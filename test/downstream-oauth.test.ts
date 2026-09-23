@@ -21,6 +21,7 @@ import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { CredentialVault } from "../src/credentials.js";
 import { vaultOAuthSealer } from "../src/oauth-sealing.js";
+import { attachOAuthSealer } from "../src/oauth-sealing.js";
 import type {
   Connector,
   ConnectorContext,
@@ -4129,5 +4130,521 @@ describe("/oauth/callback/<id> route", () => {
     const body = await res.text();
     expect(body).not.toContain(evil);
     expect(body).toContain("&lt;script&gt;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remoteMcp() refresh failures: a dead grant is an authorization problem, an
+// unreachable or throttled token endpoint is an outage. The SDK's own auth()
+// blurs the two (see KvOAuthProvider), so these run the whole path.
+// ---------------------------------------------------------------------------
+describe("remoteMcp() dead and transient refresh grants", () => {
+  const issuer = "https://auth.example";
+  const mcpUrl = "https://downstream.example/mcp";
+  const resourceMetadataUrl =
+    "https://downstream.example/.well-known/oauth-protected-resource";
+  const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
+
+  type TokenAnswer = () => Response | Promise<Response>;
+
+  async function seededStorage(
+    sealer?: ReturnType<typeof vaultOAuthSealer>,
+    accessToken = "access-old",
+  ) {
+    const storage = memoryStorage();
+    const seeder = new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, sealer);
+    await seeder.saveClientInformation(
+      {
+        client_id: "connecta-client",
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: "none",
+      },
+      { issuer },
+    );
+    await seeder.saveTokens(
+      {
+        access_token: accessToken,
+        token_type: "Bearer",
+        refresh_token: "refresh-old",
+      },
+      { issuer },
+    );
+    return storage;
+  }
+
+  /**
+   * The `https://auth.example` fixture: a downstream that rejects the stored
+   * access token, and a token endpoint whose answer each case chooses.
+   */
+  function downstream(answer: {
+    current: TokenAnswer;
+    /** Accept the stored token for connect, then 401 every tool call. */
+    revokedAfterConnect?: boolean;
+  }) {
+    const counts = { token: 0, register: 0, rejected: 0 };
+    const redeemed: string[] = [];
+    let rejectedAll = deferred<void>();
+    let expectedRejections = Infinity;
+    let tokenEntered = deferred<void>();
+    let tokenGate: Promise<void> = Promise.resolve();
+    const fetchStub: FetchLike = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.href === resourceMetadataUrl) {
+        return Response.json({
+          resource: mcpUrl,
+          authorization_servers: [issuer],
+        });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.href === `${issuer}/register`) {
+        counts.register++;
+        return Response.json({
+          client_id: "replacement-client",
+          redirect_uris: [REDIRECT],
+          token_endpoint_auth_method: "none",
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+        });
+      }
+      if (url.href === `${issuer}/token`) {
+        counts.token++;
+        expect(init.body).toBeInstanceOf(URLSearchParams);
+        redeemed.push((init.body as URLSearchParams).get("refresh_token") ?? "");
+        tokenEntered.resolve();
+        await tokenGate;
+        return answer.current();
+      }
+      if (url.href !== mcpUrl) {
+        throw new Error(`Unexpected OAuth test request: ${url.href}`);
+      }
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+      const authorization = new Headers(init.headers).get("authorization");
+      const method = (JSON.parse(String(init.body)) as { method: string }).method;
+      if (
+        authorization !== "Bearer access-new" ||
+        (answer.revokedAfterConnect && method === "tools/call")
+      ) {
+        counts.rejected++;
+        if (counts.rejected >= expectedRejections) rejectedAll.resolve();
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+      const message = JSON.parse(String(init.body)) as {
+        id?: string | number;
+        method: string;
+        params?: { protocolVersion?: string };
+      };
+      if (message.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: message.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "refreshing", version: "1.0.0" },
+            }
+          : message.method === "tools/list"
+            ? { tools: [] }
+            : undefined;
+      return Response.json({ jsonrpc: "2.0", id: message.id, result });
+    };
+    return {
+      fetchStub,
+      counts,
+      redeemed,
+      /** Hold the token endpoint until `callers` scopes have all been rejected. */
+      gate(callers: number) {
+        expectedRejections = callers;
+        rejectedAll = deferred<void>();
+        tokenEntered = deferred<void>();
+        const release = deferred<void>();
+        tokenGate = release.promise;
+        return {
+          ready: Promise.all([rejectedAll.promise, tokenEntered.promise]),
+          release: () => release.resolve(),
+        };
+      },
+    };
+  }
+
+  function connector() {
+    return remoteMcp("svc", {
+      url: mcpUrl,
+      auth: { type: "oauth" },
+      versionNegotiation: "legacy",
+    });
+  }
+
+  const scope = (
+    storage: KVStorage,
+    sealer?: ReturnType<typeof vaultOAuthSealer>,
+  ): ConnectorContext =>
+    attachOAuthSealer({ ...ctx(storage), requestScope: {} }, sealer);
+
+  async function failureOf(promise: Promise<unknown>) {
+    try {
+      await promise;
+    } catch (error) {
+      return { error, classified: classifyCallError(error) };
+    }
+    throw new Error("expected the call to fail");
+  }
+
+  const deadAnswers: [string, TokenAnswer][] = [
+    [
+      "GitHub's 200 bad_refresh_token",
+      () =>
+        Response.json({
+          error: "bad_refresh_token",
+          error_description: "The refresh token passed is incorrect or expired.",
+          error_uri: "https://docs.github.com/apps",
+        }),
+    ],
+    [
+      "400 invalid_grant",
+      () =>
+        Response.json(
+          { error: "invalid_grant", error_description: "Token revoked." },
+          { status: 400 },
+        ),
+    ],
+    [
+      "401 invalid_client",
+      () =>
+        Response.json(
+          { error: "invalid_client", error_description: "Unknown client." },
+          { status: 401 },
+        ),
+    ],
+    [
+      "400 invalid_scope",
+      () => Response.json({ error: "invalid_scope" }, { status: 400 }),
+    ],
+    [
+      "403 with a non-OAuth body",
+      () =>
+        new Response("<html>Forbidden</html>", {
+          status: 403,
+          headers: { "content-type": "text/html" },
+        }),
+    ],
+    ["404 with no body", () => new Response(null, { status: 404 })],
+  ];
+
+  it.each(deadAnswers)(
+    "%s ends as auth_required, drops the dead grant, and authorize_connector reaches consent",
+    async (_label, tokenAnswer) => {
+      const storage = await seededStorage();
+      const answer = { current: tokenAnswer };
+      const server = downstream(answer);
+      const c = connector();
+      vi.stubGlobal("fetch", server.fetchStub);
+      try {
+        const passive = scope(storage);
+        const { error, classified } = await failureOf(c.listTools(passive));
+        expect(error).toBeInstanceOf(Error);
+        expect(classified).toMatchObject({
+          code: "auth_required",
+          retryable: false,
+        });
+        expect(classified.message).toContain("authorize_connector");
+        expect(server.counts.token).toBe(1);
+        // A passive call never starts consent, and never registers a client.
+        expect(server.counts.register).toBe(0);
+        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+        // The dead grant is gone, so nothing will replay it.
+        expect(await reader.tokens()).toBeUndefined();
+        await expect(c.status!(passive)).resolves.toMatchObject({
+          state: "auth_required",
+        });
+        await c.closeScope?.(passive);
+
+        const later = scope(storage);
+        await expect(c.status!(later)).resolves.toMatchObject({
+          state: "auth_required",
+        });
+        await c.closeScope?.(later);
+        expect(server.counts.token).toBe(1);
+
+        const authorizing = scope(storage);
+        const started = await c.startAuth!(authorizing);
+        expect(started.state).toBe("auth_required");
+        expect(started.authorizationUrl).toMatch(
+          new RegExp(`^${issuer}/authorize\\?`),
+        );
+        await c.closeScope?.(authorizing);
+        expect(server.redeemed).toEqual(["refresh-old"]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("drops a dead grant held as sealed state", async () => {
+    const sealer = vaultOAuthSealer(
+      new CredentialVault(memoryStorage(), SEAL_KEY),
+      "svc",
+      undefined,
+      silentLogger,
+    );
+    const storage = await seededStorage(sealer);
+    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
+    expect(await storage.get(tokenKey)).not.toContain("refresh-old");
+    const server = downstream({
+      current: () => Response.json({ error: "bad_refresh_token" }),
+    });
+    const c = connector();
+    vi.stubGlobal("fetch", server.fetchStub);
+    try {
+      const passive = scope(storage, sealer);
+      const { classified } = await failureOf(c.listTools(passive));
+      expect(classified).toMatchObject({ code: "auth_required" });
+      await c.closeScope?.(passive);
+      expect(await storage.get(tokenKey)).toBeNull();
+
+      const authorizing = scope(storage, sealer);
+      const started = await c.startAuth!(authorizing);
+      expect(started.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
+      await c.closeScope?.(authorizing);
+      expect(server.redeemed).toEqual(["refresh-old"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("gives every caller joined on a dead refresh flight the same auth_required", async () => {
+    const storage = await seededStorage();
+    const server = downstream({
+      current: () => Response.json({ error: "bad_refresh_token" }),
+    });
+    const c = connector();
+    vi.stubGlobal("fetch", server.fetchStub);
+    try {
+      const gate = server.gate(3);
+      const scopes = Array.from({ length: 3 }, () => scope(storage));
+      const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
+      await gate.ready;
+      gate.release();
+      const failures = await calls;
+      expect(failures.map((f) => f.classified.code)).toEqual([
+        "auth_required",
+        "auth_required",
+        "auth_required",
+      ]);
+      expect(server.counts.token).toBe(1);
+      const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+      expect(await reader.tokens()).toBeUndefined();
+      expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+      await Promise.all(scopes.map((s) => c.closeScope?.(s)));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  const transientAnswers: [
+    string,
+    TokenAnswer,
+    { code: string; retryAfterMs?: number },
+  ][] = [
+    [
+      "503 server_error",
+      () =>
+        Response.json(
+          { error: "server_error", error_description: "down" },
+          { status: 503 },
+        ),
+      { code: "unavailable" },
+    ],
+    [
+      "503 temporarily_unavailable with Retry-After",
+      () =>
+        Response.json(
+          { error: "temporarily_unavailable" },
+          { status: 503, headers: { "retry-after": "12" } },
+        ),
+      { code: "unavailable", retryAfterMs: 12_000 },
+    ],
+    [
+      "502 with a non-OAuth body",
+      () => new Response("Bad Gateway", { status: 502 }),
+      { code: "unavailable" },
+    ],
+    [
+      "500 invalid_grant",
+      () => Response.json({ error: "invalid_grant" }, { status: 500 }),
+      { code: "unavailable" },
+    ],
+    ["408", () => new Response(null, { status: 408 }), { code: "unavailable" }],
+    ["425", () => new Response(null, { status: 425 }), { code: "unavailable" }],
+    [
+      "429 with Retry-After",
+      () =>
+        Response.json(
+          { error: "too_many_requests" },
+          { status: 429, headers: { "retry-after": "30" } },
+        ),
+      { code: "rate_limited", retryAfterMs: 30_000 },
+    ],
+    [
+      "429 without Retry-After",
+      () => new Response("slow down", { status: 429 }),
+      { code: "rate_limited" },
+    ],
+    [
+      "a network error",
+      () => {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("connect ECONNREFUSED"), {
+            code: "ECONNREFUSED",
+          }),
+        });
+      },
+      { code: "unavailable" },
+    ],
+  ];
+
+  it.each(transientAnswers)(
+    "%s stays a retryable outage, keeps the grant, and writes no consent",
+    async (_label, tokenAnswer, expected) => {
+      const storage = await seededStorage();
+      const answer = { current: tokenAnswer };
+      const server = downstream(answer);
+      const c = connector();
+      vi.stubGlobal("fetch", server.fetchStub);
+      try {
+        const passive = scope(storage);
+        const { classified } = await failureOf(c.listTools(passive));
+        expect(classified).toMatchObject({ ...expected, retryable: true });
+        if (expected.retryAfterMs === undefined) {
+          expect(classified.retryAfterMs).toBeUndefined();
+        }
+        expect(server.counts.token).toBe(1);
+        expect(server.counts.register).toBe(0);
+        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+        expect(await reader.tokens()).toMatchObject({
+          access_token: "access-old",
+          refresh_token: "refresh-old",
+        });
+        // Nothing is latched: a status read in the same scope tries again,
+        // meets the same outage, and still reports it as one.
+        await expect(c.status!(passive)).resolves.toMatchObject({
+          state: "error",
+        });
+        await c.closeScope?.(passive);
+        expect(server.counts.token).toBe(2);
+        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+
+        // The outage passes; the kept grant still works.
+        answer.current = () =>
+          Response.json({
+            access_token: "access-new",
+            token_type: "Bearer",
+            refresh_token: "refresh-new",
+          });
+        const later = scope(storage);
+        await expect(c.listTools(later)).resolves.toEqual([]);
+        await c.closeScope?.(later);
+        expect(server.redeemed).toEqual([
+          "refresh-old",
+          "refresh-old",
+          "refresh-old",
+        ]);
+        expect(await reader.tokens()).toMatchObject({
+          refresh_token: "refresh-new",
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it.each([
+    [
+      "a dead grant",
+      () => Response.json({ error: "bad_refresh_token" }),
+      { code: "auth_required", retryable: false },
+      undefined,
+    ],
+    [
+      "an outage",
+      () => new Response("Service Unavailable", { status: 503 }),
+      { code: "unavailable", retryable: true },
+      { refresh_token: "refresh-old" },
+    ],
+  ])(
+    "classifies %s met by a tool call after connect",
+    async (_label, tokenAnswer, expected, keptTokens) => {
+      const storage = await seededStorage(undefined, "access-new");
+      const server = downstream({
+        current: tokenAnswer,
+        revokedAfterConnect: true,
+      });
+      const c = connector();
+      vi.stubGlobal("fetch", server.fetchStub);
+      try {
+        const passive = scope(storage);
+        await expect(c.listTools(passive)).resolves.toEqual([]);
+        expect(server.counts.token).toBe(0);
+        const { classified } = await failureOf(c.callTool("ping", {}, passive));
+        expect(classified).toMatchObject(expected);
+        expect(server.counts.token).toBe(1);
+        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+        if (keptTokens === undefined) {
+          expect(await reader.tokens()).toBeUndefined();
+        } else {
+          expect(await reader.tokens()).toMatchObject(keptTokens);
+        }
+        await c.closeScope?.(passive);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("gives every caller joined on a transient refresh flight the same retryable outage", async () => {
+    const storage = await seededStorage();
+    const server = downstream({
+      current: () =>
+        Response.json({ error: "server_error" }, { status: 503 }),
+    });
+    const c = connector();
+    vi.stubGlobal("fetch", server.fetchStub);
+    try {
+      const gate = server.gate(3);
+      const scopes = Array.from({ length: 3 }, () => scope(storage));
+      const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
+      await gate.ready;
+      gate.release();
+      const failures = await calls;
+      for (const { classified } of failures) {
+        expect(classified).toMatchObject({ code: "unavailable", retryable: true });
+      }
+      expect(server.counts.token).toBe(1);
+      const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+      expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+      expect(await reader.tokens()).toMatchObject({ refresh_token: "refresh-old" });
+      await Promise.all(scopes.map((s) => c.closeScope?.(s)));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
