@@ -1588,3 +1588,52 @@ describe("memory storage expiry", () => {
     } finally { deleted.mockRestore(); now.mockRestore(); }
   });
 });
+
+describe("personal registry eviction", () => {
+  it("keeps a personal registry with catalog work in flight, so its refresh cannot outlive an invalidation", async () => {
+    const storage = memoryStorage();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const connector: Connector = connectorWith({
+      id: "mine",
+      kind: "mcp",
+      authScope: "personal",
+      tools: async () => {
+        calls++;
+        if (calls === 1) {
+          await gate;
+          return [{ name: "before_reauthorization" }];
+        }
+        return [{ name: "after_reauthorization" }];
+      },
+      call: async () => null,
+    });
+    const root = new Registry([connector], { storage, logger: silentLogger });
+    const refreshing = root
+      .scoped({ connectorIds: "all", principalKey: "0" })
+      .getTools("mine", BASE);
+    await vi.waitFor(() => expect(calls).toBe(1));
+
+    // Fill the personal-registry bound while principal 0's listing is live,
+    // then let principal 0 come back and change its credential.
+    for (let i = 1; i <= 1_024; i++) {
+      root.scoped({ connectorIds: "all", principalKey: String(i) });
+    }
+    await root
+      .scoped({ connectorIds: "all", principalKey: "0" })
+      .invalidateStored("mine");
+    release();
+
+    await expect(refreshing).resolves.toEqual([
+      { name: "before_reauthorization" },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await storage.get("principal:0:catalog:mine")).toBeNull();
+    await expect(
+      root.scoped({ connectorIds: "all", principalKey: "0" }).getTools("mine", BASE),
+    ).resolves.toEqual([{ name: "after_reauthorization" }]);
+  });
+});

@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, Result } from "effect";
+import { Cause, Clock, Deferred, Effect, Exit, Result } from "effect";
 import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
@@ -12,7 +12,6 @@ import type {
   ToolDef,
 } from "./types.js";
 import {
-  closeConnectorScope,
   type DeferredWork,
 } from "./connector-scope.js";
 import {
@@ -44,8 +43,9 @@ import {
   GUIDE_SUMMARY_LENGTH,
   normalizeGuideSummary,
 } from "./skills.js";
-import { withDeadline } from "./timeout.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
+import { closeScopeOnExit } from "./runtime/connector-scope.js";
+import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { Logger as LoggerService, type Storage } from "./runtime/services.js";
 import {
   runOnPartition,
@@ -129,7 +129,12 @@ interface CacheEntry {
 
 interface CatalogRefreshFlight {
   generation: number;
-  promise: Promise<ToolDef[]>;
+  /**
+   * Completed once, by the request that owns the refresh, when its work and
+   * teardown are done. Every other caller only awaits it, each through a
+   * Promise edge of its own. No fiber outlives a request to hold it open.
+   */
+  outcome: Deferred.Deferred<ToolDef[], unknown>;
   /** One caught/logged tail shared by every stale reader that joins. */
   deferredTail?: Promise<void>;
 }
@@ -169,6 +174,21 @@ function forEachChunk<T, A>(
     items,
     (item, index) => Effect.result(operation(item, index)),
     { concurrency: CATALOG_CHUNK_IO_CONCURRENCY },
+  );
+}
+
+/**
+ * A persisted-catalog mutation that logs its storage failure rather than
+ * failing, so its turn in the mutation queue always ends.
+ */
+function warnOnFailure<R>(
+  mutation: Effect.Effect<void, unknown, R>,
+  failed: string,
+): Effect.Effect<void, never, R | LoggerService> {
+  return Effect.catch(mutation, (err) =>
+    LoggerService.use((logger) =>
+      Effect.sync(() => logger.warn(`[connecta] ${failed}: ${msg(err)}`)),
+    ),
   );
 }
 
@@ -344,8 +364,10 @@ export class Registry implements RegistryView {
   private readonly invalidated = new Set<string>();
   /** Per-connector epoch preventing a pre-invalidation refresh from publishing. */
   private readonly catalogGenerations = new Map<string, number>();
+  // The last queued mutation per connector, as the turn its own request
+  // completes once its storage work is done; see enqueueCatalogMutation.
   /** Serialize persisted catalog set/delete operations within this isolate. */
-  private readonly catalogMutations = new Map<string, Promise<void>>();
+  private readonly catalogMutations = new Map<string, Deferred.Deferred<void>>();
   /** Same-request cold loads share one promise without retaining the request.
    * See documentation/architecture.md#the-two-lifetimes. */
   private readonly requestCatalogLoads = new WeakMap<
@@ -462,11 +484,17 @@ export class Registry implements RegistryView {
     }
     if (this.personalRegistries.size >= MAX_PERSONAL_REGISTRIES) {
       // Eviction must not reset a live rolling budget or orphan queued calls.
+      // Nor may it drop catalog work in flight: a replacement for the same
+      // principal starts with no generations and no mutation queue, so a
+      // refresh the evicted registry finishes later would persist a listing
+      // that a credential change on the replacement had just deleted.
       const idle = [...this.personalRegistries].find(([, candidate]) =>
-        [...candidate.callAdmission.values()].every(admission => admission.isIdle()),
+        [...candidate.callAdmission.values()].every(admission => admission.isIdle()) &&
+        candidate.catalogRefreshes.size === 0 &&
+        candidate.catalogMutations.size === 0,
       );
       if (!idle) {
-        throw new Error("Personal connector capacity is exhausted; retry after calls and rolling budgets drain.");
+        throw new Error("Personal connector capacity is exhausted; retry after calls, rolling budgets, and catalog refreshes drain.");
       }
       idle[1].closeCallAdmission();
       this.personalRegistries.delete(idle[0]);
@@ -1181,21 +1209,30 @@ export class Registry implements RegistryView {
    * old refresh can finish its storage.set after a credential change deletes
    * the catalog and resurrect the pre-change listing.
    */
-  private enqueueCatalogMutation(
+  private async enqueueCatalogMutation(
     id: string,
-    operation: () => Promise<void>,
+    operation: Effect.Effect<void, never, Storage | LoggerService>,
   ): Promise<void> {
-    const previous = this.catalogMutations.get(id) ?? Promise.resolve();
-    const next = previous.catch(() => {}).then(operation);
-    this.catalogMutations.set(id, next);
-    void next
-      .finally(() => {
-        if (this.catalogMutations.get(id) === next) {
-          this.catalogMutations.delete(id);
-        }
-      })
-      .catch(() => {});
-    return next;
+    // Mutations run in arrival order, each taking its turn from the one
+    // queued before it. That one may belong to another request, and
+    // completing a Deferred resumes its waiters inside the completing call,
+    // so the wait is an edge of its own and this request's storage work
+    // starts only after it. (Effect's Semaphore would do neither: it resumes
+    // a waiter from the releasing fiber, and a newcomer can take the permit
+    // before a waiter that queued earlier.) An operation logs its own storage
+    // failure, so a turn always ends.
+    const previous = this.catalogMutations.get(id);
+    const turn = Deferred.makeUnsafe<void>();
+    this.catalogMutations.set(id, turn);
+    try {
+      if (previous) await runEdge(Deferred.await(previous));
+      await runOnPartition(operation, this.opts);
+    } finally {
+      if (this.catalogMutations.get(id) === turn) {
+        this.catalogMutations.delete(id);
+      }
+      Deferred.doneUnsafe(turn, Exit.void);
+    }
   }
 
   private async refreshToolsWithContext(
@@ -1258,16 +1295,19 @@ export class Registry implements RegistryView {
     });
     this.invalidated.delete(id);
     if (shouldPersist) {
-      await this.enqueueCatalogMutation(id, async () => {
-        if (generation !== this.catalogGeneration(id)) return;
-        try {
-          await runOnPartition(this.storeCatalog(id, snapshot), this.opts);
-        } catch (err) {
-          this.opts.logger.warn(
-            `[connecta] connector "${id}" catalog persistence failed: ${msg(err)}`,
-          );
-        }
-      });
+      await this.enqueueCatalogMutation(
+        id,
+        // The generation is read when the turn comes, not when it is queued:
+        // an invalidation queued meanwhile has already deleted the catalog.
+        warnOnFailure(
+          Effect.suspend(() =>
+            generation === this.catalogGeneration(id)
+              ? this.storeCatalog(id, snapshot)
+              : Effect.void,
+          ),
+          `connector "${id}" catalog persistence failed`,
+        ),
+      );
     }
     return tools;
   }
@@ -1280,35 +1320,30 @@ export class Registry implements RegistryView {
   private startCatalogRefresh(
     id: string,
     generation: number,
-    start: () => Promise<ToolDef[]>,
-    finish?: () => Promise<void>,
-  ): CatalogRefreshFlight {
+    work: Effect.Effect<ToolDef[], unknown>,
+  ): {
+    flight: CatalogRefreshFlight;
+    // Present only for the caller that published the flight, which must run
+    // it, in its own request, at once.
+    owner?: Effect.Effect<ToolDef[], unknown>;
+  } {
     const existing = this.catalogRefreshes.get(id);
-    if (existing?.generation === generation) return existing;
-    let resolveWork!: (tools: ToolDef[]) => void;
-    let rejectWork!: (reason?: unknown) => void;
-    const work = new Promise<ToolDef[]>((resolve, reject) => {
-      resolveWork = resolve;
-      rejectWork = reject;
-    });
-    let flight!: CatalogRefreshFlight;
-    const promise = work
-      .finally(async () => {
-        if (finish) await finish();
-      })
-      .finally(() => {
+    if (existing?.generation === generation) return { flight: existing };
+    const flight: CatalogRefreshFlight = {
+      generation,
+      outcome: Deferred.makeUnsafe(),
+    };
+    this.catalogRefreshes.set(id, flight);
+    const owner = Effect.onExit(work, (exit) =>
+      Effect.sync(() => {
         if (this.catalogRefreshes.get(id) === flight) {
           this.catalogRefreshes.delete(id);
         }
-      });
-    flight = { generation, promise };
-    this.catalogRefreshes.set(id, flight);
-    try {
-      Promise.resolve(start()).then(resolveWork, rejectWork);
-    } catch (err) {
-      rejectWork(err);
-    }
-    return flight;
+        // Last, because joined fibers resume inside this call.
+        Deferred.doneUnsafe(flight.outcome, exit);
+      }),
+    );
+    return { flight, owner };
   }
 
   /** Force a live listTools refresh and replace both catalog cache layers. */
@@ -1321,10 +1356,23 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     if (connector.staticTools) return connector.staticTools;
-    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions);
-    return this.startCatalogRefresh(id, this.catalogGeneration(id), () =>
-      this.refreshToolsWithContext(id, connector, ctx),
-    ).promise;
+    const { flight, owner } = this.startCatalogRefresh(
+      id,
+      this.catalogGeneration(id),
+      Effect.tryPromise({
+        try: () =>
+          this.refreshToolsWithContext(
+            id,
+            connector,
+            this.contextFor(id, baseUrl, requestScope, callOptions),
+          ),
+        catch: (error) => error,
+      }),
+    );
+    // The owner lists in its own request. A joiner waits through an edge of
+    // its own, and whatever it does with the tools happens after that, back in
+    // its request (see "Effect inside" in documentation/architecture.md).
+    return runEdge(owner ?? Deferred.await(flight.outcome));
   }
 
   private observeCatalogAccess(
@@ -1348,63 +1396,69 @@ export class Registry implements RegistryView {
     options: CatalogReadOptions,
   ): void {
     const connector = this.connectors.get(id);
-    if (!connector || connector.staticTools || !options.defer) return;
-    let flight = this.catalogRefreshes.get(id);
-    if (flight?.generation !== expectedGeneration) flight = undefined;
-    if (!flight) {
-      const requestScope = {};
-      let ctx: ConnectorContext | undefined;
-      flight = this.startCatalogRefresh(
-        id,
-        expectedGeneration,
-        () =>
-          withDeadline(
-            (signal) => {
-              const current = this.cache.get(id);
-              if (current && current.exp > Date.now()) {
-                return Promise.resolve(current.tools);
-              }
-              if (
-                expectedGeneration !== this.catalogGeneration(id) ||
-                this.invalidated.has(id)
-              ) {
-                return Promise.reject(
-                  new Error(
-                    `Deferred catalog refresh of "${id}" was invalidated before it started.`,
-                  ),
-                );
-              }
-              ctx = this.contextFor(id, baseUrl, requestScope, {
-                signal,
-                timeoutMs: options.refreshTimeoutMs,
-              });
-              return this.refreshToolsWithContext(id, connector, ctx, true);
-            },
-            {
-              timeoutMs: options.refreshTimeoutMs,
-              timeoutError: new Error(
-                `deferred catalog refresh of "${id}" timed out after ${options.refreshTimeoutMs}ms`,
+    const defer = options.defer;
+    if (!connector || connector.staticTools || !defer) return;
+    // The refresh this request starts, if none of this generation is live.
+    // Its scope is closed however it ends, deadline included, before the
+    // flight completes.
+    const refresh = withDeadlineEffect(
+      (signal) =>
+        Effect.gen({ self: this }, function* () {
+          const current = this.cache.get(id);
+          if (current && current.exp > Date.now()) return current.tools;
+          if (
+            expectedGeneration !== this.catalogGeneration(id) ||
+            this.invalidated.has(id)
+          ) {
+            return yield* Effect.fail(
+              new Error(
+                `Deferred catalog refresh of "${id}" was invalidated before it started.`,
               ),
-            },
-          ),
-        async () => {
-          if (ctx) await closeConnectorScope(connector, ctx, options.defer);
-        },
+            );
+          }
+          const ctx = this.contextFor(id, baseUrl, {}, {
+            signal,
+            timeoutMs: options.refreshTimeoutMs,
+          });
+          yield* closeScopeOnExit(connector, ctx, defer);
+          return yield* Effect.tryPromise({
+            try: () => this.refreshToolsWithContext(id, connector, ctx, true),
+            catch: (error) => error,
+          });
+        }),
+      {
+        timeoutMs: options.refreshTimeoutMs,
+        timeoutError: new Error(
+          `deferred catalog refresh of "${id}" timed out after ${options.refreshTimeoutMs}ms`,
+        ),
+      },
+    );
+    const logFailure = (err: unknown) => {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" deferred catalog refresh failed: ${msg(err)}`,
+      );
+    };
+    const { flight, owner } = this.startCatalogRefresh(
+      id,
+      expectedGeneration,
+      Effect.scoped(refresh),
+    );
+    if (owner) {
+      // Runs past this response, under the runtime's waitUntil below.
+      flight.deferredTail = detach(
+        Effect.catchCause(owner, (cause) =>
+          Effect.sync(() => logFailure(Cause.squash(cause))),
+        ),
       );
     }
-    if (!flight.deferredTail) {
-      // Attach the rejection handler before handing the tail to waitUntil.
-      flight.deferredTail = flight.promise.then(
-        () => {},
-        (err) => {
-          this.opts.logger.warn(
-            `[connecta] connector "${id}" deferred catalog refresh failed: ${msg(err)}`,
-          );
-        },
-      );
-    }
+    // A stale reader that joins a blocking refresh logs its failure once for
+    // every reader after it, and waits through an edge of its own.
+    flight.deferredTail ??= runEdge(Deferred.await(flight.outcome)).then(
+      () => {},
+      logFailure,
+    );
     try {
-      options.defer(flight.deferredTail);
+      defer(flight.deferredTail);
     } catch (err) {
       this.opts.logger.warn(
         `[connecta] connector "${id}" deferred catalog refresh could not attach to the runtime: ${msg(err)}`,
@@ -1667,15 +1721,13 @@ export class Registry implements RegistryView {
   }
 
   private deleteStoredCatalog(id: string): Promise<void> {
-    return this.enqueueCatalogMutation(id, async () => {
-      try {
-        await runOnPartition(this.deleteCatalog(id), this.opts);
-      } catch (err) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
-        );
-      }
-    });
+    return this.enqueueCatalogMutation(
+      id,
+      warnOnFailure(
+        this.deleteCatalog(id),
+        `connector "${id}" catalog invalidation failed`,
+      ),
+    );
   }
 
   /** Drop a connector's cached tool list (e.g. after auth completes). */
