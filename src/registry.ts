@@ -1,3 +1,4 @@
+import { Clock, Effect, Exit, Result } from "effect";
 import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
@@ -38,7 +39,6 @@ import {
   MAX_CATALOG_TOOLS,
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
-import { mapSettledWithConcurrency } from "./concurrency.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
 import {
   GUIDE_SUMMARY_LENGTH,
@@ -46,6 +46,13 @@ import {
 } from "./skills.js";
 import { withDeadline } from "./timeout.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
+import { Logger as LoggerService, type Storage } from "./runtime/services.js";
+import {
+  runOnPartition,
+  storageDelete,
+  storageGet,
+  storageSet,
+} from "./runtime/storage.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -147,6 +154,23 @@ interface PersistedCatalog {
 }
 
 const CATALOG_CHUNK_IO_CONCURRENCY = 4;
+
+/**
+ * Run `operation` over every chunk index or chunk with the fixed chunk I/O
+ * bound, settling each: one failure neither interrupts its siblings nor
+ * leaves their storage calls running behind the caller. Results keep input
+ * order, so the first failure by index is the one a caller reports.
+ */
+function forEachChunk<T, A>(
+  items: readonly T[],
+  operation: (item: T, index: number) => Effect.Effect<A, unknown, Storage>,
+): Effect.Effect<Array<Result.Result<A, unknown>>, never, Storage> {
+  return Effect.forEach(
+    items,
+    (item, index) => Effect.result(operation(item, index)),
+    { concurrency: CATALOG_CHUNK_IO_CONCURRENCY },
+  );
+}
 
 export interface RegistryOptions {
   storage: KVStorage;
@@ -794,46 +818,57 @@ export class Registry implements RegistryView {
    * read-cost decision, not a capacity one: however many keys an envelope
    * occupies, it is one stash entry charged its total ASCII length.
    */
-  async stashResult(key: string, chunks: readonly string[], ttlSeconds: number, prefix = "results:"): Promise<boolean> {
-    const maxBytes = this.opts.results?.maxStashBytes ?? 8 * 1024 * 1024;
-    const maxEntries = this.opts.results?.maxStashEntries ?? 64;
-    // The paging envelope is ASCII, so its string length is its stored byte count.
-    const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    if (bytes > maxBytes || maxEntries === 0) return false;
-    const now = Date.now();
-    for (const [oldKey, entry] of this.resultStash) {
-      if (entry.busy || entry.expiresAt > now) continue;
-      entry.busy = true;
-      try {
-        // TTL alone cannot reclaim a lazy backend. Keep the charge until deletion
-        // succeeds, including writes which persisted before throwing.
-        for (const staleKey of entry.keys) await this.opts.storage.delete(staleKey);
-        this.resultStash.delete(oldKey);
-        this.resultStashBytes -= entry.bytes;
-      } finally {
-        entry.busy = false;
+  stashResult(key: string, chunks: readonly string[], ttlSeconds: number, prefix = "results:"): Promise<boolean> {
+    // The fiber runs synchronously up to its first storage call. With nothing
+    // expired to reclaim, that is the first chunk write, after the
+    // reservation: a concurrent stash already sees this one's charge.
+    return runOnPartition(Effect.gen({ self: this }, function* () {
+      const maxBytes = this.opts.results?.maxStashBytes ?? 8 * 1024 * 1024;
+      const maxEntries = this.opts.results?.maxStashEntries ?? 64;
+      // The paging envelope is ASCII, so its string length is its stored byte count.
+      const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      if (bytes > maxBytes || maxEntries === 0) return false;
+      const now = yield* Clock.currentTimeMillis;
+      for (const [oldKey, entry] of this.resultStash) {
+        if (entry.busy || entry.expiresAt > now) continue;
+        entry.busy = true;
+        // TTL alone cannot reclaim a lazy backend. Keep the charge until
+        // deletion succeeds, including writes which persisted before throwing;
+        // a failed delete fails this stash, and the entry waits for the next.
+        yield* Effect.gen({ self: this }, function* () {
+          for (const staleKey of entry.keys) yield* storageDelete(staleKey);
+          this.resultStash.delete(oldKey);
+          this.resultStashBytes -= entry.bytes;
+        }).pipe(Effect.ensuring(Effect.sync(() => { entry.busy = false; })));
       }
-    }
-    if (this.resultStash.size >= maxEntries || this.resultStashBytes + bytes > maxBytes) return false;
-    const fullKey = prefix + key;
-    const keys = chunks.map((_, index) => index === 0 ? fullKey : `${fullKey}#${index}`);
-    const entry = { keys, bytes, expiresAt: Infinity, busy: true };
-    this.resultStash.set(fullKey, entry);
-    this.resultStashBytes += bytes;
-    try {
+      if (this.resultStash.size >= maxEntries || this.resultStashBytes + bytes > maxBytes) return false;
+      const fullKey = prefix + key;
+      const keys = chunks.map((_, index) => index === 0 ? fullKey : `${fullKey}#${index}`);
+      const entry = { keys, bytes, expiresAt: Infinity, busy: true };
+      this.resultStash.set(fullKey, entry);
+      this.resultStashBytes += bytes;
       // Trailing chunks first: the header chunk is what makes an id readable, so
       // a write that fails midway leaves no envelope pointing at absent chunks.
-      for (let index = keys.length - 1; index >= 0; index--) {
-        await this.opts.storage.set(keys[index]!, chunks[index]!, { ttlSeconds });
-      }
-      entry.expiresAt = Date.now() + ttlSeconds * 1000;
+      yield* Effect.gen(function* () {
+        for (let index = keys.length - 1; index >= 0; index--) {
+          yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds });
+        }
+      }).pipe(
+        // A failed write expires at once, still charged, so the next stash
+        // reclaims every key it may have persisted before failing.
+        Effect.onExit((exit) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((writtenAt) => {
+              entry.expiresAt = Exit.isSuccess(exit)
+                ? writtenAt + ttlSeconds * 1000
+                : 0;
+              entry.busy = false;
+            }),
+          ),
+        ),
+      );
       return true;
-    } catch (error) {
-      entry.expiresAt = 0;
-      throw error;
-    } finally {
-      entry.busy = false;
-    }
+    }), this.opts);
   }
 
   /**
@@ -962,175 +997,175 @@ export class Registry implements RegistryView {
     return chunks;
   }
 
-  private async readCatalog(
+  // The persisted catalog's one reader: the manifest at `catalog:<id>`, then
+  // the chunks it names. A storage failure fails the effect, and the caller
+  // logs it; a manifest or chunk that is invalid, missing, torn, or does not
+  // match its fingerprint is logged here and read as no catalog, because a
+  // catalog is complete or it is nothing.
+  private readCatalog(
     id: string,
-    raw: string | null,
     now: number,
-  ): Promise<PersistedCatalog | null> {
-    if (!raw) return null;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return null;
-    }
+  ): Effect.Effect<PersistedCatalog | null, unknown, Storage | LoggerService> {
+    return Effect.gen({ self: this }, function* () {
+      const raw = yield* storageGet(this.catalogKey(id));
+      if (!raw) return null;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return null;
+      }
 
-    const manifest = this.validCatalogManifest(parsed);
-    if (!manifest) {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" catalog manifest is invalid; ignoring persisted catalog.`,
-      );
-      return null;
-    }
-    if (manifest.staleUntil <= now) return null;
-
-    const chunkReads = await mapSettledWithConcurrency(
-      Array.from({ length: manifest.chunkCount }, (_, index) => index),
-      CATALOG_CHUNK_IO_CONCURRENCY,
-      (index) =>
-        this.opts.storage.get(
-          this.catalogChunkKey(id, manifest.revision, index),
-        ),
-    );
-    const chunks: string[] = [];
-    let chunkBytes = 0;
-    for (const [index, result] of chunkReads.entries()) {
-      if (result.status === "rejected") throw result.reason;
-      const chunk = result.value;
-      if (chunk === null) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog chunk ${index + 1}/${manifest.chunkCount} is missing; ignoring persisted catalog.`,
+      const logger = yield* LoggerService;
+      const manifest = this.validCatalogManifest(parsed);
+      if (!manifest) {
+        logger.warn(
+          `[connecta] connector "${id}" catalog manifest is invalid; ignoring persisted catalog.`,
         );
         return null;
       }
-      const byteLength = encoder.encode(chunk).byteLength;
-      chunkBytes += byteLength;
+      if (manifest.staleUntil <= now) return null;
+
+      const chunkReads = yield* forEachChunk(
+        Array.from({ length: manifest.chunkCount }, (_, index) => index),
+        (index) => storageGet(this.catalogChunkKey(id, manifest.revision, index)),
+      );
+      const chunks: string[] = [];
+      let chunkBytes = 0;
+      for (const [index, read] of chunkReads.entries()) {
+        if (Result.isFailure(read)) return yield* Effect.fail(read.failure);
+        const chunk = read.success;
+        if (chunk === null) {
+          logger.warn(
+            `[connecta] connector "${id}" catalog chunk ${index + 1}/${manifest.chunkCount} is missing; ignoring persisted catalog.`,
+          );
+          return null;
+        }
+        const byteLength = encoder.encode(chunk).byteLength;
+        chunkBytes += byteLength;
+        if (
+          byteLength > MAX_CATALOG_CHUNK_BYTES ||
+          chunkBytes > manifest.byteCount
+        ) {
+          logger.warn(
+            `[connecta] connector "${id}" catalog chunk bounds do not match its manifest; ignoring persisted catalog.`,
+          );
+          return null;
+        }
+        chunks.push(chunk);
+      }
+
+      const serializedTools = chunks.join("");
+      const stored = yield* Effect.tryPromise({
+        try: () => fingerprintSerializedCatalog(serializedTools),
+        catch: (error) => error,
+      });
       if (
-        byteLength > MAX_CATALOG_CHUNK_BYTES ||
-        chunkBytes > manifest.byteCount
+        stored.byteLength !== manifest.byteCount ||
+        stored.fingerprint !== manifest.revision
       ) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog chunk bounds do not match its manifest; ignoring persisted catalog.`,
+        logger.warn(
+          `[connecta] connector "${id}" catalog fingerprint mismatch; ignoring persisted catalog.`,
         );
         return null;
       }
-      chunks.push(chunk);
-    }
 
-    const serializedTools = chunks.join("");
-    const stored = await fingerprintSerializedCatalog(serializedTools);
-    if (
-      stored.byteLength !== manifest.byteCount ||
-      stored.fingerprint !== manifest.revision
-    ) {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" catalog fingerprint mismatch; ignoring persisted catalog.`,
-      );
-      return null;
-    }
-
-    let tools: unknown;
-    try {
-      tools = JSON.parse(serializedTools);
-    } catch {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" catalog chunks are torn; ignoring persisted catalog.`,
-      );
-      return null;
-    }
-    if (!Array.isArray(tools) || !this.validCatalogTools(tools)) {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" catalog chunks contain invalid tools; ignoring persisted catalog.`,
-      );
-      return null;
-    }
-    if (tools.length !== manifest.toolCount) {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" catalog tool count does not match its manifest; ignoring persisted catalog.`,
-      );
-      return null;
-    }
-    return {
-      tools,
-      fingerprint: stored.fingerprint,
-      fetchedAt: manifest.fetchedAt,
-      expiresAt: manifest.expiresAt,
-      staleUntil: manifest.staleUntil,
-    };
-  }
-
-  private async storeCatalog(
-    id: string,
-    snapshot: CatalogSnapshot,
-  ): Promise<void> {
-    if (!this.persistToolCatalog) return;
-    const fetchedAt = Date.now();
-    const expiresAt = fetchedAt + this.ttlMs;
-    const staleUntil = expiresAt + this.staleMs;
-    const ttlSeconds = Math.max(
-      60,
-      Math.ceil((this.ttlMs + this.staleMs) / 1000),
-    );
-    const chunks = this.splitCatalogChunks(snapshot);
-    const chunkWrites = await mapSettledWithConcurrency(
-      chunks,
-      CATALOG_CHUNK_IO_CONCURRENCY,
-      (chunk, index) =>
-        this.opts.storage.set(
-          this.catalogChunkKey(id, snapshot.fingerprint, index),
-          chunk,
-          { ttlSeconds: ttlSeconds + CATALOG_CHUNK_TTL_GRACE_SECONDS },
-        ),
-    );
-    for (const result of chunkWrites) {
-      if (result.status === "rejected") throw result.reason;
-    }
-    // The manifest is the only publication point. A failed/partial chunk write
-    // therefore leaves the previous manifest authoritative (or no catalog);
-    // unreachable chunks carry a bounded TTL and require no prefix scan.
-    const manifest: PersistedCatalogManifest = {
-      version: 2,
-      revision: snapshot.fingerprint,
-      toolCount: snapshot.tools.length,
-      byteCount: snapshot.serializedBytes.byteLength,
-      chunkCount: chunks.length,
-      fetchedAt,
-      expiresAt,
-      staleUntil,
-    };
-    await this.opts.storage.set(this.catalogKey(id), JSON.stringify(manifest), {
-      ttlSeconds,
+      let tools: unknown;
+      try {
+        tools = JSON.parse(serializedTools);
+      } catch {
+        logger.warn(
+          `[connecta] connector "${id}" catalog chunks are torn; ignoring persisted catalog.`,
+        );
+        return null;
+      }
+      if (!Array.isArray(tools) || !this.validCatalogTools(tools)) {
+        logger.warn(
+          `[connecta] connector "${id}" catalog chunks contain invalid tools; ignoring persisted catalog.`,
+        );
+        return null;
+      }
+      if (tools.length !== manifest.toolCount) {
+        logger.warn(
+          `[connecta] connector "${id}" catalog tool count does not match its manifest; ignoring persisted catalog.`,
+        );
+        return null;
+      }
+      return {
+        tools,
+        fingerprint: stored.fingerprint,
+        fetchedAt: manifest.fetchedAt,
+        expiresAt: manifest.expiresAt,
+        staleUntil: manifest.staleUntil,
+      };
     });
   }
 
-  private async deleteCatalog(id: string): Promise<void> {
-    let raw: string | null = null;
-    let readError: unknown;
-    try {
-      raw = await this.opts.storage.get(this.catalogKey(id));
-    } catch (err) {
-      readError = err;
-    }
-    const manifest = this.parseCatalogManifest(raw);
-    // The root is authoritative, so attempt its deletion even when the
-    // best-effort read needed for physical chunk cleanup failed.
-    await this.opts.storage.delete(this.catalogKey(id));
-    if (!manifest) {
-      if (readError) throw readError;
-      return;
-    }
-    let firstError: unknown;
-    for (let index = 0; index < manifest.chunkCount; index++) {
-      try {
-        await this.opts.storage.delete(
-          this.catalogChunkKey(id, manifest.revision, index),
-        );
-      } catch (err) {
-        firstError ??= err;
+  // Persist one complete catalog: every chunk, then the manifest. A snapshot
+  // only reaches here after the tool and byte ceilings accepted it whole.
+  private storeCatalog(
+    id: string,
+    snapshot: CatalogSnapshot,
+  ): Effect.Effect<void, unknown, Storage> {
+    return Effect.gen({ self: this }, function* () {
+      if (!this.persistToolCatalog) return;
+      const fetchedAt = yield* Clock.currentTimeMillis;
+      const expiresAt = fetchedAt + this.ttlMs;
+      const staleUntil = expiresAt + this.staleMs;
+      const ttlSeconds = Math.max(
+        60,
+        Math.ceil((this.ttlMs + this.staleMs) / 1000),
+      );
+      const chunks = this.splitCatalogChunks(snapshot);
+      const chunkWrites = yield* forEachChunk(chunks, (chunk, index) =>
+        storageSet(this.catalogChunkKey(id, snapshot.fingerprint, index), chunk, {
+          ttlSeconds: ttlSeconds + CATALOG_CHUNK_TTL_GRACE_SECONDS,
+        }),
+      );
+      for (const write of chunkWrites) {
+        if (Result.isFailure(write)) return yield* Effect.fail(write.failure);
       }
-    }
-    if (readError) throw readError;
-    if (firstError) throw firstError;
+      // The manifest is the only publication point. A failed/partial chunk write
+      // therefore leaves the previous manifest authoritative (or no catalog);
+      // unreachable chunks carry a bounded TTL and require no prefix scan.
+      const manifest: PersistedCatalogManifest = {
+        version: 2,
+        revision: snapshot.fingerprint,
+        toolCount: snapshot.tools.length,
+        byteCount: snapshot.serializedBytes.byteLength,
+        chunkCount: chunks.length,
+        fetchedAt,
+        expiresAt,
+        staleUntil,
+      };
+      yield* storageSet(this.catalogKey(id), JSON.stringify(manifest), {
+        ttlSeconds,
+      });
+    });
+  }
+
+  // Remove the persisted catalog: the manifest always, then the chunks it
+  // names. Every delete is attempted; the effect fails with the manifest
+  // read's error first, then the first chunk delete's.
+  private deleteCatalog(id: string): Effect.Effect<void, unknown, Storage> {
+    return Effect.gen({ self: this }, function* () {
+      const read = yield* Effect.result(storageGet(this.catalogKey(id)));
+      const manifest = Result.isSuccess(read)
+        ? this.parseCatalogManifest(read.success)
+        : null;
+      // The root is authoritative, so attempt its deletion even when the
+      // best-effort read needed for physical chunk cleanup failed.
+      yield* storageDelete(this.catalogKey(id));
+      let firstError: Result.Failure<void, unknown> | undefined;
+      for (let index = 0; manifest && index < manifest.chunkCount; index++) {
+        const deleted = yield* Effect.result(
+          storageDelete(this.catalogChunkKey(id, manifest.revision, index)),
+        );
+        if (Result.isFailure(deleted)) firstError ??= deleted;
+      }
+      if (Result.isFailure(read)) return yield* Effect.fail(read.failure);
+      if (firstError) return yield* Effect.fail(firstError.failure);
+    });
   }
 
   private catalogGeneration(id: string): number {
@@ -1226,7 +1261,7 @@ export class Registry implements RegistryView {
       await this.enqueueCatalogMutation(id, async () => {
         if (generation !== this.catalogGeneration(id)) return;
         try {
-          await this.storeCatalog(id, snapshot);
+          await runOnPartition(this.storeCatalog(id, snapshot), this.opts);
         } catch (err) {
           this.opts.logger.warn(
             `[connecta] connector "${id}" catalog persistence failed: ${msg(err)}`,
@@ -1405,10 +1440,9 @@ export class Registry implements RegistryView {
       const generation = this.catalogGeneration(id);
       let persisted: PersistedCatalog | null = null;
       try {
-        persisted = await this.readCatalog(
-          id,
-          await this.opts.storage.get(this.catalogKey(id)),
-          now,
+        persisted = await runOnPartition(
+          this.readCatalog(id, now),
+          this.opts,
         );
       } catch (err) {
         this.opts.logger.warn(
@@ -1635,7 +1669,7 @@ export class Registry implements RegistryView {
   private deleteStoredCatalog(id: string): Promise<void> {
     return this.enqueueCatalogMutation(id, async () => {
       try {
-        await this.deleteCatalog(id);
+        await runOnPartition(this.deleteCatalog(id), this.opts);
       } catch (err) {
         this.opts.logger.warn(
           `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,

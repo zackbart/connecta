@@ -6,8 +6,9 @@
 // Connecta's runtime (an EdgeRuntime, src/runtime/run.ts), so an Effect
 // program reads them from its context rather than from arguments threaded
 // through every call. The shells — Registry, CatalogService, and the rest —
-// stay constructible from plain arguments, as the tests construct them;
-// nothing here replaces those arguments yet.
+// stay constructible from plain arguments, as the tests construct them. The
+// registry's storage programs read Storage and Logger too, but from their own
+// partition rather than this runtime (see src/runtime/storage.ts for why).
 //
 // Every import from an optional module is type-only. An omitted activity
 // module is a no-op recorder that builds no event and calls nothing, and the

@@ -228,8 +228,9 @@ shape from building, in someone else's repository rather than this one.
 ## Effect inside
 
 Request admission, downstream call admission, deadlines, bounded settled
-fan-out, connector scope close, and OAuth refresh coordination run on Effect
-v4; the rest of the core has not moved yet. Every published signature stays Promise-shaped, so each
+fan-out, connector scope close, OAuth refresh coordination, catalog
+persistence, and the result stash run on Effect v4; the rest of the core has
+not moved yet. Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
 member names included. The core is an Effect program behind it.
@@ -245,7 +246,10 @@ fiber's Clock. `closeConnectorScope` is the Promise face of `closeScope` in
 finalizer (`closeScopeOnExit`). `withDeadline` is the Promise face of
 `withDeadlineEffect`. `OAuthRefreshCoordinator.coordinatedFetch()` still
 returns a plain `FetchLike`; inside, a refresh flight is a Deferred, and the
-owning request's redemption is a fiber its abort interrupts.
+owning request's redemption is a fiber its abort interrupts. The registry's
+persisted catalog (the manifest and its chunks: read, write, delete) and its
+result stash are Effect programs over the `Storage` and `Logger` services,
+run from the registry's unchanged methods.
 
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting
@@ -267,8 +271,16 @@ per-request `DeferredWork` hook is provided by the request, never the runtime.
 Creating the runtime builds nothing, because a Worker may construct its
 Connecta at global scope; the first run that needs the services builds them,
 and `close()` disposes the runtime last. The shells stay constructible from
-plain arguments, as the tests build them, and nothing reads these services
-yet.
+plain arguments, as the tests build them.
+
+The registry's programs do not run on that runtime. A personal registry's
+storage is the root's namespaced to its principal, so the runtime's `Storage`
+would be another partition's; each registry instead provides its own storage
+and logger to the programs it runs (`runOnPartition` in
+`src/runtime/storage.ts`). For the root registry those are the same two
+objects the runtime holds. A scoped view has no storage of its own and reaches
+it through the registry it delegates to, and the result stash is always the
+root's, because its capacity is runtime-wide.
 
 `src/runtime/run.ts` is the only place a fiber starts, and
 `test/purity.test.ts` fails if any other file calls `Effect.run*`, `runFork`,
