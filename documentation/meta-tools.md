@@ -24,15 +24,17 @@ because writes will run only there or for config-exempt tools.
 | `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
 | `call_destructive_tool` | the same, plus `reason?` | the same |
 | `authorize_connector` | `connector`, `force?` | the class-specific handoff in [authorization recovery](#authorization-recovery) |
-| `get_result` | `id`, `offset?`, `maxBytes?` | `{ offset, nextOffset?, totalBytes, text }` |
+| `get_result` | `id`, `offset?`, `maxBytes?` | a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, then the page as raw text ([paging](#paging-with-get_result)) |
 | `skills` | `name?` | the listing when `name` is absent, that skill's markdown when it is present |
 
 `limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
 `get_result.offset` is a whole number of bytes ≥ 0 defaulting to 0 and
-`maxBytes` a whole number ≥ 1 defaulting to the deployment result cap — itself
-24,000 bytes unless `calls.maxResultBytes` or a per-connector override says
-otherwise ([why 24,000](#truncated-direct-call-results)). Both are validated
-rather than clamped: a bad value is an input error. `reason` is at most 500 characters of context for the host's human
+`maxBytes` a whole number ≥ 1 that defaults to, and is clamped to, the inline
+cap of the call that stashed the result — 24,000 bytes unless
+`calls.maxResultBytes` or a per-connector override says otherwise
+([why 24,000](#truncated-direct-call-results)). A value outside those domains is
+an input error; a valid `maxBytes` above the cap is an upper bound, not an
+error ([why](#paging-with-get_result)). `reason` is at most 500 characters of context for the host's human
 approval view; Connecta neither treats it as authority nor sends it downstream,
 and an empty or whitespace-only one reads as no reason rather than as grounds to
 refuse a consequential call.
@@ -262,7 +264,7 @@ as one text block. Its first line is the truncation notice, one line of compact
 JSON; everything after the first newline is the preview:
 
 ```text
-{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with get_result using nextAction, without maxBytes.","nextAction":{"tool":"get_result","arguments":{"id":"…","offset":24000}}}
+{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with get_result using nextAction.","nextAction":{"tool":"get_result","arguments":{"id":"…","offset":24000}}}
 {"ts":"2026-09-16T21:31:11.759Z","actor":"sam.ortiz@example.com",…
 ```
 
@@ -283,9 +285,9 @@ three models re-ran a billable export three times trying to read its result.
 The default cap sits under both lines with room to spare. Preview plus notice
 stays under 25,000 bytes, which is under 50,000 characters for any text, because
 a character is at least one UTF-8 byte, and under 25,000 tokens for any text,
-because a token covers at least one byte. A default `get_result` page stays
-under the character line even if JSON escaping doubles it, and 24,000 matches
-the program result boundary in [code mode](./code-mode.md). A deployment whose
+because a token covers at least one byte. A `get_result` page obeys the same
+cap, and 24,000 matches the program result boundary in
+[code mode](./code-mode.md). A deployment whose
 clients take more can raise the cap, and one whose clients take less can lower
 it, per connector if need be; a result between 24,000 and 50,000 bytes that
 used to arrive whole now pages. A client that spills rather than rejects keeps
@@ -309,13 +311,41 @@ notice is `data` itself, with no preview and a next action at offset 0.
 The hint says what to do next. For a call not explicitly annotated read-only it
 opens with “This write already ran: do not call it again to see its result.”
 The approved write happened; repeating it to look again is how one export
-becomes three. Every hint says to page without `maxBytes`, because the default
-page is the size clients pass through whole, and a larger one is cut exactly as
-the original was. `resultId` stays beside the exact `nextAction`, so the handle
+becomes three. `resultId` stays beside the exact `nextAction`, so the handle
 is actionable without copying an identifier out of prose. Program results and
 oversized discovery responses carry no such route: paging a program's return
 value is a refused shape, because a program can shrink anything before it
 returns.
+
+### Paging with get_result
+
+A page is the truncated result's shape again: one text block whose first line
+is a JSON header and whose remainder is the page, raw.
+
+```text
+{"resultId":"…","offset":24000,"bytes":24000,"totalBytes":161420,"hasMore":true,"nextAction":{"tool":"get_result","arguments":{"id":"…","offset":48000}}}
+{"ts":"2026-09-17T23:42:55.357Z","actor":"noor.haddad@example.com",…
+```
+
+`bytes` is what this page returned; `hasMore` is false on the last page, which
+carries no `nextAction`. The page is the stashed text as-is — a lone text
+block's own text, a value's compact JSON, several blocks' serialized content
+array — and never a JSON string holding it. Pages used to arrive as
+`{ offset, nextOffset?, totalBytes, text }`, which escaped every quote and
+newline in the page: a second layer over JSON payloads that made them hard to
+read and swelled a 20,000-byte page of JSON lines to 25,000 characters or more.
+
+`maxBytes` is an upper bound clamped to the inline cap of the call that stashed
+the result — the connector's override when it had one, recorded in the stash
+entry — and a clamped request is answered, not refused, with `bytes` saying how
+much came back. Clients cut an oversized page exactly as they cut the original
+result. In the eval, agents that could finally see the handle asked for pages of
+50,000 bytes and more, and Claude Code rejected every one of those answers
+outright, leaving an agent that had just been told not to repeat a write with
+nothing to read. So no response to a truncated call or to a page request
+exceeds the cap plus a header of a few hundred bytes. Value mode's unpageable
+preview is cut short enough that its JSON escaping still fits. Entries stashed
+before the cap was recorded page at the deployment cap.
 
 A refused or failed stash write cannot undo a downstream success. Both call tools
 then return the same layout with a paging-unavailable notice and no `resultId`

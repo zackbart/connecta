@@ -51,7 +51,7 @@ Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`detail
 
 For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. \`diagnostics: true\` adds timing.
 
-\`get_result({ id, offset?, maxBytes? })\` returns \`{ text, offset, nextOffset?, totalBytes }\` for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1 and defaults to the deployment cap; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the response reports the served offset. Follow \`nextOffset\` to reassemble pages. An unknown or expired id is an error.
+\`get_result({ id, offset?, maxBytes? })\` returns a one-line JSON header \`{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }\`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow \`nextAction\` until \`hasMore\` is false to reassemble pages. An unknown or expired id is an error.
 
 Limits: 20 host calls per run and a 15-second deadline per host call.
 

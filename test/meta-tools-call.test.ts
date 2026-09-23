@@ -23,6 +23,32 @@ import {
   silentLogger,
 } from "./helpers.js";
 
+/**
+ * One get_result page, read the way a client does: a one-line JSON header,
+ * a newline, and the raw page text.
+ */
+function pageOf(result: { content: { text: string }[] }): {
+  offset: number;
+  nextOffset?: number | undefined;
+  totalBytes: number;
+  text: string;
+} {
+  const whole = required(result.content[0]).text;
+  const newline = whole.indexOf("\n");
+  const header = JSON.parse(whole.slice(0, newline)) as {
+    offset: number;
+    totalBytes: number;
+    hasMore: boolean;
+    nextAction?: { arguments: { offset: number } };
+  };
+  return {
+    offset: header.offset,
+    ...(header.hasMore ? { nextOffset: header.nextAction?.arguments.offset } : {}),
+    totalBytes: header.totalBytes,
+    text: whole.slice(newline + 1),
+  };
+}
+
 describe("call_tool", () => {
   it("JSON-wraps an api connector's return value", async () => {
     const mt = createMetaTools(registry(), BASE);
@@ -1003,9 +1029,9 @@ describe("call_tool size guard + get_result", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = textOf(
-        await mt.getResult({ id: notice.resultId, offset, maxBytes: 100 }),
-      ) as { text: string; nextOffset?: number; totalBytes: number };
+      const page = pageOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 100 })
+      );
       assembled += page.text;
       if (page.nextOffset === undefined) break;
       offset = page.nextOffset;
@@ -1044,10 +1070,17 @@ describe("call_tool size guard + get_result", () => {
         arguments: { id: parsed.data.resultId, offset: 0 },
       },
     });
-    const page = textOf(
-      await mt.getResult({ id: parsed.data.resultId, maxBytes: 1_000 }),
-    ) as { text: string };
-    expect(JSON.parse(page.text)).toEqual({ blob: "x".repeat(500) });
+    let text = "";
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = pageOf(
+        await mt.getResult({ id: parsed.data.resultId, offset, maxBytes: 1_000 })
+      );
+      expect(page.text.length).toBeLessThanOrEqual(100);
+      text += page.text;
+      offset = page.nextOffset;
+    }
+    expect(JSON.parse(text)).toEqual({ blob: "x".repeat(500) });
   });
 
   it("pages multi-byte content at a codepoint-splitting boundary byte-exactly", async () => {
@@ -1080,9 +1113,9 @@ describe("call_tool size guard + get_result", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = textOf(
-        await mt.getResult({ id: notice.resultId, offset, maxBytes: 4 }),
-      ) as { text: string; nextOffset?: number };
+      const page = pageOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 4 })
+      );
       expect(page.text).not.toContain("�");
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1192,9 +1225,9 @@ describe("per-connector maxResultBytes override", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = textOf(
-        await mt.getResult({ id: notice.resultId, offset, maxBytes: 64 }),
-      ) as { text: string; nextOffset?: number; totalBytes: number };
+      const page = pageOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 64 })
+      );
       expect(page.totalBytes).toBe(FULL.length);
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1205,9 +1238,8 @@ describe("per-connector maxResultBytes override", () => {
 
   it("pages an override-truncated result with get_result's default page size", async () => {
     // Cap above the global one but below the payload: truncation happens at
-    // the connector's 300 while get_result, given no maxBytes, falls back to
-    // the deployment-wide 100 — so this covers both the larger-than-global
-    // truncation and get_result's default page size in one round trip.
+    // the connector's 300, and get_result, given no maxBytes, pages at that
+    // same 300 the stash recorded — not the deployment-wide 100.
     const mt = createMetaTools(
       makeRegistry([capped("wide", 300)], { maxResultBytes: 100 }),
       BASE,
@@ -1221,19 +1253,19 @@ describe("per-connector maxResultBytes override", () => {
     let assembled = "";
     let pages = 0;
     for (;;) {
-      const page = textOf(
-        await mt.getResult({ id: notice.resultId, offset }),
-      ) as { text: string; nextOffset?: number; totalBytes: number };
+      const page = pageOf(
+        await mt.getResult({ id: notice.resultId, offset })
+      );
       pages++;
       expect(page.totalBytes).toBe(FULL.length);
-      expect(page.text.length).toBeLessThanOrEqual(100);
+      expect(page.text.length).toBeLessThanOrEqual(300);
       assembled += page.text;
       if (page.nextOffset === undefined) break;
       offset = page.nextOffset;
     }
-    // 502 bytes in 100-byte default pages — the global cap, not the 300 the
-    // connector truncated at.
-    expect(pages).toBe(6);
+    // 502 bytes in 300-byte default pages — the connector's cap, recorded
+    // with the stash, not the deployment's 100.
+    expect(pages).toBe(2);
     expect(assembled).toBe(FULL);
   });
 
@@ -1289,9 +1321,9 @@ describe("maxResultBytes validation", () => {
     let offset = 0;
     let assembled = "";
     for (let guard = 0; guard < FULL.length + 10; guard++) {
-      const page = textOf(
-        await mt.getResult({ id: resultId, offset, maxBytes: 1 }),
-      ) as { text: string; nextOffset?: number };
+      const page = pageOf(
+        await mt.getResult({ id: resultId, offset, maxBytes: 1 })
+      );
       assembled += page.text;
       if (page.nextOffset === undefined) break;
       expect(page.nextOffset).toBeGreaterThan(offset);
@@ -1489,10 +1521,16 @@ describe("handler returns JSON cannot represent", () => {
     };
     const full = JSON.stringify(long);
     expect(notice.totalBytes).toBe(byteLength(full));
-    const page = textOf(
-      await mt.getResult({ id: notice.resultId, maxBytes: 10_000 }),
-    ) as { text: string };
-    expect(page.text).toBe(full);
+    let text = "";
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = pageOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 10_000 }),
+      );
+      text += page.text;
+      offset = page.nextOffset;
+    }
+    expect(text).toBe(full);
   });
 });
 
@@ -1588,9 +1626,9 @@ describe("mcp-mode content size guard", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = textOf(
-        await mt.getResult({ id: notice.resultId, offset, maxBytes: 10_000 }),
-      ) as { text: string; nextOffset?: number; totalBytes: number };
+      const page = pageOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 10_000 })
+      );
       expect(page.totalBytes).toBe(byteLength(full));
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1679,9 +1717,11 @@ describe("get_result offset validation and alignment", () => {
         },
       ],
     });
-    // A cap of 1 stashes the payload whole while keeping the inline head tiny.
+    // A cap of 9, one byte under the payload, stashes it whole; pages are
+    // clamped to that cap, so it is also wide enough for the 100-byte requests
+    // below to reach the end from any offset.
     const mt = createMetaTools(
-      makeRegistry([conn], { maxResultBytes: 1 }),
+      makeRegistry([conn], { maxResultBytes: 9 }),
       BASE,
     );
     const call = await mt.callTool({ address: "mb.get" });
@@ -1711,9 +1751,9 @@ describe("get_result offset validation and alignment", () => {
     async (requested) => {
     // Pre-fix these decoded the severed bytes as U+FFFD.
     const { mt, resultId } = await stashEmoji();
-    const page = textOf(
-      await mt.getResult({ id: resultId, offset: requested, maxBytes: 100 }),
-    ) as { text: string; offset: number; totalBytes: number };
+    const page = pageOf(
+      await mt.getResult({ id: resultId, offset: requested, maxBytes: 100 })
+    );
     expect(page.text, `offset ${requested}`).not.toContain("�");
     expect(page.offset, `offset ${requested}`).toBe(EMOJI_START);
     expect(page.text).toBe("😀bb\"");
@@ -1725,9 +1765,9 @@ describe("get_result offset validation and alignment", () => {
     const { mt, resultId } = await stashEmoji();
     // Every boundary in the payload, including the ones paging produces.
     for (const offset of [0, 1, 2, EMOJI_START, 7, 8]) {
-      const page = textOf(
-        await mt.getResult({ id: resultId, offset, maxBytes: 100 }),
-      ) as { text: string; offset: number };
+      const page = pageOf(
+        await mt.getResult({ id: resultId, offset, maxBytes: 100 })
+      );
       expect(page.offset, `offset ${offset}`).toBe(offset);
       expect(page.text).not.toContain("�");
     }
@@ -1735,9 +1775,9 @@ describe("get_result offset validation and alignment", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = textOf(
-        await mt.getResult({ id: resultId, offset, maxBytes: 3 }),
-      ) as { text: string; nextOffset?: number };
+      const page = pageOf(
+        await mt.getResult({ id: resultId, offset, maxBytes: 3 })
+      );
       expect(page.text).not.toContain("�");
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1750,9 +1790,9 @@ describe("get_result offset validation and alignment", () => {
     // Still a whole number of bytes, so still legal: an empty last page rather
     // than an error, and nothing to align.
     const { mt, resultId } = await stashEmoji();
-    const page = textOf(
+    const page = pageOf(
       await mt.getResult({ id: resultId, offset: byteLength(EMOJI_FULL) + 5 }),
-    ) as { text: string; offset: number; nextOffset?: number };
+    );
     expect(page.text).toBe("");
     expect(page.offset).toBe(byteLength(EMOJI_FULL) + 5);
     expect(page.nextOffset).toBeUndefined();
@@ -2068,7 +2108,7 @@ describe("bounded result stash", () => {
     try {
       // Fresh adapters pin paging across requests, not a request-local cache.
       for (const offset of [0, 100_001, 150_003]) {
-        const page = textOf(await createMetaTools(root, BASE).getResult({ id, offset, maxBytes: 1024 })) as { text: string; totalBytes: number };
+        const page = pageOf(await createMetaTools(root, BASE).getResult({ id, offset, maxBytes: 1024 }));
         expect(page.text).not.toContain("�");
         expect(page.totalBytes).toBe(200_002);
       }
@@ -2099,7 +2139,7 @@ describe("bounded result stash", () => {
       chars = 0;
       // One byte past JSON's opening quote plus 10,000 whole repeats: a page
       // deep inside both results, at the same byte, from a different chunk index.
-      const page = textOf(await createMetaTools(root, BASE).getResult({ id, offset: 100_001, maxBytes: 1024 })) as { text: string; totalBytes: number };
+      const page = pageOf(await createMetaTools(root, BASE).getResult({ id, offset: 100_001, maxBytes: 1024 }));
       expect(page.totalBytes).toBe(repeats * 10 + 2);
       expect(page.text.startsWith("aé界😀")).toBe(true);
       expect(page.text).not.toContain("�");
@@ -2117,7 +2157,9 @@ describe("bounded result stash", () => {
   it("reassembles a chunked stash byte-exactly across stored chunk boundaries", async () => {
     const payload = "aé界😀".repeat(30_000); // 300 KB: several stored chunks
     const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
-    const root = makeRegistry([connector], { maxResultBytes: 100 });
+    // Pages are clamped to the stashing call's cap, so the cap must admit the
+    // 7,777-byte pages below.
+    const root = makeRegistry([connector], { maxResultBytes: 8_000 });
     const id = notice(await createMetaTools(root, BASE).callTool({ address: "large.read" })).resultId;
     const full = JSON.stringify(payload); // what was stashed, quotes included
     // A page size coprime with the chunk width lands boundaries mid-chunk and
@@ -2125,7 +2167,7 @@ describe("bounded result stash", () => {
     let text = "";
     let offset: number | undefined = 0;
     while (offset !== undefined) {
-      const page = textOf(await createMetaTools(root, BASE).getResult({ id, offset, maxBytes: 7_777 })) as { text: string; nextOffset?: number; totalBytes: number };
+      const page = pageOf(await createMetaTools(root, BASE).getResult({ id, offset, maxBytes: 7_777 }));
       expect(page.totalBytes).toBe(300_002);
       text += page.text;
       offset = page.nextOffset;
@@ -2148,7 +2190,7 @@ describe("bounded result stash", () => {
       let text = "";
       let offset: number | undefined = 0;
       while (offset !== undefined) {
-        const page = textOf(await mt.getResult({ id, offset, maxBytes: 777 })) as { text: string; nextOffset?: number; totalBytes: number };
+        const page = pageOf(await mt.getResult({ id, offset, maxBytes: 777 }));
         expect(page.totalBytes).toBe(4_002);
         text += page.text;
         offset = page.nextOffset;
@@ -2199,7 +2241,7 @@ describe("truncated results lead with their get_result handle", () => {
     let text = "";
     let offset: number | undefined = from;
     while (offset !== undefined) {
-      const page = textOf(await mt.getResult({ id, offset })) as { text: string; nextOffset?: number };
+      const page = pageOf(await mt.getResult({ id, offset }));
       text += page.text;
       offset = page.nextOffset;
     }
@@ -2320,5 +2362,158 @@ describe("truncated results lead with their get_result handle", () => {
     );
     expect((await inline[method]({ address: "down.run" })).content)
       .toEqual([{ type: "text", text: "x".repeat(24_000) }]);
+  });
+});
+
+describe("get_result pages raw text, clamped to the result's cap", () => {
+  const LINES = Array.from({ length: 300 }, (_, i) =>
+    JSON.stringify({ ts: `2026-09-16T00:00:${String(i % 60).padStart(2, "0")}Z`, actor: `user${i}@example.com`, note: 'says "hi"' }),
+  ).join("\n");
+
+  function mcpText(id: string, content: unknown[], maxResultBytes?: number): Connector {
+    return connectorWith({
+      id,
+      kind: "mcp",
+      ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
+      tools: [{ name: "run", annotations: { readOnlyHint: true } }],
+      call: async () => ({ content }),
+    });
+  }
+
+  interface PageHeader {
+    resultId: string;
+    offset: number;
+    bytes: number;
+    totalBytes: number;
+    hasMore: boolean;
+    nextAction?: { tool: string; arguments: { id: string; offset: number } };
+  }
+
+  /** A page is one text block: a one-line JSON header, a newline, the raw text. */
+  function rawPage(result: { content: { text: string }[]; isError?: boolean }): { header: PageHeader; body: string; whole: string } {
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toHaveLength(1);
+    const whole = required(result.content[0]).text;
+    const newline = whole.indexOf("\n");
+    expect(newline).toBeGreaterThan(0);
+    return { header: JSON.parse(whole.slice(0, newline)) as PageHeader, body: whole.slice(newline + 1), whole };
+  }
+
+  async function truncatedId(mt: ReturnType<typeof createMetaTools>, address: string): Promise<{ id: string; next: number }> {
+    const text = required((await mt.callTool({ address })).content[0]).text;
+    const notice = JSON.parse(text.slice(0, text.indexOf("\n"))) as { resultId: string; nextAction: { arguments: { offset: number } } };
+    return { id: notice.resultId, next: notice.nextAction.arguments.offset };
+  }
+
+  it("returns a header line then the raw page text, never JSON-escaped", async () => {
+    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }), BASE);
+    const { id, next } = await truncatedId(mt, "down.run");
+    const { header, body } = rawPage(await mt.getResult({ id, offset: next }));
+    expect(body).toBe(LINES.slice(1_000, 2_000));
+    expect(body).not.toContain('\\"ts\\"');
+    expect(header).toEqual({
+      resultId: id,
+      offset: 1_000,
+      bytes: 1_000,
+      totalBytes: byteLength(LINES),
+      hasMore: true,
+      nextAction: { tool: "get_result", arguments: { id, offset: 2_000 } },
+    });
+  });
+
+  it("clamps a larger maxBytes to the cap instead of refusing it", async () => {
+    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }), BASE);
+    const { id } = await truncatedId(mt, "down.run");
+    for (const maxBytes of [1_001, 50_000, Number.MAX_SAFE_INTEGER]) {
+      const { header, body } = rawPage(await mt.getResult({ id, offset: 0, maxBytes }));
+      expect(header.bytes, `maxBytes ${maxBytes}`).toBe(1_000);
+      expect(body).toBe(LINES.slice(0, 1_000));
+      expect(header.nextAction?.arguments.offset).toBe(1_000);
+    }
+    // A smaller request is still honoured: maxBytes is an upper bound.
+    expect(rawPage(await mt.getResult({ id, offset: 0, maxBytes: 10 })).header.bytes).toBe(10);
+  });
+
+  it("reports the last page with hasMore false and no next action", async () => {
+    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }), BASE);
+    const { id } = await truncatedId(mt, "down.run");
+    const total = byteLength(LINES);
+    const { header, body } = rawPage(await mt.getResult({ id, offset: total - 10 }));
+    expect(body).toBe(LINES.slice(-10));
+    expect(header).toMatchObject({ offset: total - 10, bytes: 10, totalBytes: total, hasMore: false });
+    expect(header).not.toHaveProperty("nextAction");
+  });
+
+  it("pages at the connector's own cap, not the deployment's", async () => {
+    const mt = createMetaTools(
+      makeRegistry([mcpText("wide", [{ type: "text", text: LINES }], 3_000)], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const { id, next } = await truncatedId(mt, "wide.run");
+    expect(next).toBe(3_000);
+    for (const maxBytes of [undefined, 9_999]) {
+      const { header } = rawPage(await mt.getResult({ id, offset: next, ...(maxBytes ? { maxBytes } : {}) }));
+      expect(header.bytes, `maxBytes ${String(maxBytes)}`).toBe(3_000);
+    }
+  });
+
+  it("pages a multi-block envelope as its stored JSON, escaped once", async () => {
+    const content = [
+      { type: "text", text: LINES.slice(0, 900) },
+      { type: "text", text: LINES.slice(900, 1_800) },
+    ];
+    const mt = createMetaTools(makeRegistry([mcpText("down", content)], { maxResultBytes: 500 }), BASE);
+    const { id } = await truncatedId(mt, "down.run");
+    let offset: number | undefined = 0;
+    let stored = "";
+    while (offset !== undefined) {
+      const { header, body } = rawPage(await mt.getResult({ id, offset }));
+      stored += body;
+      offset = header.hasMore ? header.nextAction?.arguments.offset : undefined;
+    }
+    expect(stored).toBe(JSON.stringify(content));
+    expect(JSON.parse(stored)).toEqual(content);
+  });
+
+  it("never answers a page request with more than the cap plus a small header", async () => {
+    const cap = 1_000;
+    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: cap }), BASE);
+    const { id } = await truncatedId(mt, "down.run");
+    for (const maxBytes of [undefined, 1, cap, cap * 10, Number.MAX_SAFE_INTEGER]) {
+      for (const offset of [0, 777, 5_000]) {
+        const result = await mt.getResult({ id, offset, ...(maxBytes ? { maxBytes } : {}) });
+        // What a client measures: the text it is handed, with no second copy.
+        expect(result.structuredContent).toBeUndefined();
+        expect(byteLength(rawPage(result).whole), `maxBytes ${String(maxBytes)} offset ${offset}`)
+          .toBeLessThanOrEqual(cap + 400);
+      }
+    }
+  });
+
+  it.each(["mcp", "value"] as const)("bounds an unpageable %s-mode truncation by the cap plus a small header", async (resultMode) => {
+    const store = memoryStorage();
+    const storage = { ...store, set: async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
+      if (key.includes("result:")) throw new Error("stash down");
+      await store.set(key, value, opts);
+    } };
+    const cap = 1_000;
+    // Quote-heavy JSON, so a preview escaped into value mode's JSON envelope
+    // would grow well past the cap if it were cut at `cap` bytes before escaping.
+    const connector = connectorWith({ id: "api", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => LINES });
+    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: cap }), BASE);
+    const result = await mt.callTool({ address: "api.read", resultMode });
+    expect(JSON.stringify(result)).toContain("Paging is unavailable");
+    expect(byteLength(required(result.content[0]).text)).toBeLessThanOrEqual(cap + 400);
+  });
+
+  it("pages an entry stashed before the cap was recorded at the deployment cap", async () => {
+    const stashed = LINES.slice(0, 3_000);
+    const bytes = new TextEncoder().encode(stashed);
+    const storage = memoryStorage();
+    await storage.set("results:result:old", `connecta-result-v2:${bytes.length}:49152:${btoa(String.fromCharCode(...bytes))}`);
+    const mt = createMetaTools(makeRegistry([calcConnector], { storage, maxResultBytes: 1_000 }), BASE);
+    const { header, body } = rawPage(await mt.getResult({ id: "old", offset: 0, maxBytes: 5_000 }));
+    expect(header.bytes).toBe(1_000);
+    expect(body).toBe(stashed.slice(0, 1_000));
   });
 });
