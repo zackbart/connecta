@@ -52,6 +52,7 @@ export const WORKERS_SUITES = [
   "test/server-route-contracts.test.ts",
   "test/server.test.ts",
   "test/startup-warnings.test.ts",
+  "test/storage-cas.test.ts",
   "test/stripe-provider.test.ts",
   "test/ui.test.ts",
   "test/ui-credentials.test.ts",
@@ -60,6 +61,11 @@ export const WORKERS_SUITES = [
 ] as const;
 
 export const NODE_ONLY_SUITES = [
+  {
+    file: "test/d1-storage-example.test.ts",
+    reason:
+      "drives the example D1 adapter through wrangler's getPlatformProxy local D1",
+  },
   {
     file: "test/deployment-shapes.test.ts",
     reason: "walks the template and example trees with Node filesystem APIs",

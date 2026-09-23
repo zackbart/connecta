@@ -31,7 +31,9 @@
     // `tsx` needed an exemption until `drift:check` named it in a script: its
     // other uses — the forked QuickJS child, the Node template's runner — are
     // ones knip cannot see. Delete that script and it needs the exemption back.
-    // Deployment CLI and the schema provider for examples/worker/wrangler.jsonc.
-    "wrangler"
+    // `wrangler` — the deployment CLI and the schema provider for
+    // examples/worker/wrangler.jsonc — is in the same position:
+    // test/d1-storage-example.test.ts imports it, and losing that import
+    // brings its exemption back.
   ]
 }

@@ -144,11 +144,16 @@ accounting error a budget exists to prevent. Both layers are pinned by
 connector state, catalogs, and result paging — a 15-minute TTL with one
 runtime-wide accounting of stash bytes and entries, where a full stash returns the
 successful call's preview and a paging-unavailable notice rather than a result id.
-Adapters: `src/storage/memory.ts`, `src/storage/file.ts` (Node), and the
-Cloudflare KV/D1 pair in `examples/worker/`, copyable reference source and
-deliberately not an importable subpath. Planned resumable writes
-([ethos](../ethos.md#decisions)) add an atomic compare-and-set to this
-contract, which eventually consistent Cloudflare KV cannot provide.
+A second optional method, `compareAndSet(key, expected, next)`, is an atomic
+claim: `null` means absent (expired counts) on the way in and delete on the way
+out. Nothing in core requires it yet; a subsystem that needs an exactly-once
+claim will require it explicitly rather than emulate it with a read and a write.
+Adapters: `src/storage/memory.ts` and `src/storage/file.ts` (Node) both provide
+it, and the namespaced views core hands connectors forward it only when the
+underlying store has it. `examples/worker/` carries two more: Cloudflare KV,
+eventually consistent and so declaring none, and a D1 store that provides it —
+copyable reference source beside the D1 activity store, deliberately not an
+importable subpath. The shared cases live in `test/storage-contract.ts`.
 
 `src/credentials.ts` is the AES-GCM vault behind the root-exported
 `CredentialVault` contract, selected through the `vault` slot. It binds connector

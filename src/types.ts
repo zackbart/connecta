@@ -17,6 +17,29 @@ export interface KVStorage {
    * subsystems that need independent, enumerable records require it explicitly.
    */
   list?(prefix: string): Promise<string[]>;
+  /**
+   * Atomic compare-and-set: write `next` only if the key's current value is
+   * exactly `expected`, and report whether the write happened. `expected:
+   * null` means "absent", and an expired entry is absent. `next: null`
+   * deletes; otherwise `next` is stored with `options.ttlSeconds`, or with no
+   * expiry when that is omitted, exactly as `set` would. On `false` nothing
+   * changed.
+   *
+   * Atomic means linearizable against every other operation on the same
+   * store, `set` and `delete` included: of N concurrent `compareAndSet(key,
+   * null, value)` claims on an absent key, exactly one returns true.
+   *
+   * Optional, because not every backend can promise it: an eventually
+   * consistent store such as Cloudflare Workers KV must omit the method
+   * rather than emulate it with a read followed by a write. Subsystems that
+   * need an atomic claim require it explicitly.
+   */
+  compareAndSet?(
+    key: string,
+    expected: string | null,
+    next: string | null,
+    options?: { ttlSeconds?: number },
+  ): Promise<boolean>;
 }
 
 export interface Logger {

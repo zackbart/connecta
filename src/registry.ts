@@ -189,6 +189,16 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
             ),
         }
       : {}),
+    ...(storage.compareAndSet
+      ? {
+          compareAndSet: (
+            k: string,
+            expected: string | null,
+            next: string | null,
+            o?: { ttlSeconds?: number },
+          ) => storage.compareAndSet!(prefix + k, expected, next, o),
+        }
+      : {}),
   };
 }
 
