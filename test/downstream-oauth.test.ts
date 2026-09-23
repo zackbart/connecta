@@ -1728,6 +1728,81 @@ describe("OAuthRefreshCoordinator", () => {
     expect(redeemed).toEqual(["refresh-old", "refresh-new"]);
   });
 
+  it("keeps a refused grant's flight standing when its owner aborts during the discard", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    const contender = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    for (const provider of [owner, contender]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
+    const discard = deferred<void>();
+    const discarding = deferred<void>();
+    const compareAndSet = storage.compareAndSet!.bind(storage);
+    storage.compareAndSet = async (key, expected, next, opts) => {
+      if (key === tokenKey && next === null) {
+        discarding.resolve();
+        await discard.promise;
+      }
+      return compareAndSet(key, expected, next, opts);
+    };
+    const redeemed: string[] = [];
+    const baseFetch: FetchLike = async (_input, init) => {
+      redeemed.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+      return Response.json({ error: "invalid_grant" }, { status: 400 });
+    };
+    const ownerScope = new AbortController();
+    const ownerAbort = new DOMException("Owner scope ended", "AbortError");
+    const ownerRefresh = coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+      ownerScope.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const ownerOutcome = ownerRefresh.then(
+      (response) => response.status,
+      (error: unknown) => error,
+    );
+    await discarding.promise;
+
+    // The authorization server has refused refresh-old, and the owner is
+    // deleting it. Cancelling the owner now must not free the generation
+    // for a contender to redeem the refused token a second time (P1-S09).
+    ownerScope.abort(ownerAbort);
+    const contenderScope = trackedAbortSignal();
+    const contenderRefresh = coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+      contenderScope.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const contenderOutcome = contenderRefresh.then(
+      (response) => response.status,
+      (error: unknown) => error,
+    );
+    // One listener: the contender is either waiting on the owner's flight or
+    // has published its own. Only the second redeems refresh-old again.
+    await vi.waitFor(() => expect(contenderScope.listeners()).toBe(1));
+    discard.resolve();
+
+    const [contenderResult, ownerResult] = await Promise.all([
+      contenderOutcome,
+      ownerOutcome,
+    ]);
+    expect(redeemed).toEqual(["refresh-old"]);
+    // The contender inherits the owner's refusal, verdict and all.
+    expect(contenderResult).toEqual(
+      new Error("OAuth refresh failed with HTTP 400."),
+    );
+    expect(ownerResult).toBe(ownerAbort);
+    expect(contenderScope.listeners()).toBe(0);
+    expect(await storage.get(tokenKey)).toBeNull();
+  });
+
   it("surfaces a pending mutation as retryable without starting authorization", async () => {
     const storage = memoryStorage();
     const coordinator = new OAuthRefreshCoordinator();

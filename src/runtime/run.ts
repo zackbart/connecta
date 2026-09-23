@@ -177,7 +177,13 @@ export async function runEdge<A, E, R>(
  */
 export function fromSignal(signal: AbortSignal): Effect.Effect<never, unknown> {
   return Effect.callback<never, unknown>((resume) => {
-    const onAbort = () => resume(Effect.fail(abortReason(signal)));
+    // Remove the listener on every path, firing included. `once` already
+    // drops it from a real AbortSignal, but the cleanup below runs only on
+    // interruption, and a signal-shaped wrapper sees no removal otherwise.
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      resume(Effect.fail(abortReason(signal)));
+    };
     if (signal.aborted) {
       onAbort();
       return;
