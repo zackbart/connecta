@@ -229,8 +229,9 @@ shape from building, in someone else's repository rather than this one.
 
 Request admission, downstream call admission, deadlines, bounded settled
 fan-out, connector scope close, OAuth refresh coordination, catalog
-persistence, the result stash, and the remote MCP connection lifecycle run on
-Effect v4; the rest of the core has not moved yet. Every published signature stays Promise-shaped, so each
+persistence, catalog refresh flights, the result stash, and the remote MCP
+connection lifecycle run on Effect v4; the rest of the core has not moved yet.
+Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
 member names included. The core is an Effect program behind it.
@@ -249,7 +250,16 @@ returns a plain `FetchLike`; inside, a refresh flight is a Deferred, and the
 owning request's redemption is a fiber its abort interrupts. The registry's
 persisted catalog (the manifest and its chunks: read, write, delete) and its
 result stash are Effect programs over the `Storage` and `Logger` services,
-run from the registry's unchanged methods. `remoteMcp()` keeps its
+run from the registry's unchanged methods. A catalog refresh flight is a
+Deferred too: the request that publishes it runs the listing (a stale read's
+refresh under `detach`, so under `waitUntil`, with its own deadline and a
+connector scope closed as a Scope finalizer) and completes the flight after
+that teardown; every other reader joins the outcome. Persisted-catalog writes
+and deletes take turns per connector, in arrival order, each turn a Deferred
+its own request completes once its storage work is done. Effect's `Semaphore`
+is not used for that: a newcomer can take a released permit ahead of a
+waiter that queued earlier, and the waiter is resumed from the releasing
+fiber, which is the cross-request problem below. `remoteMcp()` keeps its
 Promise-shaped `Connector`; inside, each request scope's state holds a Scope,
 and each connection is a lease forked from it that closes the connection's
 transport, bounded to a second for the session DELETE and a second for the
