@@ -61,12 +61,12 @@ export interface CallAdmissionPermit {
  * the pump with a permit or a refusal, close() with a shutdown error, or the
  * waiting fiber itself on timeout or abort. removeWaiter() arbitrates — only
  * the party that takes the waiter out of the queue may settle it. A waiter
- * holds a signal, a clock, and a continuation; never the call's arguments.
+ * holds a clock and a continuation; never the call's arguments, and never its
+ * signal, which belongs to the waiter's request and is watched from there.
  */
 interface Waiter {
   readonly queuedAt: number;
   readonly now: () => number;
-  readonly signal: AbortSignal | undefined;
   readonly outcome: Deferred.Deferred<CallAdmissionPermit, CallAdmissionError>;
 }
 
@@ -328,14 +328,12 @@ export class ConnectorCallAdmissionController {
       state.waiters.length > 0
     ) {
       const waiter = state.waiters.shift()!;
-      if (waiter.signal?.aborted) {
-        this.cancelledTotal++;
-        Deferred.doneUnsafe(
-          waiter.outcome,
-          Effect.fail(this.cancelled(waiter.signal)),
-        );
-        continue;
-      }
+      // The waiter's signal is not read here. This runs in whichever request
+      // released a slot, and on Workers reading an AbortSignal that another
+      // request created throws, failing the releaser and stranding the
+      // waiter. Nor does it need reading: a waiter whose signal aborted took
+      // itself out of the queue when it did, from its own abort listener.
+      //
       // The waiter's own clock: the fiber's Clock for an Effect caller, the
       // live `Date.now` for a Promise one.
       const now = waiter.now();
@@ -571,7 +569,6 @@ export class ConnectorCallAdmissionController {
       const waiter: Waiter = {
         queuedAt,
         now,
-        signal,
         outcome: Deferred.makeUnsafe(),
       };
       state.waiters.push(waiter);

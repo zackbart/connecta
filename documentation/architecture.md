@@ -234,8 +234,9 @@ shape from building, in someone else's repository rather than this one.
 Request admission, downstream call admission, deadlines, bounded settled
 fan-out, connector scope close, OAuth refresh coordination, catalog
 persistence, catalog refresh flights, the result stash, the remote MCP
-connection lifecycle, and discovery's request-scoped catalog cache run on
-Effect v4; the rest of the core has not moved yet.
+connection lifecycle, discovery's request-scoped catalog cache, and the
+single-call invocation pipeline run on Effect v4; the rest of the core has not
+moved yet.
 Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
@@ -279,6 +280,14 @@ deadline ends one asker's wait and never the read the others share. Search and
 describe fan out over those catalogs with `Effect.forEach` under the
 discovery concurrency, each probe under `withDeadlineEffect`, and settle every
 slot with `Effect.result`; ranking and rendering stay synchronous.
+`InvocationService.invoke` runs one call as one fiber: resolution,
+the read-only and schema refusals, admission, and the one downstream attempt
+sit under a single `withDeadlineEffect`, whose expiry interrupts the call
+wherever it is instead of leaving it to finish in the background. The call
+permit is an `acquireRelease` in the attempt's Scope, released on success,
+failure, and interruption alike, and the connector call is an
+`Effect.tryPromise` over the unchanged Promise `Connector`. Every outcome,
+refusals included, is a value; the caller still records the activity event.
 
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting
@@ -288,7 +297,13 @@ request's I/O context: a waiter that goes on to touch its own request body or
 transport there fails with workerd's "Cannot perform I/O on behalf of a
 different request". So the wait runs through `runEdge`, and the waiter does
 its own I/O after awaiting that promise, which workerd resumes in the
-waiter's request as it does any promise resolved from another one.
+waiter's request as it does any promise resolved from another one. Call
+admission is the busiest case: a permit is handed to a queued call from inside
+the request that released one, so the invocation pipeline awaits
+`registry.admitCall`'s promise rather than the controller's Effect program,
+and the controller never reads a waiter's `AbortSignal` while handing it a
+permit — on workerd, reading another request's signal throws. A waiter whose
+signal aborts leaves the queue from its own listener, in its own request.
 
 Each Connecta also gets a runtime of its own. `createConnecta` resolves
 storage, the vault, activity history, the logger, and the rest of its
