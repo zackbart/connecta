@@ -117,6 +117,15 @@ export interface ConnectaExecuteConfig {
    * values fall back to the default.
    */
   hostCallTimeoutMs?: number;
+  /**
+   * Hard ceiling on one execution, in milliseconds, enforced outside the
+   * sandbox. Default 120_000, above both executors' own deadlines (QuickJS
+   * 30_000, the Dynamic Worker 60_000), so it only ends a run whose executor
+   * never settled; that run fails as unresponsive and its admission slot is
+   * released. Keep it above any raised executor deadline. Invalid values
+   * fall back to the default.
+   */
+  watchdogMs?: number;
 }
 
 export interface AdmissionPoolConfig {
@@ -355,6 +364,7 @@ const CONFIG_SCHEMA = {
     maxEmittedBlocks: null,
     maxHostCalls: null,
     hostCallTimeoutMs: null,
+    watchdogMs: null,
   } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
     requests: admissionPoolSchema,
@@ -746,6 +756,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxEmittedBlocks: config.execute?.maxEmittedBlocks,
     maxHostCalls: config.execute?.maxHostCalls,
     hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
+    watchdogMs: config.execute?.watchdogMs,
     credentialVault,
     ui: config.ui,
     deploymentInfo: config.deploymentInfo,

@@ -90,7 +90,9 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 5. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
    call order (`R5`), bounding what it retains.
 6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), staying
-   inside the tested `P2`/`X5` boundary.
+   inside the tested `P2`/`X5` boundary. Settle `execute()` on your own
+   deadline: connecta stops waiting at `execute.watchdogMs` and reports the
+   sandbox unresponsive (`L3`).
 7. **Grant no ambient authority of its own.** Never back this with `eval` or
    `node:vm`: the sandbox is a containment layer on top of connecta's boundary,
    not a replacement for it, and every capability arrives through `fns`.
@@ -394,7 +396,8 @@ pause the host approves; until they ship, it stands as written.
 **E5.** Failures of the *execution*, not of a call, never appear inside the
 guest: admission rejection (`executor_overloaded`, retryable, with
 `retryAfterMs`), cancellation (`executor_cancelled`), shutdown
-(`executor_closed`), deadline expiry, and sandbox crashes end the run and reach
+(`executor_closed`), deadline expiry, an executor that never settles (`L3`),
+and sandbox crashes end the run and reach
 the model as an error result. One seam: a host call still in flight when the run
 is cancelled fails with `cancelled`, catchable on the way out but never worth
 acting on (`Y3`). When shutdown tears down a program that had already started,
@@ -586,12 +589,22 @@ block runs — a cancelled QuickJS child is terminated outright. Write programs
 that need no cleanup.
 
 **L2.** What cancellation guarantees: in-flight host calls abort, no further
-host call is admitted, the admission lease is released, and nothing
-request-bound survives the request.
+host call is admitted, the response returns `executor_cancelled` without
+waiting for the executor to settle, the admission lease is released, and
+nothing request-bound survives the request. Whether the program itself stops
+is the executor's (`X3`).
 
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
-partial result; the deadline's length is executor configuration (`X1`).
+partial result; the deadline's length is executor configuration (`X1`). Above
+it sits a ceiling connecta enforces outside the sandbox, `execute.watchdogMs`
+(120 s by default, above both executors' own deadlines), because an executor's
+deadline may live inside the sandbox it is meant to stop: a wedged Dynamic
+Worker never fires its in-isolate timer. A run whose executor has not settled
+by the ceiling ends as a non-retryable `executor_failed` whose message calls
+the sandbox unresponsive, with no partial result, and its admission lease is
+released, so wedged runs cannot fill the code pool. Raising an executor's
+deadline past the ceiling means raising the ceiling too.
 
 **L4.** Per-execution bounds that are contract, identical in both executors
 because connecta enforces them above the sandbox:
@@ -692,10 +705,14 @@ and guest-CPU limits (`L5`); the Dynamic Worker has no such knobs, so workerd's
 isolate limits apply untuned. A specific heap ceiling is a Node-only option.
 
 **X3. Mid-flight cancellation.** The QuickJS pool receives the request's
-`AbortSignal` and kills the child. The Dynamic Worker executor's `execute()`
-takes no signal, so a cancelled request's program runs on until its host calls
-fail or the deadline expires. `L2` holds either way — the calls abort, the
-response does not wait — but "the run ends" is best-effort on Workers.
+`AbortSignal` and kills the child, and releasing a lease whose child is still
+running recycles that child, so a run the watchdog abandons (`L3`) ends too.
+The Dynamic Worker executor's `execute()` takes no signal, so a cancelled or
+abandoned program runs on in its isolate until its host calls fail or its own
+deadline expires. `L2` and `L3` hold either way — the calls abort, connecta
+stops awaiting the executor and frees the admission slot — but "the run ends"
+is best-effort on Workers, and for that tail the code pool bounds what
+connecta is waiting on, not what the platform is still running.
 
 **X4. Log rendering and capture.** QuickJS JSON-stringifies non-string arguments
 and captures `log`, `info`, `warn`, `error`, and `debug`; the Dynamic Worker
@@ -803,8 +820,8 @@ passing one table is also the check on the executor duties above, with
 | `R6`–`R8` | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion) |
 | `Y1`, `Y2`, `Y3` | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code) |
 | `Y4` | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue) |
-| `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls) |
-| `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors) |
+| `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls; a cancelled wedged executor returns promptly and releases its lease) |
+| `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
 | `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets) |
 | `L5`, `L7`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue) |
 | `L6`, `X10` | `test/quickjs-executor.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.test.ts` (outer reply serialization failure settles the call) |
@@ -816,7 +833,7 @@ passing one table is also the check on the executor duties above, with
 | `M8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `M10` | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted) |
 | `X4` | `test/guest-api-contract.test.ts` (string logs only), `test/quickjs-executor.test.ts` (logs before cancellation), `test/quickjs-child-stderr.test.ts` (crash, shutdown, deadline, IPC failure, bounded parent retention), `test/quickjs-log-limits.test.ts` (unchanged successful logs) |
-| `X3`, `X6` | `test/quickjs-executor.test.ts` (cancels a running child, never-settling await) |
+| `X3`, `X6` | `test/quickjs-executor.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
 The surface itself is checked by `test/server.test.ts` (the exact seven-tool

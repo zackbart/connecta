@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import { Duration, Effect } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import {
@@ -25,6 +26,7 @@ import {
   InvocationService,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
+import { fromSignal, runEdge } from "./runtime/run.js";
 import {
   connectorGuide,
   connectorGuideRequired,
@@ -32,6 +34,7 @@ import {
   hasConnectorGuides,
 } from "./skills.js";
 import type {
+  ExecuteResult,
   Executor,
   ExecutorProvider,
   Logger,
@@ -40,6 +43,13 @@ import type {
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
 const EXECUTE_MAX_HOST_CALLS = 20;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+/**
+ * The outer ceiling on one execution. It sits above both executors' own
+ * deadlines (QuickJS 30s, the Dynamic Worker 60s), so a healthy executor
+ * always reports its own timeout first and this fires only for one that
+ * never settles at all.
+ */
+const EXECUTE_WATCHDOG_MS = 120_000;
 /** Complete entries plus an exact omission count, all inside this byte cap. */
 export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
 /**
@@ -584,6 +594,68 @@ export async function buildSandboxProviders(
   ];
 }
 
+/**
+ * Await an executor without trusting it to settle.
+ *
+ * An executor's deadline is its own business, and the Dynamic Worker's lives
+ * inside the sandbox: a wedged isolate never fires it, so the call never
+ * settles, the handler's `finally` never runs, and the admission lease is
+ * held for good. Two of those fill the default code pool and every later
+ * execute_code queues behind them (executor hit this in production).
+ *
+ * So the host races the call against the request's signal and a ceiling of
+ * its own. Cancellation settles as the same `executor_cancelled` the QuickJS
+ * pool reports, unless the executor reports its own first; the ceiling as an
+ * untyped executor failure naming the key that sets it. Either way the
+ * handler returns and releases the lease, and the abandoned call keeps
+ * whatever it was doing: the QuickJS lease release recycles its child, and a
+ * Dynamic Worker isolate runs on to its own deadline. The result contract is
+ * untouched — this only decides when to stop waiting for one.
+ */
+function watchExecution(
+  run: () => Promise<ExecuteResult>,
+  signal: AbortSignal,
+  watchdogMs: number,
+  logger: Logger,
+): Promise<ExecuteResult> {
+  return runEdge(
+    Effect.raceAllFirst([
+      Effect.tryPromise({ try: () => run(), catch: (err) => err }),
+      // An executor that honors the signal rejects in the abort event itself,
+      // with the logs it captured attached, and that report beats ours by one
+      // timer turn. (A 1ms sleep, not 0: Effect.sleep(0) waits a microtask,
+      // which the executor's promise chain can still lose to.)
+      fromSignal(signal).pipe(
+        Effect.catch(() => Effect.sleep(Duration.millis(1))),
+        Effect.andThen(
+          Effect.fail(
+            new ExecutorAdmissionError(
+              "executor_cancelled",
+              "Execution was cancelled.",
+            ),
+          ),
+        ),
+      ),
+      Effect.sleep(Duration.millis(watchdogMs)).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            logger.warn(
+              "[connecta] execute_code executor did not settle; run abandoned",
+              { watchdogMs },
+            );
+            return Effect.fail(
+              new Error(
+                `sandbox unresponsive: no outcome within the ${watchdogMs}ms ` +
+                  "execute.watchdogMs ceiling, so the run was abandoned",
+              ),
+            );
+          }),
+        ),
+      ),
+    ]),
+  );
+}
+
 /** The execute_code handler. Exported for direct testing. */
 export function createExecuteTool(
   registry: RegistryView,
@@ -598,9 +670,11 @@ export function createExecuteTool(
     maxEmittedBlocks?: number | undefined;
     maxHostCalls?: number | undefined;
     hostCallTimeoutMs?: number | undefined;
+    watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
   } = {},
 ) {
+  const watchdogMs = resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS);
   return async (
     { code, diagnostics: diagnosticsRequested }: {
       code: string;
@@ -675,9 +749,16 @@ export function createExecuteTool(
       }
       const executorStarted = Date.now();
       try {
-        outcome = lease
-          ? await lease.execute(code, providers)
-          : await executor.execute(code, providers);
+        const admitted = lease;
+        outcome = await watchExecution(
+          () =>
+            admitted
+              ? admitted.execute(code, providers)
+              : executor.execute(code, providers),
+          controller.signal,
+          watchdogMs,
+          logger,
+        );
       } finally {
         if (diagnostics) {
           diagnostics.executorWallMs = Date.now() - executorStarted;
@@ -944,6 +1025,8 @@ export function registerExecuteTool(
     maxHostCalls?: number | undefined;
     /** Deadline per host call in milliseconds. Default 15_000. */
     hostCallTimeoutMs?: number | undefined;
+    /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
+    watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
   },
 ): void {
@@ -979,6 +1062,7 @@ export function registerExecuteTool(
       maxEmittedBlocks: emitBudgets.maxBlocks,
       maxHostCalls: hostLimits.maxHostCalls,
       hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
+      watchdogMs: ctx.watchdogMs,
       defer: ctx.defer,
     },
   );

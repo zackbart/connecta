@@ -493,6 +493,32 @@ describe("quickJsExecutor", () => {
     await ex.close?.();
   });
 
+  it("recycles a running child when the execute watchdog abandons it", async () => {
+    // The ceiling is set below this pool's own deadline only to make the
+    // abandonment observable: releasing the lease must kill the child rather
+    // than hand its slot to the next run with the old program still inside.
+    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
+    const started = performance.now();
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      ex,
+      silentLogger,
+      undefined,
+      { watchdogMs: 300 },
+    )({ code: `async () => { while (true) {} }`, diagnostics: true });
+    expect(performance.now() - started).toBeLessThan(3_000);
+    const payload = JSON.parse(required(out.content[0]).text) as {
+      error: { code: string; message: string };
+    };
+    expect(payload.error.code).toBe("executor_failed");
+    expect(payload.error.message).toContain("unresponsive");
+    expect(ex.admissionSnapshot?.().active).toBe(0);
+    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
+      result: 9,
+    });
+  }, 10_000);
+
   it("cancels a cold readiness wait without poisoning the warming slot", async () => {
     const ex = quickJsExecutor({ timeoutMs: 2_000 });
     const controller = new AbortController();
