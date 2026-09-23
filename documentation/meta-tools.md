@@ -30,9 +30,9 @@ because writes will run only there or for config-exempt tools.
 `limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
 `get_result.offset` is a whole number of bytes ≥ 0 defaulting to 0 and
 `maxBytes` a whole number ≥ 1 defaulting to the deployment result cap — itself
-50,000 bytes unless `calls.maxResultBytes` or a per-connector override says
-otherwise. Both are validated rather than clamped: a bad value is an input
-error. `reason` is at most 500 characters of context for the host's human
+24,000 bytes unless `calls.maxResultBytes` or a per-connector override says
+otherwise ([why 24,000](#truncated-direct-call-results)). Both are validated
+rather than clamped: a bad value is an input error. `reason` is at most 500 characters of context for the host's human
 approval view; Connecta neither treats it as authority nor sends it downstream,
 and an empty or whitespace-only one reads as no reason rather than as grounds to
 refuse a consequential call.
@@ -205,7 +205,8 @@ text block carrying its compact JSON and then applies the same content size
 guard, which preserves structured-only results including `null`, arrays, and
 scalars. An existing text mirror stays unchanged; Connecta adds no second copy.
 Newly stashed JSON and downstream content envelopes use compact serialization,
-so `get_result` offsets and totals describe that exact compact text.
+and a lone text block stashes as its own text, so `get_result` offsets and
+totals describe exactly that text.
 
 | Bound | Value |
 | --- | --- |
@@ -247,29 +248,83 @@ original UTF-8 text, not the envelope. A supplied offset inside a character
 moves back to its start; page ends also align to character boundaries, and a
 page smaller than one character widens just enough to make progress.
 
-A successfully stashed `call_tool` truncation notice carries both the historical
-`resultId` and an exact
-`nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`, so the handle
+A per-call `timeoutMs` covers catalog resolution, admission, and connector
+execution under one deadline. The admission queue's own timeout may expire
+sooner but cannot extend the call deadline. Result processing happens after that
+deadline ends, because a completed downstream call must not turn into a
+retryable timeout while Connecta prepares its response.
+
+### Truncated direct-call results
+
+A `call_tool` or `call_destructive_tool` result over its cap — the connector's
+`maxResultBytes`, else `calls.maxResultBytes`, else 24,000 bytes — comes back
+as one text block. Its first line is the truncation notice, one line of compact
+JSON; everything after the first newline is the preview:
+
+```text
+{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with get_result using nextAction, without maxBytes.","nextAction":{"tool":"get_result","arguments":{"id":"…","offset":24000}}}
+{"ts":"2026-09-16T21:31:11.759Z","actor":"sam.ortiz@example.com",…
+```
+
+The notice leads because clients cut oversized results from the end, and a
+notice at the tail is the part they drop. Claude Code (measured on 2.1.280, from
+its bundled source and with `claude -p` against a probe server) passes an MCP
+result through untouched while its text blocks total at most 50,000 characters.
+One character more and it replaces the whole result with a pointer to a spill
+file plus the first 2,000 characters of `JSON.stringify(content, null, 2)`,
+whatever `MAX_MCP_OUTPUT_TOKENS` says. Once the characters exceed twice
+`MAX_MCP_OUTPUT_TOKENS` (25,000 by default, so again 50,000) it also counts real
+tokens against that limit, and a result over it arrives as an error carrying no
+content at all — no preview, no notice. The old layout — a
+50,000-byte preview, then the notice — crossed the first line every time, so an
+agent without file tools never saw the handle; in the eval's write task two of
+three models re-ran a billable export three times trying to read its result.
+
+The default cap sits under both lines with room to spare. Preview plus notice
+stays under 25,000 bytes, which is under 50,000 characters for any text, because
+a character is at least one UTF-8 byte, and under 25,000 tokens for any text,
+because a token covers at least one byte. A default `get_result` page stays
+under the character line even if JSON escaping doubles it, and 24,000 matches
+the program result boundary in [code mode](./code-mode.md). A deployment whose
+clients take more can raise the cap, and one whose clients take less can lower
+it, per connector if need be; a result between 24,000 and 50,000 bytes that
+used to arrive whole now pages. A client that spills rather than rejects keeps
+the notice whatever its threshold, since the notice is the first few hundred
+characters. One that rejects outright — Claude Code with
+`MAX_MCP_OUTPUT_TOKENS` set below 12,500 — needs a cap under twice its limit.
+
+The preview is the head of what `get_result` pages, cut on a character
+boundary, so `nextAction.arguments.offset` continues exactly where it stops. A
+lone text block — including the one synthesized from `structuredContent` — is
+measured, stashed, previewed, and paged as its text: wrapping it in a content
+envelope added nothing but a second layer of JSON escaping, so a JSON payload
+used to preview as `[{"type":"text","text":"{\"ts\":…` and every page carried
+the escaping twice. Several text blocks keep the serialized envelope as the one
+string measured, stashed, and paged, because their boundaries live there; they
+preview as their text joined by newlines, and their next action starts at
+offset 0. A content array carrying non-text blocks returns the notice alone,
+because the head of a half-written base64 image helps nobody. In value mode the
+notice is `data` itself, with no preview and a next action at offset 0.
+
+The hint says what to do next. For a call not explicitly annotated read-only it
+opens with “This write already ran: do not call it again to see its result.”
+The approved write happened; repeating it to look again is how one export
+becomes three. Every hint says to page without `maxBytes`, because the default
+page is the size clients pass through whole, and a larger one is cut exactly as
+the original was. `resultId` stays beside the exact `nextAction`, so the handle
 is actionable without copying an identifier out of prose. Program results and
 oversized discovery responses carry no such route: paging a program's return
 value is a refused shape, because a program can shrink anything before it
 returns.
 
 A refused or failed stash write cannot undo a downstream success. Both call tools
-then return a truncated preview where one is usable, with a paging-unavailable
-notice and no `resultId` or paging action; an envelope carrying non-text blocks
-gets the notice alone, because the head of a half-written base64 image helps
-nobody. Activity records success, and the operator logger receives a fixed
-warning naming the connector and tool without storage error prose. For read-only
-work, reduce the result inside `execute_code` — repeating an approved write is
-not a way to recover its output. Other result-processing failures use a fixed
+then return the same layout with a paging-unavailable notice and no `resultId`
+or paging action — the notice first, then the preview where one is usable, and
+for a write the same warning not to repeat it. Activity records success, and
+the operator logger receives a fixed warning naming the connector and tool
+without storage error prose. For read-only work, reduce the result inside
+`execute_code` — repeating an approved write is not a way to recover its output. Other result-processing failures use a fixed
 `result_processing_failed` message and are never retryable.
-
-A per-call `timeoutMs` covers catalog resolution, admission, and connector
-execution under one deadline. The admission queue's own timeout may expire
-sooner but cannot extend the call deadline. Result processing happens after that
-deadline ends, because a completed downstream call must not turn into a
-retryable timeout while Connecta prepares its response.
 
 ## Lexical discovery
 

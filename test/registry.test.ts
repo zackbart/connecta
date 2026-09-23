@@ -156,7 +156,7 @@ describe("normalized result-cap state", () => {
         maxResultBytes,
       });
       expect(registry.maxResultBytes, `cap ${String(maxResultBytes)}`).toBe(
-        50_000,
+        24_000,
       );
     },
   );
@@ -175,7 +175,7 @@ describe("normalized result-cap state", () => {
       storage: memoryStorage(),
       logger: silentLogger,
     });
-    expect(registry.maxResultBytes).toBe(50_000);
+    expect(registry.maxResultBytes).toBe(24_000);
   });
 });
 

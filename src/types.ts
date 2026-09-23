@@ -274,7 +274,7 @@ export interface Connector {
    * Max inline result size (bytes) for this connector's tools before
    * call_tool truncates and stashes the full text for get_result
    * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
-   * omit to inherit it (which itself defaults to 50_000). Must be a whole
+   * omit to inherit it (which itself defaults to 24_000). Must be a whole
    * number of bytes >= 1; anything else warns at startup and is ignored, so
    * the connector inherits the deployment-wide cap.
    */

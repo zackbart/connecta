@@ -83,7 +83,7 @@ export interface ConnectaCallsConfig {
   /**
    * Max inline result size (bytes) before truncation and `get_result` paging.
    * Must be a finite whole number >= 1; invalid values warn and fall back to
-   * 50_000. Connectors may override it individually.
+   * 24_000. Connectors may override it individually.
    */
   maxResultBytes?: number;
 }

@@ -61,21 +61,26 @@ function normalizeMoney(text: string): string {
 }
 
 /**
- * Follow a truncation notice's `get_result` handle to the end and decode the
- * stashed content envelope back into its text — what a careful agent does.
+ * Read a truncated one-block result through: its leading notice line, the
+ * preview after it, then `get_result` from the notice's next action to the
+ * end — what a careful agent does. A lone text block pages as its text, and
+ * the preview is a byte prefix of it, so the pieces concatenate.
  */
 async function pageAll(call: ReferenceContext["call"], truncated: string): Promise<string> {
-  const notice = JSON.parse(truncated.slice(truncated.lastIndexOf("\n{") + 1)) as { resultId: string };
-  let offset: number | undefined = 0;
-  let stashed = "";
+  const newline = truncated.indexOf("\n");
+  const notice = JSON.parse(truncated.slice(0, newline)) as {
+    nextAction: { arguments: { id: string; offset: number } };
+  };
+  const { id, offset: from } = notice.nextAction.arguments;
+  let text = from > 0 ? truncated.slice(newline + 1) : "";
+  let offset: number | undefined = from;
   while (offset !== undefined) {
-    const page = await call("get_result", { id: notice.resultId, offset });
+    const page = await call("get_result", { id, offset });
     const body = JSON.parse(page.text) as { text: string; nextOffset?: number };
-    stashed += body.text;
+    text += body.text;
     offset = body.nextOffset;
   }
-  const blocks = JSON.parse(stashed) as { text?: string }[];
-  return blocks.map((block) => block.text ?? "").join("\n");
+  return text;
 }
 
 // ------------------------------------------------------------------ the tasks

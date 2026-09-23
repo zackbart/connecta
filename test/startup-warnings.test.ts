@@ -560,7 +560,7 @@ describe("unusable calls.maxResultBytes warning", () => {
     });
     const text = warnings(logger);
     expect(text).toContain(`calls.maxResultBytes ${maxResultBytes}`);
-    expect(text).toContain("50000");
+    expect(text).toContain("24000");
     },
   );
 

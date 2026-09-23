@@ -1228,14 +1228,14 @@ describe("server /mcp end-to-end", () => {
     );
     const body = await readJsonRpc(res);
     const lines = (body.result.content[0].text as string).split("\n");
-    const notice = JSON.parse(required(lines[lines.length - 1])) as {
+    const notice = JSON.parse(required(lines[0])) as {
       truncated: boolean;
       resultId: string;
       totalBytes: number;
     };
     expect(notice.truncated).toBe(true);
     expect(notice.totalBytes).toBe(502);
-    expect(lines.slice(0, -1).join("\n")).toHaveLength(100);
+    expect(lines.slice(1).join("\n")).toHaveLength(100);
 
     const paged = await mcpRpc(
       c,

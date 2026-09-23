@@ -37,6 +37,7 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
+import { isExplicitlyReadOnly } from "./tool-safety.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -176,8 +177,8 @@ const RESULT_ENVELOPE_V2_HEADER = new RegExp(`^${RESULT_ENVELOPE_V2}(\\d+):(\\d+
 /**
  * Smallest chunk of result text stored under one key. A multiple of three so
  * every chunk's base64 stands alone and a byte offset inside it lands on a
- * whole quad, and a little under the 50,000-byte default page so a default page
- * reads two or three chunks rather than dozens.
+ * whole quad, and about twice the 24,000-byte default page so a default page
+ * reads one or two chunks rather than dozens.
  */
 const RESULT_CHUNK_BYTES = 49_152;
 
@@ -231,12 +232,57 @@ function base64Of(bytes: Uint8Array): string {
 interface ResultStash {
   set: RegistryView["stashResult"];
   warn: () => void;
+  /**
+   * The call was not explicitly read-only, so it may have changed something
+   * downstream. Its notice says the call already ran: an agent that cannot see
+   * a write's result must page it, never repeat the write to look again.
+   */
+  write: boolean;
 }
 
-/** Stash a completed result, or return a notice without a paging route. */
+/** Opens a write's notice, ahead of any paging instruction. */
+const WRITE_ALREADY_RAN =
+  "This write already ran: do not call it again to see its result.";
+
+/**
+ * How the inline preview relates to what `get_result` pages: a byte prefix of
+ * it, so paging continues where the preview stops; a readable rendering of a
+ * different stashed text (several text blocks, whose envelope pages from 0);
+ * or no preview at all.
+ */
+type PreviewShape =
+  | { kind: "prefix"; bytes: number }
+  | { kind: "text-of-envelope" }
+  | { kind: "none" };
+
+function pagingHint(
+  results: ResultStash,
+  totalBytes: number,
+  preview: PreviewShape,
+): string {
+  const body =
+    preview.kind === "prefix"
+      ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest with get_result using nextAction, without maxBytes.`
+      : preview.kind === "text-of-envelope"
+        ? `Its text follows; page the full ${totalBytes}-byte content array as JSON with get_result using nextAction, without maxBytes.`
+        : `Page all ${totalBytes} bytes with get_result using nextAction, without maxBytes.`;
+  return results.write ? `${WRITE_ALREADY_RAN} ${body}` : body;
+}
+
+/**
+ * Stash a completed result and describe it with a notice that leads whatever
+ * the caller returns, or a notice without a paging route when stashing fails.
+ *
+ * The notice goes first because clients cut oversized results from the end:
+ * Claude Code keeps the first 2,000 characters of a result it spills to disk,
+ * and a notice at the tail never reached the agent (see
+ * documentation/meta-tools.md#result-representation). It is one compact JSON
+ * line with no raw newline, so the preview starts after the first `\n`.
+ */
 async function stashResult(
   bytes: Uint8Array,
   results: ResultStash,
+  preview: PreviewShape,
 ) {
   const totalBytes = bytes.length;
   const id = crypto.randomUUID();
@@ -266,17 +312,19 @@ async function stashResult(
     return {
       truncated: true,
       totalBytes,
-      hint: "Paging is unavailable. Use execute_code to reduce read-only results before returning them. Do not repeat a completed write to recover its result.",
+      hint: results.write
+        ? `Paging is unavailable. ${WRITE_ALREADY_RAN}`
+        : "Paging is unavailable. Use execute_code to reduce read-only results before returning them.",
     };
   }
   return {
     truncated: true,
     resultId: id,
     totalBytes,
-    hint: "use get_result {id, offset} to page the complete direct-call result",
+    hint: pagingHint(results, totalBytes, preview),
     nextAction: {
       tool: "get_result",
-      arguments: { id, offset: 0 },
+      arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
     },
   };
 }
@@ -286,11 +334,23 @@ interface GuardedResult<T> {
   truncated: boolean;
 }
 
+/** The first `cap` bytes of `bytes`, ending on a character boundary. */
+function headOf(bytes: Uint8Array, cap: number): Uint8Array {
+  return bytes.subarray(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length));
+}
+
+/** One text block: the notice line, then the preview. */
+function noticeFirst(notice: object, preview: string): ToolResult {
+  return { content: [{ type: "text", text: `${JSON.stringify(notice)}\n${preview}` }] };
+}
+
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
- * full text and return the first `cap` bytes followed by a JSON truncation
- * notice pointing at get_result. `bytes` is `text` already encoded, so a caller
- * that had to measure it to make this decision doesn't encode it twice.
+ * full text and return a JSON truncation notice pointing at get_result,
+ * followed by the first `cap` bytes. The preview is a byte prefix of what
+ * pages, so the notice's next action continues where it stops. `bytes` is
+ * `text` already encoded, so a caller that had to measure it to make this
+ * decision doesn't encode it twice.
  */
 async function guardEncoded(
   text: string,
@@ -304,16 +364,12 @@ async function guardEncoded(
       truncated: false,
     };
   }
-  const notice = await stashResult(bytes, results);
-  const head = dec.decode(
-    bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
-  );
-  return {
-    result: {
-      content: [{ type: "text", text: `${head}\n${JSON.stringify(notice)}` }],
-    },
-    truncated: true,
-  };
+  const head = headOf(bytes, cap);
+  const notice = await stashResult(bytes, results, {
+    kind: "prefix",
+    bytes: head.length,
+  });
+  return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
 }
 
 /** {@link guardEncoded} over a string that has not been measured yet. */
@@ -341,41 +397,50 @@ async function guardValue(
   const text = serializeResultText(value);
   const bytes = enc.encode(text);
   if (bytes.length <= cap) return { result: value, truncated: false };
-  const notice = await stashResult(bytes, results);
+  const notice = await stashResult(bytes, results, { kind: "none" });
   return {
     result: notice.resultId ? notice : {
       ...notice,
-      preview: dec.decode(
-        bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
-      ),
+      preview: dec.decode(headOf(bytes, cap)),
     },
     truncated: true,
   };
 }
 
 /**
- * Bound a downstream MCP `content` array by `cap`, measuring the serialized
- * envelope — the same string that gets stashed and paged, and the one that
- * counts every block rather than only the text ones.
+ * Bound a downstream MCP `content` array by `cap`.
  *
- * Both halves matter (issue #43). Measuring only text blocks meant an oversized
- * all-image result scored zero bytes and was returned inline unbounded, with no
- * `resultId` to page from; and measuring one string while truncating another
- * left `totalBytes` and the served head describing something the cap was never
+ * A lone text block is measured, stashed, previewed, and paged as its text:
+ * its envelope adds nothing but a wrapper and a second layer of JSON escaping,
+ * which made a JSON payload's preview unreadable and inflated every page.
+ *
+ * Anything else is measured as the serialized envelope — the same string that
+ * gets stashed and paged, and the one that counts every block rather than only
+ * the text ones. Both halves matter (issue #43). Measuring only text blocks
+ * meant an oversized all-image result scored zero bytes and was returned inline
+ * unbounded, with no `resultId` to page from; and measuring one string while
+ * truncating another left `totalBytes` describing something the cap was never
  * compared against.
  *
- * Over the cap, what a client gets depends on whether a prefix is usable. An
- * all-text envelope keeps the historical head + notice — a JSON prefix is still
- * readable. An envelope carrying non-text blocks is replaced by the notice
- * alone: the head of a half-written base64 image is of no use to anyone, and
- * cutting one leaves unparseable block structure behind. Either way the full
- * envelope is stashed and pages through `get_result`.
+ * Over the cap, what a client gets depends on whether a preview is usable.
+ * Several text blocks preview as their text joined by newlines, while
+ * get_result pages the envelope from offset 0, where the block boundaries
+ * live. An envelope carrying non-text blocks is replaced by the notice alone:
+ * the head of a half-written base64 image is of no use to anyone. Either way
+ * the full envelope is stashed and pages through `get_result`.
  */
 async function guardContent(
   content: TextContent[],
   results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<ToolResult>> {
+  const only = content.length === 1 ? content[0] : undefined;
+  if (only?.type === "text" && typeof only.text === "string") {
+    const bytes = enc.encode(only.text);
+    // Under the cap the block passes through untouched, annotations included.
+    if (bytes.length <= cap) return { result: { content }, truncated: false };
+    return guardEncoded(only.text, bytes, results, cap);
+  }
   let text: string;
   try {
     text = JSON.stringify(content);
@@ -393,9 +458,14 @@ async function guardContent(
     return { result: { content }, truncated: false };
   }
   if (content.every((b) => b.type === "text")) {
-    return guardEncoded(text, bytes, results, cap);
+    const joined = enc.encode(content.map((b) => b.text).join("\n"));
+    const notice = await stashResult(bytes, results, { kind: "text-of-envelope" });
+    return {
+      result: noticeFirst(notice, dec.decode(headOf(joined, cap))),
+      truncated: true,
+    };
   }
-  const notice = await stashResult(bytes, results);
+  const notice = await stashResult(bytes, results, { kind: "none" });
   return {
     result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
     truncated: true,
@@ -552,6 +622,7 @@ export function createMetaTools(
         unwrapResult: call.resultMode === "value",
         processResult: async (result, resolved) => {
           const results: ResultStash = {
+            write: !isExplicitlyReadOnly(resolved.definition),
             set: (key, value, ttlSeconds) => registry.stashResult(key, value, ttlSeconds),
             warn: () => registry.contextFor(
               resolved.connector.id, baseUrl, requestScope,
