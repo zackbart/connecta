@@ -12,7 +12,10 @@ credential administration belong to [auth](./auth.md).
 ## The seven tools
 
 Every deployment requires an executor, so `tools/list` is exactly seven. No
-configuration adds an eighth or removes one.
+configuration adds an eighth or removes one. Resumable writes plan an
+unconditional eighth, the destructive-annotated `resume_execution`
+([ethos](../ethos.md#decisions)); `execute_code` keeps its read-only hint,
+because writes will run only there or for config-exempt tools.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |

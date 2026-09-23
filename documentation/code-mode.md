@@ -129,7 +129,9 @@ storage carried to the next program, and no request-bound object outliving its
 request. Within one execution, host calls share one downstream request scope.
 `S9`'s output observation is host-owned catalog metadata, not guest memory — a
 later program receives a labeled field/type schema through discovery, never a
-prior value or object.
+prior value or object. Planned resumable writes
+([ethos](../ethos.md#decisions)) will let a paused run's journal survive,
+bounded and expiring; the program still gets no state of its own.
 
 **P5.** Plain JavaScript only; TypeScript syntax is a syntax error. Portable
 code does not import: QuickJS blocks imports, Dynamic Workers expose the `X5`
@@ -385,7 +387,9 @@ and let the failure reach the model.
 to `call_destructive_tool`, plus the original arguments when they fit the
 512-byte echo budget — whole or not at all, since a clipped copy is a different
 call. The model's short `reason` for the human reviewer grants no authority,
-never goes downstream, and generated code cannot mint the capability.
+never goes downstream, and generated code cannot mint the capability. Planned
+resumable writes ([ethos](../ethos.md#decisions)) replace this refusal with a
+pause the host approves; until they ship, it stands as written.
 
 **E5.** Failures of the *execution*, not of a call, never appear inside the
 guest: admission rejection (`executor_overloaded`, retryable, with
