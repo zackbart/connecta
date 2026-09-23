@@ -1,3 +1,4 @@
+import { Deferred, Effect, Exit, Result } from "effect";
 import {
   compactDiscoverySchema,
   compactDescriptionSchema,
@@ -10,10 +11,7 @@ import {
   summarizeDiscoveryDescription,
   summarizeDescription,
 } from "./catalog.js";
-import {
-  mapSettledWithConcurrency,
-  resolveDiscoveryConcurrency,
-} from "./concurrency.js";
+import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import {
   boundedEchoText,
   classifyCallError,
@@ -32,10 +30,10 @@ import {
   connectorGuideSummary,
   connectorSkillName,
 } from "./skills.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
-  withDeadline,
 } from "./timeout.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
@@ -454,8 +452,16 @@ export class CatalogService {
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
   private readonly readOptions: CatalogReadOptions | undefined;
-  private readonly loaded = new Map<string, ToolDef[]>();
-  private readonly loading = new Map<string, Promise<ToolDef[]>>();
+  // The request-scoped catalog cache: one Deferred per connector asked about,
+  // completed by the first asker's registry read and joined by every later
+  // one. A success stays for the rest of the request, so a search and the call
+  // after it see one catalog; a failure is dropped so the next ask reads
+  // again. The service lives and dies with one request, so no Deferred here is
+  // ever awaited from another.
+  private readonly catalogs = new Map<
+    string,
+    Deferred.Deferred<ToolDef[], unknown>
+  >();
 
   constructor(
     private readonly registry: RegistryView,
@@ -508,44 +514,76 @@ export class CatalogService {
       : { tool: "search_tools", arguments: searchArgs, purpose };
   }
 
-  async loadConnector(
+  loadConnector(
     id: string,
     callOptions: ConnectorOperationOptions = {},
   ): Promise<ToolDef[]> {
-    const cached = this.loaded.get(id);
-    if (cached) return cached;
-    const inFlight = this.loading.get(id);
-    if (inFlight) return inFlight;
-    const loading = this.registry
-      .getTools(
-        id,
-        this.baseUrl,
-        this.requestScope,
-        callOptions,
-        this.readOptions,
-      )
-      .then((tools) => {
-        this.loaded.set(id, tools);
-        return tools;
-      })
-      .finally(() => {
-        if (this.loading.get(id) === loading) this.loading.delete(id);
-      });
-    this.loading.set(id, loading);
-    return loading;
+    return runEdge(this.catalog(id, callOptions));
   }
 
-  private loadForDiscovery(id: string, label: string): Promise<ToolDef[]> {
-    return withDeadline(
-      (signal) =>
-        this.loadConnector(id, {
-          signal,
-          timeoutMs: this.probeTimeoutMs,
-        }),
-      {
-        timeoutMs: this.probeTimeoutMs,
-        timeoutError: new Error(`${label} timed out after ${this.probeTimeoutMs}ms`),
-      },
+  // One connector's catalog from the request-scoped cache, reading it through
+  // the registry when this request has not yet. The first asker's options
+  // govern the read and a joiner shares its outcome, as the registry's own
+  // flight below does. The read settles the Deferred itself, not the asker's
+  // fiber, so a probe deadline ends one asker's wait and never the read.
+  private catalog(
+    id: string,
+    callOptions: ConnectorOperationOptions,
+  ): Effect.Effect<ToolDef[], unknown> {
+    return Effect.suspend(() => {
+      const cached = this.catalogs.get(id);
+      if (cached) return Deferred.await(cached);
+      const read = Deferred.makeUnsafe<ToolDef[], unknown>();
+      this.catalogs.set(id, read);
+      // The executor turns a synchronous throw from getTools into a rejection.
+      new Promise<ToolDef[]>((resolve) =>
+        resolve(
+          this.registry.getTools(
+            id,
+            this.baseUrl,
+            this.requestScope,
+            callOptions,
+            this.readOptions,
+          ),
+        ),
+      ).then(
+        (tools) => {
+          Deferred.doneUnsafe(read, Exit.succeed(tools));
+        },
+        (cause: unknown) => {
+          // Evicted before the Deferred resumes anyone, so an asker that
+          // retries on hearing of the failure starts a fresh read.
+          if (this.catalogs.get(id) === read) this.catalogs.delete(id);
+          Deferred.doneUnsafe(read, Exit.fail(cause));
+        },
+      );
+      return Deferred.await(read);
+    });
+  }
+
+  // Every named catalog under its own probe deadline, `concurrency` at a time,
+  // each settling in its input slot: an unavailable catalog is a Failure
+  // there, not a failed discovery. `route` names the surface in a timeout.
+  private discoveryCatalogs(
+    ids: readonly string[],
+    route: SearchRoute | "connecta.describe",
+  ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
+    return Effect.forEach(
+      ids,
+      (id) =>
+        Effect.result(
+          withDeadlineEffect(
+            (signal) =>
+              this.catalog(id, { signal, timeoutMs: this.probeTimeoutMs }),
+            {
+              timeoutMs: this.probeTimeoutMs,
+              timeoutError: new Error(
+                `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
+              ),
+            },
+          ),
+        ),
+      { concurrency: this.concurrency },
     );
   }
 
@@ -701,26 +739,17 @@ export class CatalogService {
         ? [scopedConnector]
         : []
       : this.registry.listConnectors();
-    const catalogs = await mapSettledWithConcurrency(
-      connectors,
-      this.concurrency,
-      (connector) =>
-        // Unlike the describe path, this label never reaches a caller: search
-        // only counts rejected catalogs (`unavailableCatalogs` below) and
-        // renders its own guidance, so the folded name here stays internal and
-        // needs no surface awareness.
-        this.loadForDiscovery(
-          connector.id,
-          `search_tools probe of "${connector.id}"`,
-        ),
+    // Named for this service's route: a scoped search echoes a timed-out
+    // probe's message back as `queryAnalysis.catalogError`, and a program
+    // cannot call search_tools.
+    const catalogs = await runEdge(
+      this.discoveryCatalogs(
+        connectors.map((connector) => connector.id),
+        this.searchRoute,
+      ),
     );
     const searchableCatalogs = catalogs.map((catalog) =>
-      catalog.status === "fulfilled"
-        ? {
-            status: "fulfilled" as const,
-            value: toolsForSafety(catalog.value, safety),
-          }
-        : catalog,
+      Result.map(catalog, (tools) => toolsForSafety(tools, safety)),
     );
     const matches: Array<{
       connector: Connector;
@@ -734,7 +763,7 @@ export class CatalogService {
     let matchMode: "all" | "partial" = "all";
     const statistics = lexicalCorpusStatistics(
       searchableCatalogs.flatMap((catalog) =>
-        catalog.status === "fulfilled" ? [catalog.value] : [],
+        Result.isSuccess(catalog) ? [catalog.success] : [],
       ),
       retrievalQuery,
     );
@@ -757,9 +786,9 @@ export class CatalogService {
         if (!connector) {
           throw new Error("Catalog result has no corresponding connector");
         }
-        if (catalog.status === "fulfilled") {
+        if (Result.isSuccess(catalog)) {
           for (const ranked of rankTools(
-            catalog.value,
+            catalog.success,
             retrievalQuery,
             mode,
             statistics,
@@ -777,8 +806,7 @@ export class CatalogService {
             });
           }
         }
-        orderBase +=
-          catalog.status === "fulfilled" ? catalog.value.length : 1;
+        orderBase += Result.isSuccess(catalog) ? catalog.success.length : 1;
       });
       return collected;
     };
@@ -923,19 +951,22 @@ export class CatalogService {
         unmatchedTerms.push(displayTerm(term));
       }
     }
-    const unavailableCatalogs = catalogs.filter(
-      (catalog) => catalog.status === "rejected",
-    ).length;
+    const unavailableCatalogs = catalogs.filter(Result.isFailure).length;
     // Named field by field rather than spread: `CallErrorDetails` also carries
     // connector, operation, recovery, and nextAction, and a discovery read is
     // not a call — widening the classifier must not silently widen what a
     // catalog search hands back.
     const scopedCatalogError = ((): CatalogFailureDetail | undefined => {
-      if (!scopedConnector || catalogs[0]?.status !== "rejected") {
+      const scopedCatalog = catalogs[0];
+      if (
+        !scopedConnector ||
+        !scopedCatalog ||
+        Result.isSuccess(scopedCatalog)
+      ) {
         return undefined;
       }
       const error = classifyCallError(
-        catalogs[0].reason,
+        scopedCatalog.failure,
         "catalog_lookup_failed",
       );
       return {
@@ -1128,27 +1159,12 @@ export class CatalogService {
           .filter((id): id is string => Boolean(id)),
       ),
     ];
-    const loaded = await mapSettledWithConcurrency(
-      connectorIds,
-      this.concurrency,
-      (id) =>
-        this.loadForDiscovery(id, `connecta.describe probe of "${id}"`),
+    const loaded = await runEdge(
+      this.discoveryCatalogs(connectorIds, "connecta.describe"),
     );
-    const catalogs = new Map<string, ToolDef[] | Error>();
-    loaded.forEach((result, index) => {
-      const connectorId = connectorIds[index];
-      if (connectorId === undefined) {
-        throw new Error("Catalog result has no corresponding connector id");
-      }
-      catalogs.set(
-        connectorId,
-        result.status === "fulfilled"
-          ? result.value
-          : result.reason instanceof Error
-            ? result.reason
-            : new Error(String(result.reason)),
-      );
-    });
+    const catalogs = new Map(
+      connectorIds.map((id, index) => [id, loaded[index]]),
+    );
     return resolved.map(({ address, resolved: addressResolution }) => {
       if (!addressResolution) {
         const message = `Unknown address "${boundedEchoText(address)}"`;
@@ -1165,9 +1181,9 @@ export class CatalogService {
         };
       }
       const catalog = catalogs.get(addressResolution.connector.id);
-      if (catalog instanceof Error) {
+      if (catalog && Result.isFailure(catalog)) {
         const classified = classifyCallError(
-          catalog,
+          catalog.failure,
           "catalog_lookup_failed",
         );
         const message = boundedEchoText(classified.message);
@@ -1184,7 +1200,8 @@ export class CatalogService {
           },
         };
       }
-      const tool = catalog?.find(
+      const tools = catalog?.success ?? [];
+      const tool = tools.find(
         (item) => item.name === addressResolution.toolName,
       );
       if (!tool) {
@@ -1192,7 +1209,7 @@ export class CatalogService {
         const suggestions = describeSuggestions(
           addressResolution.connector.id,
           addressResolution.toolName,
-          catalog ?? [],
+          tools,
         );
         return {
           address: boundedEchoText(address),
