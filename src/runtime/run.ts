@@ -19,7 +19,16 @@
 //   interrupted without error". Callers of withDeadline today see the abort
 //   reason the caller chose, and runEdge keeps it that way.
 
-import { Cause, Context, Duration, Effect, Exit, Scheduler } from "effect";
+import {
+  Cause,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  type Layer,
+  ManagedRuntime,
+  Scheduler,
+} from "effect";
 import type { DeadlineOptions } from "../timeout.js";
 
 /** Yield to the scheduler through the microtask queue, never a timer. */
@@ -65,23 +74,95 @@ function rethrow(cause: Cause.Cause<unknown>, signal: AbortSignal | undefined): 
   throw abortReason(signal);
 }
 
+/**
+ * Long-lived services an edge run can be handed: one per Connecta, holding
+ * what createConnecta resolved at construction (src/runtime/services.ts).
+ *
+ * Making one runs nothing. The layer is built by the first run that needs it,
+ * on that run's scheduler, and released by disposeEdgeRuntime — which is why
+ * a Worker can create its Connecta at global scope, where no fiber may start.
+ * Fibers run against it are not owned by it: disposing releases the layer's
+ * resources and refuses later runs, but never interrupts work in flight,
+ * because close() drains active work rather than cutting it off.
+ */
+export type EdgeRuntime<R> = ManagedRuntime.ManagedRuntime<R, never>;
+
+const disposedRuntimes = new WeakSet<EdgeRuntime<never>>();
+
+/** Wrap a layer as an EdgeRuntime without building it. */
+export function makeEdgeRuntime<R>(layer: Layer.Layer<R>): EdgeRuntime<R> {
+  return ManagedRuntime.make(layer);
+}
+
+/**
+ * Release a runtime's layer resources. Idempotent, and never rejects: a
+ * finalizer that fails has nobody left to report to.
+ */
+export async function disposeEdgeRuntime(
+  runtime: EdgeRuntime<never>,
+): Promise<void> {
+  if (disposedRuntimes.has(runtime)) return;
+  disposedRuntimes.add(runtime);
+  // Through runExit rather than runtime.dispose(), whose runner yields on
+  // Effect's default scheduler — the one vitest's fake timers freeze.
+  await runExit(runtime.disposeEffect);
+}
+
+/**
+ * The effect with the runtime's services provided, building them first when
+ * no run has yet. The build runs on the calling fiber's scheduler, so it is
+ * the microtask scheduler here, as everything else is.
+ */
+function provideRuntime<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  runtime: EdgeRuntime<R>,
+): Effect.Effect<A, E> {
+  if (disposedRuntimes.has(runtime)) {
+    return Effect.die(new Error("This Connecta has been closed."));
+  }
+  const built = runtime.cachedContext;
+  if (built) return Effect.provideContext(effect, built);
+  return Effect.flatMap(runtime.contextEffect, (context) =>
+    Effect.provideContext(effect, context),
+  );
+}
+
 export interface EdgeOptions {
   /** Interrupts the fiber when aborted; its reason becomes the rejection. */
   signal?: AbortSignal | undefined;
+}
+
+export interface EdgeRuntimeOptions<R> extends EdgeOptions {
+  /** Supplies the services the effect requires. */
+  runtime: EdgeRuntime<R>;
 }
 
 /**
  * Run an effect at a Promise boundary.
  *
  * Resolves with the success value. Rejects with the original Fail error or Die
- * defect, and with `signal.reason` (or an AbortError) when interrupted.
+ * defect, and with `signal.reason` (or an AbortError) when interrupted. An
+ * effect that requires services takes them from `runtime`; a run against a
+ * disposed runtime dies before the effect starts.
  */
-export async function runEdge<A, E>(
+export function runEdge<A, E>(
   effect: Effect.Effect<A, E>,
-  options: EdgeOptions = {},
+  options?: EdgeOptions,
+): Promise<A>;
+export function runEdge<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  options: EdgeRuntimeOptions<R>,
+): Promise<A>;
+export async function runEdge<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  options: EdgeOptions & { runtime?: EdgeRuntime<R> } = {},
 ): Promise<A> {
   const exit = await runExit(
-    effect,
+    options.runtime
+      ? provideRuntime(effect, options.runtime)
+      // Without a runtime the overloads admit only an effect that requires
+      // nothing, so there is nothing to provide.
+      : (effect as Effect.Effect<A, E>),
     options.signal ? { signal: options.signal } : undefined,
   );
   if (Exit.isSuccess(exit)) return exit.value;

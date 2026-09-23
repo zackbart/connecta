@@ -245,6 +245,19 @@ fiber's Clock. `closeConnectorScope` is the Promise face of `closeScope` in
 finalizer (`closeScopeOnExit`). `withDeadline` is the Promise face of
 `withDeadlineEffect`.
 
+Each Connecta also gets a runtime of its own. `createConnecta` resolves
+storage, the vault, activity history, the logger, and the rest of its
+configuration once, and `src/runtime/services.ts` gives each a service key —
+`Storage`, `Vault`, `ActivityRecorder`, `Logger`, `ResolvedConfig` — behind a
+runtime keyed by the root registry (`coreRuntime`). An omitted activity module
+is a recorder that records nothing, so it does no work there either; the
+per-request `DeferredWork` hook is provided by the request, never the runtime.
+Creating the runtime builds nothing, because a Worker may construct its
+Connecta at global scope; the first run that needs the services builds them,
+and `close()` disposes the runtime last. The shells stay constructible from
+plain arguments, as the tests build them, and nothing reads these services
+yet.
+
 `src/runtime/run.ts` is the only place a fiber starts, and
 `test/purity.test.ts` fails if any other file calls `Effect.run*`, `runFork`,
 `forkDaemon`, or `ManagedRuntime.make`. Its `runEdge` does three things the
@@ -295,7 +308,7 @@ compiling and configuring the real thing.
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
 - **`close()` is idempotent and ordered.** Both admission pools, then the
-  connector limiters, then the executor; Node's `listen()` calls it on
+  connector limiters, then the executor, then the Connecta's runtime; Node's `listen()` calls it on
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
   invalid admission rule, the removed `accessTokens` option, a missing executor:

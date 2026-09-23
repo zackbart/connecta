@@ -53,6 +53,7 @@ export const WORKERS_SUITES = [
   "test/runtime.test.ts",
   "test/runtime-admission.test.ts",
   "test/runtime-call-admission.test.ts",
+  "test/runtime-services.test.ts",
   "test/server-route-contracts.test.ts",
   "test/server.test.ts",
   "test/startup-warnings.test.ts",
