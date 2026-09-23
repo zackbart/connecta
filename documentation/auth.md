@@ -149,6 +149,26 @@ partitions. Literal `auth: { type: "headers" }` cannot be personal, because its
 secret lives in deployment code; `remoteMcp()` refuses that combination at
 construction.
 
+## Downstream OAuth state at rest
+
+With a vault configured, a `remoteMcp()` OAuth connector's tokens, dynamically
+registered client (secret included), and PKCE verifier are sealed with the
+vault's AES-GCM key before they reach storage. The additional authenticated data
+names the connector, the owner partition, and the physical key, which carries
+the authorization epoch, so ciphertext copied to another connector, principal,
+or epoch does not open. Anything that fails to open — a tampered value, a
+rotated key — reads as absent: the connector reports `auth_required` and logs a
+warning. The flow bookkeeping stays plaintext: `state`, the pending URL,
+discovery metadata, and the generation. The callback route reads `state`
+directly, and none of it authenticates anything by itself.
+
+Plaintext left by an older release is read, then sealed where it lies through
+the same generation fence as any write, so an upgrade keeps the grant. Sealing
+is one-way. An older release reads sealed state as unusable, so rolling back
+means authorizing again. A vault without the optional `seal`/`open` members
+keeps these values plaintext and draws a startup warning. Without any vault,
+nothing changes: the state is plaintext, as it always was.
+
 ## Management permissions
 
 Visibility alone grants no authentication-management permission. Two independent

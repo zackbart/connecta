@@ -261,8 +261,9 @@ export function fileStorage(
     if (closed) throw new Error(`[connecta] state file ${path} is closed.`);
   };
   const logger: Logger = opts.logger ?? console;
-  // The state file holds downstream OAuth access/refresh tokens in cleartext,
-  // so keep it owner-only. Repair is best-effort: chmod is a no-op or throws on
+  // With a sealing vault, downstream OAuth tokens here are ciphertext; without
+  // one they are cleartext, and OAuth flow state is plaintext either way. Keep
+  // the file owner-only regardless. Repair is best-effort: chmod is a no-op or throws on
   // non-POSIX filesystems, and a loose mode must never keep the store from
   // starting.
   const tighten = () => {

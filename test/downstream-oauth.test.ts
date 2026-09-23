@@ -19,6 +19,8 @@ import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { CredentialVault } from "../src/credentials.js";
+import { vaultOAuthSealer } from "../src/oauth-sealing.js";
 import type {
   Connector,
   ConnectorContext,
@@ -28,7 +30,7 @@ import type {
 } from "../src/types.js";
 import { createTestConnecta, required, silentLogger } from "./helpers.js";
 import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
-import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
+import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
@@ -852,6 +854,228 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await pAll.tokens()).toBeUndefined();
     expect(await pAll.discoveryState()).toBeUndefined();
     await expect(pAll.codeVerifier()).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sealed OAuth state: tokens, client registration, and the PKCE verifier are
+// ciphertext at rest when the deployment has a vault that can seal.
+// ---------------------------------------------------------------------------
+describe("KvOAuthProvider sealed state", () => {
+  const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
+  const OTHER_SEAL_KEY = Buffer.alloc(32, 9).toString("base64");
+
+  function sealerFor(key = SEAL_KEY, logger: Logger = silentLogger) {
+    return vaultOAuthSealer(
+      new CredentialVault(memoryStorage(), key),
+      "svc",
+      undefined,
+      logger,
+    );
+  }
+
+  function sealedProvider(storage: KVStorage, sealer = sealerFor()) {
+    return new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, sealer);
+  }
+
+  function isSealed(raw: string | null): boolean {
+    if (raw === null) return false;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return (
+        parsed.connectaOAuthSealed === 1 &&
+        typeof parsed.sealed === "string" &&
+        !("value" in parsed)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  const issuer = { issuer: "https://auth.example" };
+  const tokens: OAuthTokens = {
+    access_token: "secret-access",
+    token_type: "Bearer",
+    refresh_token: "secret-refresh",
+  };
+  const client: OAuthClientInformationFull = {
+    client_id: "dcr-client",
+    client_secret: "dcr-secret",
+    redirect_uris: [REDIRECT],
+  };
+
+  it("seals tokens, client registration, and the verifier; flow bookkeeping stays plaintext", async () => {
+    const storage = memoryStorage();
+    const p = sealedProvider(storage);
+    const generation = await p.bumpGeneration();
+    const discovery: OAuthDiscoveryState = {
+      authorizationServerUrl: "https://auth.example",
+    };
+
+    await p.saveClientInformation(client, issuer);
+    await p.saveTokens(tokens, issuer);
+    await p.saveCodeVerifier("secret-verifier");
+    const state = await p.state();
+    await p.redirectToAuthorization(new URL("https://auth.example/authorize?x=1"));
+    await p.saveDiscoveryState(discovery);
+
+    const raw = (key: string) => storage.get(oauthValueStorageKey(key, generation));
+    for (const key of ["oauth:tokens", "oauth:client", "oauth:verifier"]) {
+      const value = await raw(key);
+      expect(isSealed(value)).toBe(true);
+      for (const secret of ["secret-access", "secret-refresh", "dcr-secret", "secret-verifier"]) {
+        expect(value).not.toContain(secret);
+      }
+    }
+    for (const [key, value] of [
+      ["oauth:state", state],
+      ["oauth:pending", "https://auth.example/authorize?x=1"],
+      ["oauth:discovery", discovery],
+    ] as const) {
+      expect(JSON.parse(required((await raw(key)) ?? undefined))).toEqual({
+        connectaOAuthVersion: 2,
+        generation,
+        value,
+      });
+    }
+    expect(await storage.get("oauth:generation")).toBe(generation);
+
+    const reader = sealedProvider(storage);
+    expect(await reader.tokens(issuer)).toEqual(tokens);
+    expect(await reader.clientInformation(issuer)).toEqual(client);
+    expect(await reader.codeVerifier()).toBe("secret-verifier");
+    expect(await reader.discoveryState()).toEqual(discovery);
+    expect(await reader.verifyState(state)).toBe(true);
+
+    // Without the sealer the ciphertext is nothing a caller could use.
+    const unsealed = new KvOAuthProvider("svc", storage, REDIRECT);
+    expect(await unsealed.tokens()).toBeUndefined();
+    expect(await unsealed.clientInformation()).toBeUndefined();
+    await expect(unsealed.codeVerifier()).rejects.toThrow("No PKCE code verifier");
+  });
+
+  it.each([
+    {
+      shape: "raw legacy strings",
+      generation: null,
+      tokens: () => JSON.stringify(tokens),
+      verifier: () => "legacy-verifier",
+      ctx: undefined,
+    },
+    {
+      shape: "v1 envelopes",
+      generation: "7",
+      tokens: () =>
+        JSON.stringify({ connectaOAuthVersion: 1, generation: "7", value: tokens }),
+      verifier: () =>
+        JSON.stringify({ connectaOAuthVersion: 1, generation: "7", value: "legacy-verifier" }),
+      ctx: undefined,
+    },
+    {
+      shape: "v2 envelopes",
+      generation: "v2:seeded",
+      tokens: () =>
+        JSON.stringify({
+          connectaOAuthVersion: 2,
+          generation: "v2:seeded",
+          issuer: issuer.issuer,
+          value: tokens,
+        }),
+      verifier: () =>
+        JSON.stringify({
+          connectaOAuthVersion: 2,
+          generation: "v2:seeded",
+          value: "legacy-verifier",
+        }),
+      ctx: issuer,
+    },
+  ])("upgrades $shape to sealed state on read", async (seed) => {
+    const storage = memoryStorage();
+    if (seed.generation !== null) {
+      await storage.set("oauth:generation", seed.generation);
+    }
+    const tokensKey = oauthValueStorageKey("oauth:tokens", seed.generation);
+    const verifierKey = oauthValueStorageKey("oauth:verifier", seed.generation);
+    await storage.set(tokensKey, seed.tokens());
+    await storage.set(verifierKey, seed.verifier());
+
+    const p = sealedProvider(storage);
+    expect(await p.tokens(seed.ctx)).toEqual(tokens);
+    expect(await p.codeVerifier()).toBe("legacy-verifier");
+
+    for (const key of [tokensKey, verifierKey]) {
+      const value = await storage.get(key);
+      expect(isSealed(value)).toBe(true);
+      expect(value).not.toContain("secret-access");
+      expect(value).not.toContain("legacy-verifier");
+    }
+    // The upgrade re-encodes; it neither moves the epoch nor loses the issuer.
+    expect(await storage.get("oauth:generation")).toBe(seed.generation);
+    const reader = sealedProvider(storage);
+    expect(await reader.tokens(seed.ctx)).toEqual(tokens);
+    expect(await reader.codeVerifier()).toBe("legacy-verifier");
+    expect(await storage.get("oauth:generation")).toBe(seed.generation);
+  });
+
+  it("does not rewrite plaintext after the generation has moved", async () => {
+    const base = memoryStorage();
+    const plaintext = JSON.stringify(tokens);
+    await base.set("oauth:tokens", plaintext);
+    let moved = false;
+    // A force reset lands between this read and the upgrade write.
+    const storage: KVStorage = {
+      ...base,
+      async get(key) {
+        const value = await base.get(key);
+        if (key === "oauth:tokens" && !moved) {
+          moved = true;
+          await base.set("oauth:generation", "v2:moved");
+        }
+        return value;
+      },
+    };
+
+    await sealedProvider(storage).tokens();
+
+    expect(moved).toBe(true);
+    expect(await base.get("oauth:tokens")).toBe(plaintext);
+    expect(await base.get(oauthValueStorageKey("oauth:tokens", "v2:moved"))).toBeNull();
+    expect(required(await base.list!(""))).toEqual(["oauth:generation", "oauth:tokens"]);
+  });
+
+  it("reads tampered or foreign-key ciphertext as absent, and warns without the secret", async () => {
+    const storage = memoryStorage();
+    await sealedProvider(storage).saveTokens(tokens);
+    const sealed = required((await storage.get("oauth:tokens")) ?? undefined);
+    expect(isSealed(sealed)).toBe(true);
+
+    const wrongKey = spyLogger();
+    expect(
+      await sealedProvider(storage, sealerFor(OTHER_SEAL_KEY, wrongKey.logger)).tokens(),
+    ).toBeUndefined();
+    expect(wrongKey.warnings().join("\n")).toMatch(/"svc".*oauth:tokens/);
+
+    // Flip one base64 digit in the ciphertext's middle: still well-formed,
+    // no longer authentic.
+    const envelope = JSON.parse(sealed) as { sealed: string };
+    const at = Math.floor(envelope.sealed.length * 0.75);
+    const flipped = envelope.sealed[at] === "A" ? "B" : "A";
+    await storage.set(
+      "oauth:tokens",
+      JSON.stringify({
+        ...envelope,
+        sealed: envelope.sealed.slice(0, at) + flipped + envelope.sealed.slice(at + 1),
+      }),
+    );
+    const tampered = spyLogger();
+    expect(
+      await sealedProvider(storage, sealerFor(SEAL_KEY, tampered.logger)).tokens(),
+    ).toBeUndefined();
+    expect(tampered.warnings()).toHaveLength(1);
+    for (const warning of [...wrongKey.warnings(), ...tampered.warnings()]) {
+      expect(warning).not.toContain("secret-access");
+      expect(warning).not.toContain(envelope.sealed);
+    }
   });
 });
 

@@ -8,6 +8,7 @@ import type {
   OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
+import type { OAuthStateSealer } from "../oauth-sealing.js";
 import type { KVStorage } from "../types.js";
 
 /** A 256-bit random opaque value, hex-encoded — used for the OAuth `state`. */
@@ -38,6 +39,19 @@ const OAUTH_VALUE_KEYS = [
   "oauth:state",
   "oauth:discovery",
 ] as const;
+/**
+ * The values that are credentials: tokens, a registered client (which may
+ * carry a secret), and the PKCE verifier. With a sealing vault they are
+ * ciphertext at rest. Flow bookkeeping — state, pending URL, discovery, and
+ * the generation — stays plaintext: the callback route reads state directly,
+ * and none of it authenticates anything on its own.
+ */
+const SEALED_OAUTH_KEYS: ReadonlySet<string> = new Set([
+  "oauth:client",
+  "oauth:tokens",
+  "oauth:verifier",
+]);
+const SEALED_VALUE_VERSION = 1;
 const MAX_CLEANUP_BACKLOG = 1_000;
 
 function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
@@ -576,6 +590,20 @@ function legacyStoredOAuthValue<T>(
   );
 }
 
+interface SealedOAuthValue {
+  connectaOAuthSealed: typeof SEALED_VALUE_VERSION;
+  sealed: string;
+}
+
+function sealedOAuthValue(value: unknown): value is SealedOAuthValue {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SealedOAuthValue>;
+  return (
+    candidate.connectaOAuthSealed === SEALED_VALUE_VERSION &&
+    typeof candidate.sealed === "string"
+  );
+}
+
 function isModernGeneration(generation: string): boolean {
   return (
     generation.startsWith(ACTIVE_GENERATION_PREFIX) ||
@@ -638,6 +666,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly redirectUri: string,
     private readonly refreshCoordinator?: OAuthRefreshCoordinator,
     private readonly allowAuthorization = true,
+    /** Present when the deployment's vault can seal; credentials are then ciphertext. */
+    private readonly sealer?: OAuthStateSealer,
   ) {}
 
   /**
@@ -706,6 +736,33 @@ export class KvOAuthProvider implements OAuthClientProvider {
     issuer?: string,
   ): Promise<void> {
     const generation = await this.writeGeneration();
+    await this.storeInGeneration(key, generation, () => {
+      const stored: StoredOAuthValue<T> = {
+        connectaOAuthVersion: STORED_VALUE_VERSION,
+        generation,
+        ...(issuer !== undefined ? { issuer } : {}),
+        value,
+      };
+      return isModernGeneration(generation) || issuer !== undefined
+        ? JSON.stringify(stored)
+        : serializeLegacy(value);
+    });
+  }
+
+  /**
+   * The generation fence every write goes through: refuse unless `generation`
+   * is still the live, writable epoch, write (sealed when the key holds a
+   * credential and a sealer exists), then clean up if the epoch moved under
+   * the write. With `expected`, the write also requires the physical key to
+   * still hold exactly that raw value, so re-encoding cannot resurrect a value
+   * another request replaced in the meantime.
+   */
+  private async storeInGeneration(
+    key: string,
+    generation: string,
+    serialize: () => string,
+    expected?: string,
+  ): Promise<void> {
     if (
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
       generation.startsWith(DISCONNECTED_GENERATION_PREFIX) ||
@@ -713,19 +770,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ) {
       return;
     }
-    const stored: StoredOAuthValue<T> = {
-      connectaOAuthVersion: STORED_VALUE_VERSION,
-      generation,
-      ...(issuer !== undefined ? { issuer } : {}),
-      value,
-    };
     const physicalKey = oauthValueStorageKey(key, generation);
-    await this.storage.set(
-      physicalKey,
-      isModernGeneration(generation) || issuer !== undefined
-        ? JSON.stringify(stored)
-        : serializeLegacy(value),
-    );
+    const plaintext = serialize();
+    const serialized =
+      this.sealer && SEALED_OAUTH_KEYS.has(key)
+        ? JSON.stringify({
+            connectaOAuthSealed: SEALED_VALUE_VERSION,
+            sealed: await this.sealer.seal(physicalKey, plaintext),
+          } satisfies SealedOAuthValue)
+        : plaintext;
+    if (expected === undefined) {
+      await this.storage.set(physicalKey, serialized);
+    } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
+      return;
+    }
     // If reset landed after the pre-write check and completed its cleanup
     // before this set, remove the now-unreachable residue ourselves. The epoch
     // key already provides correctness; this second check is physical hygiene.
@@ -747,10 +805,74 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /**
+   * Compare-and-set where the store has it. A store without it gets a re-read
+   * immediately before the write: it narrows the race to one round trip, the
+   * same exposure that store already has for every other OAuth write.
+   */
+  private async replaceExactly(
+    physicalKey: string,
+    expected: string,
+    next: string,
+  ): Promise<boolean> {
+    if (this.storage.compareAndSet) {
+      return this.storage.compareAndSet(physicalKey, expected, next);
+    }
+    if ((await this.storage.get(physicalKey)) !== expected) return false;
+    await this.storage.set(physicalKey, next);
+    return true;
+  }
+
+  /**
+   * Open a sealed credential. Anything that does not open — a tampered value,
+   * a rotated vault key, ciphertext copied from another connector or owner, or
+   * sealed state with no sealer configured — reads as absent, which fails
+   * closed to reauthorization.
+   */
+  private async openValue(
+    key: string,
+    physicalKey: string,
+    sealed: string,
+  ): Promise<string | undefined> {
+    if (!this.sealer || !SEALED_OAUTH_KEYS.has(key)) return undefined;
+    try {
+      return await this.sealer.open(physicalKey, sealed);
+    } catch {
+      this.sealer.warn(
+        `[connecta] connector "${this.connectorId}" has sealed OAuth state ` +
+          `(${key}) the configured vault cannot open; treating it as absent, ` +
+          "so the connector needs authorization again. A changed vault key " +
+          "or tampered storage causes this.",
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Re-encode plaintext an older release (or a vault-less deployment) wrote,
+   * in place and byte-for-byte, through the same generation fence as every
+   * write. A failure leaves the plaintext readable; the next write seals it.
+   */
+  private async sealInPlace(
+    key: string,
+    generation: string,
+    raw: string,
+  ): Promise<void> {
+    try {
+      await this.storeInGeneration(key, generation, () => raw, raw);
+    } catch {
+      this.sealer?.warn(
+        `[connecta] connector "${this.connectorId}" could not seal plaintext ` +
+          `OAuth state (${key}); it stays readable and is sealed on its next write.`,
+      );
+    }
+  }
+
+  /**
    * Read a value only when it belongs to the active generation. Plain legacy
    * values remain readable until the first v2 reset, so upgrades do not discard
    * an existing grant; once a modern epoch exists, untagged residue fails
-   * closed.
+   * closed. With a sealer, a credential found in plaintext is returned and
+   * then sealed where it lies.
    */
   private async readValue<T>(
     key: string,
@@ -759,9 +881,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     { value: T; generation: string; issuer?: string } | undefined
   > {
     const generation = await this.generation();
-    const raw = await this.storage.get(
-      oauthValueStorageKey(key, generation),
-    );
+    const physicalKey = oauthValueStorageKey(key, generation);
+    const raw = await this.storage.get(physicalKey);
     if (raw === null) return undefined;
     if (
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
@@ -770,12 +891,41 @@ export class KvOAuthProvider implements OAuthClientProvider {
       return undefined;
     }
 
+    let text = raw;
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
       // Raw string state from a pre-envelope deployment is handled below.
     }
+    let plaintextCredential = false;
+    if (sealedOAuthValue(parsed)) {
+      const opened = await this.openValue(key, physicalKey, parsed.sealed);
+      if (opened === undefined) return undefined;
+      text = opened;
+      parsed = undefined;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // A sealed raw legacy string, handled below like its plaintext form.
+      }
+    } else {
+      plaintextCredential = this.sealer !== undefined && SEALED_OAUTH_KEYS.has(key);
+    }
+
+    const stored = this.interpretValue(text, parsed, generation, parseLegacy);
+    if (stored && plaintextCredential) {
+      await this.sealInPlace(key, generation, raw);
+    }
+    return stored;
+  }
+
+  private interpretValue<T>(
+    raw: string,
+    parsed: unknown,
+    generation: string,
+    parseLegacy: (raw: string) => T,
+  ): { value: T; generation: string; issuer?: string } | undefined {
     if (storedOAuthValue<T>(parsed)) {
       return parsed.generation === generation
         ? {
