@@ -225,6 +225,37 @@ boundary in the published tarball. The failure mode is not theoretical: one
 convenience import of `node:crypto` in a shared helper stops the whole Worker
 shape from building, in someone else's repository rather than this one.
 
+## Effect inside
+
+Request admission and deadlines run on Effect v4; the rest of the core has
+not moved yet. Every published signature stays Promise-shaped, so each
+converted module is a shell and a core. The shell keeps its exported class or
+function exactly as it was: same members, same errors, same `.d.ts`, private
+member names included. The core is an Effect program behind it.
+`AdmissionController.acquire()` runs the admission program and resolves with
+the lease, or rejects with the same `ExecutorAdmissionError`. An Effect caller
+skips the Promise and takes the program from `src/runtime/admission.ts`
+(`admit`, or `acquireScoped` for a lease its Scope releases). `withDeadline` is
+the Promise face of `withDeadlineEffect`.
+
+`src/runtime/run.ts` is the only place a fiber starts, and
+`test/purity.test.ts` fails if any other file calls `Effect.run*`, `runFork`,
+`forkDaemon`, or `ManagedRuntime.make`. Its `runEdge` does three things the
+stock runner does not:
+
+- It rethrows the original failure or defect, never a wrapper, because callers
+  check `instanceof`, `name`, and `message` on connecta's error classes.
+- It turns an interrupt into the caller's `signal.reason` rather than
+  Effect's generic interruption error.
+- It runs every fiber on a scheduler that yields through microtasks. Effect's
+  default scheduler yields through `setImmediate`, which vitest's fake timers
+  freeze and Workers never had. The price is that a fiber never yields to
+  I/O, so CPU-heavy work stays out of Effect loops.
+
+`npm run check:declarations` fails if any shipped declaration names an Effect
+type. `npm run check:bundle` records what the core costs per entry against
+`scripts/bundle-budget.json`.
+
 ## Where else to look
 
 Beyond the modules already named:

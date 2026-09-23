@@ -1,6 +1,9 @@
 // The deadline vocabulary shared by downstream discovery probes and tool calls.
 // One definition keeps those waits bounded consistently.
 
+import { Effect } from "effect";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+
 /**
  * Generous default bound for a single downstream probe/catalog call. High enough
  * to trip only on a pathological hang, not a realistically slow probe.
@@ -17,7 +20,15 @@ export function normalizeTimeoutMs(
   return Math.max(1, Math.trunc(value));
 }
 
-/** Resolve after `ms`, or false when the caller aborts first. */
+/**
+ * Resolve after `ms`, or false when the caller aborts first.
+ *
+ * Deliberately a bare timer rather than a run of `Effect.sleep`: there is no
+ * work here for a fiber to own, and Effect's clock reads a zero or negative
+ * wait as a microtask yield and a non-finite one as forever, where
+ * `setTimeout` treats both as "next macrotask". Effect code sleeps with
+ * `Effect.sleep` and never needs this.
+ */
 export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
@@ -41,38 +52,31 @@ export interface DeadlineOptions {
   timeoutError: Error;
 }
 
+/**
+ * Run one operation under a deadline and the caller's signal, whichever ends
+ * it first.
+ *
+ * The operation gets a signal of its own: the caller's abort is forwarded to
+ * it, and the deadline aborts it with `timeoutError`. Either way the promise
+ * rejects with that signal's reason, without waiting for work that ignores
+ * the signal. A synchronous throw rejects like an asynchronous one. This is
+ * the Promise face of `withDeadlineEffect` (src/runtime/run.ts), which owns
+ * the contract; an Effect caller uses that directly.
+ */
 export function withDeadline<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   options: DeadlineOptions,
 ): Promise<T> {
-  const controller = new AbortController();
-  const forwardAbort = () => controller.abort(options.signal?.reason);
-  options.signal?.addEventListener("abort", forwardAbort, { once: true });
-  if (options.signal?.aborted) forwardAbort();
-  let rejectAbort!: (reason: unknown) => void;
-  const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
-  const onAbort = () =>
-    rejectAbort(controller.signal.reason ?? options.timeoutError);
-  controller.signal.addEventListener("abort", onAbort, { once: true });
-  if (controller.signal.aborted) onAbort();
-  const timer = options.timeoutMs === undefined
-    ? undefined
-    : setTimeout(
-        () => controller.abort(options.timeoutError),
-        options.timeoutMs,
-      );
-  let work: Promise<T>;
-  try {
-    work = operation(controller.signal);
-  } catch (error) {
-    work = Promise.reject(error);
-  }
-  return Promise.race([work, aborted]).finally(() => {
-    controller.abort();
-    if (timer) clearTimeout(timer);
-    controller.signal.removeEventListener("abort", onAbort);
-    options.signal?.removeEventListener("abort", forwardAbort);
-  });
+  return runEdge(
+    withDeadlineEffect(
+      (signal) =>
+        Effect.tryPromise({
+          try: () => operation(signal),
+          catch: (error) => error,
+        }),
+      options,
+    ),
+  );
 }
 
 /**
