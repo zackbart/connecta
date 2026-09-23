@@ -1,4 +1,13 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -316,5 +325,108 @@ describe("public package boundary", () => {
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
+  });
+});
+
+// Effect is the core's implementation and must never become its API: a
+// published declaration that names an Effect type turns every Effect upgrade
+// into a breaking change for deployments that never chose Effect. These run
+// the same checker the build and the tarball smoke use.
+describe("Effect behind the published surface", () => {
+  const checker = join(ROOT, "scripts", "check-declarations.mjs");
+  const runChecker = (args: string[]) =>
+    spawnSync(process.execPath, [checker, ...args], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+
+  it("publishes no Effect type in any reachable declaration", () => {
+    const result = runChecker([]);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("no Effect types");
+  }, 60_000);
+
+  describe("a checker that can fail", () => {
+    const fixture = (files: Record<string, string>) => {
+      const dir = mkdtempSync(join(tmpdir(), "connecta-declarations-"));
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "fixture",
+          exports: {
+            ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+          },
+        }),
+      );
+      mkdirSync(join(dir, "dist"));
+      for (const [name, text] of Object.entries(files)) {
+        writeFileSync(join(dir, "dist", name), text);
+      }
+      return dir;
+    };
+
+    it("fails on an Effect import in a reachable declaration and names it", () => {
+      const dir = fixture({
+        "index.d.ts":
+          'export { thing } from "./thing.js";\n' +
+          'import type { Effect } from "effect";\n' +
+          "export declare const run: Effect.Effect<void>;\n",
+        "thing.d.ts": "export declare const thing: number;\n",
+      });
+      try {
+        const result = runChecker(["--dist", dir]);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("dist/index.d.ts:2");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+
+    it("fails on a declaration no exports target reaches", () => {
+      const dir = fixture({
+        "index.d.ts": "export declare const value: number;\n",
+        "orphan.d.ts": "export declare const internal: string;\n",
+      });
+      try {
+        const result = runChecker(["--dist", dir]);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("dist/orphan.d.ts: orphan declaration");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+  });
+
+  it("depends on effect at one exact version", () => {
+    // Exact, never a range: `effect/unstable/*` breaks in minor releases, and
+    // a deployment that also uses Alchemy must resolve one Effect, not two.
+    // An upgrade is its own pull request.
+    const pinned = packageJson.dependencies?.effect;
+    expect(pinned, "effect is not a runtime dependency").toBeTruthy();
+    expect(pinned).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+    expect(packageJson.peerDependencies).not.toHaveProperty("effect");
+    expect(packageJson.devDependencies).not.toHaveProperty("effect");
+    const lock = JSON.parse(
+      readFileSync(join(ROOT, "package-lock.json"), "utf8"),
+    ) as { packages?: Record<string, { version?: string }> };
+    expect(lock.packages?.["node_modules/effect"]?.version).toBe(pinned);
+    const nested = Object.keys(lock.packages ?? {}).filter((path) =>
+      path.endsWith("/node_modules/effect"),
+    );
+    expect(nested, "a second copy of effect is locked").toEqual([]);
+  });
+
+  it("declares exactly the core runtime dependencies", () => {
+    // zod leaves for devDependencies once the meta-tool input schemas move
+    // to Effect Schema (P1-S16b).
+    expect(Object.keys(packageJson.dependencies ?? {}).sort()).toEqual([
+      "@cfworker/json-schema",
+      "@modelcontextprotocol/client",
+      "@modelcontextprotocol/server",
+      "effect",
+      "zod",
+    ]);
   });
 });

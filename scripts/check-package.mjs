@@ -212,16 +212,13 @@ try {
   )[0];
   const archive = join(work, packed.filename);
   const paths = new Set(packed.files.map((file) => file.path));
-  const operatorUiDeclaration = packed.files.find(
-    (file) => file.path === "dist/operator-ui/generated.d.ts",
-  );
-  if (!operatorUiDeclaration) {
-    throw new Error("Packed artifact is missing dist/operator-ui/generated.d.ts");
-  }
-  if (operatorUiDeclaration.size >= 1_000) {
+  // The generated operator UI bundle is an internal string constant no export
+  // reaches, so the build prunes its declaration with every other unreachable
+  // one (scripts/prune-declarations.mjs). Packed, it means pruning stopped.
+  if (paths.has("dist/operator-ui/generated.d.ts")) {
     throw new Error(
-      "Generated operator UI declaration must stay below 1 KB; " +
-        `packed ${operatorUiDeclaration.size} bytes`,
+      "Packed artifact ships dist/operator-ui/generated.d.ts; the build " +
+        "should have pruned it as unreachable",
     );
   }
 
@@ -522,6 +519,39 @@ try {
     ["install", "--ignore-scripts", "--omit=optional", archive],
     work,
   );
+  // The declarations a consumer compiles against, as installed: no Effect
+  // type anywhere under dist/, reachable or not, and nothing left unpruned.
+  run(
+    process.execPath,
+    [
+      join(root, "scripts", "check-declarations.mjs"),
+      "--dist",
+      join(work, "node_modules", "@zackbart", "connecta"),
+    ],
+    root,
+  );
+  // One Effect, at exactly the pinned version. A second copy means two
+  // runtimes whose fibers, services, and errors do not recognize each other.
+  const effectPin = rootManifest.dependencies?.effect;
+  const installedEffect = JSON.parse(
+    await readFile(join(work, "node_modules", "effect", "package.json"), "utf8"),
+  ).version;
+  if (installedEffect !== effectPin) {
+    throw new Error(
+      `Installed effect ${installedEffect} does not match the pin ${effectPin}`,
+    );
+  }
+  const consumerLock = JSON.parse(
+    await readFile(join(work, "package-lock.json"), "utf8"),
+  );
+  const nestedEffect = Object.keys(consumerLock.packages ?? {}).filter((path) =>
+    path.endsWith("/node_modules/effect"),
+  );
+  if (nestedEffect.length) {
+    throw new Error(
+      `A second copy of effect was installed: ${nestedEffect.join(", ")}`,
+    );
+  }
   const installedBin = join(
     work,
     "node_modules",

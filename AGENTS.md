@@ -35,8 +35,10 @@ exists.
 
 `npm run check` must pass before you claim anything is done — `check:docs` →
 `check:operator-ui` → `check:lint` → `check:unused` → `typecheck` → `test`
-(both vitest projects) → `build` → `check:examples`. It is also the `prepack`
-hook. `npm run release:check` adds `check:security` and `check:package` and is
+(both vitest projects) → `build` (which prunes unreachable declarations) →
+`check:declarations` (no Effect type in what ships) → `check:bundle` (per-entry
+gzip caps in `scripts/bundle-budget.json`) → `check:examples`. It is also the
+`prepack` hook. `npm run release:check` adds `check:security` and `check:package` and is
 what CI runs on every pull request, on `main`, and again on publish; use it
 when touching packaging, dependencies, or exports.
 
