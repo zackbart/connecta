@@ -26,6 +26,7 @@ import {
   unavailableCallError,
 } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
+import { inheritOAuthSealer, oauthSealerFor } from "../oauth-sealing.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -843,6 +844,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       `${ctx.baseUrl}/oauth/callback/${id}`,
       refreshCoordinator,
       ctx.allowAuthorization === true,
+      oauthSealerFor(ctx),
     );
     if (state) state.provider = provider;
     return provider;
@@ -1446,7 +1448,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
 
     connector.startAuth = async (ctx, startOpts) => {
-      ctx = { ...ctx, requestScope: ctx.requestScope ?? ctx, allowAuthorization: true };
+      ctx = inheritOAuthSealer(ctx, {
+        ...ctx,
+        requestScope: ctx.requestScope ?? ctx,
+        allowAuthorization: true,
+      });
       const state = stateFor(ctx);
       state.provider = null;
       const p = newProvider(ctx, state);

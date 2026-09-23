@@ -45,6 +45,7 @@ import {
   normalizeGuideSummary,
 } from "./skills.js";
 import { withDeadline } from "./timeout.js";
+import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -664,7 +665,7 @@ export class Registry implements RegistryView {
         getAll: readValues,
       };
     }
-    return {
+    const context: ConnectorContext = {
       storage: namespaced(this.opts.storage, `conn:${id}:`),
       logger: this.opts.logger,
       baseUrl,
@@ -672,6 +673,19 @@ export class Registry implements RegistryView {
       requestScope,
       ...callOptions,
     };
+    // Downstream OAuth state is sealed under the vault key, bound to this
+    // connector and owner. The sealer rides beside the context, not on it.
+    return this.opts.credentialVault
+      ? attachOAuthSealer(
+          context,
+          vaultOAuthSealer(
+            this.opts.credentialVault,
+            id,
+            this.opts.credentialOwner,
+            this.opts.logger,
+          ),
+        )
+      : context;
   }
 
   admitCall(

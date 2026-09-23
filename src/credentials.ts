@@ -23,6 +23,24 @@ interface CredentialPlaintext {
   updatedBy: string;
 }
 
+/** Version tag of the compact `seal` output: `v1.<iv>.<ciphertext>`. */
+const SEALED_VERSION = "v1";
+
+/**
+ * Binds sealed OAuth state to its connector, owner, and physical storage key
+ * (which carries the authorization epoch), so ciphertext copied anywhere else
+ * does not open. Connector ids cannot contain `|`, and the owner is a hash.
+ */
+function oauthStateAdditionalData(
+  connectorId: string,
+  purpose: string,
+  owner?: string,
+): Uint8Array {
+  return encoder.encode(
+    `connecta:oauth-state:v1|${connectorId}|${owner ?? ""}|${purpose}`,
+  );
+}
+
 function storageKey(connectorId: string, owner?: string): string {
   return owner
     ? `principal:${owner}:conn:${connectorId}:credential:v1`
@@ -124,7 +142,8 @@ function validateValues(
 /**
  * Encrypted, connector-scoped credential vault over the deployment's existing
  * KVStorage. Only ciphertext enters KV; the AES-GCM key remains an environment
- * secret outside the store.
+ * secret outside the store. The same key seals downstream OAuth state, which
+ * the OAuth provider stores itself.
  */
 export class CredentialVault implements Vault {
   private readonly key: Promise<CryptoKey>;
@@ -271,6 +290,58 @@ export class CredentialVault implements Vault {
 
   async delete(connectorId: string, owner?: string): Promise<void> {
     await this.storage.delete(storageKey(connectorId, owner));
+  }
+
+  /** Encrypt downstream OAuth state under the vault key; nothing is stored. */
+  async seal(
+    connectorId: string,
+    purpose: string,
+    plaintext: string,
+    owner?: string,
+  ): Promise<string> {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+    const ciphertext = await crypto.subtle.encrypt(
+      {
+        name: "AES-GCM",
+        iv,
+        additionalData: oauthStateAdditionalData(connectorId, purpose, owner),
+      },
+      await this.key,
+      encoder.encode(plaintext),
+    );
+    return `${SEALED_VERSION}.${bytesToBase64(iv)}.${bytesToBase64(new Uint8Array(ciphertext))}`;
+  }
+
+  /** Decrypt what `seal` produced for this connector, purpose, and owner. */
+  async open(
+    connectorId: string,
+    purpose: string,
+    sealed: string,
+    owner?: string,
+  ): Promise<string> {
+    const [version, iv, ciphertext, ...rest] = sealed.split(".");
+    if (
+      version !== SEALED_VERSION ||
+      iv === undefined ||
+      ciphertext === undefined ||
+      rest.length > 0
+    ) {
+      throw new Error("Sealed OAuth state is invalid or corrupted");
+    }
+    try {
+      const plaintext = await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: base64ToBytes(iv),
+          additionalData: oauthStateAdditionalData(connectorId, purpose, owner),
+        },
+        await this.key,
+        base64ToBytes(ciphertext),
+      );
+      return decoder.decode(plaintext);
+    } catch {
+      throw new Error("Sealed OAuth state could not be decrypted");
+    }
   }
 }
 

@@ -6,6 +6,8 @@ import { connectorWith } from "./fixtures/connectors.js";
 import { createTestConnecta } from "./helpers.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
+import type { CredentialVault } from "../src/credential-contract.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 
 const BASE = "https://connecta.test";
 const CREDENTIAL_KEY = Buffer.alloc(32, 7).toString("base64");
@@ -356,6 +358,73 @@ describe("missing-verifyState CSRF warning", () => {
         logger,
       });
       expect(warnings(logger)).not.toContain("state/CSRF check");
+    }],
+  ] as const)("%s", (_name, run) => run());
+});
+
+describe("unsealed downstream OAuth state warning", () => {
+  /** A custom vault written before `seal`/`open` existed. */
+  function vaultWithoutSealing(): CredentialVault {
+    const inner = encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY);
+    return {
+      get: (...args) => inner.get(...args),
+      getAll: (...args) => inner.getAll(...args),
+      metadata: (...args) => inner.metadata(...args),
+      set: (...args) => inner.set(...args),
+      setAll: (...args) => inner.setAll(...args),
+      delete: (...args) => inner.delete(...args),
+    };
+  }
+
+  const oauthDownstream = remoteMcp("downstream", {
+    url: "https://downstream.example/mcp",
+    auth: { type: "oauth" },
+  });
+
+  it.each([
+    ["warns when the vault cannot seal an OAuth connector's state", () => {
+      const logger = spyLogger();
+      createTestConnecta({
+        connectors: [oauthDownstream],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        vault: vaultWithoutSealing(),
+        logger,
+      });
+      const text = warnings(logger);
+      expect(text).toContain("seal");
+      expect(text).toContain('connector "downstream"');
+      expect(text).toContain("plaintext");
+    }],
+
+    ["does not warn when the vault seals", () => {
+      const logger = spyLogger();
+      createTestConnecta({
+        connectors: [oauthDownstream],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
+        logger,
+      });
+      expect(warnings(logger)).not.toContain("plaintext");
+    }],
+
+    ["does not warn when no connector has downstream OAuth state", () => {
+      const logger = spyLogger();
+      createTestConnecta({
+        connectors: [
+          credentialConnector,
+          remoteMcp("headers", {
+            url: "https://downstream.example/mcp",
+            auth: { type: "headers", headers: { Authorization: "Bearer x" } },
+          }),
+        ],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        vault: vaultWithoutSealing(),
+        logger,
+      });
+      expect(warnings(logger)).not.toContain("plaintext");
     }],
   ] as const)("%s", (_name, run) => run());
 });

@@ -438,7 +438,7 @@ function assertKnownConfig(config: ConnectaConfig): void {
       }
     }
   }
-  if (config.vault && ["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function")) throw new Error("ConnectaConfig.vault must implement CredentialVault");
+  if (config.vault && (["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function") || ["seal", "open"].some(key => !["undefined", "function"].includes(typeof (config.vault as unknown as Record<string, unknown>)[key])))) throw new Error("ConnectaConfig.vault must implement CredentialVault");
   if (config.ui && (typeof config.ui.handle !== "function" || typeof config.ui.credentialHandoffUrl !== "function" || !Array.isArray(config.ui.reservedPaths))) throw new Error("ConnectaConfig.ui must be created with operatorUi(...)");
   const activity = config.activity as unknown;
   if (
@@ -621,6 +621,21 @@ function warnInsecureConfig(
         `action and POST /ui/credentials/${connector.id}/test answers 400 ` +
         "until the matching hook is implemented.",
     );
+  }
+
+  // A vault written before seal/open existed encrypts credentials but cannot
+  // seal downstream OAuth state, so tokens stay plaintext at rest beside them.
+  const vault = config.vault;
+  if (vault && (typeof vault.seal !== "function" || typeof vault.open !== "function")) {
+    for (const connector of config.connectors) {
+      if (!connector.startAuth) continue;
+      logger.warn(
+        `[connecta] connector "${connector.id}" stores its downstream OAuth ` +
+          "tokens, client registration, and PKCE verifier as plaintext: the " +
+          "configured vault implements no `seal`/`open`. Use " +
+          "encryptedCredentialVault(...) or add both methods to seal them.",
+      );
+    }
   }
 
   // OAuth connectors whose callback cannot perform a state/CSRF check. The

@@ -22,4 +22,13 @@ export interface CredentialVault {
   set(connectorId: string, value: string, updatedBy: string, owner?: string): Promise<CredentialMetadata>;
   setAll(connectorId: string, values: ConnectorCredentialValues, updatedBy: string, owner?: string): Promise<CredentialMetadata>;
   delete(connectorId: string, owner?: string): Promise<void>;
+  /**
+   * Encrypt downstream OAuth state (tokens, a registered client, a PKCE
+   * verifier) before it enters storage. `purpose` is the storage key the value
+   * is written under, so the result is bound to one connector, owner, and key.
+   * Without both `seal` and `open`, that state is stored as plaintext.
+   */
+  seal?(connectorId: string, purpose: string, plaintext: string, owner?: string): Promise<string>;
+  /** Reverse `seal` for the same connector, purpose, and owner; rejects otherwise. */
+  open?(connectorId: string, purpose: string, sealed: string, owner?: string): Promise<string>;
 }

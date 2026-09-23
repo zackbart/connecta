@@ -1,14 +1,21 @@
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { CredentialVault } from "../src/credentials.js";
+import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { ConnectorContext } from "../src/types.js";
+import type { ConnectorContext, InboundAuth } from "../src/types.js";
 import { connectorContext, spyLogger } from "./fixtures/misc.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { activitySink, makeRegistry, required, silentLogger } from "./helpers.js";
+import {
+  activitySink,
+  createTestConnecta,
+  fetchTestUiDetails,
+  makeRegistry,
+  required,
+  silentLogger,
+} from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const URL_UNDER_TEST = "https://downstream.test/mcp";
@@ -698,5 +705,169 @@ describe("remoteMcp() credential auth — through the deployment", () => {
       operatorUrl: `${BASE}/`,
     });
     expect(text).not.toContain("do-not-return-this-secret");
+  });
+});
+
+describe("remoteMcp() downstream OAuth — sealed at rest through the deployment", () => {
+  const ISSUER = "https://auth.test";
+  const RESOURCE_METADATA =
+    "https://downstream.test/.well-known/oauth-protected-resource/mcp";
+  const SECRETS = ["e2e-access-token", "e2e-refresh-token", "e2e-client-secret"];
+
+  /** The downstream MCP behind a stub authorization server, over global fetch. */
+  function serveOAuthDownstream(): { verifiers: string[] } {
+    const verifiers: string[] = [];
+    const downstream = httpDownstream((server) => {
+      server.registerTool(
+        "echo",
+        {
+          description: "Echo text back",
+          inputSchema: z.object({ text: z.string() }),
+          annotations: { readOnlyHint: true },
+        },
+        async ({ text }) => ({ content: [{ type: "text", text }] }),
+      );
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.href.startsWith("https://downstream.test/.well-known/oauth-protected-resource")) {
+        return Response.json({
+          resource: URL_UNDER_TEST,
+          authorization_servers: [ISSUER],
+        });
+      }
+      if (url.href === `${ISSUER}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer: ISSUER,
+          authorization_endpoint: `${ISSUER}/authorize`,
+          token_endpoint: `${ISSUER}/token`,
+          registration_endpoint: `${ISSUER}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["client_secret_post"],
+        });
+      }
+      if (url.href === `${ISSUER}/register`) {
+        return Response.json({
+          client_id: "e2e-client",
+          client_secret: "e2e-client-secret",
+          redirect_uris: [`${BASE}/oauth/callback/svc`],
+          token_endpoint_auth_method: "client_secret_post",
+        });
+      }
+      if (url.href === `${ISSUER}/token`) {
+        const form = new URLSearchParams(await request.text());
+        expect(form.get("code")).toBe("e2e-code");
+        verifiers.push(required(form.get("code_verifier") ?? undefined));
+        return Response.json({
+          access_token: "e2e-access-token",
+          token_type: "Bearer",
+          refresh_token: "e2e-refresh-token",
+          expires_in: 3600,
+        });
+      }
+      if (url.href !== URL_UNDER_TEST) {
+        throw new Error(`Unexpected OAuth test request: ${url.href}`);
+      }
+      if (request.headers.get("authorization") !== "Bearer e2e-access-token") {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${RESOURCE_METADATA}"`,
+          },
+        });
+      }
+      return downstream.fetch(input as string | URL, init);
+    });
+    return { verifiers };
+  }
+
+  it("leaves no plaintext token, client secret, or verifier in storage after the callback", async () => {
+    const { verifiers } = serveOAuthDownstream();
+    const storage = memoryStorage();
+    const operator: InboundAuth = {
+      kind: "clerk",
+      interactiveOperator: true,
+      uiAuth: {
+        kind: "clerk",
+        publishableKey: "pk_test_fake",
+        frontendApiUrl: "https://clerk.example.com",
+      },
+      authorize: (request) =>
+        request.headers.get("authorization") === "Bearer operator"
+          ? { ok: true, userId: "user_1" }
+          : { ok: false, response: new Response(null, { status: 401 }) },
+    };
+    const connecta = createTestConnecta({
+      connectors: [
+        remoteMcp("svc", { url: URL_UNDER_TEST, auth: { type: "oauth" } }),
+      ],
+      storage,
+      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+      auth: operator,
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const operatorRequest = (path: string, method = "GET") =>
+      connecta.fetch(
+        new Request(`${BASE}${path}`, {
+          method,
+          headers: { Authorization: "Bearer operator", Origin: BASE },
+        }),
+      );
+    const stored = async () =>
+      Promise.all(
+        required(await storage.list?.("")).map(async (key) => ({
+          key,
+          value: required((await storage.get(key)) ?? undefined),
+        })),
+      );
+    /** The sealed kinds present now; every one of them must be ciphertext. */
+    const sealedKinds = async () => {
+      const kinds: string[] = [];
+      for (const { key, value } of await stored()) {
+        const kind = /:oauth:(tokens|client|verifier)(?::|$)/.exec(key)?.[1];
+        if (!kind) continue;
+        expect(JSON.parse(value)).toMatchObject({ connectaOAuthSealed: 1 });
+        kinds.push(kind);
+      }
+      return kinds.sort();
+    };
+
+    const started = await operatorRequest("/ui/oauth/svc", "POST");
+    expect(started.status).toBe(200);
+    const { authorizationUrl } = (await started.json()) as {
+      authorizationUrl: string;
+    };
+    expect(await sealedKinds()).toEqual(["client", "verifier"]);
+
+    const state = required(new URL(authorizationUrl).searchParams.get("state") ?? undefined);
+    const callback = await connecta.fetch(
+      new Request(
+        `${BASE}/oauth/callback/svc?code=e2e-code&state=${encodeURIComponent(state)}`,
+      ),
+    );
+    expect(callback.status).toBe(200);
+    expect(verifiers).toHaveLength(1);
+    expect(await sealedKinds()).toEqual(["client", "tokens"]);
+
+    for (const { value } of await stored()) {
+      for (const secret of [...SECRETS, ...verifiers]) {
+        expect(value).not.toContain(secret);
+      }
+    }
+
+    // The sealed grant is still the one the connector uses.
+    const data = (await (
+      await fetchTestUiDetails(
+        connecta,
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: "Bearer operator" },
+        }),
+      )
+    ).json()) as { connectors: Array<{ status: string; toolCount: number }> };
+    expect(data.connectors[0]).toMatchObject({ status: "ok", toolCount: 1 });
   });
 });

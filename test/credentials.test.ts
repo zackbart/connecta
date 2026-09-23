@@ -1,15 +1,22 @@
 import { CredentialVault } from "../src/credentials.js";
-import { required } from "./helpers.js";
+import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { oauthSealerFor } from "../src/oauth-sealing.js";
+import { makeRegistry, required } from "./helpers.js";
+import { connectorWith } from "./fixtures/connectors.js";
 import { describe, expect, it } from "vitest";
 import {
   describeUndeclaredCredentialFields,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
   storedCredentialShape,
 } from "../src/credential-rules.js";
-import type { ConnectorCredentialConfig } from "../src/types.js";
+import type {
+  ConnectorContext,
+  ConnectorCredentialConfig,
+} from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
+const OAUTH_BASE = "https://connecta.test";
 
 describe("storedCredentialShape", () => {
   const single: ConnectorCredentialConfig = { label: "API token" };
@@ -278,21 +285,66 @@ describe("CredentialVault", () => {
     expect(await vault.metadata("service")).toBeNull();
   });
 
-  it("shares CONNECTA_KV without touching existing downstream MCP OAuth state", async () => {
+  it("seals downstream OAuth state and leaves it untouched by vault writes", async () => {
     const storage = memoryStorage();
-    await storage.set("conn:notion:oauth:tokens", '{"access_token":"mcp-token"}');
-    await storage.set("conn:notion:oauth:client", '{"client_id":"mcp-client"}');
+    const tokens = { access_token: "mcp-token", token_type: "Bearer" };
+    const client = { client_id: "mcp-client" };
+    // Plaintext in the pre-sealing legacy format, as an older release left it.
+    await storage.set("conn:notion:oauth:tokens", JSON.stringify(tokens));
+    await storage.set("conn:notion:oauth:client", JSON.stringify(client));
     const vault = new CredentialVault(storage, KEY);
+    const oauthConnector = (id: string, authScope?: "personal") =>
+      connectorWith({ id, kind: "mcp", ...(authScope ? { authScope } : {}) });
+    const registry = makeRegistry(
+      [oauthConnector("notion", "personal"), oauthConnector("linear")],
+      { storage, credentialVault: vault },
+    );
+    const providerFor = (context: ConnectorContext, id: string) =>
+      new KvOAuthProvider(
+        id,
+        context.storage,
+        `${OAUTH_BASE}/oauth/callback/${id}`,
+        undefined,
+        true,
+        oauthSealerFor(context),
+      );
+    const notion = registry.contextFor("notion", OAUTH_BASE);
+
+    const provider = providerFor(notion, "notion");
+    expect(await provider.tokens()).toEqual(tokens);
+    expect(await provider.clientInformation()).toEqual(client);
+
+    const sealedTokens = required((await storage.get("conn:notion:oauth:tokens")) ?? undefined);
+    const sealedClient = required((await storage.get("conn:notion:oauth:client")) ?? undefined);
+    expect(sealedTokens).not.toContain("mcp-token");
+    expect(sealedClient).not.toContain("mcp-client");
 
     await vault.set("notion", "static-fallback-token", "user_123");
     await vault.delete("notion");
 
-    expect(await storage.get("conn:notion:oauth:tokens")).toBe(
-      '{"access_token":"mcp-token"}',
+    expect(await storage.get("conn:notion:oauth:tokens")).toBe(sealedTokens);
+    expect(await storage.get("conn:notion:oauth:client")).toBe(sealedClient);
+    const reread = providerFor(registry.contextFor("notion", OAUTH_BASE), "notion");
+    expect(await reread.tokens()).toEqual(tokens);
+    expect(await reread.clientInformation()).toEqual(client);
+
+    // The sealed bytes are bound to their connector and owner: copied into
+    // another connector's namespace, or into a principal's partition of the
+    // same connector, they open as nothing.
+    await storage.set("conn:linear:oauth:tokens", sealedTokens);
+    await storage.set("conn:linear:oauth:client", sealedClient);
+    const linear = providerFor(registry.contextFor("linear", OAUTH_BASE), "linear");
+    expect(await linear.tokens()).toBeUndefined();
+    expect(await linear.clientInformation()).toBeUndefined();
+
+    await storage.set("principal:owner-a:conn:notion:oauth:tokens", sealedTokens);
+    await storage.set("principal:owner-a:conn:notion:oauth:client", sealedClient);
+    const personal = providerFor(
+      registry.personalRegistry("owner-a").contextFor("notion", OAUTH_BASE),
+      "notion",
     );
-    expect(await storage.get("conn:notion:oauth:client")).toBe(
-      '{"client_id":"mcp-client"}',
-    );
+    expect(await personal.tokens()).toBeUndefined();
+    expect(await personal.clientInformation()).toBeUndefined();
   });
 
   it("rejects invalid keys, empty values, and oversized values", async () => {
