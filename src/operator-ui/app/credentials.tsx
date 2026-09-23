@@ -11,6 +11,7 @@ import {
   saveCredential,
   testCredential,
 } from "./store.js";
+import { FixPrompt } from "./parts.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
@@ -159,6 +160,13 @@ export function CredentialCard({
         </div>
       ) : null}
       {credential.error ? <div class="msg">{credential.error}</div> : null}
+      {credential.error && credential.problem ? (
+        <FixPrompt
+          kind={credential.problem}
+          connectorId={connector.id}
+          name={connector.title || connector.id}
+        />
+      ) : null}
       {/* Leftover stored fields are not an error — the credential still works,
           so this stays muted copy rather than the msg block a failure earns. */}
       {credential.notice ? (

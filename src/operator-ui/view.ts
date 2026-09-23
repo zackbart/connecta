@@ -3,7 +3,10 @@ import type {
   CredentialManagementCapability,
   UiConnector,
   UiData,
+  UiProblem,
+  UiToolSafety,
 } from "./model.js";
+import type { FixPromptKind } from "./fix-prompts.js";
 
 /**
  * Everything the operator app knows, and every rule for changing it, with no
@@ -56,18 +59,28 @@ export interface UiActivityEvent {
   friction?: string;
 }
 
+/**
+ * Which fix prompt a failure offers. A kind and a configured connector id —
+ * the message beside it never travels with it.
+ */
+export interface NoticeFix {
+  kind: FixPromptKind;
+  connectorId: string;
+}
+
 /** A message with the tone that decides its live region: status or alert. */
 export interface Notice {
   message: string;
   tone: "info" | "error";
+  fix?: NoticeFix;
 }
 
 export function info(message: string): Notice {
   return { message, tone: "info" };
 }
 
-export function failure(message: string): Notice {
-  return { message, tone: "error" };
+export function failure(message: string, fix?: NoticeFix): Notice {
+  return fix ? { message, tone: "error", fix } : { message, tone: "error" };
 }
 
 /**
@@ -277,6 +290,35 @@ export function connectorSummaryParts(
       : []),
     { text: toolCountLabel(summary.tools), tone: "neutral" as Tone },
   ];
+}
+
+/**
+ * The badge for each call path, keyed by the server's classification so the
+ * planned third state is a row here rather than a new branch in a component.
+ */
+export const TOOL_SAFETY_BADGE: Readonly<
+  Record<UiToolSafety, { label: string; tone: Tone; title: string }>
+> = {
+  runs_in_programs: {
+    label: "runs in programs",
+    tone: "ok",
+    title: "Explicitly read-only: execute_code programs may call it without asking.",
+  },
+  needs_approval: {
+    label: "needs approval",
+    tone: "warn",
+    title: "Not explicitly read-only: calls cross call_destructive_tool, where the host asks first.",
+  },
+};
+
+/**
+ * Copy for a problem the status message does not already describe. Only a
+ * catalog failure qualifies: status reads "ok" there, so there is no message.
+ */
+export function problemCopy(problem: UiProblem | undefined): string | null {
+  return problem === "catalog_failed"
+    ? "Connected, but its tool catalog could not be loaded, so none of its tools are served."
+    : null;
 }
 
 /** Who owns this connector's downstream credentials, in two words. */

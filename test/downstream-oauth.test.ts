@@ -4184,7 +4184,7 @@ describe("/oauth/callback/<id> route", () => {
       new Request(`${BASE}/oauth/callback/svc?error=access_denied`),
     );
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("access_denied");
+    expect(await res.text()).toContain('data-oauth-callback="denied"');
   });
 
   it("missing code → 400", async () => {
@@ -4204,7 +4204,7 @@ describe("/oauth/callback/<id> route", () => {
     expect(res.status).toBe(400);
     const body = await res.text();
     expect(body).not.toContain(evil);
-    expect(body).toContain("&lt;script&gt;");
+    expect(body).not.toContain("&lt;script&gt;");
   });
 });
 

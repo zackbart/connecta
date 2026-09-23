@@ -311,7 +311,51 @@
     justify-content: space-between;
     padding: .5rem .5rem .5rem .75rem;
   }
-  .endpoint code { overflow-wrap: anywhere; }
+  .endpoint code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .endpoints, .endpoint-block { display: grid; gap: .35rem; }
+  .endpoints { gap: .6rem; }
+  .endpoint-label { flex: none; }
+  .setup-list { display: grid; gap: .6rem; margin-top: .5rem; }
+  .setup-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    display: grid;
+    gap: .35rem;
+    padding: .5rem .6rem .6rem .75rem;
+  }
+  .setup-head {
+    align-items: center;
+    display: flex;
+    gap: .5rem;
+    justify-content: space-between;
+  }
+
+  /* Code a person copies: setup snippets and fix prompts. Wrapped rather than
+     scrolled, so a narrow screen shows all of it. */
+  .setup-code, .fix-prompt-text {
+    background: var(--surface-2);
+    border-radius: calc(var(--radius) / 2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: .75rem;
+    line-height: 1.55;
+    margin: 0;
+    overflow-wrap: anywhere;
+    padding: .5rem .6rem;
+    white-space: pre-wrap;
+  }
+
+  /* Fix prompts */
+
+  .fix-prompt { display: grid; gap: .35rem; }
+  .fix-prompt-head { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
+  .fix-prompt .fix-prompt-text {
+    border: 1px solid var(--border);
+    margin-top: .4rem;
+    max-height: 18rem;
+    overflow: auto;
+  }
 
   /* Connector rows */
 
@@ -393,7 +437,9 @@
     border-left: 2px solid var(--border-strong);
     padding-left: .6rem;
   }
-  .tool code { font-family: var(--mono); font-size: .8125rem; }
+  .tool code { font-family: var(--mono); font-size: .8125rem; overflow-wrap: anywhere; }
+  .tool-head { align-items: center; display: flex; flex-wrap: wrap; gap: .25rem .5rem; }
+  .tool-legend { margin-bottom: .15rem; }
   .td { color: var(--muted); font-size: .8125rem; }
   details > summary { cursor: pointer; }
   .disclosure {
@@ -485,6 +531,7 @@
     :root { --pad: 1rem; }
     .conn-head { align-items: flex-start; flex-direction: column; gap: .4rem; }
     .conn-badges { justify-content: flex-start; }
+    .endpoint { flex-wrap: wrap; }
     .activity-item { grid-template-columns: minmax(0, 1fr); }
     .activity-outcome { text-align: left; }
   }

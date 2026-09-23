@@ -10,13 +10,20 @@ import {
   driftSummary,
   formatDate,
   permissionLabel,
+  problemCopy,
   safeHttpHref,
   summarizeConnectors,
+  TOOL_SAFETY_BADGE,
   toolCountLabel,
   type OperatorState,
 } from "../view.js";
+import {
+  clientServerName,
+  clientSetupCommands,
+  poolEndpointUrl,
+} from "../setup-commands.js";
 import { mcpUrl, productName, productOperatorLabel } from "./config.js";
-import { Badge, CopyButton, Empty, NoticeLine } from "./parts.js";
+import { Badge, CopyButton, Empty, FixPrompt, NoticeLine } from "./parts.js";
 import { oauthAction, refreshConnector, setConnectorFilter } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -37,6 +44,8 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
   const drift = connector.catalogDrift;
   const state = driftState(drift);
   return (
+    <>
+    {/* Kept outside the counted panel, so the panel stays counts only. */}
     <div
       id={`drift-${connector.id}`}
       class={`connector-drift ${state}`}
@@ -54,6 +63,86 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
           ))}
         </ul>
       )}
+    </div>
+    {state === "warning" ? (
+      <FixPrompt
+        kind="catalog_drift"
+        connectorId={connector.id}
+        name={connector.title || connector.id}
+      />
+    ) : null}
+    </>
+  );
+}
+
+/**
+ * A tool's call path as the server classified it. Keyed by the payload's
+ * value through `TOOL_SAFETY_BADGE`; an unknown or missing value renders
+ * nothing rather than a guess.
+ */
+function SafetyBadge({ safety }: { safety: UiConnector["tools"][number]["safety"] }) {
+  const badge = safety ? TOOL_SAFETY_BADGE[safety] : undefined;
+  if (!badge) return null;
+  return (
+    <span class="tool-safety" title={badge.title} data-safety={safety}>
+      <Badge tone={badge.tone}>{badge.label}</Badge>
+    </span>
+  );
+}
+
+/**
+ * One MCP endpoint: its URL, a copy button, and the client snippets for it.
+ * The deployment's `/mcp` and every pool this identity may open render the
+ * same way, so a pool is never a second-class endpoint.
+ */
+function Endpoint({
+  url,
+  name,
+  label,
+  primary,
+}: {
+  url: string;
+  name: string;
+  label?: string;
+  primary?: boolean;
+}) {
+  return (
+    <div class="endpoint-block" data-endpoint={name}>
+      <div class="endpoint">
+        {label ? <span class="endpoint-label cap">{label}</span> : null}
+        <code {...(primary ? { id: "mcpUrl" } : {})} class="mono">
+          {url}
+        </code>
+        <CopyButton
+          value={url}
+          label="Copy URL"
+          {...(label ? { ariaLabel: `Copy URL for ${label}` } : {})}
+        />
+      </div>
+      <details class="setup">
+        <summary class="disclosure">
+          Client setup{label ? ` · ${label}` : ""}
+        </summary>
+        <div class="setup-list">
+          {clientSetupCommands(name, url).map((command) => (
+            <div class="setup-item" key={command.id} data-setup={command.id}>
+              <div class="setup-head">
+                <span class="cap">{command.label}</span>
+                <CopyButton
+                  value={command.text}
+                  label="Copy"
+                  class="btn quiet"
+                  ariaLabel={`Copy ${command.label} setup${label ? ` for ${label}` : ""}`}
+                />
+              </div>
+              <pre class="setup-code">{command.text}</pre>
+            </div>
+          ))}
+          <p class="meta">
+            No token is included. Clients sign in through this deployment's inbound auth.
+          </p>
+        </div>
+      </details>
     </div>
   );
 }
@@ -113,7 +202,17 @@ function ConnectorRow({
         {connector.description ? (
           <p class="conn-note">{connector.description}</p>
         ) : null}
-        {connector.message ? <p class="msg">{connector.message}</p> : null}
+        {connector.message ? (
+          <p class="msg">{connector.message}</p>
+        ) : problemCopy(connector.problem) ? (
+          <p class="msg">{problemCopy(connector.problem)}</p>
+        ) : null}
+        {/* A credential mismatch is also on the credential card; one prompt is enough. */}
+        {connector.problem &&
+        connector.status !== "loading" &&
+        connector.problem !== connector.credential?.problem ? (
+          <FixPrompt kind={connector.problem} connectorId={connector.id} name={name} />
+        ) : null}
         {connector.authorizationUrl && !authorization ? (
           <p class="meta">Authorization URL: {connector.authorizationUrl}</p>
         ) : null}
@@ -174,9 +273,19 @@ function ConnectorRow({
           <details open={expanded}>
             <summary class="disclosure">Tools ({tools.length})</summary>
             <div class="tool-list">
+              {tools.some((tool) => tool.safety) ? (
+                <p class="meta tool-legend">
+                  Read-only tools run inside execute_code programs. Everything
+                  else goes through call_destructive_tool, where the host asks
+                  first.
+                </p>
+              ) : null}
               {tools.map((tool) => (
                 <div class="tool" key={tool.address}>
-                  <code>{tool.address}</code>
+                  <div class="tool-head">
+                    <code>{tool.address}</code>
+                    <SafetyBadge safety={tool.safety} />
+                  </div>
                   {tool.description ? (
                     <span class="td">{tool.description}</span>
                   ) : null}
@@ -199,6 +308,38 @@ function ConnectorRow({
         </details>
       </div>
     </details>
+  );
+}
+
+/**
+ * The deployment's endpoint, then one per pool this identity may open. The
+ * pool list is what `/ui/data` returned after running each pool's grant, so
+ * a pool that would 404 for this reader never appears here.
+ */
+function Endpoints({
+  pools,
+  serverName,
+}: {
+  pools: string[];
+  serverName: string | undefined;
+}) {
+  return (
+    <div class="endpoints">
+      <Endpoint
+        url={mcpUrl}
+        name={clientServerName(serverName)}
+        primary
+        {...(pools.length ? { label: "All tools" } : {})}
+      />
+      {pools.map((pool) => (
+        <Endpoint
+          key={pool}
+          url={poolEndpointUrl(mcpUrl, pool)}
+          name={clientServerName(serverName, pool)}
+          label={`Pool · ${pool}`}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -229,12 +370,7 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
         </h1>
         <div class="lead-copy">
           <p>Point an MCP client at this endpoint to reach the tools below.</p>
-          <div class="endpoint">
-            <code id="mcpUrl" class="mono">
-              {mcpUrl}
-            </code>
-            <CopyButton value={mcpUrl} label="Copy URL" />
-          </div>
+          <Endpoints pools={data?.pools ?? []} serverName={data?.serverInfo?.name} />
           <p class="cap" id="serverInfo">
             {data
               ? `${data.serverInfo?.name || productName} v${data.connectaVersion || "?"}`
