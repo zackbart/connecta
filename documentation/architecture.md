@@ -104,7 +104,7 @@ or hands out, and a change usually belongs in exactly one of them:
 | Module | Owns |
 | --- | --- |
 | `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, catalog TTL/persistence/completeness, refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
-| `src/catalog-service.ts` | Request-local listing, search, and describe. Coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
+| `src/catalog-service.ts` | Request-local listing, search, and describe. Caches catalogs inside one request, fans discovery probes out under deadlines, and opts agent reads into the runtime's deferred catalog channel when one exists. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact schema renderer discovery shows. |
 | `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
@@ -229,8 +229,9 @@ shape from building, in someone else's repository rather than this one.
 
 Request admission, downstream call admission, deadlines, bounded settled
 fan-out, connector scope close, OAuth refresh coordination, catalog
-persistence, catalog refresh flights, the result stash, and the remote MCP
-connection lifecycle run on Effect v4; the rest of the core has not moved yet.
+persistence, catalog refresh flights, the result stash, the remote MCP
+connection lifecycle, and discovery's request-scoped catalog cache run on
+Effect v4; the rest of the core has not moved yet.
 Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
@@ -265,7 +266,15 @@ and each connection is a lease forked from it that closes the connection's
 transport, bounded to a second for the session DELETE and a second for the
 local close. A connect in flight is a Deferred that every caller in the scope
 joins and that resolves with the client it connected, and `closeScope` closes
-the Scope, which is the one-way latch a late connect checks.
+the Scope, which is the one-way latch a late connect checks. `CatalogService`
+keeps its Promise methods; inside, each connector a request asks about is a
+Deferred that the first asker's registry read completes and every later asker
+joins, a success kept for the rest of the request and a failure dropped so the
+next ask reads again. The read settles the Deferred itself, so a probe
+deadline ends one asker's wait and never the read the others share. Search and
+describe fan out over those catalogs with `Effect.forEach` under the
+discovery concurrency, each probe under `withDeadlineEffect`, and settle every
+slot with `Effect.result`; ranking and rendering stay synchronous.
 
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting
