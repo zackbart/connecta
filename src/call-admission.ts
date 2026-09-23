@@ -1,4 +1,10 @@
+import { Deferred, Duration, Effect } from "effect";
 import { ConnectorCallError } from "./errors.js";
+import {
+  provideCallAdmissionProgram,
+  startCallAdmission,
+} from "./runtime/call-admission.js";
+import { fromSignal, runEdge } from "./runtime/run.js";
 import type {
   ConnectorCallAdmissionInput,
   ConnectorCallAdmissionPolicy,
@@ -50,13 +56,18 @@ export interface CallAdmissionPermit {
   release(): void;
 }
 
+/**
+ * One queued call. Its outcome is a Deferred completed by exactly one party:
+ * the pump with a permit or a refusal, close() with a shutdown error, or the
+ * waiting fiber itself on timeout or abort. removeWaiter() arbitrates — only
+ * the party that takes the waiter out of the queue may settle it. A waiter
+ * holds a signal, a clock, and a continuation; never the call's arguments.
+ */
 interface Waiter {
-  queuedAt: number;
-  resolve: (permit: CallAdmissionPermit) => void;
-  reject: (error: CallAdmissionError) => void;
-  signal?: AbortSignal;
-  onAbort?: () => void;
-  timer?: ReturnType<typeof setTimeout>;
+  readonly queuedAt: number;
+  readonly now: () => number;
+  readonly signal: AbortSignal | undefined;
+  readonly outcome: Deferred.Deferred<CallAdmissionPermit, CallAdmissionError>;
 }
 
 interface PartitionState {
@@ -226,136 +237,10 @@ export class ConnectorCallAdmissionController {
   acquire(
     input: Readonly<ConnectorCallAdmissionInput> & { signal?: AbortSignal },
   ): Promise<CallAdmissionPermit> {
-    // Copy the signal out before constructing any waiter closure. Referencing
-    // `input` from a queued callback would retain its `args`, defeating the
-    // limiter's payload-free state contract.
-    const signal = input.signal;
-    if (this.closed) {
-      return Promise.reject(
-        new CallAdmissionError(
-          "closed",
-          "unavailable",
-          `Connector "${this.connectorId}" call admission is closed.`,
-        ),
-      );
-    }
-    if (signal?.aborted) {
-      this.cancelledTotal++;
-      return Promise.reject(this.cancelled(signal));
-    }
-
-    let key: string;
-    try {
-      key = this.partitionKey
-        ? this.partitionKey({
-            toolName: input.toolName,
-            args: input.args,
-          })
-        : DEFAULT_PARTITION_KEY;
-    } catch (cause) {
-      this.rejectedTotal++;
-      return Promise.reject(
-        new CallAdmissionError(
-          "partition",
-          "connector_call_failed",
-          `Connector "${this.connectorId}" call-admission partitionKey threw.`,
-          { cause },
-        ),
-      );
-    }
-    if (
-      typeof key !== "string" ||
-      enc.encode(key).length > MAX_PARTITION_KEY_BYTES
-    ) {
-      this.rejectedTotal++;
-      return Promise.reject(
-        new CallAdmissionError(
-          "partition",
-          "connector_call_failed",
-          `Connector "${this.connectorId}" call-admission partitionKey must return a string of at most ${MAX_PARTITION_KEY_BYTES} UTF-8 bytes.`,
-        ),
-      );
-    }
-    // A partition callback is operator code and may synchronously abort the
-    // caller. Recheck after it returns so that cancellation cannot consume a
-    // budget entry or concurrency slot.
-    if (signal?.aborted) {
-      this.cancelledTotal++;
-      return Promise.reject(this.cancelled(signal));
-    }
-
-    const now = Date.now();
-    let state = this.partitions.get(key);
-    if (!state) {
-      this.evictIdlePartitions(now);
-      if (this.partitions.size >= this.maxPartitions) {
-        this.rejectedTotal++;
-        return Promise.reject(
-          new CallAdmissionError(
-            "partition",
-            "rate_limited",
-            `Connector "${this.connectorId}" call-admission partition capacity is exhausted.`,
-            { retryAfterMs: this.retryAfterMs },
-          ),
-        );
-      }
-      state = {
-        active: 0,
-        waiters: [],
-        admittedAt: [],
-      };
-      this.partitions.set(key, state);
-    }
-    this.pruneBudget(state, now);
-    const budgetRetryAfterMs = this.budgetRetryAfterMs(state, now);
-    if (budgetRetryAfterMs !== undefined) {
-      this.rateLimitedTotal++;
-      return Promise.reject(this.budgetLimited(budgetRetryAfterMs));
-    }
-    if (
-      this.maxConcurrency === undefined ||
-      state.active < this.maxConcurrency
-    ) {
-      return Promise.resolve(this.admit(state, now, 0));
-    }
-    if (state.waiters.length >= this.maxQueueSize) {
-      this.rejectedTotal++;
-      return Promise.reject(this.concurrencyLimited("queue is full"));
-    }
-
-    return new Promise<CallAdmissionPermit>((resolve, reject) => {
-      const waiter: Waiter = {
-        queuedAt: now,
-        resolve,
-        reject,
-        ...(signal ? { signal } : {}),
-      };
-      waiter.onAbort = () => {
-        if (!this.removeWaiter(state!, waiter)) return;
-        this.cleanupWaiter(waiter);
-        this.cancelledTotal++;
-        reject(this.cancelled(signal!));
-        this.maybeDeletePartition(key, state!, Date.now());
-      };
-      waiter.timer = setTimeout(() => {
-        if (!this.removeWaiter(state!, waiter)) return;
-        this.cleanupWaiter(waiter);
-        this.rejectedTotal++;
-        reject(
-          this.concurrencyLimited(
-            `queue wait exceeded ${this.queueTimeoutMs}ms`,
-          ),
-        );
-        this.maybeDeletePartition(key, state!, Date.now());
-      }, this.queueTimeoutMs);
-      state!.waiters.push(waiter);
-      this.queuedTotal++;
-      signal?.addEventListener("abort", waiter.onAbort, { once: true });
-      // Close the check-to-listener race: an abort before registration is not
-      // replayed by AbortSignal, so inspect it once after the waiter is fully
-      // removable and its timer is installed.
-      if (signal?.aborted) waiter.onAbort();
-    });
+    // The checks run now and the returned effect only waits. It closes over
+    // the partition key, not `input`, so a queued call does not retain its
+    // `args` — the limiter's payload-free state contract.
+    return runEdge(startCallAdmission(this, input));
   }
 
   /** A principal registry may be evicted only after calls and budgets drain. */
@@ -397,12 +282,14 @@ export class ConnectorCallAdmissionController {
     this.closed = true;
     for (const state of this.partitions.values()) {
       for (const waiter of state.waiters.splice(0)) {
-        this.cleanupWaiter(waiter);
-        waiter.reject(
-          new CallAdmissionError(
-            "closed",
-            "unavailable",
-            `Connector "${this.connectorId}" call admission is closed.`,
+        Deferred.doneUnsafe(
+          waiter.outcome,
+          Effect.fail(
+            new CallAdmissionError(
+              "closed",
+              "unavailable",
+              `Connector "${this.connectorId}" call admission is closed.`,
+            ),
           ),
         );
       }
@@ -441,22 +328,32 @@ export class ConnectorCallAdmissionController {
       state.waiters.length > 0
     ) {
       const waiter = state.waiters.shift()!;
-      this.cleanupWaiter(waiter);
       if (waiter.signal?.aborted) {
         this.cancelledTotal++;
-        waiter.reject(this.cancelled(waiter.signal));
+        Deferred.doneUnsafe(
+          waiter.outcome,
+          Effect.fail(this.cancelled(waiter.signal)),
+        );
         continue;
       }
-      const now = Date.now();
+      // The waiter's own clock: the fiber's Clock for an Effect caller, the
+      // live `Date.now` for a Promise one.
+      const now = waiter.now();
       this.pruneBudget(state, now);
       const retryAfterMs = this.budgetRetryAfterMs(state, now);
       if (retryAfterMs !== undefined) {
         this.rateLimitedTotal++;
-        waiter.reject(this.budgetLimited(retryAfterMs));
+        Deferred.doneUnsafe(
+          waiter.outcome,
+          Effect.fail(this.budgetLimited(retryAfterMs)),
+        );
         continue;
       }
       const waitMs = Math.max(0, now - waiter.queuedAt);
-      waiter.resolve(this.admit(state, now, waitMs));
+      Deferred.doneUnsafe(
+        waiter.outcome,
+        Effect.succeed(this.admit(state, now, waitMs)),
+      );
     }
   }
 
@@ -515,11 +412,26 @@ export class ConnectorCallAdmissionController {
     return true;
   }
 
-  private cleanupWaiter(waiter: Waiter): void {
-    if (waiter.timer !== undefined) clearTimeout(waiter.timer);
-    if (waiter.onAbort) {
-      waiter.signal?.removeEventListener("abort", waiter.onAbort);
+  // The waiting fiber was interrupted — an Effect caller's scope closed, not a
+  // signal. Withdraw the waiter if it is still queued; if the pump handed it a
+  // permit in the same breath, give the slot back, because nobody is left to
+  // receive it. (A line comment, not JSDoc: TypeScript copies a private
+  // member's JSDoc into the published declaration.)
+  private cleanupWaiter(
+    key: string,
+    state: PartitionState,
+    waiter: Waiter,
+  ): Effect.Effect<void> {
+    if (this.removeWaiter(state, waiter)) {
+      this.cancelledTotal++;
+      this.maybeDeletePartition(key, state, waiter.now());
+      return Effect.void;
     }
+    if (!Deferred.isDoneUnsafe(waiter.outcome)) return Effect.void;
+    return Deferred.await(waiter.outcome).pipe(
+      Effect.tap((permit) => Effect.sync(() => permit.release())),
+      Effect.ignore,
+    );
   }
 
   private concurrencyLimited(reason: string): CallAdmissionError {
@@ -547,5 +459,173 @@ export class ConnectorCallAdmissionController {
       `Connector "${this.connectorId}" call was cancelled before admission.`,
       { cause: signal.reason },
     );
+  }
+
+  // The admission program, handed to src/runtime/call-admission.ts. It lives
+  // in a static block because the class declaration ships, private member
+  // names and all: a new method or field would change the published `.d.ts`,
+  // and a static block is the one place outside an instance method that may
+  // read this bookkeeping while emitting nothing there.
+  //
+  // Calling the program decides: everything up to a grant, a refusal, or a
+  // place in the queue happens synchronously, and only the queued wait is left
+  // for a fiber. Semaphore does not fit that wait — permits here are
+  // per-partition, the queue is bounded and counted, and each waiter carries
+  // its own timeout and budget recheck — so the queue stays explicit, as in
+  // AdmissionController, with a Deferred per waiter.
+  static {
+    provideCallAdmissionProgram((controller, input, now) => {
+      // Copy the signal out before building the wait: the effect returned
+      // below must not reach `input`, or a queued call would retain `args`.
+      const signal = input.signal;
+      if (controller.closed) {
+        return Effect.fail(
+          new CallAdmissionError(
+            "closed",
+            "unavailable",
+            `Connector "${controller.connectorId}" call admission is closed.`,
+          ),
+        );
+      }
+      if (signal?.aborted) {
+        controller.cancelledTotal++;
+        return Effect.fail(controller.cancelled(signal));
+      }
+
+      let key: string;
+      try {
+        key = controller.partitionKey
+          ? controller.partitionKey({
+              toolName: input.toolName,
+              args: input.args,
+            })
+          : DEFAULT_PARTITION_KEY;
+      } catch (cause) {
+        controller.rejectedTotal++;
+        return Effect.fail(
+          new CallAdmissionError(
+            "partition",
+            "connector_call_failed",
+            `Connector "${controller.connectorId}" call-admission partitionKey threw.`,
+            { cause },
+          ),
+        );
+      }
+      if (
+        typeof key !== "string" ||
+        enc.encode(key).length > MAX_PARTITION_KEY_BYTES
+      ) {
+        controller.rejectedTotal++;
+        return Effect.fail(
+          new CallAdmissionError(
+            "partition",
+            "connector_call_failed",
+            `Connector "${controller.connectorId}" call-admission partitionKey must return a string of at most ${MAX_PARTITION_KEY_BYTES} UTF-8 bytes.`,
+          ),
+        );
+      }
+      // A partition callback is operator code and may synchronously abort the
+      // caller. Recheck after it returns so that cancellation cannot consume a
+      // budget entry or concurrency slot.
+      if (signal?.aborted) {
+        controller.cancelledTotal++;
+        return Effect.fail(controller.cancelled(signal));
+      }
+
+      const queuedAt = now();
+      let found = controller.partitions.get(key);
+      if (!found) {
+        controller.evictIdlePartitions(queuedAt);
+        if (controller.partitions.size >= controller.maxPartitions) {
+          controller.rejectedTotal++;
+          return Effect.fail(
+            new CallAdmissionError(
+              "partition",
+              "rate_limited",
+              `Connector "${controller.connectorId}" call-admission partition capacity is exhausted.`,
+              { retryAfterMs: controller.retryAfterMs },
+            ),
+          );
+        }
+        found = { active: 0, waiters: [], admittedAt: [] };
+        controller.partitions.set(key, found);
+      }
+      const state = found;
+      controller.pruneBudget(state, queuedAt);
+      const budgetRetryAfterMs = controller.budgetRetryAfterMs(state, queuedAt);
+      if (budgetRetryAfterMs !== undefined) {
+        controller.rateLimitedTotal++;
+        return Effect.fail(controller.budgetLimited(budgetRetryAfterMs));
+      }
+      if (
+        controller.maxConcurrency === undefined ||
+        state.active < controller.maxConcurrency
+      ) {
+        return Effect.succeed(controller.admit(state, queuedAt, 0));
+      }
+      if (state.waiters.length >= controller.maxQueueSize) {
+        controller.rejectedTotal++;
+        return Effect.fail(controller.concurrencyLimited("queue is full"));
+      }
+
+      const waiter: Waiter = {
+        queuedAt,
+        now,
+        signal,
+        outcome: Deferred.makeUnsafe(),
+      };
+      state.waiters.push(waiter);
+      controller.queuedTotal++;
+
+      // A timeout or abort settles the waiter only if it takes it out of the
+      // queue first. Otherwise the pump or close() got there in the same tick,
+      // and the outcome they recorded is the answer.
+      const giveUp = (
+        count: () => void,
+        error: () => CallAdmissionError,
+      ): Effect.Effect<CallAdmissionPermit, CallAdmissionError> =>
+        Effect.suspend(() => {
+          if (!controller.removeWaiter(state, waiter)) {
+            return Deferred.await(waiter.outcome);
+          }
+          count();
+          const refusal = error();
+          controller.maybeDeletePartition(key, state, now());
+          return Effect.fail(refusal);
+        });
+
+      // One flat race; each contender is a forked fiber. The abort contender
+      // checks the signal as it starts, which closes the check-to-listener
+      // race an AbortSignal would not replay.
+      const contenders = [
+        Deferred.await(waiter.outcome),
+        Effect.sleep(Duration.millis(controller.queueTimeoutMs)).pipe(
+          Effect.andThen(
+            giveUp(
+              () => controller.rejectedTotal++,
+              () =>
+                controller.concurrencyLimited(
+                  `queue wait exceeded ${controller.queueTimeoutMs}ms`,
+                ),
+            ),
+          ),
+        ),
+      ];
+      if (signal) {
+        contenders.push(
+          fromSignal(signal).pipe(
+            Effect.catch(() =>
+              giveUp(
+                () => controller.cancelledTotal++,
+                () => controller.cancelled(signal),
+              ),
+            ),
+          ),
+        );
+      }
+      return Effect.raceAllFirst(contenders).pipe(
+        Effect.onInterrupt(() => controller.cleanupWaiter(key, state, waiter)),
+      );
+    });
   }
 }
