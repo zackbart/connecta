@@ -229,8 +229,8 @@ shape from building, in someone else's repository rather than this one.
 
 Request admission, downstream call admission, deadlines, bounded settled
 fan-out, connector scope close, OAuth refresh coordination, catalog
-persistence, and the result stash run on Effect v4; the rest of the core has
-not moved yet. Every published signature stays Promise-shaped, so each
+persistence, the result stash, and the remote MCP connection lifecycle run on
+Effect v4; the rest of the core has not moved yet. Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
 member names included. The core is an Effect program behind it.
@@ -249,7 +249,13 @@ returns a plain `FetchLike`; inside, a refresh flight is a Deferred, and the
 owning request's redemption is a fiber its abort interrupts. The registry's
 persisted catalog (the manifest and its chunks: read, write, delete) and its
 result stash are Effect programs over the `Storage` and `Logger` services,
-run from the registry's unchanged methods.
+run from the registry's unchanged methods. `remoteMcp()` keeps its
+Promise-shaped `Connector`; inside, each request scope's state holds a Scope,
+and each connection is a lease forked from it that closes the connection's
+transport, bounded to a second for the session DELETE and a second for the
+local close. A connect in flight is a Deferred that every caller in the scope
+joins and that resolves with the client it connected, and `closeScope` closes
+the Scope, which is the one-way latch a late connect checks.
 
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting

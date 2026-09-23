@@ -14,6 +14,7 @@ import type {
   Tool,
   Transport,
 } from "@modelcontextprotocol/client";
+import { Deferred, Duration, Effect, Exit, Scope } from "effect";
 import {
   KvOAuthProvider,
   OAuthRefreshCoordinator,
@@ -28,6 +29,7 @@ import {
 import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
 import { inheritOAuthSealer, oauthSealerFor } from "../oauth-sealing.js";
+import { detach, runEdge } from "../runtime/run.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -180,6 +182,14 @@ export interface RemoteMcpOptions {
 const TERMINATE_SESSION_BUDGET_MS = 1_000;
 
 /**
+ * How long the local close gets after the DELETE: the second of the two
+ * seconds the core's deferred scope-close tail allows (see
+ * `src/runtime/connector-scope.ts`). The SDK's own transports close at once;
+ * this bounds one that never does.
+ */
+const LOCAL_CLOSE_BUDGET_MS = 1_000;
+
+/**
  * Absolute backstop on `tools/list` pages in one refresh — a runaway guard, not
  * the primary defense.
  *
@@ -262,11 +272,11 @@ function isCursorShapeError(err: unknown): boolean {
  * (405 is a legal answer), errors, or never replies all fall through to the
  * close with the session left to age out as it did before.
  */
-async function terminateSession(
+function terminateSession(
   transport: Transport,
   logger: Logger,
   connectorId: string,
-): Promise<void> {
+): Effect.Effect<void> {
   // SDK v2's Client.close() does not send the legacy session DELETE on our
   // behalf. Connecta's own endpoint creates no protocol session, but a stateful
   // legacy downstream can still issue `Mcp-Session-Id`, and every path that
@@ -275,13 +285,9 @@ async function terminateSession(
   const terminate = (
     transport as Transport & { terminateSession?: () => Promise<void> }
   ).terminateSession;
-  if (typeof terminate !== "function") return;
-  // The SDK issues no request at all when no `mcp-session-id` was captured, so
-  // a stateless downstream never sees a spurious DELETE.
-  const done = Promise.resolve().then(() => terminate.call(transport));
-  await new Promise<void>((resolve) => {
-    let finished = false;
-    const warn = (message: string, error?: unknown) => {
+  if (typeof terminate !== "function") return Effect.void;
+  const warn = (message: string, error?: unknown) =>
+    Effect.sync(() => {
       try {
         if (error === undefined) logger.warn(message);
         else logger.warn(message, error);
@@ -289,41 +295,64 @@ async function terminateSession(
         // A diagnostic sink cannot make best-effort teardown observable to the
         // caller in the one way this contract forbids: by replacing its result.
       }
-    };
-    const timer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      warn(
-        `[connecta] connector "${connectorId}" session termination was not ` +
-          `acknowledged within ${TERMINATE_SESSION_BUDGET_MS} ms; the ` +
-          "downstream may still finish the headers-only DELETE, otherwise " +
-          "the session will remain until its provider timeout.",
-      );
-      resolve();
-    }, TERMINATE_SESSION_BUDGET_MS);
-    done.then(
-      () => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
-        resolve();
-      },
-      (error) => {
-        // The rejection handler stays attached after the timer wins, so an
-        // abort or other late failure is consumed without a duplicate warning.
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
+    });
+  // Whichever finishes first wins and the other is interrupted: an answer
+  // clears the timer, and a failure that lands after the timeout is consumed
+  // by the interrupted wait rather than warned about a second time.
+  return Effect.raceAllFirst([
+    // The SDK issues no request at all when no `mcp-session-id` was captured,
+    // so a stateless downstream never sees a spurious DELETE.
+    promised(() => Promise.resolve(terminate.call(transport))).pipe(
+      Effect.catch((error) =>
         warn(
           `[connecta] connector "${connectorId}" session termination was ` +
             "refused or failed; the downstream session may remain until its " +
             "provider timeout.",
           error,
-        );
-        resolve();
-      },
-    );
-  });
+        ),
+      ),
+    ),
+    Effect.sleep(Duration.millis(TERMINATE_SESSION_BUDGET_MS)).pipe(
+      Effect.andThen(
+        warn(
+          `[connecta] connector "${connectorId}" session termination was not ` +
+            `acknowledged within ${TERMINATE_SESSION_BUDGET_MS} ms; the ` +
+            "downstream may still finish the headers-only DELETE, otherwise " +
+            "the session will remain until its provider timeout.",
+        ),
+      ),
+    ),
+  ]);
+}
+
+/**
+ * The local half of a close: the SDK client's close once a client owns the
+ * transport, the bare transport's until then. Never fails, and stops waiting
+ * after LOCAL_CLOSE_BUDGET_MS — a transport whose close never settles would
+ * otherwise hold every caller that awaits the scope close, the credential Test
+ * action among them.
+ */
+function closeLocally(
+  client: Client | null,
+  transport: Transport | null,
+): Effect.Effect<void> {
+  if (!client && !transport) return Effect.void;
+  return Effect.raceAllFirst([
+    promised(() =>
+      Promise.resolve(client ? client.close() : transport?.close()),
+    ).pipe(Effect.ignore),
+    Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
+  ]);
+}
+
+/**
+ * One Promise step of an Effect program. It fails with exactly what the
+ * promise rejected with, never a wrapper, because callers check the SDK's and
+ * connecta's own error classes. `evaluate` takes no signal, so the step
+ * allocates no AbortController.
+ */
+function promised<A>(evaluate: () => PromiseLike<A>): Effect.Effect<A, unknown> {
+  return Effect.tryPromise({ try: evaluate, catch: (error) => error });
 }
 
 /** Classify protocol/status facts; provider prose never decides retryability. */
@@ -589,6 +618,19 @@ function learnedUrlSafeFetch(
 }
 
 interface ConnectionState {
+  /**
+   * The request scope's lifetime, closed once, by closeScope, and never
+   * reopened. Closed is terminal: neither a late connect nor a `reset()` can
+   * cache a client into a scope that is already gone, because that client
+   * would have no owner left to close it.
+   */
+  scope: Scope.Closeable;
+  /**
+   * The live connection's lifetime, a child of `scope`, taken out when its
+   * transport is built. Closing it closes that transport — through its client
+   * once one is cached — and closing `scope` closes it too.
+   */
+  lease: Scope.Closeable | null;
   client: Client | null;
   transport: Transport | null;
   /**
@@ -599,7 +641,12 @@ interface ConnectionState {
    * `cacheToolMetadata` reach-through.
    */
   toolDefinitions: Map<string, Tool>;
-  connecting: Promise<void> | null;
+  /**
+   * The connect in flight, published before any of it runs so every call
+   * that arrives meanwhile joins it rather than starting a second. Completed
+   * once, by the attempt itself, with the client it connected.
+   */
+  connecting: Deferred.Deferred<Client, unknown> | null;
   authRequired: boolean;
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
@@ -613,12 +660,6 @@ interface ConnectionState {
    * else.
    */
   credentialDigest: string | null;
-  /**
-   * One-way latch: set by closeScope and never cleared, so neither a late
-   * connect nor a `reset()` can cache a client into a scope that is already
-   * gone — that client would have no owner left to close it.
-   */
-  closed: boolean;
 }
 
 /**
@@ -640,12 +681,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     );
   }
   // Weak keys ensure a completed request does not leave its SDK client,
-  // transport, response bodies, AbortSignals, or connection promise reachable
+  // transport, response bodies, AbortSignals, or connect attempt reachable
   // from the isolate singleton. Those are request-bound in Cloudflare Workers.
+  // A closed scope keeps its (emptied) entry, so a late or future lookup finds
+  // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
-  // Closing is terminal even after `states.delete`: a late or future lookup
-  // must not recreate an ownerless connection under the ended scope.
-  const closedScopes = new WeakSet<object>();
   const isOauth = opts.auth?.type === "oauth";
   // Long-lived enough for distinct request scopes in this connector runtime to
   // join one token redemption. It owns no client, transport, or request state.
@@ -849,12 +889,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
   };
 
-  const stateFor = (ctx: ConnectorContext): ConnectionState => {
-    const scope = ctx.requestScope ?? ctx;
-    if (closedScopes.has(scope)) throw scopeEndedError();
-    let state = states.get(scope);
+  /** This request scope's entry, open or closed, created on first sight. */
+  const entryFor = (ctx: ConnectorContext): ConnectionState => {
+    const key = ctx.requestScope ?? ctx;
+    let state = states.get(key);
     if (!state) {
       state = {
+        scope: Scope.makeUnsafe(),
+        lease: null,
         client: null,
         transport: null,
         toolDefinitions: new Map(),
@@ -863,10 +905,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         provider: null,
         connectedGeneration: null,
         credentialDigest: null,
-        closed: false,
       };
-      states.set(scope, state);
+      states.set(key, state);
     }
+    return state;
+  };
+
+  const isClosed = (state: ConnectionState): boolean =>
+    state.scope.state._tag === "Closed";
+
+  const stateFor = (ctx: ConnectorContext): ConnectionState => {
+    const state = entryFor(ctx);
+    if (isClosed(state)) throw scopeEndedError();
     return state;
   };
 
@@ -924,6 +974,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   const reset = (state: ConnectionState) => {
+    state.lease = null;
     state.client = null;
     state.transport = null;
     state.toolDefinitions.clear();
@@ -932,46 +983,50 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state.provider = null;
     state.connectedGeneration = null;
     state.credentialDigest = null;
-    // `closed` is deliberately not cleared — see ConnectionState.
+    // `scope` is deliberately left as it is — see ConnectionState.
   };
 
   // The context has no deferred-work hook. Detached exits start this bounded
   // best-effort tail immediately; closeScope awaits its own tail so the core
-  // can pass it to the runtime's deferred channel.
-  const closingSessions = new WeakMap<Transport, Promise<void>>();
+  // can pass it to the runtime's deferred channel. Terminating and closing are
+  // each bounded, so no close waits more than two seconds in all.
+  const closingSessions = new WeakMap<Transport, Deferred.Deferred<void>>();
   const closeConnection = (
     client: Client | null,
     transport: Transport | null,
     logger: Logger,
-  ): Promise<void> => {
-    const previous = transport && closingSessions.get(transport);
-    if (previous) return previous;
-    const closing = (async () => {
-      try {
-        if (transport) await terminateSession(transport, logger, id);
-        if (client) await client.close();
-        else await transport?.close();
-      } catch {
-        // Local close cannot replace the operation's result.
-      }
-    })();
-    // A connect can acquire a session after an early close. Deduplicate only
-    // once that session exists, so its late abandonment still sends DELETE.
-    if (transport?.sessionId) closingSessions.set(transport, closing);
-    return closing;
-  };
+  ): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const previous = transport && closingSessions.get(transport);
+      if (previous) return Deferred.await(previous);
+      const closed = Deferred.makeUnsafe<void>();
+      // A connect can acquire a session after an early close. Deduplicate only
+      // once that session exists, so its late abandonment still sends DELETE.
+      if (transport?.sessionId) closingSessions.set(transport, closed);
+      return (
+        transport ? terminateSession(transport, logger, id) : Effect.void
+      ).pipe(
+        Effect.andThen(closeLocally(client, transport)),
+        Effect.ensuring(Deferred.done(closed, Exit.void)),
+      );
+    });
 
-  const closeHalf = (state: ConnectionState, ctx: ConnectorContext): void => {
-    const client = state.client;
-    const transport = state.transport;
+  /**
+   * Forget the live connection and close its lease without waiting. A connect
+   * still in flight is unpublished with it, and sees at its next check that it
+   * has been abandoned.
+   */
+  const closeHalf = (state: ConnectionState): void => {
+    const lease = state.lease;
     reset(state);
-    void closeConnection(client, transport, ctx.logger);
+    const release = lease && Scope.closeUnsafe(lease, Exit.void);
+    if (release) detach(release);
   };
 
   const ensureConnected = async (
     ctx: ConnectorContext,
     state: ConnectionState,
-  ): Promise<void> => {
+  ): Promise<Client> => {
     // A 401 after connect is a verdict for the whole request scope, not merely
     // for the one call that observed it. Do not let the still-cached client make
     // a later status or call in the same scope report healthy.
@@ -989,9 +1044,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const provider = newProvider(ctx, state);
       oauthGeneration = await provider.generation();
       if (provider.isOperatorDisconnectedGeneration(oauthGeneration)) {
-        const connecting = state.connecting;
-        void connecting?.catch(() => {});
-        closeHalf(state, ctx);
+        closeHalf(state);
         throw operatorDisconnectedError();
       }
     }
@@ -999,9 +1052,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // wiped credentials. This request's cached client still speaks the old
     // token — drop it so the next connect runs against current state.
     if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
-      if (state.closed) throw scopeEndedError();
+      if (isClosed(state)) throw scopeEndedError();
       if (oauthGeneration !== state.connectedGeneration) {
-        closeHalf(state, ctx);
+        closeHalf(state);
       }
     }
     // The static-credential counterpart of the epoch read above, and
@@ -1028,112 +1081,177 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.credentialDigest !== null &&
         state.credentialDigest !== credentialDigest
       ) {
-        if (state.closed) throw scopeEndedError();
-        const connecting = state.connecting;
-        void connecting?.catch(() => {});
-        closeHalf(state, ctx);
+        if (isClosed(state)) throw scopeEndedError();
+        closeHalf(state);
       }
     }
-    if (state.closed) throw scopeEndedError();
-    if (state.client) return;
-    if (!state.connecting) {
-      let attempt!: Promise<void>;
-      attempt = (async () => {
-        const ownsAttempt = () =>
-          state.connecting === attempt && !state.closed;
-        const abandon = (client: Client | null, transport: Transport): never => {
-          void closeConnection(client, transport, ctx.logger);
-          throw scopeEndedError();
-        };
-        // Let the assignment immediately below this async IIFE publish
-        // `state.connecting = attempt` before ownership is checked. OAuth's
-        // generation read naturally yields; unauthenticated transports do not.
-        await Promise.resolve();
-        // A provider belongs to exactly one connect attempt. A force reset can
-        // abandon that attempt while its transport still holds the provider;
-        // the replacement must never mutate the abandoned provider's epoch.
-        const provider = isOauth ? newProvider(ctx) : null;
-        const genAtStart = provider ? await provider.generation() : "";
-        if (!ownsAttempt()) throw scopeEndedError();
-        if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
-          throw operatorDisconnectedError();
-        }
-        provider?.captureGeneration(genAtStart);
-        // SDK v2 selects its validator by runtime export condition: AJV on
-        // Node and @cfworker/json-schema under workerd. The Workers-safe path
-        // no longer needs Connecta-specific wiring.
-        const c = new Client(
-          { name: "connecta", version: CONNECTA_VERSION },
-          {
-            versionNegotiation: {
-              mode: opts.versionNegotiation ?? "auto",
-            },
-            // Connecta has no interactive relay. Surface the result manually
-            // below as one structured, non-retryable connector failure.
-            inputRequired: { autoFulfill: false },
+    if (isClosed(state)) throw scopeEndedError();
+    if (state.client) return state.client;
+    const attempt =
+      state.connecting ??
+      startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
+    // A Promise edge of its own, as architecture.md's "Effect inside" requires
+    // of every shared wait: whatever this caller does next with the client is
+    // its own I/O, so it resumes in its own continuation rather than inside the
+    // call that completed the attempt.
+    const client = await runEdge(Deferred.await(attempt));
+    // Teardown can land between the attempt completing and this caller
+    // resuming. The client it would hand back is being closed, and this scope
+    // is over.
+    if (isClosed(state)) throw scopeEndedError();
+    return client;
+  };
+
+  /**
+   * Start this scope's connect attempt, publishing it before any of it runs.
+   * The attempt completes its Deferred itself, and every caller — the one that
+   * started it included — waits on that; nothing awaits the run directly,
+   * which is why handing it to `detach` orphans nothing.
+   */
+  const startConnect = (
+    ctx: ConnectorContext,
+    state: ConnectionState,
+    credentialValue: string | null,
+    credentialFramed: string | null,
+    credentialDigest: string | null,
+  ): Deferred.Deferred<Client, unknown> => {
+    const attempt = Deferred.makeUnsafe<Client, unknown>();
+    state.connecting = attempt;
+    // Published with the attempt, not with its result: a rotation that lands
+    // while this connect is in flight has to be visible to the next caller,
+    // which would otherwise wait on a client bound to the older key.
+    state.credentialDigest = credentialDigest;
+    detach(
+      connect(ctx, state, attempt, credentialValue, credentialFramed).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            // Force reset may have abandoned this attempt and installed a new
+            // one in the same request scope. An old completion must not erase
+            // the new attempt and allow a third concurrent connect.
+            if (state.connecting === attempt) state.connecting = null;
+            // Last: a Deferred resumes its waiters inside this call.
+            Deferred.doneUnsafe(attempt, exit);
+          }),
+        ),
+      ),
+    );
+    return attempt;
+  };
+
+  const connect = (
+    ctx: ConnectorContext,
+    state: ConnectionState,
+    attempt: Deferred.Deferred<Client, unknown>,
+    credentialValue: string | null,
+    credentialFramed: string | null,
+  ): Effect.Effect<Client, unknown> => {
+    // Force reset, rotation, and teardown all abandon an attempt the same way:
+    // they unpublish it and close the lease it holds, if it holds one yet.
+    const owned = () => state.connecting === attempt && !isClosed(state);
+    return Effect.gen(function* () {
+      // A provider belongs to exactly one connect attempt. A force reset can
+      // abandon that attempt while its transport still holds the provider;
+      // the replacement must never mutate the abandoned provider's epoch.
+      const provider = isOauth ? newProvider(ctx) : null;
+      const genAtStart = provider ? yield* promised(() => provider.generation()) : "";
+      if (!owned()) return yield* Effect.fail(scopeEndedError());
+      if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
+        return yield* Effect.fail(operatorDisconnectedError());
+      }
+      provider?.captureGeneration(genAtStart);
+      // SDK v2 selects its validator by runtime export condition: AJV on
+      // Node and @cfworker/json-schema under workerd. The Workers-safe path
+      // no longer needs Connecta-specific wiring.
+      const c = new Client(
+        { name: "connecta", version: CONNECTA_VERSION },
+        {
+          versionNegotiation: {
+            mode: opts.versionNegotiation ?? "auto",
           },
-        );
-        const t = buildTransport(ctx, provider, credentialFramed);
-        if (!ownsAttempt()) abandon(null, t);
-        state.transport = t;
-        try {
-          await c.connect(t);
-          // A probe deadline can end its scope while connect is still in flight.
-          // The transport is closed immediately by closeScope; if connect wins
-          // that race anyway, close the resulting client rather than
-          // resurrecting a session in the detached state object.
-          if (!ownsAttempt()) abandon(c, t);
-          // A force re-auth that landed WHILE we were connecting wiped the
-          // credentials this client just bound to. Discard it rather than
-          // cache a stale-isolate connection.
-          if (provider) {
-            const generation = await provider.generation();
-            // closeScope can land while the generation read is pending, after
-            // connect succeeded but before this client is cached. Discard the
-            // client on that side of the await too.
-            if (!ownsAttempt()) abandon(c, t);
-            if (generation !== genAtStart) {
-              void closeConnection(c, t, ctx.logger);
-              throw new UnauthorizedError(
+          // Connecta has no interactive relay. Surface the result manually
+          // below as one structured, non-retryable connector failure.
+          inputRequired: { autoFulfill: false },
+        },
+      );
+      const t = buildTransport(ctx, provider, credentialFramed);
+      if (!owned()) {
+        detach(closeConnection(null, t, ctx.logger));
+        return yield* Effect.fail(scopeEndedError());
+      }
+      // From here the connection has a lease on the scope, and closing it —
+      // force reset, rotation, teardown — closes this transport: through the
+      // client once one is cached, the bare transport until then, which is
+      // what aborts a connect still in flight.
+      const lease = Scope.forkUnsafe(state.scope);
+      const held: { client: Client | null } = { client: null };
+      yield* Scope.addFinalizer(
+        lease,
+        Effect.suspend(() => closeConnection(held.client, t, ctx.logger)),
+      );
+      state.lease = lease;
+      state.transport = t;
+      return yield* Effect.gen(function* () {
+        yield* promised(() => c.connect(t));
+        // A probe deadline can end its scope while connect is still in flight.
+        // The transport is closed immediately by closeScope; if connect wins
+        // that race anyway, close the resulting client rather than resurrecting
+        // a session in the detached state object.
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
+        // A force re-auth that landed WHILE we were connecting wiped the
+        // credentials this client just bound to. Discard it rather than cache
+        // a stale-isolate connection.
+        if (provider) {
+          const generation = yield* promised(() => provider.generation());
+          // closeScope can land while the generation read is pending, after
+          // connect succeeded but before this client is cached. Discard the
+          // client on that side of the await too.
+          if (!owned()) return yield* Effect.fail(scopeEndedError());
+          if (generation !== genAtStart) {
+            return yield* Effect.fail(
+              new UnauthorizedError(
                 "Connector was re-authorized during connect; reconnect required.",
-              );
-            }
+              ),
+            );
           }
-          if (!ownsAttempt()) abandon(c, t);
-          state.client = c;
-          state.connectedGeneration = genAtStart;
-          state.authRequired = false;
-        } catch (err) {
-          void closeConnection(c, t, ctx.logger);
-          if (ownsAttempt()) state.transport = null;
-          // Only a real 401/UnauthorizedError means auth is the problem — a
-          // network error on an oauth connector must surface as "error", not
-          // "auth_required".
-          if (err instanceof UnauthorizedError && ownsAttempt()) {
-            state.authRequired = true;
+        }
+        held.client = c;
+        state.client = c;
+        state.connectedGeneration = genAtStart;
+        state.authRequired = false;
+        return c;
+      }).pipe(
+        Effect.catch((err) => {
+          // Close the failed connection through its client, without waiting.
+          held.client = c;
+          if (owned()) {
+            state.lease = null;
+            state.transport = null;
+            // Only a real 401/UnauthorizedError means auth is the problem —
+            // a network error on an oauth connector must surface as "error",
+            // not "auth_required".
+            if (err instanceof UnauthorizedError) state.authRequired = true;
+            const release = Scope.closeUnsafe(lease, Exit.void);
+            if (release) detach(release);
+          } else {
+            // Whoever abandoned this attempt closed the lease already, while
+            // the connect was in flight. A session it acquired after that
+            // close still owes its DELETE.
+            detach(closeConnection(c, t, ctx.logger));
           }
           if (err instanceof UnauthorizedError) {
-            throw authRequiredError(err);
+            return Effect.fail(authRequiredError(err));
           }
           // Defense in depth for the one error class that can quote the
-          // credential: a runtime refusing the assembled header. `readCredential`
-          // already rejects a value that cannot ride one, so reaching this is a
-          // gap in that check rather than a routine outcome.
-          throw withoutCredential(err, credentialValue, credentialFramed);
-        } finally {
-          // Force reset may have abandoned this attempt and installed a new one
-          // in the same request scope. An old completion must not erase the new
-          // promise and allow a third concurrent connect.
-          if (state.connecting === attempt) state.connecting = null;
-        }
-      })();
-      state.connecting = attempt;
-      // Published with the attempt, not with its result: a rotation that lands
-      // while this connect is in flight has to be visible to the next caller,
-      // which would otherwise wait on a client bound to the older key.
-      state.credentialDigest = credentialDigest;
-    }
-    return state.connecting;
+          // credential: a runtime refusing the assembled header.
+          // `readCredential` already rejects a value that cannot ride one, so
+          // reaching this is a gap in that check rather than a routine
+          // outcome.
+          return Effect.fail(
+            withoutCredential(err, credentialValue, credentialFramed),
+          );
+        }),
+      );
+    });
   };
 
   const disconnectAuthorization = async (
@@ -1145,15 +1263,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // Publish the replacement epoch before waiting on or closing any
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
-    const connecting = state.connecting;
     try {
       await provider.resetAuthorization(operatorDisconnected);
     } finally {
-      // Consume the abandoned connect and close whichever half of the
+      // Abandon any connect in flight and close whichever half of the
       // client/transport exists. Reset is unconditional because KV may already
       // be fenced behind a newer epoch after a cleanup error.
-      void connecting?.catch(() => {});
-      closeHalf(state, ctx);
+      closeHalf(state);
     }
   };
 
@@ -1238,15 +1354,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // failure. Follow every page to the end of the cursor chain, preserve
       // schemas and annotations, and never cache or serve a partial walk.
       const state = stateFor(ctx);
-      await ensureConnected(ctx, state);
-      // Bind the client once so the whole walk provably rides one session — a
-      // cursor is only meaningful to the connection that issued it, and a
-      // re-read could in principle pick up a different one. It is NOT guarding
-      // against closeScope nulling state.client mid-loop: closeScope sets
-      // `closed` and nulls `client` in one synchronous run, and the loop
-      // re-checks `closed` before every page, so the nulled client is
-      // unreachable from here.
-      const client = state.client!;
+      // The client this call connected or joined, bound once so the whole walk
+      // provably rides one session — a cursor is only meaningful to the
+      // connection that issued it. Never re-read from `state`: a force reset
+      // or rotation can null it before this call resumes, and teardown is
+      // caught instead by the `closed` check before every page.
+      const client = await ensureConnected(ctx, state);
       // Raw SDK tools, not ToolDefs: the metadata re-prime below needs fields
       // (task support) that a ToolDef deliberately does not carry.
       const listed: ListedTool[] = [];
@@ -1260,7 +1373,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         for (let page = 0; page < MAX_TOOL_PAGES; page++) {
           // The scope can end between pages (probe timeout, teardown). Stop
           // rather than keep paging into a transport that is being closed.
-          if (state.closed) throw scopeEndedError();
+          if (isClosed(state)) throw scopeEndedError();
           // A discovery deadline uses the same signal for the whole chain.
           // Check it before issuing each page as well as passing it to the
           // in-flight SDK request, so expiry never starts one more round trip.
@@ -1367,8 +1480,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     async callTool(name, args, ctx) {
       const state = stateFor(ctx);
-      await ensureConnected(ctx, state);
-      const client = state.client!;
+      const client = await ensureConnected(ctx, state);
       try {
         const toolDefinition = state.toolDefinitions.get(name);
         if (toolDefinition?.execution?.taskSupport === "required") {
@@ -1407,21 +1519,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async closeScope(ctx) {
-      const scope = ctx.requestScope ?? ctx;
-      // Tombstone before any lookup or await. This also makes close-before-use
-      // terminal rather than allowing the scope to spring into existence later.
-      closedScopes.add(scope);
-      const state = states.get(scope);
-      if (!state) return;
-
-      // Delete before awaiting: a duplicate teardown is a no-op.
-      states.delete(scope);
-      state.closed = true;
-      const client = state.client;
-      const transport = state.transport;
+      // A scope closed before its first use gets an entry too, closed at once,
+      // so it cannot spring into existence later.
+      const state = entryFor(ctx);
+      // Closed before any await, and before the finalizers run: every check
+      // from here on sees the scope ended. A duplicate teardown finds it
+      // closed and has nothing to run.
+      const release = Scope.closeUnsafe(state.scope, Exit.void);
       reset(state);
-
-      await closeConnection(client, transport, ctx.logger);
+      // Runs the live connection's lease finalizer, if there is one.
+      if (release) await runEdge(release);
     },
 
     async status(ctx): Promise<ConnectorStatus> {
@@ -1460,7 +1567,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // verifyState ran on this request-scoped provider first and captured the
       // pending flow's generation. If force reset races the exchange, any late
       // token write remains tagged with that older generation and is unreadable.
-      const t = (state.transport ??
+      // A transport an attempt built belongs to that attempt's lease; one built
+      // here for the exchange alone belongs to this call, which closes it.
+      const leased = state.transport;
+      const t = (leased ??
         buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
       if (callbackParams !== undefined) {
         await t.finishAuth(callbackParams);
@@ -1469,8 +1579,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       await provider.clearPending();
       // Reset so the next use reconnects with the freshly stored tokens.
-      if (!state.transport) state.transport = t;
-      closeHalf(state, ctx);
+      closeHalf(state);
+      if (!leased) detach(closeConnection(null, t, ctx.logger));
     },
   };
 

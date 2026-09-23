@@ -1238,3 +1238,152 @@ describe("remote MCP transport diagnostics", () => {
     }
   });
 });
+
+describe("remoteMcp() connection lifecycle", () => {
+  type Context = ReturnType<typeof ctx>;
+  type Step = (connector: ReturnType<typeof remoteMcp>, context: Context) => Promise<unknown>;
+
+  /**
+   * Run `call`, and run `teardown` `ticks` microtasks after the handshake's
+   * last message goes out. The in-memory transport and storage do no I/O, so
+   * each interleaving is deterministic, and sweeping `ticks` visits every
+   * point from there to the call's result — including the one between a
+   * connect resolving and its waiter picking up the client. The sweep starts
+   * at the end of the handshake because the SDK drops a rejection of its own
+   * when a close lands inside it, which workerd reports as unhandled.
+   */
+  async function sweepTeardown(
+    call: Step,
+    teardown: Step,
+    opts: { oauth?: boolean } = {},
+  ): Promise<{ swept: number; outcomes: unknown[] }> {
+    const outcomes: unknown[] = [];
+    for (let ticks = 0; ticks < 5_000; ticks++) {
+      const { server, clientTransport } = await connectServer();
+      let initialized = false;
+      const watched: Transport = {
+        start: () => clientTransport.start(),
+        send: (message, sendOpts) => {
+          if ("method" in message && message.method === "notifications/initialized") {
+            initialized = true;
+          }
+          return clientTransport.send(
+            message,
+            sendOpts?.relatedRequestId !== undefined
+              ? { relatedRequestId: sendOpts.relatedRequestId }
+              : undefined,
+          );
+        },
+        close: () => clientTransport.close(),
+      };
+      for (const key of ["onclose", "onerror", "onmessage"] as const) {
+        Object.defineProperty(watched, key, {
+          get: () => clientTransport[key],
+          set: (value) => {
+            clientTransport[key] = value as never;
+          },
+        });
+      }
+      const connector = remoteMcp("down", {
+        url: "https://unused.example/mcp",
+        description: "Downstream",
+        ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
+        _transportFactory: () => watched,
+      });
+      const context = { ...ctx(), requestScope: {} };
+      let settled = false;
+      const outcome = call(connector, context).then(
+        () => "ok",
+        (error: unknown) => error,
+      );
+      void outcome.then(() => {
+        settled = true;
+      });
+      while (!initialized && !settled) await Promise.resolve();
+      for (let tick = 0; tick < ticks && !settled; tick++) {
+        await Promise.resolve();
+      }
+      const lateTeardown = settled;
+      await teardown(connector, context).catch(() => {});
+      outcomes.push(await outcome);
+      await connector.closeScope!(context);
+      await server.close();
+      // Once the call finished before teardown, every later tick would too.
+      if (lateTeardown) return { swept: ticks, outcomes };
+    }
+    throw new Error("the call never settled before teardown");
+  }
+
+  const readsNulledClient = (outcome: unknown) =>
+    outcome instanceof TypeError && /null/.test(outcome.message);
+
+  it("never hands a waiting call a client its scope has already torn down", async () => {
+    const { swept, outcomes } = await sweepTeardown(
+      (connector, context) => connector.callTool("echo", { text: "x" }, context),
+      (connector, context) => connector.closeScope!(context),
+    );
+    expect(swept).toBeGreaterThan(10);
+    // Every teardown point ends the call as ok, or as a scope-ended or
+    // connection-closed failure — never as a read of the nulled client.
+    expect(outcomes.filter(readsNulledClient)).toEqual([]);
+  });
+
+  it("never hands a waiting catalog walk a client a force re-auth replaced", async () => {
+    const { swept, outcomes } = await sweepTeardown(
+      (connector, context) => connector.listTools(context),
+      (connector, context) => {
+        // Another isolate's force re-auth bumps the epoch; the next call in
+        // this scope sees it and drops the cached client.
+        void context.storage.set("oauth:generation", "v2:replacement");
+        return connector.listTools(context);
+      },
+      { oauth: true },
+    );
+    expect(swept).toBeGreaterThan(10);
+    expect(outcomes.filter(readsNulledClient)).toEqual([]);
+  });
+
+  it("bounds a scope close whose transport never finishes closing", async () => {
+    const { server, clientTransport } = await connectServer();
+    closer = () => server.close();
+    // Forward the SDK's callbacks to the linked transport, as the tracked
+    // connector above does, but never let close settle.
+    const stuck: Transport = {
+      start: () => clientTransport.start(),
+      send: (message) => clientTransport.send(message),
+      close: () => new Promise<void>(() => {}),
+    };
+    for (const key of ["onclose", "onerror", "onmessage"] as const) {
+      Object.defineProperty(stuck, key, {
+        get: () => clientTransport[key],
+        set: (value) => {
+          clientTransport[key] = value as never;
+        },
+      });
+    }
+    const connector = remoteMcp("down", {
+      url: "https://unused.example/mcp",
+      description: "Downstream",
+      _transportFactory: () => stuck,
+    });
+    const context = { ...ctx(), requestScope: {} };
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "ok",
+    });
+
+    // The credential Test action awaits closeScope directly, outside the
+    // core's bounded closeConnectorScope, so the hook has to bound itself.
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const closing = connector.closeScope!(context).then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(settled).toBe(true);
+      await closing;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
