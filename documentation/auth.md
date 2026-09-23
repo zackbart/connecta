@@ -192,6 +192,40 @@ and the provider hooks it calls next finish the job. The pinned SDK behavior is
 spelled out beside `refreshResponseOutcome`. An explicit authorization during
 an outage still falls through to consent, since that is what it asked for.
 
+## URLs a downstream advertises
+
+A `remoteMcp()` OAuth connector learns most of the URLs it fetches from the
+downstream itself: the `resource_metadata` in its 401 challenge, the
+`authorization_servers` in that metadata, and the token and registration
+endpoints the authorization server publishes. Connecta fetches every one of
+them server-side, so a compromised downstream could otherwise aim a Node or
+Docker host at its own network — cloud metadata at `169.254.169.254`, an admin
+panel on the LAN. Config is the security model, so the rule splits on it:
+
+- A URL on the connector's configured origin is trusted. The operator wrote it
+  down.
+- Any other URL must be `https` and must not name a private host: `localhost`
+  and `*.localhost`, `127/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`,
+  `100.64/10`, `0/8`, `::`, `::1`, `fc00::/7`, `fe80::/10`, or an IPv4-mapped
+  IPv6 form of any of those.
+- A connector configured on a loopback host may also learn loopback URLs, over
+  `http` too, so a local MCP server with a local authorization server keeps
+  working. LAN and link-local addresses stay refused.
+
+A refused URL is never requested. Discovery, registration, and code exchange
+fail with a non-retryable `connector_call_failed` that names the host and
+nothing else from the URL. A refused refresh never reaches the token endpoint,
+so there is no verdict to act on: the grant is kept, and the SDK falls through
+to consent as it does for any refresh it could not complete. Redirects cannot
+route around the rule, because the redirect policy only follows same-origin
+hops.
+
+The check is syntactic. It reads the host after the WHATWG URL parser has
+folded `2130706433` and `0x7f.1` into `127.0.0.1`, and it never resolves a
+name, because the Workers-safe core has no DNS. A public name that resolves to
+a private address, or rebinds to one after the check, is out of scope; a host
+that must stop that runs connecta behind an egress policy that does.
+
 ## Management permissions
 
 Visibility alone grants no authentication-management permission. Two independent
