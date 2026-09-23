@@ -312,13 +312,31 @@ export const TOOL_SAFETY_BADGE: Readonly<
 };
 
 /**
- * Copy for a problem the status message does not already describe. Only a
- * catalog failure qualifies: status reads "ok" there, so there is no message.
+ * What the page says about a connector that is not usable, one fixed sentence
+ * per problem kind the server classified. This is the only account of a
+ * failure the Connections page renders: a connector's status message can quote
+ * a downstream error body, and a downstream error body can quote the secret
+ * that was just rejected, so the raw text stays in the deployment's log and
+ * never reaches the payload or the DOM. The fix prompt beside it is keyed off
+ * the same kind.
  */
+const PROBLEM_COPY: Readonly<Record<UiProblem, string>> = {
+  connector_unavailable:
+    "Unavailable: its status check or catalog load failed, or did not finish in time. The deployment's log has the downstream error.",
+  oauth_required:
+    "Needs OAuth authorization: no grant is stored, or the stored grant expired or was revoked.",
+  credential_required:
+    "Needs a credential: nothing usable is stored in its credential slot.",
+  auth_required:
+    "Needs authorization. Its secret lives in deployment configuration, not on this page.",
+  credential_mismatch:
+    "The stored credential does not match the fields this connector declares, so it cannot be used.",
+  catalog_failed:
+    "Connected, but its tool catalog could not be loaded, so none of its tools are served.",
+};
+
 export function problemCopy(problem: UiProblem | undefined): string | null {
-  return problem === "catalog_failed"
-    ? "Connected, but its tool catalog could not be loaded, so none of its tools are served."
-    : null;
+  return problem ? PROBLEM_COPY[problem] ?? null : null;
 }
 
 /** Who owns this connector's downstream credentials, in two words. */

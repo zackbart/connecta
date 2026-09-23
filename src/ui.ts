@@ -139,6 +139,24 @@ export async function buildUiData(
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
+  /**
+   * A connector's status message stops here. It can quote a downstream error
+   * body — and a downstream error body can quote the secret it just rejected —
+   * so the payload carries only the classified `problem` and the raw text goes
+   * to the deployment's log, where an operator debugging the failure already
+   * looks. An `ok` status's message is informational and simply dropped.
+   */
+  const logStatus = (
+    id: string,
+    state: ConnectorStatus["state"] | "failed",
+    message: string | undefined,
+  ) => {
+    if (!message || state === "ok") return;
+    const logger = registry.contextFor(id, baseUrl, requestScope).logger;
+    const line = `[connecta] connector "${id}" operator status ${state}: ${message}`;
+    if (state === "auth_required") logger.info(line);
+    else logger.warn(line);
+  };
   const concurrency = resolveDiscoveryConcurrency(discoveryConcurrency);
   const settled = await mapSettledWithConcurrency(
     connectorSet,
@@ -258,6 +276,7 @@ export async function buildUiData(
             }
           }
           outerSignal.throwIfAborted();
+          logStatus(c.id, status.state, status.message);
           const problem = uiProblemFor(c, status.state, {
             credentialDrift: Boolean(drift),
             catalogFailed,
@@ -270,7 +289,6 @@ export async function buildUiData(
               ? { description: c.description }
               : {}),
             status: status.state,
-            ...(status.message ? { message: status.message } : {}),
             ...(problem ? { problem } : {}),
             toolCount: tools.length,
             tools,
@@ -291,6 +309,7 @@ export async function buildUiData(
           timeoutError: new Error("Connection details timed out. Retry this connection."),
         });
       } catch (error) {
+        logStatus(c.id, "failed", error instanceof Error ? error.message : String(error));
         return {
           id: c.id,
           ...(c.title ? { title: c.title } : {}),
@@ -298,7 +317,6 @@ export async function buildUiData(
           status: "error",
           problem: "connector_unavailable",
           oauth: Boolean(c.startAuth && c.disconnectAuth),
-          message: error instanceof Error ? error.message : "Connection details unavailable",
           toolCount: 0,
           tools: [],
         };

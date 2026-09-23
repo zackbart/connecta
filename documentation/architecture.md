@@ -194,8 +194,12 @@ material code explicitly permitted; it never edits the connector set, catalog,
 annotations, scopes, or permission rules. Two invariants shape it: a status read
 never starts authorization, since OAuth begins with an explicit authorized POST,
 and each lazy details request owns a bounded downstream scope, so one failing
-provider leaves the other connections usable. Credential handoff URLs exist only
-while the UI is mounted; OAuth callbacks never need it.
+provider leaves the other connections usable. A connector's status message
+never reaches the page: it can quote a downstream error body, and that body can
+quote the secret it rejected, so the details payload carries only a classified
+`problem` — which picks fixed on-screen copy and a fixed fix prompt — and the raw
+text goes to the server log. Credential handoff URLs exist only while the UI is
+mounted; OAuth callbacks never need it.
 
 Its appearance is one token layer. `src/operator-ui/browser.css` resolves every
 color, radius, and font through a custom property and mixes the rest from those

@@ -28,8 +28,10 @@ export interface UiTool {
 
 /**
  * What went wrong with a connector, as a closed set the server chooses from.
- * The browser keys a fixed fix prompt off this and never off `message`, which
- * can quote a downstream error body.
+ * The browser keys both its on-screen description and a fixed fix prompt off
+ * this. There is deliberately no message beside it: a connector's status
+ * message can quote a downstream error body, so it goes to the deployment's
+ * log and never into the operator payload.
  *
  * `auth_required` splits by who has to act: a downstream OAuth grant
  * (`oauth_required`, which also covers an expired or revoked grant — the
@@ -89,8 +91,11 @@ export interface UiConnector {
   description?: string;
   status: "loading" | "ok" | "auth_required" | "error";
   permissions?: { use: boolean; manageSharedAuth: boolean; connectPersonal: boolean };
-  message?: string;
-  /** Why this connector is not usable, when it is not. See `UiProblem`. */
+  /**
+   * Why this connector is not usable, when it is not. See `UiProblem`. The
+   * only failure detail the payload carries; the status message behind it is
+   * logged on the server, not shipped.
+   */
   problem?: UiProblem;
   authorizationUrl?: string;
   toolCount: number;
