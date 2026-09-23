@@ -21,6 +21,8 @@ import {
   withExecutorAdmission,
 } from "./executor-admission.js";
 import type { ActivityModule, OperatorSurface } from "./module-contracts.js";
+import { disposeEdgeRuntime } from "./runtime/run.js";
+import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
 export type { ActivityModule, OperatorSurface } from "./module-contracts.js";
 export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
 import type {
@@ -292,15 +294,6 @@ function admissionController(
     queueTimeoutMs: options?.queueTimeoutMs ?? defaults.queueTimeoutMs,
     retryAfterMs: options?.retryAfterMs ?? defaults.retryAfterMs,
   });
-}
-
-function defaultLogger(): Logger {
-  return {
-    debug: (...a) => console.debug("[connecta]", ...a),
-    info: (...a) => console.info("[connecta]", ...a),
-    warn: (...a) => console.warn("[connecta]", ...a),
-    error: (...a) => console.error("[connecta]", ...a),
-  };
 }
 
 /** Bearer providers are checked before Clerk (per spec). */
@@ -676,9 +669,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     );
   }
   const storage = config.storage ?? memoryStorage();
-  const logger = config.logger === "silent"
-    ? { debug() {}, info() {}, warn() {}, error() {} }
-    : config.logger ?? defaultLogger();
+  const logger = resolveLogger(config.logger);
   const credentialVault = config.vault;
   const configuredAuth = normalizeAuth(config.auth);
   const serverInfo = {
@@ -733,6 +724,22 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         "executor's concurrency and queue options instead.",
     );
   }
+  // Every structural check has passed, so this is the configuration the
+  // deployment runs with. Creating the runtime builds nothing — a Worker may
+  // construct its Connecta at global scope, where no fiber may start.
+  const runtime = createCoreRuntime(registry, {
+    storage,
+    logger,
+    vault: credentialVault,
+    activity: config.activity,
+    config: {
+      config,
+      serverInfo,
+      auth: inboundAuth,
+      pools,
+      executorName: configuredExecutorName,
+    },
+  });
   const handler = createFetchHandler({
     registry,
     auth: inboundAuth,
@@ -774,10 +781,17 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     registry,
     close: async () => {
       closePromise ??= Promise.resolve().then(async () => {
-        requestAdmission.close();
-        codeAdmission?.close();
-        registry.closeCallAdmission();
-        await config.executor?.close?.();
+        try {
+          requestAdmission.close();
+          codeAdmission?.close();
+          registry.closeCallAdmission();
+          await config.executor?.close?.();
+        } finally {
+          // Last, and whether or not the executor closed cleanly. A fiber
+          // already running keeps the services it was given; only a run
+          // started after this is refused.
+          await disposeEdgeRuntime(runtime);
+        }
       });
       await closePromise;
     },
