@@ -171,6 +171,14 @@ export function alignEndToCharBoundary(
 /** Prefix of the chunked paging envelope; `v1`'s single inline key still reads. */
 const RESULT_ENVELOPE_V2 = "connecta-result-v2:";
 
+/**
+ * The current envelope: v2's header plus the inline cap of the call that
+ * stashed it, `<total>:<chunk>:<cap>:`, so get_result can clamp a page to the
+ * connector's own cap without the stash carrying connector identity.
+ */
+const RESULT_ENVELOPE_V3 = "connecta-result-v3:";
+const RESULT_ENVELOPE_V3_HEADER = new RegExp(`^${RESULT_ENVELOPE_V3}(\\d+):(\\d+):(\\d+):`);
+
 /** `<total bytes>:<bytes per chunk>:` follow the prefix, then chunk 0's base64. */
 const RESULT_ENVELOPE_V2_HEADER = new RegExp(`^${RESULT_ENVELOPE_V2}(\\d+):(\\d+):`);
 
@@ -238,6 +246,8 @@ interface ResultStash {
    * a write's result must page it, never repeat the write to look again.
    */
   write: boolean;
+  /** The call's effective inline cap; recorded so its pages obey it too. */
+  cap: number;
 }
 
 /** Opens a write's notice, ahead of any paging instruction. */
@@ -262,10 +272,10 @@ function pagingHint(
 ): string {
   const body =
     preview.kind === "prefix"
-      ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest with get_result using nextAction, without maxBytes.`
+      ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest with get_result using nextAction.`
       : preview.kind === "text-of-envelope"
-        ? `Its text follows; page the full ${totalBytes}-byte content array as JSON with get_result using nextAction, without maxBytes.`
-        : `Page all ${totalBytes} bytes with get_result using nextAction, without maxBytes.`;
+        ? `Its text follows; page the full ${totalBytes}-byte content array as JSON with get_result using nextAction.`
+        : `Page all ${totalBytes} bytes with get_result using nextAction.`;
   return results.write ? `${WRITE_ALREADY_RAN} ${body}` : body;
 }
 
@@ -292,7 +302,7 @@ async function stashResult(
     // the whole result (issue #540). Chunk 0 carries the header; the get_result
     // reader below maps a byte offset back to chunk index and base64 quad.
     const chunkBytes = resultChunkBytes(totalBytes);
-    const chunks = [`${RESULT_ENVELOPE_V2}${totalBytes}:${chunkBytes}:`];
+    const chunks = [`${RESULT_ENVELOPE_V3}${totalBytes}:${chunkBytes}:${results.cap}:`];
     for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
       const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
       if (offset === 0) chunks[0] += chunk;
@@ -401,10 +411,26 @@ async function guardValue(
   return {
     result: notice.resultId ? notice : {
       ...notice,
-      preview: dec.decode(headOf(bytes, cap)),
+      preview: escapedHeadOf(bytes, cap),
     },
     truncated: true,
   };
+}
+
+/**
+ * The longest head of `bytes` whose JSON string form fits `cap` bytes. Value
+ * mode carries an unpageable preview inside its JSON envelope, where escaping
+ * could double a quote-heavy head cut at `cap` bytes; a response that only
+ * exists because paging failed must not be the one that breaks the cap.
+ */
+function escapedHeadOf(bytes: Uint8Array, cap: number): string {
+  let limit = cap;
+  for (;;) {
+    const head = limit === 0 ? "" : dec.decode(headOf(bytes, limit));
+    const escaped = enc.encode(JSON.stringify(head)).length;
+    if (escaped <= cap || limit === 0) return head;
+    limit = Math.max(0, Math.min(limit - 1, Math.floor((limit * cap) / escaped)));
+  }
 }
 
 /**
@@ -621,16 +647,6 @@ export function createMetaTools(
           : {}),
         unwrapResult: call.resultMode === "value",
         processResult: async (result, resolved) => {
-          const results: ResultStash = {
-            write: !isExplicitlyReadOnly(resolved.definition),
-            set: (key, value, ttlSeconds) => registry.stashResult(key, value, ttlSeconds),
-            warn: () => registry.contextFor(
-              resolved.connector.id, baseUrl, requestScope,
-            ).logger.warn("[connecta] result paging unavailable", {
-              connector: resolved.connector.id,
-              tool: resolved.toolName,
-            }),
-          };
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
           // folded into `globalCap`). Resolved per call so one request can
@@ -641,6 +657,17 @@ export function createMetaTools(
             resolved.connector.maxResultBytes,
             globalCap,
           );
+          const results: ResultStash = {
+            write: !isExplicitlyReadOnly(resolved.definition),
+            cap,
+            set: (key, value, ttlSeconds) => registry.stashResult(key, value, ttlSeconds),
+            warn: () => registry.contextFor(
+              resolved.connector.id, baseUrl, requestScope,
+            ).logger.warn("[connecta] result paging unavailable", {
+              connector: resolved.connector.id,
+              tool: resolved.toolName,
+            }),
+          };
           const processed = (
             toolResult: ToolResult,
             truncated: boolean,
@@ -858,15 +885,24 @@ export function createMetaTools(
         return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
       }
       const requestedOffset = args.offset ?? 0;
-      const maxBytes = args.maxBytes ?? globalCap;
       // Read and decode only the chunks this page covers, plus a few bytes of
       // UTF-8 boundary lookaround. Pre-upgrade entries stay readable for their
-      // short TTL: v1 inlined the whole envelope under one key, which is this
-      // format with a single chunk as wide as the result, and raw text before
-      // that still pays one full encode per page.
-      const chunked = RESULT_ENVELOPE_V2_HEADER.exec(stored.slice(0, 80));
+      // short TTL: v2 is this format without the recorded cap, v1 inlined the
+      // whole envelope under one key, which is v2 with a single chunk as wide
+      // as the result, and raw text before that still pays one full encode
+      // per page.
+      const current = RESULT_ENVELOPE_V3_HEADER.exec(stored.slice(0, 96));
+      const chunked = current ?? RESULT_ENVELOPE_V2_HEADER.exec(stored.slice(0, 80));
       const inline = chunked ? null : /^connecta-result-v1:(\d+):/.exec(stored.slice(0, 64));
       const header = chunked ?? inline;
+      // A page never exceeds the inline cap of the call that stashed it — the
+      // connector's override when it had one — whatever maxBytes asks for.
+      // Clients cut an oversized page exactly as they cut the original result,
+      // so honouring a larger request would hand the agent an error in place
+      // of its data. Entries from before the cap was recorded use the
+      // deployment-wide one.
+      const cap = current ? Number(current[3]) : globalCap;
+      const maxBytes = Math.min(args.maxBytes ?? cap, cap);
       let bytes: Uint8Array;
       let total: number;
       let start = 0;
@@ -907,10 +943,8 @@ export function createMetaTools(
       // the boundary at or before it, and it is what the response reports back
       // as `offset` (issue #38).
       const offset = start + alignStartToCharBoundary(bytes, requestedOffset - start);
-      // Page size only: a stashed result carries no connector identity, so
-      // get_result keeps the deployment-wide default when none is requested.
-      // Both sides are validated by now — the argument above, `globalCap` at
-      // intake — so `offset + maxBytes` always reaches past `offset`.
+      // Both sides of `maxBytes` are validated by now — the argument above, the
+      // cap at intake — so `offset + maxBytes` always reaches past `offset`.
       // Align the slice end to a codepoint boundary so a multi-byte char is
       // never split across pages (which would emit U+FFFD on both sides).
       // `nextOffset` is this aligned end, so it is a valid boundary for the
@@ -922,13 +956,21 @@ export function createMetaTools(
         total - start,
       );
       const slice = dec.decode(bytes.subarray(offset - start, end - start));
-      const nextOffset = end < total ? end : undefined;
-      return jsonResult({
+      const hasMore = end < total;
+      // The same notice-first shape as a truncated call: one line of header,
+      // then the page as raw text. A JSON `text` field escaped every quote and
+      // newline in the page — a second layer over JSON payloads — which
+      // inflated pages past the size clients accept and made them hard to read.
+      return noticeFirst({
+        resultId: args.id,
         offset,
-        ...(nextOffset !== undefined ? { nextOffset } : {}),
+        bytes: Math.max(0, end - offset),
         totalBytes: total,
-        text: slice,
-      });
+        hasMore,
+        ...(hasMore
+          ? { nextAction: { tool: "get_result", arguments: { id: args.id, offset: end } } }
+          : {}),
+      }, slice);
     },
 
     async authorizeConnector(args: AuthorizeArgs): Promise<ToolResult> {
@@ -1039,7 +1081,7 @@ const CALL_DESC =
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 const GET_RESULT_DESC =
-  "Page a truncated direct-call result by id and byte offset. A program result is never paged; reduce it inside execute_code. Returns text, offset, nextOffset when more remains, and totalBytes.";
+  "Page a truncated direct-call result by id and byte offset. A program result is never paged; reduce it inside execute_code. Returns a one-line JSON header (offset, bytes, totalBytes, hasMore, nextAction) and then the page as raw text. maxBytes is an upper bound, clamped to the result's inline cap.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
 const SKILLS_DESC =

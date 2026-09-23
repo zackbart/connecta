@@ -75,10 +75,15 @@ async function pageAll(call: ReferenceContext["call"], truncated: string): Promi
   let text = from > 0 ? truncated.slice(newline + 1) : "";
   let offset: number | undefined = from;
   while (offset !== undefined) {
-    const page = await call("get_result", { id, offset });
-    const body = JSON.parse(page.text) as { text: string; nextOffset?: number };
-    text += body.text;
-    offset = body.nextOffset;
+    // A page is the same shape: a one-line JSON header, then raw text.
+    const page = (await call("get_result", { id, offset })).text;
+    const lineEnd = page.indexOf("\n");
+    const header = JSON.parse(page.slice(0, lineEnd)) as {
+      hasMore: boolean;
+      nextAction?: { arguments: { offset: number } };
+    };
+    text += page.slice(lineEnd + 1);
+    offset = header.hasMore ? header.nextAction?.arguments.offset : undefined;
   }
   return text;
 }

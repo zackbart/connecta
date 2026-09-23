@@ -449,7 +449,7 @@ describe("server /mcp end-to-end", () => {
     );
     expect(skill).toContain("`diagnostics: true` adds timing");
     expect(skill).toContain(
-      "`get_result({ id, offset?, maxBytes? })` returns `{ text, offset, nextOffset?, totalBytes }`",
+      "`get_result({ id, offset?, maxBytes? })` returns a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, and then the page as raw text",
     );
     expect(skill).toContain("`maxBytes` must be a whole number at least 1");
     expect(skill).toContain("`offset` must be a whole number at least 0");
@@ -1246,10 +1246,19 @@ describe("server /mcp end-to-end", () => {
       },
       { token: TOKEN },
     );
-    const page = JSON.parse(
-      (await readJsonRpc(paged)).result.content[0].text,
-    ) as { text: string };
-    expect(JSON.parse(page.text)).toBe("x".repeat(500));
+    // A header line, then raw text; the 1,000-byte request is clamped to the
+    // deployment's 100-byte cap end to end.
+    const pageText = (await readJsonRpc(paged)).result.content[0].text as string;
+    const newline = pageText.indexOf("\n");
+    expect(JSON.parse(pageText.slice(0, newline))).toMatchObject({
+      resultId: notice.resultId,
+      offset: 0,
+      bytes: 100,
+      totalBytes: 502,
+      hasMore: true,
+      nextAction: { tool: "get_result", arguments: { id: notice.resultId, offset: 100 } },
+    });
+    expect(pageText.slice(newline + 1)).toBe(JSON.stringify("x".repeat(500)).slice(0, 100));
   });
 
   it("forwards calls.defaultTimeoutMs into connector call context", async () => {
