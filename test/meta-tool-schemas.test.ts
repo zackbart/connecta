@@ -52,7 +52,7 @@ const GOLDEN: Record<string, unknown> = {
       limit: { type: "integer", exclusiveMinimum: 0, maximum: 100 },
       offset: { type: "integer", minimum: 0, maximum: MAX_SAFE_INTEGER },
       fullDescriptions: { type: "boolean" },
-      includeSchemas: { type: "string", enum: ["compact", "json"] },
+      includeSchemas: { type: "string", enum: ["compact", "json", "typescript"] },
     },
   },
   call_tool: {

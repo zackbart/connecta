@@ -533,7 +533,7 @@ export async function buildSandboxProviders(
             limit?: number;
             offset?: number;
             fullDescriptions?: boolean;
-            includeSchemas?: "compact" | "json";
+            includeSchemas?: "compact" | "json" | "typescript";
             includeSchemaKeys?: boolean;
           };
           const result = flatSearchResult(
@@ -555,7 +555,7 @@ export async function buildSandboxProviders(
           const args = (raw ?? {}) as {
             address?: unknown;
             addresses?: unknown;
-            format?: "compact" | "json";
+            format?: "compact" | "json" | "typescript";
             fullDescriptions?: boolean;
           };
           const result = { tools: await catalog.describe(args) };

@@ -509,7 +509,7 @@ export interface SearchArgs {
   limit?: number;
   offset?: number;
   fullDescriptions?: boolean;
-  includeSchemas?: "compact" | "json";
+  includeSchemas?: "compact" | "json" | "typescript";
 }
 type ResultMode = "mcp" | "value";
 export interface CallArgs {
@@ -1204,7 +1204,7 @@ export function registerMetaTools(
         limit: z.number().int().positive().max(MAX_SEARCH_LIMIT).optional(),
         offset: z.number().int().nonnegative().optional(),
         fullDescriptions: z.boolean().optional(),
-        includeSchemas: z.enum(["compact", "json"]).optional(),
+        includeSchemas: z.enum(["compact", "json", "typescript"]).optional(),
       }),
       annotations: READ_ONLY_REMOTE,
     },

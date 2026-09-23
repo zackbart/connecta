@@ -615,8 +615,66 @@ function renderConstraints(
     : `${grouped(base)} /* ${kept.join("; ")} */`;
 }
 
+/**
+ * `grouped` for the TypeScript dialect, whose JSDoc prose and string literals
+ * may carry unbalanced brackets from a downstream description: skipping both
+ * keeps a stray `)` in prose from hiding a real top-level union.
+ */
+function groupedType(part: string): string {
+  let nesting = 0;
+  for (let i = 0; i < part.length; i += 1) {
+    const char = part[i];
+    if (part.startsWith("/*", i)) {
+      const end = part.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+    } else if (char === '"') {
+      for (i += 1; i < part.length && part[i] !== '"'; i += 1) {
+        if (part[i] === "\\") i += 1;
+      }
+    } else if (char === "{" || char === "(" || char === "[" || char === "<") {
+      nesting += 1;
+    } else if (char === "}" || char === ")" || char === "]" || char === ">") {
+      nesting -= 1;
+    } else if (
+      nesting === 0 &&
+      (part.startsWith(" | ", i) || part.startsWith(" & ", i))
+    ) {
+      return `(${part})`;
+    }
+  }
+  return part;
+}
+
+const TYPESCRIPT_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function typescriptKey(key: string): string {
+  return TYPESCRIPT_IDENTIFIER.test(key) ? key : JSON.stringify(key);
+}
+
+/** One-line JSDoc body; downstream prose can never close the comment early. */
+function typescriptDoc(text: string): string {
+  return text.replace(/\s+/g, " ").trim().replaceAll("*/", "*\\/");
+}
+
+function typescriptPrimitive(type: string): string {
+  if (type === "integer") return "number";
+  if (type === "array") return "unknown[]";
+  if (type === "object") return "Record<string, unknown>";
+  return ["string", "number", "boolean", "null"].includes(type)
+    ? type
+    : "unknown";
+}
+
 interface RenderOptions {
   work: SchemaWork;
+  /**
+   * Render valid TypeScript types rather than the compact routing notation:
+   * `number` for `integer`, `;`-separated members, quoted non-identifier keys,
+   * JSDoc prose, index signatures, `null` from OpenAPI `nullable`, and
+   * `unknown` plus a marker wherever compact would print a name or raw JSON.
+   */
+  typescript?: boolean;
   propertyDescriptions: boolean;
   requiredFirst: boolean;
   enumByteLimit?: number;
@@ -673,11 +731,32 @@ function renderSchemaNode(
   depth: number,
   options: RenderOptions,
 ): string {
-  if (depth > 4) return "…";
+  const ts = options.typescript === true;
+  const group = ts ? groupedType : grouped;
+  if (depth > 4) {
+    if (!ts) return "…";
+    options.work.truncated = true;
+    return `unknown${COMPACT_DISCOVERY_TRUNCATION}`;
+  }
   if (schema === null || typeof schema !== "object") {
+    if (ts) return schema === false ? "never" : "unknown";
     return options.work.json(schema);
   }
   const s = schema as Record<string, unknown>;
+
+  // OpenAPI 3.0's `nullable` has no JSON Schema meaning, so compact ignores
+  // it; a TypeScript reader writing `null` checks needs it in the type.
+  if (ts && s.nullable === true) {
+    const base: Record<string, unknown> = Object.create(null);
+    for (const key of propertyNames(s, options.work)) {
+      if (key !== "nullable") base[key] = s[key];
+    }
+    const rendered = declaresShape(base)
+      ? renderSchema(base, defs, seen, depth, options)
+      : "unknown";
+    return rendered === "unknown" ? rendered : `${rendered} | null`;
+  }
+
   const constrain = (rendered: string) =>
     options.renderConstraints
       ? renderConstraints(
@@ -724,11 +803,11 @@ function renderSchemaNode(
       : s.allOf.length > 1;
     if (declaresShape(own)) {
       const rendered = renderSchema(own, defs, seen, depth, options);
-      parts.add(groupParts ? grouped(rendered) : rendered);
+      parts.add(groupParts ? group(rendered) : rendered);
     }
     for (const member of s.allOf) {
       const rendered = renderSchema(member, defs, seen, depth + 1, options);
-      parts.add(groupParts ? grouped(rendered) : rendered);
+      parts.add(groupParts ? group(rendered) : rendered);
     }
     if (parts.length === 0) return "unknown";
     return parts.finish();
@@ -739,10 +818,17 @@ function renderSchemaNode(
     const dynamic = s.$ref === undefined;
     const rawName = refName(options.work.text(reference));
     const name = dynamic ? rawName.replace(/^#/, "") : rawName;
-    if (seen.has(name)) return name;
+    if (seen.has(name)) {
+      if (!ts) return name;
+      // A cycle has no finite TypeScript expansion, and a bare definition
+      // name would be an undeclared type: degrade and send callers to JSON.
+      options.work.truncated = true;
+      return "unknown /* recursive */";
+    }
     const target = resolveDefinition(defs, name);
     if (target === undefined) {
-      if (dynamic) options.work.truncated = true;
+      if (dynamic || ts) options.work.truncated = true;
+      if (ts) return "unknown /* unresolved */";
       return dynamic ? "unknown" : name;
     }
     const cacheKey = JSON.stringify([name, depth, [...seen]]);
@@ -784,6 +870,29 @@ function renderSchemaNode(
   }
 
   const type = s.type;
+  // A type list renders member by member, so `["object", "null"]` beside
+  // `properties` keeps both its shape and its null rather than the object alone.
+  if (ts && Array.isArray(type) && type.length > 0) {
+    const members = new Set<string>();
+    const parts = boundedParts(options.work, " | ", "", "");
+    for (const item of type) {
+      options.work.visit();
+      if (typeof item !== "string") continue;
+      let rendered = "null";
+      if (item !== "null") {
+        const member: Record<string, unknown> = Object.create(null);
+        for (const key of propertyNames(s, options.work)) {
+          if (key !== "type") member[key] = s[key];
+        }
+        member.type = item;
+        rendered = renderSchema(member, defs, seen, depth, options);
+      }
+      if (members.has(rendered)) continue;
+      members.add(rendered);
+      parts.add(rendered);
+    }
+    return parts.length === 0 ? "unknown" : parts.finish();
+  }
   if (Array.isArray(s.prefixItems)) {
     const parts = boundedParts(options.work, ", ", "[", "]");
     for (const item of s.prefixItems) {
@@ -793,7 +902,7 @@ function renderSchemaNode(
       const rest = s.items === undefined || s.items === true
         ? "unknown"
         : renderSchema(s.items, defs, seen, depth + 1, options);
-      parts.add(`...${grouped(rest)}[]`);
+      parts.add(`...${group(rest)}[]`);
     }
     return parts.finish();
   }
@@ -801,7 +910,7 @@ function renderSchemaNode(
     const items = s.items
       ? renderSchema(s.items, defs, seen, depth + 1, options)
       : "unknown";
-    return `${items}[]`;
+    return ts ? `${groupedType(items)}[]` : `${items}[]`;
   }
   if (type === "object" || s.properties) {
     const props = (s.properties ?? {}) as Record<string, unknown>;
@@ -813,8 +922,16 @@ function renderSchemaNode(
           ...declaredKeys.filter((key) => !required.has(key)),
         ]
       : declaredKeys;
-    if (keys.length === 0) return "{}";
-    const parts = boundedParts(options.work, ", ", "{ ", " }");
+    const additional = s.additionalProperties;
+    const index = ts && additional !== null && typeof additional === "object"
+      ? renderSchema(additional, defs, seen, depth + 1, options)
+      : undefined;
+    if (keys.length === 0 && index === undefined) {
+      // In TypeScript `{}` reads as "empty"; an object with no declared
+      // properties is an open map unless it closes itself explicitly.
+      return ts && additional !== false ? "Record<string, unknown>" : "{}";
+    }
+    const parts = boundedParts(options.work, ts ? "; " : ", ", "{ ", " }");
     for (const key of keys) {
       const optional = required.has(key) ? "" : "?";
       const rendered = renderSchema(
@@ -831,16 +948,27 @@ function renderSchemaNode(
         options.work.text(description);
       }
       options.work.text(key);
+      if (ts) {
+        const doc =
+          options.propertyDescriptions && typeof description === "string" &&
+          description.trim()
+            ? `/** ${typescriptDoc(description)} */ `
+            : "";
+        parts.add(`${doc}${typescriptKey(key)}${optional}: ${rendered}`);
+        continue;
+      }
       const comment =
         options.propertyDescriptions && typeof description === "string"
           ? ` // ${description}`
           : "";
       parts.add(`${key}${optional}: ${rendered}${comment}`);
     }
+    if (index !== undefined) parts.add(`[key: string]: ${index}`);
     return parts.finish();
   }
   if (typeof type === "string") {
-    return constrain(options.work.text(type));
+    const text = options.work.text(type);
+    return constrain(ts ? typescriptPrimitive(text) : text);
   }
   if (Array.isArray(type)) {
     const parts = boundedParts(options.work, " | ", "", "");
@@ -859,7 +987,7 @@ function renderSchemaNode(
       options.onConstraintTruncated,
     );
   }
-  return options.work.json(schema);
+  return ts ? "unknown" : options.work.json(schema);
 }
 
 const compactSchemas = new WeakMap<JsonSchema, CompactDiscoverySchema>();
@@ -953,15 +1081,81 @@ export function compactDiscoverySchema(
   return result;
 }
 
+const typescriptDiscoveryTypes = new WeakMap<JsonSchema, CompactDiscoverySchema>();
+const typescriptDescriptionTypes = new WeakMap<JsonSchema, CompactDiscoverySchema>();
+
+/**
+ * One schema as a TypeScript type, under exactly the compact budgets: search
+ * drops prose and orders required keys first within 1,024 bytes, describe
+ * keeps prose as JSDoc within 8,192, and both share the 2,000-visit walk.
+ */
+function typescriptType(
+  schema: JsonSchema,
+  description: boolean,
+): CompactDiscoverySchema {
+  const cache = description ? typescriptDescriptionTypes : typescriptDiscoveryTypes;
+  const cached = cache.get(schema);
+  if (cached) return cached;
+  const result = boundedCompactSchema(schema, description, true);
+  cache.set(schema, result);
+  return result;
+}
+
+export interface TypeScriptSignature {
+  text: string;
+  inputTruncated: boolean;
+  outputTruncated: boolean;
+}
+
+/** Marks runtime evidence inside the signature itself, not only beside it. */
+const OBSERVED_OUTPUT_MARKER = "/* observed, not declared */ ";
+
+/**
+ * Render a tool as the function `connecta.call(address, args)` resolves to,
+ * for an agent to read — never to execute: code mode still runs JavaScript.
+ *
+ * The input half comes from the declared input schema. The output half is the
+ * declared output schema, else a passively observed shape carrying a leading
+ * marker (runtime evidence is never presented as a contract), else `unknown`.
+ * A zero-field input renders as the optional `args?: {}` that call accepts:
+ * an MCP tool with no parameters rarely closes its schema, and reading its
+ * open `Record<string, unknown>` as "pass anything" would invite guessing.
+ */
+export function typescriptSignature(
+  input: JsonSchema,
+  output: JsonSchema | undefined,
+  options: { observed: boolean; description: boolean },
+): TypeScriptSignature {
+  const renderedInput = typescriptType(input, options.description);
+  const renderedOutput = output
+    ? typescriptType(output, options.description)
+    : undefined;
+  const args =
+    renderedInput.text === "{}" ||
+    renderedInput.text === "Record<string, unknown>"
+    ? "args?: {}"
+    : `args: ${renderedInput.text}`;
+  const result = renderedOutput
+    ? `${options.observed ? OBSERVED_OUTPUT_MARKER : ""}${renderedOutput.text}`
+    : "unknown";
+  return {
+    text: `(${args}) => Promise<${result}>`,
+    inputTruncated: renderedInput.truncated,
+    outputTruncated: renderedOutput?.truncated === true,
+  };
+}
+
 function boundedCompactSchema(
   schema: JsonSchema,
   description: boolean,
+  typescript = false,
 ): CompactDiscoverySchema {
   const work = new SchemaWork(
     description ? MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES : MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
   );
   const options: RenderOptions = {
     work,
+    typescript,
     propertyDescriptions: description,
     requiredFirst: !description,
     enumByteLimit: description ? work.byteLimit : MAX_COMPACT_DISCOVERY_ENUM_BYTES,
