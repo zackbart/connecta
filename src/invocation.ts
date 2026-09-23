@@ -1,9 +1,13 @@
+import { Cause, Effect, Exit, type Scope } from "effect";
 import {
   type ActivityCallSource,
   type ActivityRequestContext,
   type AgentFriction,
 } from "./activity.js";
-import { isCallAdmissionError } from "./call-admission.js";
+import {
+  isCallAdmissionError,
+  type CallAdmissionPermit,
+} from "./call-admission.js";
 import {
   CatalogService,
   type ResolvedCatalogTool,
@@ -19,8 +23,8 @@ import {
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import { splitAddress, type RegistryView } from "./registry.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
-import { withDeadline } from "./timeout.js";
 import { validateToolInput } from "./validate.js";
 
 function defined<T extends object>(
@@ -31,16 +35,56 @@ function defined<T extends object>(
   ) as { [K in keyof T]?: Exclude<T[K], undefined> };
 }
 
-async function timed<T>(
+/** Add the effect's wall time to `bucket` however it ends, interruption included. */
+function timed<A, E, R>(
   bucket: (elapsed: number) => void,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const started = Date.now();
-  try {
-    return await fn();
-  } finally {
-    bucket(Date.now() - started);
-  }
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.suspend(() => {
+    const started = Date.now();
+    return Effect.ensuring(
+      effect,
+      Effect.sync(() => bucket(Date.now() - started)),
+    );
+  });
+}
+
+/**
+ * The connector's call permit, owned by the enclosing Scope.
+ *
+ * Admission goes through `registry.admitCall`, a Promise, on purpose. The
+ * permit queue is shared by every request in the isolate, and a queued
+ * waiter is resumed from inside the request that released the slot. Were
+ * this fiber to wait on the controller's Effect program itself
+ * (`acquireCallScoped`), it would be resumed there and run this call's
+ * downstream I/O in the releasing request, which workerd refuses. Awaiting
+ * admitCall's promise resumes it in its own request instead.
+ *
+ * The wait stays interruptible, so a deadline ends it. A permit granted just
+ * as the wait was interrupted still arrives, later, and is released on
+ * arrival rather than holding its slot forever.
+ */
+function admitted(
+  registry: RegistryView,
+  target: ResolvedCatalogTool,
+  args: unknown,
+  signal: AbortSignal | undefined,
+): Effect.Effect<CallAdmissionPermit, unknown, Scope.Scope> {
+  return Effect.acquireRelease(
+    Effect.suspend(() => {
+      const pending = registry.admitCall(target.connector.id, {
+        toolName: target.toolName,
+        args: args ?? {},
+        ...defined({ signal }),
+      });
+      return Effect.tryPromise({ try: () => pending, catch: (error) => error })
+        .pipe(Effect.onInterrupt(() => Effect.sync(() => {
+          pending.then((permit) => permit.release(), () => {});
+        })));
+    }),
+    (permit) => Effect.sync(() => permit.release()),
+    { interruptible: true },
+  );
 }
 
 function callerCancelledDetails(): CallErrorDetails {
@@ -169,6 +213,11 @@ export class InvocationFailure extends Error {
  * Shared downstream invocation engine. Address/catalog resolution is delegated
  * to the request-local CatalogService; every remaining call semantic lives
  * here so MCP and code mode cannot drift independently.
+ *
+ * One call is one fiber: resolve, refuse or validate, admit, dispatch, then
+ * process the result, with every way the call can go wrong turned into an
+ * outcome. Only a throw while recording that outcome, or a bug, rejects
+ * `invoke`.
  */
 export class InvocationService {
   constructor(
@@ -177,66 +226,75 @@ export class InvocationService {
     private readonly activity?: ActivityRequestContext,
   ) {}
 
-  async invoke<T = unknown>(
+  invoke<T = unknown>(
     address: string,
     args: unknown,
     context: InvocationContext<T>,
   ): Promise<InvocationOutcome<T>> {
-    const started = Date.now();
-    let catalogMs = 0;
-    let admissionMs = 0;
-    let connectorMs = 0;
-    let resultProcessingMs = 0;
-    let attempts = 0;
-    let resolved: ResolvedCatalogTool | undefined;
-    let activityTarget:
-      | Pick<ResolvedCatalogTool, "connector" | "toolName">
-      | undefined;
-    // The address as written, used for activity when resolution never reached
-    // a connector. Only its two halves are recorded — the same fields activity
-    // has always carried — so no new class of payload enters the log.
-    const attempted = splitAddress(address);
-    const timing = (): InvocationTiming => ({
-      catalogMs,
-      admissionMs,
-      connectorMs,
-      resultProcessingMs,
-      totalMs: Date.now() - started,
-    });
-    const record = (
-      outcome: "success" | "error" | "timeout" | "cancelled",
-      classification: { errorCode?: string; friction?: AgentFriction } = {},
-    ) => {
-      const identity = activityTarget
-        ? {
-            connectorId: activityTarget.connector.id,
-            toolName: activityTarget.toolName,
-          }
-        : attempted;
-      if (!identity) return;
-      this.activity?.recordTool?.(this.activity, {
-        connectorId: identity.connectorId,
-        toolName: identity.toolName,
-        address: `${identity.connectorId}.${identity.toolName}`,
-        source: context.source,
-        outcome,
-        durationMs: Date.now() - started,
-        attempts,
-        ...defined({
-          errorCode: classification.errorCode,
-          friction: classification.friction,
-        }),
+    return runEdge(this.pipeline(address, args, context));
+  }
+
+  private pipeline<T>(
+    address: string,
+    args: unknown,
+    context: InvocationContext<T>,
+  ): Effect.Effect<InvocationOutcome<T>> {
+    return Effect.gen({ self: this }, function* () {
+      const started = Date.now();
+      let catalogMs = 0;
+      let admissionMs = 0;
+      let connectorMs = 0;
+      let resultProcessingMs = 0;
+      let attempts = 0;
+      let resolved: ResolvedCatalogTool | undefined;
+      let activityTarget:
+        | Pick<ResolvedCatalogTool, "connector" | "toolName">
+        | undefined;
+      // The address as written, used for activity when resolution never reached
+      // a connector. Only its two halves are recorded — the same fields activity
+      // has always carried — so no new class of payload enters the log.
+      const attempted = splitAddress(address);
+      const timing = (): InvocationTiming => ({
+        catalogMs,
+        admissionMs,
+        connectorMs,
+        resultProcessingMs,
+        totalMs: Date.now() - started,
       });
-    };
-    const enrich = (
-      error: CallErrorDetails,
-      target: typeof activityTarget,
-    ): CallErrorDetails => {
-      if (!target) return error;
-      switch (error.code) {
-        case "destructive_tool_requires_approval": {
-          const echoed = echoedCallArgs(args);
-          return {
+      const record = (
+        outcome: "success" | "error" | "timeout" | "cancelled",
+        classification: { errorCode?: string; friction?: AgentFriction } = {},
+      ) => {
+        const identity = activityTarget
+          ? {
+              connectorId: activityTarget.connector.id,
+              toolName: activityTarget.toolName,
+            }
+          : attempted;
+        if (!identity) return;
+        this.activity?.recordTool?.(this.activity, {
+          connectorId: identity.connectorId,
+          toolName: identity.toolName,
+          address: `${identity.connectorId}.${identity.toolName}`,
+          source: context.source,
+          outcome,
+          durationMs: Date.now() - started,
+          attempts,
+          ...defined({
+            errorCode: classification.errorCode,
+            friction: classification.friction,
+          }),
+        });
+      };
+      const enrich = (
+        error: CallErrorDetails,
+        target: typeof activityTarget,
+      ): CallErrorDetails => {
+        if (!target) return error;
+        switch (error.code) {
+          case "destructive_tool_requires_approval": {
+            const echoed = echoedCallArgs(args);
+            return {
               ...error,
               nextAction: {
                 tool: "call_destructive_tool" as const,
@@ -251,9 +309,9 @@ export class InvocationService {
                     : "Re-send the arguments you just sent — they are too large to echo back — and add a short reason for the human reviewer."),
               },
             };
-        }
-        case "auth_required":
-          return {
+          }
+          case "auth_required":
+            return {
               ...error,
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
@@ -272,252 +330,251 @@ export class InvocationService {
                 `Retry ${target.connector.id}.${target.toolName} after ` +
                 "the operator completes recovery.",
             };
-        case "invalid_args":
-          if (!error.validation) return error;
-          return {
-                ...error,
-                connector: target.connector.id,
-                operation: `${target.connector.id}.${target.toolName}`,
-                nextAction: this.catalog.searchRecovery(
-                  {
-                    query: target.toolName,
-                    connector: target.connector.id,
-                  },
-                  "Inspect the current input shape if the validation findings are not sufficient.",
-                ),
-                retry:
-                  `Correct the listed arguments and retry ` +
-                  `${target.connector.id}.${target.toolName}.`,
-              };
-        default:
-          return error;
-      }
-    };
-    const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
-      const diagnostics = timing();
-      const target = resolved ?? activityTarget;
-      const details = enrich(error, target);
-      // Activity rows stay payload-free by construction; the operator's log is
-      // where the downstream reason goes, bounded and without arguments.
-      if (target && details.code !== "destructive_tool_requires_approval") {
-        this.registry
-          .contextFor(
-            target.connector.id,
-            this.catalog.baseUrl,
-            this.catalog.requestScope,
-          )
-          .logger.warn("[connecta] call failed", {
-            connector: target.connector.id,
-            tool: target.toolName,
-            source: context.source,
-            code: details.code,
-            // Sanitized transport diagnostics (origin and errno only, #539).
-            ...(details.details ? { details: details.details } : {}),
-            attempts,
-            durationMs: Date.now() - started,
-            message: String(details.message ?? "").slice(0, 300),
-          });
-      }
-      record(
-        details.code === "timeout"
-          ? "timeout"
-          : details.code === "cancelled"
-            ? "cancelled"
-            : "error",
-        { errorCode: details.code },
-      );
-      return {
-        ok: false,
-        durationMs: Date.now() - started,
-        attempts,
-        timing: diagnostics,
-        ...defined({ resolved }),
-        error: details,
+          case "invalid_args":
+            if (!error.validation) return error;
+            return {
+              ...error,
+              connector: target.connector.id,
+              operation: `${target.connector.id}.${target.toolName}`,
+              nextAction: this.catalog.searchRecovery(
+                {
+                  query: target.toolName,
+                  connector: target.connector.id,
+                },
+                "Inspect the current input shape if the validation findings are not sufficient.",
+              ),
+              retry:
+                `Correct the listed arguments and retry ` +
+                `${target.connector.id}.${target.toolName}.`,
+            };
+          default:
+            return error;
+        }
       };
-    };
-
-    if (context.requestSignal?.aborted) {
-      // Preserve the cancelled admission-attempt count without starting discovery.
-      attempts = 1;
-      return failed(callerCancelledDetails());
-    }
-    let result: unknown;
-    let observedResult: unknown;
-    // One deadline owns discovery, queue admission, and provider dispatch.
-    // Only the caller of this function records the final outcome, so a late
-    // cancellation cannot append a second activity event after the deadline.
-    const dispatch = async (
-      callSignal?: AbortSignal,
-    ): Promise<CallErrorDetails | undefined> => {
-      const resolution = await this.catalog.resolveTool(
-        address, defined({ signal: callSignal }),
-      );
-      catalogMs += resolution.catalogMs;
-      if (callSignal?.aborted) throw callSignal.reason;
-      if (!resolution.ok) {
-        if (resolution.connector && resolution.toolName) {
-          activityTarget = {
-            connector: resolution.connector,
-            toolName: resolution.toolName,
-          };
-        }
-        if (resolution.cause && context.requestSignal?.aborted) {
-          return callerCancelledDetails();
-        }
-        return resolution.error;
-      }
-      const target = resolution.resolved;
-      resolved = target;
-      activityTarget = target;
-
-      if (!isExplicitlyReadOnly(target.definition) && !context.allowDestructive) {
-        const canonicalAddress = `${target.connector.id}.${target.toolName}`;
-        return framingError(
-          "destructive_tool_requires_approval",
-          `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
-        );
-      }
-
-      // Remote MCP tools advertise their input schema in the catalog. Validate
-      // against that same request-local definition before admission or provider
-      // dispatch, so a predictable mismatch stays structured instead of being
-      // flattened into provider-specific error prose. Unsupported schemas retain
-      // validateToolInput's fail-open behavior and reach the downstream normally.
-      if (
-        target.connector.kind === "mcp" &&
-        target.definition.inputSchema
-      ) {
-        const invalid = validateToolInput(
-          target.definition.inputSchema,
-          args ?? {},
-          {
-            address: `${target.connector.id}.${target.toolName}`,
-            logger: this.registry.contextFor(
+      const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
+        const diagnostics = timing();
+        const target = resolved ?? activityTarget;
+        const details = enrich(error, target);
+        // Activity rows stay payload-free by construction; the operator's log is
+        // where the downstream reason goes, bounded and without arguments.
+        if (target && details.code !== "destructive_tool_requires_approval") {
+          this.registry
+            .contextFor(
               target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
-            ).logger,
-          },
+            )
+            .logger.warn("[connecta] call failed", {
+              connector: target.connector.id,
+              tool: target.toolName,
+              source: context.source,
+              code: details.code,
+              // Sanitized transport diagnostics (origin and errno only, #539).
+              ...(details.details ? { details: details.details } : {}),
+              attempts,
+              durationMs: Date.now() - started,
+              message: String(details.message ?? "").slice(0, 300),
+            });
+        }
+        record(
+          details.code === "timeout"
+            ? "timeout"
+            : details.code === "cancelled"
+              ? "cancelled"
+              : "error",
+          { errorCode: details.code },
         );
-        if (invalid) return classifyCallError(invalid);
-      }
+        return {
+          ok: false,
+          durationMs: Date.now() - started,
+          attempts,
+          timing: diagnostics,
+          ...defined({ resolved }),
+          error: details,
+        };
+      };
 
-      try {
-        context.beforeDispatch?.();
-      } catch (error) {
-        return error instanceof InvocationFailure
-          ? error.details
-          : classifyCallError(error);
+      if (context.requestSignal?.aborted) {
+        // Preserve the cancelled admission-attempt count without starting discovery.
+        attempts = 1;
+        return failed(callerCancelledDetails());
       }
+      let result: unknown;
+      let observedResult: unknown;
+      // Everything up to the downstream result: resolution, the safety and
+      // schema refusals, admission, and the one attempt. A refusal is its
+      // success value. Its failure is an abort reason or something nobody
+      // expected, and a throw anywhere in it — a defect, to Effect — is
+      // classified like a failure, as the async body this replaced did.
+      const dispatch = (
+        callSignal?: AbortSignal,
+      ): Effect.Effect<CallErrorDetails | undefined, unknown> =>
+        Effect.gen({ self: this }, function* () {
+          const resolution = yield* this.catalog.resolve(
+            address, defined({ signal: callSignal }),
+          );
+          catalogMs += resolution.catalogMs;
+          if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
+          if (!resolution.ok) {
+            if (resolution.connector && resolution.toolName) {
+              activityTarget = {
+                connector: resolution.connector,
+                toolName: resolution.toolName,
+              };
+            }
+            if (resolution.cause && context.requestSignal?.aborted) {
+              return callerCancelledDetails();
+            }
+            return resolution.error;
+          }
+          const target = resolution.resolved;
+          resolved = target;
+          activityTarget = target;
 
-      if (callSignal?.aborted) throw callSignal.reason;
-      attempts = 1;
-      let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
-      let attemptError: unknown;
-      let attemptFailed = false;
-      try {
-        permit = await timed(
-          (elapsed) => { admissionMs += elapsed; },
-          () => this.registry.admitCall(target.connector.id, {
-            toolName: target.toolName,
-            args: args ?? {},
-            ...defined({ signal: callSignal }),
-          }),
-        );
-        const raw = await timed(
-          (elapsed) => { connectorMs += elapsed; },
-          () => {
-            const call = () => {
-              const connectorContext = this.registry.contextFor(
-                target.connector.id,
-                this.catalog.baseUrl,
-                this.catalog.requestScope,
-                defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
+          if (!isExplicitlyReadOnly(target.definition) && !context.allowDestructive) {
+            const canonicalAddress = `${target.connector.id}.${target.toolName}`;
+            return framingError(
+              "destructive_tool_requires_approval",
+              `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
+            );
+          }
+
+          // Remote MCP tools advertise their input schema in the catalog. Validate
+          // against that same request-local definition before admission or provider
+          // dispatch, so a predictable mismatch stays structured instead of being
+          // flattened into provider-specific error prose. Unsupported schemas retain
+          // validateToolInput's fail-open behavior and reach the downstream normally.
+          if (
+            target.connector.kind === "mcp" &&
+            target.definition.inputSchema
+          ) {
+            const invalid = validateToolInput(
+              target.definition.inputSchema,
+              args ?? {},
+              {
+                address: `${target.connector.id}.${target.toolName}`,
+                logger: this.registry.contextFor(
+                  target.connector.id,
+                  this.catalog.baseUrl,
+                  this.catalog.requestScope,
+                ).logger,
+              },
+            );
+            if (invalid) return classifyCallError(invalid);
+          }
+
+          try {
+            context.beforeDispatch?.();
+          } catch (error) {
+            return error instanceof InvocationFailure
+              ? error.details
+              : classifyCallError(error);
+          }
+
+          if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
+          attempts = 1;
+          const call = () => {
+            const connectorContext = this.registry.contextFor(
+              target.connector.id,
+              this.catalog.baseUrl,
+              this.catalog.requestScope,
+              defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
+            );
+            if (
+              target.connector.credential &&
+              !connectorContext.credential
+            ) {
+              throw new ConnectorCallError(
+                "auth_required",
+                "Operator-managed credential storage is not configured. Call " +
+                  `authorize_connector({ connector: "${target.connector.id}" }).`,
               );
-              if (
-                target.connector.credential &&
-                !connectorContext.credential
-              ) {
-                throw new ConnectorCallError(
-                  "auth_required",
-                  "Operator-managed credential storage is not configured. Call " +
-                    `authorize_connector({ connector: "${target.connector.id}" }).`,
-                );
-              }
-              // Cancellation can arrive during admission or context construction.
-              if (callSignal?.aborted) throw callSignal.reason;
-              return target.connector.callTool(
-                target.toolName,
-                args ?? {},
-                connectorContext,
+            }
+            // Cancellation can arrive during admission or context construction.
+            if (callSignal?.aborted) throw callSignal.reason;
+            return target.connector.callTool(
+              target.toolName,
+              args ?? {},
+              connectorContext,
+            );
+          };
+          // The permit belongs to this scope, so success, failure, and the
+          // deadline's interruption all release it. Interruption stops the
+          // wait instead of waiting for the connector, so an uncooperative one
+          // cannot hold its permit past the deadline.
+          const attempt = yield* Effect.exit(Effect.scoped(
+            Effect.gen({ self: this }, function* () {
+              yield* timed(
+                (elapsed) => { admissionMs += elapsed; },
+                admitted(this.registry, target, args, callSignal),
               );
-            };
-            // Race cancellation here too, so an uncooperative connector cannot
-            // retain its admission permit after the enclosing deadline expires.
-            return callSignal
-              ? withDeadline(call, {
-                  signal: callSignal,
-                  timeoutError: new ConnectorCallError("timeout", "Tool call timed out"),
-                })
-              : call();
-          },
-        );
-        // isError is checked here for BOTH result shapes so every adapter
-        // reports the same downstream-failure wording, and the throw lands
-        // inside the attempt where it feeds health.
-        assertRawMcpSuccess(target.connector.kind, raw);
-        observedResult = unwrapMcpResult(target.connector.kind, raw);
-        result = context.unwrapResult ? observedResult : raw;
-      } catch (error) {
-        attemptFailed = true;
-        attemptError = error;
-      } finally {
-        permit?.release();
-      }
-
-      if (attemptFailed) {
-        if (callSignal?.aborted) throw callSignal.reason;
-        const callerCancelled = isCallerCancellation(
-          attemptError,
-          context.requestSignal,
-        );
-        const details = callerCancelled
-          ? callerCancelledDetails()
-          : classifyCallError(attemptError);
-        return details;
-      }
-
-      return undefined;
-    };
-    try {
-      const error = context.timeoutMs || context.requestSignal
-        ? await withDeadline(dispatch, {
-            ...defined({
-              timeoutMs: context.timeoutMs,
-              signal: context.requestSignal,
+              const raw = yield* timed(
+                (elapsed) => { connectorMs += elapsed; },
+                Effect.tryPromise({
+                  try: () => Promise.resolve(call()),
+                  catch: (error) => error,
+                }),
+              );
+              // isError is checked here for BOTH result shapes so every adapter
+              // reports the same downstream-failure wording, and the throw lands
+              // inside the attempt where it feeds health.
+              assertRawMcpSuccess(target.connector.kind, raw);
+              return { raw, observed: unwrapMcpResult(target.connector.kind, raw) };
             }),
-            timeoutError: new ConnectorCallError(
-              "timeout", `Tool call timed out after ${context.timeoutMs}ms`,
-            ),
-          })
-        : await dispatch();
-      if (error) return failed(error);
-    } catch (error) {
-      return failed(context.requestSignal?.aborted
-        ? callerCancelledDetails()
-        : classifyCallError(error));
-    }
-    // A dispatch that returned no refusal resolved a concrete tool.
-    const completed = resolved;
-    if (!completed) throw new Error("Invocation completed without a resolved tool");
+          ));
+          if (Exit.isFailure(attempt)) {
+            if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
+            const attemptError = Cause.squash(attempt.cause);
+            return isCallerCancellation(attemptError, context.requestSignal)
+              ? callerCancelledDetails()
+              : classifyCallError(attemptError);
+          }
+          observedResult = attempt.value.observed;
+          result = context.unwrapResult ? observedResult : attempt.value.raw;
+          return undefined;
+        });
 
-    try {
-      const value = await timed(
+      // One deadline owns discovery, queue admission, and provider dispatch.
+      // Expiry interrupts dispatch wherever it is, so nothing it started runs
+      // on afterwards, and only this fiber records the outcome: a late
+      // cancellation cannot append a second activity event.
+      const dispatched = yield* Effect.exit(
+        context.timeoutMs || context.requestSignal
+          ? withDeadlineEffect(dispatch, {
+              ...defined({
+                timeoutMs: context.timeoutMs,
+                signal: context.requestSignal,
+              }),
+              timeoutError: new ConnectorCallError(
+                "timeout", `Tool call timed out after ${context.timeoutMs}ms`,
+              ),
+            })
+          : dispatch(),
+      );
+      if (Exit.isFailure(dispatched)) {
+        return failed(context.requestSignal?.aborted
+          ? callerCancelledDetails()
+          : classifyCallError(Cause.squash(dispatched.cause)));
+      }
+      if (dispatched.value) return failed(dispatched.value);
+      // A dispatch that returned no refusal resolved a concrete tool.
+      const completed = resolved;
+      if (!completed) {
+        return yield* Effect.die(
+          new Error("Invocation completed without a resolved tool"),
+        );
+      }
+
+      const processResult = context.processResult;
+      const processing: Effect.Effect<T, unknown> = processResult
+        ? Effect.tryPromise({
+            try: () => Promise.resolve(processResult(result, completed)) as Promise<T>,
+            catch: (error) => error,
+          })
+        : Effect.succeed(result as T);
+      const processed = yield* Effect.exit(timed(
         (elapsed) => { resultProcessingMs += elapsed; },
-        async () => {
-          const processed = context.processResult
-            ? await context.processResult(result, completed)
-            : (result as T);
+        Effect.tap(processing, () => Effect.sync(() => {
           try {
             this.registry.observeOutputShape(
               completed.connector.id,
@@ -527,27 +584,33 @@ export class InvocationService {
           } catch {
             // Shape learning is advisory. It cannot change a completed call.
           }
-          return processed;
-        },
-      );
-      const diagnostics = timing();
-      const friction = context.activityFriction?.(value);
-      record("success", friction ? { friction } : {});
-      return {
-        ok: true,
-        value,
-        resolved: completed,
-        durationMs: Date.now() - started,
-        attempts,
-        timing: diagnostics,
-      };
-    } catch {
-      return failed(
-        framingError(
-          "result_processing_failed",
-          "The downstream call completed, but its result could not be processed. Do not repeat the call to recover its result.",
-        ),
-      );
-    }
+        })),
+      ));
+      // Past this point the call has happened, so nothing may invite a retry.
+      const unprocessable = () =>
+        failed(
+          framingError(
+            "result_processing_failed",
+            "The downstream call completed, but its result could not be processed. Do not repeat the call to recover its result.",
+          ),
+        );
+      if (Exit.isFailure(processed)) return unprocessable();
+      try {
+        const value = processed.value;
+        const diagnostics = timing();
+        const friction = context.activityFriction?.(value);
+        record("success", friction ? { friction } : {});
+        return {
+          ok: true,
+          value,
+          resolved: completed,
+          durationMs: Date.now() - started,
+          attempts,
+          timing: diagnostics,
+        };
+      } catch {
+        return unprocessable();
+      }
+    });
   }
 }

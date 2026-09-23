@@ -467,6 +467,12 @@ export class CatalogService {
   // after it see one catalog; a failure is dropped so the next ask reads
   // again. The service lives and dies with one request, so no Deferred here is
   // ever awaited from another.
+  //
+  // Registry.getTools also joins concurrent reads in one request scope, which
+  // the operator UI and status reads rely on. This map overlaps it only for
+  // reads still in flight and is kept for what the registry's cannot do: hold
+  // the success for the rest of the request, recorded by the read itself
+  // rather than by an asker, whose probe deadline may have ended its wait.
   private readonly catalogs = new Map<
     string,
     Deferred.Deferred<ToolDef[], unknown>
@@ -666,43 +672,43 @@ export class CatalogService {
     };
   }
 
-  async resolveTool(
+  resolveTool(
     address: string,
     callOptions: ConnectorOperationOptions = {},
   ): Promise<CatalogResolution> {
-    const resolved = this.registry.resolveAddress(address);
-    if (!resolved) {
-      return this.unknownAddressFailure(address, address);
-    }
-    const started = Date.now();
-    let tools: ToolDef[];
-    try {
-      tools = await this.loadConnector(resolved.connector.id, callOptions);
-    } catch (cause) {
-      return this.catalogLoadFailure(
-        cause,
-        started,
-        resolved.connector,
-        resolved.toolName,
-      );
-    }
-    const definition = tools.find((tool) => tool.name === resolved.toolName);
-    if (!definition) {
-      return this.unknownToolFailure(
-        resolved.toolName,
-        resolved.connector,
-        started,
-      );
-    }
-    return {
-      ok: true,
-      resolved: {
-        connector: resolved.connector,
-        toolName: resolved.toolName,
-        definition,
-      },
-      catalogMs: Date.now() - started,
-    };
+    return runEdge(this.resolve(address, callOptions));
+  }
+
+  // resolveTool without the Promise, for InvocationService's pipeline, which
+  // yields it inside the call's deadline rather than crossing an edge. Never
+  // fails: an unloadable catalog is a resolution like any other refusal.
+  resolve(
+    address: string,
+    callOptions: ConnectorOperationOptions = {},
+  ): Effect.Effect<CatalogResolution> {
+    return Effect.suspend(() => {
+      const resolved = this.registry.resolveAddress(address);
+      if (!resolved) {
+        return Effect.succeed(this.unknownAddressFailure(address, address));
+      }
+      const { connector, toolName } = resolved;
+      const started = Date.now();
+      return Effect.match(this.catalog(connector.id, callOptions), {
+        onFailure: (cause) =>
+          this.catalogLoadFailure(cause, started, connector, toolName),
+        onSuccess: (tools): CatalogResolution => {
+          const definition = tools.find((tool) => tool.name === toolName);
+          if (!definition) {
+            return this.unknownToolFailure(toolName, connector, started);
+          }
+          return {
+            ok: true,
+            resolved: { connector, toolName, definition },
+            catalogMs: Date.now() - started,
+          };
+        },
+      });
+    });
   }
 
   async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
