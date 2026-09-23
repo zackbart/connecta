@@ -835,7 +835,7 @@ passing one table is also the check on the executor duties above, with
 | `R6`–`R8` | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion) |
 | `Y1`, `Y2`, `Y3` | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code) |
 | `Y4` | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue) |
-| `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls; a cancelled wedged executor returns promptly and releases its lease) |
+| `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease) |
 | `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
 | `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets) |
 | `L5`, `L7`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue) |

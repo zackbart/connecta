@@ -26,6 +26,7 @@ import type {
   AdmittingExecutor,
   Connector,
   Executor,
+  ExecutorLease,
   ExecutorProvider,
 } from "../src/types.js";
 import { required,
@@ -2099,3 +2100,136 @@ it.each([false, true])("preserves logs on thrown executor errors (over cap: %s)"
     expect(logs).toBe("first\nsecond");
   }
 });
+
+// L2: once the run's signal aborts, no further host call is admitted and an
+// in-flight one fails `cancelled` — discovery included, not only calls.
+describe("host-call cancellation covers discovery (L2)", () => {
+  function countingCatalog(listTools: Connector["listTools"]): {
+    connector: Connector;
+    loads: () => number;
+  } {
+    let loads = 0;
+    return {
+      loads: () => loads,
+      connector: connectorWith({
+        id: "catalog",
+        kind: "api",
+        tools: (ctx) => {
+          loads++;
+          return listTools(ctx);
+        },
+      }),
+    };
+  }
+
+  it.each(["search", "describe"] as const)(
+    "refuses %s once the run has ended, before any catalog is read",
+    async (operation) => {
+      const catalog = countingCatalog(async () => [
+        { name: "read", annotations: { readOnlyHint: true } },
+      ]);
+      const controller = new AbortController();
+      controller.abort();
+      const providers = await buildSandboxProviders(
+        makeRegistry([catalog.connector]), BASE, silentLogger, undefined,
+        { signal: controller.signal },
+      );
+      const fns = connectaProvider(providers).fns;
+      const failure = await (
+        operation === "search"
+          ? required(fns.search)({ connector: "catalog" })
+          : required(fns.describe)({ address: "catalog.read" })
+      ).then(() => null, (error: InvocationFailure) => error);
+      expect(failure?.details).toMatchObject({
+        code: "cancelled",
+        retryable: false,
+      });
+      expect(catalog.loads()).toBe(0);
+    },
+  );
+
+  it.each(["search", "describe"] as const)(
+    "fails an in-flight %s as cancelled when the run ends",
+    { timeout: 8_000 },
+    async (operation) => {
+      let loading!: () => void;
+      const started = new Promise<void>((resolve) => {
+        loading = resolve;
+      });
+      // A catalog that ignores its signal: only the run's end can stop the
+      // program waiting on it before the 30s probe deadline.
+      const catalog = countingCatalog(() => {
+        loading();
+        return new Promise<never>(() => {});
+      });
+      let pending: Promise<unknown> | undefined;
+      const executor: Executor = {
+        async execute(_code, providers) {
+          const fns = connectaProvider(providers).fns;
+          pending = operation === "search"
+            ? required(fns.search)({ connector: "catalog" })
+            : required(fns.describe)({ address: "catalog.read" });
+          pending.catch(() => {});
+          await started;
+          return { result: "finished" };
+        },
+      };
+      const out = await createExecuteTool(
+        makeRegistry([catalog.connector]), BASE, executor, silentLogger,
+      )({ code: "async () => 'finished'" });
+      expect(out.isError).toBeFalsy();
+      const failure = await Promise.race([
+        required(pending).then(
+          () => null,
+          (error: InvocationFailure) => error,
+        ),
+        new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+      ]);
+      expect(failure).not.toBe("hung");
+      expect((failure as InvocationFailure | null)?.details).toMatchObject({
+        code: "cancelled",
+        retryable: false,
+      });
+    },
+  );
+});
+
+// L2/L7: cancellation returns without waiting on an admitting executor whose
+// acquire ignores the signal, and a lease granted afterwards is given back.
+it(
+  "returns a cancelled run promptly when acquire ignores the signal",
+  { timeout: 8_000 },
+  async () => {
+    let grant!: (lease: ExecutorLease) => void;
+    const release = vi.fn();
+    const execute = vi.fn(async () => ({ result: "never" }));
+    const executor: AdmittingExecutor = {
+      execute,
+      acquire: () =>
+        new Promise<ExecutorLease>((resolve) => {
+          grant = resolve;
+        }),
+    };
+    const controller = new AbortController();
+    const pending = createExecuteTool(
+      makeRegistry([calcConnector]), BASE, executor, silentLogger,
+    )({ code: "async () => null" }, { signal: controller.signal });
+    await Promise.resolve();
+    const abortedAt = Date.now();
+    controller.abort();
+    const settled = await Promise.race([
+      pending,
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+    ]);
+    expect(settled).not.toBe("hung");
+    expect(Date.now() - abortedAt).toBeLessThan(1_000);
+    const out = settled as Awaited<typeof pending>;
+    expect(out.isError).toBe(true);
+    expect(out.structuredContent).toMatchObject({
+      error: { code: "executor_cancelled", retryable: false },
+    });
+    grant({ execute, release });
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(execute).not.toHaveBeenCalled();
+  },
+);

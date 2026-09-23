@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { Duration, Effect } from "effect";
+import { Cause, Duration, Effect, Exit, type Scope } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import {
@@ -24,6 +24,7 @@ import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
+  timed,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
@@ -34,8 +35,10 @@ import {
   hasConnectorGuides,
 } from "./skills.js";
 import type {
+  AdmittingExecutor,
   ExecuteResult,
   Executor,
+  ExecutorLease,
   ExecutorProvider,
   Logger,
 } from "./types.js";
@@ -401,25 +404,46 @@ export async function buildSandboxProviders(
   baseUrl: string,
   _logger: Logger,
   activity?: ActivityRequestContext,
-  limits: {
-    signal?: AbortSignal | undefined;
-    maxHostCalls?: number | undefined;
-    hostCallTimeoutMs?: number | undefined;
-    discoveryConcurrency?: number | undefined;
-    /** Per-connector deadline for in-program catalog probes. Default 30_000. */
-    probeTimeoutMs?: number | undefined;
-    onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
-    diagnostics?: ExecuteDiagnostics | undefined;
-    /**
-     * Where `connecta.emit` collects. The handler that will deliver the
-     * blocks owns it; without one, emit fails loudly rather than accept
-     * blocks nobody will ever return.
-     */
-    emitCollector?: EmitCollector | undefined;
-    /** Runtime-owned tail for stale catalog refreshes. */
-    defer?: DeferredWork | undefined;
-  } = {},
+  limits: SandboxLimits = {},
 ): Promise<ExecutorProvider[]> {
+  return [sandboxProvider(registry, baseUrl, activity, limits)];
+}
+
+interface SandboxLimits {
+  signal?: AbortSignal | undefined;
+  maxHostCalls?: number | undefined;
+  hostCallTimeoutMs?: number | undefined;
+  discoveryConcurrency?: number | undefined;
+  /** Per-connector deadline for in-program catalog probes. Default 30_000. */
+  probeTimeoutMs?: number | undefined;
+  onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
+  diagnostics?: ExecuteDiagnostics | undefined;
+  /**
+   * Where `connecta.emit` collects. The handler that will deliver the
+   * blocks owns it; without one, emit fails loudly rather than accept
+   * blocks nobody will ever return.
+   */
+  emitCollector?: EmitCollector | undefined;
+  /** Runtime-owned tail for stale catalog refreshes. */
+  defer?: DeferredWork | undefined;
+}
+
+/**
+ * The `connecta` provider for one execution.
+ *
+ * Building it is synchronous and loads nothing. Each function is a Promise
+ * edge the executor awaits, and behind it one host call is one fiber: spend
+ * the budget, do the operation, and turn a typed failure into the frame the
+ * prelude rebuilds inside the guest. Nothing is shared between those fibers
+ * but the budget counter and this request's catalog, so a call the program
+ * never awaits cannot disturb the others.
+ */
+function sandboxProvider(
+  registry: RegistryView,
+  baseUrl: string,
+  activity: ActivityRequestContext | undefined,
+  limits: SandboxLimits,
+): ExecutorProvider {
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
   const requestScope = {};
@@ -441,218 +465,317 @@ export async function buildSandboxProviders(
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
   const failureSecret = guestFailureSecret();
+  const { signal, diagnostics } = limits;
   let hostCalls = 0;
-  // L4/M7: discovery and invocation spend the same budget; emit does not.
-  const spendHostCall = () => {
-    hostCalls++;
-    if (hostCalls > maxHostCalls) {
-      throw guestFailure(
-        "budget_exceeded",
-        `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
-      );
-    }
-  };
+  // L4/M7: discovery and invocation spend the same budget, on entry; emit
+  // does not.
+  const spendHostCall = Effect.suspend(() =>
+    ++hostCalls > maxHostCalls
+      ? Effect.fail(
+          guestFailure(
+            "budget_exceeded",
+            `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+          ),
+        )
+      : Effect.void,
+  );
   const invocationContext = () => ({
     source: "execute_code" as const,
     timeoutMs: hostCallTimeoutMs,
-    ...(limits.signal !== undefined ? { requestSignal: limits.signal } : {}),
+    ...(signal !== undefined ? { requestSignal: signal } : {}),
     unwrapResult: true,
   });
-  /**
-   * Discovery policy failures use the same thrown vocabulary as calls and
-   * utilities. The transport below reconstructs their code inside the guest.
-   */
-  const typedDiscovery = async <T>(operation: () => Promise<T>): Promise<T> => {
-    try {
-      return await operation();
-    } catch (err) {
-      if (err instanceof DiscoveryPolicyError) {
-        throw guestFailure(err.code, err.message);
-      }
-      throw err;
-    }
-  };
-  const timedCatalog = async <T>(
-    operation: "search" | "describe",
-    fn: () => Promise<T>,
-  ): Promise<T> => {
-    const started = Date.now();
-    try {
-      spendHostCall();
-      const result = await fn();
-      limits.diagnostics?.recordCatalog(
-        operation,
-        Date.now() - started,
-        true,
-        result,
-      );
-      return result;
-    } catch (err) {
-      limits.diagnostics?.recordCatalog(
-        operation,
-        Date.now() - started,
-        false,
-      );
-      throw err;
-    }
-  };
-  const callAddress = async (address: unknown, args: unknown) => {
-    spendHostCall();
-    const outcome = await invocation.invoke(String(address), args ?? {}, invocationContext());
-    limits.diagnostics?.recordCall(outcome);
-    if (!outcome.ok) throw new InvocationFailure(outcome.error);
-    return outcome.value;
-  };
 
-  const fns: ExecutorProvider["fns"] = {
-    call: (address: unknown, args: unknown) =>
-      callAddress(address, args),
+  // A call brings its own cancellation: the invocation pipeline reads the
+  // run's signal, refuses a call that starts after it, and records the
+  // cancelled attempt in activity like any other outcome.
+  const call = (address: unknown, args: unknown) =>
+    spendHostCall.pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          invocation.pipeline(String(address), args ?? {}, invocationContext()),
+        ),
+      ),
+      Effect.flatMap((outcome) => {
+        diagnostics?.recordCall(outcome);
+        return outcome.ok
+          ? Effect.succeed(outcome.value)
+          : Effect.fail(new InvocationFailure(outcome.error));
+      }),
+    );
+
+  // Discovery gets the same treatment from here (L2): once the run has
+  // ended no search or describe starts, and one still in flight fails
+  // `cancelled` instead of holding the program until its probe deadline.
+  // Policy failures use the same thrown vocabulary as calls and utilities;
+  // the transport below reconstructs their code inside the guest.
+  const discovery = <T>(
+    operation: "search" | "describe",
+    read: () => Promise<T>,
+  ): Effect.Effect<T, unknown> =>
+    Effect.suspend(() => {
+      const started = Date.now();
+      const cancelled = () =>
+        guestFailure(
+          "cancelled",
+          `connecta.${operation} was cancelled because the run ended.`,
+        );
+      const reading = Effect.tryPromise({
+        try: read,
+        catch: (err) =>
+          err instanceof DiscoveryPolicyError
+            ? guestFailure(err.code, err.message)
+            : err,
+      });
+      return spendHostCall.pipe(
+        Effect.andThen(
+          !signal
+            ? reading
+            : signal.aborted
+              ? Effect.fail(cancelled())
+              : Effect.raceAllFirst([
+                  reading,
+                  fromSignal(signal).pipe(Effect.mapError(cancelled)),
+                ]),
+        ),
+        Effect.onExit((exit) =>
+          Effect.sync(() =>
+            diagnostics?.recordCatalog(
+              operation,
+              Date.now() - started,
+              Exit.isSuccess(exit),
+              Exit.isSuccess(exit) ? exit.value : undefined,
+            ),
+          ),
+        ),
+      );
+    });
+
+  const operations: Record<
+    string,
+    (...args: unknown[]) => Effect.Effect<unknown, unknown>
+  > = {
+    call,
     // Emission is a provider function, never an ExecuteResult field —
     // that is what keeps the Executor contract untouched and parity
     // structural (M8). It spends no host-call budget (M7); its own
     // budgets live in the collector.
-    emit: async (block: unknown) => {
-      if (!limits.emitCollector) {
-        throw guestFailure(
-          "unavailable",
-          "connecta.emit is unavailable: no emission collector was configured for this execution",
-          true,
-        );
-      }
-      limits.emitCollector.accept(block);
-    },
-    // Not `async`: a synchronous budget refusal must reject the same promise
-    // the transport wrapper awaits, or workerd reports an unhandled rejection.
-    search: (raw: unknown) =>
-      timedCatalog("search", () =>
-        typedDiscovery(async () => {
-          const args = (raw ?? {}) as {
-            query?: string;
-            connector?: string;
-            safety?: "readOnly" | "approvalRequired" | "all";
-            limit?: number;
-            offset?: number;
-            fullDescriptions?: boolean;
-            includeSchemas?: "compact" | "json" | "typescript";
-            includeSchemaKeys?: boolean;
-          };
-          const result = flatSearchResult(
-            await catalog.search({
-              ...args,
-              includeSchemaKeys: args.includeSchemaKeys !== false,
-            }),
-          );
-          boundedDiscoveryText(
-            result,
-            "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
-          );
-          return result;
-        }),
-      ),
-    describe: (raw: unknown) =>
-      timedCatalog("describe", () =>
-        typedDiscovery(async () => {
-          const args = (raw ?? {}) as {
-            address?: unknown;
-            addresses?: unknown;
-            format?: "compact" | "json" | "typescript";
-            fullDescriptions?: boolean;
-          };
-          const result = { tools: await catalog.describe(args) };
-          boundedDiscoveryText(
-            result,
-            'Split the address list or use format: "compact".',
-          );
-          return result;
-        }),
-      ),
-  };
-  const transportedFns = Object.fromEntries(
-    Object.entries(fns).map(([name, fn]) => [
-      name,
-      async (...args: unknown[]) => {
-        try {
-          return await fn(...args);
-        } catch (err) {
-          if (err instanceof InvocationFailure) {
-            const failure = boundedGuestFailure(err);
-            const framed = framedGuestFailure(failureSecret, failure);
-            limits.onInvocationFailure?.(failure);
-            throw framed;
+    emit: (block) =>
+      Effect.try({
+        try: () => {
+          if (!limits.emitCollector) {
+            throw guestFailure(
+              "unavailable",
+              "connecta.emit is unavailable: no emission collector was configured for this execution",
+              true,
+            );
           }
-          throw err;
-        }
-      },
-    ]),
-  );
-  return [
-    {
-      name: "connecta",
-      prelude: guestErrorPrelude(failureSecret),
-      fns: transportedFns,
-    },
-  ];
+          limits.emitCollector.accept(block);
+        },
+        catch: (err) => err,
+      }),
+    search: (raw) =>
+      discovery("search", async () => {
+        const args = (raw ?? {}) as {
+          query?: string;
+          connector?: string;
+          safety?: "readOnly" | "approvalRequired" | "all";
+          limit?: number;
+          offset?: number;
+          fullDescriptions?: boolean;
+          includeSchemas?: "compact" | "json" | "typescript";
+          includeSchemaKeys?: boolean;
+        };
+        const result = flatSearchResult(
+          await catalog.search({
+            ...args,
+            includeSchemaKeys: args.includeSchemaKeys !== false,
+          }),
+        );
+        boundedDiscoveryText(
+          result,
+          "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+        );
+        return result;
+      }),
+    describe: (raw) =>
+      discovery("describe", async () => {
+        const args = (raw ?? {}) as {
+          address?: unknown;
+          addresses?: unknown;
+          format?: "compact" | "json" | "typescript";
+          fullDescriptions?: boolean;
+        };
+        const result = { tools: await catalog.describe(args) };
+        boundedDiscoveryText(
+          result,
+          'Split the address list or use format: "compact".',
+        );
+        return result;
+      }),
+  };
+  // Every failure leaves through the same frame, so the prelude can rebuild
+  // a typed error however the host call failed — refused, over budget, or
+  // cancelled. Anything that is not an InvocationFailure crosses unchanged.
+  const framed = (err: unknown): Effect.Effect<never, unknown> =>
+    Effect.suspend(() => {
+      if (!(err instanceof InvocationFailure)) return Effect.fail(err);
+      const failure = boundedGuestFailure(err);
+      const frame = framedGuestFailure(failureSecret, failure);
+      limits.onInvocationFailure?.(failure);
+      return Effect.fail(frame);
+    });
+  return {
+    name: "connecta",
+    prelude: guestErrorPrelude(failureSecret),
+    fns: Object.fromEntries(
+      Object.entries(operations).map(([name, operation]) => [
+        name,
+        (...args: unknown[]) => {
+          const settled = runEdge(
+            Effect.suspend(() => operation(...args)).pipe(Effect.catch(framed)),
+          );
+          // The executor owns this promise, and a program may abandon a call
+          // that the run's end then cancels before anyone has awaited it.
+          // The rejection is still there for whoever does; it is just not an
+          // unhandled rejection of the host's, which workerd reports as soon
+          // as a microtask passes without a handler.
+          settled.catch(() => {});
+          return settled;
+        },
+      ]),
+    ),
+  };
 }
 
 /**
- * Await an executor without trusting it to settle.
+ * Await an executor's promise without trusting it to settle.
  *
  * An executor's deadline is its own business, and the Dynamic Worker's lives
  * inside the sandbox: a wedged isolate never fires it, so the call never
- * settles, the handler's `finally` never runs, and the admission lease is
- * held for good. Two of those fill the default code pool and every later
- * execute_code queues behind them (executor hit this in production).
+ * settles, the handler never returns, and the admission lease is held for
+ * good. Two of those fill the default code pool and every later execute_code
+ * queues behind them (executor hit this in production). An `acquire()` that
+ * ignores its signal holds a cancelled request the same way.
  *
- * So the host races the call against the request's signal and a ceiling of
- * its own. Cancellation settles as the same `executor_cancelled` the QuickJS
- * pool reports, unless the executor reports its own first; the ceiling as an
- * untyped executor failure naming the key that sets it. Either way the
- * handler returns and releases the lease, and the abandoned call keeps
- * whatever it was doing: the QuickJS lease release recycles its child, and a
- * Dynamic Worker isolate runs on to its own deadline. The result contract is
- * untouched — this only decides when to stop waiting for one.
+ * So the host races the promise against the request's signal and, for a run,
+ * a ceiling of its own. Cancellation settles as the same `executor_cancelled`
+ * the QuickJS pool reports, unless the executor reports its own first; the
+ * ceiling as an untyped executor failure naming the key that sets it. Either
+ * way the handler returns and releases the lease, and the abandoned call
+ * keeps whatever it was doing: the QuickJS lease release recycles its child,
+ * a Dynamic Worker isolate runs on to its own deadline, and a lease granted
+ * after its request gave up goes to `late`. The result contract is untouched
+ * — this only decides when to stop waiting for one.
  */
-function watchExecution(
-  run: () => Promise<ExecuteResult>,
+function awaitExecutor<A>(
+  start: () => A | Promise<A>,
   signal: AbortSignal,
-  watchdogMs: number,
-  logger: Logger,
-): Promise<ExecuteResult> {
-  return runEdge(
-    Effect.raceAllFirst([
-      Effect.tryPromise({ try: () => run(), catch: (err) => err }),
-      // An executor that honors the signal rejects in the abort event itself,
-      // with the logs it captured attached, and that report beats ours by one
-      // timer turn. (A 1ms sleep, not 0: Effect.sleep(0) waits a microtask,
-      // which the executor's promise chain can still lose to.)
-      fromSignal(signal).pipe(
-        Effect.catch(() => Effect.sleep(Duration.millis(1))),
-        Effect.andThen(
-          Effect.fail(
-            new ExecutorAdmissionError(
-              "executor_cancelled",
-              "Execution was cancelled.",
+  options: {
+    late?: (value: A) => void;
+    watchdog?: { ms: number; logger: Logger };
+  } = {},
+): Effect.Effect<A, unknown> {
+  const contenders: Array<Effect.Effect<A, unknown>> = [
+    Effect.suspend(() => {
+      let pending: Promise<A> | undefined;
+      const settling = Effect.tryPromise({
+        try: () => (pending = Promise.resolve(start())),
+        catch: (err) => err,
+      });
+      const { late } = options;
+      return late
+        ? settling.pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                pending?.then(late, () => {});
+              }),
             ),
+          )
+        : settling;
+    }),
+    // An executor that honors the signal rejects in the abort event itself,
+    // with the logs it captured attached, and that report beats ours by one
+    // timer turn. (A 1ms sleep, not 0: Effect.sleep(0) waits a microtask,
+    // which the executor's promise chain can still lose to.)
+    fromSignal(signal).pipe(
+      Effect.catch(() => Effect.sleep(Duration.millis(1))),
+      Effect.andThen(
+        Effect.fail(
+          new ExecutorAdmissionError(
+            "executor_cancelled",
+            "Execution was cancelled.",
           ),
         ),
       ),
-      Effect.sleep(Duration.millis(watchdogMs)).pipe(
+    ),
+  ];
+  const { watchdog } = options;
+  if (watchdog) {
+    contenders.push(
+      Effect.sleep(Duration.millis(watchdog.ms)).pipe(
         Effect.andThen(
           Effect.suspend(() => {
-            logger.warn(
+            watchdog.logger.warn(
               "[connecta] execute_code executor did not settle; run abandoned",
-              { watchdogMs },
+              { watchdogMs: watchdog.ms },
             );
             return Effect.fail(
               new Error(
-                `sandbox unresponsive: no outcome within the ${watchdogMs}ms ` +
+                `sandbox unresponsive: no outcome within the ${watchdog.ms}ms ` +
                   "execute.watchdogMs ceiling, so the run was abandoned",
               ),
             );
           }),
         ),
       ),
-    ]),
+    );
+  }
+  return Effect.raceAllFirst(contenders);
+}
+
+/**
+ * The run's own signal, aborted however the run ends. It follows the
+ * caller's, and aborting it on the way out is what releases outstanding host
+ * waits and tells cooperative connectors to stop.
+ */
+function runSignal(
+  caller: AbortSignal | undefined,
+): Effect.Effect<AbortSignal, never, Scope.Scope> {
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      const controller = new AbortController();
+      const forward = () => controller.abort(caller?.reason);
+      if (caller?.aborted) forward();
+      else caller?.addEventListener("abort", forward, { once: true });
+      return { controller, forward };
+    }),
+    ({ controller, forward }) =>
+      Effect.sync(() => {
+        controller.abort();
+        caller?.removeEventListener("abort", forward);
+      }),
+  ).pipe(Effect.map(({ controller }) => controller.signal));
+}
+
+/**
+ * An admitting executor's lease, released when the run's scope closes.
+ *
+ * `acquire()` is the executor's Promise, awaited as one on purpose. A queued
+ * request is handed its lease from inside whichever request released one, so
+ * a fiber resumed straight from the executor's admission queue would build
+ * this request's providers and run its program in the releasing request —
+ * which workerd refuses for any I/O. Awaiting the promise resumes it here.
+ */
+function leased(
+  executor: AdmittingExecutor,
+  signal: AbortSignal,
+): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
+  return Effect.acquireRelease(
+    awaitExecutor(() => executor.acquire({ signal }), signal, {
+      late: (lease) => lease.release(),
+    }),
+    (lease) => Effect.sync(() => lease.release()),
   );
 }
 
@@ -674,57 +797,51 @@ export function createExecuteTool(
     defer?: DeferredWork | undefined;
   } = {},
 ) {
-  const watchdogMs = resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS);
-  return async (
+  const watchdog = {
+    ms: resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS),
+    logger,
+  };
+  return (
     { code, diagnostics: diagnosticsRequested }: {
       code: string;
       diagnostics?: boolean;
     },
     options: { signal?: AbortSignal } = {},
-  ): Promise<ToolResult> => {
-    const controller = new AbortController();
-    const forwardAbort = () => controller.abort(options.signal?.reason);
-    if (options.signal?.aborted) forwardAbort();
-    else {
-      options.signal?.addEventListener("abort", forwardAbort, { once: true });
-    }
-    let lease;
-    let outcome;
-    const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
-    const emitted = new EmitCollector(
-      resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
-      resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
-      diagnostics,
-    );
-    const invocationFailures: InvocationFailure[] = [];
-    try {
-      // Admission comes before provider construction: queued calls retain no
-      // catalogs, request scopes, or one-closure-per-tool provider arrays.
-      if (isAdmittingExecutor(executor)) {
-        const admissionStarted = Date.now();
-        try {
-          lease = await executor.acquire({ signal: controller.signal });
-        } finally {
-          if (diagnostics) {
-            diagnostics.admissionMs = Date.now() - admissionStarted;
+  ): Promise<ToolResult> =>
+    runEdge(Effect.suspend(() => {
+      const diagnostics = diagnosticsRequested
+        ? new ExecuteDiagnostics()
+        : undefined;
+      const emitted = new EmitCollector(
+        resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
+        resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
+        diagnostics,
+      );
+      const invocationFailures: InvocationFailure[] = [];
+      // The run's scope holds its signal and its lease. However the run
+      // ends — a result, a thrown executor, the watchdog, cancellation —
+      // closing it releases the lease and then aborts the signal, so
+      // nothing the run started outlives the request.
+      const run = Effect.gen(function* () {
+        const signal = yield* runSignal(options.signal);
+        // Admission comes before provider construction: queued calls retain
+        // no catalogs, request scopes, or provider closures.
+        let lease: ExecutorLease | undefined;
+        if (isAdmittingExecutor(executor)) {
+          lease = yield* timed((elapsed) => {
+            if (diagnostics) diagnostics.admissionMs = elapsed;
+          }, leased(executor, signal));
+          if ((lease.waitMs ?? 0) > 0) {
+            logger.debug("[connecta] execute_code admitted after queue wait", {
+              waitMs: lease.waitMs,
+            });
           }
         }
-        if ((lease.waitMs ?? 0) > 0) {
-          logger.debug("[connecta] execute_code admitted after queue wait", {
-            waitMs: lease.waitMs,
-          });
-        }
-      }
-      const setupStarted = Date.now();
-      let providers: ExecutorProvider[];
-      try {
-        providers = await buildSandboxProviders(
-          registry,
-          baseUrl,
-          logger,
-          activity,
-          {
-            signal: controller.signal,
+        const provider = yield* timed((elapsed) => {
+          if (diagnostics) diagnostics.setupMs = elapsed;
+        }, Effect.sync(() =>
+          sandboxProvider(registry, baseUrl, activity, {
+            signal,
             onInvocationFailure: (failure) => {
               invocationFailures.push(failure);
               if (invocationFailures.length > 64) invocationFailures.shift();
@@ -736,159 +853,171 @@ export function createExecuteTool(
             maxHostCalls: config.maxHostCalls,
             hostCallTimeoutMs: config.hostCallTimeoutMs,
             defer: config.defer,
-          },
-        );
-      } finally {
-        if (diagnostics) diagnostics.setupMs = Date.now() - setupStarted;
-      }
-      if (controller.signal.aborted) {
-        throw new ExecutorAdmissionError(
-          "executor_cancelled",
-          "Execution was cancelled during sandbox setup.",
-        );
-      }
-      const executorStarted = Date.now();
-      try {
+          }),
+        ));
+        if (signal.aborted) {
+          return yield* Effect.fail(
+            new ExecutorAdmissionError(
+              "executor_cancelled",
+              "Execution was cancelled during sandbox setup.",
+            ),
+          );
+        }
         const admitted = lease;
-        outcome = await watchExecution(
+        return yield* timed((elapsed) => {
+          if (diagnostics) diagnostics.executorWallMs = elapsed;
+        }, awaitExecutor(
           () =>
             admitted
-              ? admitted.execute(code, providers)
-              : executor.execute(code, providers),
-          controller.signal,
-          watchdogMs,
-          logger,
-        );
-      } finally {
-        if (diagnostics) {
-          diagnostics.executorWallMs = Date.now() - executorStarted;
-        }
-      }
-    } catch (err) {
-      const logs = err !== null && typeof err === "object" && "logs" in err
-        ? executeLogs(err.logs)
-        : undefined;
-      if (err instanceof ExecutorAdmissionError) {
-        if (err.code === "executor_overloaded") {
-          logger.warn("[connecta] execute_code admission rejected", {
-            code: err.code,
-            retryAfterMs: err.retryAfterMs,
-          });
-        }
-        return failureResponse(err.message, {
-          logs,
-          emitted:
-            err instanceof ExecutorExecutionError ? emitted : undefined,
-          diagnostics,
-          code: {
-            code: err.code,
-            message: err.message,
-            retryable: err.retryable,
-            ...(err.retryAfterMs !== undefined
-              ? { retryAfterMs: err.retryAfterMs }
-              : {}),
-          },
-        });
-      }
-      return failureResponse(`Executor failed: ${msg(err)}`, {
-        logs,
-        emitted,
-        diagnostics,
-        code: "executor_failed",
+              ? admitted.execute(code, [provider])
+              : executor.execute(code, [provider]),
+          signal,
+          { watchdog },
+        ));
       });
-    } finally {
-      // A sandbox timeout or early return must also release any outstanding
-      // host waits and signal cooperative connectors to stop their work.
-      controller.abort();
-      lease?.release();
-      options.signal?.removeEventListener("abort", forwardAbort);
-    }
-    const logs = executeLogs(outcome.logs);
-    if (outcome.error !== undefined) {
-      // Executor bridges necessarily reduce thrown host errors to strings.
-      // Match that terminal string back to the request-local typed failure so
-      // an unhandled tool failure keeps the same structured contract as
-      // call_tool. Failures caught by model code never reach
-      // outcome.error and therefore remain under that code's control.
-      //
-      // An error the program let through unchanged matches exactly, and an
-      // exact match always wins: a program that wrapped one failure's message
-      // around another's must not have the wrong type attached. Containment is
-      // the fallback, so a wrapped message still reports its underlying type
-      // rather than losing it to prose.
-      let invocationFailure: InvocationFailure | undefined;
-      for (const match of [
-        (candidate: InvocationFailure) =>
-          outcome.error !== "" &&
-          [candidate.message, guestFailureFrames.get(candidate)].includes(
-            outcome.error,
-          ),
-        (candidate: InvocationFailure) =>
-          [candidate.message, guestFailureFrames.get(candidate)].some(
-            (message) =>
-              // E6: empty or tiny prose cannot identify a wrapped failure.
-              message !== undefined &&
-              message.length >= 8 &&
-              outcome.error?.includes(message) === true,
-          ),
-      ]) {
-        for (let i = invocationFailures.length - 1; i >= 0; i--) {
-          const candidate = invocationFailures[i];
-          if (candidate && match(candidate)) {
-            invocationFailure = candidate;
-            break;
-          }
-        }
-        if (invocationFailure) break;
-      }
-      if (invocationFailure) {
-        // E1/X11: return the same bounded details the guest received.
-        return failureResponse(invocationFailure.details.message, {
-          logs,
-          emitted,
-          diagnostics,
-          code: invocationFailure.details,
-        });
-      }
-      const message = `Error: ${outcome.error || "Execution failed without an error message."}`;
-      return failureResponse(message, {
-        logs,
-        emitted,
-        diagnostics,
-        code: "executor_failed",
-      });
-    }
-    // A result crossing back as a host BigInt (or otherwise unserializable
-    // value) makes JSON.stringify throw — keep that inside the structured
-    // error path so captured logs survive instead of a raw SDK 500.
-    let result: unknown;
-    try {
-      result = guardExecuteResultValue(outcome.result);
-    } catch (err) {
-      const message = `Error: result is not JSON-serializable: ${msg(err)}`;
-      return failureResponse(message, {
-        logs,
-        emitted,
-        diagnostics,
-        code: "executor_failed",
-      });
-    }
-    const response = jsonResult({
-      result,
-      ...(emitted.blocks.length > 0 ? { emitted: emitted.blocks.length } : {}),
-      ...(logs ? { logs } : {}),
-      ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
-    });
-    if (emitted.blocks.length > 0) {
-      // Emitted image/audio blocks are valid MCP content that ToolResult's
-      // text-only typing does not model — the same acknowledged gap
-      // guardContent lives with for downstream block passthrough.
-      response.content.push(
-        ...(emitted.blocks as unknown as typeof response.content),
+      const reported = { emitted, diagnostics, invocationFailures };
+      return Effect.map(Effect.exit(Effect.scoped(run)), (exit) =>
+        Exit.isSuccess(exit)
+          ? finishedRun(exit.value, reported)
+          : failedRun(Cause.squash(exit.cause), logger, reported),
       );
+    }));
+}
+
+interface RunReport {
+  emitted: EmitCollector;
+  diagnostics: ExecuteDiagnostics | undefined;
+  invocationFailures: readonly InvocationFailure[];
+}
+
+/** An execution that never produced an ExecuteResult, as the model sees it. */
+function failedRun(
+  err: unknown,
+  logger: Logger,
+  { emitted, diagnostics }: RunReport,
+): ToolResult {
+  const logs = err !== null && typeof err === "object" && "logs" in err
+    ? executeLogs(err.logs)
+    : undefined;
+  if (err instanceof ExecutorAdmissionError) {
+    if (err.code === "executor_overloaded") {
+      logger.warn("[connecta] execute_code admission rejected", {
+        code: err.code,
+        retryAfterMs: err.retryAfterMs,
+      });
     }
-    return response;
-  };
+    return failureResponse(err.message, {
+      logs,
+      emitted: err instanceof ExecutorExecutionError ? emitted : undefined,
+      diagnostics,
+      code: {
+        code: err.code,
+        message: err.message,
+        retryable: err.retryable,
+        ...(err.retryAfterMs !== undefined
+          ? { retryAfterMs: err.retryAfterMs }
+          : {}),
+      },
+    });
+  }
+  return failureResponse(`Executor failed: ${msg(err)}`, {
+    logs,
+    emitted,
+    diagnostics,
+    code: "executor_failed",
+  });
+}
+
+/** The response for an ExecuteResult: the program's error or its value. */
+function finishedRun(
+  outcome: ExecuteResult,
+  { emitted, diagnostics, invocationFailures }: RunReport,
+): ToolResult {
+  const logs = executeLogs(outcome.logs);
+  if (outcome.error !== undefined) {
+    // Executor bridges necessarily reduce thrown host errors to strings.
+    // Match that terminal string back to the request-local typed failure so
+    // an unhandled tool failure keeps the same structured contract as
+    // call_tool. Failures caught by model code never reach
+    // outcome.error and therefore remain under that code's control.
+    //
+    // An error the program let through unchanged matches exactly, and an
+    // exact match always wins: a program that wrapped one failure's message
+    // around another's must not have the wrong type attached. Containment is
+    // the fallback, so a wrapped message still reports its underlying type
+    // rather than losing it to prose.
+    let invocationFailure: InvocationFailure | undefined;
+    for (const match of [
+      (candidate: InvocationFailure) =>
+        outcome.error !== "" &&
+        [candidate.message, guestFailureFrames.get(candidate)].includes(
+          outcome.error,
+        ),
+      (candidate: InvocationFailure) =>
+        [candidate.message, guestFailureFrames.get(candidate)].some(
+          (message) =>
+            // E6: empty or tiny prose cannot identify a wrapped failure.
+            message !== undefined &&
+            message.length >= 8 &&
+            outcome.error?.includes(message) === true,
+        ),
+    ]) {
+      for (let i = invocationFailures.length - 1; i >= 0; i--) {
+        const candidate = invocationFailures[i];
+        if (candidate && match(candidate)) {
+          invocationFailure = candidate;
+          break;
+        }
+      }
+      if (invocationFailure) break;
+    }
+    if (invocationFailure) {
+      // E1/X11: return the same bounded details the guest received.
+      return failureResponse(invocationFailure.details.message, {
+        logs,
+        emitted,
+        diagnostics,
+        code: invocationFailure.details,
+      });
+    }
+    const message = `Error: ${outcome.error || "Execution failed without an error message."}`;
+    return failureResponse(message, {
+      logs,
+      emitted,
+      diagnostics,
+      code: "executor_failed",
+    });
+  }
+  // A result crossing back as a host BigInt (or otherwise unserializable
+  // value) makes JSON.stringify throw — keep that inside the structured
+  // error path so captured logs survive instead of a raw SDK 500.
+  let result: unknown;
+  try {
+    result = guardExecuteResultValue(outcome.result);
+  } catch (err) {
+    const message = `Error: result is not JSON-serializable: ${msg(err)}`;
+    return failureResponse(message, {
+      logs,
+      emitted,
+      diagnostics,
+      code: "executor_failed",
+    });
+  }
+  const response = jsonResult({
+    result,
+    ...(emitted.blocks.length > 0 ? { emitted: emitted.blocks.length } : {}),
+    ...(logs ? { logs } : {}),
+    ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
+  });
+  if (emitted.blocks.length > 0) {
+    // Emitted image/audio blocks are valid MCP content that ToolResult's
+    // text-only typing does not model — the same acknowledged gap
+    // guardContent lives with for downstream block passthrough.
+    response.content.push(
+      ...(emitted.blocks as unknown as typeof response.content),
+    );
+  }
+  return response;
 }
 
 function executeLogs(value: unknown): string | undefined {

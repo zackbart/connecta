@@ -234,9 +234,9 @@ shape from building, in someone else's repository rather than this one.
 Request admission, downstream call admission, deadlines, bounded settled
 fan-out, connector scope close, OAuth refresh coordination, catalog
 persistence, catalog refresh flights, the result stash, the remote MCP
-connection lifecycle, discovery's request-scoped catalog cache, and the
-single-call invocation pipeline run on Effect v4; the rest of the core has not
-moved yet.
+connection lifecycle, discovery's request-scoped catalog cache, the
+single-call invocation pipeline, and the `execute_code` run with its sandbox
+host calls run on Effect v4; the rest of the core has not moved yet.
 Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
@@ -288,6 +288,19 @@ permit is an `acquireRelease` in the attempt's Scope, released on success,
 failure, and interruption alike, and the connector call is an
 `Effect.tryPromise` over the unchanged Promise `Connector`. Every outcome,
 refusals included, is a value; the caller still records the activity event.
+An `execute_code` run is one fiber too, and its Scope holds what the run
+owns: the run's own signal and, from an admitting executor, the lease.
+Closing it on every exit releases the lease and aborts the signal, so a
+result, a thrown executor, the watchdog, and cancellation all end the same
+way. The executor's `acquire()` and `execute()` stay Promises, each raced
+against the signal (and a run against `execute.watchdogMs`), so connecta
+stops waiting on a sandbox that does not settle; a lease that arrives after
+its request gave up is released on arrival. Each guest host call is a fiber
+of its own behind the provider function the executor awaits: spend the
+budget, then a call yields the invocation pipeline directly while `search`
+and `describe` race the run's signal, and a typed failure leaves through the
+authenticated frame. The budget, the emit collector, and the frame itself
+stay plain synchronous code.
 
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting
@@ -304,6 +317,10 @@ the request that released one, so the invocation pipeline awaits
 and the controller never reads a waiter's `AbortSignal` while handing it a
 permit — on workerd, reading another request's signal throws. A waiter whose
 signal aborts leaves the queue from its own listener, in its own request.
+Executor admission is the same shape one level up: a queued `execute_code`
+is handed its code slot by the request that finished, so the run awaits the
+executor's `acquire()` promise and builds its providers only after it
+resolves, back in its own request.
 
 Each Connecta also gets a runtime of its own. `createConnecta` resolves
 storage, the vault, activity history, the logger, and the rest of its
