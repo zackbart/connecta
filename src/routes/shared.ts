@@ -49,6 +49,8 @@ export interface ServerOptions {
   maxHostCalls?: number | undefined;
   /** Deadline per execute_code host call. Default 15_000. */
   hostCallTimeoutMs?: number | undefined;
+  /** Hard ceiling on one execute_code run, outside the sandbox. Default 120_000. */
+  watchdogMs?: number | undefined;
   /** Required sandbox backing the execute_code meta-tool. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */

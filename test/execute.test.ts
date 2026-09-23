@@ -6,7 +6,10 @@ import {
   createExecuteTool,
 } from "../src/execute.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { AdmissionController } from "../src/executor-admission.js";
+import {
+  AdmissionController,
+  withExecutorAdmission,
+} from "../src/executor-admission.js";
 import {
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
@@ -32,6 +35,7 @@ import { required,
   remoteConnector,
   silentLogger,
 } from "./helpers.js";
+import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
 
@@ -1228,6 +1232,208 @@ describe("MCP and code-mode invocation parity", () => {
     expect(codeError.details.message).toBe(mcpError.message);
     expect(codeError.retryable).toBe(mcpError.retryable);
   });
+});
+
+describe("execute_code executor watchdog", () => {
+  // Ported from executor's wedge repro (UsefulSoftwareCo/executor,
+  // runtime-dynamic-worker/src/wedge-repro.test.ts): an executor whose own
+  // deadline runs inside the sandbox never settles once the sandbox wedges,
+  // and before the watchdog that held its admission slot forever. Each case
+  // carries its own timeout so the old behavior fails fast instead of hanging.
+
+  /** Never settles, like a Dynamic Worker whose in-isolate timer never fires. */
+  function wedgedExecutor(): Executor & { started: Promise<void> } {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    return {
+      started,
+      execute: () => {
+        markStarted();
+        return new Promise<never>(() => {});
+      },
+    };
+  }
+
+  /** The controller createConnecta wraps around a non-admitting executor. */
+  function fallbackAdmission(): AdmissionController {
+    return new AdmissionController({
+      concurrency: 2,
+      maxQueueSize: 8,
+      queueTimeoutMs: 5_000,
+    });
+  }
+
+  function parsedError(out: { content: { text?: string }[] }): {
+    code: string;
+    message: string;
+    retryable: boolean;
+  } {
+    return (JSON.parse(required(out.content[0]).text ?? "") as {
+      error: { code: string; message: string; retryable: boolean };
+    }).error;
+  }
+
+  type RpcToolResult = { isError?: boolean; content: { text?: string }[] };
+
+  async function callExecute(
+    deployment: ReturnType<typeof makeDeployment>,
+    args: { code: string; diagnostics?: boolean },
+  ): Promise<RpcToolResult> {
+    const response = await mcpRpc(
+      deployment,
+      "tools/call",
+      { name: "execute_code", arguments: args },
+      { token: "test-token-123" },
+    );
+    return (await readJsonRpc(response)).result as RpcToolResult;
+  }
+
+  it(
+    "ends a never-settling run as unresponsive and releases its lease",
+    { timeout: 8_000 },
+    async () => {
+      const admission = fallbackAdmission();
+      const out = await createExecuteTool(
+        makeRegistry([calcConnector]),
+        BASE,
+        withExecutorAdmission(wedgedExecutor(), admission),
+        silentLogger,
+        undefined,
+        { watchdogMs: 200 },
+      )({ code: "async () => null", diagnostics: true });
+      expect(out.isError).toBe(true);
+      const error = parsedError(out);
+      expect(error.code).toBe("executor_failed");
+      expect(error.message).toContain("unresponsive");
+      expect(error.retryable).toBe(false);
+      expect(admission.snapshot().active).toBe(0);
+    },
+  );
+
+  it(
+    "keeps two wedged runs from starving the default code pool",
+    { timeout: 8_000 },
+    async () => {
+      // The production failure: the fallback pool defaults to two slots, so
+      // two wedged programs used to block every later execute_code.
+      let executions = 0;
+      const deployment = makeDeployment({
+        execute: { watchdogMs: 200 },
+        executor: {
+          execute: () => {
+            executions++;
+            return executions <= 2
+              ? new Promise<never>(() => {})
+              : Promise.resolve({ result: "third" });
+          },
+        },
+      });
+      const code = { code: "async () => null", diagnostics: true };
+      const wedged = await Promise.all([
+        callExecute(deployment, code),
+        callExecute(deployment, code),
+      ]);
+      for (const out of wedged) {
+        expect(out.isError).toBe(true);
+        expect(parsedError(out).code).toBe("executor_failed");
+        expect(parsedError(out).message).toContain("unresponsive");
+      }
+      const health = (await (
+        await deployment.fetch(new Request("https://connecta.test/health"))
+      ).json()) as { admission: { code: { active: number } } };
+      expect(health.admission.code.active).toBe(0);
+
+      const third = await callExecute(deployment, { code: "async () => null" });
+      expect(third.isError).toBeUndefined();
+      expect(JSON.parse(required(third.content[0]).text ?? "")).toEqual({
+        result: "third",
+      });
+    },
+  );
+
+  it(
+    "returns promptly and releases the lease when a wedged run is cancelled",
+    { timeout: 8_000 },
+    async () => {
+      const admission = fallbackAdmission();
+      const executor = wedgedExecutor();
+      const controller = new AbortController();
+      const pending = createExecuteTool(
+        makeRegistry([calcConnector]),
+        BASE,
+        withExecutorAdmission(executor, admission),
+        silentLogger,
+      )(
+        { code: "async () => null", diagnostics: true },
+        { signal: controller.signal },
+      );
+      await executor.started;
+      expect(admission.snapshot().active).toBe(1);
+      const abortedAt = Date.now();
+      controller.abort();
+      const out = await pending;
+      // The default ceiling is two minutes, so settling this fast means the
+      // abort, not the watchdog, ended the wait.
+      expect(Date.now() - abortedAt).toBeLessThan(1_000);
+      expect(out.isError).toBe(true);
+      expect(parsedError(out)).toMatchObject({
+        code: "executor_cancelled",
+        retryable: false,
+      });
+      expect(admission.snapshot().active).toBe(0);
+    },
+  );
+
+  it(
+    "leaves a slow run that finishes under the ceiling alone",
+    { timeout: 8_000 },
+    async () => {
+      const admission = fallbackAdmission();
+      const slow: Executor = {
+        execute: () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve({ result: "late", logs: ["kept"] }), 300);
+          }),
+      };
+      const out = await createExecuteTool(
+        makeRegistry([calcConnector]),
+        BASE,
+        withExecutorAdmission(slow, admission),
+        silentLogger,
+        undefined,
+        { watchdogMs: 2_000 },
+      )({ code: "async () => null" });
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(required(out.content[0]).text)).toEqual({
+        result: "late",
+        logs: "kept",
+      });
+      expect(admission.snapshot().active).toBe(0);
+    },
+  );
+
+  it(
+    "falls back to the default ceiling for an unusable watchdogMs",
+    { timeout: 8_000 },
+    async () => {
+      const deployment = makeDeployment({
+        execute: { watchdogMs: 0 },
+        executor: {
+          execute: () =>
+            new Promise((resolve) => {
+              setTimeout(() => resolve({ result: "fine" }), 50);
+            }),
+        },
+      });
+      const out = await callExecute(deployment, { code: "async () => null" });
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual({
+        result: "fine",
+      });
+    },
+  );
 });
 
 describe("execute_code handler", () => {

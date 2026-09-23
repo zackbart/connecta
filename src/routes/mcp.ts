@@ -292,6 +292,9 @@ async function serveMcp(
       ...(opts.hostCallTimeoutMs !== undefined
         ? { hostCallTimeoutMs: opts.hostCallTimeoutMs }
         : {}),
+      ...(opts.watchdogMs !== undefined
+        ? { watchdogMs: opts.watchdogMs }
+        : {}),
     });
     return server;
   };
