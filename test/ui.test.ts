@@ -1054,10 +1054,14 @@ describe("status UI", () => {
     expect(closedMidProbe).toBe(false);
 
     releaseSlow();
-    await expect(loading).resolves.toMatchObject({ connectors: [
-      { id: "rejecting", status: "error", message: "future unguarded rejection" },
+    const settled = await loading;
+    expect(settled).toMatchObject({ connectors: [
+      { id: "rejecting", status: "error", problem: "connector_unavailable" },
       { id: "slow", status: "ok" },
     ] });
+    // The rejection's text is classified, not shipped (see the status-message
+    // tests in operator-ui-model.test.ts).
+    expect(JSON.stringify(settled)).not.toContain("future unguarded rejection");
     expect(slowFinished).toBe(true);
     expect(closedMidProbe).toBe(false);
   });

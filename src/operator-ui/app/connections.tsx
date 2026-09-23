@@ -174,6 +174,10 @@ function ConnectorRow({
   const name = connector.title || connector.id;
   const authorization = safeHttpHref(connector.authorizationUrl);
   const drift = driftState(connector.catalogDrift);
+  // A connector being refreshed has no settled problem yet; the last one would
+  // describe a state the page is no longer showing.
+  const problem =
+    connector.status === "loading" ? null : problemCopy(connector.problem);
   return (
     <details class="conn" open={expanded}>
       <summary class="conn-head">
@@ -202,14 +206,13 @@ function ConnectorRow({
         {connector.description ? (
           <p class="conn-note">{connector.description}</p>
         ) : null}
-        {connector.message ? (
-          <p class="msg">{connector.message}</p>
-        ) : problemCopy(connector.problem) ? (
-          <p class="msg">{problemCopy(connector.problem)}</p>
+        {/* Fixed copy keyed by the server's classification — never a status
+            message, which can quote a downstream error body (see PROBLEM_COPY). */}
+        {problem ? (
+          <p class="msg" data-problem={connector.problem}>{problem}</p>
         ) : null}
         {/* A credential mismatch is also on the credential card; one prompt is enough. */}
-        {connector.problem &&
-        connector.status !== "loading" &&
+        {problem && connector.problem &&
         connector.problem !== connector.credential?.problem ? (
           <FixPrompt kind={connector.problem} connectorId={connector.id} name={name} />
         ) : null}

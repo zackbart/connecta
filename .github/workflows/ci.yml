@@ -18,6 +18,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # `check` runs the operator-page browser suite, which needs Chromium and
+      # the system libraries it links against.
+      - run: npm run test:browser:install -- --with-deps
       # release:check ends in the package smoke, which packs the tarball, runs
       # `connecta init`, and then builds and runs the generated deployment's own
       # container. Runners have Docker, and the smoke fails rather than skips

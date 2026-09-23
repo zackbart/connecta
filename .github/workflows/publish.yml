@@ -43,5 +43,8 @@ jobs:
             }
           '
       - run: npm ci
+      # `check` (in release:check and in npm publish's prepack) runs the
+      # operator-page browser suite, which needs Chromium.
+      - run: npm run test:browser:install -- --with-deps
       - run: npm run release:check
       - run: npm publish

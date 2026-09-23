@@ -1,18 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { uiProblemFor, uiToolSafety } from "../src/ui.js";
-import type { UiConnector, UiData } from "../src/operator-ui/model.js";
+import type { UiConnector, UiData, UiProblem } from "../src/operator-ui/model.js";
 import {
   clientServerName,
   clientSetupCommands,
   poolEndpointUrl,
 } from "../src/operator-ui/setup-commands.js";
-import { TOOL_SAFETY_BADGE } from "../src/operator-ui/view.js";
-import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
+import { problemCopy, TOOL_SAFETY_BADGE } from "../src/operator-ui/view.js";
+import { createTestConnecta, fetchTestUiDetails, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "model-token";
@@ -139,6 +139,105 @@ describe("connector problem classification", () => {
     expect(byId.flaky!.status).toBe("ok");
     expect(byId.flaky!.problem).toBe("catalog_failed");
     expect(byId.flaky!.tools).toEqual([]);
+  });
+});
+
+describe("connector status messages", () => {
+  /** A downstream error body that quotes the secret it rejected. */
+  const LEAK = "fetch failed: 503 upstream connect error (token sk_live_abc123)";
+  const SECRET = "sk_live_abc123";
+
+  function withStatus(id: string, status: NonNullable<Connector["status"]>): Connector {
+    return {
+      id,
+      status,
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {};
+      },
+    };
+  }
+
+  it("has fixed on-screen copy for every problem the server can classify, and nothing else", () => {
+    const problems: UiProblem[] = [
+      "connector_unavailable",
+      "oauth_required",
+      "credential_required",
+      "auth_required",
+      "credential_mismatch",
+      "catalog_failed",
+    ];
+    for (const problem of problems) {
+      const copy = problemCopy(problem);
+      expect(copy, problem).toMatch(/\S/);
+      expect(copy).not.toMatch(/https?:\/\//);
+    }
+    expect(problemCopy(undefined)).toBeNull();
+  });
+
+  it("classifies a status message into the payload and logs it instead of shipping it", async () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const connecta = createTestConnecta({
+      connectors: [
+        withStatus("down", async () => ({ state: "error", message: LEAK })),
+        withStatus("thrown", async () => {
+          throw new Error(LEAK);
+        }),
+        withStatus("locked", async () => ({ state: "auth_required", message: LEAK })),
+        withStatus("fine", async () => ({ state: "ok", message: `Connected with ${SECRET}` })),
+      ],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: { ...silentLogger, warn, info },
+    });
+    warn.mockClear();
+    info.mockClear();
+
+    const headers = { Authorization: `Bearer ${TOKEN}` };
+    const bodies: string[] = [];
+    const summary = await connecta.fetch(new Request(`${BASE}/ui/data`, { headers }));
+    bodies.push(await summary.text());
+    const details: Record<string, UiConnector> = {};
+    for (const id of ["down", "thrown", "locked", "fine"]) {
+      const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/${id}`, { headers }));
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      bodies.push(text);
+      details[id] = JSON.parse(text) as UiConnector;
+    }
+
+    // Neither the summary nor any detail carries the text, or a field for it.
+    for (const body of bodies) {
+      expect(body).not.toContain(SECRET);
+      expect(body).not.toContain("upstream connect error");
+      expect(body).not.toContain('"message"');
+    }
+    expect(details.down).toMatchObject({ status: "error", problem: "connector_unavailable" });
+    expect(details.thrown).toMatchObject({ status: "error", problem: "connector_unavailable" });
+    expect(details.locked).toMatchObject({ status: "auth_required", problem: "auth_required" });
+    expect(details.fine!.problem).toBeUndefined();
+
+    // What the page renders for each is the fixed copy for its kind.
+    for (const id of ["down", "thrown", "locked"]) {
+      const copy = problemCopy(details[id]!.problem);
+      expect(copy).toBeTruthy();
+      expect(copy).not.toContain(SECRET);
+    }
+
+    // The raw detail is on the host, where an operator debugging it looks.
+    const warned = warn.mock.calls.map((call) => String(call[0]));
+    expect(warned.filter((line) => line.includes(LEAK)).map((line) => line.split(":")[0])).toEqual([
+      '[connecta] connector "down" operator status error',
+      '[connecta] connector "thrown" operator status error',
+    ]);
+    const informed = info.mock.calls.map((call) => String(call[0]));
+    expect(informed).toContain(`[connecta] connector "locked" operator status auth_required: ${LEAK}`);
+    // An ok status's message is informational and goes nowhere.
+    expect([...warned, ...informed].some((line) => line.includes("Connected with"))).toBe(false);
   });
 });
 

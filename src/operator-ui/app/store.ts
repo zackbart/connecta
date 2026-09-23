@@ -503,7 +503,7 @@ async function loadConnectorDetails(data: UiData, current: () => boolean, token:
         const response = await fetch(`/ui/connectors/${encodeURIComponent(connector.id)}`, { headers: requestHeaders(token), credentials: "same-origin" });
         if (!response.ok) throw new Error(`Connection details unavailable (${response.status})`);
         detail = await response.json() as UiConnector;
-      } catch (error) { detail = { ...connector, status: "error", problem: "connector_unavailable", message: message(error, "Connection details unavailable") }; }
+      } catch { detail = { ...connector, status: "error", problem: "connector_unavailable" }; }
       if (!current() || generation !== detailGeneration || !state.data) return;
       if (detailRevisions.get(connector.id) !== revision) continue;
       set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === connector.id ? detail : c) } });
@@ -525,8 +525,8 @@ export async function refreshConnector(id: string): Promise<void> {
     const detail = await response.json() as UiConnector;
     if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
     set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...detail, ...(detail.status === "auth_required" && c.authorizationUrl ? { authorizationUrl: c.authorizationUrl } : {}) } : c) } });
-  } catch (error) {
+  } catch {
     if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
-    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "error", problem: "connector_unavailable", message: message(error, "Connection details unavailable") } : c) } });
+    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "error", problem: "connector_unavailable" } : c) } });
   }
 }
