@@ -17,7 +17,10 @@
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",
-    "test/**/*.test.ts"
+    "test/**/*.test.ts",
+    // The eval harness: CLI entries, plus the Worker entries wrangler loads.
+    "eval/*.ts",
+    "eval/deploy/worker-*.ts"
   ],
   "project": [
     "src/**/*.ts",
@@ -25,6 +28,7 @@
     "examples/**/*.ts",
     "scripts/**/*.mjs",
     "test/**/*.ts",
+    "eval/**/*.ts",
     "*.ts"
   ],
   "ignoreDependencies": [

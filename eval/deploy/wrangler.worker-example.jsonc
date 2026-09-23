@@ -1,0 +1,11 @@
+// Local-only smoke config for the shipped Worker example (see worker-example.ts).
+// Vars (PUBLIC_URL, secrets) arrive on the wrangler command line from
+// eval/run-smoke.ts; KV is wrangler's local simulation.
+{
+  "name": "connecta-eval-worker-example",
+  "main": "worker-example.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [{ "binding": "CONNECTA_KV", "id": "connecta-eval-local" }],
+  "worker_loaders": [{ "binding": "LOADER" }]
+}

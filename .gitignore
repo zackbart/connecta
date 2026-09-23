@@ -9,3 +9,5 @@ test-results/
 *.log
 
 assets/icon-options/
+eval/results/
+eval/deploy/.wrangler/

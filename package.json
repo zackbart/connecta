@@ -133,6 +133,11 @@
     "check:bundle": "node scripts/bundle-size.mjs",
     "providers:check": "tsx scripts/drift-check.mjs --specs --docs",
     "drift:check": "tsx scripts/drift-check.mjs",
+    "eval:selftest": "tsx eval/selftest.ts",
+    "eval:agent": "tsx eval/run-agent.ts",
+    "eval:smoke": "tsx eval/run-smoke.ts",
+    "eval:perf": "tsx eval/run-perf.ts",
+    "eval:report": "tsx eval/report.ts",
     "check": "npm run check:docs && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
     "release:check": "npm run check && npm run check:security && npm run check:package",
     "prepack": "npm run check"
