@@ -1,0 +1,73 @@
+{
+  "notes": [
+    "Gzip-9 bytes of each Web-facing entry as scripts/bundle-size.mjs bundles it. baselineGzip is the P1-S01 measurement, before any Effect code is reachable; S19 re-baselines.",
+    "Caps: the root entry is capped at 386,000 B for the whole Effect conversion. ./ui, ./activity and the Worker example get baseline + 160 KB, the room HttpApi needs in the operator and activity graphs (P1-S18). Every other entry, providers included, gets baseline + 60 KB.",
+    "A cap moves only in a change that says why. Raising one to make a check pass is the failure this file exists to catch."
+  ],
+  "entries": {
+    ".": {
+      "baselineGzip": 235346,
+      "maxGzip": 386000
+    },
+    "./json-schema": {
+      "baselineGzip": 5870,
+      "maxGzip": 65870
+    },
+    "./auth/clerk": {
+      "baselineGzip": 3087,
+      "maxGzip": 63087
+    },
+    "./auth/cloudflare-access": {
+      "baselineGzip": 447,
+      "maxGzip": 60447
+    },
+    "./providers/cloudflare": {
+      "baselineGzip": 115169,
+      "maxGzip": 175169
+    },
+    "./providers/linear": {
+      "baselineGzip": 91196,
+      "maxGzip": 151196
+    },
+    "./providers/mixpanel": {
+      "baselineGzip": 95248,
+      "maxGzip": 155248
+    },
+    "./providers/notion": {
+      "baselineGzip": 109372,
+      "maxGzip": 169372
+    },
+    "./providers/revenuecat": {
+      "baselineGzip": 92512,
+      "maxGzip": 152512
+    },
+    "./providers/stripe": {
+      "baselineGzip": 93066,
+      "maxGzip": 153066
+    },
+    "./providers/vercel": {
+      "baselineGzip": 107657,
+      "maxGzip": 167657
+    },
+    "./ui": {
+      "baselineGzip": 30204,
+      "maxGzip": 190204
+    },
+    "./credentials": {
+      "baselineGzip": 1288,
+      "maxGzip": 61288
+    },
+    "./activity": {
+      "baselineGzip": 3237,
+      "maxGzip": 163237
+    },
+    "./auth/bearer": {
+      "baselineGzip": 576,
+      "maxGzip": 60576
+    },
+    "examples/worker": {
+      "baselineGzip": 263949,
+      "maxGzip": 423949
+    }
+  }
+}

@@ -116,7 +116,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build:operator-ui": "node scripts/build-operator-ui.mjs",
     "check:operator-ui": "node scripts/build-operator-ui.mjs --check",
-    "build": "npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json",
+    "build": "npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json && node scripts/prune-declarations.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.operator-ui.json --noEmit",
     "test": "vitest run",
     "test:browser:install": "playwright install chromium",
@@ -129,9 +129,11 @@
     "check:examples": "tsc -p tsconfig.template.node.json && tsc -p tsconfig.examples.worker.json",
     "check:security": "npm audit --omit=dev --audit-level=moderate",
     "check:package": "node scripts/check-package.mjs",
+    "check:declarations": "node scripts/check-declarations.mjs --dist .",
+    "check:bundle": "node scripts/bundle-size.mjs",
     "providers:check": "tsx scripts/drift-check.mjs --specs --docs",
     "drift:check": "tsx scripts/drift-check.mjs",
-    "check": "npm run check:docs && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:examples",
+    "check": "npm run check:docs && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
     "release:check": "npm run check && npm run check:security && npm run check:package",
     "prepack": "npm run check"
   },
@@ -139,6 +141,7 @@
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
+    "effect": "4.0.0-rc.117",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
