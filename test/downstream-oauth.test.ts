@@ -4429,6 +4429,81 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     }
   });
 
+  describe("discardRefusedGrant", () => {
+    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
+    const sealer = () =>
+      vaultOAuthSealer(
+        new CredentialVault(memoryStorage(), SEAL_KEY),
+        "svc",
+        undefined,
+        silentLogger,
+      );
+
+    it("deletes through compareAndSet against the exact sealed raw value it read", async () => {
+      const s = sealer();
+      const storage = await seededStorage(s);
+      const sealedRaw = await storage.get(tokenKey);
+      expect(sealedRaw).not.toContain("refresh-old");
+      const cas = vi.spyOn(storage, "compareAndSet");
+      const del = vi.spyOn(storage, "delete");
+      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false, s);
+      await p.discardRefusedGrant("refresh-old", "legacy");
+      expect(cas).toHaveBeenCalledWith(tokenKey, sealedRaw, null);
+      expect(del).not.toHaveBeenCalled();
+      expect(await storage.get(tokenKey)).toBeNull();
+    });
+
+    it("keeps a consent that lands between the read and the compare-and-set delete", async () => {
+      const s = sealer();
+      const storage = await seededStorage(s);
+      const consent = new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, s);
+      const originalCas = storage.compareAndSet!.bind(storage);
+      let casResult: boolean | undefined;
+      storage.compareAndSet = async (key, expected, next, opts) => {
+        if (key === tokenKey) {
+          // A callback on another request completes consent right here.
+          await consent.saveTokens(
+            {
+              access_token: "access-consented",
+              token_type: "Bearer",
+              refresh_token: "refresh-consented",
+            },
+            { issuer },
+          );
+        }
+        casResult = await originalCas(key, expected, next, opts);
+        return casResult;
+      };
+      const del = vi.spyOn(storage, "delete");
+      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false, s);
+      await p.discardRefusedGrant("refresh-old", "legacy");
+      expect(casResult).toBe(false);
+      expect(del).not.toHaveBeenCalled();
+      expect(await consent.tokens()).toMatchObject({
+        access_token: "access-consented",
+        refresh_token: "refresh-consented",
+      });
+    });
+
+    it("falls back to a plain delete on a store without compareAndSet", async () => {
+      const seeded = await seededStorage();
+      const { compareAndSet: _omitted, ...rest } = seeded;
+      const storage: KVStorage = rest;
+      const del = vi.spyOn(storage, "delete");
+      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false);
+      await p.discardRefusedGrant("refresh-old", "legacy");
+      expect(del).toHaveBeenCalledWith(tokenKey);
+      expect(await storage.get(tokenKey)).toBeNull();
+    });
+
+    it("leaves a different refresh token alone", async () => {
+      const storage = await seededStorage();
+      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false);
+      await p.discardRefusedGrant("refresh-other", "legacy");
+      expect(await p.tokens()).toMatchObject({ refresh_token: "refresh-old" });
+    });
+  });
+
   it("gives every caller joined on a dead refresh flight the same auth_required", async () => {
     const storage = await seededStorage();
     const server = downstream({
@@ -4622,6 +4697,17 @@ describe("remoteMcp() dead and transient refresh grants", () => {
 
   it("gives every caller joined on a transient refresh flight the same retryable outage", async () => {
     const storage = await seededStorage();
+    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
+    // A follower's last token read comes from the coordinator itself, right
+    // before it joins the flight: the bearer header read, the SDK's issuer
+    // read, then the coordinator's. Hold the owner's token request until both
+    // followers have made all three, so none can arrive after the flight ends.
+    let tokenReads = 0;
+    const originalGet = storage.get.bind(storage);
+    storage.get = async (key) => {
+      if (key === tokenKey) tokenReads++;
+      return originalGet(key);
+    };
     const server = downstream({
       current: () =>
         Response.json({ error: "server_error" }, { status: 503 }),
@@ -4633,6 +4719,9 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       const scopes = Array.from({ length: 3 }, () => scope(storage));
       const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
       await gate.ready;
+      await vi.waitFor(() => expect(tokenReads).toBe(9));
+      // The join itself follows one more generation read: let it land.
+      await new Promise((resolve) => setTimeout(resolve, 0));
       gate.release();
       const failures = await calls;
       for (const { classified } of failures) {

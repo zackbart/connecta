@@ -910,29 +910,36 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * @internal Delete the grant the authorization server just refused, but only
    * while storage still holds exactly that refresh token in this generation: a
-   * consent that completed meanwhile must survive. KVStorage has no
-   * compare-and-delete, so a write landing between the read and the delete can
-   * still be lost — the same window the SDK's own invalidation has. Best
-   * effort: if storage fails, the next refresh is refused again and ends the
-   * same way.
+   * consent that completed meanwhile must survive. Where the store has
+   * `compareAndSet`, the delete is conditional on the exact raw string read
+   * (ciphertext, when sealed), so a write landing in between wins. A store
+   * without it (Workers KV) gets the read followed by a plain delete, and a
+   * write landing between the two can still be lost — the same window the
+   * SDK's own invalidation has. Best effort: if storage fails, the next
+   * refresh is refused again and ends the same way.
    */
   async discardRefusedGrant(
     refreshToken: string | null,
     generation: string,
   ): Promise<void> {
     try {
-      const stored = await this.readValue(
+      const read = await this.readStoredValue(
         "oauth:tokens",
         (raw) => JSON.parse(raw) as OAuthTokens,
       );
       if (
-        !stored ||
-        stored.generation !== generation ||
-        stored.value.refresh_token !== refreshToken
+        !read ||
+        read.stored.generation !== generation ||
+        read.stored.value.refresh_token !== refreshToken
       ) {
         return;
       }
-      await this.storage.delete(oauthValueStorageKey("oauth:tokens", generation));
+      const physicalKey = oauthValueStorageKey("oauth:tokens", generation);
+      if (this.storage.compareAndSet) {
+        await this.storage.compareAndSet(physicalKey, read.raw, null);
+      } else {
+        await this.storage.delete(physicalKey);
+      }
     } catch {
       // See above: a refusal that could not be recorded recurs, it does not hide.
     }
@@ -1160,6 +1167,29 @@ export class KvOAuthProvider implements OAuthClientProvider {
   ): Promise<
     { value: T; generation: string; issuer?: string } | undefined
   > {
+    const read = await this.readStoredValue(key, parseLegacy);
+    if (!read) return undefined;
+    if (read.plaintextCredential) {
+      await this.sealInPlace(key, read.stored.generation, read.raw);
+    }
+    return read.stored;
+  }
+
+  /**
+   * `readValue` without the in-place sealing, keeping the exact raw string
+   * (ciphertext, when sealed) the value came from, for a compare-and-set.
+   */
+  private async readStoredValue<T>(
+    key: string,
+    parseLegacy: (raw: string) => T,
+  ): Promise<
+    | {
+        stored: { value: T; generation: string; issuer?: string };
+        raw: string;
+        plaintextCredential: boolean;
+      }
+    | undefined
+  > {
     const generation = await this.generation();
     const physicalKey = oauthValueStorageKey(key, generation);
     const raw = await this.storage.get(physicalKey);
@@ -1194,10 +1224,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
 
     const stored = this.interpretValue(text, parsed, generation, parseLegacy);
-    if (stored && plaintextCredential) {
-      await this.sealInPlace(key, generation, raw);
-    }
-    return stored;
+    return stored ? { stored, raw, plaintextCredential } : undefined;
   }
 
   private interpretValue<T>(
