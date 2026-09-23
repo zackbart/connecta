@@ -168,7 +168,7 @@ const page = await connecta.search({
   limit: 8,                         // 1–100, default 8
   offset: 0,
   fullDescriptions: false,
-  includeSchemas: "compact",        // or "json"
+  includeSchemas: "compact",        // or "json" / "typescript"
   includeSchemaKeys: true,          // default true in code mode
 });
 ```
@@ -215,6 +215,18 @@ truncation flag; `$dynamicRef` resolves a same-named definition like `$ref`, and
 an unresolved one becomes `unknown` with the flag. For omitted exact constraints
 use `format: "json"` or JSON search.
 
+`includeSchemas: "typescript"` spends those same bounds on a different
+rendering: one `signature` string in place of `inputSchema` and
+`outputSchema`, reading `(args: { runId: number }) => Promise<Run>` for the
+value `connecta.call` returns. It is documentation for the program's author —
+the program itself is still JavaScript, and a type annotation copied into it
+is a syntax error (`P5`). Truncation keeps compact's flags and
+turns what compact would print as a name or raw JSON into a marked `unknown`;
+an observed output opens with `/* observed, not declared */`. The dialect and
+its degradation rules are specified once, under
+[TypeScript signatures](./meta-tools.md#typescript-signatures), and the
+signature is byte-identical to the one `search_tools` returns.
+
 **S1a.** `connector` loads only the named catalog; omit it only when the
 integration is ambiguous, because an unscoped search fans out across every
 configured connector. `safety: "readOnly"` returns exactly the tools available
@@ -253,7 +265,7 @@ hint and the stable `code`, `retryable`, and `details` fields (`E1`).
 const one = await connecta.describe({ address: "ci.get_run" });
 const many = await connecta.describe({
   addresses: ["ci.get_run", "ci.get_job_logs"],  // ≤ 100
-  format: "compact",                             // or "json"
+  format: "compact",                             // or "json" / "typescript"
   fullDescriptions: false,
 });
 ```
@@ -269,8 +281,11 @@ canonical addresses. More than 100 addresses is `invalid_args`, and the same
 256,000-byte ceiling applies. Compact describe keeps property prose within a
 separate 8,192-byte UTF-8 shape cap and shares search's 2,000-visit budget; a
 capped shape sets `inputSchemaTruncated` or `outputSchemaTruncated`, and
-`format: "json"` gives the exact schema. A success whose output shape came from
-`S9` carries `outputSchemaSource: "observed"`.
+`format: "json"` gives the exact schema. `format: "typescript"` returns a
+`signature` instead of both schema fields, under the same 8,192-byte cap per
+half with property prose as JSDoc. A success whose output shape came from
+`S9` carries `outputSchemaSource: "observed"`, and a TypeScript signature also
+says so inside its `Promise<…>`.
 
 ### connecta.call
 
@@ -802,7 +817,7 @@ passing one table is also the check on the executor duties above, with
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
 | `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory) |
-| `S1`, `S1a`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes) |
+| `S1`, `S1a`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling), `test/typescript-signatures-parse.test.ts` (every rendering parses) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
 | `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5`, `S6` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity) |

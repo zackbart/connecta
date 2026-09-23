@@ -20,7 +20,7 @@ because writes will run only there or for config-exempt tools.
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `execute_code` | `code`, `diagnostics?` | the program's reduced return value, plus a `diagnostics` block when asked |
-| `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json"` | `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
+| `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
 | `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
 | `call_destructive_tool` | the same, plus `reason?` | the same |
 | `authorize_connector` | `connector`, `force?` | the class-specific handoff in [authorization recovery](#authorization-recovery) |
@@ -111,7 +111,7 @@ discovery. Both take the same arguments.
 | `connector` | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous |
 | `safety` | `"readOnly"` for what generated code may call, `"approvalRequired"` for the complementary set that must cross `call_destructive_tool`, omitted or `"all"` for the complete configured catalog |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small |
-| `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema |
+| `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures)) |
 | `fullDescriptions` | unabridged tool purposes, at the obvious cost |
 
 Neither `connector` nor `safety` grants authority or changes invocation
@@ -145,6 +145,43 @@ tuples, and conditional keywords are documented once under
 act on is the flag: any cap sets `inputSchemaTruncated` or
 `outputSchemaTruncated`, and that means repeat with `includeSchemas: "json"`, or
 describe, when the exact constraints matter.
+
+### TypeScript signatures
+
+`includeSchemas: "typescript"` replaces both schema fields with one
+`signature`: the function `connecta.call(address, args)` resolves to, written
+as a TypeScript type because agents write code against types more reliably
+than against JSON Schema ([executor](https://github.com/UsefulSoftwareCo/executor)'s
+discovery made the same bet).
+
+```ts
+(args: { team: string; limit?: number /* <= 250 */ }) => Promise<unknown>
+(args?: {}) => Promise<{ accounts: { stripe_context: string; livemode: boolean; name?: string }[] }>
+(args: { team: string }) => Promise</* observed, not declared */ { cursor?: string; issues?: { id?: string }[] }>
+```
+
+It is something to read, not something that runs: programs stay JavaScript,
+and the refusal of erasable TypeScript in `execute_code` stands
+([ethos](../ethos.md#decisions)). The output half is the provider's declared
+schema, else an `S9` observation that opens with the
+`/* observed, not declared */` marker and keeps the `outputSchemaSource`
+field, else `unknown` — runtime evidence never reads as a contract, even when
+the signature is lifted out of its entry. A tool without parameters takes
+`args?: {}`.
+
+The walk, byte budgets, and truncation flags are compact's, each half
+separately, and search, describe, and every discovery route share them, so the
+same tool renders the same signature from `search_tools` and `connecta.search`.
+What changes is the dialect: `number` for `integer`, `;` between members,
+quoted non-identifier keys, `T[]` over a parenthesized union, `| null` for
+OpenAPI `nullable` and type lists, index signatures for schema-valued
+`additionalProperties`, `Record<string, unknown>` for an open object with no
+declared properties, and JSDoc for property prose where describe keeps it.
+Where compact would print a bare definition name or raw JSON, the signature
+prints `unknown` with a marker and sets the flag: `/* recursive */` for a
+`$ref` cycle, `/* unresolved */` for a missing target, `/* truncated */` past
+depth four or an exhausted budget. `inputKeys` and friends come from the
+declared schema exactly as they do for compact.
 
 ## Connector guides and skills
 

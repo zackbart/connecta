@@ -62,6 +62,7 @@ export const WORKERS_SUITES = [
   "test/startup-warnings.test.ts",
   "test/storage-cas.test.ts",
   "test/stripe-provider.test.ts",
+  "test/typescript-signatures.test.ts",
   "test/ui.test.ts",
   "test/ui-credentials.test.ts",
   "test/url-safety.test.ts",
@@ -139,6 +140,11 @@ export const NODE_ONLY_SUITES = [
   {
     file: "test/suite-partition.test.ts",
     reason: "walks the test directory to guard this partition",
+  },
+  {
+    file: "test/typescript-signatures-parse.test.ts",
+    reason:
+      "loads the CommonJS TypeScript compiler to parse every rendered signature",
   },
   {
     file: "test/template-file-activity.test.ts",

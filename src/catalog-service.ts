@@ -10,6 +10,7 @@ import {
   schemaObjectKeys,
   summarizeDiscoveryDescription,
   summarizeDescription,
+  typescriptSignature,
 } from "./catalog.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import {
@@ -218,6 +219,12 @@ export function boundedDiscoveryText(value: unknown, hint: string): string {
   return text;
 }
 
+/**
+ * How discovery renders a schema: the compact routing notation, the exact
+ * JSON, or a TypeScript `signature` replacing both schema fields.
+ */
+type SchemaFormat = "compact" | "json" | "typescript";
+
 export interface CatalogSearchArgs {
   query?: string;
   connector?: string;
@@ -229,7 +236,7 @@ export interface CatalogSearchArgs {
   limit?: number;
   offset?: number;
   fullDescriptions?: boolean;
-  includeSchemas?: "compact" | "json";
+  includeSchemas?: SchemaFormat;
   /** Code-mode helper metadata; never exposed by the public search_tools schema. */
   includeSchemaKeys?: boolean;
 }
@@ -266,7 +273,7 @@ function toolsForSafety(
 export interface CatalogDescribeArgs {
   address?: unknown;
   addresses?: unknown;
-  format?: "compact" | "json";
+  format?: SchemaFormat;
   fullDescriptions?: boolean;
 }
 
@@ -280,6 +287,7 @@ interface CatalogSearchEntry {
     description?: string;
     inputSchema?: unknown;
     outputSchema?: unknown;
+    signature?: string;
     outputSchemaSource?: "observed";
     inputSchemaTruncated?: true;
     outputSchemaTruncated?: true;
@@ -398,6 +406,7 @@ export interface CatalogDescription {
   guideRequiredReasons?: GuideRequiredReason[];
   inputSchema?: unknown;
   outputSchema?: unknown;
+  signature?: string;
   outputSchemaSource?: "observed";
   inputSchemaTruncated?: true;
   outputSchemaTruncated?: true;
@@ -851,12 +860,23 @@ export class CatalogService {
         ? this.outputSchema(match.connector.id, match.tool)
         : {};
       const input = match.tool.inputSchema ?? { type: "object" };
-      const renderedInput = withSchemas
-        ? renderSearchSchema(input, withSchemas)
+      const signature = withSchemas === "typescript"
+        ? typescriptSignature(input, output.schema, {
+            observed: output.source === "observed",
+            description: false,
+          })
         : undefined;
-      const renderedOutput =
-        withSchemas && output.schema
-          ? renderSearchSchema(output.schema, withSchemas)
+      const schemaFormat =
+        withSchemas === "typescript" ? undefined : withSchemas;
+      const renderedInput = signature
+        ? { schema: undefined, truncated: signature.inputTruncated }
+        : schemaFormat
+          ? renderSearchSchema(input, schemaFormat)
+          : undefined;
+      const renderedOutput = signature
+        ? { schema: undefined, truncated: signature.outputTruncated }
+        : schemaFormat && output.schema
+          ? renderSearchSchema(output.schema, schemaFormat)
           : undefined;
       const schemaKeys =
         withSchemas && args.includeSchemaKeys
@@ -884,15 +904,16 @@ export class CatalogService {
           name: match.tool.name,
           address: `${match.connector.id}.${match.tool.name}`,
           ...(description !== undefined ? { description } : {}),
-          ...(withSchemas
+          ...(schemaFormat
             ? {
                 inputSchema: renderedInput?.schema,
               }
             : {}),
+          ...(signature ? { signature: signature.text } : {}),
           ...(renderedInput?.truncated
             ? { inputSchemaTruncated: true as const }
             : {}),
-          ...(withSchemas && output.schema
+          ...(schemaFormat && output.schema
             ? {
                 outputSchema: renderedOutput?.schema,
               }
@@ -1233,14 +1254,24 @@ export class CatalogService {
         tool.description,
         args.fullDescriptions === true,
       );
+      const signature = format === "typescript"
+        ? typescriptSignature(input, output.schema, {
+            observed: output.source === "observed",
+            description: true,
+          })
+        : undefined;
       const compactInput = format === "compact"
         ? compactDescriptionSchema(input) : undefined;
       const compactOutput = format === "compact" && output.schema
         ? compactDescriptionSchema(output.schema) : undefined;
+      const inputTruncated =
+        compactInput?.truncated === true || signature?.inputTruncated === true;
+      const outputTruncated =
+        compactOutput?.truncated === true || signature?.outputTruncated === true;
       const requiredReasons = guideRequiredReasons(
         addressResolution.connector,
         tool,
-        compactInput?.truncated === true || compactOutput?.truncated === true,
+        inputTruncated || outputTruncated,
       );
       const guideSummary = connectorGuideSummary(addressResolution.connector);
       return {
@@ -1259,10 +1290,12 @@ export class CatalogService {
               guideRequiredReasons: requiredReasons,
             }
           : {}),
-        inputSchema: compactInput?.text ?? input,
-        ...(compactInput?.truncated ? { inputSchemaTruncated: true as const } : {}),
-        ...(compactOutput?.truncated ? { outputSchemaTruncated: true as const } : {}),
-        ...(output.schema
+        ...(signature
+          ? { signature: signature.text }
+          : { inputSchema: compactInput?.text ?? input }),
+        ...(inputTruncated ? { inputSchemaTruncated: true as const } : {}),
+        ...(outputTruncated ? { outputSchemaTruncated: true as const } : {}),
+        ...(output.schema && !signature
           ? {
               outputSchema: compactOutput?.text ?? output.schema,
             }
