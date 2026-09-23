@@ -8,6 +8,8 @@ import type {
   OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
+import { retryAfterMs } from "../connectors/guarded-fetch.js";
+import { ConnectorCallError } from "../errors.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import type { KVStorage } from "../types.js";
 
@@ -126,8 +128,102 @@ async function readRefreshResponse(response: Response): Promise<unknown> {
   }
 }
 
+/**
+ * What a failed refresh says about the grant.
+ *
+ * `dead`: the authorization server refused the refresh token or the client —
+ * any 4xx except 408, 425, and 429, or a 2xx carrying an OAuth `error` the way
+ * GitHub answers `bad_refresh_token`. Only consent repairs that, so the call is
+ * `auth_required` and the refused token is never sent again.
+ *
+ * `transient`: the server could not answer now — 5xx, 408, 425, 429, a network
+ * failure, or a 2xx that is not a token response. The grant is kept and the
+ * call is a retryable outage; a passive call never turns it into consent.
+ */
+type RefreshFailure =
+  | { kind: "dead" }
+  | {
+      kind: "transient";
+      /** Completes "the authorization server …" in the agent-facing message. */
+      reason: string;
+      status?: number;
+      retryAfterMs?: number;
+      cause?: unknown;
+    };
+
+type TransientRefreshFailure = Extract<RefreshFailure, { kind: "transient" }>;
+
+/** Client-error statuses that describe the moment, not the grant. */
+const TRANSIENT_CLIENT_STATUSES: ReadonlySet<number> = new Set([408, 425, 429]);
+
+/**
+ * OAuth `error` codes on which the SDK's own `auth()` drops state and starts
+ * over. Handing the SDK one of these is how a dead grant reaches consent on an
+ * explicit authorization, and `auth_required` on a passive call.
+ */
+const SDK_RESTARTING_CODES: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "invalid_client",
+  "unauthorized_client",
+]);
+
+function oauthErrorCode(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const code = (body as { error?: unknown }).error;
+  return typeof code === "string" ? code : undefined;
+}
+
+function transientFailure(
+  reason: string,
+  response?: Response,
+  cause?: unknown,
+): TransientRefreshFailure {
+  const wait = response ? retryAfterMs(response.headers) : undefined;
+  return {
+    kind: "transient",
+    reason,
+    ...(response ? { status: response.status } : {}),
+    ...(wait !== undefined ? { retryAfterMs: wait } : {}),
+    ...(cause !== undefined ? { cause } : {}),
+  };
+}
+
+/** What the SDK sees for a refused grant it would otherwise misread. */
+function refusedGrantResponse(original: Response): Response {
+  void original.body?.cancel().catch(() => {});
+  return Response.json(
+    {
+      error: "invalid_grant",
+      error_description: "The authorization server refused the refresh token.",
+    },
+    { status: 400 },
+  );
+}
+
+/** What the SDK sees for an outage whose body names a restarting code. */
+function outageResponse(original: Response): Response {
+  void original.body?.cancel().catch(() => {});
+  const retryAfter = original.headers.get("retry-after");
+  return Response.json(
+    {
+      error: "server_error",
+      error_description: "The authorization server is temporarily unavailable.",
+    },
+    {
+      status: original.status,
+      ...(retryAfter !== null ? { headers: { "retry-after": retryAfter } } : {}),
+    },
+  );
+}
+
 type RefreshResponseOutcome =
-  | { failure: Error; tokens?: undefined }
+  | {
+      failure: Error;
+      verdict: RefreshFailure;
+      /** The answer the SDK parses: the original unless it would misread it. */
+      forSdk: Response;
+      tokens?: undefined;
+    }
   | { failure?: undefined; tokens: OAuthTokens };
 
 /**
@@ -135,23 +231,80 @@ type RefreshResponseOutcome =
  * tokens: a valid response has already consumed the rotating refresh token, so
  * the host persists it (`coordinatedFetch`) rather than trusting the SDK's
  * later `saveTokens` to arrive on a request that may already be cancelled.
+ *
+ * A failure also decides what the SDK gets to parse. Pinned against
+ * `@modelcontextprotocol/client` 2.0.0, `dist/index.mjs`: `authInternal()`
+ * swallows a refresh failure that is not an `OAuthError`, or is `server_error`,
+ * and falls through to `startAuthorization` (`state()`, `saveCodeVerifier()`,
+ * `redirectToAuthorization()`); it rethrows every other `OAuthError`, and
+ * `auth()` retries once after `invalidateCredentials()` only for
+ * `invalid_grant` (tokens) and `invalid_client`/`unauthorized_client` (client
+ * and tokens). `executeTokenRequest()` turns a 2xx body carrying `error` into
+ * an `OAuthError` with that code. So a dead grant the SDK would rethrow
+ * (`bad_refresh_token`, `invalid_scope`, …) reaches it as `invalid_grant`, and
+ * an outage whose body names any code but `server_error` reaches it as
+ * `server_error` — a 5xx `invalid_grant` must not make the SDK drop a grant
+ * nobody refused. The provider hooks below finish the job. If the SDK moves,
+ * the tests under "remoteMcp() dead and transient refresh grants" fail first.
  */
 async function refreshResponseOutcome(
   response: Response,
 ): Promise<RefreshResponseOutcome> {
   if (!response.ok) {
-    return { failure: new Error(`OAuth refresh failed with HTTP ${response.status}.`) };
+    let code: string | undefined;
+    try {
+      code = oauthErrorCode(await readRefreshResponse(response));
+    } catch {
+      // Not JSON, or too large to be an OAuth error: the status decides.
+    }
+    const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      !TRANSIENT_CLIENT_STATUSES.has(response.status)
+    ) {
+      return {
+        failure,
+        verdict: { kind: "dead" },
+        forSdk:
+          code !== undefined && SDK_RESTARTING_CODES.has(code)
+            ? response
+            : refusedGrantResponse(response),
+      };
+    }
+    return {
+      failure,
+      verdict: transientFailure(`answered HTTP ${response.status}`, response),
+      forSdk:
+        code !== undefined && code !== "server_error"
+          ? outageResponse(response)
+          : response,
+    };
   }
   let parsed: unknown;
   try {
     parsed = await readRefreshResponse(response);
   } catch (error) {
     if (error instanceof OversizedRefreshResponse) throw error;
-    return { failure: new Error("OAuth refresh response did not contain JSON tokens.") };
+    return {
+      failure: new Error("OAuth refresh response did not contain JSON tokens."),
+      verdict: transientFailure("answered without a token response", response),
+      forSdk: response,
+    };
   }
-  return sdkAcceptsOAuthTokens(parsed)
-    ? { tokens: parsed as OAuthTokens }
-    : { failure: new Error("OAuth refresh response did not match the token schema.") };
+  if (sdkAcceptsOAuthTokens(parsed)) return { tokens: parsed as OAuthTokens };
+  if (oauthErrorCode(parsed) !== undefined) {
+    return {
+      failure: new Error("OAuth refresh was refused by the authorization server."),
+      verdict: { kind: "dead" },
+      forSdk: refusedGrantResponse(response),
+    };
+  }
+  return {
+    failure: new Error("OAuth refresh response did not match the token schema."),
+    verdict: transientFailure("answered without a token response", response),
+    forSdk: response,
+  };
 }
 
 function refreshMutationPendingResponse(): Response {
@@ -168,7 +321,8 @@ function refreshMutationPendingResponse(): Response {
 type OAuthRefreshFlightOutcome =
   | { status: "refreshed" }
   | { status: "retired" }
-  | { status: "failed"; error: unknown };
+  /** `verdict` is present when the token endpoint's answer (or silence) decided it. */
+  | { status: "failed"; error: unknown; verdict?: RefreshFailure };
 
 interface OAuthRefreshFlight {
   done: Promise<OAuthRefreshFlightOutcome>;
@@ -193,10 +347,11 @@ function aborted(signal: AbortSignal): unknown {
   );
 }
 
+/** The flight's outcome, failures included; rejects only on the waiter's own abort. */
 async function waitForRefreshFlight(
   flight: OAuthRefreshFlight,
   signal?: AbortSignal,
-): Promise<Exclude<OAuthRefreshFlightOutcome, { status: "failed" }>> {
+): Promise<OAuthRefreshFlightOutcome> {
   let outcome: OAuthRefreshFlightOutcome;
   if (!signal) {
     outcome = await flight.done;
@@ -216,7 +371,6 @@ async function waitForRefreshFlight(
       if (signal.aborted) onAbort();
     });
   }
-  if (outcome.status === "failed") throw outcome.error;
   return outcome;
 }
 
@@ -315,6 +469,8 @@ export class OAuthRefreshCoordinator {
       // adopted inner promise as an unhandled rejection.
       if (!isRefreshTokenRequest(init)) return await baseFetch(input, init);
 
+      // A verdict belongs to one refresh; never let an older one decide this.
+      provider.recordRefreshFailure(undefined);
       const generation = await provider.flowGeneration();
       const requestedRefreshToken =
         init?.body instanceof URLSearchParams
@@ -383,6 +539,12 @@ export class OAuthRefreshCoordinator {
 
         if (existing) {
           const outcome = await waitForRefreshFlight(existing, requestSignal);
+          if (outcome.status === "failed") {
+            // A joined caller inherits the owner's verdict, so every scope on
+            // one flight ends the same way: auth_required or a retryable outage.
+            provider.recordRefreshFailure(outcome.verdict);
+            throw outcome.error;
+          }
           if (outcome.status === "refreshed") {
             const activeGeneration = await provider.generation();
             const refreshedTokens =
@@ -424,18 +586,30 @@ export class OAuthRefreshCoordinator {
           // Abort may land between flight publication and listener registration.
           if (requestSignal.aborted) onOwnerAbort();
         }
+        let answered = false;
         try {
           const response = await baseFetch(
             input,
             requestSignal ? { ...init, signal: requestSignal } : init,
           );
           // Failed responses never reach a successful saveTokens callback. Give
-          // current waiters a bounded failure now while leaving the owner's
-          // response untouched for the SDK to parse and classify itself.
+          // current waiters a bounded failure now, carrying the verdict, and
+          // hand the SDK an answer it classifies the same way.
           const outcome = await refreshResponseOutcome(response);
+          answered = true;
           if (outcome.failure) {
-            this.fail(generation, flight, outcome.failure);
-            return response;
+            provider.recordRefreshFailure(outcome.verdict);
+            if (outcome.verdict.kind === "dead") {
+              // Drop the refused grant while the flight still stands: a caller
+              // arriving meanwhile joins it instead of redeeming the dead token
+              // again, and no later request or isolate can replay it.
+              await provider.discardRefusedGrant(
+                requestedRefreshToken,
+                generation,
+              );
+            }
+            this.fail(generation, flight, outcome.failure, outcome.verdict);
+            return outcome.forSdk;
           }
           // A valid response means the authorization server has consumed the
           // rotating refresh token. The SDK's saveTokens normally persists it;
@@ -462,7 +636,23 @@ export class OAuthRefreshCoordinator {
           }
           return response;
         } catch (error) {
-          this.fail(generation, flight, error);
+          // No answer at all — the network, or a body too large to be one —
+          // is an outage. A refusal connecta itself raised (a redirect the
+          // policy forbids) and this owner's own cancellation are not.
+          const verdict =
+            !answered &&
+            !requestSignal?.aborted &&
+            !(error instanceof ConnectorCallError && !error.retryable)
+              ? transientFailure(
+                  error instanceof OversizedRefreshResponse
+                    ? "answered with an oversized response"
+                    : "could not be reached",
+                  undefined,
+                  error,
+                )
+              : undefined;
+          if (verdict) provider.recordRefreshFailure(verdict);
+          this.fail(generation, flight, error, verdict);
           throw error;
         }
       }
@@ -486,8 +676,17 @@ export class OAuthRefreshCoordinator {
     this.settle(generation, flight, { status: "refreshed" });
   }
 
-  /** Give joined callers a fetch/flow failure, without rejecting the gate. */
-  fail(generation: string, flight: OAuthRefreshFlight, error: unknown): void {
+  /**
+   * Give joined callers a fetch/flow failure, without rejecting the gate. A
+   * `verdict` travels with it only when the token endpoint decided the
+   * failure; an abort or a write failure carries none.
+   */
+  fail(
+    generation: string,
+    flight: OAuthRefreshFlight,
+    error: unknown,
+    verdict?: RefreshFailure,
+  ): void {
     // Only saveTokens owns a live credential write. If it has started, its
     // success/failure callback clears the marker even after owner cancellation.
     if (flight.writing) {
@@ -524,7 +723,11 @@ export class OAuthRefreshCoordinator {
     }
     // A response alone is not a write and must never strand the generation.
     this.finishMutation(generation, flight);
-    this.settle(generation, flight, { status: "failed", error });
+    this.settle(generation, flight, {
+      status: "failed",
+      error,
+      ...(verdict !== undefined ? { verdict } : {}),
+    });
   }
 
   /** Finish an exact failed credential write, then publish its failure. */
@@ -650,6 +853,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private refreshFlight:
     | { generation: string; flight: OAuthRefreshFlight }
     | undefined;
+  /** How the last refresh this provider took part in failed, if it did. */
+  private refreshFailure: RefreshFailure | undefined;
   /** Tokens this request's issuer-aware auth flow decided to refresh. */
   private refreshBasis:
     | {
@@ -690,6 +895,81 @@ export class KvOAuthProvider implements OAuthClientProvider {
     flight: OAuthRefreshFlight,
   ): void {
     this.refreshFlight = { generation, flight };
+  }
+
+  /**
+   * @internal How the refresh this provider owned or joined failed, recorded by
+   * the coordinator; `undefined` clears it. The SDK learns nothing from this
+   * directly — the hooks it calls next (`state`, `saveCodeVerifier`,
+   * `redirectToAuthorization`, `invalidateCredentials`) read it.
+   */
+  recordRefreshFailure(failure: RefreshFailure | undefined): void {
+    this.refreshFailure = failure;
+  }
+
+  /**
+   * @internal Delete the grant the authorization server just refused, but only
+   * while storage still holds exactly that refresh token in this generation: a
+   * consent that completed meanwhile must survive. KVStorage has no
+   * compare-and-delete, so a write landing between the read and the delete can
+   * still be lost — the same window the SDK's own invalidation has. Best
+   * effort: if storage fails, the next refresh is refused again and ends the
+   * same way.
+   */
+  async discardRefusedGrant(
+    refreshToken: string | null,
+    generation: string,
+  ): Promise<void> {
+    try {
+      const stored = await this.readValue(
+        "oauth:tokens",
+        (raw) => JSON.parse(raw) as OAuthTokens,
+      );
+      if (
+        !stored ||
+        stored.generation !== generation ||
+        stored.value.refresh_token !== refreshToken
+      ) {
+        return;
+      }
+      await this.storage.delete(oauthValueStorageKey("oauth:tokens", generation));
+    } catch {
+      // See above: a refusal that could not be recorded recurs, it does not hide.
+    }
+  }
+
+  /**
+   * Why a passive request cannot start consent. After a transient refresh
+   * failure that is a retryable outage, not an authorization problem: the SDK
+   * falls through to authorization on any refresh it could not parse, and
+   * answering that with `UnauthorizedError` would tell the agent a working
+   * grant needs consent.
+   */
+  private authorizationRefused(): Error {
+    const failure = this.refreshFailure;
+    return failure?.kind === "transient"
+      ? this.refreshOutage(failure)
+      : new UnauthorizedError(
+          "Authorization required. Use authorize_connector or Connect to start consent.",
+        );
+  }
+
+  private refreshOutage(failure: TransientRefreshFailure): ConnectorCallError {
+    const { cause } = failure;
+    return new ConnectorCallError(
+      failure.status === 429 ? "rate_limited" : "unavailable",
+      `Connector "${this.connectorId}" could not refresh its OAuth grant: the ` +
+        `authorization server ${failure.reason}. The grant is kept; retry later.`,
+      {
+        ...(cause !== undefined ? { cause } : {}),
+        ...(failure.retryAfterMs !== undefined
+          ? { retryAfterMs: failure.retryAfterMs }
+          : {}),
+        ...(cause instanceof ConnectorCallError && cause.details
+          ? { details: cause.details }
+          : {}),
+      },
+    );
   }
 
   private failRefreshFlight(error: unknown): void {
@@ -1132,6 +1412,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
         ctx?.issuer,
       );
       if (coordinated) this.refreshCoordinator?.succeedMutation(owned.generation, owned.flight);
+      this.refreshFailure = undefined;
     } catch (error) {
       if (coordinated) this.refreshCoordinator?.failMutation(owned.generation, owned.flight, error);
       throw error;
@@ -1152,7 +1433,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * clearPending() once the flow completes.
    */
   async state(): Promise<string> {
-    if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
+    if (!this.allowAuthorization) throw this.authorizationRefused();
     const value = randomState();
     await this.writeValue("oauth:state", value, (raw) => raw);
     return value;
@@ -1171,7 +1452,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
-    if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
+    if (!this.allowAuthorization) throw this.authorizationRefused();
     await this.writeValue("oauth:verifier", verifier, (raw) => raw);
   }
 
@@ -1185,7 +1466,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     try {
-      if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
+      if (!this.allowAuthorization) throw this.authorizationRefused();
       await this.writeValue(
         "oauth:pending",
         authorizationUrl.toString(),
@@ -1350,6 +1631,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     } catch (error) {
       if (endsRefresh) this.failRefreshFlight(error);
       throw error;
+    }
+    // The SDK invalidates after a refused refresh and then starts over, which
+    // on `invalid_client` means registering a new client. A passive request
+    // must not begin authorization, so it ends here, as auth_required.
+    if (!this.allowAuthorization && this.refreshFailure?.kind === "dead") {
+      throw this.authorizationRefused();
     }
   }
 }

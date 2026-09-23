@@ -169,6 +169,29 @@ means authorizing again. A vault without the optional `seal`/`open` members
 keeps these values plaintext and draws a startup warning. Without any vault,
 nothing changes: the state is plaintext, as it always was.
 
+## Refresh failures
+
+A failed token refresh means one of two things, and connecta decides which
+from the token endpoint's answer, not the SDK's reading of it. A **dead grant**
+is any 4xx except 408, 425, and 429, or a 2xx carrying an OAuth `error` (GitHub
+answers `200 {"error":"bad_refresh_token"}`). It ends as `auth_required`, and
+the refused tokens are deleted on the spot, so no later request or isolate
+sends them again and the next `authorize_connector` goes straight to consent.
+An **outage** is a 5xx, 408, 425, 429, a network failure, or a 2xx that is not
+a token response. It ends as retryable `unavailable`, or `rate_limited` for a
+429, with `retryAfterMs` when the server sent `Retry-After`. The grant is kept,
+and a passive call writes no consent URL. Every request joined on the same
+in-flight refresh gets the same verdict.
+
+The SDK needs this help. On a refresh failure it cannot parse, or one marked
+`server_error`, it falls through to starting authorization, which reports a
+healthy grant as needing consent. It rethrows every other OAuth error
+untouched, which reports a dead grant as a generic outage and keeps re-sending
+it. So the refresh coordinator hands the SDK an answer it classifies correctly,
+and the provider hooks it calls next finish the job. The pinned SDK behavior is
+spelled out beside `refreshResponseOutcome`. An explicit authorization during
+an outage still falls through to consent, since that is what it asked for.
+
 ## Management permissions
 
 Visibility alone grants no authentication-management permission. Two independent
