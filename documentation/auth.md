@@ -181,7 +181,10 @@ An **outage** is a 5xx, 408, 425, 429, a network failure, or a 2xx that is not
 a token response. It ends as retryable `unavailable`, or `rate_limited` for a
 429, with `retryAfterMs` when the server sent `Retry-After`. The grant is kept,
 and a passive call writes no consent URL. Every request joined on the same
-in-flight refresh gets the same verdict.
+in-flight refresh gets the same verdict, even when the request that sent the
+refresh is cancelled after the answer arrives: the refused tokens are deleted
+before anyone waiting is released, so a request arriving meanwhile joins the
+refusal instead of sending the dead token again.
 
 The SDK needs this help. On a refresh failure it cannot parse, or one marked
 `server_error`, it falls through to starting authorization, which reports a

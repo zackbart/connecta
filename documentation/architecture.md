@@ -228,8 +228,8 @@ shape from building, in someone else's repository rather than this one.
 ## Effect inside
 
 Request admission, downstream call admission, deadlines, bounded settled
-fan-out, and connector scope close run on Effect v4; the rest of the core has
-not moved yet. Every published signature stays Promise-shaped, so each
+fan-out, connector scope close, and OAuth refresh coordination run on Effect
+v4; the rest of the core has not moved yet. Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
 member names included. The core is an Effect program behind it.
@@ -243,7 +243,19 @@ follows the same shape, kept a separate controller as #453 requires:
 fiber's Clock. `closeConnectorScope` is the Promise face of `closeScope` in
 `src/runtime/connector-scope.ts`, which an Effect caller registers as a Scope
 finalizer (`closeScopeOnExit`). `withDeadline` is the Promise face of
-`withDeadlineEffect`.
+`withDeadlineEffect`. `OAuthRefreshCoordinator.coordinatedFetch()` still
+returns a plain `FetchLike`; inside, a refresh flight is a Deferred, and the
+owning request's redemption is a fiber its abort interrupts.
+
+Work shared across requests meets only through a Deferred that the owning
+request completes, never through a fiber that outlives its request. Waiting
+on one is its own edge. Deferred resumes a waiting fiber synchronously, inside
+the call that completed it, which on Workers means inside the completing
+request's I/O context: a waiter that goes on to touch its own request body or
+transport there fails with workerd's "Cannot perform I/O on behalf of a
+different request". So the wait runs through `runEdge`, and the waiter does
+its own I/O after awaiting that promise, which workerd resumes in the
+waiter's request as it does any promise resolved from another one.
 
 Each Connecta also gets a runtime of its own. `createConnecta` resolves
 storage, the vault, activity history, the logger, and the rest of its

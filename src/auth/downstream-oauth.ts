@@ -1,4 +1,5 @@
 import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { Deferred, Effect } from "effect";
 import type {
   FetchLike,
   OAuthClientInformationContext,
@@ -11,6 +12,7 @@ import type {
 import { retryAfterMs } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
+import { detach, fromSignal, runEdge } from "../runtime/run.js";
 import type { KVStorage } from "../types.js";
 
 /** A 256-bit random opaque value, hex-encoded — used for the OAuth `state`. */
@@ -325,8 +327,13 @@ type OAuthRefreshFlightOutcome =
   | { status: "failed"; error: unknown; verdict?: RefreshFailure };
 
 interface OAuthRefreshFlight {
-  done: Promise<OAuthRefreshFlightOutcome>;
-  release: (outcome: OAuthRefreshFlightOutcome) => void;
+  /**
+   * Completed once, by `settle`, and only ever from the owning request: its
+   * fiber, its provider's saveTokens/redirect/invalidate hooks, or its abort.
+   * Joined requests only await it. No fiber outlives a request to hold a
+   * flight open.
+   */
+  outcome: Deferred.Deferred<OAuthRefreshFlightOutcome>;
   stopObservingOwnerAbort: () => void;
   mutationId: object;
   writing: boolean;
@@ -338,49 +345,74 @@ interface OAuthRefreshFlight {
    * letting a contender redeem the retired token.
    */
   acceptedTokens?: OAuthTokens;
-  persist?: (tokens: OAuthTokens) => Promise<void>;
+  persist: (tokens: OAuthTokens) => Promise<void>;
 }
 
-function aborted(signal: AbortSignal): unknown {
+function aborted(signal: AbortSignal | undefined): unknown {
   return (
-    signal.reason ?? new DOMException("This operation was aborted", "AbortError")
+    signal?.reason ?? new DOMException("This operation was aborted", "AbortError")
   );
 }
 
-/** The flight's outcome, failures included; rejects only on the waiter's own abort. */
-async function waitForRefreshFlight(
+/**
+ * Call `onAbort` once when `signal` aborts, at once if it already has, until
+ * the returned function stops watching. The owner's abort needs a listener
+ * rather than an interrupt once the SDK holds the answer: the SDK saves the
+ * tokens after `coordinatedFetch` has returned, when no fiber of the owner's
+ * is left to interrupt.
+ */
+function whenAborted(signal: AbortSignal, onAbort: () => void): () => void {
+  let watching = true;
+  const stop = () => {
+    if (!watching) return;
+    watching = false;
+    signal.removeEventListener("abort", listener);
+  };
+  const listener = () => {
+    stop();
+    onAbort();
+  };
+  signal.addEventListener("abort", listener, { once: true });
+  if (signal.aborted) listener();
+  return stop;
+}
+
+/**
+ * The outcome of a flight another request owns, failures included. Rejects
+ * only with this caller's own abort.
+ *
+ * This wait is a Promise edge of its own, and the caller's storage reads stay
+ * outside it, on purpose. The owner settles the Deferred from its own request,
+ * and Deferred resumes a waiting fiber synchronously inside that call — on
+ * Workers, inside the owner's I/O context. Resolving this caller's promise
+ * instead hands the rest of its work back to its own request, as workerd does
+ * for any promise resolved from another one.
+ */
+function waitForRefreshFlight(
   flight: OAuthRefreshFlight,
   signal?: AbortSignal,
 ): Promise<OAuthRefreshFlightOutcome> {
-  let outcome: OAuthRefreshFlightOutcome;
-  if (!signal) {
-    outcome = await flight.done;
-  } else {
-    outcome = await new Promise<OAuthRefreshFlightOutcome>((resolve, reject) => {
-      let settled = false;
-      const finish = (settle: () => void) => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        settle();
-      };
-      const onAbort = () => finish(() => reject(aborted(signal)));
-      signal.addEventListener("abort", onAbort, { once: true });
-      void flight.done.then((result) => finish(() => resolve(result)));
-      // Abort may land between the caller's check and listener registration.
-      if (signal.aborted) onAbort();
-    });
-  }
-  return outcome;
+  const settled = Deferred.await(flight.outcome);
+  // The abort goes first, so a caller that has already left never joins.
+  return runEdge(
+    signal
+      ? Effect.raceAllFirst<Effect.Effect<OAuthRefreshFlightOutcome, unknown>>([
+          fromSignal(signal),
+          settled,
+        ])
+      : settled,
+  );
 }
 
 /**
  * Share one rotating-token redemption within one connector runtime and OAuth
- * generation. The first request still owns the real fetch and response. Its
- * abort signal has one bounded listener until the exact flight settles, so a
- * cancellation after the response cannot strand waiters during token storage.
- * Followers wait for that provider to save tokens, then re-read storage. The
- * map never retains a token response or transport.
+ * generation. The first request still owns the real fetch and response, and
+ * its abort ends the flight at any point until the flight settles: first by
+ * interrupting the redemption, then, once the SDK holds the answer, through
+ * one bounded listener, so a cancellation cannot strand waiters during token
+ * storage. Followers wait on the flight's Deferred for that provider to save
+ * tokens, then re-read storage. The map never retains a token response or
+ * transport.
  *
  * This is intentionally runtime-local. KVStorage has no atomic coordination
  * operation, so a second isolate can still race the same refresh token.
@@ -426,7 +458,8 @@ export class OAuthRefreshCoordinator {
     this.flights.delete(generation);
     this.advanceStateRevision();
     flight.stopObservingOwnerAbort();
-    flight.release(outcome);
+    // Last, because joined fibers resume inside this call.
+    Deferred.doneUnsafe(flight.outcome, Effect.succeed(outcome));
   }
 
   private markMutationPending(
@@ -558,12 +591,11 @@ export class OAuthRefreshCoordinator {
           continue;
         }
 
-        let release!: (outcome: OAuthRefreshFlightOutcome) => void;
+        // An owner that has already left never publishes a flight, and never
+        // reaches the token endpoint.
+        if (requestSignal?.aborted) throw aborted(requestSignal);
         const flight: OAuthRefreshFlight = {
-          done: new Promise<OAuthRefreshFlightOutcome>((resolve) => {
-            release = resolve;
-          }),
-          release: (outcome) => release(outcome),
+          outcome: Deferred.makeUnsafe(),
           stopObservingOwnerAbort: () => {},
           mutationId: {},
           writing: false,
@@ -572,89 +604,123 @@ export class OAuthRefreshCoordinator {
         this.flights.set(generation, flight);
         this.advanceStateRevision();
         provider.captureRefreshFlight(generation, flight);
-        if (requestSignal) {
-          let observing = true;
-          const onOwnerAbort = () => {
-            this.fail(generation, flight, aborted(requestSignal));
-          };
-          flight.stopObservingOwnerAbort = () => {
-            if (!observing) return;
-            observing = false;
-            requestSignal.removeEventListener("abort", onOwnerAbort);
-          };
-          requestSignal.addEventListener("abort", onOwnerAbort, { once: true });
-          // Abort may land between flight publication and listener registration.
-          if (requestSignal.aborted) onOwnerAbort();
-        }
-        let answered = false;
-        try {
+        const currentRefreshToken = currentTokens?.refresh_token;
+        // The token request starts now, as a plain promise: an owner that
+        // stops waiting for its answer can still hand the answer on.
+        const answer = (async () => {
           const response = await baseFetch(
             input,
             requestSignal ? { ...init, signal: requestSignal } : init,
           );
-          // Failed responses never reach a successful saveTokens callback. Give
-          // current waiters a bounded failure now, carrying the verdict, and
-          // hand the SDK an answer it classifies the same way.
-          const outcome = await refreshResponseOutcome(response);
-          answered = true;
+          return { response, outcome: await refreshResponseOutcome(response) };
+        })();
+
+        // Record what the token endpoint said, then settle the flight or
+        // hand it to the SDK's saveTokens.
+        const commit = ({
+          response,
+          outcome,
+        }: Awaited<typeof answer>): Effect.Effect<Response, Error> => {
           if (outcome.failure) {
+            // Failed responses never reach a successful saveTokens callback.
+            // Give current waiters a bounded failure now, carrying the
+            // verdict, and hand the SDK an answer it classifies the same way.
             provider.recordRefreshFailure(outcome.verdict);
-            if (outcome.verdict.kind === "dead") {
-              // Drop the refused grant while the flight still stands: a caller
-              // arriving meanwhile joins it instead of redeeming the dead token
-              // again, and no later request or isolate can replay it.
-              await provider.discardRefusedGrant(
-                requestedRefreshToken,
-                generation,
-              );
-            }
-            this.fail(generation, flight, outcome.failure, outcome.verdict);
-            return outcome.forSdk;
+            // Drop a refused grant while the flight still stands: a caller
+            // arriving meanwhile joins it instead of redeeming the dead token
+            // again, and no later request or isolate can replay it.
+            const discard =
+              outcome.verdict.kind === "dead"
+                ? Effect.promise(() =>
+                    provider.discardRefusedGrant(requestedRefreshToken, generation),
+                  )
+                : Effect.void;
+            return discard.pipe(
+              Effect.map(() => {
+                this.fail(generation, flight, outcome.failure, outcome.verdict);
+                return outcome.forSdk;
+              }),
+            );
           }
           // A valid response means the authorization server has consumed the
           // rotating refresh token. The SDK's saveTokens normally persists it;
           // keep this copy so `fail` can persist it instead if that callback
           // never comes (the SDK merges the old refresh token the same way).
           const rotatedRefreshToken =
-            outcome.tokens.refresh_token ?? currentTokens?.refresh_token;
-          flight.acceptedTokens = {
+            outcome.tokens.refresh_token ?? currentRefreshToken;
+          const accepted: OAuthTokens = {
             ...outcome.tokens,
             ...(rotatedRefreshToken !== undefined
               ? { refresh_token: rotatedRefreshToken }
               : {}),
           };
+          flight.acceptedTokens = accepted;
           if (!this.markMutationPending(generation, flight)) {
             // Already settled (the owner was cancelled first). Still write the
             // rotation: losing it would leave a dead credential.
-            void flight.persist?.(flight.acceptedTokens).catch(() => {});
-            throw new Error("OAuth refresh ended before tokens could be saved.");
+            detach(Effect.promise(() => flight.persist(accepted)));
+            return Effect.fail(
+              new Error("OAuth refresh ended before tokens could be saved."),
+            );
           }
-          if (requestSignal?.aborted) {
-            // Same recovery as an abort landing later: `fail` persists.
-            this.fail(generation, flight, aborted(requestSignal));
-            throw aborted(requestSignal);
+          // The SDK holds the answer from here, after this fiber is gone, so
+          // a listener watches for the owner leaving before it saves. Then
+          // `fail` persists the rotation instead.
+          if (requestSignal) {
+            flight.stopObservingOwnerAbort = whenAborted(requestSignal, () =>
+              this.fail(generation, flight, aborted(requestSignal)),
+            );
           }
-          return response;
-        } catch (error) {
-          // No answer at all — the network, or a body too large to be one —
-          // is an outage. A refusal connecta itself raised (a redirect the
-          // policy forbids) and this owner's own cancellation are not.
-          const verdict =
-            !answered &&
-            !requestSignal?.aborted &&
-            !(error instanceof ConnectorCallError && !error.retryable)
-              ? transientFailure(
-                  error instanceof OversizedRefreshResponse
-                    ? "answered with an oversized response"
-                    : "could not be reached",
-                  undefined,
-                  error,
-                )
-              : undefined;
-          if (verdict) provider.recordRefreshFailure(verdict);
-          this.fail(generation, flight, error, verdict);
-          throw error;
-        }
+          return Effect.succeed(response);
+        };
+
+        // The owner's redemption. Its abort interrupts the wait for the token
+        // endpoint and nothing after it: an answer, once it exists, is
+        // committed before anyone is released, so no caller is let go to
+        // redeem a token the server has already refused or spent. An answer
+        // that arrives after the owner left is committed in the background,
+        // as the foreground would have.
+        const redemption = Effect.uninterruptibleMask((restore) =>
+          restore(
+            Effect.tryPromise({ try: () => answer, catch: (error) => error }),
+          ).pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                this.fail(generation, flight, aborted(requestSignal));
+                detach(Effect.promise(() => answer).pipe(Effect.flatMap(commit)));
+              }),
+            ),
+            Effect.catch((error) => {
+              // No answer at all — the network, or a body too large to be
+              // one — is an outage. A refusal connecta itself raised (a
+              // redirect the policy forbids) and this owner's own
+              // cancellation are not.
+              const verdict =
+                !requestSignal?.aborted &&
+                !(error instanceof ConnectorCallError && !error.retryable)
+                  ? transientFailure(
+                      error instanceof OversizedRefreshResponse
+                        ? "answered with an oversized response"
+                        : "could not be reached",
+                      undefined,
+                      error,
+                    )
+                  : undefined;
+              if (verdict) provider.recordRefreshFailure(verdict);
+              this.fail(generation, flight, error, verdict);
+              return Effect.fail(error);
+            }),
+            Effect.flatMap(commit),
+          ),
+        );
+        return await runEdge(
+          requestSignal
+            ? Effect.raceAllFirst<Effect.Effect<Response, unknown>>([
+                redemption,
+                fromSignal(requestSignal),
+              ])
+            : redemption,
+        );
       }
       return refreshMutationPendingResponse();
     };
@@ -703,21 +769,24 @@ export class OAuthRefreshCoordinator {
     const tokens = flight.acceptedTokens;
     if (
       tokens !== undefined &&
-      flight.persist !== undefined &&
       this.pendingMutations.get(generation) === flight.mutationId
     ) {
       flight.writing = true;
-      void flight.persist(tokens).then(
-        () => {
-          if (this.finishMutation(generation, flight)) {
-            this.settle(generation, flight, { status: "refreshed" });
-          }
-        },
-        (writeError: unknown) => {
-          if (this.finishMutation(generation, flight)) {
-            this.settle(generation, flight, { status: "failed", error: writeError });
-          }
-        },
+      const written = (outcome: OAuthRefreshFlightOutcome) => {
+        if (this.finishMutation(generation, flight)) {
+          this.settle(generation, flight, outcome);
+        }
+      };
+      detach(
+        Effect.tryPromise({
+          try: () => flight.persist(tokens),
+          catch: (writeError) => writeError,
+        }).pipe(
+          Effect.match({
+            onSuccess: () => written({ status: "refreshed" }),
+            onFailure: (error) => written({ status: "failed", error }),
+          }),
+        ),
       );
       return;
     }
