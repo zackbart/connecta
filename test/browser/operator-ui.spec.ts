@@ -34,6 +34,7 @@ let activityEnabled = true;
 let authManagement = true;
 let detailBarriers = new Map<string, Promise<void>>();
 let releaseDetails: Array<() => void> = [];
+let pools: string[] = [];
 
 function data(): UiData {
   return {
@@ -42,6 +43,7 @@ function data(): UiData {
     credentialManagement: "available",
     oauthManagement: true,
     activityEnabled,
+    ...(pools.length ? { pools } : {}),
     connectors: emptyDeployment ? [] : [
       {
         id: "vaulted",
@@ -50,7 +52,7 @@ function data(): UiData {
         status: credentialValue ? "ok" : "auth_required",
         toolCount: credentialValue ? 1 : 0,
         tools: credentialValue
-          ? [{ name: "read", address: "vaulted.read" }]
+          ? [{ name: "read", address: "vaulted.read", safety: "runs_in_programs" }]
           : [],
         credential: {
           label: "API token",
@@ -91,7 +93,7 @@ function data(): UiData {
         status: oauthConnected ? "ok" : "auth_required",
         toolCount: oauthConnected ? 1 : 0,
         tools: oauthConnected
-          ? [{ name: "contacts", address: "oauth.contacts" }]
+          ? [{ name: "contacts", address: "oauth.contacts", safety: "needs_approval" }]
           : [],
         oauth: true,
       },
@@ -326,6 +328,7 @@ test.beforeEach(() => {
   authManagement = true;
   detailBarriers = new Map();
   releaseDetails = [];
+  pools = [];
 });
 
 async function openAuthenticated(
@@ -636,4 +639,84 @@ test("retries a failed connection without reloading the list", async ({ page }) 
   await card.getByRole("button", { name: "Refresh connection" }).click();
   await expect(card).toContainText("Connected");
   expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
+});
+
+/** A connector's collapsed row, opened. */
+async function openRow(page: import("@playwright/test").Page, title: string) {
+  const row = page.locator("details.conn").filter({
+    has: page.getByRole("heading", { name: title, exact: true }),
+  });
+  await row.locator("summary.conn-head").click();
+  return row;
+}
+
+test("labels each tool with the call path the server classified", async ({ page }) => {
+  credentialValue = "stored-secret";
+  await openAuthenticated(page);
+
+  const vaulted = await openRow(page, "Vaulted service");
+  await vaulted.getByText("Tools (1)").click();
+  const read = vaulted.locator('[data-safety="runs_in_programs"]');
+  await expect(read).toHaveText("runs in programs");
+
+  const crm = await openRow(page, "CRM");
+  await crm.getByText("Tools (1)").click();
+  await expect(crm.locator('[data-safety="needs_approval"]')).toHaveText("needs approval");
+  await expect(crm.locator(".tool-legend")).toContainText("call_destructive_tool");
+});
+
+test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+  faults.set("GET /ui/connectors/drifted", "upstream said sk_live_leaked_value");
+  await openAuthenticated(page);
+
+  const row = await openRow(page, "Hosted proxy");
+  // The operator still sees the message on their own screen...
+  await expect(row.locator(".msg")).toContainText("Connection details unavailable (502)");
+  const prompt = row.locator('[data-fix-prompt="connector_unavailable"]');
+  await prompt.getByRole("button", { name: "Copy fix prompt for Hosted proxy" }).click();
+  await expect(prompt.getByRole("button", { name: "Copied" })).toBeVisible();
+  // ...but the clipboard gets only the fixed catalogue text.
+  const copied = String(await page.evaluate("navigator.clipboard.readText()"));
+  expect(copied).toContain("Connector id: drifted");
+  expect(copied).toContain("configured as code");
+  expect(copied).not.toContain("sk_live_leaked_value");
+  expect(copied).not.toContain("502");
+});
+
+test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
+  faults.set("POST /ui/oauth/oauth", "downstream token=abc123");
+  await openAuthenticated(page);
+
+  const row = await openRow(page, "CRM");
+  page.once("dialog", (dialog) => dialog.accept());
+  await row.getByRole("button", { name: "Reconnect OAuth for CRM" }).click();
+  await expect(page.locator("#oauthNotice")).toHaveText("downstream token=abc123");
+  const prompt = page.locator('[data-fix-prompt="oauth_action_failed"]');
+  await prompt.getByText("Preview prompt").click();
+  await expect(prompt.locator(".fix-prompt-text")).toContainText("Connector id: oauth");
+  await expect(prompt.locator(".fix-prompt-text")).not.toContainText("abc123");
+});
+
+test("offers client setup for the endpoint and each granted pool", async ({ page }) => {
+  pools = ["support"];
+  await openAuthenticated(page);
+
+  const main = page.locator('[data-endpoint="browser-test"]');
+  await expect(main.locator("#mcpUrl")).toHaveText(`${origin}/mcp`);
+  await main.getByText("Client setup").click();
+  await expect(main.locator('[data-setup="claude"] pre')).toHaveText(
+    `claude mcp add --transport http browser-test ${origin}/mcp`,
+  );
+  expect(
+    JSON.parse(await main.locator('[data-setup="json"] pre').innerText()),
+  ).toEqual({ mcpServers: { "browser-test": { type: "http", url: `${origin}/mcp` } } });
+
+  const pool = page.locator('[data-endpoint="browser-test-support"]');
+  await expect(pool).toContainText(`${origin}/mcp/support`);
+  await pool.getByText("Client setup").click();
+  await expect(pool.locator('[data-setup="codex"] pre')).toHaveText(
+    `codex mcp add browser-test-support --url ${origin}/mcp/support`,
+  );
+  await expect(page.locator(".setup-code").filter({ hasText: TOKEN })).toHaveCount(0);
 });

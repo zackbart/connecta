@@ -167,7 +167,19 @@ export async function routeUi(
     const data = await buildUiData(one, baseUrl, opts.serverInfo, opts.credentialVault, activityEnabled, credentialManagement, defer, false, 1, authz.principalKey, { mayManage, timeoutMs: opts.probeTimeoutMs ?? 30_000, signal: request.signal });
     return privateJson({ ...data.connectors[0], permissions: permissions(connector) });
   }
+  // Setup commands are offered per pool, but only for pools this identity's
+  // grant admits: `/mcp/<name>` answers every other name with one flat 404 so
+  // a credential cannot enumerate them, and the page must not undo that.
+  const pools: string[] = [];
+  for (const [name, pool] of opts.pools ?? []) {
+    try {
+      if ((await pool.grant(authz.identity)) === true) pools.push(name);
+    } catch {
+      // A throwing grant is a refusal at the endpoint, and so a refusal here.
+    }
+  }
   return privateJson({
+    ...(pools.length ? { pools } : {}),
     serverInfo: opts.serverInfo,
     connectaVersion: CONNECTA_VERSION,
     activityEnabled,

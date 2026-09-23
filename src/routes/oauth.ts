@@ -5,6 +5,11 @@ import type {
 } from "../types.js";
 import { resolveBranding } from "../branding.js";
 import {
+  oauthCallbackOutcome,
+  providerErrorReason,
+  type OAuthCallbackReason,
+} from "../oauth-callback-outcome.js";
+import {
   authorizeUiIdentity,
   mayManageConnector,
   validateAuthPermissions,
@@ -21,13 +26,19 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-/** `body` is escaped — callback params and error messages are attacker-influenced. */
+/**
+ * The callback's one page. It renders a reason from a closed set and that
+ * reason's fixed copy, so nothing the request carried — the provider's `error`
+ * parameter, an exchange failure's message — can reach the body. Escaping
+ * stays anyway: branding and the configured connector id are still strings.
+ */
 function html(
-  body: string,
-  status = 200,
+  reason: OAuthCallbackReason,
   branding?: ConnectaBranding,
   hasUi = false,
+  connectorId?: string,
 ): Response {
+  const outcome = oauthCallbackOutcome(reason, connectorId);
   const brand = resolveBranding(branding);
   const title = brand.pageTitle;
   const owner = brand.ownerName
@@ -71,7 +82,10 @@ function html(
   a { color: inherit; text-decoration: underline; text-decoration-thickness: 1.5px;
     text-underline-offset: .22em; }
   a:hover { text-decoration-color: transparent; }
-  a:focus-visible { outline: 1px solid #000; outline-offset: 2px; }
+  a:focus-visible, summary:focus-visible { outline: 1px solid #000; outline-offset: 2px; }
+  summary { cursor: pointer; }
+  pre { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: .75rem 0 0;
+    padding: .75rem; white-space: pre-wrap; border: 1px solid #000; user-select: all; }
   @media (max-width: 36.99rem) {
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .product { grid-column: 2; }
@@ -85,16 +99,17 @@ function html(
     ${owner}
     ${product}
   </header>
-  <main class="shell grid">
+  <main class="shell grid" data-oauth-callback="${outcome.reason}">
     <h1>Connection status</h1>
     <div class="copy">
-      <p>${escapeHtml(body)}</p>
+      <p>${escapeHtml(outcome.message)}</p>
+      ${outcome.fixPrompt ? `<details><summary>Fix prompt for a coding agent</summary><pre>${escapeHtml(outcome.fixPrompt)}</pre></details>` : ""}
       ${hasUi ? `<p><a href="/">Return to ${escapeHtml(brand.productName)}</a></p>` : ""}
     </div>
   </main>
 </body>
 </html>`,
-    { status, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    { status: outcome.status, headers: { "Content-Type": "text/html; charset=utf-8" } },
   );
 }
 
@@ -139,9 +154,9 @@ export async function routeOAuthCallback(
   const { path, url, baseUrl, opts } = context;
   if (!path.startsWith("/oauth/callback/")) return null;
   const error = url.searchParams.get("error");
-  if (error) return html(`Authorization denied: ${error}`, 400, opts.branding, Boolean(opts.ui));
+  if (error) return html(providerErrorReason(error), opts.branding, Boolean(opts.ui));
   const code = url.searchParams.get("code");
-  if (!code) return html("Missing authorization code.", 400, opts.branding, Boolean(opts.ui));
+  if (!code) return html("invalid_callback", opts.branding, Boolean(opts.ui));
   const id = path.slice("/oauth/callback/".length);
   const state = url.searchParams.get("state");
   const callbackTarget = await opts.registry.oauthCallbackView(id, state);
@@ -155,13 +170,7 @@ export async function routeOAuthCallback(
   const connectorContext = callbackRegistry
     ? callbackRegistry.contextFor(id, baseUrl)
     : opts.registry.contextFor(id, baseUrl);
-  const refused = () =>
-    html(
-      "Authorization could not be completed. Re-run authorization from " +
-        "connecta and try again.",
-      400,
-      opts.branding, Boolean(opts.ui),
-    );
+  const refused = () => html("invalid_callback", opts.branding, Boolean(opts.ui));
   if (!connector || !connector.finishAuth) {
     await equalizeRefusalCost(connectorContext);
     return refused();
@@ -225,18 +234,20 @@ export async function routeOAuthCallback(
           `${loggableValue(id)} with 500: its principal handoff could not be ` +
           `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
       );
-      return html("Authorization could not be completed.", 500, opts.branding, Boolean(opts.ui));
+      return html("handoff_failed", opts.branding, Boolean(opts.ui), id);
     }
   }
   try {
     await connector.finishAuth(code, connectorContext, url.searchParams);
     await callbackRegistry!.invalidateStored(id);
-    return html(
-      `Connected "${id}". You can close this window.`,
-      200,
-      opts.branding, Boolean(opts.ui),
-    );
+    return html("connected", opts.branding, Boolean(opts.ui), id);
   } catch (err) {
-    return html(`Authorization failed: ${msg(err)}`, 500, opts.branding, Boolean(opts.ui));
+    // The page names the reason and nothing else; what the exchange threw can
+    // quote a token endpoint's body, so it goes only to the operator log.
+    opts.logger.warn(
+      `[connecta] OAuth callback for connector ${loggableValue(id)} failed ` +
+        `with 500: the authorization code exchange threw ${loggableValue(msg(err))}.`,
+    );
+    return html("exchange_failed", opts.branding, Boolean(opts.ui), id);
   }
 }

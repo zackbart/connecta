@@ -7,6 +7,7 @@ import {
   resetIdentity,
   withPage,
   type Notice,
+  type NoticeFix,
   type OperatorPage,
   type OperatorState,
   type UiActivityEvent,
@@ -293,7 +294,7 @@ export function oauthAction(
     }),
     failed: (notice) => ({
       oauthBusy: null,
-      oauthNotice: notice,
+      oauthNotice: { ...notice, fix: { kind: "oauth_action_failed", connectorId: connector } },
       pendingFocus: "oauthNotice",
     }),
     fallback: "OAuth action failed.",
@@ -317,6 +318,7 @@ function credentialMutation(
   request: (current: () => boolean) => Promise<OperatorResponse | null>,
   done: (payload: OperatorResponse | null) => Notice,
   reload = true,
+  failedFix?: NoticeFix,
 ): Promise<void> {
   const land = (credentialNotice: Notice) => ({
     credentialBusy: null,
@@ -327,7 +329,7 @@ function credentialMutation(
     request,
     busy: { credentialBusy: connector, credentialNotice: null },
     done: (payload) => land(done(payload)),
-    failed: land,
+    failed: (notice) => land(failedFix ? { ...notice, fix: failedFix } : notice),
     fallback: "Credential action failed.",
     reload: reload ? connector : undefined,
   });
@@ -371,6 +373,7 @@ export function removeCredential(connector: string): Promise<void> {
 }
 
 export function testCredential(connector: string): Promise<void> {
+  const fix: NoticeFix = { kind: "credential_test_failed", connectorId: connector };
   return credentialMutation(
     connector,
     (current) =>
@@ -383,9 +386,10 @@ export function testCredential(connector: string): Promise<void> {
       const copy =
         payload?.message ||
         (payload?.ok ? "Credential is valid." : "Credential test failed.");
-      return payload?.ok ? info(copy) : failure(copy);
+      return payload?.ok ? info(copy) : failure(copy, fix);
     },
     false,
+    fix,
   );
 }
 
@@ -499,7 +503,7 @@ async function loadConnectorDetails(data: UiData, current: () => boolean, token:
         const response = await fetch(`/ui/connectors/${encodeURIComponent(connector.id)}`, { headers: requestHeaders(token), credentials: "same-origin" });
         if (!response.ok) throw new Error(`Connection details unavailable (${response.status})`);
         detail = await response.json() as UiConnector;
-      } catch (error) { detail = { ...connector, status: "error", message: message(error, "Connection details unavailable") }; }
+      } catch (error) { detail = { ...connector, status: "error", problem: "connector_unavailable", message: message(error, "Connection details unavailable") }; }
       if (!current() || generation !== detailGeneration || !state.data) return;
       if (detailRevisions.get(connector.id) !== revision) continue;
       set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === connector.id ? detail : c) } });
@@ -523,6 +527,6 @@ export async function refreshConnector(id: string): Promise<void> {
     set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...detail, ...(detail.status === "auth_required" && c.authorizationUrl ? { authorizationUrl: c.authorizationUrl } : {}) } : c) } });
   } catch (error) {
     if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
-    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "error", message: message(error, "Connection details unavailable") } : c) } });
+    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "error", problem: "connector_unavailable", message: message(error, "Connection details unavailable") } : c) } });
   }
 }

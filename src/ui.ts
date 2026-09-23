@@ -21,8 +21,11 @@ import {
   type CredentialManagementCapability,
   type UiConnector,
   type UiData,
+  type UiProblem,
   type UiTool,
+  type UiToolSafety,
 } from "./operator-ui/model.js";
+import { isExplicitlyReadOnly } from "./tool-safety.js";
 import {
   OPERATOR_UI_CSS,
   OPERATOR_UI_SCRIPT,
@@ -30,7 +33,9 @@ import {
 import type { RegistryView } from "./registry.js";
 import type {
   ConnectaBranding,
+  Connector,
   ConnectorStatus,
+  ToolDef,
   UiAuthConfig,
 } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
@@ -72,6 +77,33 @@ export function operatorPageTitle(
   configuredTitle: string,
 ): string {
   return `${OPERATOR_PAGE_LABELS[page]} — ${configuredTitle}`;
+}
+
+/**
+ * The badge a tool earns, from the one predicate core enforces with. Computed
+ * here so the page reports the rule rather than restating it.
+ */
+export function uiToolSafety(definition: ToolDef): UiToolSafety {
+  return isExplicitlyReadOnly(definition) ? "runs_in_programs" : "needs_approval";
+}
+
+/**
+ * The fix-prompt key for a connector that is not usable. Chosen from the
+ * status state and the connector's declared auth shape — configuration, never
+ * the status message, which can carry a downstream error body.
+ */
+export function uiProblemFor(
+  connector: Pick<Connector, "credential" | "startAuth">,
+  status: ConnectorStatus["state"],
+  observed: { credentialDrift: boolean; catalogFailed: boolean },
+): UiProblem | undefined {
+  if (observed.credentialDrift) return "credential_mismatch";
+  if (status === "error") return "connector_unavailable";
+  if (status === "auth_required") {
+    if (connector.startAuth) return "oauth_required";
+    return connector.credential ? "credential_required" : "auth_required";
+  }
+  return observed.catalogFailed ? "catalog_failed" : undefined;
 }
 
 export function credentialManagementCapability(input: {
@@ -117,6 +149,7 @@ export async function buildUiData(
           const drift = await registry.credentialDriftFor(c.id);
           outerSignal.throwIfAborted();
           let tools: UiTool[] = [];
+          let catalogFailed = false;
           let status: ConnectorStatus;
           try {
             status = await withDeadline(async signal => {
@@ -124,8 +157,12 @@ export async function buildUiData(
               const current = await registry.statusFor(c.id, baseUrl, requestScope, { signal });
               if (current.state === "ok" && !signal.aborted) {
                 try {
-                  tools = (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(t => ({ name: t.name, address: `${c.id}.${t.name}`, ...(t.description ? { description: t.description } : {}) }));
-                } catch { /* The registry owns the failed catalog observation. */ }
+                  tools = (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(t => ({ name: t.name, address: `${c.id}.${t.name}`, ...(t.description ? { description: t.description } : {}), safety: uiToolSafety(t) }));
+                } catch {
+                  // The registry owns the failed catalog observation; the page
+                  // only needs to know there was one.
+                  catalogFailed = !signal.aborted;
+                }
               }
               return current;
             }, { timeoutMs: detailOptions.timeoutMs ?? 30_000, signal: outerSignal, timeoutError: new Error("Connection details timed out. Retry this connection.") });
@@ -194,7 +231,7 @@ export async function buildUiData(
                 testable:
                   testRule.mode !== null && shape.state !== "mismatch",
                 ...(shape.state === "mismatch"
-                  ? { error: shape.message }
+                  ? { error: shape.message, problem: "credential_mismatch" as const }
                   : {}),
                 // A dropped field leaves its secret in the vault, and the field
                 // list below only renders fields the connector still declares —
@@ -216,10 +253,15 @@ export async function buildUiData(
                 removable: true,
                 testable: testRule.mode !== null,
                 error: "Stored credential could not be read.",
+                problem: "credential_unreadable",
               };
             }
           }
           outerSignal.throwIfAborted();
+          const problem = uiProblemFor(c, status.state, {
+            credentialDrift: Boolean(drift),
+            catalogFailed,
+          });
           return {
             id: c.id,
             authScope: c.authScope ?? "shared",
@@ -229,6 +271,7 @@ export async function buildUiData(
               : {}),
             status: status.state,
             ...(status.message ? { message: status.message } : {}),
+            ...(problem ? { problem } : {}),
             toolCount: tools.length,
             tools,
             // Counts only, and only when a refresh in this runtime produced them.
@@ -253,6 +296,7 @@ export async function buildUiData(
           ...(c.title ? { title: c.title } : {}),
           authScope: c.authScope ?? "shared",
           status: "error",
+          problem: "connector_unavailable",
           oauth: Boolean(c.startAuth && c.disconnectAuth),
           message: error instanceof Error ? error.message : "Connection details unavailable",
           toolCount: 0,
