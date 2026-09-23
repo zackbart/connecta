@@ -43,7 +43,7 @@ channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activi
 writes use it, as does a stale-window catalog refresh, which owns a fresh scope
 and deadline rather than carrying the inbound one past the request. And a fresh
 `McpServer` per request is what makes the deployment stateless: no sessions, no
-server push, no resumability, scope resolved rather than remembered.
+server push, no stream resumability, scope resolved rather than remembered.
 
 ## Request lifecycle
 
@@ -146,7 +146,9 @@ runtime-wide accounting of stash bytes and entries, where a full stash returns t
 successful call's preview and a paging-unavailable notice rather than a result id.
 Adapters: `src/storage/memory.ts`, `src/storage/file.ts` (Node), and the
 Cloudflare KV/D1 pair in `examples/worker/`, copyable reference source and
-deliberately not an importable subpath.
+deliberately not an importable subpath. Planned resumable writes
+([ethos](../ethos.md#decisions)) add an atomic compare-and-set to this
+contract, which eventually consistent Cloudflare KV cannot provide.
 
 `src/credentials.ts` is the AES-GCM vault behind the root-exported
 `CredentialVault` contract, selected through the `vault` slot. It binds connector

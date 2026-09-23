@@ -7,13 +7,18 @@ A single MCP endpoint aggregating downstream connectors (remote MCP servers and
 plain HTTP APIs) behind seven meta-tools, `execute_code` among them. Every
 deployment configures an executor, and agents reach connectors by writing
 JavaScript against it. One fetch-native core, running on both Node and
-Cloudflare Workers.
+Cloudflare Workers. Three `planned` decisions change that picture — an Effect
+core behind the same Promise API, resumable writes with an eighth tool, and an
+artifacts module — and until they ship, the code and the guides describe what
+exists.
 
 - **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
   and isn't, and its decisions table carries a verdict for every shape already
-  considered — refused, removed, provisional, or gated. Check the table before
-  designing or building anything: a `refused` row is a "no" with the reason
-  attached, and a `removed` row (toolkits
+  considered — accepted, planned, refused, removed, provisional, or gated.
+  Check the table before designing or building anything: a `planned` row is a
+  "yes" that has not shipped, binding on review now and absent from the guides
+  until it lands, so never document it there as if it exists; a `refused` row
+  is a "no" with the reason attached, and a `removed` row (toolkits
   [#178](https://github.com/zackbart/connecta/issues/178), proactive credential
   liveness [#179](https://github.com/zackbart/connecta/issues/179), the classic
   executor-free surface
@@ -40,7 +45,7 @@ when touching packaging, dependencies, or exports.
 - [`ethos.md`](./ethos.md) — what connecta is, what it refuses to be, the
   decisions table, and the invariants every change must preserve. Check it
   before building something new; "we already decided not to" is a real answer
-  there, and its removed/provisional verdicts override anything staler.
+  there, and its planned/removed/provisional verdicts override anything staler.
 - [`documentation/`](./documentation/) — four guides for agents working on the
   repo: `architecture.md`, `meta-tools.md`, `code-mode.md`, and `auth.md`.
   Everything else — connectors, providers, admission, storage, the operator
@@ -82,7 +87,10 @@ Two boundaries CI enforces that are not obvious from reading a file:
   (`src/executors/quickjs.ts` + child) are the Node-touching paths and must stay
   unreachable from the root entry. `test/purity.test.ts` walks the import graph
   and fails otherwise. Need a Node API? It goes behind an explicit Node-only
-  subpath (`/node` or `/quickjs`), never the root.
+  subpath (`/node` or `/quickjs`), never the root. `effect/testing` is banned
+  from `src/` on the same terms — its test clocks and layers have no business
+  in a runtime graph — and the purity walk must learn to catch it in the same
+  change that brings Effect in.
 - **Optional modules.** Core owns catalog discovery, execution, invocation, and
   enforcement. UI, activity history, encrypted credentials, and bearer auth
   implementations stay behind explicit subpaths and outside the root import
@@ -101,7 +109,9 @@ Two boundaries CI enforces that are not obvious from reading a file:
   without a subpath because a Worker deployment imports it directly. None may
   become a dependency or install with core. Enforced by `test/package-surface.test.ts` and
   `scripts/check-package.mjs`. Anything heavyweight or platform-bound gets a
-  subpath and an optional peer.
+  subpath and an optional peer. The planned Effect core is the one deliberate
+  exception: it is the core, so it is a hard dependency rather than a peer,
+  under the rule in [Conventions](#conventions).
 
 ## Where new tests go
 
@@ -118,6 +128,20 @@ an unclassified, double-classified, stale, or reasonless entry.
   only; it does not enforce style. `npm run check:unused` runs Knip's
   unused-export and dependency gate. Keep both clean, and prefer removing dead
   declarations over suppressing a finding.
+- **Effect inside, Promises at the edge.** The planned core rewrite moves
+  internals onto Effect v4 and exports none of it. `createConnecta`,
+  `remoteMcp()`, `api()`, custom connectors, and every published `.d.ts` stay
+  Promise-based and name no Effect type: a deployment author should never need
+  a second async paradigm to write a connector, so convert at the boundary,
+  not in the caller. Effect is a hard dependency pinned to one exact version,
+  never a range, and it is the version Alchemy pins, so a deployment that uses
+  both resolves one Effect rather than two. `effect/unstable/*` modules are
+  allowed, which is exactly why the pin is exact: they break in minor releases,
+  so an upgrade is its own deliberate pull request, never a drive-by in another
+  change. `effect/testing` stays out of `src/` (see import-graph purity). The
+  MCP edges do not move with the core — `@modelcontextprotocol/server` upward,
+  the SDK client downstream; Effect's `McpServer` is parked until the Effect
+  core is stable and those edges are re-proven.
 - **Style.** There is no formatter. Match the surrounding code. The docs voice
   is precise, occasionally wry, and always explains *why* — don't flatten it
   into boilerplate.
