@@ -2,6 +2,13 @@
  * A fake issue tracker: three projects, ~40 issues, cursor paging, and properly
  * annotated reads and writes. Dates are relative to the world's clock so
  * "stale" means the same thing on every run.
+ *
+ * The issues nearest the 30-day line sit two days either side of it (WEB-107
+ * at 32, WEB-108 at 28), never one. An agent reasons in calendar days, and a
+ * cutoff built from a date rather than an instant can land up to a day past
+ * the world's clock whichever way it rounds. At 31 days, WEB-107 fell on the
+ * wrong side whenever the agent's local date trailed the clock's UTC date. Two
+ * days keeps the task about the 30-day boundary, not about the time of day.
  */
 import { z } from "zod";
 import type { FakeTool } from "./service.js";
@@ -36,8 +43,8 @@ const SEED: Seed[] = [
   ["WEB-104", "closed", "bug", 10, "SSO redirect loop after password reset", "umbrella.com"],
   ["WEB-105", "open", "chore", 62, "Upgrade the analytics SDK"],
   ["WEB-106", "open", "bug", 12, "Invoice PDF is missing the VAT line", "soylent.com"],
-  ["WEB-107", "open", "feature", 31, "Dark mode for the settings pages"],
-  ["WEB-108", "open", "bug", 29, "Search debounce is too aggressive"],
+  ["WEB-107", "open", "feature", 32, "Dark mode for the settings pages"],
+  ["WEB-108", "open", "bug", 28, "Search debounce is too aggressive"],
   ["WEB-109", "closed", "chore", 90, "Remove the legacy router"],
   ["WEB-110", "open", "bug", 40, "Session expires during checkout", "initech.com"],
   ["WEB-111", "open", "feature", 2, "Keyboard shortcuts for the editor"],
