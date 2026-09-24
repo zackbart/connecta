@@ -11,6 +11,19 @@ fixed words and a success without `message`, and `POST
 fields finds the text in the server log instead. A deployment that only uses
 the page can ignore it.
 
+### Changed
+
+- **A program's clock and randomness are pinned (code mode `P6`).**
+  `Date.now()`, `new Date()`, and `Date()` inside `execute_code` return the
+  instant the run started and do not advance, and `Math.random()` is an sfc32
+  stream seeded per run from the host's CSPRNG; on a Dynamic Worker,
+  `crypto.getRandomValues`, `crypto.randomUUID`, and `performance.now()` follow
+  the same pin. The replacements are locked like `Error`. Resumable writes
+  (#565) replay a paused program from the top, and a program that branched on
+  a moving clock or an unseeded draw could not be replayed; pinning every run
+  means none behaves differently for having paused. A program that timed its
+  own work now measures zero — `diagnostics: true` measures from the host.
+
 ### Fixed
 
 - **Operator notices no longer render downstream error text**

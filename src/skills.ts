@@ -59,6 +59,8 @@ Limits: 20 host calls per run and a 15-second deadline per host call.
 
 Portable code uses standard JavaScript builtins, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
 
+\`Date.now()\` and \`new Date()\` return the run's start time and do not advance, and \`Math.random()\` is seeded per run, so compute date cutoffs freely but do not time work inside a program.
+
 ## Examples
 
 One read-only call at a known address:

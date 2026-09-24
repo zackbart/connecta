@@ -144,6 +144,35 @@ bounded and expiring; the program still gets no state of its own.
 code does not import: QuickJS blocks imports, Dynamic Workers expose the `X5`
 runtime modules, and neither exposes `require`.
 
+**P6.** A run's clock and randomness are pinned. `Date.now()`, `new Date()`,
+and `Date()` read one instant, taken by the host when the run starts, and it
+does not advance — not across host calls, not across a long loop. `Date` with
+arguments, `Date.parse`, and `Date.UTC` are the ordinary ones, and instances
+are ordinary dates. `Math.random()` is an sfc32 stream seeded with four words
+from the host's CSPRNG, fresh per run. Where a runtime has them — a Dynamic
+Worker; QuickJS has none (`X5`) — `crypto.getRandomValues` and
+`crypto.randomUUID` draw from the same stream and `performance.now()` stays at
+0; that keeps a Workers-only program from being the one that cannot replay, and
+makes none of them contract (`P2`). The replacements are installed by trusted
+prelude and locked like `Error` (`X11`): assignment fails, redefinition of
+`Math.random` or `Date.now` throws, and the native constructor's `now` and the
+prototype's `constructor` lead back to the same instant. QuickJS lets
+`defineProperty` replace a locked *global* binding, `Date` included, but what
+replaces it is the program's own code, and no route leads from it to an
+unpinned clock.
+
+The reason is replay. Planned resumable writes ([ethos](../ethos.md#decisions))
+will resume a paused run by replaying its program from the top against recorded
+host calls, and a program that branched on the clock or a random draw would
+take a different branch the second time — which replay could only report as
+divergence. Pinning every run, not just the ones that pause, means a program
+behaves the same whether or not it is ever replayed, and cannot tell which kind
+of run it is in. The cost is that a program
+cannot time itself; diagnostics (`R7`) measure from the host, where the clock
+still moves. Anything else that reads the wall clock natively — an `Intl`
+formatter asked to format "now" — is outside the contract, like every other
+ambient capability.
+
 ## Addressing
 
 **A1.** A tool has one canonical address, `<connectorId>.<toolName>`, exactly as
@@ -825,6 +854,7 @@ passing one table is also the check on the executor duties above, with
 | `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (empty child-process environment), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
+| `P6` | `test/guest-api-contract.test.ts` (a frozen clock across host calls, the seeded sfc32 stream against a reference, locked and unbypassable replacements, Workers `crypto` and `performance` pinned, a fresh pair per run) |
 | `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory) |
 | `S1`, `S1a`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling), `test/typescript-signatures-parse.test.ts` (every rendering parses) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |

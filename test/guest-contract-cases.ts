@@ -7,7 +7,7 @@ import { recordToolActivity } from "../src/activity.js";
 import { expect } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createExecuteTool } from "../src/execute.js";
+import { createExecuteTool, type PinnedEnvironment } from "../src/execute.js";
 import type { Connector, Executor, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
@@ -41,6 +41,8 @@ export interface ContractCase {
   deadline?: true;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
+  /** A known clock and seed for this case and its follow-up (P6). */
+  environment?: PinnedEnvironment;
   check(
     outcome: ContractOutcome,
     state: ContractState,
@@ -144,6 +146,48 @@ export const CAPABILITY_PROBE_CODE = `async () => {
       global: envShape(globalThis.env),
       process: envShape(typeof process === "object" && process ? process.env : undefined),
       workers: envShape(workerModule ? workerModule.env : undefined)
+    }
+  };
+}`;
+
+/** A known clock (whole seconds, so `Date()` round-trips) and seed. */
+const PINNED_ENVIRONMENT: PinnedEnvironment = {
+  clockMs: 1_700_000_000_000,
+  seed: [0x9e3779b9, 0x243f6a88, 0xb7e15162, 0x12345678],
+};
+
+/** The reference sfc32 the P6 prelude implements: `count` draws in [0, 1). */
+function sfc32(
+  seed: PinnedEnvironment["seed"],
+  count: number,
+): number[] {
+  let [a, b, c, d] = seed.map((word) => word | 0) as [number, number, number, number];
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = (((a + b) | 0) + d) | 0;
+    d = (d + 1) | 0;
+    a = b ^ (b >>> 9);
+    b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11);
+    c = (c + t) | 0;
+    out.push((t >>> 0) / 4294967296);
+  }
+  return out;
+}
+
+/** Workers-only sources P6 pins where the runtime has them. */
+const PINNED_RUNTIME_PROBE = `async () => {
+  if (typeof crypto !== "object" || crypto === null) {
+    return { crypto: "absent", performance: typeof performance === "object" ? "present" : "absent" };
+  }
+  return {
+    uuid: crypto.randomUUID(),
+    bytes: Array.from(crypto.getRandomValues(new Uint8Array(4))),
+    random: Math.random(),
+    performance: performance.now(),
+    locked: {
+      getRandomValues: Reflect.set(crypto, "getRandomValues", () => null),
+      randomUUID: Reflect.set(crypto, "randomUUID", () => "forged")
     }
   };
 }`;
@@ -386,7 +430,7 @@ export function contractHarness(): {
   run: (
     executor: Executor,
     code: string,
-    config?: { maxEmittedBytes?: number },
+    config?: { maxEmittedBytes?: number; environment?: PinnedEnvironment },
   ) => Promise<ContractOutcome>;
 } {
   const state: ContractState = { calls: {}, events: [] };
@@ -508,6 +552,149 @@ export const CONTRACT_CASES: ContractCase[] = [
       const second = required(follow, "follow-up outcome");
       expect(second.isError, second.text).toBe(false);
       expect(second.result).toEqual({ leaked: "undefined" });
+    },
+  },
+  {
+    clauses: "P6",
+    name: "the clock is frozen at the run's start, host calls included",
+    environment: PINNED_ENVIRONMENT,
+    code: `async () => {
+      const first = Date.now();
+      await connecta.call("reader.read", { value: "x" });
+      return {
+        first,
+        afterCall: Date.now(),
+        constructed: new Date().getTime(),
+        called: Date(),
+        explicit: new Date(0).toISOString(),
+        parsed: Date.parse("1970-01-01T00:00:01.000Z"),
+        utc: Date.UTC(2000, 0, 1),
+        isDate: new Date() instanceof Date,
+        viaPrototype: new (Object.getPrototypeOf(new Date()).constructor)().getTime(),
+        nativeNow: Object.getPrototypeOf(new Date()).constructor.now()
+      };
+    }`,
+    check(outcome) {
+      const result = record(outcome);
+      const clock = PINNED_ENVIRONMENT.clockMs;
+      expect(result).toMatchObject({
+        first: clock,
+        afterCall: clock,
+        constructed: clock,
+        explicit: "1970-01-01T00:00:00.000Z",
+        parsed: 1_000,
+        utc: Date.UTC(2000, 0, 1),
+        isDate: true,
+        viaPrototype: clock,
+        nativeNow: clock,
+      });
+      // `Date()` is a string at second precision in the executor's zone.
+      expect(new Date(String(result.called)).getTime()).toBe(clock);
+    },
+  },
+  {
+    clauses: "P6",
+    name: "Math.random is the seeded sfc32 stream",
+    environment: PINNED_ENVIRONMENT,
+    code: `async () => [Math.random(), Math.random(), Math.random(), Math.random()]`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual(sfc32(PINNED_ENVIRONMENT.seed, 4));
+    },
+  },
+  {
+    clauses: "P6",
+    name: "the pinned clock and stream cannot be replaced or bypassed",
+    environment: PINNED_ENVIRONMENT,
+    // Redefining the global `Date` binding itself is left out: QuickJS lets
+    // defineProperty replace a non-configurable global (it does the same to
+    // the locked `Error`), and what replaces it is the program's own code.
+    // What must hold on both executors is that no route reaches an unpinned
+    // clock or stream.
+    code: `async () => {
+      const PinnedDate = Date;
+      const NativeDate = Object.getPrototypeOf(new PinnedDate()).constructor;
+      const redefine = (target, key) => {
+        try {
+          Object.defineProperty(target, key, { value: () => 0.5 });
+          return "allowed";
+        } catch { return "refused"; }
+      };
+      const out = {
+        dateSet: Reflect.set(globalThis, "Date", function () { return 1; }),
+        nowSet: Reflect.set(PinnedDate, "now", () => 1),
+        nativeNowSet: Reflect.set(NativeDate, "now", () => 1),
+        randomSet: Reflect.set(Math, "random", () => 0.5),
+        constructorSet: Reflect.set(PinnedDate.prototype, "constructor", Object),
+        nowRedefine: redefine(PinnedDate, "now"),
+        randomRedefine: redefine(Math, "random"),
+        constructorRedefine: redefine(PinnedDate.prototype, "constructor"),
+        nowDeleted: Reflect.deleteProperty(PinnedDate, "now"),
+        randomDeleted: Reflect.deleteProperty(Math, "random")
+      };
+      out.now = Date.now();
+      out.constructed = new NativeDate().getTime();
+      out.random = Math.random();
+      return out;
+    }`,
+    check(outcome) {
+      expect(record(outcome)).toEqual({
+        dateSet: false,
+        nowSet: false,
+        nativeNowSet: false,
+        randomSet: false,
+        constructorSet: false,
+        nowRedefine: "refused",
+        randomRedefine: "refused",
+        constructorRedefine: "refused",
+        nowDeleted: false,
+        randomDeleted: false,
+        now: PINNED_ENVIRONMENT.clockMs,
+        constructed: PINNED_ENVIRONMENT.clockMs,
+        random: sfc32(PINNED_ENVIRONMENT.seed, 1)[0],
+      });
+    },
+  },
+  {
+    clauses: "P6",
+    name: "a runtime's crypto and performance clock follow the pin where present",
+    environment: PINNED_ENVIRONMENT,
+    code: PINNED_RUNTIME_PROBE,
+    follows: PINNED_RUNTIME_PROBE,
+    check(outcome, _state, follow) {
+      const result = record(outcome);
+      const second = required(follow, "follow-up outcome");
+      // Same clock and seed, same values: the probe replays exactly.
+      expect(second.result).toEqual(result);
+      if (result.crypto === "absent") {
+        // QuickJS has neither global (X5); nothing to pin.
+        expect(result).toEqual({ crypto: "absent", performance: "absent" });
+        return;
+      }
+      expect(String(result.uuid)).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(result.bytes).toHaveLength(4);
+      expect(result.performance).toBe(0);
+      expect(result.locked).toEqual({ getRandomValues: false, randomUUID: false });
+    },
+  },
+  {
+    clauses: "P6",
+    name: "each run pins its own clock and seed from the host",
+    code: `async () => ({ now: Date.now(), random: Math.random() })`,
+    follows: `async () => ({ now: Date.now(), random: Math.random() })`,
+    check(outcome, _state, follow) {
+      const first = record(outcome);
+      const second = required(follow, "follow-up outcome");
+      expect(second.isError, second.text).toBe(false);
+      const next = second.result as Record<string, unknown>;
+      // A fresh seed per run: two runs drawing the same first value would
+      // mean a fixed or reused seed.
+      expect(next.random).not.toBe(first.random);
+      for (const now of [first.now, next.now]) {
+        expect(Math.abs(Number(now) - Date.now())).toBeLessThan(60_000);
+      }
     },
   },
   {
