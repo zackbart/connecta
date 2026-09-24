@@ -4,6 +4,7 @@ import type {
   ActivityCallSource,
   ActivityRequestContext,
 } from "./activity.js";
+import { advertisedSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
   CatalogService,
@@ -1144,6 +1145,56 @@ const CALL_INPUT_SCHEMA = {
   diagnostics: z.boolean().optional(),
 };
 
+// The six input schemas, built once at module scope so their JSON Schema is
+// derived once per process (see advertisedSchema). Nothing here may read
+// deployment configuration or the request's identity: anything that varies
+// belongs in the per-registration description instead.
+const SKILLS_INPUT = advertisedSchema(z.object({ name: z.string().optional() }));
+
+const SEARCH_INPUT = advertisedSchema(
+  z.object({
+    query: z.string().optional(),
+    connector: z.string().optional(),
+    safety: z.enum(["readOnly", "approvalRequired", "all"]).optional(),
+    limit: z.number().int().positive().max(MAX_SEARCH_LIMIT).optional(),
+    offset: z.number().int().nonnegative().optional(),
+    fullDescriptions: z.boolean().optional(),
+    includeSchemas: z.enum(["compact", "json", "typescript"]).optional(),
+  }),
+);
+
+const CALL_INPUT = advertisedSchema(z.strictObject(CALL_INPUT_SCHEMA));
+
+const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
+  z.strictObject({
+    ...CALL_INPUT_SCHEMA,
+    // Bounded above, but with no lower bound: a model that sends `""` or
+    // whitespace has written no reason, and failing an entire consequential
+    // call over a cosmetic field the host merely displays is the wrong
+    // trade. It is normalized to absent in the handler instead.
+    reason: z.string().max(500).optional(),
+  }),
+);
+
+const AUTHORIZE_INPUT = advertisedSchema(
+  z.object({
+    connector: z.string(),
+    force: z.boolean().optional(),
+  }),
+);
+
+const GET_RESULT_INPUT = advertisedSchema(
+  z.object({
+    id: z.string(),
+    // Both bounds are the shared rules (isValidResultOffset,
+    // isValidMaxResultBytes) expressed for the wire: spelling them against
+    // the same constants keeps the schema from drifting away from the
+    // in-handler checks if either floor ever moves.
+    offset: z.number().int().min(MIN_RESULT_OFFSET).optional(),
+    maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
+  }),
+);
+
 /**
  * Register the six explicit meta-tools onto an McpServer instance.
  * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
@@ -1182,7 +1233,7 @@ export function registerMetaTools(
     "skills",
     {
       description: describedFor(registry, SKILLS_DESC, "skills"),
-      inputSchema: z.object({ name: z.string().optional() }),
+      inputSchema: SKILLS_INPUT,
       annotations: READ_ONLY_LOCAL,
     },
     async (args) => mt.skills(args as SkillArgs),
@@ -1196,17 +1247,7 @@ export function registerMetaTools(
         SEARCH_DESC,
         "search",
       ),
-      inputSchema: z.object({
-        query: z.string().optional(),
-        connector: z.string().optional(),
-        safety: z
-          .enum(["readOnly", "approvalRequired", "all"])
-          .optional(),
-        limit: z.number().int().positive().max(MAX_SEARCH_LIMIT).optional(),
-        offset: z.number().int().nonnegative().optional(),
-        fullDescriptions: z.boolean().optional(),
-        includeSchemas: z.enum(["compact", "json", "typescript"]).optional(),
-      }),
+      inputSchema: SEARCH_INPUT,
       annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.searchTools(args as SearchArgs),
@@ -1216,7 +1257,7 @@ export function registerMetaTools(
     "call_tool",
     {
       description: CALL_DESC,
-      inputSchema: z.strictObject(CALL_INPUT_SCHEMA),
+      inputSchema: CALL_INPUT,
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
@@ -1232,14 +1273,7 @@ export function registerMetaTools(
         CALL_DESTRUCTIVE_DESC,
         "destructive",
       ),
-      inputSchema: z.strictObject({
-        ...CALL_INPUT_SCHEMA,
-        // Bounded above, but with no lower bound: a model that sends `""` or
-        // whitespace has written no reason, and failing an entire consequential
-        // call over a cosmetic field the host merely displays is the wrong
-        // trade. It is normalized to absent below instead.
-        reason: z.string().max(500).optional(),
-      }),
+      inputSchema: CALL_DESTRUCTIVE_INPUT,
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,
@@ -1261,10 +1295,7 @@ export function registerMetaTools(
     "authorize_connector",
     {
       description: AUTHORIZE_DESC,
-      inputSchema: z.object({
-        connector: z.string(),
-        force: z.boolean().optional(),
-      }),
+      inputSchema: AUTHORIZE_INPUT,
       // Starts (or with force, resets) a downstream OAuth flow — it changes
       // stored connector auth state, so it is deliberately not read-only.
       annotations: {
@@ -1280,15 +1311,7 @@ export function registerMetaTools(
     "get_result",
     {
       description: GET_RESULT_DESC,
-      inputSchema: z.object({
-        id: z.string(),
-        // Both bounds are the shared rules (isValidResultOffset,
-        // isValidMaxResultBytes) expressed for the wire: spelling them against
-        // the same constants keeps the schema from drifting away from the
-        // in-handler checks if either floor ever moves.
-        offset: z.number().int().min(MIN_RESULT_OFFSET).optional(),
-        maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
-      }),
+      inputSchema: GET_RESULT_INPUT,
       annotations: READ_ONLY_LOCAL,
     },
     async (args) => mt.getResult(args as GetResultArgs),
