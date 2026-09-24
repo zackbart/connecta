@@ -4,10 +4,12 @@ import {
   McpServer,
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
+import { Effect, Exit, Result, Scope } from "effect";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
 import { registerExecuteTool } from "../execute.js";
 import {
   ExecutorAdmissionError,
+  type AdmissionController,
   type AdmissionLease,
 } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
@@ -16,6 +18,7 @@ import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { instructionsFor } from "../skills.js";
 import { msg } from "../errors.js";
+import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
@@ -110,14 +113,19 @@ function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
 }
 
 /**
- * A request owns its permit through the response body, not merely until the
- * handler returns. This is what makes slow clients and response-stream failure
- * part of the same bounded lifecycle as success, error, and cancellation.
+ * Hand a response the Scope that holds what its request acquired.
+ *
+ * A request owns its permit and its McpServer through the response body, not
+ * merely until the handler returns. `close` runs once, on whichever comes
+ * first: the body is read to its end or fails, its reader cancels it, or the
+ * request's signal aborts. This is what makes slow clients and response-stream
+ * failure part of the same bounded lifecycle as success, error, and
+ * cancellation.
  */
-function releaseAdmissionWithResponse(
+function closeWithBody(
   response: Response,
-  lease: AdmissionLease,
   signal: AbortSignal,
+  close: () => void,
 ): Response {
   let released = false;
   let onAbort = () => {};
@@ -125,7 +133,7 @@ function releaseAdmissionWithResponse(
     if (released) return;
     released = true;
     signal.removeEventListener("abort", onAbort);
-    lease.release();
+    close();
   };
   if (!response.body) {
     release();
@@ -171,6 +179,66 @@ function releaseAdmissionWithResponse(
 }
 
 /**
+ * Run a request's handler in a Scope that outlives it.
+ *
+ * The handler acquires into the scope and its response carries the scope
+ * out, for `closeWithBody` to close when the body ends. A handler that fails,
+ * or is interrupted because the request's signal aborted, closes it at once:
+ * nothing it acquired waits on a body that will never be read.
+ */
+function scopedToBody(
+  handler: Effect.Effect<Response, unknown, Scope.Scope>,
+  signal: AbortSignal,
+): Effect.Effect<Response, unknown> {
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const exit = yield* Effect.exit(restore(Scope.provide(scope)(handler)));
+      if (Exit.isFailure(exit)) {
+        yield* Scope.close(scope, exit);
+        return yield* exit;
+      }
+      // Every finalizer in the scope is synchronous, so the close has run by
+      // the time detach returns: the permit is back, and handed to the next
+      // queued request, inside the read or cancel that ended the body.
+      return closeWithBody(exit.value, signal, () => {
+        void detach(Scope.close(scope, Exit.void));
+      });
+    }),
+  );
+}
+
+/**
+ * The request's admission permit, owned by its Scope.
+ *
+ * Admission goes through the controller's Promise rather than its Effect
+ * program (`acquireScoped`), on purpose. The pool is shared by every request
+ * in the isolate, and a queued request is handed its permit from inside the
+ * request whose body just ended. A fiber resumed there would authorize and
+ * serve this request in that one's I/O context, which workerd refuses;
+ * awaiting `acquire()`'s promise resumes it in its own.
+ *
+ * The wait stays interruptible, and a permit granted just as it was
+ * interrupted still arrives, later, to be released on arrival.
+ */
+function admitted(
+  controller: AdmissionController,
+  signal: AbortSignal,
+): Effect.Effect<AdmissionLease, unknown, Scope.Scope> {
+  return Effect.acquireRelease(
+    Effect.suspend(() => {
+      const pending = controller.acquire({ signal });
+      return Effect.tryPromise({ try: () => pending, catch: (error) => error })
+        .pipe(Effect.onInterrupt(() => Effect.sync(() => {
+          pending.then((lease) => lease.release(), () => {});
+        })));
+    }),
+    (lease) => Effect.sync(() => lease.release()),
+    { interruptible: true },
+  );
+}
+
+/**
  * 404 for any `?toolkit=` value, kept after the feature's retirement (#178).
  *
  * Toolkits are gone, but the URLs that named them are not: clients were handed
@@ -211,7 +279,7 @@ function toolkitRetired(logger: Logger): Response {
   );
 }
 
-async function serveMcp(
+function serveMcp(
   request: Request,
   opts: ServerOptions,
   baseUrl: string,
@@ -219,7 +287,11 @@ async function serveMcp(
   registry: RegistryView,
   canManageAuth: (connectorId: string) => boolean,
   runtimeContext?: RuntimeExecutionContext,
-): Promise<Response> {
+): Effect.Effect<Response, never, Scope.Scope> {
+  // Every McpServer the request builds is fresh and closes with its scope.
+  // The modern handler tears its own down after the exchange; the legacy
+  // transport never does, and neither may stay wired to an ended request.
+  const servers: McpServer[] = [];
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
       instructions: instructionsFor(),
@@ -296,33 +368,40 @@ async function serveMcp(
         ? { watchdogMs: opts.watchdogMs }
         : {}),
     });
+    servers.push(server);
     return server;
   };
 
-  // The v2 entry's built-in legacy fallback streams 2025 results as SSE.
-  // Connecta's established wire contract is JSON, so retain the documented
-  // user-land legacy branch with the same transport setting while the modern
-  // branch uses the fetch-native handler.
-  if (!(await isLegacyRequest(request))) {
-    return createMcpHandler(createServer, {
-      legacy: "reject",
-      onerror: (error) => opts.logger.error("[connecta] MCP handler error", error),
-    }).fetch(request);
-  }
+  const exchange = async (): Promise<Response> => {
+    // The v2 entry's built-in legacy fallback streams 2025 results as SSE.
+    // Connecta's established wire contract is JSON, so retain the documented
+    // user-land legacy branch with the same transport setting while the modern
+    // branch uses the fetch-native handler.
+    if (!(await isLegacyRequest(request))) {
+      return createMcpHandler(createServer, {
+        legacy: "reject",
+        onerror: (error) => opts.logger.error("[connecta] MCP handler error", error),
+      }).fetch(request);
+    }
 
-  // Fresh server + transport per legacy request, stateless and JSON-shaped.
-  const server = createServer();
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    enableJsonResponse: true,
-  });
-  await server.connect(transport);
-  return transport.handleRequest(request);
+    // Fresh server + transport per legacy request, stateless and JSON-shaped.
+    const server = createServer();
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    return transport.handleRequest(request);
+  };
+
+  return Effect.addFinalizer(() => Effect.sync(() => {
+    for (const server of servers) void server.close().catch(() => {});
+  })).pipe(Effect.andThen(Effect.promise(exchange)));
 }
 
 export function createMcpRoute(
   opts: ServerOptions,
 ): {
-  handle(context: RouteContext): Promise<Response | null>;
+  handle(context: RouteContext): Effect.Effect<Response | null, unknown>;
   rejectOrigin(request: Request): Response | null;
 } {
   const configuredOrigins = opts.allowedOrigins;
@@ -380,16 +459,17 @@ export function createMcpRoute(
     suppressedAdmissionWarnings = 0;
   };
 
-  async function routeMcp(
+
+  function routeMcp(
     context: RouteContext,
-  ): Promise<Response | null> {
+  ): Effect.Effect<Response | null, unknown> {
     const {
       path,
       request,
       baseUrl,
       runtimeContext,
     } = context;
-    if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
+    if (path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
     const poolName = path === "/mcp" ? undefined : path.slice("/mcp/".length);
     const origin = request.headers.get("Origin");
     const allowed = origin === null || allowsOrigin(origin);
@@ -399,50 +479,46 @@ export function createMcpRoute(
     // DNS-rebinding refusals cost neither a permit nor an auth lookup. This
     // local header check also guards OPTIONS before any provider metadata.
     const refusal = rejectOrigin(request);
-    if (refusal) return refusal;
-    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
-    let admission: AdmissionLease;
-    try {
-      admission = await opts.requestAdmission.acquire({
-        signal: request.signal,
-      });
-      if (admission.waitMs > 0) {
-        opts.logger.debug("[connecta] MCP request admitted after queue wait", {
-          waitMs: admission.waitMs,
-          active: opts.requestAdmission.activeCount,
-          queued: opts.requestAdmission.queuedCount,
-        });
-      }
-    } catch (error) {
-      if (
-        error instanceof ExecutorAdmissionError &&
-        error.code === "executor_cancelled"
-      ) {
-        throw request.signal.reason ?? error;
-      }
-      if (error instanceof ExecutorAdmissionError) {
+    if (refusal) return Effect.succeed(refusal);
+    if (request.method === "OPTIONS") {
+      return Effect.succeed(cors(new Response(null, { status: 204 })));
+    }
+    return scopedToBody(Effect.gen(function* () {
+      const admission = yield* Effect.result(
+        admitted(opts.requestAdmission, request.signal),
+      );
+      if (Result.isFailure(admission)) {
+        const error = admission.failure;
+        if (!(error instanceof ExecutorAdmissionError)) {
+          return yield* Effect.fail(error);
+        }
+        if (error.code === "executor_cancelled") {
+          return yield* Effect.fail(request.signal.reason ?? error);
+        }
         if (error.code === "executor_overloaded") {
           warnAdmissionRejected(error);
         }
         return cors(requestAdmissionFailure(error));
       }
-      throw error;
-    }
-    try {
-      const authz = await authorize(
+      if (admission.success.waitMs > 0) {
+        opts.logger.debug("[connecta] MCP request admitted after queue wait", {
+          waitMs: admission.success.waitMs,
+          active: opts.requestAdmission.activeCount,
+          queued: opts.requestAdmission.queuedCount,
+        });
+      }
+      // Promise code the fiber stops waiting on when the caller leaves. An
+      // Effect `authorize` would put Effect in the /activity bundle, which
+      // shares it, to save only the lookups an abandoned authorization
+      // finishes on its own.
+      const authz = yield* Effect.promise(() => authorize(
         request,
         baseUrl,
         opts.auth,
         runtimeContext,
         opts.identity,
-      );
-      if (!authz.ok) {
-        return releaseAdmissionWithResponse(
-          cors(authz.response),
-          admission,
-          request.signal,
-        );
-      }
+      ));
+      if (!authz.ok) return cors(authz.response);
       // A pool endpoint narrows the identity's own view and nothing else. An
       // undeclared name, a grant that refuses, and a grant that throws are
       // one identical 404 so a credential never enumerates the other pools;
@@ -450,26 +526,19 @@ export function createMcpRoute(
       let access: ConnectorAccess = authz;
       if (poolName !== undefined) {
         const pool = opts.pools?.get(poolName);
-        let granted = false;
-        let reason = "undeclared";
-        if (pool) {
+        const reason = !pool ? "undeclared" : yield* Effect.promise(async () => {
           try {
-            granted = (await pool.grant(authz.identity)) === true;
-            reason = granted ? "granted" : "refused";
+            return (await pool.grant(authz.identity)) === true ? "granted" : "refused";
           } catch {
-            reason = "grant threw";
+            return "grant threw";
           }
-        }
-        if (!pool || !granted) {
+        });
+        if (!pool || reason !== "granted") {
           opts.logger.warn(
             `[connecta] refused /mcp/${poolName} with 404: pool ${reason}` +
               (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
           );
-          return releaseAdmissionWithResponse(
-            cors(new Response("Not Found", { status: 404 })),
-            admission,
-            request.signal,
-          );
+          return cors(new Response("Not Found", { status: 404 }));
         }
         access = intersectAccess(authz, pool.access);
       }
@@ -483,43 +552,26 @@ export function createMcpRoute(
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
         });
       } catch (error) {
-        return releaseAdmissionWithResponse(
-          cors(
-            new Response(JSON.stringify({ error: msg(error) }), {
-              status: 403,
-              headers: { "Content-Type": "application/json" },
-            }),
-          ),
-          admission,
-          request.signal,
+        return cors(
+          new Response(JSON.stringify({ error: msg(error) }), {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          }),
         );
       }
       if (new URL(request.url).searchParams.has("toolkit")) {
-        return releaseAdmissionWithResponse(
-          cors(toolkitRetired(opts.logger)),
-          admission,
-          request.signal,
-        );
+        return cors(toolkitRetired(opts.logger));
       }
-      return releaseAdmissionWithResponse(
-        cors(
-          await serveMcp(
-            request,
-            opts,
-            baseUrl,
-            authz.actor,
-            scopedRegistry,
-            id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
-            runtimeContext,
-          ),
-        ),
-        admission,
-        request.signal,
-      );
-    } catch (error) {
-      admission.release();
-      throw error;
-    }
+      return cors(yield* serveMcp(
+        request,
+        opts,
+        baseUrl,
+        authz.actor,
+        scopedRegistry,
+        id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
+        runtimeContext,
+      ));
+    }), request.signal);
   }
   return { handle: routeMcp, rejectOrigin };
 }

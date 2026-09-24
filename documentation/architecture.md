@@ -77,7 +77,8 @@ An admitted non-preflight `/mcp` request then takes five steps in
 
 1. **Admit.** One permit from the deployment-wide pool, taken before auth so an
    unauthenticated flood costs a permit rather than a Clerk lookup, and held
-   until the response *body* completes, not until the handler returns.
+   until the response *body* completes or the caller leaves, not until the
+   handler returns.
 2. **Authorize.** Each `InboundAuth` provider's `authorize` in order, bearer
    before interactive. First `ok` admits; if all fail, the last provider's
    challenge is returned. No providers means open — development only, and it
@@ -235,8 +236,9 @@ Request admission, downstream call admission, deadlines, bounded settled
 fan-out, connector scope close, OAuth refresh coordination, catalog
 persistence, catalog refresh flights, the result stash, the remote MCP
 connection lifecycle, discovery's request-scoped catalog cache, the
-single-call invocation pipeline, and the `execute_code` run with its sandbox
-host calls run on Effect v4; the rest of the core has not moved yet.
+single-call invocation pipeline, the `execute_code` run with its sandbox
+host calls, and the request pipeline itself run on Effect v4; the operator
+and activity routes have not moved yet.
 Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
@@ -302,6 +304,24 @@ and `describe` race the run's signal, and a typed failure leaves through the
 authenticated frame. The budget, the emit collector, and the frame itself
 stay plain synchronous code.
 
+A request is a fiber too, one per `fetch`, run through `runEdge` with the
+request's signal, so a caller that leaves interrupts whatever the request is
+waiting on. An `/mcp` request's Scope outlives its handler: the admission
+permit and every `McpServer` the request builds are acquired into it, and
+the response carries it out, closed when the body is read to its end, fails,
+or is cancelled, or when the signal aborts — or at once, if the handler fails
+or is interrupted first. That is what bounds a request stalled in inbound
+auth, a pool grant, or a tool handler that ignores cancellation: before, its
+permit waited on a body that would never come. Inbound authorization stays
+a Promise the fiber awaits, since the `/activity` module shares it and an
+Effect version would ship Effect in that bundle. A discovery probe takes the
+request's signal, so `search_tools` stops listing once its caller has gone.
+The OAuth callback is the one step that is deliberately uninterruptible: an
+authorization code is single-use, and a caller that hangs up mid-exchange
+must not leave fresh tokens behind a catalog still cached as unauthorized.
+Nothing here runs on the Connecta's runtime, because `/health` and a closed
+deployment's 503 must keep answering after `close()` disposes it.
+
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting
 on one is its own edge. Deferred resumes a waiting fiber synchronously, inside
@@ -320,7 +340,10 @@ signal aborts leaves the queue from its own listener, in its own request.
 Executor admission is the same shape one level up: a queued `execute_code`
 is handed its code slot by the request that finished, so the run awaits the
 executor's `acquire()` promise and builds its providers only after it
-resolves, back in its own request.
+resolves, back in its own request. Request admission is the top level: a
+queued `/mcp` request is handed its permit from inside the request whose
+body just ended, so it awaits `acquire()`'s promise rather than the
+controller's `acquireScoped`, and authorizes only after that, at home.
 
 Each Connecta also gets a runtime of its own. `createConnecta` resolves
 storage, the vault, activity history, the logger, and the rest of its
