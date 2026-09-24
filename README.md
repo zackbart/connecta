@@ -73,10 +73,16 @@ Fifty issues in, one small object out. Your context window notices.
   retain field names and broad types in bounded runtime memory, never scalar
   values, so later programs can project a remote MCP result its provider never
   documented.
+- **Keep large results usable.** Oversized direct calls return a bounded
+  preview with a handle for paging through the rest. For read-only work, the
+  notice also points the agent to reduce or search the result inside a
+  program. Discovery can show compact schemas, exact JSON Schema, or a
+  TypeScript signature to read while writing JavaScript.
 - **Keep writes deliberate.** Only tools marked read-only run in a program.
   Everything else is a separate, visible call your client can gate.
-- **Run it where you like.** Node, a Docker container, or a Cloudflare Worker,
-  from the same small deployment file.
+- **Run it on Node or Cloudflare Workers.** The core is shared; each deployment
+  supplies its platform's executor and storage. The Node template also runs
+  unchanged in Docker.
 
 Deployments explicitly compose optional features: `operatorUi()` from
 `@zackbart/connecta/ui`, `encryptedCredentialVault()` from `/credentials`,
@@ -88,7 +94,9 @@ The optional UI shows each person's connections and effective permissions.
 Authentication controls live inside each connection, with optional activity
 history. The configured connection list loads before downstream checks finish;
 a slow provider does not hold up the page. Connector selection and access rules
-remain in deployment code.
+remain in deployment code. It also explains which tools can run in programs or
+need approval, offers a fixed repair prompt for classified failures, and shows
+client setup commands for the endpoints the signed-in person can use.
 
 One deployment may serve several authenticated people inside the same tenant.
 Cloudflare Access supplies Worker identity; Node can use Clerk or the optional
