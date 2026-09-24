@@ -2,27 +2,14 @@ import type { OperatorSurface } from "./module-contracts.js";
 import { routeUi } from "./routes/ui.js";
 import { routeCredentials } from "./routes/credentials.js";
 import { routeOAuthManagement } from "./routes/oauth-management.js";
-import { withDeadline } from "./timeout.js";
-import {
-  credentialTestRule,
-  describeUndeclaredCredentialFields,
-  storedCredentialShape,
-} from "./credential-rules.js";
+import { uiData } from "./routes/ui-data.js";
+import { runEdge } from "./runtime/run.js";
 import type { CredentialVault } from "./credential-contract.js";
-import {
-  closeConnectorScope,
-  type DeferredWork,
-} from "./connector-scope.js";
-import {
-  mapSettledWithConcurrency,
-  resolveDiscoveryConcurrency,
-} from "./concurrency.js";
+import { type DeferredWork } from "./connector-scope.js";
 import {
   type CredentialManagementCapability,
-  type UiConnector,
   type UiData,
   type UiProblem,
-  type UiTool,
   type UiToolSafety,
 } from "./operator-ui/model.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
@@ -38,7 +25,6 @@ import type {
   ToolDef,
   UiAuthConfig,
 } from "./types.js";
-import { CONNECTA_VERSION } from "./version.js";
 
 export {
   filterUiConnectors,
@@ -137,210 +123,19 @@ export async function buildUiData(
   personalCredentialOwner?: string,
   detailOptions: { mayManage?: (id: string) => boolean; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<UiData> {
-  const requestScope = {};
-  const connectorSet = registry.listConnectors();
-  /**
-   * A connector's status message stops here. It can quote a downstream error
-   * body — and a downstream error body can quote the secret it just rejected —
-   * so the payload carries only the classified `problem` and the raw text goes
-   * to the deployment's log, where an operator debugging the failure already
-   * looks. An `ok` status's message is informational and simply dropped.
-   */
-  const logStatus = (
-    id: string,
-    state: ConnectorStatus["state"] | "failed",
-    message: string | undefined,
-  ) => {
-    if (!message || state === "ok") return;
-    const logger = registry.contextFor(id, baseUrl, requestScope).logger;
-    const line = `[connecta] connector "${id}" operator status ${state}: ${message}`;
-    if (state === "auth_required") logger.info(line);
-    else logger.warn(line);
-  };
-  const concurrency = resolveDiscoveryConcurrency(discoveryConcurrency);
-  const settled = await mapSettledWithConcurrency(
-    connectorSet,
-    concurrency,
-    async (c): Promise<UiConnector> => {
-      try {
-        return await withDeadline(async outerSignal => {
-          const drift = await registry.credentialDriftFor(c.id);
-          outerSignal.throwIfAborted();
-          let tools: UiTool[] = [];
-          let catalogFailed = false;
-          let status: ConnectorStatus;
-          try {
-            status = await withDeadline(async signal => {
-              if (drift) return { state: "auth_required", message: drift } as ConnectorStatus;
-              const current = await registry.statusFor(c.id, baseUrl, requestScope, { signal });
-              if (current.state === "ok" && !signal.aborted) {
-                try {
-                  tools = (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(t => ({ name: t.name, address: `${c.id}.${t.name}`, ...(t.description ? { description: t.description } : {}), safety: uiToolSafety(t) }));
-                } catch {
-                  // The registry owns the failed catalog observation; the page
-                  // only needs to know there was one.
-                  catalogFailed = !signal.aborted;
-                }
-              }
-              return current;
-            }, { timeoutMs: detailOptions.timeoutMs ?? 30_000, signal: outerSignal, timeoutError: new Error("Connection details timed out. Retry this connection.") });
-          } catch (error) { status = { state: "error", message: error instanceof Error ? error.message : "Connection details unavailable" }; }
-          let credential: UiConnector["credential"];
-          const mayManageAuth = detailOptions.mayManage?.(c.id) ?? (c.authScope === "personal" ? Boolean(personalCredentialOwner) : oauthManagement);
-          if (c.credential && credentialVault && mayManageAuth) {
-            // One rule, shared with the test route: only the hook matching the
-            // declared credential shape can run, so the button is offered only
-            // where a click can succeed (src/credentials.ts).
-            const testRule = credentialTestRule(c);
-            const credentialFields = (
-              metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>,
-            ) =>
-              c.credential?.fields?.map((field) => {
-                const fieldMetadata = metadata?.fields?.[field.name];
-                return {
-                  name: field.name,
-                  label: field.label,
-                  ...(field.description
-                    ? { description: field.description }
-                    : {}),
-                  ...(field.placeholder
-                    ? { placeholder: field.placeholder }
-                    : {}),
-                  inputType: field.inputType ?? "password",
-                  configured: Boolean(fieldMetadata),
-                  ...(fieldMetadata
-                    ? {
-                        lastFour: fieldMetadata.lastFour,
-                        updatedAt: fieldMetadata.updatedAt,
-                      }
-                    : {}),
-                };
-              });
-            const credentialCard = {
-              label: c.credential.label,
-              ...(c.credential.description
-                ? { description: c.credential.description }
-                : {}),
-              ...(c.credential.placeholder
-                ? { placeholder: c.credential.placeholder }
-                : {}),
-            };
-            try {
-              const metadata = await credentialVault.metadata(
-                c.id,
-                c.authScope === "personal" ? personalCredentialOwner : undefined,
-              );
-              const fields = credentialFields(metadata);
-              const shape = storedCredentialShape(
-                c.credential,
-                metadata?.fields ?? null,
-              );
-              credential = {
-                ...credentialCard,
-                ...(fields?.length ? { fields } : {}),
-                configured: shape.state === "valid",
-                removable: Boolean(metadata),
-                ...(metadata
-                  ? {
-                      lastFour: metadata.lastFour,
-                      updatedAt: metadata.updatedAt,
-                    }
-                  : {}),
-                testable:
-                  testRule.mode !== null && shape.state !== "mismatch",
-                ...(shape.state === "mismatch"
-                  ? { error: shape.message, problem: "credential_mismatch" as const }
-                  : {}),
-                // A dropped field leaves its secret in the vault, and the field
-                // list below only renders fields the connector still declares —
-                // so without this line there is nowhere an operator could see it.
-                ...(shape.state === "valid" && shape.undeclared.length
-                  ? {
-                      notice: describeUndeclaredCredentialFields(
-                        shape.undeclared,
-                      ),
-                    }
-                  : {}),
-              };
-            } catch {
-              const fields = credentialFields();
-              credential = {
-                ...credentialCard,
-                ...(fields?.length ? { fields } : {}),
-                configured: false,
-                removable: true,
-                testable: testRule.mode !== null,
-                error: "Stored credential could not be read.",
-                problem: "credential_unreadable",
-              };
-            }
-          }
-          outerSignal.throwIfAborted();
-          logStatus(c.id, status.state, status.message);
-          const problem = uiProblemFor(c, status.state, {
-            credentialDrift: Boolean(drift),
-            catalogFailed,
-          });
-          return {
-            id: c.id,
-            authScope: c.authScope ?? "shared",
-            ...(c.title ? { title: c.title } : {}),
-            ...(c.description !== undefined
-              ? { description: c.description }
-              : {}),
-            status: status.state,
-            ...(problem ? { problem } : {}),
-            toolCount: tools.length,
-            tools,
-            // Counts only, and only when a refresh in this runtime produced them.
-            // `Registry.statusFor` already rebuilt the report through
-            // `boundedCatalogDrift`, so what lands here cannot carry a name or a
-            // schema even if the plugin seam returned one.
-            ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
-            ...(status.catalogAccess
-              ? { catalogAccess: status.catalogAccess }
-              : {}),
-            oauth: Boolean(c.startAuth && c.disconnectAuth),
-            ...(credential ? { credential } : {}),
-          };
-        }, {
-          timeoutMs: detailOptions.timeoutMs ?? 30_000,
-          ...(detailOptions.signal ? { signal: detailOptions.signal } : {}),
-          timeoutError: new Error("Connection details timed out. Retry this connection."),
-        });
-      } catch (error) {
-        logStatus(c.id, "failed", error instanceof Error ? error.message : String(error));
-        return {
-          id: c.id,
-          ...(c.title ? { title: c.title } : {}),
-          authScope: c.authScope ?? "shared",
-          status: "error",
-          problem: "connector_unavailable",
-          oauth: Boolean(c.startAuth && c.disconnectAuth),
-          toolCount: 0,
-          tools: [],
-        };
-      } finally {
-        await closeConnectorScope(
-          c,
-          registry.contextFor(c.id, baseUrl, requestScope),
-          defer,
-        );
-      }
-    },
+  return runEdge(
+    uiData(registry, baseUrl, {
+      serverInfo,
+      credentialVault,
+      activityEnabled,
+      credentialManagement,
+      defer,
+      oauthManagement,
+      discoveryConcurrency,
+      personalCredentialOwner,
+      ...detailOptions,
+    }),
   );
-  const connectors = settled.map((result) => {
-    if (result.status === "rejected") throw result.reason;
-    return result.value;
-  });
-  return {
-    serverInfo,
-    connectaVersion: CONNECTA_VERSION,
-    connectors,
-    activityEnabled,
-    credentialManagement,
-    oauthManagement: oauthManagement || Boolean(personalCredentialOwner),
-  };
 }
 
 function escapeHtmlAttr(value: string): string {
@@ -480,17 +275,32 @@ ${OPERATOR_UI_SCRIPT}</script>
 </html>`;
 }
 
+function ownsOperatorPath(reserved: readonly string[], path: string): boolean {
+  if (path === "/activity") return true;
+  return reserved.some((pattern) =>
+    pattern.endsWith("/*")
+      ? path.startsWith(pattern.slice(0, -1))
+      : path === pattern,
+  );
+}
+
 /** Mount the connection UI without enabling any storage or activity module. */
 export function operatorUi(
   options: { branding?: ConnectaBranding } = {},
 ): OperatorSurface {
+  const reservedPaths = ["/", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"];
   return {
     ...options,
-    reservedPaths: ["/", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"],
+    reservedPaths,
     credentialHandoffUrl(baseUrl) {
       return new URL("/", baseUrl).toString();
     },
     async handle(context) {
+      // Everything else belongs to the server, and reaches it untouched: no
+      // route here, and no activity module, runs for a path this surface does
+      // not own. The Activity page is the one addition; the server reserves
+      // it only when history is readable, and routeUi checks the same thing.
+      if (!ownsOperatorPath(reservedPaths, context.path)) return null;
       const routes = [
         ...(context.opts.credentialVault ? [routeCredentials] : []),
         routeOAuthManagement,

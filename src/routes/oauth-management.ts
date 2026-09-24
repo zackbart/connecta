@@ -1,98 +1,86 @@
-import { closeConnectorScope } from "../connector-scope.js";
-import type {
-  ConnectorStatus,
-} from "../types.js";
+import { Effect, Result } from "effect";
+import { closeScope } from "../runtime/connector-scope.js";
+import type { ConnectorStatus } from "../types.js";
 import { isSafeHttpUrl } from "../ui.js";
 import {
-  authorizeUiIdentity,
+  authorizedPerson,
+  refuse,
+  serveOperator,
+  visibleRegistry,
+  type Answer,
+} from "./operator.js";
+import {
   mayManageConnector,
-  validateAuthPermissions,
   isSameOrigin,
   msg,
   privateJson,
   type RouteContext,
 } from "./shared.js";
 
-async function handleOAuthManagementRequest(
+function oauthManagementRequest(
   context: RouteContext,
   connectorId: string,
-): Promise<Response> {
-  const { request, baseUrl, opts, defer } = context;
-  if (!isSameOrigin(request, baseUrl)) {
-    return privateJson(
-      { error: "same-origin request required" },
-      { status: 403 },
-    );
-  }
-  const authz = await authorizeUiIdentity(
-    request,
-    baseUrl,
-    opts.auth,
-    "OAuth management",
-    context.runtimeContext,
-    opts.identity,
-  );
-  if (!authz.ok) return authz.response;
-  let registry;
-  try {
-    validateAuthPermissions(authz, opts.registry);
-    registry = opts.registry.scoped({
-      connectorIds: authz.connectorIds,
-      ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}),
-      ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
-      ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
-    });
-  } catch (error) {
-    return privateJson({ error: msg(error) }, { status: 403 });
-  }
+): Effect.Effect<Response, Answer> {
+  const { request, baseUrl, defer } = context;
+  return Effect.gen(function* () {
+    if (!isSameOrigin(request, baseUrl)) {
+      return yield* refuse("same-origin request required", 403);
+    }
+    const authz = yield* authorizedPerson(context, "OAuth management");
+    const registry = yield* visibleRegistry(context, authz);
 
-  const connector = registry.getConnector(connectorId);
-  if (!connector?.disconnectAuth || !connector.startAuth) {
-    return privateJson(
-      { error: "unknown OAuth connector" },
-      { status: 404 },
-    );
-  }
-  if (!mayManageConnector(authz, connector)) return privateJson({ error: "credential management is not permitted" }, { status: 403 });
-  if (connector.authScope === "personal" && !authz.principalKey) {
-    return privateJson({ error: "forbidden" }, { status: 403 });
-  }
-  if (request.method !== "DELETE" && request.method !== "POST") {
-    return privateJson({ error: "method not allowed" }, { status: 405 });
-  }
-
-  const requestScope = {};
-  const ctx = registry.contextFor(connectorId, baseUrl, requestScope);
-  try {
-    let result: ConnectorStatus | undefined;
-    let operationError: unknown;
-    try {
-      if (request.method === "DELETE") {
-        await connector.disconnectAuth(ctx);
-      } else {
-        result = await connector.startAuth(ctx, { force: true });
-        if (result.authorizationUrl) {
-          await registry.bindOAuthHandoff(
-            connectorId,
-            result.authorizationUrl,
-          );
-        }
-      }
-    } catch (error) {
-      operationError = error;
+    const connector = registry.getConnector(connectorId);
+    const disconnectAuth = connector?.disconnectAuth?.bind(connector);
+    const startAuth = connector?.startAuth?.bind(connector);
+    if (!connector || !disconnectAuth || !startAuth) {
+      return yield* refuse("unknown OAuth connector", 404);
+    }
+    if (!mayManageConnector(authz, connector)) {
+      return yield* refuse("credential management is not permitted", 403);
+    }
+    if (connector.authScope === "personal" && !authz.principalKey) {
+      return yield* refuse("forbidden", 403);
+    }
+    const disconnecting = request.method === "DELETE";
+    if (!disconnecting && request.method !== "POST") {
+      return yield* refuse("method not allowed", 405);
     }
 
+    const ctx = registry.contextFor(connectorId, baseUrl, {});
+    // The connector scope this request opened ends with it, however it ends.
+    yield* Effect.addFinalizer(() => closeScope(connector, ctx, defer));
+
+    const operation = yield* Effect.result(
+      Effect.tryPromise({
+        try: async (): Promise<ConnectorStatus | undefined> => {
+          if (disconnecting) {
+            await disconnectAuth(ctx);
+            return undefined;
+          }
+          const started = await startAuth(ctx, { force: true });
+          if (started.authorizationUrl) {
+            await registry.bindOAuthHandoff(connectorId, started.authorizationUrl);
+          }
+          return started;
+        },
+        catch: (error) => error,
+      }),
+    );
     // The old grant and its cached catalog are invalid after either operation,
     // including a partially failed physical cleanup whose epoch fence succeeded.
-    try {
-      await registry.invalidateStored(connectorId);
-    } catch (error) {
-      operationError ??= error;
-    }
-    if (operationError) {
-      return privateJson({ error: msg(operationError) }, { status: 400 });
-    }
-    if (request.method === "DELETE") {
+    const invalidated = yield* Effect.result(
+      Effect.tryPromise({
+        try: () => registry.invalidateStored(connectorId),
+        catch: (error) => error,
+      }),
+    );
+    // A Result, not a caught value, decides whether it failed: a hook that
+    // rejects with no reason at all still failed.
+    if (Result.isFailure(operation)) return yield* refuse(msg(operation.failure), 400);
+    if (Result.isFailure(invalidated)) return yield* refuse(msg(invalidated.failure), 400);
+
+    const result = operation.success;
+    if (!result) {
       return new Response(null, {
         status: 204,
         headers: {
@@ -101,34 +89,28 @@ async function handleOAuthManagementRequest(
         },
       });
     }
-
-    const authorizationUrl = isSafeHttpUrl(result!.authorizationUrl)
-      ? result!.authorizationUrl
+    const authorizationUrl = isSafeHttpUrl(result.authorizationUrl)
+      ? result.authorizationUrl
       : undefined;
-    if (result!.state === "error") {
-      return privateJson(
-        { error: result!.message || "OAuth authorization could not start" },
-        { status: 502 },
+    if (result.state === "error") {
+      return yield* refuse(
+        result.message || "OAuth authorization could not start",
+        502,
       );
     }
-    if (result!.state === "auth_required" && !authorizationUrl) {
-      return privateJson(
-        {
-          error:
-            result!.message ||
-            "OAuth authorization requires consent but no safe URL is available",
-        },
-        { status: 502 },
+    if (result.state === "auth_required" && !authorizationUrl) {
+      return yield* refuse(
+        result.message ||
+          "OAuth authorization requires consent but no safe URL is available",
+        502,
       );
     }
     return privateJson({
-      state: result!.state,
-      ...(result!.message ? { message: result!.message } : {}),
+      state: result.state,
+      ...(result.message ? { message: result.message } : {}),
       ...(authorizationUrl ? { authorizationUrl } : {}),
     });
-  } finally {
-    await closeConnectorScope(connector, ctx, defer);
-  }
+  }).pipe(Effect.scoped);
 }
 
 export async function routeOAuthManagement(
@@ -141,5 +123,6 @@ export async function routeOAuthManagement(
   if (context.request.method === "OPTIONS") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }
-  return handleOAuthManagementRequest(context, connectorId);
+  // No signal: a disconnect that has started runs through to its invalidation.
+  return serveOperator(oauthManagementRequest(context, connectorId));
 }
