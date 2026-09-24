@@ -461,6 +461,7 @@ export class CatalogService {
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
   private readonly readOptions: CatalogReadOptions | undefined;
+  private readonly requestSignal: AbortSignal | undefined;
   // The request-scoped catalog cache: one Deferred per connector asked about,
   // completed by the first asker's registry read and joined by every later
   // one. A success stays for the rest of the request, so a search and the call
@@ -489,6 +490,8 @@ export class CatalogService {
       searchRoute?: SearchRoute | undefined;
       /** Runtime-owned tail for stale-while-revalidate catalog reads. */
       defer?: DeferredWork | undefined;
+      /** The request's cancellation; discovery probes end with it. */
+      requestSignal?: AbortSignal | undefined;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
@@ -496,6 +499,7 @@ export class CatalogService {
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.searchRoute = options.searchRoute ?? "search_tools";
+    this.requestSignal = options.requestSignal;
     this.readOptions = options.defer
       ? {
           defer: options.defer,
@@ -579,6 +583,8 @@ export class CatalogService {
   // Every named catalog under its own probe deadline, `concurrency` at a time,
   // each settling in its input slot: an unavailable catalog is a Failure
   // there, not a failed discovery. `route` names the surface in a timeout.
+  // A probe also ends with its request, so no listing outlives the caller
+  // that asked for it.
   private discoveryCatalogs(
     ids: readonly string[],
     route: SearchRoute | "connecta.describe",
@@ -591,6 +597,7 @@ export class CatalogService {
             (signal) =>
               this.catalog(id, { signal, timeoutMs: this.probeTimeoutMs }),
             {
+              ...(this.requestSignal ? { signal: this.requestSignal } : {}),
               timeoutMs: this.probeTimeoutMs,
               timeoutError: new Error(
                 `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,

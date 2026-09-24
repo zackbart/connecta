@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
 import type {
   ConnectorContext,
@@ -148,11 +149,29 @@ async function equalizeRefusalCost(
   }
 }
 
-export async function routeOAuthCallback(
+/**
+ * The callback route as a step of the request's fiber, and the one step that
+ * the request's signal does not interrupt.
+ *
+ * An authorization code is single-use. Once a browser has delivered one, the
+ * handoff it consumes, the exchange, and the catalog invalidation after it are
+ * one commitment: abandoned halfway, a connector could hold fresh tokens
+ * behind a catalog still cached as unauthorized, or a consumed handoff with no
+ * exchange behind it. A caller that hangs up mid-exchange loses only the page.
+ */
+export function routeOAuthCallback(
   context: RouteContext,
-): Promise<Response | null> {
+): Effect.Effect<Response | null> {
+  if (!context.path.startsWith("/oauth/callback/")) return Effect.succeed(null);
+  return Effect.uninterruptible(
+    Effect.promise(() => finishOAuthCallback(context)),
+  );
+}
+
+async function finishOAuthCallback(
+  context: RouteContext,
+): Promise<Response> {
   const { path, url, baseUrl, opts } = context;
-  if (!path.startsWith("/oauth/callback/")) return null;
   const error = url.searchParams.get("error");
   if (error) return html(providerErrorReason(error), opts.branding, Boolean(opts.ui));
   const code = url.searchParams.get("code");

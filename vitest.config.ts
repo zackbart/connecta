@@ -50,6 +50,7 @@ export const WORKERS_SUITES = [
   "test/provider-registry.test.ts",
   "test/registry.test.ts",
   "test/request-admission.test.ts",
+  "test/request-pipeline.test.ts",
   "test/result-shapes.test.ts",
   "test/remote-mcp-credential.test.ts",
   "test/remote-mcp-pagination.test.ts",

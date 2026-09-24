@@ -601,6 +601,7 @@ export function createMetaTools(
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
     defer: opts.defer,
+    requestSignal: opts.requestSignal,
     // searchRoute keeps its top-level default. In-program callers use a
     // separate CatalogService configured for connecta.search.
   });
