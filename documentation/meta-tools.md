@@ -348,11 +348,23 @@ notice is `data` itself, with no preview and a next action at offset 0.
 The hint says what to do next. For a call not explicitly annotated read-only it
 opens with “This write already ran: do not call it again to see its result.”
 The approved write happened; repeating it to look again is how one export
-becomes three. `resultId` stays beside the exact `nextAction`, so the handle
-is actionable without copying an identifier out of prose. Program results and
-oversized discovery responses carry no such route: paging a program's return
-value is a refused shape, because a program can shrink anything before it
-returns.
+becomes three. For an explicitly read-only call, repeating is the better route,
+so the hint offers it first: to find something specific, repeat the read inside
+`execute_code` with `connecta.call` and filter or search the result there; to
+read it in full, page with `get_result`. Inside a program the inline cap does
+not apply to a host call's result, only to what the program returns (`L6` in
+[code mode](./code-mode.md) bounds a host call far higher), so the reduction
+sees the whole result at once. When the hint named paging alone, the eval's
+weakest model read a 185 KB CI log in 24,000-byte pages, skipped the range
+holding the real failure, and named the flaky test near the top; before the
+notice was visible, it had reduced the log in a program and found the failure.
+`nextAction` stays the page handle for either kind of call, because paging is
+the one next step connecta can spell out exactly, while a reduction is a
+program the agent has to write. `resultId` stays beside the exact `nextAction`,
+so the handle is actionable without copying an identifier out of prose.
+Program results and oversized discovery responses carry no such route: paging a
+program's return value is a refused shape, because a program can shrink
+anything before it returns.
 
 ### Paging with get_result
 

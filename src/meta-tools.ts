@@ -266,18 +266,38 @@ type PreviewShape =
   | { kind: "text-of-envelope" }
   | { kind: "none" };
 
+/**
+ * Offers a read the route meta-tools.md prefers for finding something in it:
+ * repeat the call inside a program and reduce it there. Paging comes second,
+ * for reading the whole thing. Led by paging alone, the eval's weakest model
+ * read a 185 KB log in eight pages, skipped the range holding the answer, and
+ * reported the decoy near the top instead. A write never gets this: repeating
+ * it is the one thing its notice forbids.
+ */
+const READ_REDUCE_FIRST =
+  "To find something specific, repeat this read inside execute_code with connecta.call and filter or search the result there, returning only what matters";
+
 function pagingHint(
   results: ResultStash,
   totalBytes: number,
   preview: PreviewShape,
 ): string {
+  if (!results.write) {
+    const [shown, full] =
+      preview.kind === "prefix"
+        ? [`Bytes 0-${preview.bytes} of ${totalBytes} follow.`, "to read it in full, page the rest"]
+        : preview.kind === "text-of-envelope"
+          ? ["Its text follows.", `to read the full ${totalBytes}-byte content array as JSON, page it`]
+          : [`The result is ${totalBytes} bytes.`, "to read it in full, page it"];
+    return `${shown} ${READ_REDUCE_FIRST}; ${full} with get_result using nextAction.`;
+  }
   const body =
     preview.kind === "prefix"
       ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest with get_result using nextAction.`
       : preview.kind === "text-of-envelope"
         ? `Its text follows; page the full ${totalBytes}-byte content array as JSON with get_result using nextAction.`
         : `Page all ${totalBytes} bytes with get_result using nextAction.`;
-  return results.write ? `${WRITE_ALREADY_RAN} ${body}` : body;
+  return `${WRITE_ALREADY_RAN} ${body}`;
 }
 
 /**

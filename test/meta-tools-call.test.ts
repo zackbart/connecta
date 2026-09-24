@@ -2304,6 +2304,41 @@ describe("truncated results lead with their get_result handle", () => {
     expect(readNotice.hint).toContain("get_result");
   });
 
+  it("offers a read's caller a reduction inside execute_code before paging", async () => {
+    // meta-tools.md prefers reducing a read inside a program; paging eight
+    // pages to find one line is how the eval's weakest model missed it.
+    const read = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    for (const result of [
+      await read.callTool({ address: "down.run" }),
+      await read.callDestructiveTool({ address: "down.run", reason: "read" }),
+    ]) {
+      const { notice } = lead(result);
+      expect(notice.hint).toMatch(/^Bytes 0-1000 of \d+ follow\. To find something specific/);
+      expect(notice.hint.indexOf("execute_code")).toBeGreaterThan(-1);
+      expect(notice.hint.indexOf("execute_code")).toBeLessThan(notice.hint.indexOf("get_result"));
+      expect(notice.hint).toMatch(/filter or search/);
+      expect(notice.nextAction.tool).toBe("get_result");
+    }
+    const value = textOf(await read.callTool({ address: "down.run", resultMode: "value" })) as {
+      data: LeadingNotice;
+    };
+    expect(value.data.hint).toMatch(/^The result is \d+ bytes\. To find something specific.*execute_code.*get_result/);
+
+    // A write's notice is untouched: repeating it is exactly what it forbids.
+    const write = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const { notice: writeNotice } = lead(await write.callDestructiveTool({ address: "down.run", reason: "export" }));
+    expect(writeNotice.hint).toBe(
+      `This write already ran: do not call it again to see its result. Bytes 0-1000 of ${writeNotice.totalBytes} follow; page the rest with get_result using nextAction.`,
+    );
+    expect(writeNotice.hint).not.toContain("execute_code");
+  });
+
   it("previews a lone text block as its text, not its serialized envelope", async () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
