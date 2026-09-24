@@ -108,10 +108,15 @@ is just another provider function (`M8`).
 ## The program
 
 **P1.** A program is one JavaScript `async` arrow-function expression, evaluated
-once; its resolved value is the result. Both executors also accept
-markdown-fenced code and a bare statement body, normalizing those differently —
-a courtesy to model output, not contract, so anything else may be accepted,
-rejected, or reinterpreted.
+once; its resolved value is the result. The expression may end with a `;`, and
+with whitespace or comments after it: `execute_code` drops those terminators
+before either executor sees the program, because both evaluate it inside
+parentheses, where `};` was a syntax error on QuickJS and on a Dynamic Worker
+either the same error or a program that quietly returned `undefined`. Only
+semicolons that trail the expression go; `async () => 1; 2` is still more than
+one expression. Both executors also accept markdown-fenced code and a bare
+statement body, normalizing those differently — a courtesy to model output,
+not contract, so anything else may be accepted, rejected, or reinterpreted.
 
 **P2.** The only capabilities in the contract are `connecta.search`,
 `connecta.describe`, `connecta.call`, `connecta.emit`, and `console.log` /
@@ -816,7 +821,7 @@ passing one table is also the check on the executor duties above, with
 
 | Clauses | Test |
 | --- | --- |
-| `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax), `test/quickjs-executor.test.ts` (`normalizeCode`) |
+| `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax, trailing terminators), `test/program-source.test.ts` (which semicolons are terminators), `test/quickjs-executor.test.ts` (`normalizeCode`) |
 | `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (empty child-process environment), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |

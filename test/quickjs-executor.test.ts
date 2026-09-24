@@ -55,6 +55,21 @@ describe("normalizeCode", () => {
       "// grab the roadmap\nasync () => 1",
     );
   });
+  it("drops a trailing terminator after the arrow expression, and nothing else", () => {
+    expect(normalizeCode("async () => {\n  return 1;\n}; // done")).toBe(
+      "async () => {\n  return 1;\n} // done",
+    );
+    expect(normalizeCode("```js\nasync () => 1;\n```")).toBe("async () => 1");
+    expect(normalizeCode("async () => 1; 2")).toBe("async () => 1; 2");
+    expect(normalizeCode("while (poll());")).toBe("async () => {\nwhile (poll());\n}");
+  });
+  it("runs a program ending with `};` when driven directly", async () => {
+    const ex = quickJsExecutor();
+    const out = await ex.execute("async () => {\n  return 2;\n};", []);
+    expect(out.error).toBeUndefined();
+    expect(out.result).toBe(2);
+    await ex.close?.();
+  });
   it("detects a function past a leading block comment", () => {
     expect(normalizeCode("/* setup */\n(async () => 1)")).toBe(
       "/* setup */\n(async () => 1)",

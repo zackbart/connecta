@@ -27,6 +27,7 @@ import {
   InvocationService,
   timed,
 } from "./invocation.js";
+import { withoutProgramTerminator } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import {
@@ -865,13 +866,16 @@ export function createExecuteTool(
           );
         }
         const admitted = lease;
+        // P1: a trailing `;` after the arrow expression breaks both
+        // executors' parenthesized evaluation. Strip it here, above them.
+        const program = withoutProgramTerminator(code);
         return yield* timed((elapsed) => {
           if (diagnostics) diagnostics.executorWallMs = elapsed;
         }, awaitExecutor(
           () =>
             admitted
-              ? admitted.execute(code, [provider])
-              : executor.execute(code, [provider]),
+              ? admitted.execute(program, [provider])
+              : executor.execute(program, [provider]),
           signal,
           { watchdog },
         ));
