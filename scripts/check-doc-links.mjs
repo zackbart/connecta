@@ -29,11 +29,12 @@ const staleReferenceDirectoryPrefixes = ["src/", "documentation/", "examples/"];
 const ethosWordLimit = 1200;
 // Raised from 700 when code-mode.md gained the emitted-output clauses (#270),
 // from 800 when it gained the rendered-output clauses (#277), and from 900
-// when it gained pausing and resuming (#565): the contract grew real surfaces,
-// not prose — the last one an eighth tool, a journal, and a dozen error codes,
-// written as compressed clauses before the wall moved. The pressure stays — a
-// guide approaching this wall gets compressed before the wall moves again.
-const guideLineLimit = 1050;
+// when it gained pausing and resuming and their exemptions (#565, #566): the
+// contract grew real surfaces, not prose — the last an eighth tool, a journal,
+// and a dozen error codes, written as compressed clauses before the wall
+// moved, and moved only as far as they needed. The pressure stays — a guide
+// approaching this wall gets compressed before the wall moves again.
+const guideLineLimit = 1040;
 
 function usage(message) {
   if (message) console.error(message);
