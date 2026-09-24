@@ -110,6 +110,11 @@ export async function runClaude(options: ClaudeOptions): Promise<ClaudeRun> {
       ...process.env,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_AUTOUPDATER: "1",
+      // Claude Code tells the model today's local date, and the fakes' clock
+      // is an instant. Pinning UTC makes that date the fakes' date wherever
+      // and whenever the eval runs; otherwise an evening run west of UTC
+      // hands the agent yesterday, and date-only cutoffs drift by a day.
+      TZ: "UTC",
       ...(options.mcpOutputTokens ? { MAX_MCP_OUTPUT_TOKENS: String(options.mcpOutputTokens) } : {}),
     },
   });
