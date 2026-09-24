@@ -55,16 +55,16 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
-Only tools explicitly annotated \`readOnlyHint: true\` are reachable unasked. Any other call pauses the run unsent; \`execute_code\` returns \`paused\` with the exact write and a token. Repeat all three unchanged in top-level \`resume_execution\` to approve (\`approval: "tool"\` covers that tool for the run). Replay reruns the program against a journal, so make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.
+Only tools explicitly annotated \`readOnlyHint: true\` are reachable unasked. Where the MCP instructions say programs pause, any other call pauses unsent and \`execute_code\` returns \`paused\` with the write and a token; repeat all three unchanged in top-level \`resume_execution\` to approve (\`approval: "tool"\` covers that tool for the run). Replay reruns the program against a journal: make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.
 
 ## Errors and repair
 
 Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
 
-- \`destructive_tool_requires_approval\` (where programs do not pause): stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
+- \`destructive_tool_requires_approval\`: stop and send the returned address through top-level \`call_destructive_tool\`.
 - \`execution_paused\`: the run already stopped at a write; let it end.
 - \`write_outcome_unknown\`: sent but unanswered, never re-sent; check the target.
-- \`execution_expired\` or \`execution_diverged\`: run the task again with \`execute_code\`.
+- \`execution_expired\`, \`_diverged\`, \`_interrupted\`: check \`writes\`, then rerun.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
 - A truncated direct-call result: follow its \`get_result\` action. A truncated program result has no page handle; filter, map, or slice inside a new program.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
@@ -73,7 +73,7 @@ For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` set
 
 \`get_result({ id, offset?, maxBytes? })\` returns a one-line JSON header \`{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }\`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow \`nextAction\` until \`hasMore\` is false to reassemble pages. An unknown or expired id is an error.
 
-Limits: 20 host calls and 10 writes per run, and a 15-second deadline per host call.
+The \`execute_code\` description states this deployment's host-call and write budgets and per-call deadline.
 
 ## Runtime portability
 
