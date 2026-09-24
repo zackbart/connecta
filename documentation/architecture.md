@@ -145,12 +145,13 @@ accounting error a budget exists to prevent. Both layers are pinned by
 connector state, catalogs, and result paging — a 15-minute TTL with one
 runtime-wide accounting of stash bytes and entries, where a full stash returns the
 successful call's preview and a paging-unavailable notice rather than a result id.
-A second optional method, `compareAndSet(key, expected, next)`, is an atomic
-claim: `null` means absent (expired counts) on the way in and delete on the way
-out. Nothing in core requires it yet. Downstream OAuth uses it where the store
-has it, so resealing legacy plaintext and discarding a refused grant cannot
-overwrite a consent that landed in between, and falls back to a read and a
-write where it does not. A subsystem that needs an exactly-once claim will
+A second optional method, `compareAndSet(key, expected, next, options?)`, is an
+atomic claim: `null` means absent (expired counts) on the way in and delete on
+the way out. A successful write accepts the same optional `ttlSeconds` as
+`set`. Nothing in core requires it yet. Downstream OAuth uses it where the
+store has it, so resealing legacy plaintext and discarding a refused grant
+cannot overwrite a consent that landed in between, and falls back to a read and
+a write where it does not. A subsystem that needs an exactly-once claim will
 require it explicitly rather than emulate it that way.
 Adapters: `src/storage/memory.ts` and `src/storage/file.ts` (Node) both provide
 it, and the namespaced views core hands connectors forward it only when the

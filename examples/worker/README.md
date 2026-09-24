@@ -106,8 +106,8 @@ on a deployed Worker's production identity.
 ### Copied into its own repository
 
 The `npm install` above is the connecta repository's, which already has every
-dependency this file imports. A copy with its own `package.json` installs three
-things, because two of them are not part of connecta and never install with it:
+dependency this file imports. A copy with its own `package.json` installs
+Connecta and the separately installed `@cloudflare/codemode` peer:
 
 ```sh
 npm install @zackbart/connecta @cloudflare/codemode
@@ -125,7 +125,10 @@ the Clerk path in the Node template.
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`. The example explicitly enables
 `ui: operatorUi()`; open `<PUBLIC_URL>/` for Connections and each connection's
-authentication controls. There is no separate Credentials or Tokens tab.
+authentication controls. The page labels tool safety, offers fixed repair
+prompts for classified failures, and shows client setup commands for endpoints
+the signed-in person may use. Those commands contain no token. There is no
+separate Credentials or Tokens tab.
 
 ## Select optional modules
 
@@ -166,6 +169,8 @@ Reuse the same key and KV namespace during upgrades. Without the secret, omit
 the vault; declared credential slots remain unmanageable. Keep the key outside
 KV because it protects a copied namespace. Credential replacement takes effect
 on the next call without redeploying; no liveness probe runs in the background.
+With this vault, 0.25.0 seals existing downstream OAuth state on first read.
+Rolling back to 0.24.x then requires reauthorizing those OAuth connectors.
 
 The shipped Notion connector uses a deployment-owned static header and echo
 needs no secret. To exercise vault controls, declare a `credential` slot on an

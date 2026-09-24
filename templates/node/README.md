@@ -51,6 +51,11 @@ The template explicitly enables `ui: operatorUi()` from
 bearer to inspect Connections. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
+The page labels whether each tool runs in programs or needs approval. For
+classified connection failures it offers a fixed repair prompt, and its
+endpoint section has client setup commands for `/mcp` and any pool available
+to the signed-in identity. Those commands contain no bearer token.
+
 Connection management needs an interactive identity. A configured bearer is a
 client key and never authorizes browser credential mutations. To enable Clerk:
 
@@ -88,6 +93,12 @@ slot. Add `credential: { label: "API token" }` to an `api()` connector and read
 it through `await ctx.credential?.get()`, or use a provider such as `notion()`
 that declares its own slot. Authorized humans manage the slot inside that
 connection on `/`; there is no separate Credentials tab.
+
+In 0.25.0, this vault also seals downstream OAuth tokens on their first read.
+That is a one-way state migration for those tokens: rolling back to 0.24.x
+requires authorizing each OAuth connector again. See the
+[0.25.0 changelog](../../CHANGELOG.md#0250--2026-09-23) before upgrading a
+deployment with existing OAuth connections.
 
 A saved replacement takes effect on the next call. Connecta tests credentials
 only on an explicit action and otherwise fails at use. Without a vault or UI,
