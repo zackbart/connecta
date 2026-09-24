@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Result } from "effect";
+import { Effect, Result } from "effect";
 import {
   compactDiscoverySchema,
   compactDescriptionSchema,
@@ -32,6 +32,7 @@ import {
   connectorSkillName,
 } from "./skills.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { SharedRead } from "./runtime/shared-read.js";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
@@ -462,22 +463,19 @@ export class CatalogService {
   private readonly searchRoute: SearchRoute;
   private readonly readOptions: CatalogReadOptions | undefined;
   private readonly requestSignal: AbortSignal | undefined;
-  // The request-scoped catalog cache: one Deferred per connector asked about,
-  // completed by the first asker's registry read and joined by every later
-  // one. A success stays for the rest of the request, so a search and the call
-  // after it see one catalog; a failure is dropped so the next ask reads
-  // again. The service lives and dies with one request, so no Deferred here is
-  // ever awaited from another.
+  // The request-scoped catalog cache: one shared read per connector asked
+  // about, started by the first asker and joined by every later one. A
+  // success stays for the rest of the request, so a search and the call after
+  // it see one catalog; a failure, or a read cancelled because every asker
+  // left it, is dropped so the next ask reads again. The service lives and
+  // dies with one request, so no read here is ever awaited from another.
   //
   // Registry.getTools also joins concurrent reads in one request scope, which
   // the operator UI and status reads rely on. This map overlaps it only for
   // reads still in flight and is kept for what the registry's cannot do: hold
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
-  private readonly catalogs = new Map<
-    string,
-    Deferred.Deferred<ToolDef[], unknown>
-  >();
+  private readonly catalogs = new Map<string, SharedRead<ToolDef[]>>();
 
   constructor(
     private readonly registry: RegistryView,
@@ -541,42 +539,40 @@ export class CatalogService {
   }
 
   // One connector's catalog from the request-scoped cache, reading it through
-  // the registry when this request has not yet. The first asker's options
-  // govern the read and a joiner shares its outcome, as the registry's own
-  // flight below does. The read settles the Deferred itself, not the asker's
-  // fiber, so a probe deadline ends one asker's wait and never the read.
+  // the registry when this request has not yet. No asker's options govern the
+  // read: it carries its own signal and the catalog deadline, the probe
+  // timeout, whichever asker starts it. Each asker waits under its own signal
+  // and deadline, so a short-deadline call that starts the read and a search
+  // that joins it each end on their own terms, and the read is cancelled only
+  // once every asker has gone (#571).
   private catalog(
     id: string,
     callOptions: ConnectorOperationOptions,
   ): Effect.Effect<ToolDef[], unknown> {
     return Effect.suspend(() => {
-      const cached = this.catalogs.get(id);
-      if (cached) return Deferred.await(cached);
-      const read = Deferred.makeUnsafe<ToolDef[], unknown>();
-      this.catalogs.set(id, read);
-      // The executor turns a synchronous throw from getTools into a rejection.
-      new Promise<ToolDef[]>((resolve) =>
-        resolve(
-          this.registry.getTools(
-            id,
-            this.baseUrl,
-            this.requestScope,
-            callOptions,
-            this.readOptions,
-          ),
-        ),
-      ).then(
-        (tools) => {
-          Deferred.doneUnsafe(read, Exit.succeed(tools));
-        },
-        (cause: unknown) => {
-          // Evicted before the Deferred resumes anyone, so an asker that
-          // retries on hearing of the failure starts a fresh read.
-          if (this.catalogs.get(id) === read) this.catalogs.delete(id);
-          Deferred.doneUnsafe(read, Exit.fail(cause));
-        },
-      );
-      return Deferred.await(read);
+      let read = this.catalogs.get(id);
+      if (!read) {
+        const started: SharedRead<ToolDef[]> = new SharedRead(
+          (signal) =>
+            this.registry.getTools(
+              id,
+              this.baseUrl,
+              this.requestScope,
+              { signal, timeoutMs: this.probeTimeoutMs },
+              this.readOptions,
+            ),
+          (succeeded) => {
+            // Evicted before the read resumes anyone, so an asker that
+            // retries on hearing of the failure starts a fresh read.
+            if (!succeeded && this.catalogs.get(id) === started) {
+              this.catalogs.delete(id);
+            }
+          },
+        );
+        this.catalogs.set(id, started);
+        read = started;
+      }
+      return read.join(callOptions.signal);
     });
   }
 
@@ -595,7 +591,7 @@ export class CatalogService {
         Effect.result(
           withDeadlineEffect(
             (signal) =>
-              this.catalog(id, { signal, timeoutMs: this.probeTimeoutMs }),
+              this.catalog(id, { signal }),
             {
               ...(this.requestSignal ? { signal: this.requestSignal } : {}),
               timeoutMs: this.probeTimeoutMs,

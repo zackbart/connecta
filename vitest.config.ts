@@ -13,6 +13,7 @@ export const WORKERS_SUITES = [
   "test/call-admission.test.ts",
   "test/call-admission-handoff.test.ts",
   "test/catalog-drift.test.ts",
+  "test/catalog-flight-lifetimes.test.ts",
   "test/catalog-service.test.ts",
   "test/catalog.test.ts",
   "test/clerk.test.ts",

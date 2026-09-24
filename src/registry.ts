@@ -1,4 +1,13 @@
-import { Cause, Clock, Deferred, Effect, Exit, Result } from "effect";
+import {
+  Cause,
+  Clock,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Option,
+  Result,
+} from "effect";
 import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
@@ -46,6 +55,7 @@ import {
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { closeScopeOnExit } from "./runtime/connector-scope.js";
 import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { SharedRead } from "./runtime/shared-read.js";
 import { Logger as LoggerService, type Storage } from "./runtime/services.js";
 import {
   runOnPartition,
@@ -53,6 +63,7 @@ import {
   storageGet,
   storageSet,
 } from "./runtime/storage.js";
+import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -130,13 +141,35 @@ interface CacheEntry {
 interface CatalogRefreshFlight {
   generation: number;
   /**
-   * Completed once, by the request that owns the refresh, when its work and
-   * teardown are done. Every other caller only awaits it, each through a
-   * Promise edge of its own. No fiber outlives a request to hold it open.
+   * Epoch ms at which the flight is abandoned: its owner's deadline, or the
+   * default probe timeout for an owner with none. A connector that ignores
+   * its abort signal can go on listing past it, but nobody waits for it any
+   * longer, and what it lists then reaches neither cache layer (#570).
+   */
+  abandonAt: number;
+  /** Set once a reader gives up on it; its result can no longer publish. */
+  abandoned: boolean;
+  /**
+   * Completed once: by the request that owns the refresh, when its work and
+   * teardown are done, or by the reader that abandons it at its bound. Every
+   * other caller only awaits it, each through a Promise edge of its own. No
+   * fiber outlives a request to hold it open.
    */
   outcome: Deferred.Deferred<ToolDef[], unknown>;
   /** One caught/logged tail shared by every stale reader that joins. */
   deferredTail?: Promise<void>;
+}
+
+/**
+ * What a joiner hears from a flight that will not answer for it: one that
+ * passed its bound, or failed for a reason that was its owner's alone. It
+ * never reaches a caller; a joiner that hears it makes a fresh attempt.
+ */
+class AbandonedCatalogRefresh extends Error {
+  constructor(id: string) {
+    super(`The catalog refresh of "${id}" was abandoned.`);
+    this.name = "AbandonedCatalogRefresh";
+  }
 }
 
 interface PersistedCatalogManifest {
@@ -368,11 +401,11 @@ export class Registry implements RegistryView {
   // completes once its storage work is done; see enqueueCatalogMutation.
   /** Serialize persisted catalog set/delete operations within this isolate. */
   private readonly catalogMutations = new Map<string, Deferred.Deferred<void>>();
-  /** Same-request cold loads share one promise without retaining the request.
+  /** Same-request cold loads share one read without retaining the request.
    * See documentation/architecture.md#the-two-lifetimes. */
   private readonly requestCatalogLoads = new WeakMap<
     object,
-    Map<string, Promise<ToolDef[]>>
+    Map<string, SharedRead<ToolDef[]>>
   >();
   /** One live refresh per connector across agent and operator requests. */
   private readonly catalogRefreshes = new Map<
@@ -1240,6 +1273,7 @@ export class Registry implements RegistryView {
     connector: Connector,
     ctx: ConnectorContext,
     skipPublicationWhenAborted = false,
+    flight?: CatalogRefreshFlight,
   ): Promise<ToolDef[]> {
     const generation = this.catalogGeneration(id);
     const tools = await connector.listTools(ctx);
@@ -1254,9 +1288,10 @@ export class Registry implements RegistryView {
     // behavior when an inbound abort races a completed listing.
     if (skipPublicationWhenAborted && ctx.signal?.aborted) return tools;
     // The caller that began this refresh may still use its result, but a
-    // credential/OAuth change that landed while listTools was in flight means
-    // the listing must not enter either shared cache layer.
-    if (generation !== this.catalogGeneration(id)) return tools;
+    // credential/OAuth change that landed while listTools was in flight, or a
+    // flight abandoned while it listed, means the listing must not enter
+    // either shared cache layer.
+    if (!this.mayPublish(id, generation, flight)) return tools;
     if (tools.length > MAX_CATALOG_TOOLS) {
       const message =
         `Connector "${id}" returned ${tools.length} tools, over the ` +
@@ -1267,7 +1302,7 @@ export class Registry implements RegistryView {
     const previous = this.cache.get(id);
     const snapshot = await snapshotCatalog(tools);
     if (
-      generation !== this.catalogGeneration(id) ||
+      !this.mayPublish(id, generation, flight) ||
       (skipPublicationWhenAborted && ctx.signal?.aborted)
     ) {
       return tools;
@@ -1313,14 +1348,36 @@ export class Registry implements RegistryView {
   }
 
   /**
-   * Publish one shared refresh promise before starting its connector work.
-   * The first caller owns the scope and deadline; every later caller joins the
-   * result without gaining access to that context.
+   * Whether a refresh may still enter the shared cache layers: its generation
+   * is current, and the flight it runs in has been neither abandoned nor
+   * outlived its bound. Asked at each publication point, since listing and
+   * snapshotting both yield, and a late result must never overwrite the one a
+   * fresh attempt published in the meantime.
+   */
+  private mayPublish(
+    id: string,
+    generation: number,
+    flight: CatalogRefreshFlight | undefined,
+  ): boolean {
+    return (
+      generation === this.catalogGeneration(id) &&
+      (!flight || (!flight.abandoned && Date.now() < flight.abandonAt))
+    );
+  }
+
+  /**
+   * Publish one shared refresh before starting its connector work. The first
+   * caller owns the scope and signal, and the flight lives `boundMs` from now
+   * at most; every later caller joins the result without gaining access to
+   * that context. A flight found past its bound is abandoned here, and this
+   * caller starts the fresh attempt.
    */
   private startCatalogRefresh(
     id: string,
     generation: number,
-    work: Effect.Effect<ToolDef[], unknown>,
+    boundMs: number,
+    work: (flight: CatalogRefreshFlight) => Effect.Effect<ToolDef[], unknown>,
+    ownerLeft: () => boolean = () => false,
   ): {
     flight: CatalogRefreshFlight;
     // Present only for the caller that published the flight, which must run
@@ -1328,22 +1385,97 @@ export class Registry implements RegistryView {
     owner?: Effect.Effect<ToolDef[], unknown>;
   } {
     const existing = this.catalogRefreshes.get(id);
-    if (existing?.generation === generation) return { flight: existing };
+    if (existing?.generation === generation) {
+      if (Date.now() < existing.abandonAt) return { flight: existing };
+      this.abandonCatalogRefresh(id, existing);
+    }
     const flight: CatalogRefreshFlight = {
       generation,
+      abandonAt: Date.now() + boundMs,
+      abandoned: false,
       outcome: Deferred.makeUnsafe(),
     };
     this.catalogRefreshes.set(id, flight);
-    const owner = Effect.onExit(work, (exit) =>
+    const owner = Effect.onExit(work(flight), (exit) =>
       Effect.sync(() => {
         if (this.catalogRefreshes.get(id) === flight) {
           this.catalogRefreshes.delete(id);
         }
+        // A failure that was the owner's alone is no answer for anyone
+        // else: its own cancellation (its signal, read here in its own
+        // request), or anything that arrives once the flight is past its
+        // bound. Joiners make a fresh attempt under their own deadlines.
+        const ownersAlone =
+          Exit.isFailure(exit) &&
+          (flight.abandoned ||
+            Date.now() >= flight.abandonAt ||
+            ownerLeft());
         // Last, because joined fibers resume inside this call.
-        Deferred.doneUnsafe(flight.outcome, exit);
+        Deferred.doneUnsafe(
+          flight.outcome,
+          ownersAlone ? Exit.fail(new AbandonedCatalogRefresh(id)) : exit,
+        );
       }),
     );
     return { flight, owner };
+  }
+
+  /**
+   * Give up on a flight that outlived its bound. Later readers start a fresh
+   * attempt, its joiners are told to, and nothing its owner lists from now on
+   * reaches a cache. The owner's work is left alone: it belongs to another
+   * request, which nothing here may reach into, and it can no longer publish.
+   */
+  private abandonCatalogRefresh(
+    id: string,
+    flight: CatalogRefreshFlight,
+  ): void {
+    if (flight.abandoned) return;
+    flight.abandoned = true;
+    if (this.catalogRefreshes.get(id) === flight) {
+      this.catalogRefreshes.delete(id);
+    }
+    this.opts.logger.warn(
+      `[connecta] connector "${id}" catalog refresh outlived its bound; abandoning it for a fresh attempt.`,
+    );
+    Deferred.doneUnsafe(
+      flight.outcome,
+      Exit.fail(new AbandonedCatalogRefresh(id)),
+    );
+  }
+
+  /**
+   * Wait on another caller's flight, no longer than its bound. Succeeds with
+   * its tools, or with `undefined` when it will not answer for this caller —
+   * past its bound, when this waiter abandons it, or failed for its owner
+   * alone — so the caller makes a fresh attempt. The timer is this waiter's
+   * own: on workerd it is what keeps a request that waits on another alive,
+   * and bounded.
+   */
+  private joinCatalogRefresh(
+    id: string,
+    flight: CatalogRefreshFlight,
+  ): Effect.Effect<ToolDef[] | undefined, unknown> {
+    return Effect.suspend(() =>
+      Deferred.await(flight.outcome).pipe(
+        Effect.timeoutOption(
+          Duration.millis(Math.max(0, flight.abandonAt - Date.now())),
+        ),
+        Effect.flatMap((joined) =>
+          Option.isSome(joined)
+            ? Effect.succeed<ToolDef[] | undefined>(joined.value)
+            : Effect.sync(() => {
+                this.abandonCatalogRefresh(id, flight);
+                return undefined;
+              }),
+        ),
+        Effect.catch((error) =>
+          error instanceof AbandonedCatalogRefresh
+            ? Effect.succeed(undefined)
+            : Effect.fail(error),
+        ),
+      ),
+    );
   }
 
   /** Force a live listTools refresh and replace both catalog cache layers. */
@@ -1356,23 +1488,40 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     if (connector.staticTools) return connector.staticTools;
-    const { flight, owner } = this.startCatalogRefresh(
-      id,
-      this.catalogGeneration(id),
-      Effect.tryPromise({
-        try: () =>
-          this.refreshToolsWithContext(
-            id,
-            connector,
-            this.contextFor(id, baseUrl, requestScope, callOptions),
-          ),
-        catch: (error) => error,
-      }),
-    );
-    // The owner lists in its own request. A joiner waits through an edge of
-    // its own, and whatever it does with the tools happens after that, back in
-    // its request (see "Effect inside" in documentation/architecture.md).
-    return runEdge(owner ?? Deferred.await(flight.outcome));
+    // A flight lives as long as its owner will wait for it. Past that, the
+    // owner may have answered and gone, and on workerd its I/O went with it.
+    const boundMs =
+      normalizeTimeoutMs(callOptions.timeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
+    for (;;) {
+      const { flight, owner } = this.startCatalogRefresh(
+        id,
+        this.catalogGeneration(id),
+        boundMs,
+        (flight) =>
+          Effect.tryPromise({
+            try: () =>
+              this.refreshToolsWithContext(
+                id,
+                connector,
+                this.contextFor(id, baseUrl, requestScope, callOptions),
+                false,
+                flight,
+              ),
+            catch: (error) => error,
+          }),
+        () => callOptions.signal?.aborted === true,
+      );
+      // The owner lists in its own request. A joiner waits through an edge of
+      // its own, under its own signal, and whatever it does with the tools
+      // happens after that, back in its request (see "Effect inside" in
+      // documentation/architecture.md). A flight that will not answer for it
+      // sends it round again, to join a fresh attempt or to own one.
+      if (owner) return runEdge(owner);
+      const joined = await runEdge(this.joinCatalogRefresh(id, flight), {
+        signal: callOptions.signal,
+      });
+      if (joined) return joined;
+    }
   }
 
   private observeCatalogAccess(
@@ -1401,7 +1550,7 @@ export class Registry implements RegistryView {
     // The refresh this request starts, if none of this generation is live.
     // Its scope is closed however it ends, deadline included, before the
     // flight completes.
-    const refresh = withDeadlineEffect(
+    const refresh = (flight: CatalogRefreshFlight) => withDeadlineEffect(
       (signal) =>
         Effect.gen({ self: this }, function* () {
           const current = this.cache.get(id);
@@ -1422,7 +1571,8 @@ export class Registry implements RegistryView {
           });
           yield* closeScopeOnExit(connector, ctx, defer);
           return yield* Effect.tryPromise({
-            try: () => this.refreshToolsWithContext(id, connector, ctx, true),
+            try: () =>
+              this.refreshToolsWithContext(id, connector, ctx, true, flight),
             catch: (error) => error,
           });
         }),
@@ -1441,7 +1591,8 @@ export class Registry implements RegistryView {
     const { flight, owner } = this.startCatalogRefresh(
       id,
       expectedGeneration,
-      Effect.scoped(refresh),
+      options.refreshTimeoutMs,
+      (flight) => Effect.scoped(refresh(flight)),
     );
     if (owner) {
       // Runs past this response, under the runtime's waitUntil below.
@@ -1452,8 +1603,9 @@ export class Registry implements RegistryView {
       );
     }
     // A stale reader that joins a blocking refresh logs its failure once for
-    // every reader after it, and waits through an edge of its own.
-    flight.deferredTail ??= runEdge(Deferred.await(flight.outcome)).then(
+    // every reader after it, and waits through an edge of its own, no longer
+    // than the flight's bound.
+    flight.deferredTail ??= runEdge(this.joinCatalogRefresh(id, flight)).then(
       () => {},
       logFailure,
     );
@@ -1603,9 +1755,15 @@ export class Registry implements RegistryView {
    * WeakMap neither roots the request scope nor lets its connector context
    * escape into another request; settled entries are also removed eagerly.
    *
+   * The read owns its signal, and each caller waits under its own: one that
+   * is cancelled while others wait leaves with its own failure, and the read
+   * is cancelled only when every caller has gone (src/runtime/shared-read.ts).
+   *
    * The deployment-wide flight below this layer coalesces the actual live
-   * refresh across requests. Its first caller's context and deadline govern;
-   * later callers join only its result, never its request scope.
+   * refresh across requests. Its owner's context governs the listing, and its
+   * owner's deadline bounds it; later callers join only its result, never its
+   * request scope, and a failure that was the owner's alone sends them to a
+   * fresh attempt rather than to them.
    */
   async getTools(
     id: string,
@@ -1632,22 +1790,31 @@ export class Registry implements RegistryView {
       loads = new Map();
       this.requestCatalogLoads.set(requestScope, loads);
     }
-    const existing = loads.get(id);
-    if (existing) return existing;
-    const loading = this.loadTools(
-      id,
-      baseUrl,
-      requestScope,
-      callOptions,
-      readOptions,
-    );
-    loads.set(id, loading);
-    try {
-      return await loading;
-    } finally {
-      if (loads.get(id) === loading) loads.delete(id);
-      if (loads.size === 0) this.requestCatalogLoads.delete(requestScope);
+    const requestLoads = loads;
+    let load = requestLoads.get(id);
+    if (!load) {
+      const started: SharedRead<ToolDef[]> = new SharedRead(
+        (signal) =>
+          this.loadTools(
+            id,
+            baseUrl,
+            requestScope,
+            { ...callOptions, signal },
+            readOptions,
+          ),
+        // Settled or cancelled, the read leaves the map before any caller
+        // resumes, so the next one asks the caches afresh.
+        () => {
+          if (requestLoads.get(id) === started) requestLoads.delete(id);
+          if (requestLoads.size === 0) {
+            this.requestCatalogLoads.delete(requestScope);
+          }
+        },
+      );
+      requestLoads.set(id, started);
+      load = started;
     }
+    return runEdge(load.join(callOptions.signal));
   }
 
   async credentialDriftFor(id: string): Promise<string | undefined> {
