@@ -279,8 +279,10 @@ function ConnectorRow({
               {tools.some((tool) => tool.safety) ? (
                 <p class="meta tool-legend">
                   Read-only tools run inside execute_code programs. Everything
-                  else goes through call_destructive_tool, where the host asks
-                  first.
+                  else asks the host first: a program pauses for
+                  resume_execution, and a direct call goes through
+                  call_destructive_tool — unless this deployment's config
+                  exempts the tool, in which case programs call it unasked.
                 </p>
               ) : null}
               {tools.map((tool) => (

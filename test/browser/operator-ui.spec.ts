@@ -130,9 +130,12 @@ function data(): UiData {
         permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
         title: "CRM",
         status: oauthConnected ? "ok" : "auth_required",
-        toolCount: oauthConnected ? 1 : 0,
+        toolCount: oauthConnected ? 2 : 0,
         tools: oauthConnected
-          ? [{ name: "contacts", address: "oauth.contacts", safety: "needs_approval" }]
+          ? [
+              { name: "contacts", address: "oauth.contacts", safety: "needs_approval" },
+              { name: "note", address: "oauth.note", safety: "exempt" },
+            ]
           : [],
         oauth: true,
       },
@@ -737,9 +740,14 @@ test("labels each tool with the call path the server classified", async ({ page 
   await expect(read).toHaveText("runs in programs");
 
   const crm = await openRow(page, "CRM");
-  await crm.getByText("Tools (1)").click();
-  await expect(crm.locator('[data-safety="needs_approval"]')).toHaveText("needs approval");
+  await crm.getByText("Tools (2)").click();
+  await expect(crm.locator('[data-safety="needs_approval"]')).toHaveText("asks for approval");
+  // A config exemption (#566) is its own state, not a read-only one.
+  const exempt = crm.locator('[data-safety="exempt"]');
+  await expect(exempt).toHaveText("exempt from approval");
+  await expect(exempt).toHaveAttribute("title", /write budget/);
   await expect(crm.locator(".tool-legend")).toContainText("call_destructive_tool");
+  await expect(crm.locator(".tool-legend")).toContainText("resume_execution");
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {

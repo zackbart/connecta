@@ -97,9 +97,34 @@ describe("tool safety classification", () => {
   });
 
   it("has a badge for every classification the server can send", () => {
-    for (const safety of ["runs_in_programs", "needs_approval"] as const) {
+    for (const safety of ["runs_in_programs", "exempt", "needs_approval"] as const) {
       expect(TOOL_SAFETY_BADGE[safety].label.length).toBeGreaterThan(0);
     }
+  });
+
+  it("shows a config exemption only on a tool that is not read-only", () => {
+    expect(uiToolSafety({ name: "t", annotations: { destructiveHint: true } }, true))
+      .toBe("exempt");
+    expect(uiToolSafety({ name: "t" }, true)).toBe("exempt");
+    // Read-only needs no exemption, and never reads as one.
+    expect(uiToolSafety({ name: "t", annotations: { readOnlyHint: true } }, true))
+      .toBe("runs_in_programs");
+  });
+
+  it("ships a config exemption in connector details", async () => {
+    const connecta = createTestConnecta({
+      connectors: [docsApi()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      execute: { approval: { "docs.erase": "never" } },
+    });
+    const data = await uiData(connecta);
+    const docs = data.connectors.find((c) => c.id === "docs")!;
+    expect(docs.tools.map(({ address, safety }) => ({ address, safety }))).toEqual([
+      { address: "docs.read", safety: "runs_in_programs" },
+      { address: "docs.erase", safety: "exempt" },
+    ]);
   });
 
   it("ships the classification in connector details", async () => {

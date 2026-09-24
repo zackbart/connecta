@@ -27,17 +27,24 @@ import {
   InvocationFailure,
   InvocationService,
   timed,
+  type WriteGateDecision,
 } from "./invocation.js";
 import { withoutProgramTerminator } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import {
   MIN_STORAGE_TIMEOUT_MS,
+  DEFAULT_MAX_WRITES,
   RunState,
   type ResumableSettings,
   type RunStop,
 } from "./resumable.js";
 import { journalKey, type JournalOp } from "./run-journal.js";
 import { underAnySignal } from "./timeout.js";
+import {
+  isApprovalExempt,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "./tool-safety.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import {
   connectorGuide,
@@ -582,6 +589,10 @@ interface SandboxLimits {
   environment?: PinnedEnvironment | undefined;
   /** One play of a resumable run; absent when resumable writes are off. */
   runState?: RunState | undefined;
+  /** Config approval exemptions (#566). */
+  approval?: ApprovalPolicy | undefined;
+  /** Writes one program may send; the run state keeps its own count. */
+  maxWrites?: number | undefined;
 }
 
 /**
@@ -610,6 +621,7 @@ function sandboxProvider(
     concurrency: limits.discoveryConcurrency,
     probeTimeoutMs: limits.probeTimeoutMs,
     defer: limits.defer,
+    approval: limits.approval,
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
@@ -636,6 +648,34 @@ function sandboxProvider(
       : Effect.void,
   );
   const { runState } = limits;
+  const approval = limits.approval ?? NO_EXEMPTIONS;
+  const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
+  let exemptWrites = 0;
+  /**
+   * Without resumable writes nothing can pause, but a config exemption
+   * (#566) still lets its writes run: the gate covers exactly the exempt
+   * calls, spends the write budget on each, and every other write keeps
+   * E4's refusal, ahead of validation as it always was.
+   */
+  const exemptOnly = {
+    gates: (target: ResolvedCatalogTool) =>
+      isApprovalExempt(approval, target.connector, target.toolName, target.definition),
+    writeGate: (target: ResolvedCatalogTool): Effect.Effect<WriteGateDecision> =>
+      Effect.sync((): WriteGateDecision => {
+        if (exemptWrites >= maxWrites) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "budget_exceeded",
+              message: `execute_code write budget exceeded (${maxWrites} writes maximum, execute.maxWrites); ${target.connector.id}.${target.toolName} was not sent`,
+              retryable: false,
+            },
+          };
+        }
+        exemptWrites++;
+        return { kind: "dispatch" };
+      }),
+  };
   const invocationContext = (seq: number | undefined, key: string | undefined) => ({
     source: runState?.source ?? ("execute_code" as const),
     timeoutMs: hostCallTimeoutMs,
@@ -650,7 +690,9 @@ function sandboxProvider(
           writeGate: (target: ResolvedCatalogTool, args: unknown) =>
             runState.gate(seq, key, target, args),
         }
-      : {}),
+      : runState
+        ? {}
+        : exemptOnly),
   });
 
   /**
@@ -1078,6 +1120,10 @@ interface RunnerConfig {
    * refused; absent, E4's refusal stands.
    */
   resumable?: ResumableSettings | undefined;
+  /** Config approval exemptions (#566): writes a program sends unasked. */
+  approval?: ApprovalPolicy | undefined;
+  /** Writes one program may send (`execute.maxWrites`). Default 10. */
+  maxWrites?: number | undefined;
 }
 
 /** Plays programs: `execute_code` fresh, `resume_execution` from a journal. */
@@ -1185,6 +1231,8 @@ export function createProgramRunner(
             defer: config.defer,
             environment: config.environment,
             runState,
+            approval: config.approval,
+            maxWrites: config.maxWrites,
           }),
         ));
         if (signal.aborted) {
@@ -1595,6 +1643,10 @@ export function registerExecuteTool(
     defer?: DeferredWork | undefined;
     /** Resumable writes, when this deployment turned them on. */
     resumable?: ResumableSettings | undefined;
+    /** Config approval exemptions (#566). */
+    approval?: ApprovalPolicy | undefined;
+    /** Writes one program may send. Default 10. */
+    maxWrites?: number | undefined;
   },
 ): ProgramRunner {
   // Resolved once so the description and the collector cannot disagree about
@@ -1632,6 +1684,8 @@ export function registerExecuteTool(
       watchdogMs: ctx.watchdogMs,
       defer: ctx.defer,
       resumable: ctx.resumable,
+      approval: ctx.approval,
+      maxWrites: ctx.maxWrites,
     },
   );
   server.registerTool(

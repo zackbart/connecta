@@ -263,9 +263,10 @@ integration is ambiguous, because an unscoped search fans out across every
 configured connector. `safety: "readOnly"` returns exactly the tools
 `connecta.call` runs unasked; `"approvalRequired"` returns the complementary
 fail-closed class, false, missing, and contradictory annotations included,
-whose calls pause (`W1`); omitted or `"all"` preserves the complete catalog, as
-a program that means to write needs. These filters grant no authority and
-change no admission decision.
+whose calls pause (`W1`) unless config exempts them (`W12`), which a row marks
+with `approval: "exempt"` without moving it out of that class; omitted or
+`"all"` preserves the complete catalog, as a program that means to write needs.
+These filters grant no authority and change no admission decision.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -855,6 +856,21 @@ calls they spend, checked at the gate — so an over-budget write fails
 `execute.resumableWrites: false` — `E4` stands and `resume_execution` answers
 `resumable_writes_unavailable`.
 
+**W12.** Config may exempt a write from asking, and nothing else may
+([#566](https://github.com/zackbart/connecta/issues/566)). `execute.approval`
+maps connector ids and `connector.tool` addresses to `"never"` or `"ask"`; the
+address wins over the connector entry, which wins over a connector's own
+built-in default (reserved for connectors connecta ships), which wins over
+`"ask"`. An exempt call is decided at the same gate as `W1` and dispatches
+instead of pausing, with everything else an approved write gets: the write
+budget (`W10`), the write-ahead mark (`W5`), the journal, a `V1` event. It
+works without resumable writes too, where every non-exempt write keeps `E4`.
+Exempt is never read-only: a read-only tool is never reported exempt,
+discovery keeps an exempt tool approval-required, `call_tool` still refuses it,
+and no annotation can grant it — a downstream could otherwise exempt itself.
+Unknown connectors and `api()` addresses its tools lack refuse to construct; a
+remote catalog loads later, so an address it never serves simply never matches.
+
 ## Executor exceptions
 
 Documented divergences, with reasons. Everything else must match.
@@ -1005,6 +1021,7 @@ passing one table is also the check on the executor duties above, with
 | `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a retry's scope replacing an unused approval, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
 | `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, check-first advice once a write landed, the write budget) |
 | `W11` | `test/code-first-surface.test.ts`, `test/resumable.test.ts` (construction, the default, `/health`, the unavailable answer) |
+| `W12` | `test/resumable.test.ts` (an exempt write runs where the same program otherwise pauses, precedence and a connector default switched off, the write budget, resumable writes off, journaled and never re-sent, `call_tool` still refusing, search and describe markers, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
 | `X12` | `test/guest-api-contract.test.ts` (a program that keeps calling after the pause, on both executors) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |

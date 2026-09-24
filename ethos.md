@@ -9,9 +9,9 @@ Connecta’s scope, refusals, and invariants. Contradictions require a design de
 - **Config-as-code.** One tenant and connector set; identities get
   config-derived views. Maintained providers, `remoteMcp()`, and `api()` share
   one connector contract.
-- **Safe by default.** Programs run only explicitly read-only tools unasked;
-  others pause for `resume_execution` or cross `call_destructive_tool`. The
-  host owns approval.
+- **Safe by default.** Programs run only read-only or config-exempt tools
+  unasked; others pause for `resume_execution` or cross
+  `call_destructive_tool`. The host owns approval.
 - **One fetch-native core.** Web APIs on Node and Workers; platform code and
   optional features behind explicit subpaths; Effect inside, Promises outside.
 - **Human auth management.** Optional pages show status and payload-free history.
@@ -34,7 +34,8 @@ carries them.
 | --- | --- | --- |
 | OpenAPI / GraphQL ingestion | refused | the disease is a document-authored tool nobody chose; hand-written literals, even through a shared factory, are still authorship |
 | Multi-tenancy / account model | refused | one deployment per tenant; inbound auth owns identity |
-| Approvals and pauses | accepted | a program pauses host-side at its first unapproved write until the destructive-annotated `resume_execution` repeats that exact call, the host's prompt approving it or its tool; an expiring journal replays the run, never re-sending unknown outcomes ([#565](https://github.com/zackbart/connecta/issues/565)) |
+| Approvals and pauses | accepted | a program pauses host-side at its first unapproved write until the destructive-annotated `resume_execution` repeats it; an expiring journal replays it, never re-sending unknown outcomes ([#565](https://github.com/zackbart/connecta/issues/565)) |
+| Approval exemptions | accepted | config-only, program-only, never read-only elsewhere ([#566](https://github.com/zackbart/connecta/issues/566)) |
 | Runtime connector registration | refused | config-as-code is the security model |
 | Optional deployment modules | accepted | typed slots select UI, activity, vault, and inbound auth; core keeps discovery, execution, invocation, and enforcement |
 | Artifacts module | planned | a built-in connector, not a meta-tool: team-only sandboxed pages over stored JSON, never calling tools. Immutable versions let writes skip approval. Supersedes [#287](https://github.com/zackbart/connecta/issues/287) on executor's artifacts |
@@ -77,7 +78,7 @@ design decision.
 
 - **Fail-closed read-only.** A missing, false, or contradictory annotation never gets the benefit of the doubt.
 - **Generated code cannot mint capabilities.** Admission, credentials, and classification are enforced below the sandbox.
-- **Only explicitly read-only work runs unasked in the sandbox.** Other writes pause for `resume_execution` or cross `call_destructive_tool`.
+- **Only explicitly read-only or config-exempt work runs unasked in the sandbox.** Others pause or cross `call_destructive_tool`.
 - **Nothing request-bound survives a request.** No transport, stream, signal, or awaited promise outlives it; a paused journal is data, not a request.
 - **A downstream catalog is complete or it is a failure.** A partial one is never cached, persisted, or served.
 - **Activity is payload-free by construction.** The event type has nowhere to put arguments, results, code, or raw errors.

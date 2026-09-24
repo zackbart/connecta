@@ -364,8 +364,8 @@ export function connectorSummaryParts(
 }
 
 /**
- * The badge for each call path, keyed by the server's classification so the
- * planned third state is a row here rather than a new branch in a component.
+ * The badge for each call path, keyed by the server's classification so each
+ * state is a row here rather than a branch in a component.
  */
 export const TOOL_SAFETY_BADGE: Readonly<
   Record<UiToolSafety, { label: string; tone: Tone; title: string }>
@@ -375,10 +375,15 @@ export const TOOL_SAFETY_BADGE: Readonly<
     tone: "ok",
     title: "Explicitly read-only: execute_code programs may call it without asking.",
   },
+  exempt: {
+    label: "exempt from approval",
+    tone: "neutral",
+    title: "Not read-only, but this deployment's config lets programs call it without pausing. Each call still counts against the write budget and appears in activity; call_tool still refuses it.",
+  },
   needs_approval: {
-    label: "needs approval",
+    label: "asks for approval",
     tone: "warn",
-    title: "Not explicitly read-only: calls cross call_destructive_tool, where the host asks first.",
+    title: "Not explicitly read-only: a program pauses for resume_execution, and a direct call crosses call_destructive_tool — either way the host asks first.",
   },
 };
 

@@ -51,6 +51,11 @@ import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge } from "./runtime/run.js";
 import { underAnySignal } from "./timeout.js";
+import {
+  isApprovalExempt,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "./tool-safety.js";
 import type { KVStorage } from "./types.js";
 import {
   canonicalJson,
@@ -81,6 +86,8 @@ export interface ResumableSettings {
   ttlSeconds: number;
   /** The `/mcp/<pool>` this request came in on; `null` for `/mcp`. */
   pool: string | null;
+  /** Config approval exemptions; none when omitted. */
+  approval?: ApprovalPolicy | undefined;
 }
 
 /**
@@ -547,7 +554,19 @@ export class RunState {
         } as const;
       }
       const address = `${target.connector.id}.${target.toolName}`;
-      if (args === null || typeof args !== "object" || Array.isArray(args)) {
+      // A config exemption (#566) dispatches like an approval would, with
+      // everything an approved write gets — the write budget, the
+      // write-ahead mark, the journal — except the pause.
+      const exempt = isApprovalExempt(
+        this.settings.approval ?? NO_EXEMPTIONS,
+        target.connector,
+        target.toolName,
+        target.definition,
+      );
+      if (
+        !exempt &&
+        (args === null || typeof args !== "object" || Array.isArray(args))
+      ) {
         // Neither approval route takes arguments that are not an object, so
         // there is nothing a pause could ask a human to repeat.
         return {
@@ -568,7 +587,7 @@ export class RunState {
           },
         } as const;
       }
-      const approved = this.approvalFor(address, args);
+      const approved = exempt ? { index: -1 } : this.approvalFor(address, args);
       if (approved) return yield* this.reserve(seq, address, approved.index);
       // Not approved: this is where the run pauses — unless the write cannot
       // be shown to a human faithfully. A `__proto__` key survives JSON but

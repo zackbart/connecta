@@ -12,7 +12,14 @@ import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activ
 import { recordToolActivity } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createProgramRunner } from "../src/execute.js";
+import { api } from "../src/connectors/api.js";
 import { createConnecta } from "../src/index.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import {
+  isApprovalExempt,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "../src/tool-safety.js";
 import {
   resumeExecution,
   type ResumableSettings,
@@ -92,6 +99,10 @@ function scriptedExecutor(programs: Map<string, Program>): Executor & { runs: nu
 interface WorldOptions {
   storage?: KVStorage;
   settings?: Partial<ResumableSettings>;
+  /** Run with resumable writes off: only config exemptions may write. */
+  readOnlyPrograms?: true;
+  /** The tracker connector's own approval default. */
+  trackerApproval?: "never";
   hostCallTimeoutMs?: number;
   watchdogMs?: number;
   storageTimeoutMs?: number;
@@ -137,6 +148,7 @@ function world(options: WorldOptions = {}) {
     id: "tracker",
     kind: "api",
     description: "Writes issues",
+    ...(options.trackerApproval ? { approval: options.trackerApproval } : {}),
     async listTools() {
       catalogLoads.tracker = (catalogLoads.tracker ?? 0) + 1;
       return [
@@ -177,7 +189,9 @@ function world(options: WorldOptions = {}) {
     silentLogger,
     activity,
     {
-      resumable: settings,
+      ...(options.readOnlyPrograms ? {} : { resumable: settings }),
+      approval: settings.approval,
+      maxWrites: settings.maxWrites,
       ...(options.hostCallTimeoutMs !== undefined
         ? { hostCallTimeoutMs: options.hostCallTimeoutMs }
         : {}),
@@ -191,6 +205,7 @@ function world(options: WorldOptions = {}) {
   return {
     storage,
     registry,
+    activity,
     calls,
     catalogLoads,
     events,
@@ -1488,5 +1503,215 @@ describe("resumable writes: second review regressions", () => {
     expect(w.events.filter((event) => event.outcome === "approved")).toEqual([
       expect.objectContaining({ address: "tracker.close_issue", approval: "tool" }),
     ]);
+  });
+});
+
+describe("config approval exemptions (#566)", () => {
+  const policy = (
+    tools: Record<string, "never" | "ask"> = {},
+    connectors: Record<string, "never" | "ask"> = {},
+  ): ApprovalPolicy => ({
+    tools: new Map(Object.entries(tools)),
+    connectors: new Map(Object.entries(connectors)),
+  });
+  const closeOne: Program = async (connecta) => {
+    await connecta.call!("tracker.close_issue", { id: 1 });
+    return "closed";
+  };
+
+  it("runs an exempt write without pausing, and pauses once the exemption is gone", async () => {
+    const exempt = world({ settings: { approval: policy({ "tracker.close_issue": "never" }) } });
+    const done = await exempt.execute(exempt.program(closeOne));
+    expect(value(done).result).toBe("closed");
+    expect(exempt.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+    // An ordinary activity event, not a pause and not an approval.
+    expect(exempt.events.map((event) => [event.address, event.outcome, event.source]))
+      .toEqual([["tracker.close_issue", "success", "execute_code"]]);
+
+    const asking = world();
+    paused(await asking.execute(asking.program(closeOne)));
+    expect(asking.writes()).toEqual([]);
+  });
+
+  it("spends the write budget like any other write", async () => {
+    const w = world({
+      settings: { maxWrites: 1, approval: policy({}, { tracker: "never" }) },
+    });
+    const done = await w.execute(w.program(async (connecta) => {
+      const outcomes = [];
+      for (const id of [1, 2]) {
+        try {
+          await connecta.call!("tracker.close_issue", { id });
+          outcomes.push("closed");
+        } catch (error) {
+          outcomes.push((error as { code: string }).code);
+        }
+      }
+      return outcomes;
+    }));
+    expect(value(done).result).toEqual(["closed", "budget_exceeded"]);
+    expect(w.writes()).toHaveLength(1);
+  });
+
+  it("works without resumable writes, and every other write keeps E4", async () => {
+    const w = world({
+      readOnlyPrograms: true,
+      settings: { approval: policy({ "tracker.close_issue": "never" }) },
+    });
+    const done = await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      try {
+        await connecta.call!("tracker.post", { text: "x" });
+        return "posted";
+      } catch (error) {
+        return (error as { code: string }).code;
+      }
+    }));
+    expect(value(done).result).toBe("destructive_tool_requires_approval");
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+  });
+
+  it("honors a connector's own default and lets config switch it off", async () => {
+    const byDefault = world({ trackerApproval: "never" });
+    expect(value(await byDefault.execute(byDefault.program(closeOne))).result).toBe("closed");
+
+    const switchedOff = world({
+      trackerApproval: "never",
+      settings: { approval: policy({}, { tracker: "ask" }) },
+    });
+    paused(await switchedOff.execute(switchedOff.program(closeOne)));
+
+    // The address beats the connector entry, both ways.
+    const narrowed = world({
+      settings: {
+        approval: policy({ "tracker.close_issue": "ask" }, { tracker: "never" }),
+      },
+    });
+    paused(await narrowed.execute(narrowed.program(closeOne)));
+    const widened = world({
+      settings: {
+        approval: policy({ "tracker.close_issue": "never" }, { tracker: "ask" }),
+      },
+    });
+    expect(value(await widened.execute(widened.program(closeOne))).result).toBe("closed");
+  });
+
+  it("journals an exempt write before a later pause and never resends it", async () => {
+    const w = world({ settings: { approval: policy({ "tracker.close_issue": "never" }) } });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      await connecta.call!("tracker.post", { text: "closed 1" });
+      return "done";
+    })));
+    expect(first.address).toBe("tracker.post");
+    const done = await w.resume(approve(first));
+    expect(value(done).result).toBe("done");
+    expect(w.writes().map((call) => call.address)).toEqual([
+      "tracker.close_issue",
+      "tracker.post",
+    ]);
+  });
+
+  it("never exempts a read-only tool or reads an annotation as an exemption", () => {
+    const every = policy({}, { reader: "never" });
+    const connector = { id: "reader" };
+    expect(isApprovalExempt(every, connector, "get", {
+      name: "get",
+      annotations: { readOnlyHint: true },
+    })).toBe(false);
+    // A downstream cannot annotate its way out of approval.
+    expect(isApprovalExempt(NO_EXEMPTIONS, connector, "wipe", {
+      name: "wipe",
+      annotations: { readOnlyHint: false, approval: "never" } as never,
+    })).toBe(false);
+    expect(isApprovalExempt(every, connector, "wipe", { name: "wipe" })).toBe(true);
+  });
+
+  it("keeps an exempt tool approval-required everywhere else", async () => {
+    const approval = policy({ "tracker.close_issue": "never" });
+    const w = world({ settings: { approval } });
+    const tools = createMetaTools(w.registry, BASE, { approval });
+    const direct = await tools.callTool({
+      address: "tracker.close_issue",
+      args: { id: 1 },
+      resultMode: "value",
+    });
+    expect(direct.isError).toBe(true);
+    expect(JSON.stringify(direct.structuredContent)).toContain(
+      "destructive_tool_requires_approval",
+    );
+    expect(w.writes()).toEqual([]);
+
+    const search = async (safety: "readOnly" | "approvalRequired") =>
+      value(await tools.searchTools({ connector: "tracker", query: "", safety }));
+    const approvalRequired = (await search("approvalRequired")).connectors[0].tools as Array<{
+      address: string;
+      approval?: string;
+    }>;
+    expect(approvalRequired.find((tool) => tool.address === "tracker.close_issue")?.approval)
+      .toBe("exempt");
+    expect(approvalRequired.find((tool) => tool.address === "tracker.post")?.approval)
+      .toBeUndefined();
+    expect((await search("readOnly")).connectors).toEqual([]);
+
+    // A program sees the same marker.
+    const found = await w.execute(w.program(async (connecta) => {
+      const page = await connecta.search!({ connector: "tracker", query: "close" });
+      const described = await connecta.describe!({ address: "tracker.close_issue" });
+      return {
+        searched: page.tools.find((tool: { address: string }) => tool.address === "tracker.close_issue")?.approval,
+        described: described.tools[0].approval,
+      };
+    }));
+    expect(value(found).result).toEqual({ searched: "exempt", described: "exempt" });
+  });
+
+  it("validates exemptions at construction, like pools", () => {
+    const executor: Executor = { execute: async () => ({ result: null }) };
+    const notes = api("notes", {
+      tools: [
+        {
+          name: "add",
+          description: "Add a note",
+          annotations: { readOnlyHint: false },
+          handler: () => ({}),
+        },
+        {
+          name: "list",
+          description: "List notes",
+          annotations: { readOnlyHint: true },
+          handler: () => [],
+        },
+      ],
+    });
+    const remote: Connector = {
+      id: "remote",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {};
+      },
+    };
+    const construct = (approval: unknown, connectors: Connector[] = [notes, remote]) =>
+      createConnecta({
+        connectors,
+        executor,
+        logger: "silent",
+        execute: { approval: approval as Record<string, "never" | "ask"> },
+      });
+    expect(() => construct({ notes: "never", "notes.add": "ask", "remote.anything": "never" }))
+      .not.toThrow();
+    expect(() => construct({ nope: "never" })).toThrow(/unknown connector "nope"/);
+    expect(() => construct({ "nope.add": "never" })).toThrow(/unknown connector "nope"/);
+    expect(() => construct({ "notes.missing": "never" })).toThrow(
+      /connector "notes" has no tool "missing"/,
+    );
+    expect(() => construct({ notes: "always" })).toThrow(/must be "never" or "ask"/);
+    expect(() => construct({ "notes.": "never" })).toThrow(/connector ids or connector.tool addresses/);
+    expect(() => construct(["notes"])).toThrow(/must be an object/);
+    expect(() =>
+      construct(undefined, [{ ...remote, approval: "always" as never }]),
+    ).toThrow(/approval must be "never" or omitted/);
   });
 });

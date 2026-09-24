@@ -16,6 +16,7 @@ import type {
   Logger,
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
+import type { ApprovalPolicy } from "../tool-safety.js";
 import type { ConnectorPermission, ConnectaIdentityConfig } from "../index.js";
 export { msg } from "../errors.js";
 
@@ -53,6 +54,10 @@ export interface ServerOptions {
   watchdogMs?: number | undefined;
   /** Resumable writes' settings; absent when they are off. */
   resumable?: { maxWrites: number; ttlSeconds: number } | undefined;
+  /** Config approval exemptions (`execute.approval`), resolved at construction. */
+  approval?: ApprovalPolicy | undefined;
+  /** Writes one program may send (`execute.maxWrites`), exempt ones included. */
+  maxWrites?: number | undefined;
   /** Required sandbox backing the execute_code meta-tool. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */
