@@ -1525,16 +1525,18 @@ const executeDescription = (
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
   resumable: ResumableSettings | undefined,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider ${
+  resumable ? "work, writes included," : "read-only work"
+} uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${
   resumable
-    ? `Tools not annotated readOnlyHint: true pause the run before sending; resume_execution approves and replays it. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
+    ? `Writes pause for resume_execution. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
     : `Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls`
 }, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
 Read relevant guides using top-level skills, not sandbox code. Write a plain-JavaScript async arrow:
-- connecta.search({ connector, query, safety: "readOnly", includeSchemas: "json" }) returns { tools }. Search each operation separately; choose by connectorTitle and schemas. Use schema.required and .properties to build args, never guessed fields. Compact schemas are text.
+- connecta.search({ connector, query, ${resumable ? "" : 'safety: "readOnly", '}includeSchemas: "json" }) returns { tools }. Search each operation separately; choose by connectorTitle and schemas. Use schema.required and .properties to build args, never guessed fields. Compact schemas are text.
 - connecta.describe({ address }) returns { tools } for unclear schemas.
 - connecta.call(address, args) returns the provider value directly.
 - Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status before reading value; rejected calls and missing fields are unknown, never false or zero.
@@ -1643,9 +1645,12 @@ export function registerExecuteTool(
         ctx.resumable,
       ),
       inputSchema: EXECUTE_INPUT,
-      // This hint describes connector calls, all explicitly read-only. The
-      // supported executor constructions deny outbound access, filesystem,
-      // and deployment config; X5 documents Dynamic runtime modules separately.
+      // This hint describes connector calls: only explicitly read-only ones
+      // run here, and any other call pauses the run unsent (W1) — the write
+      // itself runs inside resume_execution, which is annotated destructive.
+      // The supported executor constructions deny outbound access,
+      // filesystem, and deployment config; X5 documents Dynamic runtime
+      // modules separately.
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

@@ -870,7 +870,39 @@ describe("resumable writes: construction", () => {
     ).toThrow(/resumableWrites must be a boolean/);
   });
 
-  it("registers resume_execution only when resumable writes are on", async () => {
+  it("defaults on over storage that can claim, and says so on /health", async () => {
+    const health = async (storage: KVStorage, resumableWrites?: boolean) => {
+      const warnings: unknown[][] = [];
+      const connecta = createConnecta({
+        connectors: [],
+        executor,
+        storage,
+        logger: {
+          debug() {},
+          info() {},
+          warn: (...args: unknown[]) => void warnings.push(args),
+          error() {},
+        },
+        ...(resumableWrites !== undefined ? { execute: { resumableWrites } } : {}),
+      });
+      const body = await (await connecta.fetch(new Request("http://localhost/health"))).json() as {
+        resumableWrites: boolean;
+      };
+      await connecta.close();
+      return {
+        on: body.resumableWrites,
+        warned: warnings.filter((args) => String(args[0]).includes("resumable writes are off")).length,
+      };
+    };
+    const { compareAndSet: _cas, ...plain } = memoryStorage();
+    expect(await health(memoryStorage())).toEqual({ on: true, warned: 0 });
+    expect(await health(memoryStorage(), false)).toEqual({ on: false, warned: 0 });
+    // Omitted over storage without a claim: off, and the operator hears once.
+    expect(await health(plain)).toEqual({ on: false, warned: 1 });
+    expect(await health(plain, false)).toEqual({ on: false, warned: 0 });
+  });
+
+  it("lists resume_execution whether or not programs can pause", async () => {
     const list = async (resumableWrites?: boolean) => {
       const connecta = createConnecta({
         connectors: [],
@@ -884,9 +916,13 @@ describe("resumable writes: construction", () => {
       await connecta.close();
       return json.result.tools;
     };
-    expect((await list()).map((tool) => tool.name)).not.toContain("resume_execution");
-    expect((await list(false)).map((tool) => tool.name)).not.toContain("resume_execution");
-    const on = await list(true);
+    const off = await list(false);
+    expect(off.find((tool) => tool.name === "resume_execution")?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    });
+    const on = await list();
     expect(on.find((tool) => tool.name === "resume_execution")?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,

@@ -136,10 +136,12 @@ export interface ConnectaExecuteConfig {
    * Let programs write. A call to a tool that is not explicitly read-only
    * pauses the run before anything is sent and returns the exact write with
    * a token; `resume_execution` repeating it is the approval, and the
-   * program replays from a journal to send it and continue. Off by default
-   * in this release; turning it on registers `resume_execution`. Requires
-   * `storage` with `compareAndSet`, because two resumes of one pause must
-   * send its writes at most once — `true` without it refuses to construct.
+   * program replays from a journal to send it and continue. Needs `storage`
+   * with `compareAndSet`, because two resumes of one pause must send its
+   * writes at most once. Omitted, it is on exactly when the storage has one
+   * (a single startup warning says when it is not); `true` over storage
+   * without one refuses to construct; `false` keeps E4's refusal.
+   * `resume_execution` is listed either way.
    */
   resumableWrites?: boolean;
   /**
@@ -558,19 +560,33 @@ function positiveWhole(value: unknown, fallback: number): number {
 
 /**
  * Resumable writes' deployment settings, or undefined when they are off.
- * Turning them on over storage that cannot claim atomically throws: at-most-
- * once delivery of an approved write rests on exactly one resume winning the
- * claim, and a read-then-write stand-in would let two win.
+ * Omitted, they are on exactly when the storage can claim atomically, and a
+ * deployment left without them hears so once. Asked for over storage that
+ * cannot claim, they throw: at-most-once delivery of an approved write rests
+ * on exactly one resume winning the claim, and a read-then-write stand-in
+ * would let two win.
  */
 function resolveResumableWrites(
   execute: ConnectaExecuteConfig | undefined,
   storage: KVStorage,
+  logger: Logger,
 ): { maxWrites: number; ttlSeconds: number } | undefined {
   const enabled = execute?.resumableWrites;
   if (enabled !== undefined && typeof enabled !== "boolean") {
     throw new Error("ConnectaConfig.execute.resumableWrites must be a boolean");
   }
-  if (enabled !== true) return undefined;
+  if (enabled === false) return undefined;
+  if (enabled === undefined && typeof storage.compareAndSet !== "function") {
+    logger.warn(
+      "[connecta] resumable writes are off: the configured storage has no " +
+        "compareAndSet, so programs refuse writes (E4) and resume_execution " +
+        "answers resumable_writes_unavailable. Use storage with an atomic " +
+        "compareAndSet (the Worker example's D1 store, fileStorage, " +
+        "memoryStorage) to let programs pause for approval, or set " +
+        "execute.resumableWrites: false to keep this and silence the warning.",
+    );
+    return undefined;
+  }
   if (typeof storage.compareAndSet !== "function") {
     throw new Error(
       "ConnectaConfig.execute.resumableWrites needs storage with compareAndSet: " +
@@ -770,7 +786,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   });
   const inboundAuth = configuredAuth;
   const pools = resolvePools(config.pools, registry);
-  const resumable = resolveResumableWrites(config.execute, storage);
+  const resumable = resolveResumableWrites(config.execute, storage, logger);
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,

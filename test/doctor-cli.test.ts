@@ -8,7 +8,8 @@ import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { listen } from "../src/node.js";
 import { createConnecta } from "../src/index.js";
-import type { Executor, InboundAuth } from "../src/types.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
 // print "QuickJS executed" against every deployment, including the Workers
@@ -31,7 +32,11 @@ afterEach(async () => {
 
 async function doctorAgainst(
   executor: Executor,
-  options: { auth?: InboundAuth; env?: Record<string, string> } = {},
+  options: {
+    auth?: InboundAuth;
+    env?: Record<string, string>;
+    storage?: KVStorage;
+  } = {},
 ): Promise<string> {
   const connecta = createConnecta({
     connectors: [
@@ -54,6 +59,8 @@ async function doctorAgainst(
     ],
     executor,
     auth: options.auth ?? bearerToken(TOKEN),
+    logger: "silent",
+    ...(options.storage ? { storage: options.storage } : {}),
   });
   const server = listen(connecta, {
     port: 0,
@@ -94,16 +101,28 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst(new DynamicWorkerExecutor());
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), DynamicWorkerExecutor " +
-        "executed, prescribed seven-tool surface.",
+        "executed, prescribed eight-tool surface.",
     );
     expect(line).not.toContain("QuickJS");
+  });
+
+  it("says when programs cannot write", async () => {
+    const { compareAndSet: _cas, ...plain } = memoryStorage();
+    const line = await doctorAgainst(
+      { execute: async () => ({ result: 42 }) },
+      { storage: plain },
+    );
+    expect(line).toBe(
+      "Connecta doctor passed: 1 connector(s), code executed, " +
+        "prescribed eight-tool surface, resumable writes off.",
+    );
   });
 
   it("stays executor-neutral when the deployment identifies none", async () => {
     const line = await doctorAgainst({ execute: async () => ({ result: 42 }) });
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), code executed, " +
-        "prescribed seven-tool surface.",
+        "prescribed eight-tool surface.",
     );
   });
 
@@ -114,7 +133,7 @@ describe("connecta doctor's executor line", () => {
     };
     const line = await doctorAgainst(hostile);
     expect(line).toMatch(
-      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed seven-tool surface\.$/,
+      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed eight-tool surface\.$/,
     );
     expect(line).not.toContain("\u001b");
     expect(line).not.toContain("x".repeat(41));

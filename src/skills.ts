@@ -1,14 +1,31 @@
 import { boundedEchoText } from "./errors.js";
 import type { Connector } from "./types.js";
 
-export const CONNECTA_INSTRUCTIONS =
-  'Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Inspect unfamiliar result shapes with a small sample before proceeding. Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
+const ROUTE =
+  "Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Inspect unfamiliar result shapes with a small sample before proceeding.";
+const RECOVERY =
+  'After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
+
+/**
+ * The MCP instructions of a deployment whose programs pause at writes. The
+ * route sentence is its own, not ROUTE's: with writes in programs, "one known
+ * write" is the only work left for call_destructive_tool, and an agent told
+ * only that programs *may* write reads each write after a lookup as a known
+ * one and sends them one prompt at a time.
+ */
+export const CONNECTA_INSTRUCTIONS = `Choose a route before discovery. A known-address read needs only call_tool; one known write, call_destructive_tool. Everything else starts with execute_code to discover, call, and return the answer: unknown addresses, reduction, multiple or dependent calls, loops, joins, branches, and writes that follow reads. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Inspect unfamiliar result shapes with a small sample before proceeding. A program's call to a tool not annotated readOnlyHint: true pauses unsent; resume_execution with the returned token, address, and args approves it and continues the program (approval "tool" covers that tool for the run). Keep catalog inspection top level with search_tools. ${RECOVERY}`;
+
+/**
+ * The instructions of a deployment without resumable writes, whose programs
+ * refuse every write: the routing it always had.
+ */
+export const READ_ONLY_PROGRAM_INSTRUCTIONS = `${ROUTE} Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. ${RECOVERY}`;
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
 ## The surface
 
-Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Read-only discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
+Eight tools: \`execute_code\`, \`resume_execution\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
 
 Follow the MCP instructions for routing. Read at most once for syntax or repair.
 
@@ -29,7 +46,7 @@ Search and call in one run when schemas suffice. For unfamiliar result formats, 
 
 For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An \`outputSchemaSource: "observed"\` shape is a hint, not a contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
 
-- \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for program calls. These inputs filter discovery; they grant no authority.
+- \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for reads. These inputs filter discovery; they grant no authority.
 - Use \`includeSchemas: "json"\` for programmatic schema inspection; compact schemas are text, not objects with \`.properties\`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.
 - Supply every \`requiredInputKey\` from the task or a prior result. For dependencies, match the earlier \`outputKey\` to the later required key. An empty required-key list does not permit invented arguments. Missing \`outputKeys\` means inspect \`outputSchema\`.
 - Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
@@ -38,13 +55,16 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
-Only tools explicitly annotated \`readOnlyHint: true\` are reachable. The catalog, credential, admission, and read-only gates run below the sandbox; code cannot widen its authority.
+Only tools explicitly annotated \`readOnlyHint: true\` are reachable unasked. Any other call pauses the run unsent; \`execute_code\` returns \`paused\` with the exact write and a token. Repeat all three unchanged in top-level \`resume_execution\` to approve (\`approval: "tool"\` covers that tool for the run). Replay reruns the program against a journal, so make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.
 
 ## Errors and repair
 
 Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
 
-- \`destructive_tool_requires_approval\`: stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
+- \`destructive_tool_requires_approval\` (where programs do not pause): stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
+- \`execution_paused\`: the run already stopped at a write; let it end.
+- \`write_outcome_unknown\`: sent but unanswered, never re-sent; check the target.
+- \`execution_expired\` or \`execution_diverged\`: run the task again with \`execute_code\`.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
 - A truncated direct-call result: follow its \`get_result\` action. A truncated program result has no page handle; filter, map, or slice inside a new program.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
@@ -53,13 +73,13 @@ For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` set
 
 \`get_result({ id, offset?, maxBytes? })\` returns a one-line JSON header \`{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }\`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow \`nextAction\` until \`hasMore\` is false to reassemble pages. An unknown or expired id is an error.
 
-Limits: 20 host calls per run and a 15-second deadline per host call.
+Limits: 20 host calls and 10 writes per run, and a 15-second deadline per host call.
 
 ## Runtime portability
 
 Portable code uses standard JavaScript builtins, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
 
-\`Date.now()\` and \`new Date()\` return the run's start time and do not advance, and \`Math.random()\` is seeded per run, so compute date cutoffs freely but do not time work inside a program.
+\`Date.now()\` is the run's start and does not advance; \`Math.random()\` is seeded per run.
 
 ## Examples
 
@@ -104,8 +124,8 @@ Connector guides appear in \`skills({})\` and discovery with an exact \`guide\` 
 export const USAGE_SKILL = USAGE_SKILL_BASE + CONNECTOR_GUIDES_SECTION;
 
 /** The always-loaded MCP `instructions` string. */
-export function instructionsFor(): string {
-  return CONNECTA_INSTRUCTIONS;
+export function instructionsFor(resumableWrites: boolean): string {
+  return resumableWrites ? CONNECTA_INSTRUCTIONS : READ_ONLY_PROGRAM_INSTRUCTIONS;
 }
 
 /** True when at least one of `connectors` carries a usage guide. */

@@ -8,7 +8,7 @@
  *   worker-example  examples/worker, unmodified, under `wrangler dev`
  *   worker-fakes    the Worker example's composition over loopback fakes
  *
- * Each target: /health, MCP initialize, the exact seven-tool list, a read
+ * Each target: /health, MCP initialize, the exact eight-tool list, a read
  * through execute_code, a call through call_destructive_tool (a verified
  * downstream write where the target has a write-capable tool), and the
  * operator UI loading in headless Chromium with a screenshot.
@@ -29,12 +29,13 @@ import { connectMcp, parseJson, type McpSession } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { freePort } from "./support/serve.js";
 
-const SEVEN = [
+const EIGHT = [
   "authorize_connector",
   "call_destructive_tool",
   "call_tool",
   "execute_code",
   "get_result",
+  "resume_execution",
   "search_tools",
   "skills",
 ];
@@ -133,9 +134,9 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
   if (!session) return;
   const live = session;
   try {
-    await step(checks, "tools/list is exactly the seven meta-tools", async () => {
+    await step(checks, "tools/list is exactly the eight meta-tools", async () => {
       const names = (await live.listTools()).map((tool) => tool.name).sort();
-      if (JSON.stringify(names) !== JSON.stringify(SEVEN)) throw new Error(`got ${names.join(", ")}`);
+      if (JSON.stringify(names) !== JSON.stringify(EIGHT)) throw new Error(`got ${names.join(", ")}`);
       return names.join(", ");
     });
     await step(checks, "read through execute_code", async () => {

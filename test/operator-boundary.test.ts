@@ -328,7 +328,7 @@ describe("the operator boundary", () => {
     // classes, a live catalog, and the caller's whole tool scope before
     // anything mutates.
     expect((await callerToolScope(connecta, OPERATOR_TOKEN)) as unknown[])
-      .toHaveLength(7);
+      .toHaveLength(8);
     expect(catalog.listings).toBeGreaterThan(0);
     for (const marker of [
       '"id": "alpha"',

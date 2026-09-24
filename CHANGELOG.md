@@ -4,7 +4,28 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-The operator page's last route for downstream error text is closed. What
+Programs can write. A program that reaches a tool not explicitly annotated
+read-only no longer fails: it pauses before sending the write and hands the
+agent the exact call and a token, and the new eighth tool, `resume_execution`,
+repeats that call to approve it — the host's permission prompt shows the real
+write — and replays the program from a journal to send it once and carry on.
+"Close the stale issues and post a summary" becomes one program and a couple of
+approvals instead of thirty-one top-level calls. What breaks: `tools/list` is
+now eight tools on every deployment, so anything that pins the list — a client
+allowlist, `connecta doctor` from 0.25 — must learn `resume_execution`; on
+storage with `compareAndSet` (memory, file, the Worker example's D1 store)
+resumable writes are on by default, so a program's write that used to fail
+`destructive_tool_requires_approval` now pauses; `Date.now()` and
+`Math.random()` inside a program are pinned for the run; the MCP instructions
+and the `execute_code` description change with the mode; and the Worker
+example's D1 activity table needs an `approval` column before the updated
+adapter is deployed. A deployment on Cloudflare KV can ignore most of it: KV
+cannot claim atomically, so resumable writes stay off there — with one startup
+warning, or none with `execute.resumableWrites: false` — its programs refuse
+writes exactly as before, and `resume_execution` answers that there is nothing
+to resume.
+
+Separately, the operator page's last route for downstream error text is closed. What
 changes on the wire: `POST` and `DELETE /ui/oauth/<id>` answer a failure in
 fixed words and a success without `message`, and `POST
 /ui/credentials/<id>/test` answers only `{ ok }`, so a script that read those
@@ -13,33 +34,36 @@ the page can ignore it.
 
 ### Added
 
-- **Resumable writes, opt-in (#565).** With `execute.resumableWrites: true`, a
-  program's call to a tool that is not explicitly read-only no longer fails
-  `destructive_tool_requires_approval`: the run pauses there before anything
-  is sent and returns the exact address, the exact arguments, and a token.
-  `resume_execution` — registered only when the option is on, and annotated
-  destructive so the host prompts with the write in its arguments — must
-  repeat all three exactly; it claims the run and replays the program from a
-  journal in the caller's result storage, answering every earlier host call
-  from its record and sending the approved write once. `approval: "tool"`
-  approves the rest of the run's calls to that tool. A write that was sent
-  but never answered — or answered with anything short of a refusal or the
-  downstream tool's own error — stops the run as `write_outcome_unknown`,
-  even beside a concurrent pause, and is never sent again; a program that
-  stops matching its journal fails `execution_diverged`; a resumed play that
-  sent writes and then ended without pausing (a sandbox failure, a lapsed
-  claim) fails `execution_interrupted` rather than replaying reads it never
-  journaled. Every error from a resumed play carries `writes` counts, and once
-  a write landed or may have, its advice is to check those before re-running
-  rather than a plain re-run; a run that sent writes keeps those counts past
-  its deadline. Every paused-run storage call has a deadline (the host-call
-  deadline, at least 5 s), so storage that stops answering fails the run
-  rather than holding it. The option needs `storage` with `compareAndSet` and
-  refuses to construct without it. `execute.maxWrites` (default 10) caps
-  consequential calls per run on top of the host-call budget, and
-  `execute.pausedRunTtlSeconds` (default 1,800) is how long a paused run lives
-  from its first pause. The guides, the eighth tool on every deployment, and
-  the default arrive together in a later change.
+- **Resumable writes and `resume_execution` (#565).** A program's call to a
+  tool that is not explicitly read-only pauses the run before anything is
+  sent and returns `{ paused: { address, args, token, expiresAt, nextAction,
+  hint } }`. `resume_execution` — always listed, annotated destructive — must
+  repeat the address and args exactly (`approval_mismatch` otherwise, before
+  anything is claimed); it claims the run by compare-and-set and replays the
+  program from a journal in the caller's result storage, answering every
+  earlier host call from its record — no catalog, permit, connector, or
+  activity — and sending the approved write once. `approval: "tool"` approves
+  the rest of the run's calls to that tool. Each live write is marked on the
+  run's header before it is sent, so racing or crashed resumes never send it
+  twice. A write sent but never answered — or answered with anything short
+  of a refusal or the downstream tool's own error — stops the run as
+  `write_outcome_unknown`, even beside a concurrent pause, and is never sent
+  again; a program that stops matching its journal fails
+  `execution_diverged`; a resumed play that sent writes and then ended without
+  pausing (a sandbox failure, a lapsed claim) fails `execution_interrupted`
+  rather than replaying reads it never journaled. Every error from a resumed
+  play carries `writes` counts, and once a write landed or may have, its
+  advice is to check those before re-running rather than a plain re-run; a
+  run that sent writes keeps those counts past its deadline. Every paused-run
+  storage call has a deadline (the host-call deadline, at least 5 s), so
+  storage that stops answering fails the run rather than holding it. A paused
+  run survives a restart and expires `execute.pausedRunTtlSeconds` (default 1,800) after its
+  first pause; `execute.maxWrites` (default 10) caps a run's writes on top of
+  the host-call budget. `execute.resumableWrites` defaults to whether the
+  storage has `compareAndSet`; `true` without it refuses to construct.
+  `/health` reports `resumableWrites`, and `connecta doctor` expects the eight
+  tools and says when resumable writes are off. See code mode "Pausing and
+  resuming" (`W1`–`W11`, `X12`).
 - **Activity for pauses and approvals.** `ActivityOutcome` gains `paused` and
   `approved`, both with zero attempts; `ActivityCallSource` gains
   `resume_execution`; `ToolCallActivityEvent` gains an optional `approval`
@@ -52,6 +76,13 @@ the page can ignore it.
 
 ### Changed
 
+- **Eight tools, and instructions that follow the mode.** `tools/list` adds
+  `resume_execution` everywhere. With resumable writes on, the MCP
+  instructions say programs may write and pause, the `execute_code`
+  description advertises the write budget and drops `safety: "readOnly"` from
+  its search example (a program looking for a write would not find it), and
+  the `usage` skill gains the pause, resume, and unknown-outcome guidance;
+  without them, the instructions and description read as they did in 0.25.
 - **A program's clock and randomness are pinned (code mode `P6`).**
   `Date.now()`, `new Date()`, and `Date()` inside `execute_code` return the
   instant the run started and do not advance, and `Math.random()` is an sfc32
