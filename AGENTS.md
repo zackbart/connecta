@@ -6,11 +6,10 @@ symlink to this file so every agent works from the same conventions.
 A single MCP endpoint aggregating downstream connectors (remote MCP servers and
 plain HTTP APIs) behind seven meta-tools, `execute_code` among them. Every
 deployment configures an executor, and agents reach connectors by writing
-JavaScript against it. One fetch-native core, running on both Node and
-Cloudflare Workers. Three `planned` decisions change that picture — an Effect
-core behind the same Promise API, resumable writes with an eighth tool, and an
-artifacts module — and until they ship, the code and the guides describe what
-exists.
+JavaScript against it. One fetch-native core on Effect behind a Promise API,
+running on both Node and Cloudflare Workers. Two `planned` decisions change
+that picture — resumable writes with an eighth tool, and an artifacts module —
+and until they ship, the code and the guides describe what exists.
 
 - **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
   and isn't, and its decisions table carries a verdict for every shape already
@@ -93,8 +92,9 @@ Two boundaries CI enforces that are not obvious from reading a file:
   and fails otherwise. Need a Node API? It goes behind an explicit Node-only
   subpath (`/node` or `/quickjs`), never the root. `effect/testing` is banned
   from `src/` on the same terms — its test clocks and layers have no business
-  in a runtime graph — and the purity walk must learn to catch it in the same
-  change that brings Effect in.
+  in a runtime graph — and the purity walk catches it. The same walk keeps
+  the root entry to `effect` itself and lets only `src/runtime/run.ts` start
+  a fiber.
 - **Optional modules.** Core owns catalog discovery, execution, invocation, and
   enforcement. UI, activity history, encrypted credentials, and bearer auth
   implementations stay behind explicit subpaths and outside the root import
@@ -113,7 +113,7 @@ Two boundaries CI enforces that are not obvious from reading a file:
   without a subpath because a Worker deployment imports it directly. None may
   become a dependency or install with core. Enforced by `test/package-surface.test.ts` and
   `scripts/check-package.mjs`. Anything heavyweight or platform-bound gets a
-  subpath and an optional peer. The planned Effect core is the one deliberate
+  subpath and an optional peer. The Effect core is the one deliberate
   exception: it is the core, so it is a hard dependency rather than a peer,
   under the rule in [Conventions](#conventions).
 
@@ -132,8 +132,10 @@ an unclassified, double-classified, stale, or reasonless entry.
   only; it does not enforce style. `npm run check:unused` runs Knip's
   unused-export and dependency gate. Keep both clean, and prefer removing dead
   declarations over suppressing a finding.
-- **Effect inside, Promises at the edge.** The planned core rewrite moves
-  internals onto Effect v4 and exports none of it. `createConnecta`,
+- **Effect inside, Promises at the edge.** The core runs on Effect v4 and
+  exports none of it; [Effect inside](./documentation/architecture.md#effect-inside)
+  has the shell/core shape, the one runner, and the cross-request rules.
+  `createConnecta`,
   `remoteMcp()`, `api()`, custom connectors, and every published `.d.ts` stay
   Promise-based and name no Effect type: a deployment author should never need
   a second async paradigm to write a connector, so convert at the boundary,

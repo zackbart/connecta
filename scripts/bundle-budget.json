@@ -1,13 +1,13 @@
 {
   "notes": [
-    "Gzip-9 bytes of each Web-facing entry as scripts/bundle-size.mjs bundles it. baselineGzip is the P1-S01 measurement, before any Effect code is reachable; S19 re-baselines.",
-    "Caps: the root entry is capped at 386,000 B for the whole Effect conversion. ./ui, ./activity and the Worker example get baseline + 160 KB, the room HttpApi needs in the operator and activity graphs (P1-S18). Every other entry, providers included, gets baseline + 60 KB.",
+    "Gzip-9 bytes of each Web-facing entry as scripts/bundle-size.mjs bundles it. baselineGzip is the P1-S19 measurement at 0.25.0, with the Effect core in place; main before the conversion (4f536a8) was 235,346 B at the root and 263,949 B for the Worker example.",
+    "Caps: every entry gets baseline + 60,000 B. The conversion-era allowances are retired: the root's flat 386,000 B cap covered a rewrite that is finished, and the +160 KB held for HttpApi in ./ui, ./activity and the Worker example was never spent, because P1-S18 measured HttpApi and did not use it.",
     "A cap moves only in a change that says why. Raising one to make a check pass is the failure this file exists to catch."
   ],
   "entries": {
     ".": {
-      "baselineGzip": 235346,
-      "maxGzip": 386000
+      "baselineGzip": 279526,
+      "maxGzip": 339526
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -22,52 +22,52 @@
       "maxGzip": 60447
     },
     "./providers/cloudflare": {
-      "baselineGzip": 115169,
-      "maxGzip": 175169
+      "baselineGzip": 151186,
+      "maxGzip": 211186
     },
     "./providers/linear": {
-      "baselineGzip": 91196,
-      "maxGzip": 151196
+      "baselineGzip": 127244,
+      "maxGzip": 187244
     },
     "./providers/mixpanel": {
-      "baselineGzip": 95248,
-      "maxGzip": 155248
+      "baselineGzip": 131378,
+      "maxGzip": 191378
     },
     "./providers/notion": {
-      "baselineGzip": 109372,
-      "maxGzip": 169372
+      "baselineGzip": 145300,
+      "maxGzip": 205300
     },
     "./providers/revenuecat": {
-      "baselineGzip": 92512,
-      "maxGzip": 152512
+      "baselineGzip": 128548,
+      "maxGzip": 188548
     },
     "./providers/stripe": {
-      "baselineGzip": 93066,
-      "maxGzip": 153066
+      "baselineGzip": 129103,
+      "maxGzip": 189103
     },
     "./providers/vercel": {
-      "baselineGzip": 107657,
-      "maxGzip": 167657
+      "baselineGzip": 143649,
+      "maxGzip": 203649
     },
     "./ui": {
-      "baselineGzip": 30204,
-      "maxGzip": 190204
+      "baselineGzip": 68983,
+      "maxGzip": 128983
     },
     "./credentials": {
-      "baselineGzip": 1288,
-      "maxGzip": 61288
+      "baselineGzip": 1459,
+      "maxGzip": 61459
     },
     "./activity": {
-      "baselineGzip": 3237,
-      "maxGzip": 163237
+      "baselineGzip": 35698,
+      "maxGzip": 95698
     },
     "./auth/bearer": {
       "baselineGzip": 576,
       "maxGzip": 60576
     },
     "examples/worker": {
-      "baselineGzip": 263949,
-      "maxGzip": 423949
+      "baselineGzip": 314336,
+      "maxGzip": 374336
     }
   }
 }

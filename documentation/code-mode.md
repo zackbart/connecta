@@ -604,10 +604,13 @@ block runs — a cancelled QuickJS child is terminated outright. Write programs
 that need no cleanup.
 
 **L2.** What cancellation guarantees: in-flight host calls abort, no further
-host call is admitted, the response returns `executor_cancelled` without
-waiting for the executor to settle, the admission lease is released, and
-nothing request-bound survives the request. Whether the program itself stops
-is the executor's (`X3`).
+host call is admitted — `search` and `describe` included, which fail
+`cancelled` rather than go on loading catalogs — the response returns
+`executor_cancelled` without waiting for the executor to settle, or for an
+`acquire()` that ignores the signal to grant, the admission lease is released
+(a lease granted after the run gave up is released on arrival), and nothing
+request-bound survives the request. Whether the program itself stops is the
+executor's (`X3`).
 
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
@@ -720,8 +723,9 @@ and guest-CPU limits (`L5`); the Dynamic Worker has no such knobs, so workerd's
 isolate limits apply untuned. A specific heap ceiling is a Node-only option.
 
 **X3. Mid-flight cancellation.** The QuickJS pool receives the request's
-`AbortSignal` and kills the child, and releasing a lease whose child is still
-running recycles that child, so a run the watchdog abandons (`L3`) ends too.
+`AbortSignal` and kills the child — SIGTERM, then SIGKILL if it has not exited
+within a second — and releasing a lease whose child is still running recycles
+that child, so a run the watchdog abandons (`L3`) ends too.
 The Dynamic Worker executor's `execute()` takes no signal, so a cancelled or
 abandoned program runs on in its isolate until its host calls fail or its own
 deadline expires. `L2` and `L3` hold either way — the calls abort, connecta
