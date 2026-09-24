@@ -603,8 +603,10 @@ class QuickJsChildPool implements AdmittingExecutor {
     const subprocess = fork(childPath, [], {
       // The child needs only its entry path, exec arguments, and IPC channel.
       // Do not copy deployment credentials or Node startup configuration into
-      // the process that contains the guest runtime.
-      env: {},
+      // the process that contains the guest runtime. `TZ` alone is set: the
+      // guest's local-time methods read the child's zone, and pinning it to
+      // UTC makes them the same on every host, like a Dynamic Worker's (P6).
+      env: { TZ: "UTC" },
       execArgv: sourceMode ? ["--import", "tsx"] : [],
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });

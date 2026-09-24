@@ -152,14 +152,18 @@ are ordinary dates. `Math.random()` is an sfc32 stream seeded with four words
 from the host's CSPRNG, fresh per run. Where a runtime has them — a Dynamic
 Worker; QuickJS has none (`X5`) — `crypto.getRandomValues` and
 `crypto.randomUUID` draw from the same stream and `performance.now()` stays at
-0; that keeps a Workers-only program from being the one that cannot replay, and
-makes none of them contract (`P2`). The replacements are installed by trusted
-prelude and locked like `Error` (`X11`): assignment fails, redefinition of
-`Math.random` or `Date.now` throws, and the native constructor's `now` and the
-prototype's `constructor` lead back to the same instant. QuickJS lets
-`defineProperty` replace a locked *global* binding, `Date` included, but what
-replaces it is the program's own code, and no route leads from it to an
-unpinned clock.
+0, on the objects and on their prototypes, and an `Intl` formatter asked for
+"now" formats the pinned instant; that keeps a Workers-only program from being
+the one that cannot replay, and makes none of them contract (`P2`). Local time
+is UTC on both executors — the QuickJS child runs with `TZ=UTC`. The
+replacements are installed by trusted prelude and locked like `Error` (`X11`):
+assignment fails, redefinition of `Math.random` or `Date.now` throws, and the
+native constructor's `now` and the prototype's `constructor` lead back to the
+same instant. QuickJS lets `defineProperty` replace a locked *global* binding,
+`Date` included, but what replaces it is the program's own code. The pin is
+best-effort beyond these: a runtime-only source it misses, such as the order
+Workers timers fire in, is not portable (`P2`), and a program that depends on
+one fails a replay as divergence rather than doing anything else.
 
 The reason is replay. Planned resumable writes ([ethos](../ethos.md#decisions))
 will resume a paused run by replaying its program from the top against recorded
@@ -167,11 +171,8 @@ host calls, and a program that branched on the clock or a random draw would
 take a different branch the second time — which replay could only report as
 divergence. Pinning every run, not just the ones that pause, means a program
 behaves the same whether or not it is ever replayed, and cannot tell which kind
-of run it is in. The cost is that a program
-cannot time itself; diagnostics (`R7`) measure from the host, where the clock
-still moves. Anything else that reads the wall clock natively — an `Intl`
-formatter asked to format "now" — is outside the contract, like every other
-ambient capability.
+of run it is in. The cost is that a program cannot time itself; diagnostics
+(`R7`) measure from the host, where the clock still moves.
 
 ## Addressing
 
@@ -782,8 +783,8 @@ starts has no guest logs to recover.
 
 **X5. Leftover authority.** QuickJS blocks imports and has no `fetch`,
 `process`, timers, `crypto`, or `WebSocket`, and its Node child starts with an
-explicitly empty process environment rather than inheriting deployment variables
-or `NODE_OPTIONS`. A Dynamic Worker has those globals plus a non-contract set of
+explicit environment holding only `TZ=UTC` (`P6`) rather than inheriting
+deployment variables or `NODE_OPTIONS`. A Dynamic Worker has those globals plus a non-contract set of
 runtime builtins through `import()` and `process.getBuiltinModule()`, including
 `node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`,
 and `cloudflare:workers`; the upstream set drifts, so that is not an allowlist.
@@ -851,10 +852,10 @@ passing one table is also the check on the executor duties above, with
 | Clauses | Test |
 | --- | --- |
 | `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax, trailing terminators), `test/program-source.test.ts` (which semicolons are terminators), `test/quickjs-executor.test.ts` (`normalizeCode`) |
-| `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (empty child-process environment), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
+| `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (a child-process environment holding only `TZ=UTC`), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
-| `P6` | `test/guest-api-contract.test.ts` (a frozen clock across host calls, the seeded sfc32 stream against a reference, locked and unbypassable replacements, Workers `crypto` and `performance` pinned, a fresh pair per run) |
+| `P6` | `test/guest-api-contract.test.ts` (a frozen clock across host calls, the seeded sfc32 stream against a reference, locked replacements, Workers `crypto` and `performance` pinned directly and through their prototypes, `Intl` "now" and UTC local time on both executors, a fresh pair per run) |
 | `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory) |
 | `S1`, `S1a`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling), `test/typescript-signatures-parse.test.ts` (every rendering parses) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |

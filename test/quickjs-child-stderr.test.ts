@@ -76,7 +76,7 @@ class CrashingChild extends EventEmitter {
 }
 
 describe("QuickJS child stderr diagnostics", () => {
-  it("starts the child with an explicit empty environment", async () => {
+  it("starts the child with an explicit environment holding only TZ=UTC", async () => {
     vi.stubEnv("CONNECTA_QUICKJS_PARENT_SENTINEL", "deployment-secret");
     vi.stubEnv("NODE_OPTIONS", "--inspect=127.0.0.1:0");
     const child = new CrashingChild();
@@ -95,7 +95,7 @@ describe("QuickJS child stderr diagnostics", () => {
     expect(forkMock).toHaveBeenCalledWith(
       expect.stringMatching(/quickjs-child\.ts$/),
       [],
-      expect.objectContaining({ env: {} }),
+      expect.objectContaining({ env: { TZ: "UTC" } }),
     );
     await executor.close?.();
   });

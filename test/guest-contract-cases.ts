@@ -681,6 +681,56 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "P6",
+    name: "prototype routes, Intl, and local time read the pin too",
+    environment: PINNED_ENVIRONMENT,
+    code: `async () => {
+      const out = {
+        offset: new Date(0).getTimezoneOffset(),
+        hours: new Date(0).getHours()
+      };
+      if (typeof Intl === "object" && Intl && typeof Intl.DateTimeFormat === "function") {
+        const f = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", dateStyle: "short", timeStyle: "short" });
+        out.intl = f.format() === f.format(new Date(Date.now()));
+        out.parts = JSON.stringify(f.formatToParts()) === JSON.stringify(f.formatToParts(new Date(Date.now())));
+      }
+      if (typeof crypto === "object" && crypto) {
+        const proto = Object.getPrototypeOf(crypto);
+        const viaProto = Array.from(proto.getRandomValues.call(crypto, new Uint8Array(4)));
+        out.uuidViaProto = proto.randomUUID.call(crypto);
+        out.bytesViaProto = viaProto;
+      }
+      if (typeof performance === "object" && performance) {
+        out.perfViaProto = Object.getPrototypeOf(performance).now.call(performance);
+      }
+      return out;
+    }`,
+    follows: `async () => {
+      const out = {};
+      if (typeof crypto === "object" && crypto) {
+        const proto = Object.getPrototypeOf(crypto);
+        out.bytesViaProto = Array.from(proto.getRandomValues.call(crypto, new Uint8Array(4)));
+        out.uuidViaProto = proto.randomUUID.call(crypto);
+      }
+      return out;
+    }`,
+    check(outcome, _state, follow) {
+      const result = record(outcome);
+      // Local time is UTC on both executors, whatever the host's zone.
+      expect(result).toMatchObject({ offset: 0, hours: 0 });
+      if ("intl" in result) expect(result).toMatchObject({ intl: true, parts: true });
+      if ("perfViaProto" in result) expect(result.perfViaProto).toBe(0);
+      if ("bytesViaProto" in result) {
+        // Same seed on the follow-up: the prototype route replays too.
+        const second = required(follow, "follow-up outcome");
+        expect(second.result).toEqual({
+          bytesViaProto: result.bytesViaProto,
+          uuidViaProto: result.uuidViaProto,
+        });
+      }
+    },
+  },
+  {
+    clauses: "P6",
     name: "each run pins its own clock and seed from the host",
     code: `async () => ({ now: Date.now(), random: Math.random() })`,
     follows: `async () => ({ now: Date.now(), random: Math.random() })`,

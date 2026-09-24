@@ -472,14 +472,21 @@ function pinnedEnvironmentPrelude(environment: PinnedEnvironment): string {
   lock(NativeDate.prototype, "constructor", Date);
   lock(globalThis, "Date", Date);
   lock(Math, "random", function random() { return next() / 4294967296; });
+  // Lock the replacement on the object and on its prototype, where the
+  // native method lives: \`Object.getPrototypeOf(crypto).getRandomValues\`
+  // would otherwise still reach the real stream. A prototype the runtime
+  // will not let us redefine keeps its native method (\`tryLock\`), and a
+  // program that uses it diverges on replay rather than sending anything.
+  const tryLock = (target, key, value) => {
+    try { lock(target, key, value); } catch {}
+  };
   if (typeof crypto === "object" && crypto !== null) {
     const getRandomValues = function getRandomValues(array) {
       const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
       for (let i = 0; i < bytes.length; i++) bytes[i] = next() >>> 24;
       return array;
     };
-    lock(crypto, "getRandomValues", getRandomValues);
-    lock(crypto, "randomUUID", function randomUUID() {
+    const randomUUID = function randomUUID() {
       const bytes = getRandomValues(new Uint8Array(16));
       bytes[6] = (bytes[6] & 0x0f) | 0x40;
       bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -489,10 +496,44 @@ function pinnedEnvironmentPrelude(environment: PinnedEnvironment): string {
         if (i === 3 || i === 5 || i === 7 || i === 9) hex += "-";
       }
       return hex;
-    });
+    };
+    lock(crypto, "getRandomValues", getRandomValues);
+    lock(crypto, "randomUUID", randomUUID);
+    const cryptoProto = Object.getPrototypeOf(crypto);
+    if (cryptoProto) {
+      tryLock(cryptoProto, "getRandomValues", getRandomValues);
+      tryLock(cryptoProto, "randomUUID", randomUUID);
+    }
   }
   if (typeof performance === "object" && performance !== null) {
-    lock(performance, "now", function now() { return 0; });
+    const perfNow = function now() { return 0; };
+    lock(performance, "now", perfNow);
+    const performanceProto = Object.getPrototypeOf(performance);
+    if (performanceProto) tryLock(performanceProto, "now", perfNow);
+  }
+  // An Intl formatter asked for "now" (no date) reads the native clock.
+  if (typeof Intl === "object" && Intl !== null && typeof Intl.DateTimeFormat === "function") {
+    const proto = Intl.DateTimeFormat.prototype;
+    const formatGetter = Object.getOwnPropertyDescriptor(proto, "format");
+    if (formatGetter && typeof formatGetter.get === "function") {
+      const nativeFormat = formatGetter.get;
+      try {
+        defineProperty(proto, "format", {
+          get() {
+            const bound = nativeFormat.call(this);
+            return function format(date) { return bound(date === undefined ? clock : date); };
+          },
+          enumerable: false,
+          configurable: false,
+        });
+      } catch {}
+    }
+    const nativeFormatToParts = proto.formatToParts;
+    if (typeof nativeFormatToParts === "function") {
+      tryLock(proto, "formatToParts", function formatToParts(date) {
+        return nativeFormatToParts.call(this, date === undefined ? clock : date);
+      });
+    }
   }
 })(${JSON.stringify(environment.clockMs)}, ${JSON.stringify([...environment.seed])});`;
 }
