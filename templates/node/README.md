@@ -56,6 +56,14 @@ classified connection failures it offers a fixed repair prompt, and its
 endpoint section has client setup commands for `/mcp` and any pool available
 to the signed-in identity. Those commands contain no bearer token.
 
+Branding belongs in `operatorUi({ branding })`: `productName`, `ownerName`,
+their URLs, `description`, `pageTitle`, `favicon`, and `theme`. The theme is
+five tokens — `accent`, `radius`, `fontFamily`, `monoFamily`, and
+`colorScheme` — and every other color is mixed from them, so one accent themes
+the whole page. A value that fails its gate falls back to the default, and the
+startup warning names it. `src/index.ts` carries the full shape commented out
+above `ui: operatorUi()`.
+
 Connection management needs an interactive identity. A configured bearer is a
 client key and never authorizes browser credential mutations. To enable Clerk:
 
