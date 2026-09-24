@@ -1,13 +1,15 @@
 import type { UiConnector, UiData } from "../model.js";
 import {
+  credentialTestNotice,
   failure,
   info,
   initialState,
+  oauthDoneNotice,
   pageForPath,
+  refusedNotice,
   resetIdentity,
   withPage,
   type Notice,
-  type NoticeFix,
   type OperatorPage,
   type OperatorState,
   type UiActivityEvent,
@@ -79,11 +81,26 @@ function gate(notice: Notice | null = null): void {
 
 interface OperatorResponse {
   ok?: boolean;
-  message?: string;
+  state?: string;
   error?: string;
+  problem?: string;
   authorizationUrl?: string;
   events?: UiActivityEvent[];
   nextCursor?: string;
+}
+
+/**
+ * A route's non-2xx answer, as opposed to a failure this page describes
+ * itself. Its message is the route's `error` text, which the credential form's
+ * notices still show; the notices for actions that reach a downstream never
+ * do, and read only `problem`.
+ */
+class Refusal extends Error {
+  readonly problem: unknown;
+  constructor(message: string, problem: unknown) {
+    super(message);
+    this.problem = problem;
+  }
 }
 
 async function operatorRequest(
@@ -117,7 +134,7 @@ async function operatorRequest(
     throw new Error("This identity may not perform that action.");
   }
   if (!res.ok) {
-    throw new Error(payload.error || `Request failed (${res.status}).`);
+    throw new Refusal(payload.error || `Request failed (${res.status}).`, payload.problem);
   }
   return payload;
 }
@@ -191,7 +208,7 @@ async function mutate(options: {
   request: (current: () => boolean) => Promise<OperatorResponse | null>;
   busy: Partial<OperatorState>;
   done: (payload: OperatorResponse | null) => Partial<OperatorState>;
-  failed: (notice: Notice) => Partial<OperatorState>;
+  failed: (notice: Notice, error: unknown) => Partial<OperatorState>;
   fallback: string;
   reload?: string | undefined;
 }): Promise<void> {
@@ -206,7 +223,7 @@ async function mutate(options: {
     if (options.reload) void refreshConnector(options.reload);
   } catch (error) {
     if (!current()) return;
-    set(options.failed(failure(message(error, options.fallback))));
+    set(options.failed(failure(message(error, options.fallback)), error));
 
   }
 }
@@ -263,6 +280,7 @@ export function oauthAction(
   action: "disconnect" | "reconnect",
 ): Promise<void> {
   const disconnecting = action === "disconnect";
+  const kind = disconnecting ? "oauth_disconnect" : "oauth_reconnect";
   const confirmed = window.confirm(
     disconnecting
       ? `Disconnect OAuth for ${connector}? Stored credentials and any pending authorization will be removed.`
@@ -285,16 +303,17 @@ export function oauthAction(
       }) } } : {}),
       oauthBusy: null,
       pendingFocus: "oauthNotice",
-      oauthNotice: info(
-        disconnecting
-          ? "OAuth disconnected. Restart authorization when you are ready to reconnect."
-          : payload?.message ||
-            "Authorization restarted. Open the authorization link to reconnect.",
-      ),
+      oauthNotice: oauthDoneNotice(kind, payload),
     }),
-    failed: (notice) => ({
+    // The route's words never reach this notice (see `refusedNotice`); a
+    // failure the page described itself — a lapsed session, a denied
+    // identity, a dropped connection — keeps its own.
+    failed: (notice, error) => ({
       oauthBusy: null,
-      oauthNotice: { ...notice, fix: { kind: "oauth_action_failed", connectorId: connector } },
+      oauthNotice:
+        error instanceof Refusal
+          ? refusedNotice(kind, connector, error.problem)
+          : { ...notice, fix: { kind: "oauth_action_failed", connectorId: connector } },
       pendingFocus: "oauthNotice",
     }),
     fallback: "OAuth action failed.",
@@ -318,7 +337,7 @@ function credentialMutation(
   request: (current: () => boolean) => Promise<OperatorResponse | null>,
   done: (payload: OperatorResponse | null) => Notice,
   reload = true,
-  failedFix?: NoticeFix,
+  failed: (notice: Notice, error: unknown) => Notice = (notice) => notice,
 ): Promise<void> {
   const land = (credentialNotice: Notice) => ({
     credentialBusy: null,
@@ -329,7 +348,7 @@ function credentialMutation(
     request,
     busy: { credentialBusy: connector, credentialNotice: null },
     done: (payload) => land(done(payload)),
-    failed: (notice) => land(failedFix ? { ...notice, fix: failedFix } : notice),
+    failed: (notice, error) => land(failed(notice, error)),
     fallback: "Credential action failed.",
     reload: reload ? connector : undefined,
   });
@@ -373,7 +392,6 @@ export function removeCredential(connector: string): Promise<void> {
 }
 
 export function testCredential(connector: string): Promise<void> {
-  const fix: NoticeFix = { kind: "credential_test_failed", connectorId: connector };
   return credentialMutation(
     connector,
     (current) =>
@@ -382,14 +400,13 @@ export function testCredential(connector: string): Promise<void> {
         "POST",
         current,
       ),
-    (payload) => {
-      const copy =
-        payload?.message ||
-        (payload?.ok ? "Credential is valid." : "Credential test failed.");
-      return payload?.ok ? info(copy) : failure(copy, fix);
-    },
+    (payload) => credentialTestNotice(connector, payload),
     false,
-    fix,
+    // As for OAuth: the route's words never, the page's own always.
+    (notice, error) =>
+      error instanceof Refusal
+        ? refusedNotice("credential_test", connector, error.problem)
+        : { ...notice, fix: { kind: "credential_test_failed", connectorId: connector } },
   );
 }
 

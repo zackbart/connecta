@@ -247,3 +247,97 @@ describe("operator store identity wiring", () => {
     });
   });
 });
+
+describe("operator store action notices", () => {
+  it("never puts a route's words in an OAuth or credential Test notice", async () => {
+    // Stands in for an older or hostile server: every answer below carries a
+    // downstream's words where the current routes send fixed ones or none.
+    const SECRET = "sk_live_store_leak";
+    const { store, fetchMock } = await loadStore({
+      id: "sess_a",
+      getToken: async () => "token-a",
+    });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    await store.boot();
+
+    let answer: () => Response = () => Response.json({});
+    fetchMock.mockImplementation(async (path: string) =>
+      path.startsWith("/ui/connectors/")
+        ? Response.json({ error: "unknown connector" }, { status: 404 })
+        : answer(),
+    );
+    const land = async (
+      act: () => Promise<void>,
+      respond: () => Response,
+      notice: "oauthNotice" | "credentialNotice",
+    ) => {
+      answer = respond;
+      await act();
+      return store.getState()[notice];
+    };
+
+    expect(
+      await land(
+        () => store.oauthAction("svc", "reconnect"),
+        () => Response.json({ error: `token ${SECRET}` }, { status: 502 }),
+        "oauthNotice",
+      ),
+    ).toMatchObject({
+      tone: "error",
+      message: expect.stringContaining("OAuth authorization could not restart."),
+      fix: { kind: "oauth_action_failed", connectorId: "svc" },
+    });
+    expect(
+      await land(
+        () => store.oauthAction("svc", "disconnect"),
+        () => Response.json({ error: SECRET }, { status: 400 }),
+        "oauthNotice",
+      ),
+    ).toMatchObject({ tone: "error", message: expect.stringContaining("OAuth disconnect failed.") });
+    expect(
+      await land(
+        () => store.oauthAction("svc", "reconnect"),
+        () => Response.json({ state: "auth_required", message: SECRET }),
+        "oauthNotice",
+      ),
+    ).toEqual({
+      tone: "info",
+      message: "Authorization restarted. Open the authorization link to reconnect.",
+    });
+    expect(
+      await land(
+        () => store.testCredential("svc"),
+        () => Response.json({ ok: false, message: SECRET }),
+        "credentialNotice",
+      ),
+    ).toMatchObject({
+      tone: "error",
+      message: expect.stringContaining("Credential test failed"),
+      fix: { kind: "credential_test_failed" },
+    });
+    expect(
+      await land(
+        () => store.testCredential("svc"),
+        () => Response.json({ error: SECRET }, { status: 502 }),
+        "credentialNotice",
+      ),
+    ).toMatchObject({ tone: "error", message: "The credential test could not run." });
+    expect(
+      await land(
+        () => store.testCredential("svc"),
+        () => Response.json({ error: SECRET, problem: "credential_mismatch" }, { status: 409 }),
+        "credentialNotice",
+      ),
+    ).toMatchObject({ tone: "error", fix: { kind: "credential_mismatch" } });
+    // A failure the page words itself keeps its words.
+    expect(
+      await land(
+        () => store.testCredential("svc"),
+        () => Response.json({ error: SECRET }, { status: 403 }),
+        "credentialNotice",
+      ),
+    ).toMatchObject({ message: "This identity may not perform that action." });
+
+    expect(JSON.stringify(store.getState())).not.toContain(SECRET);
+  });
+});

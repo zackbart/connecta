@@ -100,7 +100,7 @@ describe("operator data routes", () => {
     });
 
     expect(disconnected.status).toBe(400);
-    await expect(disconnected.json()).resolves.toEqual({ error: "undefined" });
+    await expect(disconnected.json()).resolves.toEqual({ error: "OAuth disconnect failed" });
     expect(await storage.get("catalog:oauth")).toBeNull();
   });
 

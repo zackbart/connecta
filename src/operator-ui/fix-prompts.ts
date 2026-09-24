@@ -8,9 +8,10 @@ import type { UiCredentialProblem, UiProblem } from "./model.js";
  * The signature is the guarantee. A prompt is looked up by kind and may name
  * the connector's configured id; there is no argument an error message, a
  * downstream body, or a credential could travel through, so none can reach a
- * coding agent's context by way of this page. The notice beside the button can
- * still show the server's message — to the operator, on the operator's screen
- * — but the text that leaves the page is fixed.
+ * coding agent's context by way of this page. The notice beside it is fixed
+ * copy too wherever a downstream could have written the failure (see
+ * `refusedNotice` in view.ts); what remains are the page's own sentences and a
+ * credential form's field checks.
  */
 export type FixPromptKind =
   | UiProblem

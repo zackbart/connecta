@@ -255,6 +255,7 @@ describe("status UI credential management", () => {
     expect(driftedTest.status).toBe(409);
     await expect(driftedTest.json()).resolves.toEqual({
       error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      problem: "credential_mismatch",
     });
     expect(testCredential).not.toHaveBeenCalled();
 
@@ -330,6 +331,7 @@ describe("status UI credential management", () => {
     expect(driftedTest.status).toBe(409);
     await expect(driftedTest.json()).resolves.toEqual({
       error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      problem: "credential_mismatch",
     });
     expect(testCredentials).not.toHaveBeenCalled();
 
@@ -416,10 +418,7 @@ describe("status UI credential management", () => {
       "/ui/credentials/vaulted/test",
       { method: "POST" },
     );
-    await expect(test.json()).resolves.toEqual({
-      ok: true,
-      message: "Credential is valid.",
-    });
+    await expect(test.json()).resolves.toEqual({ ok: true });
 
     const remove = await credentialRequest(
       connecta,
@@ -520,10 +519,8 @@ describe("status UI credential management", () => {
       "/ui/credentials/bothhooks/test",
       { method: "POST" },
     );
-    await expect(test.json()).resolves.toEqual({
-      ok: true,
-      message: "single:both-secret-9876",
-    });
+    // Only `ok` leaves the host; the mock calls below say which hook ran.
+    await expect(test.json()).resolves.toEqual({ ok: true });
     // The route ran it, and so did the liveness sweep the /ui/data request
     // triggered — both through the one rule in src/credential-rules.ts, so
     // every call is the single-value hook against the raw stored string.
@@ -556,10 +553,7 @@ describe("status UI credential management", () => {
       "/ui/credentials/bothhooks/test",
       { method: "POST" },
     );
-    await expect(test.json()).resolves.toEqual({
-      ok: true,
-      message: "named:apiKey,email",
-    });
+    await expect(test.json()).resolves.toEqual({ ok: true });
     expect(testCredentials).toHaveBeenCalledTimes(1);
     expect(testCredential).not.toHaveBeenCalled();
   });

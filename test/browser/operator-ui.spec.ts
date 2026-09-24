@@ -6,6 +6,15 @@ import {
   renderUiHtml,
   type UiData,
 } from "../../src/ui.js";
+import { api } from "../../src/connectors/api.js";
+import {
+  CredentialVault,
+  encryptedCredentialVault,
+} from "../../src/credentials.js";
+import { memoryStorage } from "../../src/storage/memory.js";
+import type { Connector } from "../../src/types.js";
+import { createTestConnecta } from "../helpers.js";
+import { fakeClerkAuth } from "../fixtures/http.js";
 
 const TOKEN = "browser-operator-token";
 const CLERK_ORIGIN = "https://clerk.example.test";
@@ -44,6 +53,19 @@ let pools: string[] = [];
 const LEAKY_STATUS_MESSAGE =
   "fetch failed: 503 upstream connect error (token sk_live_abc123)";
 let leakyStatus = false;
+/**
+ * A real deployment behind this fake one. While set, the paths it names are
+ * forwarded to its `fetch` as a signed-in, same-origin operator, so the page
+ * drives the real route and a test can read what that route answered.
+ */
+let realRoutes:
+  | {
+      connecta: ReturnType<typeof createTestConnecta>;
+      paths: ReadonlySet<string>;
+      answered: string[];
+    }
+  | undefined;
+const REAL_BASE = "https://connecta.test";
 
 function data(): UiData {
   return {
@@ -222,6 +244,22 @@ test.beforeAll(async () => {
       sendJson(response, 401, { error: "unauthorized" });
       return;
     }
+    if (realRoutes?.paths.has(url.pathname)) {
+      const real = await realRoutes.connecta.fetch(
+        new Request(`${REAL_BASE}${url.pathname}`, {
+          method,
+          headers: { Authorization: "Bearer clerk-operator", Origin: REAL_BASE },
+        }),
+      );
+      const text = await real.text();
+      realRoutes.answered.push(text);
+      response.writeHead(real.status, {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      });
+      response.end(text);
+      return;
+    }
     const fault = faults.get(`${method} ${url.pathname}`);
     if (fault) {
       sendJson(response, 502, { error: fault });
@@ -292,10 +330,7 @@ test.beforeAll(async () => {
       method === "POST" &&
       url.pathname === "/ui/credentials/vaulted/test"
     ) {
-      sendJson(response, 200, {
-        ok: true,
-        message: "Credential is valid.",
-      });
+      sendJson(response, 200, { ok: true });
       return;
     }
     if (url.pathname === "/ui/oauth/oauth") {
@@ -306,9 +341,7 @@ test.beforeAll(async () => {
       }
       if (method === "POST") {
         oauthConnected = false;
-        sendJson(response, 200, {
-          message: "Authorization restarted.",
-        });
+        sendJson(response, 200, { state: "auth_required" });
         return;
       }
     }
@@ -347,6 +380,7 @@ test.beforeEach(() => {
   releaseDetails = [];
   pools = [];
   leakyStatus = false;
+  realRoutes = undefined;
 });
 
 async function openAuthenticated(
@@ -515,7 +549,7 @@ test("disconnects and restarts downstream OAuth", async ({ page }) => {
     .getByRole("button", { name: "Restart authorization for CRM" })
     .click();
   await expect(page.locator("#oauthNotice")).toHaveText(
-    "Authorization restarted.",
+    "Authorization restarted. Open the authorization link to reconnect.",
   );
 
   expect(
@@ -593,8 +627,8 @@ test("reports a failed OAuth restart and re-enables the control", async ({
 
   page.once("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "Reconnect OAuth for CRM" }).click();
-  await expect(page.locator("#oauthNotice")).toHaveText(
-    "downstream unavailable",
+  await expect(page.locator("#oauthNotice")).toContainText(
+    "OAuth authorization could not restart.",
   );
   // Failure leaves the action retryable without reloading the connection list.
   await expect(
@@ -762,17 +796,106 @@ test("renders a classified description and never a connector's status message", 
 });
 
 test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
+  // The route's error text is what an older server sent back from the
+  // downstream; the notice says its own sentence and never this one.
   faults.set("POST /ui/oauth/oauth", "downstream token=abc123");
   await openAuthenticated(page);
 
   const row = await openRow(page, "CRM");
   page.once("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "Reconnect OAuth for CRM" }).click();
-  await expect(page.locator("#oauthNotice")).toHaveText("downstream token=abc123");
+  await expect(page.locator("#oauthNotice")).toContainText(
+    "OAuth authorization could not restart.",
+  );
+  expect(await page.content()).not.toContain("abc123");
   const prompt = page.locator('[data-fix-prompt="oauth_action_failed"]');
   await prompt.getByText("Preview prompt").click();
   await expect(prompt.locator(".fix-prompt-text")).toContainText("Connector id: oauth");
   await expect(prompt.locator(".fix-prompt-text")).not.toContainText("abc123");
+});
+
+test("keeps a downstream's error text out of every action notice, end to end", async ({
+  page,
+}) => {
+  // The real OAuth and credential Test routes, answering for connectors whose
+  // downstream refuses with the secret it was sent.
+  const SECRET = "sk_live_e2e_leak";
+  const LEAK = `invalid_grant: token ${SECRET} was revoked`;
+  const logged: string[] = [];
+  const log = (...args: unknown[]) => {
+    logged.push(args.map(String).join(" "));
+  };
+  const key = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
+  const storage = memoryStorage();
+  await new CredentialVault(storage, key).set("vaulted", "stored-secret-1234", "user_operator");
+  const oauth: Connector = {
+    id: "oauth",
+    kind: "mcp",
+    async listTools() {
+      return [];
+    },
+    async callTool() {
+      return null;
+    },
+    async startAuth() {
+      throw new Error(LEAK);
+    },
+    async disconnectAuth() {
+      throw new Error(LEAK);
+    },
+  };
+  const connecta = createTestConnecta({
+    connectors: [
+      oauth,
+      api("vaulted", {
+        description: "Vaulted API",
+        credential: { label: "API token" },
+        testCredential: async () => ({ ok: false, message: LEAK }),
+        tools: [],
+      }),
+    ],
+    auth: fakeClerkAuth(),
+    storage,
+    publicUrl: REAL_BASE,
+    vault: encryptedCredentialVault(storage, key),
+    logger: { debug: log, info: log, warn: log, error: log },
+  });
+  realRoutes = {
+    connecta,
+    paths: new Set(["/ui/oauth/oauth", "/ui/credentials/vaulted/test"]),
+    answered: [],
+  };
+  credentialValue = "stored-secret-1234";
+  await openAuthenticated(page);
+
+  const crm = await openRow(page, "CRM");
+  page.once("dialog", (dialog) => dialog.accept());
+  await crm.getByRole("button", { name: "Disconnect OAuth for CRM" }).click();
+  await expect(page.locator("#oauthNotice")).toContainText("OAuth disconnect failed.");
+  page.once("dialog", (dialog) => dialog.accept());
+  await crm.getByRole("button", { name: "Reconnect OAuth for CRM" }).click();
+  await expect(page.locator("#oauthNotice")).toContainText(
+    "OAuth authorization could not restart.",
+  );
+
+  const vaulted = await openRow(page, "Vaulted service");
+  await vaulted.getByRole("button", { name: "Test" }).click();
+  await expect(page.locator("#credentialNotice")).toContainText("Credential test failed");
+  await expect(
+    page.locator('[data-fix-prompt="credential_test_failed"]'),
+  ).toBeVisible();
+
+  // Not on the page, not in any answer the page received...
+  expect(await page.content()).not.toContain(SECRET);
+  expect(await page.locator("body").innerText()).not.toContain(SECRET);
+  expect(realRoutes.answered).toHaveLength(3);
+  for (const body of realRoutes.answered) expect(body).not.toContain(SECRET);
+  // ...and on the host, where an operator debugging it looks.
+  expect(logged.filter((line) => line.includes(LEAK))).toEqual([
+    `[connecta] connector "oauth" OAuth disconnect failed: ${LEAK}`,
+    `[connecta] connector "oauth" OAuth restart failed: ${LEAK}`,
+    `[connecta] connector "vaulted" credential test failed: ${LEAK}`,
+  ]);
 });
 
 test("offers client setup for the endpoint and each granted pool", async ({ page }) => {
