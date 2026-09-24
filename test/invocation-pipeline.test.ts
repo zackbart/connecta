@@ -1,12 +1,14 @@
 // The single-call pipeline's deadline, admission permit, and timing, observed
 // through InvocationService directly so the numbers are the engine's own.
+import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { recordToolActivity } from "../src/activity.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { CatalogService } from "../src/catalog-service.js";
 import type { CallAdmissionPermit } from "../src/call-admission.js";
 import { InvocationService } from "../src/invocation.js";
 import type { Registry } from "../src/registry.js";
-import { makeRegistry } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -121,5 +123,94 @@ describe("one deadline over resolve, admission, and dispatch", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(release).toHaveBeenCalledTimes(1);
     expect(call).not.toHaveBeenCalled();
+  });
+});
+
+describe("what a write's outcome can know", () => {
+  function writer(call: () => Promise<unknown>, kind: "api" | "mcp" = "api") {
+    return makeRegistry([
+      connectorWith({
+        id: "w",
+        kind,
+        tools: [{
+          name: "send",
+          annotations: { destructiveHint: true },
+          inputSchema: {
+            type: "object",
+            properties: { to: { type: "string" } },
+            required: ["to"],
+          },
+        }],
+        call,
+      }),
+    ]);
+  }
+  const send = (registry: Registry, args: unknown) =>
+    new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "w.send",
+      args,
+      { source: "call_destructive_tool", allowDestructive: true },
+    );
+
+  it("reports whether the connector was actually called", async () => {
+    await expect(send(writer(async () => ({ ok: true })), { to: "a" }))
+      .resolves.toMatchObject({ ok: true, dispatched: true });
+    // Refused before dispatch: nothing reached the connector.
+    const call = vi.fn(async () => ({ ok: true }));
+    await expect(send(writer(call, "mcp"), {}))
+      .resolves.toMatchObject({ ok: false, dispatched: false, error: { code: "invalid_args" } });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("tells an answer from silence", async () => {
+    const answered = await send(
+      writer(
+        async () => ({ isError: true, content: [{ type: "text", text: "no such thread" }] }),
+        "mcp",
+      ),
+      { to: "a" },
+    );
+    expect(answered).toMatchObject({ ok: false, dispatched: true, answered: true });
+    const silent = await send(
+      writer(async () => { throw new TypeError("fetch failed"); }),
+      { to: "a" },
+    );
+    expect(silent).toMatchObject({ ok: false, dispatched: true, answered: false });
+  });
+
+  it("asks a write gate only after validation, and records a pause as a pause", async () => {
+    const gate = vi.fn(() => Effect.succeed({
+      kind: "refuse" as const,
+      error: { code: "execution_paused", message: "paused", retryable: false },
+      activity: "paused" as const,
+    }));
+    const events: Array<{ outcome: string; attempts: number }> = [];
+    const registry = writer(async () => ({ ok: true }), "mcp");
+    const service = new InvocationService(registry, new CatalogService(registry, BASE), {
+      recordTool: recordToolActivity,
+      sink: { record: (event) => void events.push(event) },
+      actor: { kind: "test" },
+      requestId: "r",
+      serverInfo: { name: "t", version: "0" },
+      logger: silentLogger,
+    });
+    const invalid = await service.invoke("w.send", {}, { source: "execute_code", writeGate: gate });
+    expect(invalid).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    expect(gate).not.toHaveBeenCalled();
+    const pausedCall = await service.invoke(
+      "w.send",
+      { to: "a" },
+      { source: "execute_code", writeGate: gate },
+    );
+    expect(pausedCall).toMatchObject({
+      ok: false,
+      dispatched: false,
+      error: { code: "execution_paused" },
+    });
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(events.map((event) => [event.outcome, event.attempts])).toEqual([
+      ["error", 1],
+      ["paused", 0],
+    ]);
   });
 });

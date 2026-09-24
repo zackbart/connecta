@@ -7,6 +7,8 @@ import {
   type UiConnector,
 } from "../src/ui.js";
 import {
+  activityDetail,
+  activityOutcomeClass,
   activitySummary,
   authScopeLabel,
   connectorSummaryParts,
@@ -31,6 +33,34 @@ import {
   type UiActivityEvent,
 } from "../src/operator-ui/view.js";
 import { required } from "./helpers.js";
+
+describe("activity rows for resumed programs", () => {
+  const row = (overrides: Partial<UiActivityEvent>): UiActivityEvent => ({
+    occurredAt: "2026-09-24T12:00:00.000Z",
+    connectorId: "tracker",
+    toolName: "close_issue",
+    address: "tracker.close_issue",
+    source: "execute_code",
+    outcome: "success",
+    durationMs: 1,
+    attempts: 1,
+    ...overrides,
+  });
+
+  it("paints a pause and an approval as neither success nor failure", () => {
+    expect(activityOutcomeClass("paused")).toBe("paused");
+    expect(activityOutcomeClass("approved")).toBe("approved");
+    expect(activityOutcomeClass("something new")).toBe("error");
+  });
+
+  it("says what an approval covered", () => {
+    expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "tool" })))
+      .toBe("resume_execution · approved for the rest of the run");
+    expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "call" })))
+      .toBe("resume_execution · approved for this call");
+    expect(activityDetail(row({ outcome: "paused", attempts: 0 }))).toBe("execute_code");
+  });
+});
 
 /** A connector whose listTools always throws — exercises broken-connector isolation. */
 describe("status UI filtering", () => {

@@ -303,6 +303,7 @@ To enable it:
      attempts       INTEGER NOT NULL,
      error_code     TEXT,
      friction       TEXT,
+     approval       TEXT,
      server_name    TEXT NOT NULL,
      server_version TEXT NOT NULL,
      deployment_id  TEXT
@@ -312,14 +313,18 @@ To enable it:
      ON tool_call_activity (occurred_at_ms DESC, id DESC);
    ```
 
-   **Already have this table?** `actor_namespace` and `friction` were added
-   after the original example, and `CREATE TABLE IF NOT EXISTS` will not add
-   them to a table that already exists. Add them as migrations:
+   **Already have this table?** `actor_namespace`, `friction`, and `approval`
+   were added after the original example, and `CREATE TABLE IF NOT EXISTS`
+   will not add them to a table that already exists. Add them as migrations:
 
    ```sql
    ALTER TABLE tool_call_activity ADD COLUMN actor_namespace TEXT;
    ALTER TABLE tool_call_activity ADD COLUMN friction TEXT;
+   ALTER TABLE tool_call_activity ADD COLUMN approval TEXT;
    ```
+
+   `approval` is set only on an `approved` row — the scope a resumed
+   program's approval covered, `call` or `tool` — and is otherwise null.
 
    `friction` is stored rather than derived because one of its classes belongs
    to a call that *succeeded*: a result too large to return inline is friction

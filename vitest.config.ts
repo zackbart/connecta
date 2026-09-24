@@ -56,6 +56,7 @@ export const WORKERS_SUITES = [
   "test/request-admission.test.ts",
   "test/request-pipeline.test.ts",
   "test/result-shapes.test.ts",
+  "test/resumable.test.ts",
   "test/remote-mcp-credential.test.ts",
   "test/remote-mcp-pagination.test.ts",
   "test/remote-mcp.test.ts",
@@ -143,6 +144,11 @@ export const NODE_ONLY_SUITES = [
   {
     file: "test/quickjs-log-limits.test.ts",
     reason: "runs the Node QuickJS child-process executor",
+  },
+  {
+    file: "test/resumable-restart.test.ts",
+    reason:
+      "reopens a Node file store and runs the QuickJS executor across a restart",
   },
   {
     file: "test/suite-partition.test.ts",

@@ -11,6 +11,36 @@ fixed words and a success without `message`, and `POST
 fields finds the text in the server log instead. A deployment that only uses
 the page can ignore it.
 
+### Added
+
+- **Resumable writes, opt-in (#565).** With `execute.resumableWrites: true`, a
+  program's call to a tool that is not explicitly read-only no longer fails
+  `destructive_tool_requires_approval`: the run pauses there before anything
+  is sent and returns the exact address, the exact arguments, and a token.
+  `resume_execution` — registered only when the option is on, and annotated
+  destructive so the host prompts with the write in its arguments — must
+  repeat all three exactly; it claims the run and replays the program from a
+  journal in the caller's result storage, answering every earlier host call
+  from its record and sending the approved write once. `approval: "tool"`
+  approves the rest of the run's calls to that tool. A write that was sent
+  but never answered stops the run as `write_outcome_unknown` and is never
+  sent again; a program that stops matching its journal fails
+  `execution_diverged`. The option needs `storage` with `compareAndSet` and
+  refuses to construct without it. `execute.maxWrites` (default 10) caps
+  consequential calls per run on top of the host-call budget, and
+  `execute.pausedRunTtlSeconds` (default 1,800) is how long a paused run lives
+  from its first pause. The guides, the eighth tool on every deployment, and
+  the default arrive together in a later change.
+- **Activity for pauses and approvals.** `ActivityOutcome` gains `paused` and
+  `approved`, both with zero attempts; `ActivityCallSource` gains
+  `resume_execution`; `ToolCallActivityEvent` gains an optional `approval`
+  (`"call"` or `"tool"`), set only on an approval. All three are enums — the
+  approved arguments are never recorded. The Worker example's D1 activity
+  store writes an `approval` column; add it with
+  `ALTER TABLE tool_call_activity ADD COLUMN approval TEXT;` before deploying
+  the updated adapter. The operator activity page labels both outcomes and
+  says what an approval covered.
+
 ### Changed
 
 - **A program's clock and randomness are pinned (code mode `P6`).**

@@ -18,8 +18,15 @@ export interface ActivityEvent {
     | "call_tool"
     | "call_destructive_tool"
     | "batch_call"
-    | "execute_code";
-  outcome: "success" | "error" | "timeout" | "cancelled";
+    | "execute_code"
+    | "resume_execution";
+  outcome:
+    | "success"
+    | "error"
+    | "timeout"
+    | "cancelled"
+    | "paused"
+    | "approved";
   durationMs: number;
   attempts: number;
   errorCode?: string;
@@ -29,6 +36,7 @@ export interface ActivityEvent {
     | "destructive_reroute"
     | "auth_required"
     | "result_too_large";
+  approval?: "call" | "tool";
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
@@ -76,6 +84,8 @@ export interface ActivityRow {
   attempts: number;
   error_code: string | null;
   friction: ActivityEvent["friction"] | null;
+  /** Absent from tables created before resumable writes; read as null. */
+  approval?: ActivityEvent["approval"] | null;
   server_name: string;
   server_version: string;
   deployment_id: string | null;
@@ -102,6 +112,7 @@ export function activityEventToRow(
     // friction on a call that succeeded, so it has no error code to derive from
     // — and `error_code IS NOT NULL` stays an honest count of failures.
     friction: event.friction ?? null,
+    approval: event.approval ?? null,
     server_name: event.serverName,
     server_version: event.serverVersion,
     deployment_id: event.deploymentId ?? null,
@@ -131,6 +142,7 @@ export function activityRowToEvent(
     attempts: row.attempts,
     ...(row.error_code ? { errorCode: row.error_code } : {}),
     ...(friction ? { friction } : {}),
+    ...(row.approval ? { approval: row.approval } : {}),
     serverName: row.server_name,
     serverVersion: row.server_version,
     ...(row.deployment_id

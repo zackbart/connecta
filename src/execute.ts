@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { Cause, Duration, Effect, Exit, type Scope } from "effect";
+import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import { advertisedSchema } from "./advertised-schema.js";
@@ -8,6 +8,7 @@ import {
   CatalogService,
   DiscoveryPolicyError,
   flatSearchResult,
+  type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
@@ -29,6 +30,13 @@ import {
 } from "./invocation.js";
 import { withoutProgramTerminator } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
+import {
+  RunState,
+  type ResumableSettings,
+  type RunStop,
+} from "./resumable.js";
+import { journalKey, type JournalOp } from "./run-journal.js";
+import { underAnySignal } from "./timeout.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import {
   connectorGuide,
@@ -571,6 +579,8 @@ interface SandboxLimits {
   defer?: DeferredWork | undefined;
   /** The run's clock and seed (P6). A fresh pair when omitted. */
   environment?: PinnedEnvironment | undefined;
+  /** One play of a resumable run; absent when resumable writes are off. */
+  runState?: RunState | undefined;
 }
 
 /**
@@ -624,30 +634,99 @@ function sandboxProvider(
         )
       : Effect.void,
   );
-  const invocationContext = () => ({
-    source: "execute_code" as const,
+  const { runState } = limits;
+  const invocationContext = (seq: number | undefined, key: string | undefined) => ({
+    source: runState?.source ?? ("execute_code" as const),
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     unwrapResult: true,
+    // With resumable writes, a consequential call reaches the run's gate
+    // instead of the flat E4 refusal, and a read's decision is marked the
+    // moment it passes the same point.
+    ...(runState && seq !== undefined && key !== undefined
+      ? {
+          beforeDispatch: () => runState.decide(seq),
+          writeGate: (target: ResolvedCatalogTool, args: unknown) =>
+            runState.gate(seq, key, target, args),
+        }
+      : {}),
   });
+
+  /**
+   * The front of every numbered host call once resumable writes are on: a
+   * stopped run makes no call at all (not journaled, no activity), a
+   * recorded one is answered from the journal before the budget-free part
+   * of the path, and one the journal cannot account for is divergence.
+   * Replayed calls spend the host-call budget again, so a play's total is
+   * the run's total and nothing is counted twice.
+   */
+  const fromJournal = (
+    seq: number | undefined,
+    op: JournalOp,
+    address: string,
+    args: unknown,
+  ): Effect.Effect<
+    { kind: "live"; key: string | undefined } | { kind: "replayed"; value: unknown },
+    unknown
+  > =>
+    Effect.gen(function* () {
+      const halted = runState?.halted();
+      if (halted) return yield* Effect.fail(halted);
+      yield* spendHostCall;
+      if (!runState || seq === undefined) return { kind: "live", key: undefined };
+      const key = journalKey(op, address, args);
+      const found = runState.lookup(key);
+      if (found.kind === "diverged") {
+        return yield* Effect.fail(runState.diverge(found.reason));
+      }
+      if (found.kind === "live") return { kind: "live", key };
+      runState.decide(seq);
+      const { outcome } = found.entry;
+      return outcome.ok
+        ? { kind: "replayed", value: outcome.value }
+        : yield* Effect.fail(new InvocationFailure(outcome.error));
+    });
 
   // A call brings its own cancellation: the invocation pipeline reads the
   // run's signal, refuses a call that starts after it, and records the
   // cancelled attempt in activity like any other outcome.
-  const call = (address: unknown, args: unknown) =>
-    spendHostCall.pipe(
-      Effect.andThen(
-        Effect.suspend(() =>
-          invocation.pipeline(String(address), args ?? {}, invocationContext()),
-        ),
-      ),
-      Effect.flatMap((outcome) => {
-        diagnostics?.recordCall(outcome);
-        return outcome.ok
-          ? Effect.succeed(outcome.value)
-          : Effect.fail(new InvocationFailure(outcome.error));
-      }),
-    );
+  const call = (seq: number | undefined, address: unknown, args: unknown) =>
+    Effect.gen(function* () {
+      const addressText = String(address);
+      const callArgs = args ?? {};
+      const front = yield* fromJournal(seq, "call", addressText, callArgs);
+      if (front.kind === "replayed") return front.value;
+      const outcome = yield* invocation.pipeline(
+        addressText,
+        callArgs,
+        invocationContext(seq, front.key),
+      );
+      diagnostics?.recordCall(outcome);
+      if (runState && seq !== undefined && front.key !== undefined) {
+        if (runState.isLiveWrite(seq)) {
+          const resolved = outcome.resolved;
+          const replaced = yield* runState.settleWrite(seq, front.key, {
+            address: resolved
+              ? `${resolved.connector.id}.${resolved.toolName}`
+              : addressText,
+            args: callArgs,
+          }, outcome);
+          if (replaced) return yield* Effect.fail(replaced);
+        } else {
+          runState.record(
+            seq,
+            "call",
+            front.key,
+            outcome.ok
+              ? { ok: true, value: outcome.value }
+              : { ok: false, error: outcome.error },
+          );
+        }
+      }
+      return outcome.ok
+        ? outcome.value
+        : yield* Effect.fail(new InvocationFailure(outcome.error));
+    });
 
   // Discovery gets the same treatment from here (L2): once the run has
   // ended no search or describe starts, and one still in flight fails
@@ -656,8 +735,10 @@ function sandboxProvider(
   // the transport below reconstructs their code inside the guest.
   const discovery = <T>(
     operation: "search" | "describe",
+    seq: number | undefined,
+    raw: unknown,
     read: () => Promise<T>,
-  ): Effect.Effect<T, unknown> =>
+  ): Effect.Effect<unknown, unknown> =>
     Effect.suspend(() => {
       const started = Date.now();
       const cancelled = () =>
@@ -672,17 +753,43 @@ function sandboxProvider(
             ? guestFailure(err.code, err.message)
             : err,
       });
-      return spendHostCall.pipe(
-        Effect.andThen(
-          !signal
-            ? reading
-            : signal.aborted
-              ? Effect.fail(cancelled())
-              : Effect.raceAllFirst([
-                  reading,
-                  fromSignal(signal).pipe(Effect.mapError(cancelled)),
-                ]),
-        ),
+      return fromJournal(seq, operation, "", raw ?? {}).pipe(
+        Effect.flatMap((front) => {
+          if (front.kind === "replayed") return Effect.succeed(front.value);
+          const live = (
+            !signal
+              ? reading
+              : signal.aborted
+                ? Effect.fail(cancelled())
+                : Effect.raceAllFirst([
+                    reading,
+                    fromSignal(signal).pipe(Effect.mapError(cancelled)),
+                  ])
+          ).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (!runState || seq === undefined || front.key === undefined) return;
+                // Typed outcomes replay; an untyped throw is a bug, not an
+                // answer, and a replay that meets it again goes live.
+                if (Exit.isSuccess(exit)) {
+                  runState.record(seq, operation, front.key, {
+                    ok: true,
+                    value: exit.value,
+                  });
+                  return;
+                }
+                const error = Cause.squash(exit.cause);
+                if (error instanceof InvocationFailure) {
+                  runState.record(seq, operation, front.key, {
+                    ok: false,
+                    error: error.details,
+                  });
+                }
+              }),
+            ),
+          );
+          return live;
+        }),
         Effect.onExit((exit) =>
           Effect.sync(() =>
             diagnostics?.recordCatalog(
@@ -698,14 +805,15 @@ function sandboxProvider(
 
   const operations: Record<
     string,
-    (...args: unknown[]) => Effect.Effect<unknown, unknown>
+    (seq: number | undefined, ...args: unknown[]) => Effect.Effect<unknown, unknown>
   > = {
     call,
     // Emission is a provider function, never an ExecuteResult field —
     // that is what keeps the Executor contract untouched and parity
     // structural (M8). It spends no host-call budget (M7); its own
-    // budgets live in the collector.
-    emit: (block) =>
+    // budgets live in the collector. It is never journaled: a replay emits
+    // again, and only the play that completes delivers.
+    emit: (_seq, block) =>
       Effect.try({
         try: () => {
           if (!limits.emitCollector) {
@@ -719,8 +827,8 @@ function sandboxProvider(
         },
         catch: (err) => err,
       }),
-    search: (raw) =>
-      discovery("search", async () => {
+    search: (seq, raw) =>
+      discovery("search", seq, raw, async () => {
         const args = (raw ?? {}) as {
           query?: string;
           connector?: string;
@@ -743,8 +851,8 @@ function sandboxProvider(
         );
         return result;
       }),
-    describe: (raw) =>
-      discovery("describe", async () => {
+    describe: (seq, raw) =>
+      discovery("describe", seq, raw, async () => {
         const args = (raw ?? {}) as {
           address?: unknown;
           addresses?: unknown;
@@ -775,15 +883,27 @@ function sandboxProvider(
     // Typed errors first, then the pinned clock and randomness: both are
     // trusted host code the program runs after and cannot undo.
     prelude: `${guestErrorPrelude(failureSecret)}\n${pinnedEnvironmentPrelude(
-      limits.environment ?? freshEnvironment(),
+      runState?.environment ?? limits.environment ?? freshEnvironment(),
     )}`,
     fns: Object.fromEntries(
       Object.entries(operations).map(([name, operation]) => [
         name,
         (...args: unknown[]) => {
+          // Numbered here, synchronously, as the program makes the call: the
+          // numbering is the program's own issue order, which is what makes
+          // a pause point and a replay reproducible.
+          const seq = runState && name !== "emit" ? runState.begin() : undefined;
           const settled = runEdge(
-            Effect.suspend(() => operation(...args)).pipe(Effect.catch(framed)),
+            Effect.suspend(() => operation(seq, ...args)).pipe(
+              Effect.catch(framed),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (seq !== undefined) runState?.decide(seq);
+                }),
+              ),
+            ),
           );
+          if (seq !== undefined) runState?.track(seq, settled);
           // The executor owns this promise, and a program may abandon a call
           // that the run's end then cancels before anyone has awaited it.
           // The rejection is still there for whoever does; it is just not an
@@ -928,41 +1048,83 @@ function leased(
   );
 }
 
-/** The execute_code handler. Exported for direct testing. */
-export function createExecuteTool(
+/** The execute_code configuration a runner enforces. */
+interface RunnerConfig {
+  discoveryConcurrency?: number | undefined;
+  probeTimeoutMs?: number | undefined;
+  maxEmittedBytes?: number | undefined;
+  maxEmittedBlocks?: number | undefined;
+  maxHostCalls?: number | undefined;
+  hostCallTimeoutMs?: number | undefined;
+  watchdogMs?: number | undefined;
+  defer?: DeferredWork | undefined;
+  /**
+   * One clock and seed for every fresh run of this handler instead of a
+   * fresh pair per run. Tests pin a known stream with it; a replay always
+   * uses its journal's.
+   */
+  environment?: PinnedEnvironment | undefined;
+  /**
+   * Resumable writes. When set and the view's result storage has
+   * `compareAndSet`, a consequential call pauses the run instead of being
+   * refused; absent, E4's refusal stands.
+   */
+  resumable?: ResumableSettings | undefined;
+}
+
+/** Plays programs: `execute_code` fresh, `resume_execution` from a journal. */
+export interface ProgramRunner {
+  execute(
+    args: { code: string; diagnostics?: boolean },
+    options?: { signal?: AbortSignal },
+  ): Promise<ToolResult>;
+  /** One play of a claimed run, for `resume_execution`. */
+  replay(runState: RunState, signal?: AbortSignal): Effect.Effect<ToolResult>;
+  /** How long a claimed play may take before another may take it over. */
+  readonly claimMs: number;
+}
+
+/**
+ * Room a claim leaves beyond the watchdog and one host-call deadline, for the
+ * executor queue a resumed play waits in first. Only liveness rides on it: a
+ * claim that lapses early lets a takeover start, and the write-ahead mark
+ * still keeps any write from being sent twice.
+ */
+const CLAIM_SLACK_MS = 10_000;
+
+type PlayEnd = { settled: ExecuteResult } | { stop: RunStop };
+
+/** The runner behind both program tools. */
+export function createProgramRunner(
   registry: RegistryView,
   baseUrl: string,
   executor: Executor,
   logger: Logger,
   activity?: ActivityRequestContext,
-  config: {
-    discoveryConcurrency?: number | undefined;
-    probeTimeoutMs?: number | undefined;
-    maxEmittedBytes?: number | undefined;
-    maxEmittedBlocks?: number | undefined;
-    maxHostCalls?: number | undefined;
-    hostCallTimeoutMs?: number | undefined;
-    watchdogMs?: number | undefined;
-    defer?: DeferredWork | undefined;
-    /**
-     * One clock and seed for every run of this handler instead of a fresh
-     * pair per run. Tests pin a known stream with it.
-     */
-    environment?: PinnedEnvironment | undefined;
-  } = {},
-) {
+  config: RunnerConfig = {},
+): ProgramRunner {
   const watchdog = {
     ms: resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS),
     logger,
   };
-  return (
-    { code, diagnostics: diagnosticsRequested }: {
-      code: string;
-      diagnostics?: boolean;
-    },
-    options: { signal?: AbortSignal } = {},
-  ): Promise<ToolResult> =>
-    runEdge(Effect.suspend(() => {
+  const hostCallTimeoutMs = resolveBudget(
+    config.hostCallTimeoutMs,
+    EXECUTE_HOST_CALL_TIMEOUT_MS,
+  );
+
+  /**
+   * One play of a program. Without a run state it is the execute_code run it
+   * always was. With one, the play also ends when the run stops — a pause or
+   * a typed failure — and then waits for what is still on the wire, persists
+   * what it must, and discards the program's own result.
+   */
+  const play = (
+    program: string,
+    runState: RunState | undefined,
+    diagnosticsRequested: boolean | undefined,
+    callerSignal: AbortSignal | undefined,
+  ): Effect.Effect<ToolResult> =>
+    Effect.suspend(() => {
       const diagnostics = diagnosticsRequested
         ? new ExecuteDiagnostics()
         : undefined;
@@ -977,7 +1139,7 @@ export function createExecuteTool(
       // closing it releases the lease and then aborts the signal, so
       // nothing the run started outlives the request.
       const run = Effect.gen(function* () {
-        const signal = yield* runSignal(options.signal);
+        const signal = yield* runSignal(callerSignal);
         // Admission comes before provider construction: queued calls retain
         // no catalogs, request scopes, or provider closures.
         let lease: ExecutorLease | undefined;
@@ -1005,9 +1167,10 @@ export function createExecuteTool(
             discoveryConcurrency: config.discoveryConcurrency,
             probeTimeoutMs: config.probeTimeoutMs,
             maxHostCalls: config.maxHostCalls,
-            hostCallTimeoutMs: config.hostCallTimeoutMs,
+            hostCallTimeoutMs,
             defer: config.defer,
             environment: config.environment,
+            runState,
           }),
         ));
         if (signal.aborted) {
@@ -1019,27 +1182,96 @@ export function createExecuteTool(
           );
         }
         const admitted = lease;
-        // P1: a trailing `;` after the arrow expression breaks both
-        // executors' parenthesized evaluation. Strip it here, above them.
-        const program = withoutProgramTerminator(code);
-        return yield* timed((elapsed) => {
-          if (diagnostics) diagnostics.executorWallMs = elapsed;
-        }, awaitExecutor(
+        const executing = awaitExecutor(
           () =>
             admitted
               ? admitted.execute(program, [provider])
               : executor.execute(program, [provider]),
           signal,
           { watchdog },
-        ));
+        ).pipe(Effect.map((settled): PlayEnd => ({ settled })));
+        if (!runState) {
+          return yield* timed((elapsed) => {
+            if (diagnostics) diagnostics.executorWallMs = elapsed;
+          }, executing);
+        }
+        // The run stopping wins the race as soon as its gate decides, before
+        // the program even sees the rejection. Either way, what is still on
+        // the wire finishes before the scope aborts it: every call after a
+        // stop, since each is journaled, and every write otherwise, since an
+        // abandoned write would be an unknown one.
+        const ended = yield* timed((elapsed) => {
+          if (diagnostics) diagnostics.executorWallMs = elapsed;
+        }, Effect.raceFirst(
+          executing,
+          Deferred.await(runState.stopped).pipe(
+            Effect.map((stop): PlayEnd => ({ stop })),
+          ),
+        ).pipe(Effect.ensuring(runState.drain("writes"))));
+        if ("stop" in ended) yield* runState.drain("all");
+        return ended;
       });
       const reported = { emitted, diagnostics, invocationFailures };
-      return Effect.map(Effect.exit(Effect.scoped(run)), (exit) =>
-        Exit.isSuccess(exit)
-          ? finishedRun(exit.value, reported)
-          : failedRun(Cause.squash(exit.cause), logger, reported),
-      );
-    }));
+      return Effect.flatMap(Effect.exit(Effect.scoped(run)), (exit) => {
+        if (Exit.isFailure(exit)) {
+          const failed = failedRun(Cause.squash(exit.cause), logger, reported);
+          return runState
+            ? runState.finishExecutorFailure(failed)
+            : Effect.succeed(failed);
+        }
+        const ended = exit.value;
+        if ("stop" in ended) {
+          return runState
+            ? runState.finishStopped(ended.stop)
+            : Effect.die(new Error("a run without state cannot stop"));
+        }
+        const finished = finishedRun(ended.settled, reported);
+        return runState
+          ? runState.finishSettled(finished)
+          : Effect.succeed(finished);
+      });
+    });
+
+  return {
+    claimMs: watchdog.ms + hostCallTimeoutMs + CLAIM_SLACK_MS,
+    execute: ({ code, diagnostics }, options = {}) =>
+      runEdge(Effect.suspend(() => {
+        // P1: a trailing `;` after the arrow expression breaks both
+        // executors' parenthesized evaluation. Strip it here, above them.
+        const program = withoutProgramTerminator(code);
+        const storage = config.resumable ? registry.resultsStorage() : undefined;
+        const runState = config.resumable && storage?.compareAndSet
+          ? RunState.fresh(
+              storage,
+              program,
+              config.environment ?? freshEnvironment(),
+              config.resumable,
+            )
+          : undefined;
+        return play(program, runState, diagnostics, options.signal);
+      })),
+    replay: (runState, signal) =>
+      play(runState.program, runState, false, signal),
+  };
+}
+
+/** The execute_code handler. Exported for direct testing. */
+export function createExecuteTool(
+  registry: RegistryView,
+  baseUrl: string,
+  executor: Executor,
+  logger: Logger,
+  activity?: ActivityRequestContext,
+  config: RunnerConfig = {},
+): ProgramRunner["execute"] {
+  return createProgramRunner(
+    registry,
+    baseUrl,
+    executor,
+    logger,
+    activity,
+    config,
+  ).execute;
 }
 
 interface RunReport {
@@ -1272,7 +1504,12 @@ const executeDescription = (
   hostLimits: { maxHostCalls: number; hostCallTimeoutMs: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+  resumable: ResumableSettings | undefined,
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${
+  resumable
+    ? `Tools not annotated readOnlyHint: true pause the run before sending; resume_execution approves and replays it. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
+    : `Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls`
+}, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
@@ -1334,8 +1571,10 @@ export function registerExecuteTool(
     /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
+    /** Resumable writes, when this deployment turned them on. */
+    resumable?: ResumableSettings | undefined;
   },
-): void {
+): ProgramRunner {
   // Resolved once so the description and the collector cannot disagree about
   // the budgets this deployment actually enforces.
   const emitBudgets = {
@@ -1355,7 +1594,7 @@ export function registerExecuteTool(
     ),
   };
   const connectors = registry.listConnectors();
-  const handler = createExecuteTool(
+  const runner = createProgramRunner(
     registry,
     ctx.baseUrl,
     ctx.executor,
@@ -1370,6 +1609,7 @@ export function registerExecuteTool(
       hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
       watchdogMs: ctx.watchdogMs,
       defer: ctx.defer,
+      resumable: ctx.resumable,
     },
   );
   server.registerTool(
@@ -1380,6 +1620,7 @@ export function registerExecuteTool(
         hostLimits,
         hasConnectorGuides(connectors),
         connectors,
+        ctx.resumable,
       ),
       inputSchema: EXECUTE_INPUT,
       // This hint describes connector calls, all explicitly read-only. The
@@ -1391,26 +1632,11 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
-      const controller = new AbortController();
-      const signals = [extra.mcpReq.signal, ctx.requestSignal].filter(
-        (signal): signal is AbortSignal => signal !== undefined,
-      );
-      const forwarders = signals.map((signal) => {
-        const forward = () => controller.abort(signal.reason);
-        if (signal.aborted) forward();
-        else signal.addEventListener("abort", forward, { once: true });
-        return { signal, forward };
-      });
-      try {
-        return await handler(args as { code: string; diagnostics?: boolean }, {
-          signal: controller.signal,
-        });
-      } finally {
-        for (const { signal, forward } of forwarders) {
-          signal.removeEventListener("abort", forward);
-        }
-      }
-    },
+    (args, extra) =>
+      underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
+        runner.execute(args as { code: string; diagnostics?: boolean }, {
+          signal,
+        })),
   );
+  return runner;
 }

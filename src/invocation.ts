@@ -120,6 +120,13 @@ function isCallerCancellation(
   );
 }
 
+/**
+ * A downstream MCP tool answered with `isError`. Classified exactly as the
+ * plain `Error` it used to be — same message, same heuristics — and marked so
+ * a write's outcome can tell "the service said no" from "nobody answered".
+ */
+class DownstreamToolError extends Error {}
+
 function assertRawMcpSuccess(
   kind: ResolvedCatalogTool["connector"]["kind"],
   result: unknown,
@@ -130,12 +137,23 @@ function assertRawMcpSuccess(
     isError?: boolean;
   };
   if (!mcpResult.isError) return;
-  throw new Error(
+  throw new DownstreamToolError(
     boundedEchoText(mcpResult.content
       ?.filter((block) => block.type === "text")
       .map((block) => block.text ?? "")
       .join("") || "Downstream tool call failed"),
   );
+}
+
+/**
+ * Whether a failed attempt carries an answer from the other side: a typed
+ * `ConnectorCallError` (a connector classifies what it was told) or a
+ * downstream `isError`. An untyped throw is a transport or programming
+ * failure, and says nothing about whether the call landed.
+ */
+function answeredFailure(error: unknown): boolean {
+  return error instanceof ConnectorCallError ||
+    error instanceof DownstreamToolError;
 }
 
 export interface InvocationTiming {
@@ -151,11 +169,41 @@ interface InvocationBase {
   attempts: number;
   timing: InvocationTiming;
   resolved?: ResolvedCatalogTool;
+  /**
+   * `Connector.callTool` was actually invoked. `attempts` counts an admission
+   * attempt, which is not the same thing: a call refused at admission, or
+   * cancelled while queued, reached nothing downstream.
+   */
+  dispatched: boolean;
 }
 
 export type InvocationOutcome<T> =
   | (InvocationBase & { ok: true; value: T; resolved: ResolvedCatalogTool })
-  | (InvocationBase & { ok: false; error: CallErrorDetails });
+  | (InvocationBase & {
+      ok: false;
+      error: CallErrorDetails;
+      /**
+       * The dispatched attempt failed with an answer from the other side (a
+       * typed connector error or a downstream `isError`) rather than with
+       * silence. Absent when nothing was dispatched.
+       */
+      answered?: boolean;
+    });
+
+/**
+ * What a write gate decided about one consequential call. A dispatch goes on
+ * to admission and the connector; a refusal ends the call with `error`.
+ * `activity` says how the refusal is recorded: as an ordinary failed attempt
+ * (the default), as the payload-free `paused` event a pause leaves, or not at
+ * all — a call refused only because its run already stopped is not an attempt.
+ */
+export type WriteGateDecision =
+  | { kind: "dispatch" }
+  | {
+      kind: "refuse";
+      error: CallErrorDetails;
+      activity?: "paused" | "none";
+    };
 
 export interface InvocationContext<T> {
   source: ActivityCallSource;
@@ -180,9 +228,20 @@ export interface InvocationContext<T> {
   activityFriction?: (value: T) => AgentFriction | undefined;
   /**
    * Called after address/catalog/safety admission and before the first provider
-   * attempt. Code mode uses it for its host-call budget.
+   * attempt. Code mode uses it to mark a read's gate decision as made.
    */
   beforeDispatch?: () => void;
+  /**
+   * Decides a call that is not explicitly read-only, in place of the flat
+   * `destructive_tool_requires_approval` refusal. Only code mode with
+   * resumable writes supplies one. It runs after argument validation — a
+   * human is never asked to approve arguments the schema already rejects —
+   * and before admission, so a pause costs no permit.
+   */
+  writeGate?: (
+    target: ResolvedCatalogTool,
+    args: unknown,
+  ) => Effect.Effect<WriteGateDecision>;
 }
 
 export class InvocationFailure extends Error {
@@ -251,6 +310,10 @@ export class InvocationService {
       let connectorMs = 0;
       let resultProcessingMs = 0;
       let attempts = 0;
+      let dispatchedToConnector = false;
+      let answered = false;
+      // How a write gate's refusal is recorded; see WriteGateDecision.
+      let gateActivity: "paused" | "none" | undefined;
       let resolved: ResolvedCatalogTool | undefined;
       let activityTarget:
         | Pick<ResolvedCatalogTool, "connector" | "toolName">
@@ -267,7 +330,7 @@ export class InvocationService {
         totalMs: Date.now() - started,
       });
       const record = (
-        outcome: "success" | "error" | "timeout" | "cancelled",
+        outcome: "success" | "error" | "timeout" | "cancelled" | "paused",
         classification: { errorCode?: string; friction?: AgentFriction } = {},
       ) => {
         const identity = activityTarget
@@ -360,6 +423,24 @@ export class InvocationService {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
         const details = enrich(error, target);
+        const outcome = (): InvocationOutcome<T> => ({
+          ok: false,
+          durationMs: Date.now() - started,
+          attempts,
+          timing: diagnostics,
+          ...defined({ resolved }),
+          dispatched: dispatchedToConnector,
+          ...(dispatchedToConnector ? { answered } : {}),
+          error: details,
+        });
+        // A pause is not a failure: it leaves one payload-free `paused` event
+        // naming the call that waits, and nothing in the operator's log. A call
+        // refused only because its run had already stopped leaves neither.
+        if (gateActivity === "none") return outcome();
+        if (gateActivity === "paused") {
+          record("paused");
+          return outcome();
+        }
         // Activity rows stay payload-free by construction; the operator's log is
         // where the downstream reason goes, bounded and without arguments.
         if (target && details.code !== "destructive_tool_requires_approval") {
@@ -389,14 +470,7 @@ export class InvocationService {
               : "error",
           { errorCode: details.code },
         );
-        return {
-          ok: false,
-          durationMs: Date.now() - started,
-          attempts,
-          timing: diagnostics,
-          ...defined({ resolved }),
-          error: details,
-        };
+        return outcome();
       };
 
       if (context.requestSignal?.aborted) {
@@ -436,7 +510,9 @@ export class InvocationService {
           resolved = target;
           activityTarget = target;
 
-          if (!isExplicitlyReadOnly(target.definition) && !context.allowDestructive) {
+          const consequential =
+            !isExplicitlyReadOnly(target.definition) && !context.allowDestructive;
+          if (consequential && !context.writeGate) {
             const canonicalAddress = `${target.connector.id}.${target.toolName}`;
             return framingError(
               "destructive_tool_requires_approval",
@@ -468,6 +544,14 @@ export class InvocationService {
             if (invalid) return classifyCallError(invalid);
           }
 
+          if (consequential && context.writeGate) {
+            const decision = yield* context.writeGate(target, args ?? {});
+            if (decision.kind === "refuse") {
+              gateActivity = decision.activity;
+              return decision.error;
+            }
+          }
+
           try {
             context.beforeDispatch?.();
           } catch (error) {
@@ -497,6 +581,7 @@ export class InvocationService {
             }
             // Cancellation can arrive during admission or context construction.
             if (callSignal?.aborted) throw callSignal.reason;
+            dispatchedToConnector = true;
             return target.connector.callTool(
               target.toolName,
               args ?? {},
@@ -530,6 +615,7 @@ export class InvocationService {
           if (Exit.isFailure(attempt)) {
             if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
             const attemptError = Cause.squash(attempt.cause);
+            answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
               : classifyCallError(attemptError);
@@ -612,6 +698,7 @@ export class InvocationService {
           durationMs: Date.now() - started,
           attempts,
           timing: diagnostics,
+          dispatched: dispatchedToConnector,
         };
       } catch {
         return unprocessable();
