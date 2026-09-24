@@ -173,10 +173,11 @@ The walk, byte budgets, and truncation flags are compact's, each half
 separately, and search, describe, and every discovery route share them, so the
 same tool renders the same signature from `search_tools` and `connecta.search`.
 What changes is the dialect: `number` for `integer`, `;` between members,
-quoted non-identifier keys, `T[]` over a parenthesized union, `| null` for
-OpenAPI `nullable` and type lists, index signatures for schema-valued
-`additionalProperties`, `Record<string, unknown>` for an open object with no
-declared properties, and JSDoc for property prose where describe keeps it.
+quoted non-identifier keys, `| null` for OpenAPI `nullable` and type lists,
+index signatures for schema-valued `additionalProperties`,
+`Record<string, unknown>` for an open object with no declared properties, and
+JSDoc for property prose where describe keeps it. Both dialects parenthesize a
+union or intersection before an array suffix, `(A | B)[]`.
 Where compact would print a bare definition name or raw JSON, the signature
 prints `unknown` with a marker and sets the flag: `/* recursive */` for a
 `$ref` cycle, `/* unresolved */` for a missing target, `/* truncated */` past

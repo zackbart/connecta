@@ -2,6 +2,22 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Fixed
+
+- **Compact schemas group an array's union element.** The `compact` format,
+  the default for `search_tools` and `connecta.search`, rendered an array of a
+  union as `{ op: "replace" } | { op: "append" }[]`, which reads as one
+  operation or an array of the other; Linear `save_issue`'s `patch` was one
+  such array. A union, intersection, enum, or type list used as an array
+  element, a tuple's rest included, now renders parenthesized, as
+  `({ op: "replace" } | { op: "append" })[]`, matching the `typescript`
+  format. The renderer records which shapes it rendered at operator level
+  rather than rescanning its text, so a pipe in a literal, a constraint, or
+  property prose adds no parentheses, and every other shape renders byte for
+  byte as before (#569).
+
 ## 0.25.0 — 2026-09-23
 
 The Effect core is the release. Admission, deadlines, invocation,

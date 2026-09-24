@@ -14,6 +14,7 @@ import {
 } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { buildSandboxProviders } from "../src/execute.js";
 import {
   createMetaTools,
   jsonResult,
@@ -21,11 +22,13 @@ import {
   MAX_SEARCH_LIMIT,
 } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
+import { LINEAR_SAVE_ISSUE, PROVIDER_CORPUS } from "./fixtures/schema-corpus.js";
 import {
   required,
   calcConnector,
   makeRegistry,
   remoteConnector,
+  silentLogger,
 } from "./helpers.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
@@ -1621,6 +1624,122 @@ describe("compact schema rendering", () => {
     );
     expect(compactSchema({ type: ["string", "null"] })).toBe(
       "string | null",
+    );
+  });
+
+  // `A | B[]` reads as "an A, or an array of B" (#569): every shape that
+  // renders at operator level is grouped before an array suffix, in both
+  // compact routes, and nothing else gains parentheses.
+  it("groups a union or intersection before its array suffix", () => {
+    const replace = { type: "object", properties: { op: { const: "replace" } } };
+    const append = { type: "object", properties: { op: { const: "append" } } };
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [
+        { type: "object", properties: { patch: { type: "array", items: { anyOf: [replace, append] } } } },
+        '{ patch?: ({ op?: "replace" } | { op?: "append" })[] }',
+      ],
+      [
+        { type: "array", items: { type: "array", items: { oneOf: [replace, append] } } },
+        '({ op?: "replace" } | { op?: "append" })[][]',
+      ],
+      [
+        { type: "array", items: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "number" }] } },
+        "(string[] | number)[]",
+      ],
+      [{ type: "array", items: { type: ["string", "null"] } }, "(string | null)[]"],
+      [{ type: "array", items: { enum: ["a", "b"] } }, '("a" | "b")[]'],
+      [{ type: "array", items: { allOf: [replace, append] } }, '({ op?: "replace" } & { op?: "append" })[]'],
+      [
+        { type: "array", items: { anyOf: [replace, append], if: { required: ["op"] } } },
+        '({ op?: "replace" } | { op?: "append" } /* conditional */)[]',
+      ],
+      [
+        { $defs: { Both: { allOf: [replace, append] } }, type: "array", items: { $ref: "#/$defs/Both", minLength: 1 } },
+        '({ op?: "replace" } & { op?: "append" } /* length >= 1 */)[]',
+      ],
+      [
+        { prefixItems: [{ type: "string" }], items: { allOf: [replace, append] } },
+        '[string, ...({ op?: "replace" } & { op?: "append" })[]]',
+      ],
+    ];
+    for (const [schema, expected] of cases) {
+      expect(compactDiscoverySchema(schema).text).toBe(expected);
+      expect(compactSchema(schema)).toBe(expected);
+    }
+    // A union constrained as a whole is already grouped before its comment.
+    expect(
+      compactSchema({ type: "array", items: { anyOf: [{ type: "string" }, { type: "number" }], minLength: 1 } }),
+    ).toBe("(string | number) /* length >= 1 */[]");
+  });
+
+  it("groups by the shape rendered, not by a pipe in the text", () => {
+    // Pipes inside literals, constraints, names, and prose are not operators,
+    // and unbalanced prose brackets cannot hide one that is.
+    expect(compactSchema({ type: "array", items: { enum: ["a | b"] } })).toBe('"a | b"[]');
+    expect(compactSchema({ type: "array", items: { const: "a & b" } })).toBe('"a & b"[]');
+    expect(compactSchema({ type: "array", items: { type: "string", pattern: "a | b" } })).toBe(
+      'string /* pattern "a | b" */[]',
+    );
+    expect(compactSchema({ type: "array", items: { $ref: "#/$defs/A | B" } })).toBe("A | B[]");
+    expect(
+      compactSchema({
+        type: "array",
+        items: { type: "object", properties: { x: { type: "string", description: "1) a | 2) b" } } },
+      }),
+    ).toBe("{ x?: string // 1) a | 2) b }[]");
+    expect(
+      compactSchema({
+        type: "array",
+        items: {
+          oneOf: [
+            { type: "object", properties: { x: { type: "string", description: "b) c)" } } },
+            { type: "number" },
+          ],
+        },
+      }),
+    ).toBe("({ x?: string // b) c) } | number)[]");
+  });
+
+  it("groups Linear save_issue's patch operations identically in search_tools and connecta.search", async () => {
+    const corpus = connectorWith({
+      id: "corpus",
+      kind: "mcp",
+      tools: PROVIDER_CORPUS.map(({ address, input, output }) => ({
+        name: address.slice(address.indexOf(".") + 1),
+        inputSchema: input,
+        ...(output ? { outputSchema: output } : {}),
+        annotations: { readOnlyHint: true },
+      })),
+    });
+    const reg = makeRegistry([corpus]);
+    const topLevel = textOf(
+      await createMetaTools(reg, BASE).searchTools({ connector: "corpus", includeSchemas: "compact" }),
+    ) as SearchResult;
+    const providers = await buildSandboxProviders(reg, BASE, silentLogger);
+    const program = (await required(
+      required(providers.find((item) => item.name === "connecta")).fns.search,
+    )({ connector: "corpus", includeSchemas: "compact" })) as { tools: Array<Record<string, unknown>> };
+
+    const shapes = (rows: Array<Record<string, unknown>>) =>
+      rows.map(({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }) =>
+        ({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }));
+    const topRows = required(topLevel.connectors[0]).tools as Array<Record<string, unknown>>;
+    expect(topRows).toHaveLength(PROVIDER_CORPUS.length);
+    expect(shapes(program.tools)).toEqual(shapes(topRows));
+
+    const patch =
+      'patch?: ({ op: "replace", old_string: string /* length >= 1 */, new_string: string, replace_all?: boolean } | ' +
+      '{ op: "append", text: string /* length >= 1 */ })[], ';
+    const saveIssue = required(topRows.find((row) => row.address === "corpus.save_issue"));
+    expect(saveIssue.inputSchema).toContain(patch);
+    expect(compactSchema(LINEAR_SAVE_ISSUE)).toContain(
+      'patch?: ({ op: "replace", old_string: string /* length >= 1 */ // Exact text to replace., ',
+    );
+    // The same operations one array deeper stay grouped once, inside.
+    const patches = { type: "array", items: (LINEAR_SAVE_ISSUE.properties as Record<string, unknown>).patch };
+    expect(compactDiscoverySchema(patches).text).toBe(
+      '({ op: "replace", old_string: string /* length >= 1 */, new_string: string, replace_all?: boolean } | ' +
+        '{ op: "append", text: string /* length >= 1 */ })[][]',
     );
   });
 
