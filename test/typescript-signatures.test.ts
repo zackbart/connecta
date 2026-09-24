@@ -136,7 +136,7 @@ describe("TypeScript signatures over real provider schemas", () => {
     expect(text).toContain('expand?: "items.redemption"[]');
   });
 
-  it("groups a union before its array suffix, where compact does not", () => {
+  it("groups a union before its array suffix, as compact does", () => {
     const text = search(LINEAR_SAVE_ISSUE).text;
     expect(text).toContain(
       'patch?: ({ op: "replace"; old_string: string /* length >= 1 */; new_string: string; replace_all?: boolean } | { op: "append"; text: string /* length >= 1 */ })[];',

@@ -18,6 +18,12 @@ class SchemaWork {
   private remaining = MAX_SCHEMA_WORK;
   truncated = false;
   readonly refs = new Map<string, string>();
+  /**
+   * Renderings whose top level is a bare `|` or `&`, recorded as the walk
+   * produces them. Compact carries raw keys and `//` prose, so unlike the
+   * TypeScript dialect its text cannot be rescanned for a top-level operator.
+   */
+  readonly ungrouped = new Set<string>();
 
   constructor(readonly byteLimit = MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {}
 
@@ -541,7 +547,10 @@ function renderEnum(
     prefix.push(value);
     const full = prefix.join(" | ");
     if (schemaEncoder.encode(full).length > limit) break;
-    if (index === values.length - 1) return full;
+    if (index === values.length - 1) {
+      if (index > 0) work.ungrouped.add(full);
+      return full;
+    }
     const omitted = values.length - prefix.length;
     const candidate = `(${full} | ${marker(omitted)})`;
     if (schemaEncoder.encode(candidate).length <= limit) rendered = candidate;
@@ -733,6 +742,13 @@ function renderSchemaNode(
 ): string {
   const ts = options.typescript === true;
   const group = ts ? groupedType : grouped;
+  const ungrouped = options.work.ungrouped;
+  // A `[]` suffix binds tighter than `|` and `&`, so an element rendered at
+  // operator level needs parentheses or it reads as its last member's array.
+  const element = (rendered: string) =>
+    ts
+      ? groupedType(rendered)
+      : ungrouped.has(rendered) ? `(${rendered})` : rendered;
   if (depth > 4) {
     if (!ts) return "…";
     options.work.truncated = true;
@@ -757,15 +773,21 @@ function renderSchemaNode(
     return rendered === "unknown" ? rendered : `${rendered} | null`;
   }
 
-  const constrain = (rendered: string) =>
-    options.renderConstraints
-      ? renderConstraints(
-          rendered,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : rendered;
+  const constrain = (rendered: string) => {
+    if (!options.renderConstraints) return rendered;
+    const result = renderConstraints(
+      rendered,
+      s,
+      options.constraintByteLimit,
+      options.onConstraintTruncated,
+    );
+    // Constraints parenthesize a union before their comment but leave an
+    // intersection bare, and a comment does not group what precedes it.
+    if (ungrouped.has(rendered) && !result.startsWith(`(${rendered})`)) {
+      ungrouped.add(result);
+    }
+    return result;
+  };
 
   // Conditions cannot be expressed by a single static shape. Preserve the
   // base and send callers to the exact schema instead of hiding the rules.
@@ -781,7 +803,9 @@ function renderSchemaNode(
     const rendered = declaresShape(base)
       ? renderSchema(base, defs, seen, depth, options)
       : "unknown";
-    return `${rendered} /* conditional */`;
+    const result = `${rendered} /* conditional */`;
+    if (ungrouped.has(rendered)) ungrouped.add(result);
+    return result;
   }
 
   // allOf composes rather than replaces: it is checked before every other
@@ -810,7 +834,9 @@ function renderSchemaNode(
       parts.add(groupParts ? group(rendered) : rendered);
     }
     if (parts.length === 0) return "unknown";
-    return parts.finish();
+    const rendered = parts.finish();
+    if (parts.length > 1) ungrouped.add(rendered);
+    return rendered;
   }
 
   const reference = s.$ref ?? s.$dynamicRef;
@@ -849,6 +875,7 @@ function renderSchemaNode(
       parts.add(renderSchema(member, defs, seen, depth + 1, options));
     }
     const rendered = parts.finish() || "unknown";
+    if (parts.length > 1) ungrouped.add(rendered);
     return constrain(rendered);
   }
   if (Array.isArray(s.enum)) {
@@ -902,7 +929,7 @@ function renderSchemaNode(
       const rest = s.items === undefined || s.items === true
         ? "unknown"
         : renderSchema(s.items, defs, seen, depth + 1, options);
-      parts.add(`...${group(rest)}[]`);
+      parts.add(`...${element(rest)}[]`);
     }
     return parts.finish();
   }
@@ -910,7 +937,7 @@ function renderSchemaNode(
     const items = s.items
       ? renderSchema(s.items, defs, seen, depth + 1, options)
       : "unknown";
-    return ts ? `${groupedType(items)}[]` : `${items}[]`;
+    return `${element(items)}[]`;
   }
   if (type === "object" || s.properties) {
     const props = (s.properties ?? {}) as Record<string, unknown>;
@@ -977,6 +1004,7 @@ function renderSchemaNode(
       parts.add(options.work.text(String(item)));
     }
     const rendered = parts.finish();
+    if (parts.length > 1) ungrouped.add(rendered);
     return constrain(rendered);
   }
   if (options.renderConstraints && constraintEntries(s).length > 0) {
@@ -1172,6 +1200,7 @@ function boundedCompactSchema(
     // are memoized only within each pass because their text includes constraints.
     if (error === schemaSizeExceeded && !description) {
       work.refs.clear();
+      work.ungrouped.clear();
       try {
         return {
           text: renderSchema(schema, schema, new Set(), 0, {
