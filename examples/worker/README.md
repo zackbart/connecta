@@ -19,6 +19,7 @@ migrations, and secrets.
 | `src/d1-storage.ts` | `KVStorage` over D1 with atomic compare-and-set (optional; see below) |
 | `src/d1-activity.ts` | `ActivityStore` over D1 (deployment-owned; see below) |
 | `src/d1-activity-row.ts` | the row ↔ event mapping `d1-activity.ts` uses, including friction derived from `error_code` for rows written before that column existed |
+| `src/r2-artifact-blobs.ts` | artifact bodies in an R2 bucket, beside a D1-backed `kvArtifactStore` (optional) |
 | `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
 
 `cloudflare-kv.ts`, `d1-storage.ts`, and `d1-activity.ts` deliberately live

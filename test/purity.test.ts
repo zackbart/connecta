@@ -107,9 +107,17 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     expect(graph.has(quickJsExecutor)).toBe(false);
     expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
-    for (const file of ["ui.ts", "operator-ui/generated.ts", "credentials.ts", "activity.ts", "auth/bearer.ts"]) expect(graph.has(join(SRC, file)), file).toBe(false);
+    for (const file of ["ui.ts", "operator-ui/generated.ts", "credentials.ts", "activity.ts", "auth/bearer.ts", "artifacts.ts"]) expect(graph.has(join(SRC, file)), file).toBe(false);
     const withUi = importGraph(join(SRC, "ui.ts"));
-    for (const file of ["credentials.ts", "activity.ts", "routes/activity.ts"]) expect(withUi.has(join(SRC, file)), `UI imports ${file}`).toBe(false);
+    for (const file of ["credentials.ts", "activity.ts", "routes/activity.ts", "artifacts.ts"]) expect(withUi.has(join(SRC, file)), `UI imports ${file}`).toBe(false);
+    // The artifacts module is one subpath: nothing of it rides the root entry,
+    // and the operator UI reaches artifact pages only through their JSON API.
+    const artifactFiles = readdirSync(join(SRC, "artifacts")).filter((file) => file.endsWith(".ts"));
+    expect(artifactFiles.length).toBeGreaterThan(0);
+    for (const file of artifactFiles) {
+      expect(graph.has(join(SRC, "artifacts", file)), `root reaches artifacts/${file}`).toBe(false);
+      expect(withUi.has(join(SRC, "artifacts", file)), `UI imports artifacts/${file}`).toBe(false);
+    }
   });
 
   it("never imports this package by its own name", () => {

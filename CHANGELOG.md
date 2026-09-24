@@ -86,6 +86,18 @@ the page can ignore it.
   `ALTER TABLE tool_call_activity ADD COLUMN approval TEXT;` before deploying
   the updated adapter. The operator activity page labels both outcomes and
   says what an approval covered.
+- **Artifact storage and validation, at `@zackbart/connecta/artifacts`
+  (#562).** `kvArtifactStore(storage, { blobs?, prefix? })` keeps artifacts
+  in any `KVStorage` with `compareAndSet` and `list` — one head record per
+  artifact, swapped by compare-and-set, with every earlier version immutable
+  beside it and bodies content-addressed — and refuses Cloudflare Workers KV
+  at construction, because a write that cannot compare-and-set its head can
+  lose a teammate's edit. `validateArtifact({ kind, source, documents? })` is
+  the static check every save runs: one `id="artifact-root"`, no frames,
+  plugins, forms, or `<base>`, scripts only from an allowlisted CDN origin, no
+  relative or network resource URLs, with a line number and a fix in every
+  message. The Worker example gains `r2-artifact-blobs.ts` for keeping bodies
+  in R2 beside a D1 store. The subpath adds no dependency and no Effect.
 
 ### Changed
 

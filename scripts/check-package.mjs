@@ -263,6 +263,9 @@ try {
     "dist/providers/cloudflare.d.ts",
     "dist/providers/vercel.js",
     "dist/providers/vercel.d.ts",
+    "dist/artifacts.js",
+    "dist/artifacts.d.ts",
+    "examples/worker/src/r2-artifact-blobs.ts",
   ]) {
     if (!paths.has(required)) {
       throw new Error(`Packed artifact is missing ${required}`);
@@ -467,7 +470,17 @@ if (vercelConnection.id !== "hosting" || vercelConnection.kind !== "api") {
 if (!vercelConnection.staticTools?.length) {
   throw new Error("Vercel provider published no tools");
 }
+const artifactsModule = await import("@zackbart/connecta/artifacts");
+if (typeof artifactsModule.kvArtifactStore !== "function") {
+  throw new Error("missing kvArtifactStore");
+}
+if (!artifactsModule.validateArtifact({ kind: "markdown", source: "# smoke" }).ok) {
+  throw new Error("packed validateArtifact refused a valid page");
+}
 for (const name of [
+  "kvArtifactStore",
+  "validateArtifact",
+  "artifacts",
   "clerkAuth",
   "cloudflareApi",
   "cloudflareKvStorage",

@@ -104,7 +104,7 @@ describe("public package boundary", () => {
     expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(
       [
         ".",
-        "./ui", "./credentials", "./activity", "./auth/bearer",
+        "./ui", "./credentials", "./activity", "./auth/bearer", "./artifacts",
         "./package.json",
         "./node",
         "./json-schema",
