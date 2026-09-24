@@ -314,8 +314,8 @@ would be another partition's.
 | Admission (`executor-admission.ts`, `call-admission.ts`) | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires. |
 | One tool call (`invocation.ts`) | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`. |
 | `execute_code` (`execute.ts`) | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own. |
-| Discovery (`catalog-service.ts`) | A request-scoped cache: one Deferred per connector, completed by the first asker's read from that read's own settlement, so a probe deadline ends one asker's wait and never the read the others share. Fan-out is `Effect.forEach` under the discovery concurrency. |
-| Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes; persisted-catalog writes take per-connector turns, each a Deferred its own request completes. |
+| Discovery (`catalog-service.ts`) | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency. |
+| Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes, bounded by its owner's deadline (the default probe timeout when it has none); persisted-catalog writes take per-connector turns, each a Deferred its own request completes. Same-request loads share one read the way discovery's do. |
 | Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |
 | Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred; the owner's redemption is a fiber its abort interrupts, and committing an answer that already exists is uninterruptible. |
 | Operator and activity data (`routes/operator.ts`) | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation. |
@@ -371,6 +371,20 @@ One corollary is easy to break by tidying. Workerd cancels a request as hung
 when its only pending work is waiting on another request and it has no timer or
 I/O of its own. Connecta's deadline timers are what keep a waiting request
 alive and bounded, so no wait may lose its timer.
+
+**A shared flight has a lifetime of its own.** A catalog refresh flight runs in
+its owner's request, under its owner's scope and signal, and lives only as long
+as its owner's deadline. Past that the owner may have answered and gone, taking
+its I/O with it on workerd, and a connector that ignores its abort signal would
+otherwise hold every later reader on a flight nothing will ever settle. So each
+joiner waits on its own timer, set to the flight's bound: when it fires, the
+joiner abandons the flight and makes a fresh attempt, and a reader that arrives
+after the bound starts one without joining. Joiners also leave when the owner
+fails for a reason that was only its own, such as its cancellation, rather than
+inheriting it. A flight's result enters the caches only while the flight is
+current, checked at the same points as the catalog generation, so a stuck
+listing that lands late is never cached or persisted and never overwrites the
+fresh attempt's.
 
 ### Why not Schema or HttpApi
 

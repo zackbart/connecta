@@ -39,6 +39,28 @@ the page can ignore it.
   property prose adds no parentheses, and every other shape renders byte for
   byte as before (#569).
 
+- **A catalog refresh whose connector ignores abort held every later reader.**
+  A refresh flight lived until its connector settled, so a `listTools` that
+  ignored its signal kept the flight open until the catalog was invalidated,
+  and every reader that joined it timed out in turn while the connector stayed
+  unlisted. A flight is now bounded by its owner's deadline, or by the default
+  30-second probe timeout for an owner with none. Past it, readers still
+  waiting and readers arriving later make a fresh attempt, and a late result
+  from the abandoned flight is neither cached nor persisted, so it cannot
+  overwrite the fresh one. Abandonment logs a warning
+  ([#570](https://github.com/zackbart/connecta/issues/570)).
+- **A joined catalog read ended on its starter's deadline.** Readers of one
+  catalog in a request share one read, and that read ran under whichever
+  reader started it. A short-deadline `connecta.call` that started it failed a
+  concurrent `connecta.search` with the call's timeout, and a search cancelled
+  by its client cancelled a read others were still waiting on. The shared read
+  now carries its own signal and the probe timeout. Each reader waits under its
+  own deadline and cancellation, one that leaves fails alone, and the read is
+  cancelled only when every reader has gone. It is still one downstream read
+  per connector per request. The registry's cross-request refresh no longer
+  hands its owner's cancellation to joiners, which make a fresh attempt instead
+  ([#571](https://github.com/zackbart/connecta/issues/571)).
+
 ## 0.25.0 — 2026-09-23
 
 The Effect core is the release. Admission, deadlines, invocation,
