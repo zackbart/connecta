@@ -44,6 +44,7 @@ export const WORKERS_SUITES = [
   "test/notion-provider.test.ts",
   "test/operator-boundary.test.ts",
   "test/operator-fix-prompts.test.ts",
+  "test/operator-routes.test.ts",
   "test/operator-store.test.ts",
   "test/operator-ui-model.test.ts",
   "test/operator-view.test.ts",

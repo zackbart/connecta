@@ -237,8 +237,8 @@ fan-out, connector scope close, OAuth refresh coordination, catalog
 persistence, catalog refresh flights, the result stash, the remote MCP
 connection lifecycle, discovery's request-scoped catalog cache, the
 single-call invocation pipeline, the `execute_code` run with its sandbox
-host calls, and the request pipeline itself run on Effect v4; the operator
-and activity routes have not moved yet.
+host calls, the request pipeline itself, and the operator and activity data
+routes run on Effect v4.
 Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
@@ -313,14 +313,35 @@ or is cancelled, or when the signal aborts — or at once, if the handler fails
 or is interrupted first. That is what bounds a request stalled in inbound
 auth, a pool grant, or a tool handler that ignores cancellation: before, its
 permit waited on a body that would never come. Inbound authorization stays
-a Promise the fiber awaits, since the `/activity` module shares it and an
-Effect version would ship Effect in that bundle. A discovery probe takes the
-request's signal, so `search_tools` stops listing once its caller has gone.
+a Promise the fiber awaits: `authorize` is named in the shipped
+declarations, and every route awaits it the same way. A discovery probe takes
+the request's signal, so `search_tools` stops listing once its caller has gone.
 The OAuth callback is the one step that is deliberately uninterruptible: an
 authorization code is single-use, and a caller that hangs up mid-exchange
 must not leave fresh tokens behind a catalog still cached as unauthorized.
 Nothing here runs on the Connecta's runtime, because `/health` and a closed
 deployment's 503 must keep answering after `close()` disposes it.
+
+The operator surface and the activity module keep their Promise `handle()`,
+which returns `null`, running no route, for a path the surface does not own.
+Behind it, each JSON route under `/ui/*` is one Effect program run by
+`serveOperator` (`src/routes/operator.ts`). A route that settles its answer
+early — a refusal, or an auth provider's own challenge — fails with that
+exact Response and the edge serves it, so every status, body, and header is
+still the one `privateJson` or the provider built. Reads run under the
+request's signal, so a reader who leaves stops the connector probes and
+activity-label lookups it was waiting on. Writes run without it: a vault
+write or an OAuth disconnect that has started must reach the cache
+invalidation behind it whether or not anyone is still waiting. Connection
+details fan out with `Effect.forEach` under the discovery concurrency, each
+row under one `withDeadlineEffect` and closing its connector scope as the row
+ends; activity labels resolve eight at a time under one page budget. The HTML
+shells and favicons stay plain handlers. Effect's `HttpApi` was measured for
+these routes and not used: it cost about 100 KB gzip on `./ui` and 130 KB on
+`./activity`, mostly Schema, and matching the wire format meant opting out of
+most of what it does — unowned paths fall through rather than 404, a wrong
+method is a JSON 405, and the content-type and size checks run before a body
+is read.
 
 Work shared across requests meets only through a Deferred that the owning
 request completes, never through a fiber that outlives its request. Waiting

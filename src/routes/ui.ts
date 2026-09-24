@@ -1,19 +1,28 @@
+import { Effect } from "effect";
 import { CONNECTA_VERSION } from "../version.js";
 import { CONNECTA_FAVICON_ICO } from "../favicon.js";
+import type { RegistryView } from "../registry.js";
+import type { Connector } from "../types.js";
 import {
-  buildUiData,
   CONNECTA_FAVICON_SVG,
   operatorPageForPath,
   renderUiHtml,
 } from "../ui.js";
 import {
-  authorize,
+  authorized,
+  refuse,
+  scopeFor,
+  serveOperator,
+  visibleRegistry,
+  type Answer,
+  type Authorized,
+} from "./operator.js";
+import {
   mayManageConnector,
-  validateAuthPermissions,
-  msg,
   privateJson,
   type RouteContext,
 } from "./shared.js";
+import { uiData } from "./ui-data.js";
 
 /**
  * Headers that make an operator-supplied favicon body inert on this origin.
@@ -55,7 +64,7 @@ function uiScriptNonce(): string {
 export async function routeUi(
   context: RouteContext,
 ): Promise<Response | null> {
-  const { request, url, path, baseUrl, opts, defer, runtimeContext } = context;
+  const { request, url, path, baseUrl, opts, runtimeContext } = context;
   if (request.method === "GET" && path === "/favicon.svg") {
     return new Response(opts.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
       headers: {
@@ -128,30 +137,22 @@ export async function routeUi(
   const detail = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(path);
   if (path !== "/ui/data" && !detail) return null;
   if (request.method !== "GET") return privateJson({ error: "method not allowed" }, { status: 405 });
-
-  const authz = await authorize(
-    request,
-    baseUrl,
-    opts.auth,
-    runtimeContext,
-    opts.identity,
+  // Reads: a caller who leaves stops whatever the payload was waiting on.
+  return serveOperator(
+    detail ? connectorDetail(context, detail[1]!) : summary(context),
+    request.signal,
   );
-  if (!authz.ok) return authz.response;
-  let registry;
-  try {
-    validateAuthPermissions(authz, opts.registry);
-    registry = opts.registry.scoped({
-      connectorIds: authz.connectorIds,
-      ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}),
-      ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
-      ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
-    });
-  } catch (error) {
-    return privateJson({ error: msg(error) }, { status: 403 });
-  }
+}
+
+/** What this identity may see and do, for the summary and a detail alike. */
+function operatorView(
+  { opts }: RouteContext,
+  authz: Authorized,
+  registry: RegistryView,
+) {
   const visible = registry.listConnectors();
   const mayManage = (id: string) => { const connector = registry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); };
-  const permissions = (connector: typeof visible[number]) => ({
+  const permissions = (connector: Connector) => ({
     use: true,
     manageSharedAuth: connector.authScope !== "personal" && mayManage(connector.id),
     connectPersonal: connector.authScope === "personal" && mayManage(connector.id),
@@ -160,31 +161,72 @@ export async function routeUi(
   const credentialManagement = visible.some(c => c.credential && mayManage(c.id))
     ? opts.credentialVault ? "available" as const : "vault_not_configured" as const
     : authz.identity.interactive && !visible.some(c => c.credential) ? "no_slots" as const : "requires_operator" as const;
-  if (detail) {
-    const connector = registry.getConnector(detail[1]!);
-    if (!connector) return privateJson({ error: "unknown connector" }, { status: 404 });
-    const one = opts.registry.scoped({ connectorIds: [connector.id], ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}), ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}), ...(authz.principalKey ? { principalKey: authz.principalKey } : {}) });
-    const data = await buildUiData(one, baseUrl, opts.serverInfo, opts.credentialVault, activityEnabled, credentialManagement, defer, false, 1, authz.principalKey, { mayManage, timeoutMs: opts.probeTimeoutMs ?? 30_000, signal: request.signal });
+  return { visible, mayManage, permissions, activityEnabled, credentialManagement };
+}
+
+/** One connector's probed row, the page's second request per card. */
+function connectorDetail(
+  context: RouteContext,
+  id: string,
+): Effect.Effect<Response, Answer> {
+  const { request, baseUrl, opts, defer } = context;
+  return Effect.gen(function* () {
+    const authz = yield* authorized(context);
+    const registry = yield* visibleRegistry(context, authz);
+    const { mayManage, permissions, activityEnabled, credentialManagement } =
+      operatorView(context, authz, registry);
+    const connector = registry.getConnector(id);
+    if (!connector) return yield* refuse("unknown connector", 404);
+    const data = yield* uiData(
+      opts.registry.scoped(scopeFor(authz, [connector.id])),
+      baseUrl,
+      {
+        serverInfo: opts.serverInfo,
+        credentialVault: opts.credentialVault,
+        activityEnabled,
+        credentialManagement,
+        defer,
+        oauthManagement: false,
+        discoveryConcurrency: 1,
+        personalCredentialOwner: authz.principalKey,
+        mayManage,
+        timeoutMs: opts.probeTimeoutMs ?? 30_000,
+        signal: request.signal,
+      },
+    );
     return privateJson({ ...data.connectors[0], permissions: permissions(connector) });
-  }
-  // Setup commands are offered per pool, but only for pools this identity's
-  // grant admits: `/mcp/<name>` answers every other name with one flat 404 so
-  // a credential cannot enumerate them, and the page must not undo that.
-  const pools: string[] = [];
-  for (const [name, pool] of opts.pools ?? []) {
-    try {
-      if ((await pool.grant(authz.identity)) === true) pools.push(name);
-    } catch {
-      // A throwing grant is a refusal at the endpoint, and so a refusal here.
+  });
+}
+
+/** The summary: every visible connector as "loading", with no probe at all. */
+function summary(context: RouteContext): Effect.Effect<Response, Answer> {
+  const { opts } = context;
+  return Effect.gen(function* () {
+    const authz = yield* authorized(context);
+    const registry = yield* visibleRegistry(context, authz);
+    const { visible, mayManage, permissions, activityEnabled, credentialManagement } =
+      operatorView(context, authz, registry);
+    // Setup commands are offered per pool, but only for pools this identity's
+    // grant admits: `/mcp/<name>` answers every other name with one flat 404 so
+    // a credential cannot enumerate them, and the page must not undo that.
+    const pools: string[] = [];
+    for (const [name, pool] of opts.pools ?? []) {
+      const granted = yield* Effect.tryPromise(
+        async () => (await pool.grant(authz.identity)) === true,
+      ).pipe(
+        // A throwing grant is a refusal at the endpoint, and so a refusal here.
+        Effect.orElseSucceed(() => false),
+      );
+      if (granted) pools.push(name);
     }
-  }
-  return privateJson({
-    ...(pools.length ? { pools } : {}),
-    serverInfo: opts.serverInfo,
-    connectaVersion: CONNECTA_VERSION,
-    activityEnabled,
-    credentialManagement,
-    oauthManagement: visible.some(c => mayManage(c.id)),
-    connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),
+    return privateJson({
+      ...(pools.length ? { pools } : {}),
+      serverInfo: opts.serverInfo,
+      connectaVersion: CONNECTA_VERSION,
+      activityEnabled,
+      credentialManagement,
+      oauthManagement: visible.some(c => mayManage(c.id)),
+      connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),
+    });
   });
 }
