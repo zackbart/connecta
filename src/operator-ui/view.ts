@@ -84,6 +84,76 @@ export function failure(message: string, fix?: NoticeFix): Notice {
 }
 
 /**
+ * What the notices for an OAuth action and a credential Test say. Each of
+ * those actions reaches a downstream, and a downstream's refusal can quote the
+ * secret it was sent — so these notices are fixed sentences chosen by outcome,
+ * and no text the server sent back is ever one of them. The route logs the
+ * downstream's words on the host; the fix prompt beside a failure is keyed off
+ * the same outcome.
+ */
+export type DownstreamAction = "oauth_disconnect" | "oauth_reconnect" | "credential_test";
+
+const REFUSED_COPY: Readonly<Record<DownstreamAction, string>> = {
+  oauth_disconnect:
+    "OAuth disconnect failed. If the downstream refused it, the deployment's log has its reply.",
+  oauth_reconnect:
+    "OAuth authorization could not restart. If the downstream refused it, the deployment's log has its reply.",
+  credential_test: "The credential test could not run.",
+};
+
+/** The route's answer to a finished OAuth action. Its state picks the sentence. */
+export function oauthDoneNotice(
+  action: "oauth_disconnect" | "oauth_reconnect",
+  answer: { state?: unknown } | null,
+): Notice {
+  if (action === "oauth_disconnect") {
+    return info("OAuth disconnected. Restart authorization when you are ready to reconnect.");
+  }
+  return info(
+    answer?.state === "ok"
+      ? "OAuth reconnected."
+      : "Authorization restarted. Open the authorization link to reconnect.",
+  );
+}
+
+/** A credential Test's result. `ok` is the only part of the answer it reads. */
+export function credentialTestNotice(
+  connectorId: string,
+  answer: { ok?: unknown } | null,
+): Notice {
+  return answer?.ok === true
+    ? info("Credential is valid.")
+    : failure(
+        "Credential test failed: the downstream rejected the stored credential, or the test could not reach it. The deployment's log has the downstream's reply.",
+        { kind: "credential_test_failed", connectorId },
+      );
+}
+
+/**
+ * A route that refused one of these actions. A credential Test that found
+ * nothing usable to test names the problem, which picks the same copy and fix
+ * prompt the Connections page uses for it; every other refusal gets the
+ * action's one sentence. `problem` is whatever the response carried, so it is
+ * checked, not trusted.
+ */
+export function refusedNotice(
+  action: DownstreamAction,
+  connectorId: string,
+  problem?: unknown,
+): Notice {
+  if (
+    action === "credential_test" &&
+    (problem === "credential_required" || problem === "credential_mismatch")
+  ) {
+    return failure(PROBLEM_COPY[problem], { kind: problem, connectorId });
+  }
+  return failure(REFUSED_COPY[action], {
+    kind: action === "credential_test" ? "credential_test_failed" : "oauth_action_failed",
+    connectorId,
+  });
+}
+
+/**
  * A remote collection's four states, named once so every page spells them the
  * same way. `idle` is "nobody has asked yet" and is what makes a re-entered
  * page fetch again after an identity change.

@@ -21,7 +21,7 @@ function oauthManagementRequest(
   context: RouteContext,
   connectorId: string,
 ): Effect.Effect<Response, Answer> {
-  const { request, baseUrl, defer } = context;
+  const { request, baseUrl, defer, opts } = context;
   return Effect.gen(function* () {
     if (!isSameOrigin(request, baseUrl)) {
       return yield* refuse("same-origin request required", 403);
@@ -74,10 +74,31 @@ function oauthManagementRequest(
         catch: (error) => error,
       }),
     );
+    // Every failure below answers in the route's own fixed words. A hook's
+    // rejection and a status message can quote a token endpoint's error body
+    // or a provider's refusal, either of which can quote the secret it was
+    // sent, so that text goes to the deployment's log and nowhere else.
+    const failed = (detail: string, fixed: string, status: number) => {
+      opts.logger.warn(
+        `[connecta] connector "${connectorId}" OAuth ${disconnecting ? "disconnect" : "restart"} failed: ${detail}`,
+      );
+      return refuse(fixed, status);
+    };
+    const couldNot = disconnecting
+      ? "OAuth disconnect failed"
+      : "OAuth authorization could not start";
     // A Result, not a caught value, decides whether it failed: a hook that
     // rejects with no reason at all still failed.
-    if (Result.isFailure(operation)) return yield* refuse(msg(operation.failure), 400);
-    if (Result.isFailure(invalidated)) return yield* refuse(msg(invalidated.failure), 400);
+    if (Result.isFailure(operation)) {
+      return yield* failed(msg(operation.failure), couldNot, 400);
+    }
+    if (Result.isFailure(invalidated)) {
+      return yield* failed(
+        `stored-state invalidation: ${msg(invalidated.failure)}`,
+        couldNot,
+        400,
+      );
+    }
 
     const result = operation.success;
     if (!result) {
@@ -93,21 +114,23 @@ function oauthManagementRequest(
       ? result.authorizationUrl
       : undefined;
     if (result.state === "error") {
-      return yield* refuse(
-        result.message || "OAuth authorization could not start",
+      return yield* failed(
+        result.message || "the connector reported an error state",
+        couldNot,
         502,
       );
     }
     if (result.state === "auth_required" && !authorizationUrl) {
-      return yield* refuse(
-        result.message ||
-          "OAuth authorization requires consent but no safe URL is available",
+      return yield* failed(
+        result.message || "consent is required but no safe authorization URL was returned",
+        "OAuth authorization requires consent but no safe URL is available",
         502,
       );
     }
+    // No message: a status message is the same text the Connections page
+    // stopped shipping, and the state and the link are the whole answer.
     return privateJson({
       state: result.state,
-      ...(result.message ? { message: result.message } : {}),
       ...(authorizationUrl ? { authorizationUrl } : {}),
     });
   }).pipe(Effect.scoped);

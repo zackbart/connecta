@@ -658,7 +658,7 @@ describe("status UI", () => {
 
     expect(disconnected.status).toBe(400);
     await expect(disconnected.json()).resolves.toEqual({
-      error: "provider cleanup failed",
+      error: "OAuth disconnect failed",
     });
     expect(await storage.get("catalog:oauth")).toBeNull();
   });
@@ -770,7 +770,7 @@ describe("status UI", () => {
     );
     expect(restarted.status).toBe(502);
     await expect(restarted.json()).resolves.toEqual({
-      error: "downstream unavailable",
+      error: "OAuth authorization could not start",
     });
     expect(closeScope).toHaveBeenCalledTimes(2);
 

@@ -171,6 +171,11 @@ export interface ConnectorCredentialConfig {
 
 export interface CredentialTestResult {
   ok: boolean;
+  /**
+   * Detail for the deployment's log. The operator page shows fixed copy for
+   * `ok` and never this text, since a downstream's reply quoted here can
+   * quote the credential it rejected.
+   */
   message?: string;
 }
 

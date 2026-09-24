@@ -203,7 +203,10 @@ provider leaves the other connections usable. A connector's status message
 never reaches the page: it can quote a downstream error body, and that body can
 quote the secret it rejected, so the details payload carries only a classified
 `problem` — which picks fixed on-screen copy and a fixed fix prompt — and the raw
-text goes to the server log. Credential handoff URLs exist only while the UI is
+text goes to the server log. The OAuth and credential Test notices keep the
+same rule: those routes answer a downstream's failure in fixed words (a Test
+answers only `{ ok }`), log its text, and the page picks a sentence by outcome
+without ever rendering what the server sent. Credential handoff URLs exist only while the UI is
 mounted; OAuth callbacks never need it.
 
 Its appearance is one token layer. `src/operator-ui/browser.css` resolves every

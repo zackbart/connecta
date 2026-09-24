@@ -173,11 +173,23 @@ function credentialRequest(
         );
       }
       // Whatever goes wrong past this point is the test's result, not the
-      // route's: the page shows it beside the Test button.
+      // route's: the page shows it beside the Test button. Only `ok` leaves
+      // the host. A hook's message, and anything it throws, can quote the
+      // downstream's reply, and that reply can quote the credential it just
+      // rejected — so the text goes to the deployment's log and the page
+      // says a fixed sentence for the outcome instead.
+      const logged = (ok: boolean, detail: string | undefined) => {
+        if (!detail) return;
+        const line = `[connecta] connector "${connectorId}" credential test ${ok ? "passed" : "failed"}: ${detail}`;
+        if (ok) opts.logger.info(line);
+        else opts.logger.warn(line);
+      };
       return yield* Effect.tryPromise({
         try: async () => {
           const values = await vault.getAll(connectorId, owner);
           const shape = storedCredentialShape(credential, values);
+          // Both refusals are the route's own words, and each carries the
+          // problem kind the page keys its copy and fix prompt off.
           if (shape.state === "missing") {
             return privateJson(
               {
@@ -185,30 +197,37 @@ function credentialRequest(
                   mode === "multiple"
                     ? "configure the credentials before testing them"
                     : "configure the credential before testing it",
+                problem: "credential_required",
               },
               { status: 409 },
             );
           }
           if (shape.state === "mismatch") {
-            return privateJson({ error: shape.message }, { status: 409 });
+            return privateJson(
+              { error: shape.message, problem: "credential_mismatch" },
+              { status: 409 },
+            );
           }
           const storedValues = values!;
           const ctx = registry.contextFor(connectorId, baseUrl);
-          return privateJson(
+          const result =
             mode === "multiple"
               ? await connector.testCredentials!(storedValues, ctx)
               : await connector.testCredential!(
                   // The single-value shape check above guarantees this key.
                   storedValues.value!,
                   ctx,
-                ),
-          );
+                );
+          const ok = result?.ok === true;
+          logged(ok, result?.message);
+          return privateJson({ ok });
         },
         catch: (error) => error,
       }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed(privateJson({ ok: false, message: msg(error) })),
-        ),
+        Effect.catch((error) => {
+          logged(false, msg(error));
+          return Effect.succeed(privateJson({ ok: false }));
+        }),
       );
     }
 

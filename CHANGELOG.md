@@ -4,7 +4,28 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+The operator page's last route for downstream error text is closed. What
+changes on the wire: `POST` and `DELETE /ui/oauth/<id>` answer a failure in
+fixed words and a success without `message`, and `POST
+/ui/credentials/<id>/test` answers only `{ ok }`, so a script that read those
+fields finds the text in the server log instead. A deployment that only uses
+the page can ignore it.
+
 ### Fixed
+
+- **Operator notices no longer render downstream error text**
+  ([#568](https://github.com/zackbart/connecta/issues/568)). The OAuth
+  connect/disconnect notice and the credential Test result showed whatever the
+  server sent back, and that text can come from a token endpoint's error body or
+  a provider's refusal, either of which can quote the secret it was sent. Each
+  notice now says a fixed sentence chosen by outcome, with the fix prompt for
+  that outcome, and the page never renders a route's words there even if an
+  older server sends them. The routes log the downstream's text instead — a
+  failed OAuth action or credential test at `warn`, a passing test's message at
+  `info` — and never record it in activity. A `CredentialTestResult.message` is
+  now log-only, and a Test refused because nothing usable is stored carries the
+  same `credential_required` or `credential_mismatch` problem the Connections
+  page shows.
 
 - **Compact schemas group an array's union element.** The `compact` format,
   the default for `search_tools` and `connecta.search`, rendered an array of a
