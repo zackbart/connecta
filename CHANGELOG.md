@@ -112,6 +112,17 @@ by 0.24 keep paging until they expire.
   Per-connector overrides and validation are unchanged, and a deployment whose
   clients take more can raise the cap. A result between 24,000 and 50,000
   bytes that used to arrive whole now pages.
+- **A truncated read offers a program before paging.** The notice on an
+  explicitly read-only call now says: to find something specific, repeat the
+  read inside `execute_code` with `connecta.call` and filter or search it
+  there; to read it in full, page with `get_result`. It used to name paging
+  alone, and once the handle was visible the eval's Haiku paged a 185 KB CI
+  log 24,000 bytes at a time, skipped ranges or stopped after two pages, and
+  named the flaky test near the top in all three trials. With the new hint it
+  reduced the log in a program and found the real failure in three of three,
+  at about a third of the cost per trial. A write's notice is unchanged, since
+  repeating a write is what it forbids, and `nextAction` is still the page
+  handle for both.
 - **`get_result` pages are raw text.** A page is one text block: a JSON header
   (`resultId`, `offset`, `bytes`, `totalBytes`, `hasMore`, `nextAction`), a
   newline, then the page as stored, where it used to be
@@ -225,6 +236,13 @@ by 0.24 keep paging until they expire.
 - **Operator routes.** A credential PUT read its whole body before the
   20,000-character check; reading now stops past 60,000 bytes with the same
   413. An OAuth disconnect that rejected with no reason reported 204.
+- A program ending in `};` failed on QuickJS with `SyntaxError: expecting ')'`,
+  because both executors evaluate a program inside parentheses; on a Dynamic
+  Worker it failed the same way or, with a comment after it, quietly returned
+  `undefined`. `execute_code` now drops semicolons that trail the arrow
+  expression, with whitespace and comments after them, before either executor
+  sees the program. Anything else stays as written, so `async () => 1; 2` is
+  still more than one expression (code mode `P1`).
 - A scoped `connecta.search` whose probe timed out named `search_tools` in
   `queryAnalysis.catalogError`, a tool a program cannot call.
 - Recovery text for a missing or rejected static credential sent operators and
