@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { Cause, Duration, Effect, Exit, type Scope } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
+import { advertisedSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
   CatalogService,
@@ -1128,6 +1129,25 @@ Read relevant guides using top-level skills, not sandbox code. Write a plain-Jav
 
 No portable ambient capabilities. Return reduced JSON. If a provider result has an unfamiliar shape, return a small sample and continue in another call; never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
 
+// Module scope, like the other six meta-tool inputs: its JSON Schema is
+// derived once per process. Budgets and connectors vary by deployment and
+// view, so they live in the description, never here.
+const EXECUTE_INPUT = advertisedSchema(
+  z.object({
+    code: z
+      .string()
+      .describe(
+        "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer.",
+      ),
+    diagnostics: z
+      .boolean()
+      .optional()
+      .describe(
+        "Add request-local, payload-free timing and result-size summaries.",
+      ),
+  }),
+);
+
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(
   server: McpServer,
@@ -1204,19 +1224,7 @@ export function registerExecuteTool(
         hasConnectorGuides(connectors),
         connectors,
       ),
-      inputSchema: z.object({
-        code: z
-          .string()
-          .describe(
-            "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer.",
-          ),
-        diagnostics: z
-          .boolean()
-          .optional()
-          .describe(
-            "Add request-local, payload-free timing and result-size summaries.",
-          ),
-      }),
+      inputSchema: EXECUTE_INPUT,
       // This hint describes connector calls, all explicitly read-only. The
       // supported executor constructions deny outbound access, filesystem,
       // and deployment config; X5 documents Dynamic runtime modules separately.

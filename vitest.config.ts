@@ -37,6 +37,7 @@ export const WORKERS_SUITES = [
   "test/linear-provider.test.ts",
   "test/meta-tools-call.test.ts",
   "test/meta-tools-search.test.ts",
+  "test/meta-tool-schema-cache.test.ts",
   "test/meta-tool-schemas.test.ts",
   "test/meta-tools.test.ts",
   "test/mixpanel-provider.test.ts",
