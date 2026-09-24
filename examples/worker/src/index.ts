@@ -103,6 +103,22 @@ function build(env: Env) {
     // connector like `notion()`, which declares its own) and the form appears
     // on the next load.
     vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
+    // Branding is code too: name, owner, description, favicon, and five theme
+    // tokens that every other color is mixed from. A value that fails its
+    // check falls back to the default, and the startup warning names it.
+    // ui: operatorUi({
+    //   branding: {
+    //     productName: "Acme Tools",
+    //     ownerName: "Acme",
+    //     theme: {
+    //       accent: "#2f5fe0", // hex only
+    //       radius: 10, // pixels, or a CSS length such as "0.5rem"
+    //       fontFamily: "Inter, system-ui, sans-serif",
+    //       monoFamily: "ui-monospace, monospace",
+    //       colorScheme: "system", // or "light" | "dark"
+    //     },
+    //   },
+    // }),
     ui: operatorUi(),
     identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
     // Payload-free activity at /activity, off until a database exists to hold

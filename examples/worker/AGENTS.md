@@ -37,6 +37,12 @@ This repository is deployment configuration, not a copy of Connecta itself.
   A configured Connecta bearer cannot cross the Access edge alone. Connecta-issued
   tokens are removed. UI, vault, and activity use explicit optional imports;
   auth changes require code-derived shared or personal management permissions.
+- Brand the operator UI in `operatorUi({ branding })`: product and owner names,
+  description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
+  `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand
+  rather than leaving the default. The commented block above
+  `ui: operatorUi()` in `src/index.ts` shows the shape; README "UI and
+  encrypted credentials" covers the rest.
 - After configuration changes, typecheck: inside the connecta repository that
   is `npm run check:examples`; a copied deployment runs its own `tsc --noEmit`.
   After deployment, connect both Claude and ChatGPT to `<PUBLIC_URL>/mcp` and

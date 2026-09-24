@@ -19,6 +19,12 @@ This repository is deployment configuration, not a copy of Connecta itself.
   alone never grants it. Configured bearer auth is a client option, not a human
   management identity. Connecta-issued access tokens are removed.
   `src/file-activity.ts` remains the deployment-owned history store.
+- Brand the operator UI in `operatorUi({ branding })`: product and owner names,
+  description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
+  `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand
+  rather than leaving the default. The commented block above
+  `ui: operatorUi()` in `src/index.ts` shows the shape; README "Select optional
+  modules" covers the rest.
 - Run `npm run typecheck` after configuration changes. With the server running,
   run `CONNECTA_TOKEN=... npm run doctor` before calling setup complete.
 - `Dockerfile` and `docker-compose.yml` containerize *this* source; they are
