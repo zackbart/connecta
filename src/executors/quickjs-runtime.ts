@@ -15,6 +15,7 @@ import {
 } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
 import { msg } from "../errors.js";
+import { withoutProgramTerminator } from "../program-source.js";
 import {
   hostCallLabel,
   MAX_QUICKJS_LOG_TRANSPORT_BYTES,
@@ -92,7 +93,9 @@ export function normalizeCode(code: string): string {
   // lines — models routinely prefix their code with a `//` or `/* */` note,
   // which would otherwise defeat the detection and wrap the whole thing.
   const head = c.replace(/^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)+/, "");
-  if (/^async\b/.test(head) || head.startsWith("(")) return c;
+  if (/^async\b/.test(head) || head.startsWith("(")) {
+    return withoutProgramTerminator(c);
+  }
   return `async () => {\n${c}\n}`;
 }
 

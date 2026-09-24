@@ -459,6 +459,42 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "P1",
+    name: "a trailing semicolon after the arrow expression is accepted",
+    // Models end a program with `};` as often as not. The semicolons inside
+    // the strings, the regex, and the trailing comments are data, not
+    // terminators, and must survive untouched.
+    code: `async () => {
+      const text = "a;b";
+      const tail = \`;\${text};\`;
+      return { text, tail, match: /;$/.test(tail) }; // done;
+    };
+    // nothing after this; really
+    /* ; */ ;`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ text: "a;b", tail: ";a;b;", match: true });
+    },
+  },
+  {
+    clauses: "P1",
+    name: "a one-line arrow expression may end with a semicolon",
+    code: "async () => 40 + 2;",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toBe(42);
+    },
+  },
+  {
+    clauses: "P1",
+    name: "a fenced arrow expression may end with a semicolon",
+    code: "```js\nasync () => ({ fenced: true });\n```",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ fenced: true });
+    },
+  },
+  {
     clauses: "P4",
     name: "nothing a program leaves behind reaches the next one",
     code: `async () => {

@@ -48,6 +48,7 @@ export const WORKERS_SUITES = [
   "test/operator-store.test.ts",
   "test/operator-ui-model.test.ts",
   "test/operator-view.test.ts",
+  "test/program-source.test.ts",
   "test/provider-conventions.test.ts",
   "test/provider-registry.test.ts",
   "test/registry.test.ts",
