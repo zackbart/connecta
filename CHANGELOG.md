@@ -23,9 +23,13 @@ the page can ignore it.
   journal in the caller's result storage, answering every earlier host call
   from its record and sending the approved write once. `approval: "tool"`
   approves the rest of the run's calls to that tool. A write that was sent
-  but never answered stops the run as `write_outcome_unknown` and is never
-  sent again; a program that stops matching its journal fails
-  `execution_diverged`. The option needs `storage` with `compareAndSet` and
+  but never answered — or answered with anything short of a refusal or the
+  downstream tool's own error — stops the run as `write_outcome_unknown`,
+  even beside a concurrent pause, and is never sent again; a program that
+  stops matching its journal fails `execution_diverged`; a resumed play that
+  sent writes and then ended without pausing (a sandbox failure, a lapsed
+  claim) fails `execution_interrupted` rather than replaying reads it never
+  journaled. Every error from a resumed play carries `writes` counts. The option needs `storage` with `compareAndSet` and
   refuses to construct without it. `execute.maxWrites` (default 10) caps
   consequential calls per run on top of the host-call budget, and
   `execute.pausedRunTtlSeconds` (default 1,800) is how long a paused run lives

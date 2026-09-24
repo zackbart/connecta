@@ -30,6 +30,8 @@ export const MAX_JOURNAL_BYTES = 4 * 1024 * 1024;
  * limit. A bigger write goes through `call_destructive_tool`.
  */
 export const MAX_PENDING_ARGS_BYTES = 16 * 1024;
+/** How long an ended run keeps its answer for a repeated resume, in ms. */
+const FINAL_HOLD_MS = 30 * 60 * 1_000;
 /** A completed run keeps at most this much of its answer for a retried resume. */
 export const MAX_FINAL_CHARS = 24_000;
 
@@ -43,18 +45,47 @@ export function utf8Bytes(text: string): number {
  * JSON with object keys sorted at every depth, so two argument objects that
  * differ only in key order serialize identically. Arrays keep their order and
  * a type change is a different string: `1` and `"1"` never match.
+ *
+ * Written out directly rather than by building sorted objects and handing
+ * them to `JSON.stringify`: assigning an own `__proto__` key onto a plain
+ * object sets its prototype instead, so a key that `JSON.parse` kept would
+ * vanish from the canonical form, and two different writes would compare
+ * equal.
  */
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(value, (_key, current: unknown) => {
-    if (current === null || typeof current !== "object" || Array.isArray(current)) {
-      return current;
-    }
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(current).sort()) {
-      sorted[key] = (current as Record<string, unknown>)[key];
-    }
-    return sorted;
-  }) ?? "null";
+  return canonical(value) ?? "null";
+}
+
+function canonical(input: unknown): string | undefined {
+  let value = input;
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { toJSON?: unknown }).toJSON === "function"
+  ) {
+    value = (value as { toJSON(): unknown }).toJSON();
+  }
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonical(item) ?? "null").join(",")}]`;
+  }
+  const parts: string[] = [];
+  for (const key of Object.keys(value).sort()) {
+    const item = canonical((value as Record<string, unknown>)[key]);
+    if (item !== undefined) parts.push(`${JSON.stringify(key)}:${item}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+/** Whether a `__proto__` key appears anywhere in a JSON value. */
+export function hasProtoKey(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(hasProtoKey);
+  return Object.keys(value).some(
+    (key) =>
+      key === "__proto__" ||
+      hasProtoKey((value as Record<string, unknown>)[key]),
+  );
 }
 
 export type JournalOp = "search" | "describe" | "call";
@@ -124,6 +155,12 @@ export interface RunHeader {
   writes: Array<{ entry: number; address: string; state: WriteState }>;
   /** Entry slots `0 … entries - 1` exist or are reserved by a `sending` write. */
   entries: number;
+  /**
+   * `entries` when the current pause was persisted. A write whose entry is
+   * at or past it was sent by a play that has not paused since, so its
+   * reads were never journaled and the run cannot be replayed past it.
+   */
+  playFrom: number;
   /** Source plus journaled entries, serialized, against `MAX_JOURNAL_BYTES`. */
   bytes: number;
   claim?: { id: string; until: number };
@@ -180,9 +217,9 @@ export async function sha256Hex(text: string): Promise<string> {
  * `unknown` is the one outcome replay must never paper over: the call left
  * connecta and no answer came back, so sending it again could do it twice and
  * not sending it could leave it undone. That is a dispatched call that timed
- * out, was cancelled, found the service unavailable, or failed untyped — a
- * transport error, not a verdict. A downstream `isError` or a typed connector
- * error is an answer, so it is `failed`, except that an `isError` whose text
+ * out, was cancelled, found the service unavailable, or failed any way that
+ * is not a verdict. A refusal code (`REFUSALS`) or a downstream tool's own
+ * `isError` is an answer, so it is `failed`, except that an `isError` whose text
  * classifies as a timeout is a gateway reporting that it gave up, and stays
  * unknown. A call that was never dispatched is `failed`: nothing was sent.
  * `result_processing_failed` means the downstream call completed.
@@ -200,8 +237,25 @@ export function classifyWriteOutcome(outcome: {
   if (code === "timeout" || code === "cancelled" || code === "unavailable") {
     return "unknown";
   }
+  if (code !== undefined && REFUSALS.has(code)) return "failed";
   return outcome.answered === true ? "failed" : "unknown";
 }
+
+/**
+ * Codes that say the other side refused the call rather than acted on it:
+ * the credential, the arguments, the resource, or the rate. Anything else a
+ * connector reports after dispatch — `connector_call_failed` from a response
+ * too large to read, a redirect it would not follow, a body it could not
+ * parse, a 5xx — may come after the write landed, so only a downstream
+ * tool's own `isError` answer makes it a known failure.
+ */
+const REFUSALS = new Set([
+  "auth_required",
+  "invalid_args",
+  "not_found",
+  "rate_limited",
+  "input_required_unsupported",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -228,6 +282,7 @@ function parseHeader(raw: string): RunHeader | undefined {
     !Array.isArray(value.writes) ||
     typeof value.entries !== "number" ||
     typeof value.bytes !== "number" ||
+    typeof value.playFrom !== "number" ||
     typeof value.programHash !== "string"
   ) {
     return undefined;
@@ -277,8 +332,17 @@ export class RunJournal {
     const cas = this.storage.compareAndSet;
     if (!cas) throw new Error("resumable writes need KVStorage.compareAndSet");
     const raw = JSON.stringify(next);
+    // The header outlives `expiresAt` while a claim is live, so a play that
+    // runs past it can still record what it sent, and after the run ends, so
+    // a repeated resume gets the same answer rather than "expired, run it
+    // again" — which would repeat every write the run made.
+    const keepUntil = Math.max(
+      next.expiresAt,
+      next.claim?.until ?? 0,
+      next.final ? Date.now() + FINAL_HOLD_MS : 0,
+    );
     const written = await cas.call(this.storage, this.headerKey, expected, raw, {
-      ttlSeconds: RunJournal.ttlSeconds(next.expiresAt),
+      ttlSeconds: RunJournal.ttlSeconds(keepUntil),
     });
     return written ? raw : undefined;
   }

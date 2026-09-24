@@ -770,7 +770,9 @@ function sandboxProvider(
               Effect.sync(() => {
                 if (!runState || seq === undefined || front.key === undefined) return;
                 // Typed outcomes replay; an untyped throw is a bug, not an
-                // answer, and a replay that meets it again goes live.
+                // answer, and is not journaled — so a replay that re-issues
+                // the call before repeating the approved write finds no record
+                // and fails `execution_diverged`.
                 if (Exit.isSuccess(exit)) {
                   runState.record(seq, operation, front.key, {
                     ok: true,
@@ -1196,9 +1198,10 @@ export function createProgramRunner(
           }, executing);
         }
         // The run stopping wins the race as soon as its gate decides, before
-        // the program even sees the rejection. Either way, what is still on
-        // the wire finishes before the scope aborts it: every call after a
-        // stop, since each is journaled, and every write otherwise, since an
+        // the program even sees the rejection. Either way the play closes —
+        // a write gated after this is not sent — and what is still on the
+        // wire finishes before the scope aborts it: every call after a stop,
+        // since each is journaled, and every write otherwise, since an
         // abandoned write would be an unknown one.
         const ended = yield* timed((elapsed) => {
           if (diagnostics) diagnostics.executorWallMs = elapsed;
@@ -1207,7 +1210,10 @@ export function createProgramRunner(
           Deferred.await(runState.stopped).pipe(
             Effect.map((stop): PlayEnd => ({ stop })),
           ),
-        ).pipe(Effect.ensuring(runState.drain("writes"))));
+        ).pipe(Effect.ensuring(Effect.suspend(() => {
+          runState.close();
+          return runState.drain("writes");
+        }))));
         if ("stop" in ended) yield* runState.drain("all");
         return ended;
       });
@@ -1222,7 +1228,7 @@ export function createProgramRunner(
         const ended = exit.value;
         if ("stop" in ended) {
           return runState
-            ? runState.finishStopped(ended.stop)
+            ? runState.finishStopped()
             : Effect.die(new Error("a run without state cannot stop"));
         }
         const finished = finishedRun(ended.settled, reported);

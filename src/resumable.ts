@@ -19,7 +19,14 @@
 //   finds the `sending` mark and reports the outcome unknown rather than
 //   replaying past it.
 // - A write whose outcome is unknown is never sent again: the run fails there
-//   and a failed run is never replayed (`settleWrite`).
+//   and a failed run is never replayed (`settleWrite`). A failure outranks a
+//   pause that arrived first (`stopWith`), and no play ends paused or
+//   completed over a write that is `unknown` or `sending`.
+// - Replay only ever picks up at a pause. A play that sent writes and then
+//   ended any other way — the executor failed, the claim lapsed — fails
+//   `execution_interrupted`, because what it read after those writes was never
+//   journaled and a replay would read it afresh (`finishExecutorFailure`, the
+//   takeover in `resumeExecution`).
 // - Replay reaches nothing downstream. Recorded calls are answered from the
 //   journal before the invocation path, so they load no catalog, take no
 //   permit, call no connector, and record no activity (`lookup`).
@@ -51,6 +58,7 @@ import {
   formatToken,
   MAX_FINAL_CHARS,
   MAX_JOURNAL_BYTES,
+  hasProtoKey,
   MAX_PENDING_ARGS_BYTES,
   parseToken,
   randomId,
@@ -86,7 +94,8 @@ interface RunFailure {
     | "execution_claim_lost"
     | "journal_too_large"
     | "pending_write_too_large"
-    | "unavailable";
+    | "execution_interrupted"
+    | "execution_expired";
   message: string;
   retryable: boolean;
   [field: string]: unknown;
@@ -136,8 +145,9 @@ class ReplayState {
   lookup(key: string): Lookup {
     const entry = this.queues.get(key)?.shift();
     if (entry) {
+      // Never the pending call, even when its key matches: the pending call
+      // is not journaled, so a hit is an earlier identical call.
       this.writes.delete(entry);
-      if (key === this.pendingKey) this.pendingReissued = true;
       return { kind: "hit", entry };
     }
     if (!this.pendingReissued && key === this.pendingKey) {
@@ -177,7 +187,7 @@ function failure(
   message: string,
   extra: Record<string, unknown> = {},
 ): RunFailure {
-  return { code, message, retryable: code === "unavailable", ...extra };
+  return { code, message, retryable: false, ...extra };
 }
 
 function guestFailure(code: string, message: string): InvocationFailure {
@@ -201,11 +211,39 @@ function diverged(reason: string): RunFailure {
   );
 }
 
-function storageFailure(): RunFailure {
+/**
+ * The run stopped where replay cannot pick it up: storage failed under it, or
+ * a play that had already sent writes ended without pausing. Not retryable —
+ * a re-run repeats whatever the run already sent, which `writes` counts.
+ */
+function interrupted(reason: string): RunFailure {
   return failure(
-    "unavailable",
-    "Paused-run storage failed, so nothing further was sent. Retry shortly.",
+    "execution_interrupted",
+    `${reason} The run stopped there and cannot be resumed; nothing further was sent. Writes it already sent are counted in writes and are not undone, so check them before running the task again.`,
+    { nextAction: RERUN },
   );
+}
+
+function storageFailure(): RunFailure {
+  return interrupted("Paused-run storage failed.");
+}
+
+/** A write whose outcome nobody knows, found when the play ends. */
+function unknownOutcome(): RunFailure {
+  return failure(
+    "write_outcome_unknown",
+    "A write this run sent has no known outcome, so the run stopped and will not be replayed; that write will not be sent again. Check its target before doing anything that depends on it.",
+  );
+}
+
+type WriteCounts = { succeeded: number; failed: number; unknown: number };
+
+function countWrites(writes: RunHeader["writes"]): WriteCounts {
+  return {
+    succeeded: writes.filter((write) => write.state === "ok").length,
+    failed: writes.filter((write) => write.state === "failed").length,
+    unknown: writes.filter((write) => write.state === "unknown" || write.state === "sending").length,
+  };
 }
 
 /**
@@ -217,9 +255,16 @@ function storageFailure(): RunFailure {
  * sends live only what comes after.
  */
 export class RunState {
-  /** Completed when the play stops early: a pause, or a typed failure. */
+  /** Completed when the play first stops early: a pause, or a typed failure. */
   readonly stopped = Deferred.makeUnsafe<RunStop>();
+  /**
+   * Why the play stopped. A failure replaces a pause — a write that turned
+   * unknown beside a concurrent pause must not be buried under it, or the
+   * pause would persist and a replay could send that write again.
+   */
   private stop: RunStop | undefined;
+  /** Set once the program settled: a write gated after this is not sent. */
+  private closed = false;
   private seq = 0;
   private readonly decisions: Array<Deferred.Deferred<void>> = [];
   private writesSpent = 0;
@@ -227,6 +272,8 @@ export class RunState {
   private readonly unpersisted: JournalEntry[] = [];
   /** Live writes this play dispatched: seq → reserved entry slot. */
   private readonly liveWrites = new Map<number, number | undefined>();
+  /** Writes between approval and dispatch, so a drain can wait for them. */
+  private readonly gating = new Set<number>();
   /** Writes a fresh play sent, for the header of a later pause. */
   private readonly freshWrites: RunHeader["writes"] = [];
   /** Calls a gate refused because the play had stopped. Not journaled. */
@@ -332,16 +379,26 @@ export class RunState {
   }
 
   /**
+   * The program settled. A write that reaches the gate from now on is not
+   * sent: nobody is left to see its answer, and a mark it left behind would
+   * claim a write the run never made.
+   */
+  close(): void {
+    this.closed = true;
+  }
+
+  /**
    * Wait for in-flight calls: every one after a stop, since each will be
-   * journaled; only writes otherwise, since abandoning a read costs nothing
-   * but abandoning a write turns its outcome unknown. Each is bounded by its
-   * own host-call deadline.
+   * journaled; only writes otherwise — past approval, or already on the wire
+   * — since abandoning a read costs nothing but abandoning a write turns its
+   * outcome unknown. Each is bounded by its own host-call deadline.
    */
   drain(scope: "all" | "writes"): Effect.Effect<void> {
     return Effect.promise(async () => {
       for (;;) {
         const waiting = [...this.inFlight.entries()]
-          .filter(([seq]) => scope === "all" || this.liveWrites.has(seq))
+          .filter(([seq]) =>
+            scope === "all" || this.liveWrites.has(seq) || this.gating.has(seq))
           .map(([, settled]) => settled);
         if (waiting.length === 0) return;
         await Promise.allSettled(waiting);
@@ -364,9 +421,12 @@ export class RunState {
   }
 
   private stopWith(stop: RunStop): void {
-    if (this.stop) return;
+    if (this.stop && !(this.stop.kind === "paused" && stop.kind === "failed")) {
+      return;
+    }
+    const first = this.stop === undefined;
     this.stop = stop;
-    Deferred.doneUnsafe(this.stopped, Effect.succeed(stop));
+    if (first) Deferred.doneUnsafe(this.stopped, Effect.succeed(stop));
   }
 
   /** Divergence (a): stop, and hand the calling program the typed failure. */
@@ -441,86 +501,135 @@ export class RunState {
     const decided = Effect.sync(() => this.decide(seq));
     return Effect.gen({ self: this }, function* () {
       yield* this.decidedBefore(seq);
-      {
-        const halted = this.halted();
-        if (halted) {
-          this.unrecorded.add(seq);
-          return { kind: "refuse", error: halted.details, activity: "none" } as const;
-        }
-        const address = `${target.connector.id}.${target.toolName}`;
-        if (args === null || typeof args !== "object" || Array.isArray(args)) {
-          // Neither approval route takes arguments that are not an object, so
-          // there is nothing a pause could ask a human to repeat.
-          return {
-            kind: "refuse",
-            error: framingError(
-              "destructive_tool_requires_approval",
-              `Tool "${address}" is not explicitly read-only, and its arguments are not an object, so it cannot pause for approval.`,
-            ),
-          } as const;
-        }
-        if (this.writesSpent >= this.settings.maxWrites) {
-          return {
-            kind: "refuse",
-            error: {
-              code: "budget_exceeded",
-              message: `execute_code write budget exceeded (${this.settings.maxWrites} writes maximum, execute.maxWrites); ${address} was not sent`,
-              retryable: false,
+      const halted = this.halted();
+      if (halted) {
+        this.unrecorded.add(seq);
+        return { kind: "refuse", error: halted.details, activity: "none" } as const;
+      }
+      if (this.closed) {
+        this.unrecorded.add(seq);
+        return {
+          kind: "refuse",
+          error: {
+            code: "cancelled",
+            message: "The program had already returned, so this write was not sent.",
+            retryable: false,
+          },
+          activity: "none",
+        } as const;
+      }
+      const address = `${target.connector.id}.${target.toolName}`;
+      if (args === null || typeof args !== "object" || Array.isArray(args)) {
+        // Neither approval route takes arguments that are not an object, so
+        // there is nothing a pause could ask a human to repeat.
+        return {
+          kind: "refuse",
+          error: framingError(
+            "destructive_tool_requires_approval",
+            `Tool "${address}" is not explicitly read-only, and its arguments are not an object, so it cannot pause for approval.`,
+          ),
+        } as const;
+      }
+      if (this.writesSpent >= this.settings.maxWrites) {
+        return {
+          kind: "refuse",
+          error: {
+            code: "budget_exceeded",
+            message: `execute_code write budget exceeded (${this.settings.maxWrites} writes maximum, execute.maxWrites); ${address} was not sent`,
+            retryable: false,
+          },
+        } as const;
+      }
+      const approved = this.approvalFor(address, args);
+      if (approved) return yield* this.reserve(seq, address, approved.index);
+      // Not approved: this is where the run pauses — unless the write cannot
+      // be shown to a human faithfully. A `__proto__` key survives JSON but
+      // not every object a host or schema layer builds from it, so the write
+      // a human approved could differ from the one sent.
+      if (hasProtoKey(args)) {
+        return {
+          kind: "refuse",
+          error: {
+            code: "invalid_args",
+            message: `The arguments for ${address} contain a "__proto__" key, which cannot be shown and repeated faithfully for approval, so the write was not sent.`,
+            retryable: false,
+          },
+        } as const;
+      }
+      // A write too large to hold for a human stops the run instead, before
+      // anything is kept.
+      let argsText: string;
+      try {
+        argsText = canonicalJson(args);
+      } catch {
+        argsText = "";
+      }
+      if (!argsText || utf8Bytes(argsText) > MAX_PENDING_ARGS_BYTES) {
+        const tooLarge = failure(
+          "pending_write_too_large",
+          `The write to ${address} has arguments over ${MAX_PENDING_ARGS_BYTES} bytes, too large to hold for approval. Nothing was sent. Call it through call_destructive_tool instead.`,
+          {
+            nextAction: {
+              tool: "call_destructive_tool",
+              arguments: { address },
+              purpose: "Ask the MCP host to approve this one call directly.",
             },
-          } as const;
-        }
-        const approved = this.approvalFor(address, args);
-        if (approved) {
-          const reserved = yield* this.writeAhead(address, approved.index);
+          },
+        );
+        this.stopWith({ kind: "failed", failure: tooLarge });
+        this.unrecorded.add(seq);
+        return {
+          kind: "refuse",
+          error: { code: tooLarge.code, message: tooLarge.message, retryable: false },
+        } as const;
+      }
+      this.stopWith({ kind: "paused", pending: { address, args, key } });
+      this.unrecorded.add(seq);
+      return {
+        kind: "refuse",
+        error: (this.halted() as InvocationFailure).details,
+        activity: "paused",
+      } as const;
+    }).pipe(Effect.ensuring(decided));
+  }
+
+  /**
+   * Reserve an approved write: the write-ahead mark, then the bookkeeping
+   * that makes it a live write. Uninterruptible as one, so a host-call
+   * deadline cannot land between a `sending` mark and the record that the
+   * write is this play's — which would leave a reserved journal slot nothing
+   * ever fills. A deadline that fires here takes effect just after, before
+   * dispatch, and the write settles as `failed`: marked, never sent.
+   */
+  private reserve(
+    seq: number,
+    address: string,
+    approvalIndex: number,
+  ): Effect.Effect<WriteGateDecision> {
+    this.gating.add(seq);
+    return Effect.uninterruptible(
+      this.writeAhead(address, approvalIndex).pipe(
+        Effect.map((reserved): WriteGateDecision => {
+          this.gating.delete(seq);
           if (reserved.kind === "lost") {
             this.stopWith({ kind: "failed", failure: reserved.failure });
             this.unrecorded.add(seq);
             return {
               kind: "refuse",
-              error: { code: reserved.failure.code, message: reserved.failure.message, retryable: false },
+              error: {
+                code: reserved.failure.code,
+                message: reserved.failure.message,
+                retryable: false,
+              },
               activity: "none",
-            } as const;
+            };
           }
           this.writesSpent++;
           this.liveWrites.set(seq, reserved.slot);
-          return { kind: "dispatch" } as const;
-        }
-        // Not approved: this is where the run pauses. A write too large to
-        // hold for a human stops the run instead, before anything is kept.
-        let argsText: string;
-        try {
-          argsText = canonicalJson(args);
-        } catch {
-          argsText = "";
-        }
-        if (!argsText || utf8Bytes(argsText) > MAX_PENDING_ARGS_BYTES) {
-          const tooLarge = failure(
-            "pending_write_too_large",
-            `The write to ${address} has arguments over ${MAX_PENDING_ARGS_BYTES} bytes, too large to hold for approval. Nothing was sent. Call it through call_destructive_tool instead.`,
-            {
-              nextAction: {
-                tool: "call_destructive_tool",
-                arguments: { address },
-                purpose: "Ask the MCP host to approve this one call directly.",
-              },
-            },
-          );
-          this.stopWith({ kind: "failed", failure: tooLarge });
-          this.unrecorded.add(seq);
-          return {
-            kind: "refuse",
-            error: { code: tooLarge.code, message: tooLarge.message, retryable: false },
-          } as const;
-        }
-        this.stopWith({ kind: "paused", pending: { address, args, key } });
-        this.unrecorded.add(seq);
-        return {
-          kind: "refuse",
-          error: (this.halted() as InvocationFailure).details,
-          activity: "paused",
-        } as const;
-      }
-    }).pipe(Effect.ensuring(decided));
+          return { kind: "dispatch" };
+        }),
+      ),
+    );
   }
 
   /**
@@ -555,7 +664,15 @@ export class RunState {
       Effect.map((result) =>
         result === "ok"
           ? { kind: "reserved" as const, slot }
-          : { kind: "lost" as const, failure: result },
+          : {
+              kind: "lost" as const,
+              failure: result === "lost"
+                ? failure(
+                    "execution_claim_lost",
+                    `Another resume_execution took this run over, so this one stopped before sending ${address}.`,
+                  )
+                : storageFailure(),
+            },
       ),
     );
   }
@@ -604,26 +721,39 @@ export class RunState {
           )
         : undefined;
       if (this.claim && slot !== undefined) {
+        const claim = this.claim;
         const written = yield* Effect.tryPromise(() =>
-          this.journal.writeEntry(slot, entry, this.claim?.header.expiresAt ?? Date.now()),
+          this.journal.writeEntry(slot, entry, claim.header.expiresAt),
         ).pipe(Effect.as(true), Effect.catch(() => Effect.succeed(false)));
+        const recorded: WriteState = written ? state : "unknown";
         const settled = yield* this.mutateHeader((header) => ({
           ...header,
           bytes: header.bytes + utf8Bytes(RunJournal.entryText(entry)),
           writes: header.writes.map((write) =>
-            write.entry === slot
-              ? { ...write, state: written ? state : "unknown" }
-              : write,
+            write.entry === slot ? { ...write, state: recorded } : write,
           ),
         }));
         if (settled !== "ok") {
-          this.stopWith({ kind: "failed", failure: settled });
-          return guestFailure(settled.code, settled.message);
+          // The write happened, or may have; only the record of it is lost.
+          // Say which, from what this play knows, rather than "nothing sent".
+          this.noteLocally(slot, recorded);
+          const lost = settled === "lost"
+            ? failure(
+                "execution_claim_lost",
+                `The write to ${target.address} was sent (${describeState(recorded)}), but another resume_execution took the run over before it could be recorded, so this play stopped there.`,
+              )
+            : interrupted(
+                `The write to ${target.address} was sent (${describeState(recorded)}), but paused-run storage failed before it could be recorded.`,
+              );
+          this.stopWith({ kind: "failed", failure: lost });
+          return guestFailure(lost.code, lost.message);
         }
         if (!written && !unknownFailure) {
           // The write's outcome is known here but could not be journaled, so
           // no later replay could answer it: stop rather than lose it.
-          const lost = storageFailure();
+          const lost = interrupted(
+            `The write to ${target.address} was sent (${describeState(state)}), but its result could not be journaled.`,
+          );
           this.stopWith({ kind: "failed", failure: lost });
           return guestFailure(lost.code, lost.message);
         }
@@ -656,31 +786,45 @@ export class RunState {
    */
   private mutateHeader(
     update: (header: RunHeader) => RunHeader,
-  ): Effect.Effect<"ok" | RunFailure> {
+  ): Effect.Effect<"ok" | "lost" | "storage"> {
     return Effect.promise(() => {
-      const turn = this.headerTurn.then(async (): Promise<"ok" | RunFailure> => {
+      const turn = this.headerTurn.then(async (): Promise<"ok" | "lost" | "storage"> => {
         const claim = this.claim;
-        if (!claim) return failure("execution_claim_lost", "This run holds no claim.");
+        if (!claim) return "lost";
         const next = update(structuredClone(claim.header));
         next.version = claim.header.version + 1;
         let raw: string | undefined;
         try {
           raw = await this.journal.casHeader(claim.raw, next);
         } catch {
-          return storageFailure();
+          return "storage";
         }
-        if (raw === undefined) {
-          return failure(
-            "execution_claim_lost",
-            "Another resume_execution took over this run, so this one stopped before sending anything further.",
-          );
-        }
+        if (raw === undefined) return "lost";
         this.claim = { ...claim, raw, header: next };
         return "ok";
       });
       this.headerTurn = turn.catch(() => {});
       return turn;
     });
+  }
+
+  /**
+   * Record a write's state in this play's copy of the header only, after the
+   * claim was lost: nothing can be stored any more, but the counts this play
+   * reports should still say what it knows.
+   */
+  private noteLocally(slot: number, state: WriteState): void {
+    const claim = this.claim;
+    if (!claim) return;
+    this.claim = {
+      ...claim,
+      header: {
+        ...claim.header,
+        writes: claim.header.writes.map((write) =>
+          write.entry === slot ? { ...write, state } : write,
+        ),
+      },
+    };
   }
 
   /**
@@ -697,13 +841,14 @@ export class RunState {
     return slots;
   }
 
-  private writeCounts(): { succeeded: number; failed: number; unknown: number } {
-    const writes = this.claim?.header.writes ?? this.freshWrites;
-    return {
-      succeeded: writes.filter((write) => write.state === "ok").length,
-      failed: writes.filter((write) => write.state === "failed").length,
-      unknown: writes.filter((write) => write.state === "unknown" || write.state === "sending").length,
-    };
+  private writeCounts(): WriteCounts {
+    return countWrites(this.claim?.header.writes ?? this.freshWrites);
+  }
+
+  /** Whether this run has sent any write, in this play or an earlier one. */
+  private sentAny(): boolean {
+    const counts = this.writeCounts();
+    return counts.succeeded + counts.failed + counts.unknown > 0;
   }
 
   // --- how a play ends -----------------------------------------------------
@@ -711,23 +856,41 @@ export class RunState {
   /**
    * The play stopped: persist the pause, or the failure, and say so. Called
    * after in-flight calls drained, so everything the program started is in
-   * `unpersisted` or already journaled.
+   * `unpersisted` or already journaled. The stop consulted is the current
+   * one — a failure that arrived during the drain has replaced a pause — and
+   * a pause is never persisted over a write whose outcome is unknown.
    */
-  finishStopped(stop: RunStop): Effect.Effect<ToolResult> {
-    return stop.kind === "paused"
-      ? this.persistPause(stop.pending)
-      : this.finishFailed(stop.failure);
+  finishStopped(): Effect.Effect<ToolResult> {
+    const stop = this.stop;
+    if (!stop) return Effect.die(new Error("finishStopped without a stop"));
+    if (stop.kind === "failed") return this.finishFailed(stop.failure);
+    if (this.writeCounts().unknown > 0) return this.finishFailed(unknownOutcome());
+    return this.persistPause(stop.pending);
   }
 
-  /** The program settled on its own. */
+  /**
+   * The program settled on its own. Its own result is only the answer when
+   * nothing else happened: a stop that arrived while writes drained (a
+   * concurrent pause, or an unawaited write that turned unknown) wins, as does
+   * any write left without a known outcome.
+   */
   finishSettled(result: ToolResult): Effect.Effect<ToolResult> {
     return Effect.gen({ self: this }, function* () {
+      if (this.stop) return yield* this.finishStopped();
       const unfinished = this.replay?.unfinished();
       if (unfinished) return yield* this.finishFailed(diverged(unfinished));
-      if (!this.claim) return result;
-      const text = result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
+      if (this.writeCounts().unknown > 0) {
+        return yield* this.finishFailed(unknownOutcome());
+      }
+      // A program that failed after sending writes: its error, with the
+      // counts, so nobody mistakes the run for one safe to repeat.
+      const reported = result.isError && this.sentAny()
+        ? withWrites(result, this.writeCounts())
+        : result;
+      if (!this.claim) return reported;
+      const text = reported.content[0]?.type === "text" ? reported.content[0].text ?? "" : "";
       const final = {
-        isError: result.isError === true,
+        isError: reported.isError === true,
         text: text.length <= MAX_FINAL_CHARS
           ? text
           : JSON.stringify({
@@ -735,30 +898,41 @@ export class RunState {
               note: "The run completed and its result was returned once; it was too large to keep for a repeated resume_execution.",
             }),
       };
-      yield* this.mutateHeader((header) => ({
-        ...header,
-        state: "completed",
-        final,
-      }));
-      return result;
+      // An erroring program ends the run `failed`: it is not replayed, and
+      // its answer — error and counts — is what a repeated resume returns.
+      yield* this.mutateHeader((header) => {
+        const { claim: _released, ...rest } = header;
+        return {
+          ...rest,
+          state: reported.isError ? "failed" : "completed",
+          final,
+        };
+      });
+      return reported;
     });
   }
 
   /**
    * The executor itself failed — admission, cancellation, the watchdog — not
-   * the program. A claimed run goes back to paused at the same pause, its
-   * claim released and this attempt's approval withdrawn, so the same resume
-   * can be tried again: every write it sent is journaled and replays.
+   * the program. If this play sent no write, the run goes back to the same
+   * pause, its claim released and this attempt's unused approval withdrawn,
+   * and the resume can be tried again: nothing it read mattered. If it sent a
+   * write, it fails: what it read between that write and the failure was
+   * never journaled, so a replay would read afresh and could build a later
+   * write from different data than the earlier one.
    */
   finishExecutorFailure(result: ToolResult): Effect.Effect<ToolResult> {
     return Effect.gen({ self: this }, function* () {
-      if (!this.claim) return result;
+      if (!this.claim) {
+        return this.sentAny() ? withWrites(result, this.writeCounts()) : result;
+      }
       if (this.writeCounts().unknown > 0) {
+        return yield* this.finishFailed(unknownOutcome());
+      }
+      if (this.liveWrites.size > 0) {
         return yield* this.finishFailed(
-          failure(
-            "write_outcome_unknown",
-            "The run ended while a write was in flight, so whether it happened is unknown. It will not be sent again.",
-            { writes: this.writeCounts() },
+          interrupted(
+            `The sandbox failed partway through a resumed run that had already sent writes (${errorText(result)}).`,
           ),
         );
       }
@@ -769,8 +943,8 @@ export class RunState {
           ...rest,
           state: "paused",
           // Withdraw this attempt's approval of the current pause, unless it
-          // was a call approval already spent: that write is journaled and
-          // replays, and the retry must not be handed a fresh one.
+          // was a call approval already spent: the retry must not be handed a
+          // fresh one.
           approvals: header.approvals.filter(
             (approval) =>
               approval.nonce !== nonce ||
@@ -784,9 +958,7 @@ export class RunState {
 
   private finishFailed(runFailure: RunFailure): Effect.Effect<ToolResult> {
     return Effect.gen({ self: this }, function* () {
-      const withCounts: RunFailure = runFailure.code === "write_outcome_unknown" ||
-          runFailure.code === "execution_diverged" ||
-          this.writeCounts().succeeded + this.writeCounts().failed > 0
+      const withCounts: RunFailure = this.claim || this.sentAny()
         ? { ...runFailure, writes: this.writeCounts() }
         : runFailure;
       const result = errorEnvelope(withCounts);
@@ -813,6 +985,18 @@ export class RunState {
       const claim = this.claim;
       const expiresAt = claim?.header.expiresAt ??
         now + this.settings.ttlSeconds * 1_000;
+      if (now >= expiresAt) {
+        // Only a claimed play can outlive the deadline it replays under. A
+        // pause now would be born expired, and "run it again" is the wrong
+        // advice for a run that has sent writes.
+        return yield* this.finishFailed(
+          failure(
+            "execution_expired",
+            "The run reached another write after its paused-run lifetime ended, so it cannot pause again. Writes it already sent are counted in writes and are not undone; check them before running the rest of the task again.",
+            { nextAction: RERUN },
+          ),
+        );
+      }
       const newBytes = this.unpersisted.reduce(
         (sum, entry) => sum + utf8Bytes(RunJournal.entryText(entry)),
         0,
@@ -822,7 +1006,11 @@ export class RunState {
         return yield* this.finishFailed(
           failure(
             "journal_too_large",
-            `This run recorded more than ${MAX_JOURNAL_BYTES} bytes of source and host calls, too much to hold while it waits for approval. Nothing was sent. Read less before the first write, or split the work.`,
+            `This run recorded more than ${MAX_JOURNAL_BYTES} bytes of source and host calls, too much to hold while it waits for approval, so it stopped here without pausing. ${
+              this.sentAny()
+                ? "Writes it already sent are counted in writes and are not undone; check them before running the task again."
+                : "Nothing was sent."
+            } Read less before the first write, or split the work.`,
             { nextAction: RERUN },
           ),
         );
@@ -846,10 +1034,21 @@ export class RunState {
             nonce,
             pending,
             entries,
+            playFrom: entries,
             bytes,
           };
         });
-        if (moved !== "ok") return errorEnvelope(moved);
+        if (moved !== "ok") {
+          return errorEnvelope({
+            ...(moved === "lost"
+              ? failure(
+                  "execution_claim_lost",
+                  "Another resume_execution took this run over before its next pause could be recorded, so this play stopped there.",
+                )
+              : storageFailure()),
+            writes: this.writeCounts(),
+          });
+        }
       } else {
         const header: RunHeader = {
           v: 1,
@@ -866,12 +1065,13 @@ export class RunState {
           approvals: [],
           writes: this.freshWriteSlots(),
           entries,
+          playFrom: entries,
           bytes,
         };
         const stored = yield* Effect.tryPromise(() =>
           this.journal.casHeader(null, header),
         ).pipe(Effect.catch(() => Effect.succeed(undefined)));
-        if (stored === undefined) return errorEnvelope(storageFailure());
+        if (stored === undefined) return yield* this.finishFailed(storageFailure());
       }
       this.unpersisted.length = 0;
       return pausedResult(
@@ -881,6 +1081,51 @@ export class RunState {
       );
     });
   }
+}
+
+function describeState(state: WriteState): string {
+  return state === "ok"
+    ? "it succeeded"
+    : state === "failed"
+      ? "it failed"
+      : "its outcome is unknown";
+}
+
+/** The first part of an error result's text, for a message that wraps it. */
+function errorText(result: ToolResult): string {
+  const structured = result.structuredContent?.error as
+    | { message?: unknown }
+    | undefined;
+  const text = typeof structured?.message === "string"
+    ? structured.message
+    : result.content[0]?.text ?? "";
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
+/**
+ * An error result from a run that sent writes, carrying their counts: a
+ * program that fails after writing is not a run that is safe to repeat.
+ */
+function withWrites(result: ToolResult, writes: WriteCounts): ToolResult {
+  const structured = result.structuredContent;
+  const error = structured?.error;
+  const annotated = errorEnvelope({
+    ...(error !== null && typeof error === "object"
+      ? (error as Record<string, unknown>)
+      : {
+          code: "executor_failed",
+          message: result.content[0]?.text ?? "",
+          retryable: false,
+        }),
+    writes,
+    note: "This run attempted writes, counted in writes; those that succeeded are not undone. Check them before running the task again.",
+  });
+  if (structured && error !== null && typeof error === "object") {
+    const { error: _replaced, ...rest } = structured;
+    annotated.structuredContent = { ...rest, error: annotated.structuredContent?.error };
+    annotated.content = [{ type: "text", text: JSON.stringify(annotated.structuredContent) }];
+  }
+  return annotated;
 }
 
 /** The `execute_code` / `resume_execution` result for a paused run. */
@@ -1010,9 +1255,8 @@ export function resumeExecution(
     if (!read) return now >= token.expiresAt ? expired : notFound;
     const { header } = read;
     if (header.pool !== settings.pool) return notFound;
-    if (now >= header.expiresAt) return expired;
     if (token.nonce !== header.nonce) {
-      const next = resumeAction(header, token.runId);
+      const next = now < header.expiresAt ? resumeAction(header, token.runId) : undefined;
       return resumeError(
         "execution_token_stale",
         "This token names an earlier pause of the run, which has moved on.",
@@ -1032,7 +1276,9 @@ export function resumeExecution(
       );
     }
     if (header.state === "completed" || header.state === "failed") {
-      // The same resume, repeated after the run ended: the same answer.
+      // The same resume, repeated after the run ended: the same answer —
+      // before the expiry check, because "expired, run it again" is the
+      // wrong answer for a run that sent writes and then ended.
       const final = header.final;
       if (!final) return notFound;
       let parsed: unknown;
@@ -1045,6 +1291,7 @@ export function resumeExecution(
       if (final.isError) repeated.isError = true;
       return repeated;
     }
+    if (now >= header.expiresAt) return expired;
     const scope = args.approval ?? "call";
     const claimId = randomId();
     const until = now + ctx.claimMs;
@@ -1055,41 +1302,35 @@ export function resumeExecution(
     const alreadyApproved = header.approvals.some(
       (approval) => approval.nonce === header.nonce,
     );
-    let claimed: RunHeader;
     const approvedNow = !alreadyApproved;
-    if (header.state === "running") {
-      if ((header.claim?.until ?? 0) > now) {
-        return resumeError(
-          "execution_in_progress",
-          "Another resume_execution is playing this run right now. Retry after it finishes to see its result.",
-          {},
-          true,
-        );
-      }
-      // The previous claimant stopped without finishing, and its lease ran
-      // out. Whatever it marked `sending` may or may not have landed.
-      const inFlight = header.writes.some((write) => write.state === "sending");
-      claimed = {
-        ...header,
-        version: header.version + 1,
-        claim: { id: claimId, until },
-        ...(inFlight
-          ? {
-              state: "failed" as const,
-              writes: header.writes.map((write) =>
-                write.state === "sending" ? { ...write, state: "unknown" as const } : write,
-              ),
-            }
-          : {}),
-      };
-    } else {
-      claimed = {
-        ...header,
-        state: "running",
-        version: header.version + 1,
-        claim: { id: claimId, until },
-      };
+    if (header.state === "running" && (header.claim?.until ?? 0) > now) {
+      return resumeError(
+        "execution_in_progress",
+        "Another resume_execution is playing this run right now. Retry after it finishes to see its result.",
+        {},
+        true,
+      );
     }
+    // What the run can no longer be replayed past. A write marked `sending`
+    // may or may not have landed. A write sent by a play that ended without
+    // pausing — its claim lapsed after a crash or restart — was followed by
+    // reads nobody journaled, so a replay would read afresh and could build a
+    // later write from different data. A paused header should hold neither,
+    // but a replay past either could send a write twice, so both refuse.
+    const unsettled = header.writes.some(
+      (write) => write.state === "sending" || write.state === "unknown",
+    );
+    const unjournaled = header.state === "running" &&
+      header.writes.some((write) => write.entry >= header.playFrom);
+    const claimed: RunHeader = {
+      ...header,
+      state: unsettled || unjournaled ? "failed" : "running",
+      version: header.version + 1,
+      claim: { id: claimId, until },
+      writes: header.writes.map((write) =>
+        write.state === "sending" ? { ...write, state: "unknown" as const } : write,
+      ),
+    };
     if (!alreadyApproved) {
       claimed.approvals = [...header.approvals, approvalOf(pending, scope, header.nonce)];
     }
@@ -1106,17 +1347,16 @@ export function resumeExecution(
     }
     if (approvedNow) recordApproval(ctx.activity, pending.address, scope);
     if (claimed.state === "failed") {
-      // A takeover that found a write in flight: report, never replay.
-      const counts = {
-        succeeded: claimed.writes.filter((write) => write.state === "ok").length,
-        failed: claimed.writes.filter((write) => write.state === "failed").length,
-        unknown: claimed.writes.filter((write) => write.state === "unknown").length,
-      };
       const result = errorEnvelope({
-        code: "write_outcome_unknown",
-        message: "An earlier resume of this run stopped while a write was in flight, so whether it happened is unknown. It will not be sent again, and the run will not be replayed.",
-        retryable: false,
-        writes: counts,
+        ...(unsettled
+          ? failure(
+              "write_outcome_unknown",
+              "An earlier play of this run left a write whose outcome is unknown, so the run will not be replayed and that write will not be sent again. Check its target before doing anything that depends on it.",
+            )
+          : interrupted(
+              "An earlier resume of this run stopped partway after sending writes, and what it read between them was not kept.",
+            )),
+        writes: countWrites(claimed.writes),
       });
       const { claim: _released, ...rest } = claimed;
       yield* Effect.tryPromise(() =>
@@ -1135,11 +1375,20 @@ export function resumeExecution(
     const claim: Claim = { id: claimId, raw, header: claimed };
     if (!loaded?.program || !loaded.entries) {
       // Unreadable is unrecoverable: a partial journal cannot be replayed.
+      const result = errorEnvelope({
+        ...interrupted("This run's journal could not be read back in full."),
+        writes: countWrites(claimed.writes),
+      });
       const { claim: _released, ...rest } = claimed;
       yield* Effect.tryPromise(() =>
-        journal.casHeader(raw, { ...rest, state: "failed", version: claimed.version + 1 }),
+        journal.casHeader(raw, {
+          ...rest,
+          state: "failed",
+          version: claimed.version + 1,
+          final: { isError: true, text: result.content[0]?.text ?? "" },
+        }),
       ).pipe(Effect.ignore);
-      return notFound;
+      return result;
     }
     return yield* ctx.run(
       RunState.replaying({

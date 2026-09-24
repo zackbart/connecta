@@ -93,6 +93,7 @@ interface WorldOptions {
   storage?: KVStorage;
   settings?: Partial<ResumableSettings>;
   hostCallTimeoutMs?: number;
+  watchdogMs?: number;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
 }
@@ -179,6 +180,7 @@ function world(options: WorldOptions = {}) {
       ...(options.hostCallTimeoutMs !== undefined
         ? { hostCallTimeoutMs: options.hostCallTimeoutMs }
         : {}),
+      ...(options.watchdogMs !== undefined ? { watchdogMs: options.watchdogMs } : {}),
     },
   );
   let next = 0;
@@ -602,7 +604,12 @@ describe("resumable writes: resume_execution", () => {
     const first = paused(await w.execute(w.program(staleClose)));
     journal = new RunJournal(w.registry.resultsStorage(), required(parseToken(first.token)).runId);
     const result = await w.resume(approve(first, "tool"));
-    expect(value(result).error.code).toBe("execution_claim_lost");
+    // The write that lost the claim was sent, and the report says so.
+    expect(value(result).error).toMatchObject({
+      code: "execution_claim_lost",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(value(result).error.message).toContain("was sent (it succeeded)");
     // The first close had already been sent; the second never was.
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
   });
@@ -655,6 +662,21 @@ describe("resumable writes: unknown outcomes", () => {
     });
   }
 
+  it("treats a typed error after the response as an unknown outcome", async () => {
+    const w = world({
+      write: () => {
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "tracker returned more bytes than it may, past this connector's response ceiling.",
+        );
+      },
+    });
+    const first = paused(await w.execute(w.program(staleClose)));
+    const result = await w.resume(approve(first));
+    expect(value(result).error.code).toBe("write_outcome_unknown");
+    expect(w.writes()).toHaveLength(1);
+  });
+
   it("treats a typed downstream answer as a known failure the program sees", async () => {
     const w = world({
       write: (_name, args) => {
@@ -690,6 +712,11 @@ describe("resumable writes: unknown outcomes", () => {
       [{ ok: false, dispatched: true, answered: true, error: { code: "unavailable" } }, "unknown"],
       [{ ok: false, dispatched: true, answered: false, error: { code: "connector_call_failed" } }, "unknown"],
       [{ ok: false, dispatched: true, answered: true, error: { code: "connector_call_failed" } }, "failed"],
+      // A typed error after the request went out (an oversized body, a
+      // refused redirect) is not an answer: the write may have landed.
+      [{ ok: false, dispatched: true, answered: false, error: { code: "connector_call_failed" } }, "unknown"],
+      [{ ok: false, dispatched: true, answered: false, error: { code: "not_found" } }, "failed"],
+      [{ ok: false, dispatched: true, answered: false, error: { code: "invalid_args" } }, "failed"],
       [{ ok: false, dispatched: true, answered: true, error: { code: "not_found" } }, "failed"],
       [{ ok: false, dispatched: true, answered: true, error: { code: "rate_limited" } }, "failed"],
       [{ ok: false, dispatched: true, error: { code: "result_processing_failed" } }, "ok"],
@@ -860,5 +887,293 @@ describe("resumable writes: construction", () => {
       openWorldHint: true,
     });
     expect(on.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint).toBe(true);
+  });
+});
+
+describe("resumable writes: review regressions", () => {
+  it("never buries an unknown write under a concurrent pause, and never re-sends it", async () => {
+    const sent: number[] = [];
+    const w = world({
+      write: async (name, args) => {
+        if (name === "close_issue") {
+          sent.push(Number(args.id));
+          // The first send lands, then the gateway gives up on it.
+          if (sent.length === 1) {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            throw new ConnectorCallError("timeout", "gateway timed out");
+          }
+        }
+        return { ok: true };
+      },
+    });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      const closeWithRetry = async (id: number) => {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            return await connecta.call!("tracker.close_issue", { id });
+          } catch (error) {
+            if (!(error as { retryable?: boolean }).retryable) throw error;
+          }
+        }
+        return undefined;
+      };
+      await Promise.all([
+        closeWithRetry(2),
+        connecta.call!("tracker.post", { text: "closed" }),
+      ]);
+      return "done";
+    })));
+    expect(first.address).toBe("tracker.close_issue");
+    // The close goes out under "tool"; the post pauses beside it; the close
+    // then times out. The unknown outcome must win over the pause.
+    const second = await w.resume(approve(first, "tool"));
+    expect(value(second).error).toMatchObject({
+      code: "write_outcome_unknown",
+      writes: { succeeded: 0, failed: 0, unknown: 1 },
+    });
+    expect((await header(w.storage, first.token)).header.state).toBe("failed");
+    // Nothing left to resume, and the close is never sent a second time.
+    const again = await w.resume(approve(first, "tool"));
+    expect(value(again).error.code).toBe("write_outcome_unknown");
+    expect(sent).toEqual([2]);
+  });
+
+  it("fails rather than returning to the pause when a play that sent a write is cut short", async () => {
+    let plays = 0;
+    let reads = 0;
+    const w = world({
+      watchdogMs: 200,
+      read: (name) => {
+        reads++;
+        // The data a later write is built from changes between reads.
+        return name === "get" ? { target: 100 + reads } : { issues: ISSUES };
+      },
+    });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      plays++;
+      const a = await connecta.call!("reader.get", { id: 1 });
+      await connecta.call!("tracker.close_issue", { id: a.target });
+      const b = await connecta.call!("reader.get", { id: 2 });
+      // The second play hangs here until the watchdog ends it.
+      if (plays === 2) await new Promise(() => {});
+      await connecta.call!("tracker.close_issue", { id: b.target });
+      return "done";
+    })));
+    expect(first.args).toEqual({ id: 101 });
+    const cut = await w.resume(approve(first, "tool"));
+    expect(value(cut).error).toMatchObject({
+      code: "execution_interrupted",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect((await header(w.storage, first.token)).header.state).toBe("failed");
+    // A retry, however it approves, gets the same answer and sends nothing.
+    const retried = await w.resume(approve(first, "tool"));
+    expect(value(retried).error.code).toBe("execution_interrupted");
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 101 } }]);
+  });
+
+  it("refuses to replay past a lapsed play that sent writes it never paused after", async () => {
+    const w = world();
+    const first = paused(await w.execute(w.program(staleClose)));
+    const { raw, header: stored } = await header(w.storage, first.token);
+    const journal = new RunJournal(w.registry.resultsStorage(), required(parseToken(first.token)).runId);
+    // A claimant sent the approved close, recorded it, and then crashed:
+    // the reads it made after it were never journaled.
+    await journal.writeEntry(stored.entries, {
+      seq: 1,
+      op: "call",
+      key: required(stored.pending).key,
+      write: true,
+      outcome: { ok: true, value: { ok: true } },
+    }, stored.expiresAt);
+    await journal.casHeader(raw, {
+      ...stored,
+      state: "running",
+      version: stored.version + 1,
+      claim: { id: "0".repeat(32), until: Date.now() - 1 },
+      approvals: [{ address: "tracker.close_issue", scope: "tool", nonce: stored.nonce }],
+      writes: [{ entry: stored.entries, address: "tracker.close_issue", state: "ok" }],
+      entries: stored.entries + 1,
+    });
+    const result = await w.resume(approve(first, "tool"));
+    expect(value(result).error).toMatchObject({
+      code: "execution_interrupted",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(w.writes()).toEqual([]);
+  });
+
+  it("keeps a __proto__ key in the canonical form, and refuses to hold such a write", async () => {
+    const hidden = JSON.parse('{"text":"hello","__proto__":{"text":"HIDDEN"}}') as unknown;
+    expect(canonicalJson(hidden)).not.toBe(canonicalJson({ text: "hello" }));
+    expect(canonicalJson(hidden)).toContain('"__proto__"');
+    const w = world();
+    const result = await w.execute(w.program(async (connecta) => {
+      try {
+        await connecta.call!("tracker.post", JSON.parse('{"text":"hello","__proto__":{"text":"HIDDEN"}}'));
+        return "sent";
+      } catch (error) {
+        return (error as { code: string }).code;
+      }
+    }));
+    expect(value(result).result).toBe("invalid_args");
+    expect(w.writes()).toEqual([]);
+  });
+
+  it("reports an unawaited write that turned unknown after the program returned", async () => {
+    const w = world({
+      read: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { ok: true };
+      },
+      write: async (_name, args) => {
+        if (args.id === 2) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          throw new ConnectorCallError("timeout", "gateway timed out");
+        }
+        return { ok: true };
+      },
+    });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      const unawaited = connecta.call!("tracker.close_issue", { id: 2 });
+      unawaited.catch(() => {});
+      await connecta.call!("reader.get", { id: 9 });
+      return "done";
+    })));
+    const result = await w.resume(approve(first, "tool"));
+    expect(value(result).error).toMatchObject({
+      code: "write_outcome_unknown",
+      writes: { succeeded: 1, failed: 0, unknown: 1 },
+    });
+    expect((await header(w.storage, first.token)).header.state).toBe("failed");
+  });
+
+  it("never leaves a write marked sending when the program returns before it is gated", async () => {
+    const w = world();
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      connecta.call!("tracker.close_issue", { id: 2 }).catch(() => {});
+      return "done";
+    })));
+    const result = await w.resume(approve(first, "tool"));
+    expect(value(result).result).toBe("done");
+    const { header: stored } = await header(w.storage, first.token);
+    expect(stored.state).toBe("completed");
+    expect(stored.writes.some((write) => write.state === "sending" || write.state === "unknown"))
+      .toBe(false);
+    // Whatever reached the connector is exactly what the header records.
+    expect(w.writes().length).toBe(stored.writes.length);
+  });
+
+  it("puts write counts on the error of a claimed play whose program failed", async () => {
+    const w = world();
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      throw new Error("the program gave up");
+    })));
+    const result = await w.resume(approve(first));
+    expect(result.isError).toBe(true);
+    expect(value(result).error).toMatchObject({
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(value(result).error.message).toContain("the program gave up");
+    expect((await header(w.storage, first.token)).header.state).toBe("failed");
+  });
+
+  it("keeps the run's header while a claim outlives its deadline, and answers a repeat", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const w = world({
+      settings: { ttlSeconds: 1 },
+      write: () => {
+        // The write takes longer than the paused run's whole lifetime.
+        vi.setSystemTime(Date.now() + 2_000);
+        return { ok: true };
+      },
+    });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      return "done";
+    })));
+    const done = await w.resume(approve(first));
+    expect(value(done).result).toBe("done");
+    // Past expiresAt, a repeat gets the run's answer, not "run it again".
+    const again = await w.resume(approve(first));
+    expect(value(again).result).toBe("done");
+    expect(w.writes()).toHaveLength(1);
+  });
+
+  it("does not take an earlier identical call for the repeated approved write", async () => {
+    let plays = 0;
+    const w = world();
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      plays++;
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      await connecta.call!("reader.get", { id: plays === 3 ? 99 : 1 });
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      return "done";
+    })));
+    const second = paused(await w.resume(approve(first)));
+    expect(second.args).toEqual({ id: 1 });
+    const result = await w.resume(approve(second));
+    expect(value(result).error.code).toBe("execution_diverged");
+    expect(w.writes()).toHaveLength(1);
+  });
+
+  it("settles a write a host-call deadline cut short after its sending mark as never sent", async () => {
+    const base = memoryStorage();
+    let slowed = false;
+    const slow: KVStorage = {
+      ...base,
+      compareAndSet: async (key, expected, next, options) => {
+        // Only the first write-ahead mark outlasts the host-call deadline.
+        if (!slowed && next?.includes('"state":"sending"')) {
+          slowed = true;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return required(base.compareAndSet)(key, expected, next, options);
+      },
+    };
+    const w = world({ storage: slow, hostCallTimeoutMs: 40 });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      let code = "sent";
+      try {
+        await connecta.call!("tracker.close_issue", { id: 1 });
+      } catch (error) {
+        code = (error as { code: string }).code;
+      }
+      await connecta.call!("tracker.post", { text: code });
+      return code;
+    })));
+    const second = paused(await w.resume(approve(first)));
+    expect(second.args).toEqual({ text: "timeout" });
+    const done = await w.resume(approve(second));
+    expect(value(done).result).toBe("timeout");
+    expect(w.writes()).toEqual([{ address: "tracker.post", args: { text: "timeout" } }]);
+    // The header says what happened: the close was marked, then settled as
+    // never sent — not left `sending` over a journal slot nothing filled.
+    const { header: stored } = await header(w.storage, first.token);
+    expect(stored.writes.map((write) => [write.address, write.state])).toEqual([
+      ["tracker.close_issue", "failed"],
+      ["tracker.post", "ok"],
+    ]);
+  });
+});
+
+describe("resumable writes: messages that match what happened", () => {
+  it("does not say nothing was sent when a chained pause is too large to hold", async () => {
+    const w = world();
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      await connecta.call!("reader.big", {});
+      await connecta.call!("tracker.close_issue", { id: 2 });
+      return "done";
+    })));
+    const result = await w.resume(approve(first));
+    expect(value(result).error).toMatchObject({
+      code: "journal_too_large",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(value(result).error.message).not.toContain("Nothing was sent");
   });
 });

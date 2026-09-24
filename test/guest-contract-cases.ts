@@ -906,6 +906,23 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "E4",
+    name: "a write whose arguments carry a __proto__ key is refused, never held for approval",
+    resumable: true,
+    code: `async () => {
+      try {
+        await connecta.call("reader.wipe", JSON.parse('{"text":"hello","__proto__":{"text":"HIDDEN"}}'));
+        return "sent";
+      } catch (err) { return err.code; }
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.value.paused).toBeUndefined();
+      expect(outcome.result).toBe("invalid_args");
+      expect(state.calls).toEqual({});
+    },
+  },
+  {
     clauses: "E4, P6",
     name: "an approved write resumes by replay: same draws, reads not repeated",
     resumeWith: "call",

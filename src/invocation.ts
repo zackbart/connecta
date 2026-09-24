@@ -146,14 +146,13 @@ function assertRawMcpSuccess(
 }
 
 /**
- * Whether a failed attempt carries an answer from the other side: a typed
- * `ConnectorCallError` (a connector classifies what it was told) or a
- * downstream `isError`. An untyped throw is a transport or programming
- * failure, and says nothing about whether the call landed.
+ * Whether a failed attempt is the downstream tool's own answer: an MCP
+ * `isError`. A connector's typed error is not, by itself, one — a response
+ * too large to read or a refused redirect comes after the request was acted
+ * on — so its code decides instead (`classifyWriteOutcome`).
  */
 function answeredFailure(error: unknown): boolean {
-  return error instanceof ConnectorCallError ||
-    error instanceof DownstreamToolError;
+  return error instanceof DownstreamToolError;
 }
 
 export interface InvocationTiming {
@@ -183,9 +182,8 @@ export type InvocationOutcome<T> =
       ok: false;
       error: CallErrorDetails;
       /**
-       * The dispatched attempt failed with an answer from the other side (a
-       * typed connector error or a downstream `isError`) rather than with
-       * silence. Absent when nothing was dispatched.
+       * The dispatched attempt failed with the downstream tool's own answer
+       * (an MCP `isError`). Absent when nothing was dispatched.
        */
       answered?: boolean;
     });
