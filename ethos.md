@@ -12,8 +12,7 @@ Connecta’s scope, refusals, and invariants. Contradictions require a design de
 - **Safe by default.** Programs run only explicitly read-only tools unasked;
   others cross `call_destructive_tool` or, planned, pause. The host owns approval.
 - **One fetch-native core.** Web APIs on Node and Workers; platform code and
-  optional features behind explicit subpaths. Planned: Effect inside, Promises
-  outside.
+  optional features behind explicit subpaths; Effect inside, Promises outside.
 - **Human auth management.** Optional pages show status and payload-free history.
   Explicit permissions allow credential changes and OAuth. Capabilities stay in code.
 
@@ -52,7 +51,7 @@ carries them.
 | Provenance tracking for emitted content | refused | everything a program emits is program output ([#267](https://github.com/zackbart/connecta/issues/267)) |
 | Result sampling on the catalog surface | refused | sampling is execution, not a catalog read ([#282](https://github.com/zackbart/connecta/issues/282)) |
 | Legacy embedded `UIResource` delivery | refused | superseded upstream, rendered by no client we face ([#266](https://github.com/zackbart/connecta/issues/266)) |
-| Effect as the core effect system | planned | lifetimes are where this core's bugs live; Promises stay outside, pinned exactly. Overturns [#470](https://github.com/zackbart/connecta/issues/470) |
+| Effect as the core effect system | accepted | lifetimes held the bugs: the rewrite closed leaked permits, hung waits, and cross-request races. Overturns [#470](https://github.com/zackbart/connecta/issues/470) |
 | Shared bounded queue under both admission controllers | refused | built: −17 lines bought a hook-parameterised abstraction ([#453](https://github.com/zackbart/connecta/issues/453)) |
 | MCP Apps rendering and `connecta.ui` | removed | clients render returned data |
 | Connector shortcut globals | removed | canonical addresses need no sanitization |
@@ -84,7 +83,7 @@ design decision.
 - **An observed shape is never a declaration.** Names and broad types only, labeled, and gone behind any declared schema.
 - **Credentials never leave the host.** Encrypted at rest, readable only by the owning connector (and principal, for personal auth), rendered by nothing.
 - **Import-graph purity.** Nothing reachable from the root entry imports a `node:` builtin or `effect/testing`.
-- **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath; planned Effect is the one hard dependency, named by no published type.
+- **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath; Effect is the one hard dependency, named by no published type.
 - **Human routes manage auth, never capability.** Visibility grants use, not administration. Shared and personal auth mutations need separate config-derived permissions, both denied by default, and activity reads their own. Planned: viewing artifacts.
 - **Omitted modules do no work.** Core imports no UI bundle, vault, activity, or bearer implementation. OAuth callbacks work without UI.
 - **Status reads do not start authorization.** Only an explicit authorized action starts OAuth, never a page load.

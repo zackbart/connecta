@@ -2,6 +2,241 @@
 
 All notable changes to this package are documented here.
 
+## 0.25.0 — 2026-09-23
+
+The Effect core is the release. Admission, deadlines, invocation,
+`execute_code`, discovery, the registry, remote MCP connections, OAuth refresh,
+and the request pipeline now run on Effect v4 behind the same Promise API:
+connectors, `createConnecta`, and every shipped declaration name no Effect
+type, and no connector code changes. The rewrite paid for itself in lifetimes —
+about a dozen bugs where a permit, a lease, or a wait outlived the request that
+owned it, each listed under Fixed — and the release also seals downstream OAuth
+state, stops treating a dead refresh grant as an outage, and bounds results
+below what clients cut off. What breaks: `effect` is a new hard dependency,
+pinned to exactly `4.0.0-rc.117` (about 53 MB installed, +44 KB gzip on the
+root bundle, about +20 ms of Worker cold start); `calls.maxResultBytes`
+defaults to 24,000 instead of 50,000, and a truncated result now leads with its
+notice; `get_result` pages are a header line plus raw text, with `maxBytes`
+clamped to the cap; with `encryptedCredentialVault()`, OAuth tokens are sealed
+the first time they are read, so rolling back to 0.24 means authorizing every
+OAuth connector again; `/ui/connectors/<id>` no longer returns `message`; the
+OAuth callback page names a classified reason instead of echoing the
+provider's; an OAuth URL a downstream advertises off its configured origin must
+be HTTPS on a public host; and `npm run check` now needs Chromium. A deployment
+can ignore the rest: every new surface is optional or defaulted
+(`KVStorage.compareAndSet`, `CredentialVault.seal`/`open`,
+`execute.watchdogMs`, the `typescript` schema format), no existing option
+changes meaning (the result cap changes only its default), and results stashed
+by 0.24 keep paging until they expire.
+
+### Added
+
+- **`KVStorage.compareAndSet(key, expected, next, { ttlSeconds })`.** An
+  optional atomic claim: `expected: null` means absent (an expired entry
+  counts), `next: null` deletes, and a write takes a TTL exactly as `set` does.
+  Memory and file storage provide it — the file store atomically under its
+  lock, persisted across reopen, and rolled back when the write cannot be
+  persisted — and the namespaced views core hands connectors forward it only
+  when the store underneath has it. The Worker example gains a D1-backed
+  `KVStorage` with compare-and-set and TTL (`examples/worker/src/d1-storage.ts`,
+  its schema in the example README, a commented `STORAGE_DB` binding). The
+  Cloudflare KV adapter declares none, because eventually consistent storage
+  cannot keep that promise. Nothing requires it; downstream OAuth uses it where
+  it exists.
+- **`CredentialVault.seal` / `open`.** Optional members for sealing values that
+  are not credentials. `encryptedCredentialVault()` implements them with the
+  vault's AES-GCM key, binding the connector id, the owner, and the physical
+  storage key (which carries the authorization epoch) into the authenticated
+  data, so ciphertext copied to another connector, principal, or epoch does not
+  open. A vault without them draws one startup warning per OAuth connector.
+- **`execute.watchdogMs`.** A ceiling on how long connecta waits for an
+  executor to settle, enforced outside the sandbox: 120,000 ms by default,
+  above both executors' own deadlines, with an invalid value falling back like
+  its sibling keys. A run still unsettled at the ceiling ends as a
+  non-retryable `executor_failed` calling the sandbox unresponsive, and its
+  admission lease is released. See code mode `L3`.
+- **TypeScript signatures in discovery.** `includeSchemas: "typescript"` on
+  `search_tools` and `connecta.search`, and `format: "typescript"` on
+  `connecta.describe`, replace both schema fields with one `signature` — the
+  function `connecta.call` resolves to, such as
+  `(args: { team: string }) => Promise<unknown>` — for an agent to read, never
+  to run; programs stay JavaScript. It rides the compact renderer's walk and
+  budgets, and an observed output opens with `/* observed, not declared */`.
+  The default stays `compact`: agents in the eval never chose `typescript`, even
+  when nudged.
+- **The operator page says what each tool may do and how to fix what is
+  wrong.** Every tool carries the path core enforces for it — "runs in
+  programs" for an explicitly read-only tool, "needs approval" for everything
+  that crosses `call_destructive_tool`. Every failure the page shows offers
+  "Copy fix prompt", fixed text chosen by a server-classified problem and the
+  configured connector id, with no parameter an error message, token, or URL
+  could travel through. The endpoint block offers Claude Code, Codex, and
+  `mcpServers` JSON setup for `/mcp` and for each `/mcp/<pool>` the viewer's
+  grant admits; none carries a token.
+- **An eval harness, for contributors.** `eval/` drives a deployment only
+  through its public surface: `eval:agent` runs headless Claude Code against six
+  stateful fake MCP servers and grades the fakes' final state and call ledger,
+  never the agent's prose; `eval:smoke` boots the Node template and the Worker
+  example; `eval:perf` measures the root Worker bundle and request latency;
+  `eval:report` renders a comparison against the baselines in
+  `eval/baselines/`. None of it runs in `npm run check` or ships in the
+  tarball.
+
+### Changed
+
+- **The core runs on Effect.** Each converted module keeps its exported class
+  or function exactly and runs an Effect program behind it; one runner,
+  `src/runtime/run.ts`, is the only place a fiber starts, and it rethrows
+  connecta's own error classes and a caller's abort reason unchanged.
+  `documentation/architecture.md` describes the shape and the two workerd rules
+  it had to learn. `effect` is a runtime dependency at one exact version, never
+  a range — the version Alchemy pins, so a deployment using both resolves one
+  copy — and an upgrade is its own release. The cost, against 0.24.4: the root
+  entry 235,346 → 279,526 B gzip, the Worker example 263,949 → 314,336 B, each
+  provider about +36 KB, `./ui` +39 KB, `./activity` +32 KB, and about 53 MB
+  on disk (`effect` has no dependencies of its own). Effect Schema and
+  `HttpApi` were measured and not used; `zod` stays for the meta-tool inputs.
+- **Truncated results lead with their handle, under client cutoffs.** Claude
+  Code (2.1.280) swaps any MCP result over 50,000 characters for a spill-file
+  pointer and a 2,000-character preview, and past twice
+  `MAX_MCP_OUTPUT_TOKENS` rejects it with no content at all. The old layout, a
+  50,000-byte preview with the `get_result` notice at the tail, crossed that
+  line every time: agents never saw the handle, and two of three models re-ran
+  a billable export three times to look again. A `call_tool` or
+  `call_destructive_tool` result over its cap now opens with a one-line JSON
+  notice (`resultId`, `totalBytes`, `hint`, `nextAction`), then the preview;
+  the default `calls.maxResultBytes` drops to 24,000 bytes so notice plus
+  preview stays under 25,000; a lone text block is measured, previewed, and
+  paged as its text rather than a JSON-escaped content envelope; and a call not
+  explicitly read-only says the write already ran and must not be repeated.
+  Per-connector overrides and validation are unchanged, and a deployment whose
+  clients take more can raise the cap. A result between 24,000 and 50,000
+  bytes that used to arrive whole now pages.
+- **`get_result` pages are raw text.** A page is one text block: a JSON header
+  (`resultId`, `offset`, `bytes`, `totalBytes`, `hasMore`, `nextAction`), a
+  newline, then the page as stored, where it used to be
+  `{ offset, nextOffset?, totalBytes, text }` with every quote and newline in
+  the page escaped a second time. `maxBytes` is an upper bound clamped to the
+  inline cap of the call that stashed the result, recorded in the stash entry;
+  a larger request is answered, not refused, because agents that could finally
+  see the handle asked for 50,000-byte pages and Claude Code rejected every
+  answer. Entries stashed before the cap was recorded page at the deployment
+  cap.
+- **Connector status text stays in the server log.** A status message can quote
+  a downstream error body, and that body can quote the secret it rejected, so
+  `/ui/connectors/<id>` no longer returns `message` and the page shows fixed
+  copy for a classified `problem` instead. The raw text is logged as
+  `[connecta] connector "<id>" operator status <state>: <message>`, at warn for
+  failures and info for `auth_required`.
+- **The OAuth callback page names a closed reason** — `denied`,
+  `provider_error`, `invalid_callback`, `handoff_failed`, or `exchange_failed` —
+  instead of echoing the provider's `error` parameter or the exchange error,
+  which goes to the operator log. An expired callback reads as
+  `invalid_callback`, so refusals stay indistinguishable.
+- **Faster requests.** Each `/mcp` request builds a fresh `McpServer`, and zod
+  re-rendered all seven meta-tool input schemas for every one — about 65% of
+  `tools/list` CPU. They are now derived once and memoized; `tools/list`
+  bodies are byte-identical. On the eval's Node deployment, p50 against 0.24.4:
+  `tools/list` 1.43 → 0.68 ms, `call_tool` 2.95 → 1.34 ms, `execute_code`
+  4.94 → 3.45 ms.
+- **The tarball ships only declarations an export reaches.** The build prunes
+  every `.d.ts` file no `exports` target reaches — about thirty,
+  `src/runtime/` included — and `npm run check:declarations` fails if a shipped
+  declaration names an Effect type or is left orphaned. Nothing importable
+  changed; those paths were never a supported import.
+- **`npm run check` needs Chromium.** It runs the operator UI's browser suite
+  after vitest (`npm run test:browser:install` once per machine; `npm pack`
+  runs `check` too), then `check:declarations` and `check:bundle`, which caps
+  every entry's gzip size against `scripts/bundle-budget.json`. CI and publish
+  install Chromium first.
+- RevenueCat's product store-state plan family and targeting-rule tools arrive
+  classified instead of failing closed; the five tools RevenueCat deprecated
+  keep their verdicts, and the usage guide routes store changes through the
+  plan workflow (#560).
+
+### Fixed
+
+- **Downstream OAuth state at rest.** A `remoteMcp()` OAuth connector's tokens,
+  registered client secret, and PKCE verifier were written to storage as
+  plaintext JSON beside vault-encrypted credentials. With a vault that has
+  `seal`/`open` they are now sealed on write, and plaintext left by an older
+  release is resealed where it lies on first read, conditional on nothing
+  having changed it meanwhile. A value that does not open reads as absent:
+  `auth_required`, with a warning. Without a vault, stored bytes are
+  unchanged.
+- **Dead refresh grants.** A refused refresh — any 4xx but 408, 425, or 429,
+  or a 2xx carrying an OAuth error such as GitHub's `bad_refresh_token` — was
+  reported as a generic failure and the dead token sent again, while an outage
+  the SDK could not parse was reported as needing consent. A refusal now ends
+  as `auth_required` with the refused tokens deleted, so the next
+  `authorize_connector` reaches consent; a 5xx, 408, 425, 429, or network
+  failure is a retryable `unavailable` (or `rate_limited`, with `retryAfterMs`
+  from `Retry-After`), the grant is kept, and a passive call writes no consent
+  URL. Every request joined on the refresh gets the same verdict.
+- **A refused refresh token could be redeemed twice.** A request that owned a
+  refresh and was cancelled while deleting the refused grant released its
+  joiners early, so a request arriving meanwhile sent the refused token again.
+  Deleting it also no longer overwrites a consent that lands between the read
+  and the delete, where the store has `compareAndSet`.
+- **OAuth URLs a downstream advertises.** Connecta fetched the authorization
+  servers, token endpoints, and registration endpoints a remote server's
+  metadata names from the host, so a compromised downstream could aim a Node or
+  Docker deployment at `169.254.169.254` or its LAN. A URL off the connector's
+  configured origin must now be HTTPS on a host that is not private by syntax,
+  and a refused one is never requested; it fails as a non-retryable
+  `connector_call_failed` naming only the host. A loopback-configured connector
+  may still learn loopback URLs. DNS rebinding is out of scope, as the auth
+  guide says.
+- **Admission permits and leases that outlived their caller.**
+  - An `/mcp` request that stalled after admission — in inbound auth, a pool
+    grant, or a tool handler that ignores cancellation — kept its permit after
+    its client left. On Workers, where such a request is cancelled as hung, the
+    permit leaked for the isolate's life.
+  - `execute_code` awaited its executor with no outer bound. A wedged Dynamic
+    Worker never fired its in-isolate deadline, so the run held its code-pool
+    lease forever; two of those filled the default pool and every later
+    program queued behind them. `execute.watchdogMs` ends that wait.
+  - An admitting executor whose `acquire()` ignored the signal held a cancelled
+    request until it granted a lease.
+- **Work that outlived a cancelled request.** `connecta.search` and
+  `connecta.describe` kept loading catalogs after their run was cancelled, and
+  one in flight held the program until its probe deadline; `search_tools`
+  probes ran on after their caller left; operator activity pages kept looking
+  up labels from the identity provider after the reader had gone; and legacy
+  `/mcp` requests never closed their `McpServer`.
+- **Call admission on Workers.** Handing a permit to a queued call read the
+  waiter's abort signal from inside the releasing request, which workerd
+  refuses: the releasing call reported `connector_call_failed` despite
+  succeeding, and the waiter stranded until its deadline.
+- **Remote MCP connections.** A call waiting on a connect could resume after
+  teardown, a forced re-authorization, or a credential rotation had cleared the
+  client, and fail with "Cannot read properties of null (reading 'callTool')".
+  And a transport whose close never settled held the connection's teardown
+  forever, hanging direct callers such as the credential Test action; closing a
+  session and the transport are now bounded to a second each.
+- **A stale catalog persisted after invalidation.** Evicting a personal
+  registry while its catalog refresh was in flight let a replacement for the
+  same principal invalidate the catalog, and the evicted refresh then persisted
+  the pre-change listing again. Eviction now skips a registry with a refresh or
+  catalog write in flight.
+- **QuickJS shutdown.** A child that ignored SIGTERM outlived `close()`, which
+  stopped waiting after a second; it now gets SIGKILL. `close()` also waits for
+  children recycled before it, not only its own.
+- **Operator routes.** A credential PUT read its whole body before the
+  20,000-character check; reading now stops past 60,000 bytes with the same
+  413. An OAuth disconnect that rejected with no reason reported 204.
+- A scoped `connecta.search` whose probe timed out named `search_tools` in
+  `queryAnalysis.catalogError`, a tool a program cannot call.
+- Recovery text for a missing or rejected static credential sent operators and
+  agents to a `/credentials` page that no longer exists; it now points at
+  `authorize_connector` for recovery options and at the connection in the
+  operator UI (#551).
+- Compact schema rendering accumulated every member's text of an oversized
+  composite before checking it against the byte budget — megabytes of
+  transient text for a wide schema with long descriptions. It now stops
+  consuming members once the budget cannot be met; output within budget is
+  unchanged (#558).
+
 ## 0.24.4 — 2026-09-17
 
 The operator UI is the release. Its connections page is now a summary line and

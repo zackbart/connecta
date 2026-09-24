@@ -147,8 +147,11 @@ runtime-wide accounting of stash bytes and entries, where a full stash returns t
 successful call's preview and a paging-unavailable notice rather than a result id.
 A second optional method, `compareAndSet(key, expected, next)`, is an atomic
 claim: `null` means absent (expired counts) on the way in and delete on the way
-out. Nothing in core requires it yet; a subsystem that needs an exactly-once
-claim will require it explicitly rather than emulate it with a read and a write.
+out. Nothing in core requires it yet. Downstream OAuth uses it where the store
+has it, so resealing legacy plaintext and discarding a refused grant cannot
+overwrite a consent that landed in between, and falls back to a read and a
+write where it does not. A subsystem that needs an exactly-once claim will
+require it explicitly rather than emulate it that way.
 Adapters: `src/storage/memory.ts` and `src/storage/file.ts` (Node) both provide
 it, and the namespaced views core hands connectors forward it only when the
 underlying store has it. `examples/worker/` carries two more: Cloudflare KV,
@@ -232,178 +235,162 @@ shape from building, in someone else's repository rather than this one.
 
 ## Effect inside
 
-Request admission, downstream call admission, deadlines, bounded settled
-fan-out, connector scope close, OAuth refresh coordination, catalog
-persistence, catalog refresh flights, the result stash, the remote MCP
-connection lifecycle, discovery's request-scoped catalog cache, the
-single-call invocation pipeline, the `execute_code` run with its sandbox
-host calls, the request pipeline itself, and the operator and activity data
-routes run on Effect v4.
-Every published signature stays Promise-shaped, so each
-converted module is a shell and a core. The shell keeps its exported class or
-function exactly as it was: same members, same errors, same `.d.ts`, private
-member names included. The core is an Effect program behind it.
-`AdmissionController.acquire()` runs the admission program and resolves with
-the lease, or rejects with the same `ExecutorAdmissionError`. An Effect caller
-skips the Promise and takes the program from `src/runtime/admission.ts`
-(`admit`, or `acquireScoped` for a lease its Scope releases). Call admission
-follows the same shape, kept a separate controller as #453 requires:
-`ConnectorCallAdmissionController.acquire()` over `src/runtime/call-admission.ts`
-(`admitCall`, `acquireCallScoped`), with the rolling window read from the
-fiber's Clock. `closeConnectorScope` is the Promise face of `closeScope` in
-`src/runtime/connector-scope.ts`, which an Effect caller registers as a Scope
-finalizer (`closeScopeOnExit`). `withDeadline` is the Promise face of
-`withDeadlineEffect`. `OAuthRefreshCoordinator.coordinatedFetch()` still
-returns a plain `FetchLike`; inside, a refresh flight is a Deferred, and the
-owning request's redemption is a fiber its abort interrupts. The registry's
-persisted catalog (the manifest and its chunks: read, write, delete) and its
-result stash are Effect programs over the `Storage` and `Logger` services,
-run from the registry's unchanged methods. A catalog refresh flight is a
-Deferred too: the request that publishes it runs the listing (a stale read's
-refresh under `detach`, so under `waitUntil`, with its own deadline and a
-connector scope closed as a Scope finalizer) and completes the flight after
-that teardown; every other reader joins the outcome. Persisted-catalog writes
-and deletes take turns per connector, in arrival order, each turn a Deferred
-its own request completes once its storage work is done. Effect's `Semaphore`
-is not used for that: a newcomer can take a released permit ahead of a
-waiter that queued earlier, and the waiter is resumed from the releasing
-fiber, which is the cross-request problem below. `remoteMcp()` keeps its
-Promise-shaped `Connector`; inside, each request scope's state holds a Scope,
-and each connection is a lease forked from it that closes the connection's
-transport, bounded to a second for the session DELETE and a second for the
-local close. A connect in flight is a Deferred that every caller in the scope
-joins and that resolves with the client it connected, and `closeScope` closes
-the Scope, which is the one-way latch a late connect checks. `CatalogService`
-keeps its Promise methods; inside, each connector a request asks about is a
-Deferred that the first asker's registry read completes and every later asker
-joins, a success kept for the rest of the request and a failure dropped so the
-next ask reads again. The read settles the Deferred itself, so a probe
-deadline ends one asker's wait and never the read the others share. Search and
-describe fan out over those catalogs with `Effect.forEach` under the
-discovery concurrency, each probe under `withDeadlineEffect`, and settle every
-slot with `Effect.result`; ranking and rendering stay synchronous.
-`InvocationService.invoke` runs one call as one fiber: resolution,
-the read-only and schema refusals, admission, and the one downstream attempt
-sit under a single `withDeadlineEffect`, whose expiry interrupts the call
-wherever it is instead of leaving it to finish in the background. The call
-permit is an `acquireRelease` in the attempt's Scope, released on success,
-failure, and interruption alike, and the connector call is an
-`Effect.tryPromise` over the unchanged Promise `Connector`. Every outcome,
-refusals included, is a value; the caller still records the activity event.
-An `execute_code` run is one fiber too, and its Scope holds what the run
-owns: the run's own signal and, from an admitting executor, the lease.
-Closing it on every exit releases the lease and aborts the signal, so a
-result, a thrown executor, the watchdog, and cancellation all end the same
-way. The executor's `acquire()` and `execute()` stay Promises, each raced
-against the signal (and a run against `execute.watchdogMs`), so connecta
-stops waiting on a sandbox that does not settle; a lease that arrives after
-its request gave up is released on arrival. Each guest host call is a fiber
-of its own behind the provider function the executor awaits: spend the
-budget, then a call yields the invocation pipeline directly while `search`
-and `describe` race the run's signal, and a typed failure leaves through the
-authenticated frame. The budget, the emit collector, and the frame itself
-stay plain synchronous code.
+The core runs on Effect v4; no API a deployment touches does. `createConnecta`,
+`remoteMcp()`, `api()`, the `Connector` contract, and every shipped `.d.ts`
+are Promise-shaped and name no Effect type, so a connector author never meets a
+second async paradigm. The reason for the rewrite is the first section of this
+guide: the bugs here are lifetime bugs, and Effect makes a lifetime a value —
+a Scope that closes on every exit, an interrupt that reaches whatever a fiber
+is waiting on, a Deferred that one party completes and any number join. The
+conversion found and closed a dozen of them, each with a test that fails on the
+code before it: permits and leases held after their caller left, waits with no
+bound, and races between requests.
 
-A request is a fiber too, one per `fetch`, run through `runEdge` with the
-request's signal, so a caller that leaves interrupts whatever the request is
-waiting on. An `/mcp` request's Scope outlives its handler: the admission
-permit and every `McpServer` the request builds are acquired into it, and
-the response carries it out, closed when the body is read to its end, fails,
-or is cancelled, or when the signal aborts — or at once, if the handler fails
-or is interrupted first. That is what bounds a request stalled in inbound
-auth, a pool grant, or a tool handler that ignores cancellation: before, its
-permit waited on a body that would never come. Inbound authorization stays
-a Promise the fiber awaits: `authorize` is named in the shipped
-declarations, and every route awaits it the same way. A discovery probe takes
-the request's signal, so `search_tools` stops listing once its caller has gone.
-The OAuth callback is the one step that is deliberately uninterruptible: an
-authorization code is single-use, and a caller that hangs up mid-exchange
-must not leave fresh tokens behind a catalog still cached as unauthorized.
-Nothing here runs on the Connecta's runtime, because `/health` and a closed
-deployment's 503 must keep answering after `close()` disposes it.
+### Shell and core
 
-The operator surface and the activity module keep their Promise `handle()`,
-which returns `null`, running no route, for a path the surface does not own.
-Behind it, each JSON route under `/ui/*` is one Effect program run by
-`serveOperator` (`src/routes/operator.ts`). A route that settles its answer
-early — a refusal, or an auth provider's own challenge — fails with that
-exact Response and the edge serves it, so every status, body, and header is
-still the one `privateJson` or the provider built. Reads run under the
-request's signal, so a reader who leaves stops the connector probes and
-activity-label lookups it was waiting on. Writes run without it: a vault
-write or an OAuth disconnect that has started must reach the cache
-invalidation behind it whether or not anyone is still waiting. Connection
-details fan out with `Effect.forEach` under the discovery concurrency, each
-row under one `withDeadlineEffect` and closing its connector scope as the row
-ends; activity labels resolve eight at a time under one page budget. The HTML
-shells and favicons stay plain handlers. Effect's `HttpApi` was measured for
-these routes and not used: it cost about 100 KB gzip on `./ui` and 130 KB on
-`./activity`, mostly Schema, and matching the wire format meant opting out of
-most of what it does — unowned paths fall through rather than 404, a wrong
-method is a JSON 405, and the content-type and size checks run before a body
-is read.
+Each converted module is a shell and a core. The shell keeps its exported class
+or function exactly — same members, same error classes, same `.d.ts`, private
+member names included, because TypeScript ships those too. The core is an
+Effect program behind it. In a published class it lives in a `static` block,
+the one place that can read private state without adding a member to the
+declarations; elsewhere it lives in an unexported function or in
+`src/runtime/`, which no `exports` target reaches. Errors keep their classes
+(`ConnectorCallError`, `ExecutorAdmissionError`, `CallAdmissionError`) because
+callers and tests check `instanceof`, `name`, and `message`.
 
-Work shared across requests meets only through a Deferred that the owning
-request completes, never through a fiber that outlives its request. Waiting
-on one is its own edge. Deferred resumes a waiting fiber synchronously, inside
-the call that completed it, which on Workers means inside the completing
-request's I/O context: a waiter that goes on to touch its own request body or
-transport there fails with workerd's "Cannot perform I/O on behalf of a
-different request". So the wait runs through `runEdge`, and the waiter does
-its own I/O after awaiting that promise, which workerd resumes in the
-waiter's request as it does any promise resolved from another one. Call
-admission is the busiest case: a permit is handed to a queued call from inside
-the request that released one, so the invocation pipeline awaits
-`registry.admitCall`'s promise rather than the controller's Effect program,
-and the controller never reads a waiter's `AbortSignal` while handing it a
-permit — on workerd, reading another request's signal throws. A waiter whose
-signal aborts leaves the queue from its own listener, in its own request.
-Executor admission is the same shape one level up: a queued `execute_code`
-is handed its code slot by the request that finished, so the run awaits the
-executor's `acquire()` promise and builds its providers only after it
-resolves, back in its own request. Request admission is the top level: a
-queued `/mcp` request is handed its permit from inside the request whose
-body just ended, so it awaits `acquire()`'s promise rather than the
-controller's `acquireScoped`, and authorizes only after that, at home.
+Effect callers skip the Promise and take the program: `admit` and
+`acquireScoped` for request admission (`src/runtime/admission.ts`), `admitCall`
+and `acquireCallScoped` for call admission, `closeScope` and `closeScopeOnExit`
+for a connector scope, `withDeadlineEffect` where Promise code has
+`withDeadline`. The build prunes every declaration no `exports` target reaches,
+and `npm run check:declarations` fails if what remains names an Effect type.
 
-Each Connecta also gets a runtime of its own. `createConnecta` resolves
-storage, the vault, activity history, the logger, and the rest of its
-configuration once, and `src/runtime/services.ts` gives each a service key —
-`Storage`, `Vault`, `ActivityRecorder`, `Logger`, `ResolvedConfig` — behind a
-runtime keyed by the root registry (`coreRuntime`). An omitted activity module
-is a recorder that records nothing, so it does no work there either; the
-per-request `DeferredWork` hook is provided by the request, never the runtime.
-Creating the runtime builds nothing, because a Worker may construct its
-Connecta at global scope; the first run that needs the services builds them,
-and `close()` disposes the runtime last. The shells stay constructible from
-plain arguments, as the tests build them.
-
-The registry's programs do not run on that runtime. A personal registry's
-storage is the root's namespaced to its principal, so the runtime's `Storage`
-would be another partition's; each registry instead provides its own storage
-and logger to the programs it runs (`runOnPartition` in
-`src/runtime/storage.ts`). For the root registry those are the same two
-objects the runtime holds. A scoped view has no storage of its own and reaches
-it through the registry it delegates to, and the result stash is always the
-root's, because its capacity is runtime-wide.
+### One runner
 
 `src/runtime/run.ts` is the only place a fiber starts, and
 `test/purity.test.ts` fails if any other file calls `Effect.run*`, `runFork`,
-`forkDaemon`, or `ManagedRuntime.make`. Its `runEdge` does three things the
-stock runner does not:
+`forkDaemon`, or `ManagedRuntime.make`. It exports two ways out:
 
-- It rethrows the original failure or defect, never a wrapper, because callers
-  check `instanceof`, `name`, and `message` on connecta's error classes.
-- It turns an interrupt into the caller's `signal.reason` rather than
-  Effect's generic interruption error.
-- It runs every fiber on a scheduler that yields through microtasks. Effect's
-  default scheduler yields through `setImmediate`, which vitest's fake timers
-  freeze and Workers never had. The price is that a fiber never yields to
-  I/O, so CPU-heavy work stays out of Effect loops.
+- **`runEdge(effect, { signal, runtime? })`** runs an effect at a Promise
+  boundary. It rethrows the original failure or defect, never a wrapper. It
+  turns an interrupt into the caller's `signal.reason` rather than Effect's
+  "All fibers interrupted without error". And it runs every fiber on a
+  scheduler that yields through microtasks: Effect's default yields through
+  `setImmediate`, which vitest's fake timers freeze and Workers never had. The
+  price is that a fiber never yields to I/O, so CPU-heavy work stays out of
+  Effect loops.
+- **`detach(effect, ctx)`** is the only fire-and-forget, and it hands the work
+  to `ctx.waitUntil` when there is one.
 
-`npm run check:declarations` fails if any shipped declaration names an Effect
-type. `npm run check:bundle` records what the core costs per entry against
-`scripts/bundle-budget.json`.
+Beside them sit `withDeadlineEffect`, which aborts the operation's own signal
+with the labelled timeout error *before* interrupting it, so work that honors
+the signal sees the same reason the caller does, and `fromSignal`, which turns
+an `AbortSignal` into a failure to race against. Nothing runs Effect at module
+scope, where a Worker may not start work, and nothing logs through
+`Effect.log`: logging goes through the configured `Logger`, which is what
+honors `logger: "silent"`.
+
+Each Connecta also gets a runtime of its own (`src/runtime/services.ts`):
+`Storage`, `Vault`, `ActivityRecorder` (one that records nothing when the module
+is omitted), `Logger`, and `ResolvedConfig`. Creating it builds nothing, since
+a Worker constructs its Connecta at global scope; the first run that needs the
+services builds them, and `close()` disposes the runtime last. Two things
+deliberately do not run on it. The request pipeline runs on no runtime, so
+`/health` and a closed deployment's 503 keep answering after `close()`. And a
+registry provides its own storage and logger to its programs
+(`runOnPartition` in `src/runtime/storage.ts`), because a personal registry's
+storage is the root's namespaced to its principal and the runtime's `Storage`
+would be another partition's.
+
+### What runs on Effect
+
+| Area | Shape |
+| --- | --- |
+| Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, or at once if the handler fails first. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
+| Admission (`executor-admission.ts`, `call-admission.ts`) | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires. |
+| One tool call (`invocation.ts`) | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`. |
+| `execute_code` (`execute.ts`) | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own. |
+| Discovery (`catalog-service.ts`) | A request-scoped cache: one Deferred per connector, completed by the first asker's read from that read's own settlement, so a probe deadline ends one asker's wait and never the read the others share. Fan-out is `Effect.forEach` under the discovery concurrency. |
+| Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes; persisted-catalog writes take per-connector turns, each a Deferred its own request completes. |
+| Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |
+| Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred; the owner's redemption is a fiber its abort interrupts, and committing an answer that already exists is uninterruptible. |
+| Operator and activity data (`routes/operator.ts`) | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation. |
+| QuickJS pool (`executors/quickjs.ts`, Node only) | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`. |
+
+### What stays plain
+
+- **Everything a deployment writes against.** The `Connector` contract,
+  `api()`, the providers, custom connectors, storage adapters, and the vault
+  are Promises. A connector is called with `Effect.tryPromise`, never asked to
+  return an Effect.
+- **Inbound authorization.** `authorize` in `src/routes/shared.ts` ships in
+  the declarations and in the `./activity` bundle; converting it cost 32 KB
+  gzip there for nothing a caller could see.
+- **Pure synchronous code.** Ranking, schema rendering, classification,
+  `validateToolInput`, the host-call budget, the emit collector, failure
+  framing, and result shaping. The microtask scheduler never yields to I/O, so
+  wrapping them would buy nothing and could starve a request.
+- **The MCP edges.** `@modelcontextprotocol/server` upward and the SDK client
+  downstream; Effect's own `McpServer` is not used.
+- **The Node and browser leaves.** `node.ts`, `fileStorage`, the QuickJS
+  child, runtime, and protocol, and the operator UI's browser app.
+
+### Across requests
+
+Work shared across requests meets only through a Deferred that the owning
+request completes, never through a fiber that outlives its request. Two
+workerd rules follow, and both have bitten.
+
+**Waiting on a shared Deferred is its own edge.** Deferred resumes a waiting
+fiber synchronously, inside the call that completed it, which on Workers means
+inside the completing request's I/O context. A waiter that goes on to touch its
+own body, transport, or storage there fails with "Cannot perform I/O on behalf
+of a different request", or hangs until its deadline. So the wait runs through
+`runEdge`, and the waiter does its own I/O after awaiting that promise, which
+workerd resumes in the waiter's request as it does any promise resolved from
+another. The same holds one level out for every queue: a queued call, a queued
+`execute_code`, and a queued `/mcp` request are each handed their permit from
+inside the request that released one, so each awaits the controller's
+Promise-shaped `acquire` rather than yielding its Effect program, and does its
+own work only once that promise resolves. Effect's `Semaphore` is not used
+across requests for the same reason, and because a same-tick newcomer can take
+a released permit ahead of a waiter that queued earlier.
+
+**Never read another request's signal.** On workerd, reading `aborted` or
+`reason`, or calling `abort()`, on a signal that belongs to another request
+throws; adding and removing listeners does not. Code that runs from another
+request's completion — a queue handing out a permit, `close()` — must not look
+at a waiter's signal. A waiter whose signal aborts leaves the queue from its
+own listener, in its own request.
+
+One corollary is easy to break by tidying. Workerd cancels a request as hung
+when its only pending work is waiting on another request and it has no timer or
+I/O of its own. Connecta's deadline timers are what keep a waiting request
+alive and bounded, so no wait may lose its timer.
+
+### Why not Schema or HttpApi
+
+Both were measured and both lost. `effect` is imported through its barrel,
+which defeats tree-shaking: the first conversion step measured about +20 ms
+of Worker cold start for it, and that cost was accepted over deep imports at
+every call site. The catch is that a module the barrel reaches is paid for in
+full, however little of it is used. Effect Schema for config validation and the
+meta-tool inputs came to about +62 KB gzip and +13 ms of cold start in the
+root, for a validator no clearer than the hand-written `CONFIG_SCHEMA`; the
+meta-tool inputs stay zod, which the MCP SDK bundles regardless. `HttpApi` for
+the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
+on `./activity`, and matching the wire format meant opting out of most of what
+it does: unowned paths fall through rather than 404, a wrong method is a JSON
+405, and the content-type and size checks run before a body is read. The root
+entry may import only `effect` itself (`test/purity.test.ts`); nothing in
+`src/` uses `effect/unstable/*`, which would have to stay behind a subpath.
+
+The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
+grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to
+314,336, and each provider by about 36 KB, since each reaches Effect through
+`remoteMcp()`; `npm run check:bundle` caps every entry against
+`scripts/bundle-budget.json`. An install carries about 53 MB of `effect`, with
+no dependencies of its own.
 
 ## Where else to look
 
