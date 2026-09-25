@@ -8,7 +8,7 @@
 
 import { scanHtml } from "./html-scan.js";
 import { scriptSafeJson } from "./json.js";
-import { markdownPage } from "./markdown.js";
+import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import type { ArtifactAllowlist, ArtifactKind } from "./types.js";
 
 /** What a page reads as `window.artifact`, besides `data`. */
@@ -65,8 +65,17 @@ export function buildFrameDocument(input: {
   global: ArtifactGlobal;
   data: Readonly<Record<string, string>>;
 }): string {
-  const page =
-    input.kind === "markdown" ? markdownPage(input.source, input.global.title) : input.source;
+  let page = input.source;
+  if (input.kind === "markdown") {
+    try {
+      page = markdownPage(input.source, input.global.title);
+    } catch (error) {
+      if (!(error instanceof MarkdownNestingError)) throw error;
+      // Old or externally populated stores may hold a page that today's
+      // validator would reject. Render fixed text instead of throwing here.
+      page = markdownPage("This page has too many nested block quotes or lists to display.", input.global.title);
+    }
+  }
   const meta = scriptSafeJson(input.global);
   const data = Object.entries(input.data)
     .map(([name, text]) => `${JSON.stringify(name)}:${text}`)

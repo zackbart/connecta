@@ -20,6 +20,13 @@ const escapeHtml = (text: string) =>
 
 const PUNCTUATION = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const MAX_INLINE_DEPTH = 8;
+const MAX_BLOCK_DEPTH = 64;
+
+export class MarkdownNestingError extends Error {
+  constructor() {
+    super(`Markdown blocks are nested more than ${MAX_BLOCK_DEPTH} levels deep. Flatten the block quotes or lists.`);
+  }
+}
 
 /** A link target a sandboxed page can follow; anything else renders as text. */
 function safeHref(url: string): string | undefined {
@@ -288,7 +295,8 @@ const dedent = (line: string, width: number) =>
   line.slice(Math.min(width, leadingSpaces(line)));
 
 /** Render block-level Markdown. `tight` renders paragraphs bare, as in a tight list. */
-function blocks(lines: string[], tight = false): string {
+function blocks(lines: string[], tight = false, depth = 0): string {
+  if (depth > MAX_BLOCK_DEPTH) throw new MarkdownNestingError();
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -333,7 +341,7 @@ function blocks(lines: string[], tight = false): string {
         inner.push((lines[i] ?? "").replace(QUOTE, ""));
         i++;
       }
-      out.push(`<blockquote>\n${blocks(inner)}\n</blockquote>`);
+      out.push(`<blockquote>\n${blocks(inner, false, depth + 1)}\n</blockquote>`);
       continue;
     }
     const next = lines[i + 1] ?? "";
@@ -407,7 +415,7 @@ function blocks(lines: string[], tight = false): string {
       const tag = ordered ? "ol" : "ul";
       out.push(
         `<${tag}${ordered && start !== 1 ? ` start="${start}"` : ""}>\n` +
-          items.map((body) => `<li>${blocks(body, !loose)}</li>`).join("\n") +
+          items.map((body) => `<li>${blocks(body, !loose, depth + 1)}</li>`).join("\n") +
           `\n</${tag}>`,
       );
       continue;

@@ -5,7 +5,8 @@ import {
   type ArtifactStore,
 } from "../src/artifacts.js";
 import { ArtifactOperations, applyPatch } from "../src/artifacts/operations.js";
-import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
+import { markdownPage } from "../src/artifacts/markdown.js";
+import { resolveAllowlist, resolveLimits, validateArtifact } from "../src/artifacts/validate.js";
 import type { ArtifactLimits } from "../src/artifacts/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 
@@ -41,6 +42,36 @@ async function created(ops: ArtifactOperations, id = "q3-bugs") {
 }
 
 describe("creating", () => {
+  it("rejects inherited document names from parsed JSON on every entry path", async () => {
+    const { ops, store } = setup();
+    for (const name of ["__proto__", "constructor", "toString", "valueOf", "prototype"]) {
+      const values = JSON.parse(`{"${name}":1}`) as Record<string, unknown>;
+      const createdWithName = await ops.create({
+        id: "reserved",
+        title: "Reserved",
+        kind: "html",
+        source: page("<h1>Reserved</h1>"),
+        documents: values,
+        by: alice,
+      });
+      expect(createdWithName).toMatchObject({ ok: false, code: "invalid_args" });
+      expect(await store.head("reserved")).toBeNull();
+    }
+
+    await created(ops);
+    for (const name of ["__proto__", "constructor", "toString", "valueOf", "prototype"]) {
+      const changes = JSON.parse(`{"${name}":{"baseVersion":0,"value":1}}`) as Record<string, { baseVersion: number; value: unknown }>;
+      const set = await ops.setDocuments({ id: "q3-bugs", documents: changes, by: bob });
+      expect(set).toMatchObject({ ok: false, code: "invalid_args" });
+      expect(await ops.getDocument("q3-bugs", name)).toMatchObject({ ok: false, code: "invalid_args" });
+      expect(await ops.rollback({ id: "q3-bugs", target: "document", name, version: 1, baseVersion: 1, by: bob }))
+        .toMatchObject({ ok: false, code: "invalid_args" });
+      const pin = JSON.parse(`{"${name}":1}`) as Record<string, number>;
+      expect(await ops.page("q3-bugs", { documents: pin })).toMatchObject({ ok: false, code: "invalid_args" });
+    }
+    expect((await store.head("q3-bugs"))?.head.revision).toBe(1);
+  });
+
   it("creates the view and its documents in one commit", async () => {
     const { ops } = setup();
     const head = await created(ops);
@@ -349,6 +380,40 @@ describe("limits", () => {
       by: bob,
     });
     expect(!count.ok && count.validation?.errors[0]?.message).toMatch(/would have 3 documents; the limit is 2/);
+  });
+
+  it("counts injected documents against a Markdown page's rendered size", async () => {
+    const source = "# Short";
+    const title = "Markdown";
+    const base = new TextEncoder().encode(markdownPage(source, title)).length + 4096;
+    const limit = base + 100;
+    expect(validateArtifact({ kind: "markdown", source, title, documents: { data: "x".repeat(200) } },
+      { limits: { renderedBytes: limit } }).errors[0]?.code).toBe("E_TOO_LARGE");
+
+    const { ops } = setup({ renderedBytes: limit });
+    const made = await ops.create({ id: "markdown", title, kind: "markdown", source, by: alice });
+    expect(made.ok).toBe(true);
+    const added = await ops.setDocuments({ id: "markdown", documents: { data: { baseVersion: 0, value: "x".repeat(200) } }, by: bob });
+    expect(added).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  it("checks the final rendered size when rolling a document back", async () => {
+    for (const kind of ["html", "markdown"] as const) {
+      const source = kind === "html" ? page("Short") : "# Short";
+      const title = "Page";
+      const base = new TextEncoder().encode(kind === "html" ? source : markdownPage(source, title)).length + 4096;
+      const { ops } = setup({ renderedBytes: base + 250 });
+      const made = await ops.create({ id: kind, title, kind, source,
+        documents: { data: "x".repeat(200) }, by: alice });
+      expect(made.ok).toBe(true);
+      const removed = await ops.setDocuments({ id: kind, documents: { data: { baseVersion: 1, value: null } }, by: bob });
+      expect(removed.ok).toBe(true);
+      const longerSource = kind === "html" ? page("Short" + "a".repeat(150)) : source + "a".repeat(150);
+      const longer = await ops.update({ id: kind, baseVersion: 1, source: longerSource, by: bob });
+      expect(longer.ok).toBe(true);
+      const rollback = await ops.rollback({ id: kind, target: "document", name: "data", version: 1, baseVersion: 2, by: bob });
+      expect(rollback).toMatchObject({ ok: false, code: "invalid_args" });
+    }
   });
 
   it("bounds distinct document names while retaining removed names' versions", async () => {

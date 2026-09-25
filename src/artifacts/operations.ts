@@ -16,12 +16,14 @@
 // error; a throw means storage failed.
 
 import { sha256Hex, utf8Bytes } from "../run-journal.js";
+import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {
   ARTIFACT_ID,
   checkDocument,
   checkDocumentTotals,
   checkView,
   finish,
+  validDocumentName,
   type CheckContext,
 } from "./validate.js";
 import type {
@@ -207,6 +209,15 @@ export class ArtifactOperations {
       : fail("invalid_args", `${name} must be a whole number of at least ${min}.`);
   }
 
+  #checkDocumentName(name: unknown): ArtifactFailure | undefined {
+    if (validDocumentName(name)) return undefined;
+    return fail(
+      "invalid_args",
+      `Document name ${quoteId(String(name))} is not allowed. Use 1–64 letters, digits, or _, ` +
+        "starting with a letter or _, and avoid reserved object property names.",
+    );
+  }
+
   #notFound(id: string): ArtifactFailure {
     return fail(
       "not_found",
@@ -355,6 +366,34 @@ export class ArtifactOperations {
       this.#context,
     );
     return finish(findings);
+  }
+
+  /** A document change must fit the frame, including rendered Markdown. */
+  async #checkRendered(head: ArtifactHeadRecord): Promise<ArtifactFailure | undefined> {
+    const total = dataBytesOf(head);
+    let viewBytes = head.view.bytes;
+    if (head.kind === "markdown") {
+      try {
+        viewBytes = utf8Bytes(markdownPage(await this.#body(head.view.body), head.title));
+      } catch (error) {
+        if (!(error instanceof MarkdownNestingError)) throw error;
+        return invalidContent("The page", finish({
+          errors: [{ code: "E_NESTING", severity: "error", message: error.message }],
+          warnings: [],
+        }));
+      }
+    }
+    const rendered = viewBytes + total + FRAME_OVERHEAD_BYTES;
+    if (rendered <= this.#context.limits.renderedBytes) return undefined;
+    return invalidContent("The page and its documents", finish({
+      errors: [{
+        code: "E_TOO_LARGE",
+        severity: "error",
+        message: `The page plus its documents would be ${rendered.toLocaleString("en-US")} bytes; ` +
+          `the limit is ${this.#context.limits.renderedBytes.toLocaleString("en-US")}. Trim the page or its documents.`,
+      }],
+      warnings: [],
+    }));
   }
 
   async create(input: {
@@ -698,23 +737,8 @@ export class ArtifactOperations {
       const total = dataBytesOf(nextHead);
       const totals = checkDocumentTotals(live.length, total, limits);
       if (totals) return invalidContent("The documents", finish({ errors: [totals], warnings: [] }));
-      if (head.kind === "html" && head.view.bytes + total + FRAME_OVERHEAD_BYTES > limits.renderedBytes) {
-        return invalidContent(
-          "The documents",
-          finish({
-            errors: [
-              {
-                code: "E_TOO_LARGE",
-                severity: "error",
-                message:
-                  `The page plus its documents would be ${(head.view.bytes + total + FRAME_OVERHEAD_BYTES).toLocaleString("en-US")} ` +
-                  `bytes; the limit is ${limits.renderedBytes.toLocaleString("en-US")}. Trim the documents.`,
-              },
-            ],
-            warnings: [],
-          }),
-        );
-      }
+      const tooLarge = await this.#checkRendered(nextHead);
+      if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies, supersede, warnings: [] };
     }, input.render);
   }
@@ -737,6 +761,10 @@ export class ArtifactOperations {
     if (badVersion) return badVersion;
     if (input.target === "document" && (typeof input.name !== "string" || !input.name)) {
       return fail("invalid_args", 'name is required when target is "document".');
+    }
+    if (input.target === "document") {
+      const badName = this.#checkDocumentName(input.name);
+      if (badName) return badName;
     }
     const name = input.name ?? "";
     const stream: ArtifactStream = input.target === "view" ? "view" : `doc:${name}`;
@@ -802,6 +830,8 @@ export class ArtifactOperations {
       };
       const totals = checkDocumentTotals(liveDocuments(nextHead).length, dataBytesOf(nextHead), this.#context.limits);
       if (totals) return invalidContent("The documents", finish({ errors: [totals], warnings: [] }));
+      const tooLarge = await this.#checkRendered(nextHead);
+      if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies: new Map(), supersede: [[stream, latest]], warnings: [] };
     }, input.render);
   }
@@ -886,6 +916,8 @@ export class ArtifactOperations {
     const badId = this.#checkId(id);
     if (badId) return badId;
     if (typeof name !== "string" || !name) return fail("invalid_args", "name is required.");
+    const badName = this.#checkDocumentName(name);
+    if (badName) return badName;
     if (version !== undefined) {
       const bad = this.#checkVersion("version", version);
       if (bad) return bad;
@@ -933,6 +965,8 @@ export class ArtifactOperations {
       : liveDocuments(head).map(([name, record]) => [name, record.version]);
     const documents: Record<string, { record: ArtifactVersionRecord; value: unknown }> = {};
     for (const [name, version] of wanted) {
+      const badName = this.#checkDocumentName(name);
+      if (badName) return badName;
       const record = await this.#version(id, `doc:${name}`, head.documents[name], version);
       if (!record) return this.#notFound(id);
       if (record.removed) continue;
