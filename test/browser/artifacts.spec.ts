@@ -13,7 +13,7 @@ let origin: string;
 let requests: string[];
 let pageSource: string;
 
-async function start() {
+async function start(scriptOrigins: string[] = []) {
   requests = [];
   server = createServer(async (incoming, outgoing) => {
     const chunks: Buffer[] = [];
@@ -33,7 +33,8 @@ async function start() {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("no test address");
   origin = `http://127.0.0.1:${address.port}`;
-  const module = artifacts({ store: kvArtifactStore(memoryStorage()) });
+  const module = artifacts({ store: kvArtifactStore(memoryStorage()),
+    ...(scriptOrigins.length ? { allowlist: { scripts: scriptOrigins } } : {}) });
   const app = createConnecta({
     connectors: [], executor: { execute: async () => ({ result: null }) },
     logger: "silent", publicUrl: origin, auth: bearerToken(TOKEN, { subjectId: "viewer" }),
@@ -192,11 +193,40 @@ test("allowed CDN scripts load while other script origins stay blocked", async (
   pageSource = `<!doctype html><main id="artifact-root">before</main>
     <script src="https://cdn.jsdelivr.net/npm/artifact-test.js"></script>
     <script>const s=document.createElement('script');s.src='https://attacker.test/bad.js';document.body.append(s)</script>`;
-  await start();
+  await start(["https://cdn.jsdelivr.net"]);
   await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
   await page.goto(`${origin}/artifacts/probe`);
   await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("allowed");
   expect(loaded).toEqual(["https://cdn.jsdelivr.net/npm/artifact-test.js"]);
+});
+
+test("public CDN scripts, styles and fonts cannot load by default", async ({ page }) => {
+  const loaded: string[] = [];
+  for (const host of ["cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"]) {
+    await page.route(`https://${host}/**`, route => {
+      loaded.push(route.request().url());
+      return route.fulfill({ status: 200, body: "unexpected" });
+    });
+  }
+  pageSource = `<!doctype html><main id="artifact-root">before</main><script>
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+    document.head.append(script);
+    const stylesheet = document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = 'https://fonts.googleapis.com/css2?family=Inter';
+    document.head.append(stylesheet);
+    const font = document.createElement('style');
+    font.textContent = '@font-face{font-family:Probe;src:url(https://fonts.gstatic.com/s/probe.woff2)}body{font-family:Probe}';
+    document.head.append(font);
+    document.querySelector('#artifact-root').textContent = 'attempted';
+  </script>`;
+  await start();
+  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
+  await page.goto(`${origin}/artifacts/probe`);
+  await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("attempted");
+  await page.waitForTimeout(200);
+  expect(loaded).toEqual([]);
 });
 
 test("a dedicated origin boots the viewer but never serves operator or MCP routes", async ({ page }) => {
@@ -216,10 +246,11 @@ test("a dedicated origin boots the viewer but never serves operator or MCP route
   if (typeof result === "object" && result !== null && "isError" in result && result.isError) {
     throw new Error(JSON.stringify(result));
   }
-  const seen: string[] = [];
-  await page.route("**/*", async route => {
+  const seen: { url: string; authorization?: string }[] = [];
+  await page.context().route("**/*", async route => {
     const request = route.request();
-    seen.push(new URL(request.url()).pathname);
+    seen.push({ url: request.url(), ...(request.headers().authorization
+      ? { authorization: request.headers().authorization } : {}) });
     const response = await dedicated.fetch(new Request(request.url(), {
       method: request.method(), headers: request.headers(),
       ...(request.postDataBuffer() ? { body: request.postDataBuffer() } : {}),
@@ -230,14 +261,29 @@ test("a dedicated origin boots the viewer but never serves operator or MCP route
       body: Buffer.from(await response.arrayBuffer()),
     });
   });
-  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
-  await page.goto(`${pages}/artifacts/dedicated`);
+  await page.goto(`${main}/`);
+  await page.getByLabel("Bearer token").fill(TOKEN);
+  await page.getByRole("button", { name: "Open operator pages" }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("connecta:token"))).toBe(TOKEN);
+  await expect.poll(() => seen.some(({ url, authorization }) =>
+    url === `${main}/ui/data` && authorization === `Bearer ${TOKEN}`)).toBe(true);
+
+  const redirect = await dedicated.fetch(new Request(`${main}/artifacts/dedicated`));
+  expect(redirect.status).toBe(308);
+  expect(redirect.headers.get("Location")).toBe(`${pages}/artifacts/dedicated`);
+  await page.goto(redirect.headers.get("Location")!);
+  await expect(page).toHaveURL(`${pages}/artifacts/dedicated`);
+  await expect(page.getByLabel("Bearer token")).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("connecta:token"))).toBeNull();
+  expect(seen.filter(({ url, authorization }) => url.startsWith(pages) && authorization)).toEqual([]);
+
+  await page.getByLabel("Bearer token").fill(TOKEN);
+  await page.getByRole("button", { name: "Open operator pages" }).click();
   await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("dedicated page");
-  expect(seen).not.toContain("/ui/data");
+  expect(seen.some(({ url }) => url === `${pages}/ui/data`)).toBe(false);
+  expect(seen.some(({ url, authorization }) =>
+    url.startsWith(`${pages}/artifacts/_api/view/`) && authorization === `Bearer ${TOKEN}`)).toBe(true);
   for (const path of ["/", "/ui/data", "/mcp", "/health"]) {
     expect((await dedicated.fetch(new Request(`${pages}${path}`))).status, path).toBe(404);
   }
-  const mainLink = await dedicated.fetch(new Request(`${main}/artifacts/dedicated`));
-  expect(mainLink.status).toBe(308);
-  expect(mainLink.headers.get("Location")).toBe(`${pages}/artifacts/dedicated`);
 });

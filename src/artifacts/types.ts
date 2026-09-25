@@ -202,24 +202,9 @@ export interface ArtifactAllowlist {
 
 export const DEFAULT_ARTIFACT_ALLOWLIST: Readonly<ArtifactAllowlist> =
   Object.freeze({
-    scripts: Object.freeze([
-      "https://cdn.jsdelivr.net",
-      "https://cdnjs.cloudflare.com",
-      "https://esm.sh",
-      "https://unpkg.com",
-    ]),
-    styles: Object.freeze([
-      "https://cdn.jsdelivr.net",
-      "https://cdnjs.cloudflare.com",
-      "https://fonts.googleapis.com",
-      "https://unpkg.com",
-    ]),
-    fonts: Object.freeze([
-      "https://cdn.jsdelivr.net",
-      "https://cdnjs.cloudflare.com",
-      "https://fonts.gstatic.com",
-      "https://unpkg.com",
-    ]),
+    scripts: Object.freeze([]),
+    styles: Object.freeze([]),
+    fonts: Object.freeze([]),
   });
 
 /** One validation finding. `line` and `column` are 1-based, into the source. */

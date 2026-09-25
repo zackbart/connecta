@@ -339,6 +339,15 @@ function checkHtml(input: ViewCheckInput, context: CheckContext, findings: Findi
   const unpinned = new Set<string>();
   const missingNames = new Map<string, number>();
   let networkWarned = 0;
+  const scriptOriginHelp = allowlist.scripts.length
+    ? ` (${allowlist.scripts.join(", ")}). Load it from one of those, pinned, e.g. ${PINNED_EXAMPLE}.`
+    : ". This deployment allows no external scripts. Inline the script, or ask the operator to trust its origin.";
+  const styleOriginHelp = allowlist.styles.length
+    ? ` (${allowlist.styles.join(", ")}). Inline the CSS in a <style> element, or load it from one of those.`
+    : ". This deployment allows no external stylesheets. Inline the CSS, or ask the operator to trust its origin.";
+  const styleImportHelp = allowlist.styles.length
+    ? ` (${allowlist.styles.join(", ")}). Inline the CSS, or import from one of those.`
+    : ". This deployment allows no external stylesheets. Inline the CSS, or ask the operator to trust its origin.";
 
   const checkResourceUrl = (tag: string, attr: HtmlAttribute) => {
     const value = attr.value;
@@ -428,8 +437,7 @@ function checkHtml(input: ViewCheckInput, context: CheckContext, findings: Findi
       error(
         "E_STYLE_ORIGIN",
         offset + match.index,
-        `${where} @import ${quote(value)} loads from outside the style allowlist (${allowlist.styles.join(", ")}). ` +
-          "Inline the CSS, or import from one of those.",
+        `${where} @import ${quote(value)} loads from outside the style allowlist${styleImportHelp}`,
       );
     }
   };
@@ -541,7 +549,7 @@ function checkHtml(input: ViewCheckInput, context: CheckContext, findings: Findi
                 : https.credentials
                   ? "carries credentials"
                   : "loads from outside the allowlist"
-            } (${allowlist.scripts.join(", ")}). Load it from one of those, pinned, e.g. ${PINNED_EXAMPLE}.`,
+            }${scriptOriginHelp}`,
           );
         } else if (!pinned(https.url) && !unpinned.has(https.url.href)) {
           unpinned.add(https.url.href);
@@ -575,8 +583,7 @@ function checkHtml(input: ViewCheckInput, context: CheckContext, findings: Findi
         error(
           "E_STYLE_ORIGIN",
           href.offset,
-          `${shown} loads from outside the style allowlist (${allowlist.styles.join(", ")}). ` +
-            "Inline the CSS in a <style> element, or load it from one of those.",
+          `${shown} loads from outside the style allowlist${styleOriginHelp}`,
         );
       } else if (stylesheet && https.url.hostname !== "fonts.googleapis.com" && !pinned(https.url) && !unpinned.has(https.url.href)) {
         unpinned.add(https.url.href);

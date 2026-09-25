@@ -16,9 +16,8 @@ export interface ArtifactsOptions {
   store: ArtifactStore;
   /**
    * Origins pages may load scripts, stylesheets, and fonts from, each an exact
-   * `https:` origin. Each list given replaces its default: jsDelivr, cdnjs,
-   * unpkg, and esm.sh for scripts; the same (without esm.sh) plus Google Fonts
-   * for styles and fonts. The viewer's CSP names exactly these.
+   * `https:` origin. Every list defaults to empty; a deployment must opt in
+   * to each origin it trusts with page data. The viewer's CSP names only these.
    */
   allowlist?: Partial<ArtifactAllowlist>;
   /** Tighten any limit below its default; none can be raised. */

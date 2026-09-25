@@ -183,7 +183,8 @@ describe("the artifacts slot", () => {
     const guide = await call("skills", { name: "connector:artifacts" });
     const text = guide.content.map((block) => block.text).join("\n");
     expect(text).toContain('id="artifact-root"');
-    expect(text).toContain("https://cdn.jsdelivr.net");
+    expect(text).toContain("External scripts** load only from none");
+    expect(text).toContain("Both origin lists default to");
     expect(text).toContain("| Page source | 1 MiB |");
     const found = json(
       await call("search_tools", { query: "artifact", connector: "artifacts", limit: 20 }),
@@ -343,7 +344,7 @@ describe("the render-check hook", () => {
     expect(made.warnings).toEqual(["Render check: slow chart"]);
     const input = required(renderCheck.mock.calls[0])[0];
     expect(input.kind).toBe("html");
-    expect(input.csp).toMatch(/^sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:\/\/cdn\.jsdelivr\.net/);
+    expect(input.csp).toMatch(/^sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline';/);
     expect(input.csp).toContain("connect-src 'none'");
     expect(input.document.startsWith('<!doctype html><script>(()=>{')).toBe(true);
     expect(input.document).toContain('"data":{"data":{"title":"Q3"}}');
