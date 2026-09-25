@@ -19,7 +19,7 @@ const key = randomBytes(24).toString("hex");
 const configPath = join(temp, "wrangler.json");
 const observations = [];
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-let deployed = false;
+let deploymentAttempted = false;
 
 const source = `
 import { createConnecta } from ${JSON.stringify(join(root, "src/index.ts"))};
@@ -86,8 +86,9 @@ try {
       compatibility_date: "2025-01-01", compatibility_flags: flags,
       workers_dev: true, vars: { PROBE_KEY: key, PROBE_VERSION: String(enabled) }, observability: { enabled: false },
     }), { mode: 0o600 });
+    // A failed CLI response does not prove the remote deployment failed.
+    deploymentAttempted = true;
     const deployment = await exec(wrangler, ["deploy", "--config", configPath], { cwd: root, maxBuffer: 2 ** 20 });
-    deployed = true;
     const origin = deployment.stdout.match(new RegExp(`https://${name}\\.[a-zA-Z0-9-]+\\.workers\\.dev`))?.[0];
     if (!origin) throw new Error("Deployment returned no workers.dev URL");
     console.log(`Deployed ${origin}, request signal ${enabled ? 'enabled' : 'default'}`);
@@ -156,9 +157,12 @@ try {
     }
   }
 } finally {
-  if (deployed) {
-    await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
-    console.log(`Deleted ${name}`);
+  try {
+    if (deploymentAttempted) {
+      await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
+      console.log(`Deleted ${name}`);
+    }
+  } finally {
+    await rm(temp, { recursive: true, force: true });
   }
-  await rm(temp, { recursive: true, force: true });
 }

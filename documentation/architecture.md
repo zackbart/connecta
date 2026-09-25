@@ -149,6 +149,8 @@ client. A raw Worker stream established the runtime behavior; a custom auth
 provider returning a synthetic streaming 401 exercised Connecta's real admission
 wrapper. Each case had its own Connecta instance with one request permit and no
 queue. Health checks and subsequent MCP requests confirmed the same isolate ID.
+The [recorded observations](../scripts/probes/worker-disconnect-2026-09-25.json)
+contain all twelve cases, including served flags and client-end timing.
 
 | Response and flag | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
 | --- | --- | --- | --- |
