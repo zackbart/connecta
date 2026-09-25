@@ -6,6 +6,7 @@ import type {
   recordCatalogDriftActivity,
 } from "./activity.js";
 import type { RouteContext } from "./routes/shared.js";
+import type { ArtifactRefreshRuntime } from "./artifacts/refresh.js";
 /** Construction-time UI contract. Core never imports the implementation. */
 export interface OperatorSurface {
   readonly branding?: ConnectaBranding;
@@ -38,4 +39,6 @@ export interface ArtifactsModule {
    * artifact routes at all.
    */
   handle(context: RouteContext): Promise<Response | null>;
+  /** Bind the optional refresh runner after core has built its registry and executor. */
+  bindRefresh?(runtime: ArtifactRefreshRuntime): void;
 }

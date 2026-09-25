@@ -70,6 +70,7 @@ export function kvArtifactStore(
     `${prefix}ver:${id}:${stream}:`;
   const runPrefix = (id: string) => `${prefix}run:${id}:`;
   const blobKey = (key: string) => `${prefix}blob:${key}`;
+  const scanKey = `${prefix}refresh:scan-cursor`;
 
   const readJson = async <T>(key: string): Promise<T | null> => {
     const text = await kv.get(key);
@@ -170,6 +171,15 @@ export function kvArtifactStore(
         newest.map((key) => readJson<ArtifactRunRecord>(key)),
       );
       return runs.filter((run): run is ArtifactRunRecord => run !== null);
+    },
+
+    async refreshScanCursor() {
+      return (await kv.get(scanKey)) ?? undefined;
+    },
+
+    async setRefreshScanCursor(after) {
+      if (after === undefined) await kv.delete(scanKey);
+      else await kv.set(scanKey, after);
     },
   };
 }

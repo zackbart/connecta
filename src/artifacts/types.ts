@@ -67,6 +67,27 @@ export interface ArtifactHeadRecord {
   view: ArtifactVersionRecord;
   /** Latest version of every document name ever set, removals included. */
   documents: Record<string, ArtifactVersionRecord>;
+  /** Absent until a refresh program is configured. */
+  refresh?: ArtifactRefreshState;
+}
+
+export type ArtifactRefreshSchedule = "manual" | "daily" | "weekly";
+
+export interface ArtifactRefreshState {
+  program: ArtifactVersionRecord;
+  /** Trusted caller captured by the built-in connector, reauthorized on every run. */
+  owner?: { identity: import("../types.js").AuthenticatedIdentity; pool?: string };
+  document: string;
+  schedule: ArtifactRefreshSchedule;
+  configuredAt: string;
+  /** An expiring CAS claim. Only its run may publish data. */
+  claim?: { runId: string; until: string };
+  last?: {
+    runId: string;
+    at: string;
+    status: "succeeded" | "unchanged" | "failed" | "superseded";
+    documentVersion?: number;
+  };
 }
 
 /** One refresh run, as history keeps it. */
@@ -141,6 +162,9 @@ export interface ArtifactStore {
   putRun(id: string, run: ArtifactRunRecord): Promise<void>;
   /** Newest first. */
   runs(id: string, limit: number): Promise<ArtifactRunRecord[]>;
+  /** Durable, best-effort continuation for bounded scheduled scans. */
+  refreshScanCursor(): Promise<string | undefined>;
+  setRefreshScanCursor(after: string | undefined): Promise<void>;
 }
 
 /**

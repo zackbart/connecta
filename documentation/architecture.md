@@ -300,7 +300,8 @@ The artifacts module — `artifacts()` from `/artifacts`, implemented in
 `src/artifacts/` — is the one module that contributes a connector. Core
 appends its prebuilt `artifacts` connector to the configured set, so its reads
 and writes take the same catalog, invocation, admission, and activity paths as
-any other connector; the slot carries no hook core must run, and a deployment
+any other connector; the slot binds its optional refresh runner once, after the
+registry and executor exist, and a deployment
 without it has no connector, no guide, and no artifact storage traffic. Its
 writes are not read-only anywhere — `call_tool` refuses them and discovery
 lists them approval-required — but they skip approval inside programs through
@@ -308,6 +309,25 @@ the connector's own `approval: "never"`, which `execute.approval` switches off,
 because every write is a new immutable version anyone can roll back. The
 module needs `publicUrl`: the links it hands out are shared, so they must never
 come from a request's `Host`.
+
+An artifact can version an `execute_code` program and target data document with
+`set_refresh`, on a manual, daily, or weekly schedule. The deployment calls
+`artifacts.runDue()` from a Node timer or Worker `scheduled()` handler; core
+starts no background jobs. One tick scans at most 1,000 heads and starts at
+most 10 due runs. Every run uses the configured executor, host-call budget,
+and watchdog, with a registry view containing only shared connectors. The
+owner admitted to `set_refresh` is stored with the program. Every run rechecks
+that identity's current `connectorAccess` and pool grant, including continued
+access to `artifacts.set_refresh`, then intersects those grants with shared
+connectors. Revoking either grant stops later runs.
+Resumable writes and approval exemptions are off. A refused call fails the
+entire refresh even if its program catches the error. The head CAS claims one
+run per artifact; the data commit checks the claim ID and program version in
+the same CAS. The claim deadline starts before executor admission and aborts
+a queued or active play when it expires. An expired old run cannot publish over
+a newer claim. Run history retains 50 records with bounded logs. A failure leaves the
+last good data intact and marks the artifact stale. Library and viewer show
+only outcome enums and times, never downstream messages or logs.
 
 With the operator UI mounted, `/artifacts` lists the team pages and
 `/artifacts/<id>` opens one. The shell contains no page data. It reads the

@@ -1128,6 +1128,8 @@ function leased(
 
 /** The execute_code configuration a runner enforces. */
 interface RunnerConfig {
+  /** Refresh only: a refused host call fails the whole run even if guest code catches it. */
+  failOnInvocationFailure?: boolean | undefined;
   discoveryConcurrency?: number | undefined;
   probeTimeoutMs?: number | undefined;
   maxEmittedBytes?: number | undefined;
@@ -1332,6 +1334,12 @@ export function createProgramRunner(
             : Effect.die(new Error("a run without state cannot stop"));
         }
         const finished = finishedRun(ended.settled, reported);
+        if (config.failOnInvocationFailure && invocationFailures.length > 0) {
+          const refusal = invocationFailures[0]!;
+          return Effect.succeed(failureResponse(refusal.details.message, {
+            code: refusal.details,
+          }));
+        }
         return runState
           ? runState.finishSettled(finished)
           : Effect.succeed(exemptWrites?.finish(finished) ?? finished);

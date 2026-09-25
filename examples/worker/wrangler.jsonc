@@ -6,6 +6,10 @@
   "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "observability": { "enabled": true },
 
+  // Uncomment with artifacts and D1 in src/index.ts. Every hourly tick runs
+  // at most 10 due pages; each page's own daily/weekly schedule lives in data.
+  // "triggers": { "crons": ["0 * * * *"] },
+
   // Plain vars. Secrets (CREDENTIAL_ENCRYPTION_KEY, DOWNSTREAM_TOKEN) are set with
   // `wrangler secret put <NAME>`, not here.
   "vars": {
