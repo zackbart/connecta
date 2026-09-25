@@ -398,6 +398,147 @@ function guestErrorPrelude(failureSecret: string): string {
 }
 
 /**
+ * The clock and randomness a program sees, fixed for one run (P6).
+ *
+ * Resumable writes replay a paused program from the top against its recorded
+ * host calls, and a program that branched on `Date.now()` or `Math.random()`
+ * would take a different branch the second time — which replay can only
+ * report as divergence. So every run, paused or not, sees one instant and one
+ * seeded stream, and nothing about a run changes when it is replayed.
+ */
+export interface PinnedEnvironment {
+  /** Epoch milliseconds every clock read in the run returns. */
+  clockMs: number;
+  /** Four 32-bit words seeding the run's sfc32 stream. */
+  seed: readonly [number, number, number, number];
+}
+
+/** A clock read now and a seed drawn from the host's CSPRNG. */
+function freshEnvironment(): PinnedEnvironment {
+  const words = new Uint32Array(4);
+  crypto.getRandomValues(words);
+  return {
+    clockMs: Date.now(),
+    seed: [words[0] ?? 0, words[1] ?? 0, words[2] ?? 0, words[3] ?? 0],
+  };
+}
+
+/**
+ * Trusted guest code installing the pinned clock and stream, evaluated after
+ * the error prelude and before the program. Every replacement is locked the
+ * way `Error` is — non-writable and non-configurable — so a program can read
+ * the pinned values and nothing else.
+ *
+ * `Date` becomes a wrapper whose argument-free forms (`new Date()`, `Date()`,
+ * `Date.now()`) read the pinned instant; with arguments it is the native
+ * constructor, and instances are ordinary dates. The native constructor's own
+ * `now` and the prototype's `constructor` are pinned too, so the usual ways
+ * back to it read the same instant. `Math.random` is sfc32 over the seed:
+ * small, fast, and specified in a few lines anyone can check. Where the
+ * runtime has them (a Dynamic Worker; QuickJS has neither), `crypto`'s
+ * `getRandomValues` and `randomUUID` draw from the same stream and
+ * `performance.now()` stays at 0, the run's start. None of that makes
+ * `crypto` contract (`P2`): it only keeps a Workers-only program from being
+ * the one that cannot replay.
+ */
+function pinnedEnvironmentPrelude(environment: PinnedEnvironment): string {
+  return `((clock, seed) => {
+  const NativeDate = globalThis.Date;
+  const construct = Reflect.construct;
+  const defineProperty = Object.defineProperty;
+  const lock = (target, key, value) => defineProperty(target, key, {
+    value, writable: false, enumerable: false, configurable: false
+  });
+  let a = seed[0] | 0, b = seed[1] | 0, c = seed[2] | 0, d = seed[3] | 0;
+  const next = () => {
+    const t = (((a + b) | 0) + d) | 0;
+    d = (d + 1) | 0;
+    a = b ^ (b >>> 9);
+    b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11);
+    c = (c + t) | 0;
+    return t >>> 0;
+  };
+  const now = function now() { return clock; };
+  function Date(...args) {
+    if (new.target === undefined) return new NativeDate(clock).toString();
+    return construct(NativeDate, args.length === 0 ? [clock] : args, new.target);
+  }
+  Date.prototype = NativeDate.prototype;
+  lock(Date, "now", now);
+  lock(Date, "parse", NativeDate.parse);
+  lock(Date, "UTC", NativeDate.UTC);
+  lock(NativeDate, "now", now);
+  lock(NativeDate.prototype, "constructor", Date);
+  lock(globalThis, "Date", Date);
+  lock(Math, "random", function random() { return next() / 4294967296; });
+  // Lock the replacement on the object and on its prototype, where the
+  // native method lives: \`Object.getPrototypeOf(crypto).getRandomValues\`
+  // would otherwise still reach the real stream. A prototype the runtime
+  // will not let us redefine keeps its native method (\`tryLock\`), and a
+  // program that uses it diverges on replay rather than sending anything.
+  const tryLock = (target, key, value) => {
+    try { lock(target, key, value); } catch {}
+  };
+  if (typeof crypto === "object" && crypto !== null) {
+    const getRandomValues = function getRandomValues(array) {
+      const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+      for (let i = 0; i < bytes.length; i++) bytes[i] = next() >>> 24;
+      return array;
+    };
+    const randomUUID = function randomUUID() {
+      const bytes = getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      let hex = "";
+      for (let i = 0; i < 16; i++) {
+        hex += (bytes[i] + 0x100).toString(16).slice(1);
+        if (i === 3 || i === 5 || i === 7 || i === 9) hex += "-";
+      }
+      return hex;
+    };
+    lock(crypto, "getRandomValues", getRandomValues);
+    lock(crypto, "randomUUID", randomUUID);
+    const cryptoProto = Object.getPrototypeOf(crypto);
+    if (cryptoProto) {
+      tryLock(cryptoProto, "getRandomValues", getRandomValues);
+      tryLock(cryptoProto, "randomUUID", randomUUID);
+    }
+  }
+  if (typeof performance === "object" && performance !== null) {
+    const perfNow = function now() { return 0; };
+    lock(performance, "now", perfNow);
+    const performanceProto = Object.getPrototypeOf(performance);
+    if (performanceProto) tryLock(performanceProto, "now", perfNow);
+  }
+  // An Intl formatter asked for "now" (no date) reads the native clock.
+  if (typeof Intl === "object" && Intl !== null && typeof Intl.DateTimeFormat === "function") {
+    const proto = Intl.DateTimeFormat.prototype;
+    const formatGetter = Object.getOwnPropertyDescriptor(proto, "format");
+    if (formatGetter && typeof formatGetter.get === "function") {
+      const nativeFormat = formatGetter.get;
+      try {
+        defineProperty(proto, "format", {
+          get() {
+            const bound = nativeFormat.call(this);
+            return function format(date) { return bound(date === undefined ? clock : date); };
+          },
+          enumerable: false,
+          configurable: false,
+        });
+      } catch {}
+    }
+    const nativeFormatToParts = proto.formatToParts;
+    if (typeof nativeFormatToParts === "function") {
+      tryLock(proto, "formatToParts", function formatToParts(date) {
+        return nativeFormatToParts.call(this, date === undefined ? clock : date);
+      });
+    }
+  }
+})(${JSON.stringify(environment.clockMs)}, ${JSON.stringify([...environment.seed])});`;
+}
+
+/**
  * Expose one host provider and typed guest errors. Catalogs load only when
  * the program calls a tool or asks search/describe.
  */
@@ -428,6 +569,8 @@ interface SandboxLimits {
   emitCollector?: EmitCollector | undefined;
   /** Runtime-owned tail for stale catalog refreshes. */
   defer?: DeferredWork | undefined;
+  /** The run's clock and seed (P6). A fresh pair when omitted. */
+  environment?: PinnedEnvironment | undefined;
 }
 
 /**
@@ -629,7 +772,11 @@ function sandboxProvider(
     });
   return {
     name: "connecta",
-    prelude: guestErrorPrelude(failureSecret),
+    // Typed errors first, then the pinned clock and randomness: both are
+    // trusted host code the program runs after and cannot undo.
+    prelude: `${guestErrorPrelude(failureSecret)}\n${pinnedEnvironmentPrelude(
+      limits.environment ?? freshEnvironment(),
+    )}`,
     fns: Object.fromEntries(
       Object.entries(operations).map(([name, operation]) => [
         name,
@@ -797,6 +944,11 @@ export function createExecuteTool(
     hostCallTimeoutMs?: number | undefined;
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
+    /**
+     * One clock and seed for every run of this handler instead of a fresh
+     * pair per run. Tests pin a known stream with it.
+     */
+    environment?: PinnedEnvironment | undefined;
   } = {},
 ) {
   const watchdog = {
@@ -855,6 +1007,7 @@ export function createExecuteTool(
             maxHostCalls: config.maxHostCalls,
             hostCallTimeoutMs: config.hostCallTimeoutMs,
             defer: config.defer,
+            environment: config.environment,
           }),
         ));
         if (signal.aborted) {
