@@ -134,9 +134,11 @@ try {
             // Compare two server timestamps. The original lease can only be
             // granted after its Worker entry, and the competing decision ran
             // before its response returned. This is a conservative bound.
-            elapsedMs: Number(competing.headers.get('x-probe-finished-at')) -
-              Number(response.headers.get('x-probe-started-at')) };
-          await competing.text();
+            elapsedMs: Number(competing.headers.get('x-probe-finished-at') ?? NaN) -
+              Number(response.headers.get('x-probe-started-at') ?? NaN) };
+          const competingBody = await competing.text();
+          try { whileLive.toolCount = JSON.parse(competingBody).result?.tools?.length; } catch {}
+          whileLive.clientEndAtCheck = clientEnd ?? null;
         }
         await wait(750);
         const clientEndedBeforeAbort = clientEnd ?? null;
@@ -176,8 +178,9 @@ try {
           response.status === (route === 'mcp' ? 401 : 200) && observation.sameIsolate &&
           observation.admission.active === 0 && observation.followup.status === 200 &&
           observation.followup.sameIsolate && toolCount === 8 &&
-          (!whileLive || (whileLive.status === 503 && whileLive.sameIsolate && whileLive.elapsedMs < maxDurationMs));
-        observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs >= maxDurationMs)
+          (!whileLive || (whileLive.sameIsolate && whileLive.elapsedMs >= 0 && whileLive.elapsedMs < maxDurationMs &&
+            (whileLive.status === 503 || (whileLive.clientEndAtCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
+        observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs < 0 || whileLive.elapsedMs >= maxDurationMs)
           ? 'inconclusive: contention arrived after the conservative deadline'
           : observation.passed ? 'pass' : 'fail';
         observations.push(observation);
@@ -191,7 +194,21 @@ try {
 } finally {
   try {
     if (deploymentAttempted) {
-      await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
+      let deletionError;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
+          deletionError = undefined;
+          break;
+        } catch (error) {
+          deletionError = error;
+          if (attempt < 2) await wait(500);
+        }
+      }
+      if (deletionError) throw new Error(
+        `Could not delete disposable Worker ${name}. Run wrangler delete --name ${name} --force.`,
+        { cause: deletionError },
+      );
       console.log(`Deleted ${name}`);
     }
   } finally {
