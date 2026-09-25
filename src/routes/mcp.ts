@@ -592,6 +592,7 @@ export function createMcpRoute(
         scopedRegistry = opts.registry.scoped({
           connectorIds: access.connectorIds,
           ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
+          ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}),
           ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
           caller: {

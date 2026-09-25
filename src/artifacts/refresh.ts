@@ -3,6 +3,7 @@
 
 import type { ArtifactOperations } from "./operations.js";
 import type { ArtifactHeadRecord, ArtifactRunRecord } from "./types.js";
+import type { RenderPage } from "./operations.js";
 
 const MAX_DUE_PER_TICK = 10;
 const MAX_HEADS_PER_TICK = 1_000;
@@ -65,6 +66,7 @@ function responsePayload(result: { content: { type: string; text?: string }[] })
 export class ArtifactRefreshService {
   readonly #ops: ArtifactOperations;
   #runtime: ArtifactRefreshRuntime | undefined;
+  #renderFor: ((signal: AbortSignal) => RenderPage | undefined) | undefined;
 
   constructor(ops: ArtifactOperations) {
     this.#ops = ops;
@@ -73,6 +75,10 @@ export class ArtifactRefreshService {
   bind(runtime: ArtifactRefreshRuntime): void {
     if (this.#runtime) throw new Error("One artifacts() module cannot be bound to two deployments.");
     this.#runtime = runtime;
+  }
+
+  setRender(renderFor: (signal: AbortSignal) => RenderPage | undefined): void {
+    this.#renderFor = renderFor;
   }
 
   async run(id: string, trigger: ArtifactRunRecord["trigger"]): Promise<RefreshOutcome> {
@@ -109,12 +115,14 @@ export class ArtifactRefreshService {
       } else {
         const document = claimed.head.refresh!.document;
         const baseVersion = claimed.head.documents[document]?.version ?? 0;
+        const render = this.#renderFor?.(controller.signal);
         const saved = await this.#ops.setDocuments({
           id,
           documents: { [document]: { baseVersion, value: response.result } },
           by: { kind: "refresh" },
           op: "refresh", runId,
           programVersion: run.programVersion,
+          ...(render ? { render } : {}),
         });
         if (saved.ok) {
           run.status = "succeeded";

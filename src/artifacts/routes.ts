@@ -82,7 +82,7 @@ export function artifactRoutes(options: {
       return privateJson({ error: "invalid identity permission" }, { status: 403 });
     }
     // Refused like an absent page, so a slug's existence is not an oracle.
-    return mayViewArtifacts(authz) ? authz : notFound();
+    return mayViewArtifacts(authz, opts.registry) ? authz : notFound();
   };
 
   const labelsFor = async (context: RouteContext, actors: ActivityActor[]) => {

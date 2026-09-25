@@ -112,6 +112,101 @@ The checked-in `access.dev` block gives `wrangler dev` a local operator
 identity. Remove the block to test the missing-Access refusal. It has no effect
 on a deployed Worker's production identity.
 
+### Optional resource management with Alchemy
+
+Keep this example's Worker on Wrangler. A copied deployment may use
+[Alchemy](https://alchemy.run) to manage its KV namespace, optional D1 databases
+and R2 bucket, and the Access application without adding Alchemy to connecta or
+changing this template. In that deployment, install `alchemy@2.0.0-beta.79`
+and `effect@4.0.0-rc.117` at exact versions. The latter is connecta's own
+Effect pin; check `npm ls effect` for one resolved copy after installation.
+The following `alchemy.run.ts` is a resource stack, not a Worker deployment:
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import { adopt } from "alchemy/AdoptPolicy";
+import * as Effect from "effect/Effect";
+
+// Replace this with the immutable ID of the Wrangler-deployed Worker.
+const workerId = "replace-with-worker-id";
+
+export default Alchemy.Stack(
+  "ConnectaResources",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const kv = yield* Cloudflare.KV.Namespace("ConnectaKV", { title: "connecta-kv" }).pipe(adopt(true));
+    const activity = yield* Cloudflare.D1.Database("ActivityDB", {
+      name: "connecta-activity", migrations: "./migrations/activity",
+    }).pipe(adopt(true));
+    const storage = yield* Cloudflare.D1.Database("StorageDB", {
+      name: "connecta-storage", migrations: "./migrations/storage",
+    }).pipe(adopt(true));
+    const blobs = yield* Cloudflare.R2.Bucket("ArtifactBlobs", { name: "connecta-artifacts" }).pipe(adopt(true));
+    const access = yield* Cloudflare.Access.Application("ConnectaAccess", {
+      type: "self_hosted",
+      name: "Connecta",
+      destinations: [{ type: "worker", workerId }],
+      policies: [{ decision: "allow", include: [{ emailDomain: "example.com" }] }],
+      oauthConfiguration: {
+        enabled: true,
+        dynamicClientRegistration: {
+          enabled: true,
+          allowedUris: [
+            "https://claude.ai/api/mcp/auth_callback",
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+            "https://chatgpt.com/connector/oauth/*",
+          ],
+        },
+      },
+    }).pipe(adopt(true));
+    return { kvId: kv.namespaceId, activityId: activity.databaseId,
+      storageId: storage.databaseId, bucketName: blobs.bucketName,
+      accessId: access.applicationId };
+  }),
+);
+```
+
+Replace the Worker ID and example Access policy before applying this stack.
+Keep only the resources the deployment uses: `STORAGE_DB` replaces
+`CONNECTA_KV`; `ACTIVITY_DB` and R2 are optional. Copy the output IDs into the
+matching `wrangler.jsonc` bindings. Keep `LOADER` in `worker_loaders` and, when
+enabled, the Browser Rendering binding and cron trigger in the Wrangler-owned
+Worker configuration. Configure the main and artifact hostnames as Wrangler
+custom domain `routes` with `custom_domain: true`. The Worker-level Access
+destination covers both hostnames; verify both against the same application
+after domain setup. Continue to set secrets with `wrangler secret put` and to
+deploy the Worker with Wrangler. After its initial `wrangler deploy`, use
+`wrangler versions upload` and `wrangler versions deploy` for code updates;
+apply route and cron changes through Wrangler too.
+
+The `adopt(true)` calls explicitly permit taking over matching existing
+resources; compare their live names, IDs, Access policy, and data before the
+first Alchemy deploy. Remove adoption where a resource is new. Put the D1 SQL
+from this README in the shown migration directories before deploying. With
+`migrations` configured, Alchemy copies an adopted database's Wrangler
+migration history once into `__alchemy_migrations`; the old history stays
+frozen. Review pending SQL before handing migrations over. Remote
+`Cloudflare.state()` bootstraps an account-level state-store Worker backed by a
+Durable Object and Secrets Store entries for its credentials. Retain them:
+deleting the state store loses Alchemy's record of what it owns.
+
+Verification for this optional path stops at the API and types. The fenced
+snippet was copied to an isolated `alchemy.run.ts` and passed `tsc --noEmit`
+with TypeScript 5.9.3, Alchemy 2.0.0-beta.79, and Effect 4.0.0-rc.117; no
+Alchemy deploy or adoption was run.
+[Alchemy's Worker resource](https://alchemy.run/cloudflare/compute/workers/)
+can declare `WorkerLoader`, domains, Browser Rendering, and cron wiring, but
+those properties are coupled to its script deploy. Its current full deploy
+still uses the script-upload endpoint; only a conditional gradual rollout uses
+the versions API. A previous full deploy through that endpoint did not provide
+`ctx.access`, so do not transfer Worker ownership until that path is verified
+end to end. The [Access](https://alchemy.run/cloudflare/security/access/),
+[D1](https://alchemy.run/cloudflare/data/d1/), and
+[state-store](https://alchemy.run/state-store/) guides describe the resources
+above; the typecheck does not prove Cloudflare will accept this particular
+Access adoption or preserve production identity.
+
 ### Copied into its own repository
 
 The `npm install` above is the connecta repository's, which already has every

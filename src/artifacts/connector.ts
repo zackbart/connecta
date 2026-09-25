@@ -249,7 +249,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
     return `${urlOf(ctx, artifactId)}/v/${view}${pins.length ? `?${pins.join("&")}` : ""}`;
   };
 
-  const renderFor = (ctx: ConnectorContext): RenderPage | undefined =>
+  const renderForSignal = (signal: AbortSignal | undefined): RenderPage | undefined =>
     hook
       ? async ({ id: artifactId, head, source, data }) => {
           const verdict = await runRenderCheck(
@@ -264,7 +264,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
               csp,
               kind: head.kind,
             },
-            ctx.signal,
+            signal,
           );
           if (verdict.ok) return verdict;
           if ("unavailable" in verdict) {
@@ -274,6 +274,8 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
           return invalidContent("The page", validation);
         }
       : undefined;
+  const renderFor = (ctx: ConnectorContext): RenderPage | undefined => renderForSignal(ctx.signal);
+  refresh.setRender(renderForSignal);
 
   const unwrap = <T extends { ok: true }>(result: T | ArtifactFailure): T => {
     if (!result.ok) throw failure(result);
@@ -455,10 +457,11 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
         },
         handler: async (args, ctx) => {
           const owner = callerOf(ctx);
+          if (!owner) throw new ConnectorCallError("unavailable", "Refresh requires an admitted caller identity.");
           const saved = unwrap(await ops.setRefresh({
             id: args.id, document: args.document, program: args.program,
             schedule: args.schedule, baseVersion: args.baseVersion, by: actorOf(ctx),
-            ...(owner ? { owner } : {}),
+            owner,
           }));
           return { id: args.id, freshness: freshnessOf(saved.head) };
         },

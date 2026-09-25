@@ -1639,7 +1639,7 @@ const executeDescription = (
 
 ${connectorInventory(connectors)}
 
-Read relevant guides using top-level skills, not sandbox code. Write a plain-JavaScript async arrow:
+Read guides with top-level skills. Write JavaScript as async () => { ... }; connecta is global, not a parameter:
 - connecta.search({ connector, query, ${resumable ? "" : 'safety: "readOnly", '}includeSchemas: "json" }) returns { tools }. Search each operation separately; choose by connectorTitle and schemas. Use schema.required and .properties to build args, never guessed fields. Compact schemas are text.
 - connecta.describe({ address }) returns { tools } for unclear schemas.
 - connecta.call(address, args) returns the provider value directly.
@@ -1657,7 +1657,7 @@ const EXECUTE_INPUT = advertisedSchema(
     code: z
       .string()
       .describe(
-        "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer. At most 65,536 UTF-8 bytes.",
+        "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
       ),
     diagnostics: z
       .boolean()

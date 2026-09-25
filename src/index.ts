@@ -5,7 +5,7 @@ import {
 } from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { intersectAccess, parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
-import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
+import type { ConnectorAccess, ConnectorGrant, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
 import { createProgramRunner } from "./execute.js";
 import {
@@ -225,12 +225,15 @@ export interface ConnectaIdentityConfig {
   /**
    * What this admitted identity may discover and call: `"all"`, or a list
    * whose entries are connector ids (the whole connector) and `connector.tool`
-   * addresses (that tool only). Grants are additive. An address naming a tool
-   * the catalog lacks is unreachable and warned once, never widened.
+   * addresses (that tool only), or `{ tool: "connector.tool",
+   * requireReadOnly: true }` for an exact tool only while its loaded catalog
+   * explicitly classifies it read-only. Grants are additive: an unrestricted
+   * connector or address grant wins over the guarded form. An address naming
+   * a tool the catalog lacks is unreachable and warned once, never widened.
    */
   connectorAccess?(
     identity: Readonly<AuthenticatedIdentity>,
-  ): "all" | readonly string[] | Promise<"all" | readonly string[]>;
+  ): "all" | readonly ConnectorGrant[] | Promise<"all" | readonly ConnectorGrant[]>;
   /** Global payload-free activity reads. Defaults to interactive humans. */
   activityAccess?(
     principal: Readonly<IdentityReference>,
@@ -1015,7 +1018,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       execute: async (program, owner, signal) => {
         if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");
         let access = parseConnectorAccess(config.identity?.connectorAccess
-          ? await config.identity.connectorAccess(owner.identity) : "all");
+          ? await config.identity.connectorAccess(owner.identity) : "all", { allowReadOnly: true });
         if (owner.pool) {
           const pool = pools.get(owner.pool);
           if (!pool || await pool.grant(owner.identity) !== true) {
@@ -1023,10 +1026,21 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           }
           access = intersectAccess(access, pool.access);
         }
+        if (access.connectorIds !== "all" && !access.connectorIds.includes("artifacts")) {
+          throw new Error("Refresh owner no longer has artifact publishing access.");
+        }
+        if (access.toolAccess?.get("artifacts") &&
+          !access.toolAccess.get("artifacts")!.has("set_refresh")) {
+          throw new Error("Refresh owner no longer has refresh configuration access.");
+        }
+        if (access.guardedToolAccess?.get("artifacts")?.has("set_refresh")) {
+          throw new Error("A read-only guarded grant cannot configure refresh.");
+        }
         access = intersectAccess(access, { connectorIds: sharedIds });
         if (signal.aborted) throw new Error("Refresh deadline expired before execution.");
         const view = registry.scoped({ connectorIds: access.connectorIds,
-          ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}) });
+          ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
+          ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}) });
         const runner = createProgramRunner(view, config.publicUrl!, executor, logger, undefined, refreshConfig);
         return runner.execute({ code: program }, { signal });
       },

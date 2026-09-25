@@ -51,8 +51,11 @@ deployments and providers that return no identity share one result partition.
 
 `identity.connectorAccess` returns `"all"` — the default — or a list of grants:
 a declared connector id opens every tool on it, a `connector.tool` address opens
-that tool alone, and grants are additive, so a bare id beside addresses for the
-same connector means the whole connector. It governs discovery and use alike.
+that tool alone, and `{ tool: "connector.tool", requireReadOnly: true }` opens
+that exact tool only while the loaded catalog says it is explicitly read-only.
+The guarded form accepts no connector-wide grant. Grants are additive, so a
+bare id or an unrestricted address beside a guarded address wins for that
+tool. It governs discovery and use alike.
 
 Tool grants are enforced in the scoped registry view, below the catalog service,
 so `search_tools`, both call tools, a program's `connecta.search`,
@@ -68,6 +71,84 @@ one place on purpose.
 There is no *caller-selected* tool set. A narrower slice is a branch in this
 resolver or a config-declared pool; a bot that needs its own slice is its own
 bearer subject. What a request may never do is name its own scope.
+
+### Team read sets
+
+`connectorAccess` is the supported way to give Engineering and Marketing
+different views of one deployment. Keep membership in deployment code and
+review the exact tool addresses you intend to grant:
+
+```ts
+const engineering = new Set(["engineer-id"]);
+const marketing = new Set(["marketer-id"]);
+const engineeringGrants = ["issues", { tool: "campaigns.list", requireReadOnly: true }] as const;
+const marketingGrants = ["campaigns", { tool: "issues.search", requireReadOnly: true }] as const;
+
+createConnecta({
+  auth: cloudflareAccessAuth(),
+  identity: {
+    connectorAccess: ({ principal }) => {
+      const id = principal?.id;
+      if (!id) return [];
+      return [...new Set([
+        ...(engineering.has(id) ? engineeringGrants : []),
+        ...(marketing.has(id) ? marketingGrants : []),
+      ])];
+    },
+  },
+  connectors: [issues, campaigns, billing],
+  executor,
+});
+```
+
+Here Engineering sees every `issues` tool and only `campaigns.list`;
+Marketing sees every `campaigns` tool and only `issues.search`. Neither sees
+`billing`. Someone in both groups gets both connectors in full because grants
+are additive. An unknown or unprincipalled identity gets an empty view. The
+example assumes the two exact tools have been reviewed as read-only; the names
+themselves carry no safety meaning. The guarded grants also check the current
+loaded annotations before discovery or use. Use a stable authenticated
+principal or subject for membership, never a request header or tool argument. A pool can
+narrow any of these views on its endpoint, but cannot make plain `/mcp` narrower.
+
+New tool names are excluded until added to a reviewed list. A removed or
+renamed name is unreachable and warned when the scoped view reads its catalog.
+For a guarded grant, missing, false, or contradictory read-only annotations
+also remove that tool from discovery and every invocation path, including
+`call_destructive_tool` and approval-exempt programs. An unrestricted exact
+string grant has the earlier behavior: a tool that changes from read to write
+stays granted, though `call_tool` refuses it and the write paths take over.
+Changing schema alone does not revoke either kind of grant. Review schemas,
+annotations, and downstream behavior before changing lists or upgrading a
+maintained provider. An arbitrary remote MCP catalog can drift without a
+package upgrade; a valid stale cached catalog may keep its earlier
+classification until refresh. A downstream can also keep a read-only
+annotation while changing the behavior behind it. For `api()` tools, the
+deployment author owns both declaration and handler. Connecta enforces the
+loaded declaration, not the downstream's promise of no side effects. A
+restricted downstream credential adds protection where the provider offers
+one, but does not replace the per-identity grant.
+
+When the resolver returns `[]`, connector-level discovery and the connection
+UI have no connectors to show. An address-only grant can leave a connector
+visible while its named tool is absent; the tool stays unreachable. A failed
+remote catalog load is an error, not an empty successful catalog; a valid stale
+catalog may be served within its configured stale window. A guarded grant
+whose tool loses qualification can leave its connector visible with no tools.
+Personal OAuth ownership and credential-administration permissions remain separate from
+visibility. These are the checks for a team read set:
+
+| Boundary | Expected result for a reviewed address and an excluded write |
+| --- | --- |
+| `search_tools`, `describe_tools`, connector guides | Show the granted address; omit the write. |
+| `call_tool` | Invoke an explicitly read-only granted address; return `unknown_tool` for the write. |
+| `call_destructive_tool` | Return `unknown_tool` for the excluded write, without dispatch. |
+| `execute_code` search, describe, call | See granted tools only; refuse the excluded write. A granted write still follows the separate approval rules. |
+| Connection UI | List granted tools only; never turn visibility into credential administration. |
+| `/mcp/<pool>` | Intersect its grants with the identity view; plain `/mcp` keeps the identity view. |
+
+Integration tests in `test/identity-scope.test.ts` exercise these paths and
+the older unrestricted exact-grant behavior.
 
 ## Pools
 
