@@ -134,6 +134,10 @@ the page can ignore it.
 
 ### Changed
 
+- **`execute_code` source intake (#576).** Programs over 64 KiB of UTF-8
+  source fail before executor admission. The host recovers one fenced async
+  arrow even when prose surrounds it, a default-exported arrow, or a named
+  async function declaration, so Node and Workers receive the same program.
 - **Eight tools, and instructions that follow the mode.** `tools/list` adds
   `resume_execution` everywhere. With resumable writes on, the MCP
   instructions say programs may write and pause, the `execute_code`

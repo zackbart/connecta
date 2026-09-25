@@ -5,6 +5,9 @@
 /** A whole-program markdown fence, as QuickJS's normalizer recognizes one. */
 const FENCE = /^```[\w-]*\s*\n([\s\S]*?)\n?```$/;
 
+/** Intake accepts one JavaScript fence, optionally surrounded by prose. */
+const PROGRAM_FENCE = /^```(?:js|javascript)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
+
 /** Leading whitespace and comments, which may precede the arrow expression. */
 const LEADING_TRIVIA = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)+/;
 
@@ -48,6 +51,110 @@ export function withoutProgramTerminator(code: string): string {
   const source = fenced === undefined ? code : fenced.trim();
   const stripped = stripTerminators(source);
   return stripped === source ? code : stripped;
+}
+
+/**
+ * Recover wrappers that models put around a single program. This runs in the
+ * host, so QuickJS and Dynamic Workers receive the same source. It does not
+ * turn arbitrary statements into a program: an arrow remains the contract.
+ */
+export function normalizeProgramSource(code: string): string {
+  let source = code.trim();
+  const head = source.replace(LEADING_TRIVIA, "");
+  // A program may itself contain fenced Markdown in a comment or string. Once
+  // the source starts as a program, a fence inside it is data, never a wrapper.
+  if (!/^(?:async\b|\(|export\s+default\s+async\b)/.test(head)) {
+    const fences = [...source.matchAll(PROGRAM_FENCE)];
+    if (fences.length === 1) {
+      const fence = fences[0]!;
+      const outside = source.slice(0, fence.index) + source.slice(fence.index! + fence[0].length);
+      const body = fence[1]!.trim();
+      const fencedHead = body.replace(LEADING_TRIVIA, "");
+      if (!outside.includes("```") && /^(?:async\b|\(|export\s+default\s+async\b)/.test(fencedHead)) {
+        source = body;
+      }
+    }
+  }
+
+  source = source.replace(/^export\s+default\s+(?=async\s*(?:\(|[A-Za-z_$]))/, "");
+
+  // The declaration must be the whole source. A scanner finds its own closing
+  // brace rather than mistaking a brace in a string or a second statement for
+  // the end of the function.
+  const named = /^async\s+function\s+([A-Za-z_$][\w$]*)\s*\(([^()]*)\)\s*\{/.exec(source);
+  if (named) {
+    const end = functionBodyEnd(source, named[0].length - 1);
+    if (end !== undefined && /^(?:\s|;|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*$/.test(source.slice(end + 1))) {
+      // Invoke a named function expression inside the arrow. Its own name and
+      // `arguments` binding then work exactly as in the original declaration.
+      source = `async (...args) => (async function ${named[1]}(${named[2]}) {${source.slice(named[0].length, end)}})(...args)${source.slice(end + 1)}`;
+    }
+  }
+
+  return withoutProgramTerminator(source);
+}
+
+/** Find the matching closing brace of a named function's body. */
+function functionBodyEnd(source: string, open: number): number | undefined {
+  let depth = 0;
+  let previous = "";
+  for (let i = open; i < source.length; i++) {
+    const c = source[i]!;
+    if (/\s/.test(c)) continue;
+    if (c === "/" && source[i + 1] === "/") {
+      const end = source.indexOf("\n", i + 2);
+      i = end === -1 ? source.length : end;
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      if (end === -1) return undefined;
+      i = end + 1;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") {
+      let end = i + 1;
+      for (; end < source.length && source[end] !== c; end++) {
+        if (source[end] === "\\") end++;
+        else if (source[end] === "\n" && c !== "`") return undefined;
+      }
+      if (end >= source.length) return undefined;
+      i = end;
+      previous = "0";
+      continue;
+    }
+    if (c === "/" && startsRegex(previous)) {
+      let end = i + 1;
+      let inClass = false;
+      for (; end < source.length; end++) {
+        const r = source[end];
+        if (r === "\n") return undefined;
+        if (r === "\\") end++;
+        else if (r === "[") inClass = true;
+        else if (r === "]") inClass = false;
+        else if (r === "/" && !inClass) break;
+      }
+      if (end >= source.length) return undefined;
+      i = end;
+      previous = "0";
+      continue;
+    }
+    if (WORD.test(c)) {
+      let end = i + 1;
+      while (end < source.length && WORD.test(source[end]!)) end++;
+      previous = source.slice(i, end);
+      i = end - 1;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return i;
+      if (depth < 0) return undefined;
+    }
+    previous = c;
+  }
+  return undefined;
 }
 
 function stripTerminators(source: string): string {

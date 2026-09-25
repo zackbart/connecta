@@ -29,7 +29,7 @@ import {
   timed,
   type WriteGateDecision,
 } from "./invocation.js";
-import { withoutProgramTerminator } from "./program-source.js";
+import { normalizeProgramSource } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import {
   DEFAULT_MAX_WRITES,
@@ -66,6 +66,8 @@ import type {
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
 const EXECUTE_MAX_HOST_CALLS = 20;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+/** Above every program in the recorded evals, below the QuickJS IPC ceiling. */
+const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
 /**
  * The outer ceiling on one execution. It sits above both executors' own
  * deadlines (QuickJS 30s, the Dynamic Worker 60s), so a healthy executor
@@ -1339,11 +1341,18 @@ export function createProgramRunner(
   return {
     claimMs: watchdog.ms + hostCallTimeoutMs + CLAIM_SLACK_MS,
     storageTimeoutMs,
-    execute: ({ code, diagnostics }, options = {}) =>
-      runEdge(Effect.suspend(() => {
-        // P1: a trailing `;` after the arrow expression breaks both
-        // executors' parenthesized evaluation. Strip it here, above them.
-        const program = withoutProgramTerminator(code);
+    execute: ({ code, diagnostics }, options = {}) => {
+      // A code-unit count above the cap is already too large in UTF-8. Check
+      // that first so a huge direct-call string is never encoded in full.
+      if (code.length > EXECUTE_MAX_CODE_BYTES ||
+        new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
+        const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+        return Promise.resolve(failureResponse(message, {
+          code: { code: "invalid_args", message, retryable: false },
+        }));
+      }
+      return runEdge(Effect.suspend(() => {
+        const program = normalizeProgramSource(code);
         const storage = config.resumable ? registry.resultsStorage() : undefined;
         const runState = config.resumable && storage?.compareAndSet
           ? RunState.fresh(
@@ -1355,7 +1364,8 @@ export function createProgramRunner(
             )
           : undefined;
         return play(program, runState, diagnostics, options.signal);
-      })),
+      }));
+    },
     replay: (runState, signal) =>
       play(runState.program, runState, false, signal),
   };
@@ -1639,7 +1649,7 @@ const EXECUTE_INPUT = advertisedSchema(
     code: z
       .string()
       .describe(
-        "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer.",
+        "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer. At most 65,536 UTF-8 bytes.",
       ),
     diagnostics: z
       .boolean()

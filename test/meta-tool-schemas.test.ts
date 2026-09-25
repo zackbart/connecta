@@ -115,7 +115,7 @@ const GOLDEN: Record<string, unknown> = {
       code: {
         type: "string",
         description:
-          "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer.",
+          "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer. At most 65,536 UTF-8 bytes.",
       },
       diagnostics: {
         description:

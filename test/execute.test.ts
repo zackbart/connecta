@@ -96,6 +96,35 @@ function callCanonical(
   );
 }
 
+describe("execute_code intake", () => {
+  it("rejects over 64 KiB of UTF-8 source before executor admission", async () => {
+    const executor = fakeExecutor({ result: 42 });
+    const handler = createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger);
+    const code = `async () => "${"é".repeat(32_769)}"`;
+    const result = await handler({ code, diagnostics: true });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "invalid_args", retryable: false },
+    });
+    expect(JSON.stringify(result)).toContain("65536");
+    expect(JSON.stringify(result)).not.toContain("éééé");
+    expect(executor.seen).toEqual([]);
+  });
+
+  it("accepts a 64 KiB source measured by UTF-8 bytes", async () => {
+    const executor = fakeExecutor({ result: 42 });
+    const handler = createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger);
+    const prefix = 'async () => "';
+    const multi = "é".repeat(Math.floor((65_536 - prefix.length - 1) / 2));
+    const exact = `${prefix}${multi}${"x".repeat(65_536 - prefix.length - 1 - multi.length * 2)}"`;
+    expect(new TextEncoder().encode(exact).byteLength).toBe(65_536);
+    const result = await handler({ code: exact });
+    expect(result.isError).toBeUndefined();
+    expect(executor.seen).toHaveLength(1);
+  });
+});
+
 describe("unwrapMcpResult", () => {
   it("passes non-mcp results through untouched", () => {
     expect(unwrapMcpResult("api", { sum: 3 })).toEqual({ sum: 3 });

@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { normalizeCode } from "../src/executors/quickjs.js";
+import { normalizeProgramSource } from "../src/program-source.js";
 import type { Connector, ExecutorProvider } from "../src/types.js";
 import {
   required,
@@ -75,6 +76,14 @@ describe("normalizeCode", () => {
       "/* setup */\n(async () => 1)",
     );
   });
+});
+
+it("forwards positional arguments through recovered named functions", async () => {
+  const source = normalizeProgramSource(
+    "async function read(value) { return { value, count: arguments.length }; }",
+  );
+  const program = new Function(`return (${source});`)() as (value: number) => Promise<unknown>;
+  await expect(program(42)).resolves.toEqual({ value: 42, count: 1 });
 });
 
 describe("quickJsExecutor", () => {
