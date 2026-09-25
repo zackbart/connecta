@@ -51,6 +51,8 @@ export interface ServerOptions {
   hostCallTimeoutMs?: number | undefined;
   /** Hard ceiling on one execute_code run, outside the sandbox. Default 120_000. */
   watchdogMs?: number | undefined;
+  /** Resumable writes' settings; absent when they are off. */
+  resumable?: { maxWrites: number; ttlSeconds: number } | undefined;
   /** Required sandbox backing the execute_code meta-tool. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */

@@ -57,6 +57,7 @@ export interface UiActivityEvent {
   attempts: number;
   errorCode?: string;
   friction?: string;
+  approval?: string;
 }
 
 /**
@@ -567,7 +568,16 @@ export function activitySummary(events: UiActivityEvent[]): string {
   } · no arguments or results stored`;
 }
 
-const ACTIVITY_OUTCOMES = ["success", "error", "timeout", "cancelled"];
+// A pause and an approval are neither success nor failure: each gets its own
+// class, and the stylesheet paints neither as an error.
+const ACTIVITY_OUTCOMES = [
+  "success",
+  "error",
+  "timeout",
+  "cancelled",
+  "paused",
+  "approved",
+];
 
 export function activityOutcomeClass(outcome: string): string {
   return ACTIVITY_OUTCOMES.includes(outcome) ? outcome : "error";
@@ -576,6 +586,8 @@ export function activityOutcomeClass(outcome: string): string {
 /** The one-line detail under an address: source, retries, and friction. */
 export function activityDetail(event: UiActivityEvent): string {
   const parts = [event.source];
+  if (event.approval === "tool") parts.push("approved for the rest of the run");
+  if (event.approval === "call") parts.push("approved for this call");
   if (event.attempts > 1) parts.push(`${event.attempts} attempts`);
   if (event.friction) parts.push(event.friction);
   // The friction class and the code coincide for auth_required and

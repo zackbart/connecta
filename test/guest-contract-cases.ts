@@ -7,7 +7,14 @@ import { recordToolActivity } from "../src/activity.js";
 import { expect } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createExecuteTool, type PinnedEnvironment } from "../src/execute.js";
+import {
+  createExecuteTool,
+  createProgramRunner,
+  type PinnedEnvironment,
+} from "../src/execute.js";
+import type { ToolResult } from "../src/meta-tools.js";
+import { resumeExecution, type ResumableSettings } from "../src/resumable.js";
+import { runEdge } from "../src/runtime/run.js";
 import type { Connector, Executor, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
@@ -43,6 +50,13 @@ export interface ContractCase {
   maxEmittedBytes?: number;
   /** A known clock and seed for this case and its follow-up (P6). */
   environment?: PinnedEnvironment;
+  /** Run with resumable writes on. */
+  resumable?: true;
+  /**
+   * Approve the paused write with this scope and hand the resumed outcome to
+   * `check` as its follow-up. Implies `resumable`.
+   */
+  resumeWith?: "call" | "tool";
   check(
     outcome: ContractOutcome,
     state: ContractState,
@@ -424,13 +438,39 @@ function contractConnectors(state: ContractState): Connector[] {
   ];
 }
 
+interface CaseConfig {
+  maxEmittedBytes?: number;
+  environment?: PinnedEnvironment;
+  resumable?: ResumableSettings;
+}
+
+/** The execute_code configuration a case asks for, the same on every arm. */
+export function caseConfig(contractCase: ContractCase): CaseConfig {
+  return {
+    ...(contractCase.maxEmittedBytes !== undefined
+      ? { maxEmittedBytes: contractCase.maxEmittedBytes }
+      : {}),
+    ...(contractCase.environment ? { environment: contractCase.environment } : {}),
+    ...(contractCase.resumable || contractCase.resumeWith
+      ? { resumable: { maxWrites: 10, ttlSeconds: 1_800, pool: null } }
+      : {}),
+  };
+}
+
 /** One fresh registry, activity sink, and call counter per case. */
 export function contractHarness(): {
   state: ContractState;
   run: (
     executor: Executor,
     code: string,
-    config?: { maxEmittedBytes?: number; environment?: PinnedEnvironment },
+    config?: CaseConfig,
+  ) => Promise<ContractOutcome>;
+  /** Approve a paused outcome's write through resume_execution. */
+  resume: (
+    executor: Executor,
+    paused: ContractOutcome,
+    approval: "call" | "tool",
+    config: CaseConfig,
   ) => Promise<ContractOutcome>;
 } {
   const state: ContractState = { calls: {}, events: [] };
@@ -447,18 +487,7 @@ export function contractHarness(): {
     logger: silentLogger,
   };
   const registry = makeRegistry(contractConnectors(state));
-  return {
-    state,
-    run: async (executor, code, config = {}) => {
-      const handler = createExecuteTool(
-        registry,
-        CONTRACT_BASE,
-        executor,
-        silentLogger,
-        activity,
-        config,
-      );
-      const out = await handler({ code });
+  const outcomeOf = (out: ToolResult): ContractOutcome => {
       const text = required(out.content[0]).text ?? "";
       let value: Record<string, unknown> = {};
       try {
@@ -479,6 +508,43 @@ export function contractHarness(): {
           ? { meta: out._meta as Record<string, unknown> }
           : {}),
       };
+  };
+  return {
+    state,
+    run: async (executor, code, config = {}) =>
+      outcomeOf(await createExecuteTool(
+        registry,
+        CONTRACT_BASE,
+        executor,
+        silentLogger,
+        activity,
+        config,
+      )({ code })),
+    resume: async (executor, paused, approval, config) => {
+      const pause = paused.value.paused as {
+        token: string;
+        address: string;
+        args: Record<string, unknown>;
+      };
+      const runner = createProgramRunner(
+        registry,
+        CONTRACT_BASE,
+        executor,
+        silentLogger,
+        activity,
+        config,
+      );
+      return outcomeOf(await runEdge(resumeExecution(
+        { token: pause.token, address: pause.address, args: pause.args, approval },
+        {
+          storage: registry.resultsStorage(),
+          settings: config.resumable,
+          run: (runState) => runner.replay(runState),
+          claimMs: runner.claimMs,
+          storageTimeoutMs: runner.storageTimeoutMs,
+          activity,
+        },
+      )));
     },
   };
 }
@@ -812,6 +878,83 @@ export const CONTRACT_CASES: ContractCase[] = [
       }
       expect(state.calls["reader.wipe"]).toBeUndefined();
       expect(state.calls["reader.unannotated"]).toBeUndefined();
+    },
+  },
+  {
+    clauses: "E4",
+    name: "with resumable writes, a write pauses the run and nothing after it gets through",
+    resumable: true,
+    code: `async () => {
+      const out = {};
+      try { await connecta.call("reader.wipe", {}); } catch (err) { out.first = err.code; }
+      try { await connecta.call("reader.read", { value: "after" }); } catch (err) { out.second = err.code; }
+      try { await connecta.call("reader.unannotated", {}); } catch (err) { out.third = err.code; }
+      return out;
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      // The pause is the answer; whatever the program went on to return is
+      // discarded, and none of its later calls reached a connector.
+      expect(outcome.value.paused).toMatchObject({
+        address: "reader.wipe",
+        args: {},
+        nextAction: { tool: "resume_execution" },
+      });
+      expect(outcome.value.result).toBeUndefined();
+      expect(state.calls).toEqual({});
+      expect(state.events.map((event) => [event.address, event.outcome, event.attempts]))
+        .toEqual([["reader.wipe", "paused", 0]]);
+    },
+  },
+  {
+    clauses: "E4",
+    name: "a write whose arguments carry a __proto__ key is refused, never held for approval",
+    resumable: true,
+    code: `async () => {
+      try {
+        await connecta.call("reader.wipe", JSON.parse('{"text":"hello","__proto__":{"text":"HIDDEN"}}'));
+        return "sent";
+      } catch (err) { return err.code; }
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.value.paused).toBeUndefined();
+      expect(outcome.result).toBe("invalid_args");
+      expect(state.calls).toEqual({});
+    },
+  },
+  {
+    clauses: "E4, P6",
+    name: "an approved write resumes by replay: same draws, reads not repeated",
+    resumeWith: "call",
+    code: `async () => {
+      const first = await connecta.call("reader.read", { value: "before" });
+      const marker = Math.random();
+      const at = Date.now();
+      const wiped = await connecta.call("reader.wipe", { marker, at });
+      return { first, marker, at, wiped };
+    }`,
+    check(outcome, state, follow) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      const pause = outcome.value.paused as { args: { marker: number; at: number } };
+      const resumed = required(follow, "resumed outcome");
+      expect(resumed.isError, resumed.text).toBe(false);
+      // The replay drew the same number and read the same clock, so it
+      // repeated exactly the approved write.
+      expect(resumed.result).toEqual({
+        first: { echo: "before" },
+        marker: pause.args.marker,
+        at: pause.args.at,
+        wiped: { done: true },
+      });
+      expect(state.calls).toEqual({ "reader.read": 1, "reader.wipe": 1 });
+      expect(state.events.map((event) => [event.address, event.outcome, event.source]))
+        .toEqual([
+          ["reader.read", "success", "execute_code"],
+          ["reader.wipe", "paused", "execute_code"],
+          ["reader.wipe", "approved", "resume_execution"],
+          ["reader.wipe", "success", "resume_execution"],
+        ]);
     },
   },
   {

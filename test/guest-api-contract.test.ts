@@ -20,6 +20,7 @@ import type { Connector, Executor } from "../src/types.js";
 import { fakeExecutor } from "./fixtures/misc.js";
 import {
   CAPABILITY_PROBE_CODE,
+  caseConfig,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
@@ -213,19 +214,13 @@ describe.skipIf(!workerExecutor)(
         const executor = required(
           contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
         );
-        const environment = contractCase.environment
-          ? { environment: contractCase.environment }
-          : {};
-        const outcome = await harness.run(
-          executor,
-          contractCase.code,
-          contractCase.maxEmittedBytes === undefined
-            ? environment
-            : { maxEmittedBytes: contractCase.maxEmittedBytes, ...environment },
-        );
+        const config = caseConfig(contractCase);
+        const outcome = await harness.run(executor, contractCase.code, config);
         const follow = contractCase.follows
-          ? await harness.run(executor, contractCase.follows, environment)
-          : undefined;
+          ? await harness.run(executor, contractCase.follows, config)
+          : contractCase.resumeWith
+            ? await harness.resume(executor, outcome, contractCase.resumeWith, config)
+            : undefined;
         contractCase.check(outcome, harness.state, follow);
       });
     }

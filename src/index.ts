@@ -21,6 +21,10 @@ import {
   withExecutorAdmission,
 } from "./executor-admission.js";
 import type { ActivityModule, OperatorSurface } from "./module-contracts.js";
+import {
+  DEFAULT_MAX_WRITES,
+  DEFAULT_PAUSED_RUN_TTL_SECONDS,
+} from "./resumable.js";
 import { disposeEdgeRuntime } from "./runtime/run.js";
 import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
 export type { ActivityModule, OperatorSurface } from "./module-contracts.js";
@@ -128,6 +132,30 @@ export interface ConnectaExecuteConfig {
    * fall back to the default.
    */
   watchdogMs?: number;
+  /**
+   * Let programs write. A call to a tool that is not explicitly read-only
+   * pauses the run before anything is sent and returns the exact write with
+   * a token; `resume_execution` repeating it is the approval, and the
+   * program replays from a journal to send it and continue. Off by default
+   * in this release; turning it on registers `resume_execution`. Requires
+   * `storage` with `compareAndSet`, because two resumes of one pause must
+   * send its writes at most once — `true` without it refuses to construct.
+   */
+  resumableWrites?: boolean;
+  /**
+   * Consequential calls one run may send, on top of the host-call budget
+   * every call already spends. Default 10. A replayed write spends it again,
+   * so it bounds the run, not each play. Invalid values fall back to the
+   * default.
+   */
+  maxWrites?: number;
+  /**
+   * How long a paused run can be resumed, in seconds from its first pause.
+   * Default 1_800. A later pause in the same run keeps the first deadline, so
+   * a run never replays reads older than this. Invalid values fall back to
+   * the default.
+   */
+  pausedRunTtlSeconds?: number;
 }
 
 export interface AdmissionPoolConfig {
@@ -358,6 +386,9 @@ const CONFIG_SCHEMA = {
     maxHostCalls: null,
     hostCallTimeoutMs: null,
     watchdogMs: null,
+    resumableWrites: null,
+    maxWrites: null,
+    pausedRunTtlSeconds: null,
   } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
     requests: admissionPoolSchema,
@@ -516,6 +547,45 @@ function resolvePools(
     resolved.set(name, { access, grant: pool.grant ?? (() => false) });
   }
   return resolved;
+}
+
+/** A positive whole number, or the default when the value is unusable. */
+function positiveWhole(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.trunc(value)
+    : fallback;
+}
+
+/**
+ * Resumable writes' deployment settings, or undefined when they are off.
+ * Turning them on over storage that cannot claim atomically throws: at-most-
+ * once delivery of an approved write rests on exactly one resume winning the
+ * claim, and a read-then-write stand-in would let two win.
+ */
+function resolveResumableWrites(
+  execute: ConnectaExecuteConfig | undefined,
+  storage: KVStorage,
+): { maxWrites: number; ttlSeconds: number } | undefined {
+  const enabled = execute?.resumableWrites;
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    throw new Error("ConnectaConfig.execute.resumableWrites must be a boolean");
+  }
+  if (enabled !== true) return undefined;
+  if (typeof storage.compareAndSet !== "function") {
+    throw new Error(
+      "ConnectaConfig.execute.resumableWrites needs storage with compareAndSet: " +
+        "two resumes of one paused run must send its writes at most once, which " +
+        "takes an atomic claim. memoryStorage() and fileStorage() provide it, as " +
+        "does the Worker example's D1 store; Cloudflare KV cannot.",
+    );
+  }
+  return {
+    maxWrites: positiveWhole(execute?.maxWrites, DEFAULT_MAX_WRITES),
+    ttlSeconds: positiveWhole(
+      execute?.pausedRunTtlSeconds,
+      DEFAULT_PAUSED_RUN_TTL_SECONDS,
+    ),
+  };
 }
 
 /**
@@ -700,6 +770,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   });
   const inboundAuth = configuredAuth;
   const pools = resolvePools(config.pools, registry);
+  const resumable = resolveResumableWrites(config.execute, storage);
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,
@@ -764,6 +835,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxHostCalls: config.execute?.maxHostCalls,
     hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
     watchdogMs: config.execute?.watchdogMs,
+    resumable,
     credentialVault,
     ui: config.ui,
     deploymentInfo: config.deploymentInfo,

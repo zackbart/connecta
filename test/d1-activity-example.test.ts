@@ -149,4 +149,30 @@ describe("Worker D1 activity example", () => {
     expect(row.friction).toBe("result_too_large");
     expect(activityRowToEvent(row)).toEqual(event);
   });
+
+  it("round-trips a resumed program's approval, and reads older rows without one", () => {
+    const event: ToolCallActivityEvent = {
+      schemaVersion: 1,
+      id: "11111111-1111-4111-8111-111111111111",
+      occurredAt: "2026-07-27T12:34:56.000Z",
+      requestId: "22222222-2222-4222-8222-222222222222",
+      actor: { kind: "bearer" },
+      connectorId: "tracker",
+      toolName: "close_issue",
+      address: "tracker.close_issue",
+      source: "resume_execution",
+      outcome: "approved",
+      durationMs: 0,
+      attempts: 0,
+      approval: "tool",
+      serverName: "connecta",
+      serverVersion: "0.26.0",
+    };
+    const row = activityEventToRow(event);
+    expect(row.approval).toBe("tool");
+    expect(activityRowToEvent(row)).toEqual(event);
+    // A row from a table created before the column: no `approval` at all.
+    const { approval: _absent, ...older } = row;
+    expect(activityRowToEvent({ ...older, outcome: "success" })).not.toHaveProperty("approval");
+  });
 });

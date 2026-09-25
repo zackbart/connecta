@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   CAPABILITY_PROBE_CODE,
+  caseConfig,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
@@ -27,19 +28,13 @@ describe("guest API contract (QuickJS executor)", () => {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness();
       const chosen = contractCase.deadline ? deadlineExecutor : executor;
-      const environment = contractCase.environment
-        ? { environment: contractCase.environment }
-        : {};
-      const outcome = await harness.run(
-        chosen,
-        contractCase.code,
-        contractCase.maxEmittedBytes === undefined
-          ? environment
-          : { maxEmittedBytes: contractCase.maxEmittedBytes, ...environment },
-      );
+      const config = caseConfig(contractCase);
+      const outcome = await harness.run(chosen, contractCase.code, config);
       const follow = contractCase.follows
-        ? await harness.run(chosen, contractCase.follows, environment)
-        : undefined;
+        ? await harness.run(chosen, contractCase.follows, config)
+        : contractCase.resumeWith
+          ? await harness.resume(chosen, outcome, contractCase.resumeWith, config)
+          : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }

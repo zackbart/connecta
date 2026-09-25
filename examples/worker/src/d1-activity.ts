@@ -50,8 +50,9 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
             id, occurred_at_ms, request_id, actor_kind, actor_id,
             actor_namespace,
             connector_id, tool_name, source, outcome, duration_ms, attempts,
-            error_code, friction, server_name, server_version, deployment_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            error_code, friction, approval, server_name, server_version,
+            deployment_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -68,6 +69,7 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
           row.attempts,
           row.error_code,
           row.friction ?? null,
+          row.approval ?? null,
           row.server_name,
           row.server_version,
           row.deployment_id,

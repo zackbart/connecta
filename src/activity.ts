@@ -31,13 +31,23 @@ export type ActivityCallSource =
   // into this type — and an operator's timeline should not have to lie about
   // where a call came from. Never widen this member back into a live source.
   | "batch_call"
-  | "execute_code";
+  | "execute_code"
+  // A resumed program's approval and every call its replay makes live.
+  | "resume_execution";
 
 export type ActivityOutcome =
   | "success"
   | "error"
   | "timeout"
-  | "cancelled";
+  | "cancelled"
+  // A program stopped at this write to wait for approval; nothing was sent.
+  | "paused"
+  // `resume_execution` approved this paused write; the call itself follows as
+  // its own event.
+  | "approved";
+
+/** How much one `resume_execution` approved: this call, or this tool for the run. */
+export type ActivityApproval = "call" | "tool";
 
 export type AgentFriction =
   | "tool_not_found"
@@ -92,6 +102,11 @@ export interface ToolCallActivityEvent {
    * agent while remaining an `outcome: "success"` call with no error code.
    */
   friction?: AgentFriction;
+  /**
+   * Set only on an `approved` event: the scope the approval covered. An enum,
+   * like everything else here — the approved arguments are never recorded.
+   */
+  approval?: ActivityApproval;
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
@@ -207,6 +222,7 @@ export type ActivityEventInput = Pick<
   | "attempts"
   | "errorCode"
   | "friction"
+  | "approval"
 >;
 
 /**
@@ -234,9 +250,19 @@ export function recordToolActivity(
     source: input.source,
     outcome: input.outcome,
     durationMs: Math.max(0, Math.trunc(input.durationMs)),
-    attempts: Math.max(1, Math.trunc(input.attempts)),
+    // A pause and an approval reach nothing downstream, so they are the two
+    // events that honestly carry zero attempts. Every other outcome keeps its
+    // floor of one, as it always has.
+    attempts:
+      input.outcome === "paused" || input.outcome === "approved"
+        ? 0
+        : Math.max(1, Math.trunc(input.attempts)),
     ...(input.errorCode ? { errorCode: input.errorCode } : {}),
     ...(friction ? { friction } : {}),
+    ...(input.outcome === "approved" &&
+    (input.approval === "call" || input.approval === "tool")
+      ? { approval: input.approval }
+      : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
     ...(context.deploymentId

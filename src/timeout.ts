@@ -54,6 +54,33 @@ export function withDeadline<T>(
 }
 
 /**
+ * Run `operation` under one signal that aborts when any of `signals` does —
+ * the MCP call's own and the inbound request's, for the program tools — and
+ * detach every listener afterwards, however it ends.
+ */
+export async function underAnySignal<T>(
+  signals: ReadonlyArray<AbortSignal | undefined>,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const forwarders = signals
+    .filter((signal): signal is AbortSignal => signal !== undefined)
+    .map((signal) => {
+      const forward = () => controller.abort(signal.reason);
+      if (signal.aborted) forward();
+      else signal.addEventListener("abort", forward, { once: true });
+      return { signal, forward };
+    });
+  try {
+    return await operation(controller.signal);
+  } finally {
+    for (const { signal, forward } of forwarders) {
+      signal.removeEventListener("abort", forward);
+    }
+  }
+}
+
+/**
  * Give one operation a caller-facing deadline and the matching cancellation
  * signal. The timeout rejects with the stable, labelled error while aborting
  * any in-flight work that honors the signal.

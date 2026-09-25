@@ -48,6 +48,52 @@ describe("activity delivery", () => {
     expect(agentFrictionForCode("not_found")).toBeUndefined();
   });
 
+  it("records pauses and approvals with zero attempts and an enum-only scope", () => {
+    const events: ToolCallActivityEvent[] = [];
+    const context: ActivityRequestContext = {
+      recordTool: recordToolActivity,
+      sink: { record: (event) => void events.push(event) },
+      actor: { kind: "test" },
+      requestId: "r",
+      serverInfo: { name: "connecta", version: "0" },
+      logger: silentLogger,
+    };
+    const base = {
+      connectorId: "tracker",
+      toolName: "close_issue",
+      address: "tracker.close_issue",
+      durationMs: 3,
+    } as const;
+    recordToolActivity(context, { ...base, source: "execute_code", outcome: "paused", attempts: 0 });
+    recordToolActivity(context, {
+      ...base,
+      source: "resume_execution",
+      outcome: "approved",
+      attempts: 0,
+      approval: "tool",
+    });
+    // A refusal keeps its floor of one, and a scope on anything but an
+    // approval is dropped.
+    recordToolActivity(context, {
+      ...base,
+      source: "execute_code",
+      outcome: "error",
+      attempts: 0,
+      errorCode: "unknown_tool",
+      approval: "call",
+    });
+    expect(events.map((event) => [event.outcome, event.attempts, event.approval])).toEqual([
+      ["paused", 0, undefined],
+      ["approved", 0, "tool"],
+      ["error", 1, undefined],
+    ]);
+    expect(Object.keys(required(events[1])).sort()).toEqual([
+      "actor", "address", "approval", "attempts", "connectorId", "durationMs",
+      "id", "occurredAt", "outcome", "requestId", "schemaVersion",
+      "serverName", "serverVersion", "source", "toolName",
+    ]);
+  });
+
   it("attaches rejected async writes to waitUntil without throwing", async () => {
     const deferred: Promise<unknown>[] = [];
     const warnings: unknown[][] = [];

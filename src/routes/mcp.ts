@@ -13,6 +13,7 @@ import {
   type AdmissionLease,
 } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
+import { registerResumeTool } from "../resumable.js";
 import type { RegistryView } from "../registry.js";
 import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
@@ -286,8 +287,14 @@ function serveMcp(
   actor: ActivityActor,
   registry: RegistryView,
   canManageAuth: (connectorId: string) => boolean,
+  poolName: string | undefined,
   runtimeContext?: RuntimeExecutionContext,
 ): Effect.Effect<Response, never, Scope.Scope> {
+  // A paused run belongs to the endpoint it started on: resuming it through
+  // another pool's endpoint finds nothing, as another subject would.
+  const resumable = opts.resumable
+    ? { ...opts.resumable, pool: poolName ?? null }
+    : undefined;
   // Every McpServer the request builds is fresh and closes with its scope.
   // The modern handler tears its own down after the exchange; the legacy
   // transport never does, and neither may stay wired to an ended request.
@@ -337,7 +344,7 @@ function serveMcp(
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
     });
-    registerExecuteTool(server, registry, {
+    const runner = registerExecuteTool(server, registry, {
       baseUrl,
       executor: opts.executor,
       logger: opts.logger,
@@ -367,7 +374,16 @@ function serveMcp(
       ...(opts.watchdogMs !== undefined
         ? { watchdogMs: opts.watchdogMs }
         : {}),
+      resumable,
     });
+    if (resumable) {
+      registerResumeTool(server, registry, {
+        runner,
+        settings: resumable,
+        ...(activity ? { activity } : {}),
+        requestSignal: request.signal,
+      });
+    }
     servers.push(server);
     return server;
   };
@@ -569,6 +585,7 @@ export function createMcpRoute(
         authz.actor,
         scopedRegistry,
         id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
+        poolName,
         runtimeContext,
       ));
     }), request.signal);
