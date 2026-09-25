@@ -94,6 +94,7 @@ interface WorldOptions {
   settings?: Partial<ResumableSettings>;
   hostCallTimeoutMs?: number;
   watchdogMs?: number;
+  storageTimeoutMs?: number;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
 }
@@ -181,6 +182,9 @@ function world(options: WorldOptions = {}) {
         ? { hostCallTimeoutMs: options.hostCallTimeoutMs }
         : {}),
       ...(options.watchdogMs !== undefined ? { watchdogMs: options.watchdogMs } : {}),
+      ...(options.storageTimeoutMs !== undefined
+        ? { storageTimeoutMs: options.storageTimeoutMs }
+        : {}),
     },
   );
   let next = 0;
@@ -205,6 +209,7 @@ function world(options: WorldOptions = {}) {
         settings: { ...settings, ...overrides },
         run: (runState) => runner.replay(runState),
         claimMs: runner.claimMs,
+        storageTimeoutMs: runner.storageTimeoutMs,
         activity,
       })),
     writes: () => calls.filter((call) => call.address.startsWith("tracker.")),
@@ -831,6 +836,7 @@ describe("resumable writes: expiry, divergence, and budgets", () => {
         settings: undefined,
         run: () => { throw new Error("never played"); },
         claimMs: 1_000,
+        storageTimeoutMs: 1_000,
       },
     ));
     expect(value(result).error.code).toBe("resumable_writes_unavailable");
@@ -1175,5 +1181,276 @@ describe("resumable writes: messages that match what happened", () => {
       writes: { succeeded: 1, failed: 0, unknown: 0 },
     });
     expect(value(result).error.message).not.toContain("Nothing was sent");
+  });
+});
+
+/** Resolves "hung" if `work` has not settled within `ms`. */
+function within<T>(ms: number, work: Promise<T>): Promise<T | "hung"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<"hung">((resolve) => {
+      timer = setTimeout(() => resolve("hung"), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** A header as a claimant that sent the approved close and then crashed left it. */
+async function lapsedAfterWrite(
+  w: ReturnType<typeof world>,
+  pause: Paused,
+  until: number,
+): Promise<void> {
+  const { raw, header: stored } = await header(w.storage, pause.token);
+  const journal = new RunJournal(w.registry.resultsStorage(), required(parseToken(pause.token)).runId);
+  await journal.writeEntry(stored.entries, {
+    seq: 1,
+    op: "call",
+    key: required(stored.pending).key,
+    write: true,
+    outcome: { ok: true, value: { ok: true } },
+  }, stored.expiresAt);
+  expect(await journal.casHeader(raw, {
+    ...stored,
+    state: "running",
+    version: stored.version + 1,
+    claim: { id: "0".repeat(32), until },
+    approvals: [{ address: "tracker.close_issue", scope: "tool", nonce: stored.nonce }],
+    writes: [{ entry: stored.entries, address: "tracker.close_issue", state: "ok" }],
+    entries: stored.entries + 1,
+  })).toBeDefined();
+}
+
+describe("resumable writes: second review regressions", () => {
+  it("answers a live claim as in progress and a lapsed one with its counts, even past the deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const w = world({ settings: { ttlSeconds: 5 } });
+    const first = paused(await w.execute(w.program(staleClose)));
+    // A claimant still inside its lease, past the run's deadline.
+    await lapsedAfterWrite(w, first, Date.now() + 20_000);
+    vi.setSystemTime(Date.now() + 10_000);
+    const live = await w.resume(approve(first, "tool"));
+    expect(value(live).error).toMatchObject({ code: "execution_in_progress", retryable: true });
+    // Its lease lapses: what it sent is still reported, not "expired".
+    vi.setSystemTime(Date.now() + 15_000);
+    const lapsed = await w.resume(approve(first, "tool"));
+    expect(value(lapsed).error).toMatchObject({
+      code: "execution_interrupted",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(w.writes()).toEqual([]);
+  });
+
+  it("gives check-first advice, not a plain re-run, once a write landed", async () => {
+    let plays = 0;
+    const w = world();
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      plays++;
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      await connecta.call!("reader.get", { id: plays === 3 ? 99 : 1 });
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      return "done";
+    })));
+    const second = paused(await w.resume(approve(first)));
+    const result = await w.resume(approve(second));
+    const error = value(result).error;
+    expect(error).toMatchObject({
+      code: "execution_diverged",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+      nextAction: { tool: "execute_code" },
+    });
+    expect(error.nextAction.purpose).toMatch(/^Check what the writes/);
+    // A run that sent nothing keeps the plain advice.
+    const quiet = world();
+    let quietPlays = 0;
+    const pause = paused(await quiet.execute(quiet.program(async (connecta) => {
+      quietPlays++;
+      await connecta.call!("reader.get", { id: quietPlays });
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      return "done";
+    })));
+    const diverged = value(await quiet.resume(approve(pause))).error;
+    expect(diverged.nextAction.purpose).toMatch(/^Run the task again/);
+  });
+
+  it("keeps a paused run's write counts past its deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const w = world({ settings: { ttlSeconds: 5 } });
+    const first = paused(await w.execute(w.program(staleClose)));
+    const second = paused(await w.resume(approve(first)));
+    vi.setSystemTime(Date.now() + 60_000);
+    const expired = value(await w.resume(approve(second))).error;
+    expect(expired).toMatchObject({
+      code: "execution_expired",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(expired.nextAction.purpose).toMatch(/^Check what the writes/);
+    expect(w.writes()).toHaveLength(1);
+  });
+
+  it("bounds a write-ahead mark that storage never answers, and sends nothing", async () => {
+    const base = memoryStorage();
+    const hanging: KVStorage = {
+      ...base,
+      compareAndSet: (key, expected, next, options) =>
+        next?.includes('"state":"sending"')
+          ? new Promise<boolean>(() => {})
+          : required(base.compareAndSet)(key, expected, next, options),
+    };
+    const w = world({ storage: hanging, storageTimeoutMs: 50 });
+    const first = paused(await w.execute(w.program(staleClose)));
+    const result = await within(3_000, w.resume(approve(first)));
+    expect(result).not.toBe("hung");
+    expect(value(result as { structuredContent?: Record<string, unknown> }).error).toMatchObject({
+      code: "execution_interrupted",
+      writes: { succeeded: 0, failed: 0, unknown: 0 },
+    });
+    expect(w.writes()).toEqual([]);
+  });
+
+  it("bounds a write's journal entry that storage never answers, and reports it sent", async () => {
+    const base = memoryStorage();
+    let armed = false;
+    const hanging: KVStorage = {
+      ...base,
+      set: (key, value, options) =>
+        armed && /:e:\d+$/.test(key)
+          ? new Promise<void>(() => {})
+          : base.set(key, value, options),
+    };
+    const w = world({ storage: hanging, storageTimeoutMs: 50 });
+    const first = paused(await w.execute(w.program(staleClose)));
+    armed = true;
+    const result = await within(3_000, w.resume(approve(first)));
+    expect(result).not.toBe("hung");
+    const error = value(result as { structuredContent?: Record<string, unknown> }).error;
+    expect(error.code).toBe("execution_interrupted");
+    expect(error.message).toContain("was sent");
+    expect(error.writes.succeeded + error.writes.unknown).toBe(1);
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+  });
+
+  it("stores a failed takeover's answer in the compare-and-set that ends the run", async () => {
+    const base = memoryStorage();
+    let casLeft = Number.POSITIVE_INFINITY;
+    const flaky: KVStorage = {
+      ...base,
+      compareAndSet: (key, expected, next, options) => {
+        if (casLeft-- <= 0) return Promise.reject(new Error("storage went away"));
+        return required(base.compareAndSet)(key, expected, next, options);
+      },
+    };
+    const w = world({ storage: flaky });
+    const first = paused(await w.execute(w.program(staleClose)));
+    await lapsedAfterWrite(w, first, Date.now() - 1);
+    // One more compare-and-set works; a second would fail.
+    casLeft = 1;
+    const result = await w.resume(approve(first, "tool"));
+    expect(value(result).error.code).toBe("execution_interrupted");
+    casLeft = 0;
+    // The answer was stored with the failure, so a repeat still gets it.
+    expect(await w.resume(approve(first, "tool"))).toEqual(result);
+    expect(w.writes()).toEqual([]);
+
+    // The same for a journal that cannot be read back.
+    const v = world({ storage: flaky });
+    casLeft = Number.POSITIVE_INFINITY;
+    const pause = paused(await v.execute(v.program(staleClose)));
+    await v.registry.resultsStorage().delete(`run:${required(parseToken(pause.token)).runId}:src`);
+    casLeft = 1;
+    const unreadable = await v.resume(approve(pause));
+    expect(value(unreadable).error.code).toBe("execution_interrupted");
+    casLeft = 0;
+    expect(await v.resume(approve(pause))).toEqual(unreadable);
+    expect(v.writes()).toEqual([]);
+  });
+
+  it("answers approval_mismatch to a repetition whose args carry __proto__", async () => {
+    const programs = new Map<string, Program>();
+    const sent: unknown[] = [];
+    const tracker: Connector = {
+      id: "tracker",
+      kind: "api",
+      description: "Writes issues",
+      listTools: async () => [{ name: "post" }],
+      callTool: async (_name, args) => {
+        sent.push(args);
+        return { ok: true };
+      },
+    };
+    const connecta = createConnecta({
+      connectors: [tracker],
+      executor: scriptedExecutor(programs),
+      logger: "silent",
+      execute: { resumableWrites: true },
+    });
+    const code = "async () => protoProgram";
+    programs.set(code, async (guest) => {
+      await guest.call!("tracker.post", { text: "a" });
+      return "done";
+    });
+    const call = async (name: string, args: unknown) =>
+      (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args })) as {
+        result: { structuredContent: Record<string, any> };
+      }).result.structuredContent;
+    const pause = (await call("execute_code", { code })).paused as Paused;
+    expect(pause.args).toEqual({ text: "a" });
+    const smuggled = JSON.parse(
+      `{"token":${JSON.stringify(pause.token)},"address":"tracker.post","args":{"text":"a","__proto__":{"text":"b"}}}`,
+    ) as unknown;
+    const answer = await call("resume_execution", smuggled);
+    expect(answer.error?.code).toBe("approval_mismatch");
+    expect(sent).toEqual([]);
+    // The exact repetition still goes through.
+    const done = await call("resume_execution", approve(pause));
+    expect(done.result).toBe("done");
+    expect(sent).toEqual([{ text: "a" }]);
+    await connecta.close();
+  });
+
+  it("renders holes and boxed primitives as JSON does", () => {
+    // oxlint-disable-next-line no-sparse-arrays
+    const sparse = [1, , 3];
+    const boxed = {
+      n: Object(1) as unknown,
+      s: Object("x") as unknown,
+      b: Object(false) as unknown,
+      list: [Object(2) as unknown],
+    };
+    expect(canonicalJson(sparse)).toBe(JSON.stringify(sparse));
+    expect(canonicalJson(sparse)).toBe("[1,null,3]");
+    expect(canonicalJson(boxed)).toBe('{"b":false,"list":[2],"n":1,"s":"x"}');
+    expect(canonicalJson(boxed)).not.toBe(canonicalJson({ b: {}, list: [{}], n: {}, s: {} }));
+  });
+
+  it("lets a retried resume's approval scope replace an unused approval of the same pause", async () => {
+    const w = world();
+    const first = paused(await w.execute(w.program(staleClose)));
+    const { raw, header: stored } = await header(w.storage, first.token);
+    const journal = new RunJournal(w.registry.resultsStorage(), required(parseToken(first.token)).runId);
+    // A claimant approved the close for one call, then crashed before sending.
+    await journal.casHeader(raw, {
+      ...stored,
+      state: "running",
+      version: stored.version + 1,
+      claim: { id: "0".repeat(32), until: Date.now() - 1 },
+      approvals: [{
+        address: "tracker.close_issue",
+        scope: "call",
+        argsCanonical: canonicalJson({ id: 1 }),
+        nonce: stored.nonce,
+      }],
+    });
+    const next = paused(await w.resume(approve(first, "tool")));
+    // The retry's "tool" covers both closes; the post asks.
+    expect(next.address).toBe("tracker.post");
+    expect(w.writes().map((call) => call.args)).toEqual([{ id: 1 }, { id: 2 }]);
+    const approvals = (await header(w.storage, next.token)).header.approvals;
+    expect(approvals).toEqual([
+      { address: "tracker.close_issue", scope: "tool", nonce: stored.nonce },
+    ]);
+    expect(w.events.filter((event) => event.outcome === "approved")).toEqual([
+      expect.objectContaining({ address: "tracker.close_issue", approval: "tool" }),
+    ]);
   });
 });

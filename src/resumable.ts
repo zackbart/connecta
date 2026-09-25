@@ -34,7 +34,7 @@
 //   from its first pause, and a program that stops matching its journal fails
 //   typed (`execution_diverged`).
 
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer, StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { Deferred, Effect } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
@@ -82,6 +82,15 @@ export interface ResumableSettings {
   /** The `/mcp/<pool>` this request came in on; `null` for `/mcp`. */
   pool: string | null;
 }
+
+/**
+ * The floor under the deadline on each paused-run storage call. The deadline
+ * is the host-call deadline or this, whichever is longer: a write's
+ * reservation and its settling cannot be interrupted, so without one a
+ * storage call that never answers would hold the play — and the drain behind
+ * it — forever.
+ */
+export const MIN_STORAGE_TIMEOUT_MS = 5_000;
 
 export const DEFAULT_MAX_WRITES = 10;
 export const DEFAULT_PAUSED_RUN_TTL_SECONDS = 1_800;
@@ -199,6 +208,12 @@ const RERUN = {
   purpose: "Run the task again from the start; nothing from this run will be replayed.",
 } as const;
 
+/** RERUN, for a run whose writes may have landed. */
+const RERUN_AFTER_CHECK = {
+  tool: "execute_code",
+  purpose: "Check what the writes counted in writes did first: running the task again from the start sends them again.",
+} as const;
+
 /**
  * A replay that stopped matching its journal. It stops where it noticed; what
  * it had already sent is counted in `writes`, and nothing is replayed again.
@@ -244,6 +259,18 @@ function countWrites(writes: RunHeader["writes"]): WriteCounts {
     failed: writes.filter((write) => write.state === "failed").length,
     unknown: writes.filter((write) => write.state === "unknown" || write.state === "sending").length,
   };
+}
+
+/**
+ * A failure with the run's write counts. "Run it again" is only plain advice
+ * when nothing landed: once a write succeeded, or may have, the advice says
+ * to check first, because a re-run sends it again.
+ */
+function counted(runFailure: RunFailure, writes: WriteCounts): RunFailure {
+  const landed = writes.succeeded + writes.unknown > 0;
+  return landed && runFailure.nextAction === RERUN
+    ? { ...runFailure, nextAction: RERUN_AFTER_CHECK, writes }
+    : { ...runFailure, writes };
 }
 
 /**
@@ -297,9 +324,10 @@ export class RunState {
     program: string,
     environment: PinnedEnvironment,
     settings: ResumableSettings,
+    storageTimeoutMs: number,
   ): RunState {
     return new RunState(
-      new RunJournal(storage, randomId()),
+      new RunJournal(storage, randomId(), storageTimeoutMs),
       program,
       environment,
       "execute_code",
@@ -599,7 +627,10 @@ export class RunState {
    * deadline cannot land between a `sending` mark and the record that the
    * write is this play's — which would leave a reserved journal slot nothing
    * ever fills. A deadline that fires here takes effect just after, before
-   * dispatch, and the write settles as `failed`: marked, never sent.
+   * dispatch, and the write settles as `failed`: marked, never sent. Every
+   * storage call has a deadline of its own (`RunJournal`), so the wait here —
+   * and the drain behind it — is bounded; a mark that times out is a lost
+   * one, and the write is not sent.
    */
   private reserve(
     seq: number,
@@ -959,7 +990,7 @@ export class RunState {
   private finishFailed(runFailure: RunFailure): Effect.Effect<ToolResult> {
     return Effect.gen({ self: this }, function* () {
       const withCounts: RunFailure = this.claim || this.sentAny()
-        ? { ...runFailure, writes: this.writeCounts() }
+        ? counted(runFailure, this.writeCounts())
         : runFailure;
       const result = errorEnvelope(withCounts);
       if (this.claim) {
@@ -1039,15 +1070,15 @@ export class RunState {
           };
         });
         if (moved !== "ok") {
-          return errorEnvelope({
-            ...(moved === "lost"
+          return errorEnvelope(counted(
+            moved === "lost"
               ? failure(
                   "execution_claim_lost",
                   "Another resume_execution took this run over before its next pause could be recorded, so this play stopped there.",
                 )
-              : storageFailure()),
-            writes: this.writeCounts(),
-          });
+              : storageFailure(),
+            this.writeCounts(),
+          ));
         }
       } else {
         const header: RunHeader = {
@@ -1167,6 +1198,12 @@ export interface ResumeArgs {
   address: string;
   args: Record<string, unknown>;
   approval?: "call" | "tool";
+  /**
+   * Set by the input schema when `args` arrived with a `__proto__` key, which
+   * parsing drops — so `args` alone would look like the exact repetition it
+   * is not.
+   */
+  argsHadProtoKey?: boolean;
 }
 
 /** What `resume_execution` needs from the deployment and the request. */
@@ -1177,6 +1214,8 @@ export interface ResumeContext {
   run: (runState: RunState) => Effect.Effect<ToolResult>;
   /** Claim lease: long enough for one play to finish or be abandoned. */
   claimMs: number;
+  /** The deadline on each paused-run storage call. */
+  storageTimeoutMs: number;
   activity?: ActivityRequestContext | undefined;
 }
 
@@ -1211,9 +1250,11 @@ function resumeAction(
  * claim the run, and play it again.
  *
  * Everything that can refuse — an unknown or expired token, a stale one, a
- * mismatch — refuses before the claim, so a refusal spends nothing and
- * changes nothing. The claim is one compare-and-set from `paused` to
- * `running`; of two resumes racing for it, exactly one wins.
+ * mismatch, a live claim — refuses before the claim, so a refusal spends
+ * nothing and changes nothing. The claim is one compare-and-set from `paused`
+ * (or `running` under a lapsed claim) to `running`; of two resumes racing for
+ * it, exactly one wins. A run that can no longer be replayed is failed in
+ * that same compare-and-set, with its answer, so a repeat gets it too.
  */
 export function resumeExecution(
   args: ResumeArgs,
@@ -1233,26 +1274,34 @@ export function resumeExecution(
       "No paused run matches this token. Run the task again with execute_code.",
       { nextAction: RERUN },
     );
+    const unavailable = resumeError(
+      "unavailable",
+      "Paused-run storage could not be read or written. Nothing was approved or sent. Retry shortly.",
+      {},
+      true,
+    );
+    const claimedFirst = resumeError(
+      "execution_in_progress",
+      "Another resume_execution claimed this run first. Retry after it finishes to see its result.",
+      {},
+      true,
+    );
     if (!token) return notFound;
-    const journal = new RunJournal(storage, token.runId);
+    const journal = new RunJournal(storage, token.runId, ctx.storageTimeoutMs);
     const read = yield* Effect.tryPromise(() => journal.readHeader()).pipe(
       Effect.catch(() => Effect.succeed(null)),
     );
-    if (read === null) {
-      return resumeError(
-        "unavailable",
-        "Paused-run storage could not be read. Retry shortly.",
-        {},
-        true,
-      );
-    }
+    if (read === null) return unavailable;
     const now = Date.now();
-    const expired = resumeError(
-      "execution_expired",
-      "This paused run expired. Its reads are stale, so it will not be replayed: run the task again with execute_code.",
-      { nextAction: RERUN },
-    );
-    if (!read) return now >= token.expiresAt ? expired : notFound;
+    if (!read) {
+      return now >= token.expiresAt
+        ? resumeError(
+            "execution_expired",
+            "This paused run expired. Its reads are stale, so it will not be replayed: run the task again with execute_code.",
+            { nextAction: RERUN },
+          )
+        : notFound;
+    }
     const { header } = read;
     if (header.pool !== settings.pool) return notFound;
     if (token.nonce !== header.nonce) {
@@ -1267,6 +1316,8 @@ export function resumeExecution(
     if (
       !pending ||
       args.address !== pending.address ||
+      args.argsHadProtoKey === true ||
+      hasProtoKey(args.args) ||
       canonicalJson(args.args) !== canonicalJson(pending.args)
     ) {
       return resumeError(
@@ -1291,19 +1342,9 @@ export function resumeExecution(
       if (final.isError) repeated.isError = true;
       return repeated;
     }
-    if (now >= header.expiresAt) return expired;
-    const scope = args.approval ?? "call";
-    const claimId = randomId();
-    const until = now + ctx.claimMs;
-    // One approval per pause. A retry after an executor failure finds the
-    // pause's spent call approval still on file and adds none: approving the
-    // same call twice must not leave a second, unspent approval behind for an
-    // identical later call to use.
-    const alreadyApproved = header.approvals.some(
-      (approval) => approval.nonce === header.nonce,
-    );
-    const approvedNow = !alreadyApproved;
     if (header.state === "running" && (header.claim?.until ?? 0) > now) {
+      // Someone is playing the run right now — past its deadline or not, a
+      // live claim may still be sending, and only its result is the answer.
       return resumeError(
         "execution_in_progress",
         "Another resume_execution is playing this run right now. Retry after it finishes to see its result.",
@@ -1316,89 +1357,140 @@ export function resumeExecution(
     // pausing — its claim lapsed after a crash or restart — was followed by
     // reads nobody journaled, so a replay would read afresh and could build a
     // later write from different data. A paused header should hold neither,
-    // but a replay past either could send a write twice, so both refuse.
+    // but a replay past either could send a write twice, so both refuse —
+    // before the expiry check, because the answer is the writes' counts, not
+    // "expired, run it again".
     const unsettled = header.writes.some(
       (write) => write.state === "sending" || write.state === "unknown",
     );
     const unjournaled = header.state === "running" &&
       header.writes.some((write) => write.entry >= header.playFrom);
-    const claimed: RunHeader = {
-      ...header,
-      state: unsettled || unjournaled ? "failed" : "running",
-      version: header.version + 1,
-      claim: { id: claimId, until },
-      writes: header.writes.map((write) =>
+    if (unsettled || unjournaled) {
+      const writes = header.writes.map((write) =>
         write.state === "sending" ? { ...write, state: "unknown" as const } : write,
-      ),
-    };
-    if (!alreadyApproved) {
-      claimed.approvals = [...header.approvals, approvalOf(pending, scope, header.nonce)];
-    }
-    const raw = yield* Effect.tryPromise(() => journal.casHeader(read.raw, claimed)).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
-    );
-    if (raw === undefined) {
-      return resumeError(
-        "execution_in_progress",
-        "Another resume_execution claimed this run first. Retry after it finishes to see its result.",
-        {},
-        true,
       );
-    }
-    if (approvedNow) recordApproval(ctx.activity, pending.address, scope);
-    if (claimed.state === "failed") {
-      const result = errorEnvelope({
-        ...(unsettled
+      return yield* failRun(
+        journal,
+        read.raw,
+        header,
+        writes,
+        unsettled
           ? failure(
               "write_outcome_unknown",
               "An earlier play of this run left a write whose outcome is unknown, so the run will not be replayed and that write will not be sent again. Check its target before doing anything that depends on it.",
             )
           : interrupted(
               "An earlier resume of this run stopped partway after sending writes, and what it read between them was not kept.",
-            )),
-        writes: countWrites(claimed.writes),
-      });
-      const { claim: _released, ...rest } = claimed;
-      yield* Effect.tryPromise(() =>
-        journal.casHeader(raw, {
-          ...rest,
-          version: claimed.version + 1,
-          final: { isError: true, text: result.content[0]?.text ?? "" },
-        }),
-      ).pipe(Effect.ignore);
-      return result;
+            ),
+        { unavailable, claimedFirst },
+      );
     }
+    if (now >= header.expiresAt) {
+      if (header.writes.length === 0) {
+        return resumeError(
+          "execution_expired",
+          "This paused run expired. Its reads are stale, so it will not be replayed: run the task again with execute_code.",
+          { nextAction: RERUN },
+        );
+      }
+      // The header outlives the run as a tombstone for exactly this answer.
+      return errorEnvelope(counted(
+        failure(
+          "execution_expired",
+          "This paused run expired, so it will not be replayed. Writes it already sent are counted in writes and are not undone; check them before running the task again.",
+          { nextAction: RERUN },
+        ),
+        countWrites(header.writes),
+      ));
+    }
+    // Read the journal before claiming, so a storage hiccup refuses and
+    // changes nothing, and a journal that is gone fails the run in the same
+    // compare-and-set that would have claimed it.
     const loaded = yield* Effect.tryPromise(async () => ({
-      program: await journal.readSource(claimed.programHash),
-      entries: await journal.readEntries(claimed.entries),
+      program: await journal.readSource(header.programHash),
+      entries: await journal.readEntries(header.entries),
     })).pipe(Effect.catch(() => Effect.succeed(undefined)));
-    const claim: Claim = { id: claimId, raw, header: claimed };
-    if (!loaded?.program || !loaded.entries) {
-      // Unreadable is unrecoverable: a partial journal cannot be replayed.
-      const result = errorEnvelope({
-        ...interrupted("This run's journal could not be read back in full."),
-        writes: countWrites(claimed.writes),
-      });
-      const { claim: _released, ...rest } = claimed;
-      yield* Effect.tryPromise(() =>
-        journal.casHeader(raw, {
-          ...rest,
-          state: "failed",
-          version: claimed.version + 1,
-          final: { isError: true, text: result.content[0]?.text ?? "" },
-        }),
-      ).pipe(Effect.ignore);
-      return result;
+    if (!loaded) return unavailable;
+    if (!loaded.program || !loaded.entries) {
+      // Missing is unrecoverable: a partial journal cannot be replayed.
+      return yield* failRun(
+        journal,
+        read.raw,
+        header,
+        header.writes,
+        interrupted("This run's journal could not be read back in full."),
+        { unavailable, claimedFirst },
+      );
     }
+    const scope = args.approval ?? "call";
+    const claimId = randomId();
+    // One approval per pause: this resume's. An approval of this pause still
+    // on file was given to an attempt that sent nothing — one that sent a
+    // write failed above — so this resume's scope replaces it rather than
+    // being ignored. A spent one is kept, and then none is added: approving
+    // the same call twice must not leave a second, unspent approval behind
+    // for an identical later call to use.
+    const kept = header.approvals.filter(
+      (approval) =>
+        approval.nonce !== header.nonce ||
+        (approval.scope === "call" && approval.consumed === true),
+    );
+    const approvedNow = !kept.some((approval) => approval.nonce === header.nonce);
+    const claimed: RunHeader = {
+      ...header,
+      state: "running",
+      version: header.version + 1,
+      claim: { id: claimId, until: now + ctx.claimMs },
+      approvals: approvedNow
+        ? [...kept, approvalOf(pending, scope, header.nonce)]
+        : kept,
+    };
+    const raw = yield* Effect.tryPromise(() => journal.casHeader(read.raw, claimed)).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    if (raw === null) return unavailable;
+    if (raw === undefined) return claimedFirst;
+    if (approvedNow) recordApproval(ctx.activity, pending.address, scope);
     return yield* ctx.run(
       RunState.replaying({
         journal,
         program: loaded.program,
-        claim,
+        claim: { id: claimId, raw, header: claimed },
         entries: loaded.entries,
         settings,
       }),
     );
+  });
+}
+
+/**
+ * End a run that can no longer be replayed, in one compare-and-set that also
+ * stores its answer: a repeated resume gets the same one, and no window is
+ * left in which the run is `failed` with nothing to say.
+ */
+function failRun(
+  journal: RunJournal,
+  expected: string,
+  header: RunHeader,
+  writes: RunHeader["writes"],
+  runFailure: RunFailure,
+  refusals: { unavailable: ToolResult; claimedFirst: ToolResult },
+): Effect.Effect<ToolResult> {
+  return Effect.gen(function* () {
+    const result = errorEnvelope(counted(runFailure, countWrites(writes)));
+    const { claim: _lapsed, ...rest } = header;
+    const stored = yield* Effect.tryPromise(() =>
+      journal.casHeader(expected, {
+        ...rest,
+        state: "failed",
+        version: header.version + 1,
+        writes,
+        final: { isError: true, text: result.content[0]?.text ?? "" },
+      }),
+    ).pipe(Effect.catch(() => Effect.succeed(null)));
+    if (stored === null) return refusals.unavailable;
+    if (stored === undefined) return refusals.claimedFirst;
+    return result;
   });
 }
 
@@ -1440,8 +1532,38 @@ function recordApproval(
 const RESUME_DESC =
   'Approve and run the write a paused execute_code program stopped at. Repeat the paused result\'s token, address, and args exactly. The program replays from its journal — earlier reads are answered from it, not repeated — sends the write once, and continues to its result or its next pause. approval "tool" also approves later calls to that tool in this run. A mismatch approves and sends nothing. reason is for the human reviewer and is not sent downstream.';
 
+/**
+ * The resume input, plus the one fact validation loses: `z.record` copies
+ * `args` and drops a `__proto__` key as it does, so a repetition carrying one
+ * would compare equal to the paused write. The flag rides on the validated
+ * value for the handler, which answers `approval_mismatch`.
+ */
+function flaggingProtoArgs<I, O>(
+  schema: StandardSchemaWithJSON<I, O>,
+): StandardSchemaWithJSON<I, O> {
+  const standard = schema["~standard"];
+  return {
+    "~standard": {
+      ...standard,
+      validate: (value) => {
+        const args = value !== null && typeof value === "object"
+          ? (value as { args?: unknown }).args
+          : undefined;
+        const flagged = hasProtoKey(args);
+        const result = standard.validate(value);
+        type Result = Awaited<typeof result>;
+        const flag = (outcome: Result): Result =>
+          flagged && !outcome.issues
+            ? { value: { ...outcome.value, argsHadProtoKey: true } as O }
+            : outcome;
+        return result instanceof Promise ? result.then(flag) : flag(result);
+      },
+    },
+  };
+}
+
 // Built once at module scope, like the other meta-tool inputs.
-const RESUME_INPUT = advertisedSchema(
+const RESUME_INPUT = flaggingProtoArgs(advertisedSchema(
   z.strictObject({
     token: z.string().max(512),
     address: z.string(),
@@ -1450,7 +1572,7 @@ const RESUME_INPUT = advertisedSchema(
     // Dropped in the handler exactly as call_destructive_tool drops it.
     reason: z.string().max(500).optional(),
   }),
-);
+));
 
 /** Register `resume_execution`, the approval point for a paused program. */
 export function registerResumeTool(
@@ -1486,6 +1608,7 @@ export function registerResumeTool(
           settings: ctx.settings,
           run: (runState) => ctx.runner.replay(runState, signal),
           claimMs: ctx.runner.claimMs,
+          storageTimeoutMs: ctx.runner.storageTimeoutMs,
           activity: ctx.activity,
         })));
     },

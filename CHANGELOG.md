@@ -29,7 +29,12 @@ the page can ignore it.
   stops matching its journal fails `execution_diverged`; a resumed play that
   sent writes and then ended without pausing (a sandbox failure, a lapsed
   claim) fails `execution_interrupted` rather than replaying reads it never
-  journaled. Every error from a resumed play carries `writes` counts. The option needs `storage` with `compareAndSet` and
+  journaled. Every error from a resumed play carries `writes` counts, and once
+  a write landed or may have, its advice is to check those before re-running
+  rather than a plain re-run; a run that sent writes keeps those counts past
+  its deadline. Every paused-run storage call has a deadline (the host-call
+  deadline, at least 5 s), so storage that stops answering fails the run
+  rather than holding it. The option needs `storage` with `compareAndSet` and
   refuses to construct without it. `execute.maxWrites` (default 10) caps
   consequential calls per run on top of the host-call budget, and
   `execute.pausedRunTtlSeconds` (default 1,800) is how long a paused run lives

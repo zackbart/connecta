@@ -11,6 +11,7 @@
 // Web-API only, like everything reachable from the root entry.
 
 import type { CallErrorDetails } from "./errors.js";
+import { withDeadline } from "./timeout.js";
 import type { KVStorage } from "./types.js";
 
 /** Entry chunks are the result stash's size (`RESULT_CHUNK_BYTES`), in characters. */
@@ -65,9 +66,23 @@ function canonical(input: unknown): string | undefined {
   ) {
     value = (value as { toJSON(): unknown }).toJSON();
   }
+  // Boxed primitives serialize as their value, as JSON.stringify has them.
+  if (
+    value instanceof Number ||
+    value instanceof String ||
+    value instanceof Boolean
+  ) {
+    value = value.valueOf();
+  }
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) {
-    return `[${value.map((item) => canonical(item) ?? "null").join(",")}]`;
+    // Indexed, not mapped: `map` skips a hole, and JSON has none — a hole is
+    // `null`, as JSON.stringify writes it.
+    const items: string[] = [];
+    for (let index = 0; index < value.length; index++) {
+      items.push(canonical(value[index]) ?? "null");
+    }
+    return `[${items.join(",")}]`;
   }
   const parts: string[] = [];
   for (const key of Object.keys(value).sort()) {
@@ -297,12 +312,31 @@ function parseHeader(raw: string): RunHeader | undefined {
  * `run:<id>:src` is the program, written once. `run:<id>:e:<n>` is entry `n`,
  * split into `#<k>` continuation keys past one chunk, written before the
  * header that counts it. Every key expires with the run.
+ *
+ * Every storage call here answers within `timeoutMs` or rejects, as a
+ * failing store would: a play reserving or settling a write cannot be
+ * interrupted, and a store that never answers must not hold it — or the
+ * request waiting on it — forever. A write that timed out may still land;
+ * each caller treats the call as failed, and every write here is one that is
+ * safe to find landed later (a compare-and-set that landed after all only
+ * makes the next one lose).
  */
 export class RunJournal {
   constructor(
     private readonly storage: KVStorage,
     readonly runId: string,
+    private readonly timeoutMs?: number,
   ) {}
+
+  private bounded<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.timeoutMs === undefined) return operation();
+    return withDeadline(() => operation(), {
+      timeoutMs: this.timeoutMs,
+      timeoutError: new Error(
+        `paused-run storage did not answer within ${this.timeoutMs}ms`,
+      ),
+    });
+  }
 
   private get headerKey(): string {
     return `run:${this.runId}`;
@@ -314,7 +348,7 @@ export class RunJournal {
   }
 
   async readHeader(): Promise<{ raw: string; header: RunHeader } | undefined> {
-    const raw = await this.storage.get(this.headerKey);
+    const raw = await this.bounded(() => this.storage.get(this.headerKey));
     if (raw === null) return undefined;
     const header = parseHeader(raw);
     return header ? { raw, header } : undefined;
@@ -335,26 +369,35 @@ export class RunJournal {
     // The header outlives `expiresAt` while a claim is live, so a play that
     // runs past it can still record what it sent, and after the run ends, so
     // a repeated resume gets the same answer rather than "expired, run it
-    // again" — which would repeat every write the run made.
+    // again" — which would repeat every write the run made. For the same
+    // reason a run that has sent writes keeps its header past its deadline
+    // and past a lapsed claim, as a tombstone with their counts.
+    const sent = next.writes.length > 0;
     const keepUntil = Math.max(
       next.expiresAt,
       next.claim?.until ?? 0,
       next.final ? Date.now() + FINAL_HOLD_MS : 0,
+      sent ? next.expiresAt + FINAL_HOLD_MS : 0,
+      sent && next.claim ? next.claim.until + FINAL_HOLD_MS : 0,
     );
-    const written = await cas.call(this.storage, this.headerKey, expected, raw, {
-      ttlSeconds: RunJournal.ttlSeconds(keepUntil),
-    });
+    const written = await this.bounded(() =>
+      cas.call(this.storage, this.headerKey, expected, raw, {
+        ttlSeconds: RunJournal.ttlSeconds(keepUntil),
+      }),
+    );
     return written ? raw : undefined;
   }
 
   async writeSource(source: string, expiresAt: number): Promise<void> {
-    await this.storage.set(`${this.headerKey}:src`, source, {
-      ttlSeconds: RunJournal.ttlSeconds(expiresAt),
-    });
+    await this.bounded(() =>
+      this.storage.set(`${this.headerKey}:src`, source, {
+        ttlSeconds: RunJournal.ttlSeconds(expiresAt),
+      }),
+    );
   }
 
   async readSource(programHash: string): Promise<string | undefined> {
-    const source = await this.storage.get(`${this.headerKey}:src`);
+    const source = await this.bounded(() => this.storage.get(`${this.headerKey}:src`));
     if (source === null) return undefined;
     return (await sha256Hex(source)) === programHash ? source : undefined;
   }
@@ -364,7 +407,15 @@ export class RunJournal {
     return JSON.stringify(entry);
   }
 
-  async writeEntry(
+  writeEntry(
+    index: number,
+    entry: JournalEntry,
+    expiresAt: number,
+  ): Promise<void> {
+    return this.bounded(() => this.writeEntryUnbounded(index, entry, expiresAt));
+  }
+
+  private async writeEntryUnbounded(
     index: number,
     entry: JournalEntry,
     expiresAt: number,
@@ -393,7 +444,11 @@ export class RunJournal {
    * reserved and never filled is such a hole, and a run holding one has
    * failed rather than paused, so it is never read.)
    */
-  async readEntries(count: number): Promise<JournalEntry[] | undefined> {
+  readEntries(count: number): Promise<JournalEntry[] | undefined> {
+    return this.bounded(() => this.readEntriesUnbounded(count));
+  }
+
+  private async readEntriesUnbounded(count: number): Promise<JournalEntry[] | undefined> {
     const entries: JournalEntry[] = [];
     for (let index = 0; index < count; index++) {
       const key = `${this.headerKey}:e:${index}`;

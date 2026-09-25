@@ -31,6 +31,7 @@ import {
 import { withoutProgramTerminator } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import {
+  MIN_STORAGE_TIMEOUT_MS,
   RunState,
   type ResumableSettings,
   type RunStop,
@@ -1059,6 +1060,11 @@ interface RunnerConfig {
   maxHostCalls?: number | undefined;
   hostCallTimeoutMs?: number | undefined;
   watchdogMs?: number | undefined;
+  /**
+   * The deadline on each paused-run storage call. Defaults to the host-call
+   * deadline, never under `MIN_STORAGE_TIMEOUT_MS`; tests shorten it.
+   */
+  storageTimeoutMs?: number | undefined;
   defer?: DeferredWork | undefined;
   /**
    * One clock and seed for every fresh run of this handler instead of a
@@ -1084,6 +1090,8 @@ export interface ProgramRunner {
   replay(runState: RunState, signal?: AbortSignal): Effect.Effect<ToolResult>;
   /** How long a claimed play may take before another may take it over. */
   readonly claimMs: number;
+  /** The deadline on each paused-run storage call. */
+  readonly storageTimeoutMs: number;
 }
 
 /**
@@ -1112,6 +1120,10 @@ export function createProgramRunner(
   const hostCallTimeoutMs = resolveBudget(
     config.hostCallTimeoutMs,
     EXECUTE_HOST_CALL_TIMEOUT_MS,
+  );
+  const storageTimeoutMs = resolveBudget(
+    config.storageTimeoutMs,
+    Math.max(hostCallTimeoutMs, MIN_STORAGE_TIMEOUT_MS),
   );
 
   /**
@@ -1240,6 +1252,7 @@ export function createProgramRunner(
 
   return {
     claimMs: watchdog.ms + hostCallTimeoutMs + CLAIM_SLACK_MS,
+    storageTimeoutMs,
     execute: ({ code, diagnostics }, options = {}) =>
       runEdge(Effect.suspend(() => {
         // P1: a trailing `;` after the arrow expression breaks both
@@ -1252,6 +1265,7 @@ export function createProgramRunner(
               program,
               config.environment ?? freshEnvironment(),
               config.resumable,
+              storageTimeoutMs,
             )
           : undefined;
         return play(program, runState, diagnostics, options.signal);

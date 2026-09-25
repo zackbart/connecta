@@ -541,6 +541,7 @@ export function contractHarness(): {
           settings: config.resumable,
           run: (runState) => runner.replay(runState),
           claimMs: runner.claimMs,
+          storageTimeoutMs: runner.storageTimeoutMs,
           activity,
         },
       )));
