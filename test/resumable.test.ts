@@ -1381,6 +1381,95 @@ describe("resumable writes: second review regressions", () => {
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
   });
 
+  it.each(["reject", "commit then reject"])(
+    "checks a resumed run's final header write when storage will %s",
+    async (failure) => {
+      const base = memoryStorage();
+      const storage: KVStorage = {
+        ...base,
+        compareAndSet: async (key, expected, next, options) => {
+          if (next?.includes('"state":"completed"')) {
+            if (failure === "commit then reject") {
+              await required(base.compareAndSet)(key, expected, next, options);
+            }
+            throw new Error("final header unavailable");
+          }
+          return required(base.compareAndSet)(key, expected, next, options);
+        },
+      };
+      const w = world({ storage });
+      const first = paused(await w.execute(w.program(async (connecta) => {
+        await connecta.call!("tracker.close_issue", { id: 1 });
+        return { completed: true };
+      })));
+      const result = await w.resume(approve(first));
+      expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+      if (failure === "commit then reject") {
+        expect(value(result)).toEqual({ result: { completed: true } });
+        expect(await w.resume(approve(first))).toEqual(result);
+      } else {
+        expect(value(result).error).toMatchObject({
+          code: "execution_interrupted",
+          writes: { succeeded: 1, failed: 0, unknown: 0 },
+        });
+        expect((await header(w.storage, first.token)).header.state).toBe("failed");
+        expect(await w.resume(approve(first))).toEqual(result);
+      }
+    },
+  );
+
+  it("does not overwrite a claimant that wins before final persistence", async () => {
+    const base = memoryStorage();
+    const storage: KVStorage = {
+      ...base,
+      compareAndSet: async (key, expected, next, options) => {
+        if (next?.includes('"state":"completed"')) {
+          const winner = JSON.parse(next) as RunHeader;
+          winner.state = "running";
+          winner.claim = { id: "other claimant", until: Date.now() + 60_000 };
+          delete winner.final;
+          await required(base.compareAndSet)(key, expected, JSON.stringify(winner), options);
+          return false;
+        }
+        return required(base.compareAndSet)(key, expected, next, options);
+      },
+    };
+    const w = world({ storage });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      return { completed: true };
+    })));
+    const result = await w.resume(approve(first));
+    expect(value(result).error).toMatchObject({
+      code: "execution_claim_lost",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect((await header(w.storage, first.token)).header.claim?.id).toBe("other claimant");
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+  });
+
+  it("recovers an erroring program's final answer when its CAS commits then rejects", async () => {
+    const base = memoryStorage();
+    const storage: KVStorage = {
+      ...base,
+      compareAndSet: async (key, expected, next, options) => {
+        const committed = await required(base.compareAndSet)(key, expected, next, options);
+        if (next?.includes('"state":"failed"')) throw new Error("reply lost");
+        return committed;
+      },
+    };
+    const w = world({ storage });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      throw new Error("program failed after write");
+    })));
+    const result = await w.resume(approve(first));
+    expect(value(result).error.writes).toEqual({ succeeded: 1, failed: 0, unknown: 0 });
+    expect((await header(w.storage, first.token)).header.state).toBe("failed");
+    expect(await w.resume(approve(first))).toEqual(result);
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+  });
+
   it("stores a failed takeover's answer in the compare-and-set that ends the run", async () => {
     const base = memoryStorage();
     let casLeft = Number.POSITIVE_INFINITY;

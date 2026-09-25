@@ -941,7 +941,7 @@ export class RunState {
       };
       // An erroring program ends the run `failed`: it is not replayed, and
       // its answer — error and counts — is what a repeated resume returns.
-      yield* this.mutateHeader((header) => {
+      const moved = yield* this.mutateHeader((header) => {
         const { claim: _released, ...rest } = header;
         return {
           ...rest,
@@ -949,6 +949,32 @@ export class RunState {
           final,
         };
       });
+      if (moved !== "ok") {
+        // A timed-out CAS may have committed before storage reported an
+        // error. If its final answer is readable, completion is durable and
+        // the same resume can return it again. Otherwise never report a
+        // successful completion that the header cannot repeat.
+        const read = yield* Effect.tryPromise(() => this.journal.readHeader()).pipe(
+          Effect.catch(() => Effect.succeed(undefined)),
+        );
+        if (
+          read?.header.final?.text === final.text &&
+          read.header.final.isError === final.isError &&
+          read.header.state === (reported.isError ? "failed" : "completed")
+        ) return reported;
+        if (moved === "lost") {
+          return errorEnvelope(counted(
+            failure(
+              "execution_claim_lost",
+              "Another resume_execution took this run over before its final answer could be recorded.",
+            ),
+            this.writeCounts(),
+          ));
+        }
+        return yield* this.finishFailed(interrupted(
+          "The program finished, but paused-run storage failed before its final answer could be recorded.",
+        ));
+      }
       return reported;
     });
   }
