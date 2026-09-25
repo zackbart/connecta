@@ -288,6 +288,8 @@ export interface ConnectaConfig {
    * because the links it hands out are shared.
    */
   artifacts?: ArtifactsModule;
+  /** Optional dedicated HTTPS origin that serves only artifact pages and their library. */
+  artifactOrigin?: string;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
@@ -397,6 +399,7 @@ const CONFIG_SCHEMA = {
   vault: null,
   ui: null,
   artifacts: null,
+  artifactOrigin: null,
   discovery: {
     concurrency: null,
     catalogTtlSeconds: null,
@@ -526,7 +529,8 @@ function assertKnownConfig(config: ConnectaConfig): void {
       artifacts === null ||
       !connector ||
       connector.id !== "artifacts" ||
-      typeof connector.callTool !== "function"
+      typeof connector.callTool !== "function" ||
+      typeof (artifacts as Partial<ArtifactsModule>).handle !== "function"
     ) {
       throw new Error(
         "ConnectaConfig.artifacts must be created with artifacts(...) from @zackbart/connecta/artifacts",
@@ -544,6 +548,27 @@ function assertKnownConfig(config: ConnectaConfig): void {
           "with teammates, so they must name the deployment's own origin, never " +
           "one taken from a request's Host header",
       );
+    }
+  }
+  if (config.artifactOrigin !== undefined) {
+    if (!config.artifacts || !config.ui || !config.publicUrl) {
+      throw new Error("ConnectaConfig.artifactOrigin needs artifacts, ui, and publicUrl");
+    }
+    if (typeof config.artifactOrigin !== "string") {
+      throw new Error("ConnectaConfig.artifactOrigin must be an HTTPS origin");
+    }
+    let origin: URL;
+    try {
+      origin = new URL(config.artifactOrigin);
+    } catch {
+      throw new Error("ConnectaConfig.artifactOrigin must be an HTTPS origin");
+    }
+    if (
+      origin.protocol !== "https:" ||
+      origin.toString() !== `${origin.origin}/` ||
+      origin.origin === new URL(config.publicUrl).origin
+    ) {
+      throw new Error("ConnectaConfig.artifactOrigin must be a distinct HTTPS origin");
     }
   }
 }
@@ -743,6 +768,22 @@ function warnInsecureConfig(
           ? "Configured credentials and downstream OAuth grants are exposed to those calls. "
           : "") +
         "Configure `auth` (for example bearerToken(...) or Clerk) to gate access.",
+    );
+  }
+
+  // Artifact pages mount inside the operator UI and open only for an
+  // authenticated viewer; either missing leaves the connector with no page.
+  if (config.artifacts && !config.ui) {
+    logger.warn(
+      "[connecta] artifacts is configured without ui: agents can publish and " +
+        "read artifacts, but there is no viewer, so their links answer 404. " +
+        "Add ui: operatorUi() to serve artifact pages.",
+    );
+  } else if (config.artifacts && inboundAuth.length === 0) {
+    logger.warn(
+      "[connecta] artifacts is configured with no inbound authentication: " +
+        "artifact pages refuse every request, because there is no team to " +
+        "show them to. Configure `auth` to open them.",
     );
   }
 
@@ -953,11 +994,13 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     identity: config.identity,
     pools,
     publicUrl: config.publicUrl,
+    artifactOrigin: config.artifactOrigin,
     allowedOrigins: config.allowedOrigins,
     serverInfo,
     logger,
     activity: config.activity?.store,
     activityModule: config.activity,
+    artifactsModule: config.artifacts,
     activityReadGate: config.activity?.readGate,
     activityDeploymentId: config.activity?.deploymentId,
     executor,

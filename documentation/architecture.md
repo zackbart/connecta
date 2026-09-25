@@ -236,6 +236,31 @@ because every write is a new immutable version anyone can roll back. The
 module needs `publicUrl`: the links it hands out are shared, so they must never
 come from a request's `Host`.
 
+With the operator UI mounted, `/artifacts` lists the team pages and
+`/artifacts/<id>` opens one. The shell contains no page data. It reads the
+artifact through an authenticated JSON route with the operator UI's inbound
+identity and connector visibility, then passes the document into a sandboxed
+frame. Snapshot links pin the view and document versions. The frame's response
+CSP gives scripts an opaque origin, refuses fetch, XHR, images and other
+unlisted requests. External script, style, and font origins default to none;
+a deployment opts in to each one it trusts with page data. The shell tightens
+its own `frame-src` to `'none'` after the fixed bootstrap loads and before it
+hands over the page,
+so a page script cannot navigate even its own frame to send data in a URL.
+This browser boundary is covered by Chromium tests, including a
+`document.open/write` rewrite.
+
+`artifactOrigin` optionally names a distinct HTTPS origin for these pages.
+The main host redirects every `/artifacts` path to it; the artifact host
+answers every other path, including `/mcp` and operator APIs, with 404. The
+artifact shell still uses the same inbound auth providers and checks the
+identity on each data read. The bare shell and fixed frame bootstrap carry no
+artifact data, so a visitor can reach sign-in before an authenticated read.
+Bearer tokens in browser localStorage belong to one origin: signing in on the
+main host does not sign in on the artifact host. A redirected visitor enters
+the token again there; the redirect carries no credential. Cookie or session
+auth likewise depends on the provider admitting that separate origin.
+
 Storage is an `ArtifactStore`, and `kvArtifactStore` is the reference: over any
 `KVStorage` with `compareAndSet` and `list`, one head record per artifact is
 the only key ever compared-and-set, earlier versions sit beside it immutable,

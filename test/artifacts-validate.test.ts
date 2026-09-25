@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateArtifact } from "../src/artifacts.js";
+import { validateArtifact, type ArtifactAllowlist } from "../src/artifacts.js";
 import { decodeEntities, scanHtml } from "../src/artifacts/html-scan.js";
 
 const wrap = (body: string, head = "") =>
@@ -8,8 +8,15 @@ const wrap = (body: string, head = "") =>
 const html = (source: string, documents?: Record<string, unknown>) =>
   validateArtifact({ kind: "html", source, ...(documents ? { documents } : {}) });
 
-const messages = (source: string, documents?: Record<string, unknown>) => {
-  const result = html(source, documents);
+const PUBLIC_TEST_ALLOWLIST: ArtifactAllowlist = {
+  scripts: ["https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://esm.sh", "https://unpkg.com"],
+  styles: ["https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com", "https://unpkg.com"],
+  fonts: ["https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://fonts.gstatic.com", "https://unpkg.com"],
+};
+
+const messages = (source: string, documents?: Record<string, unknown>, allowlist?: ArtifactAllowlist) => {
+  const result = validateArtifact({ kind: "html", source, ...(documents ? { documents } : {}) },
+    allowlist ? { allowlist } : {});
   return {
     errors: result.errors.map((issue) => issue.message),
     warnings: result.warnings.map((issue) => issue.message),
@@ -96,7 +103,7 @@ describe("validateArtifact: URLs", () => {
           '<a href="http://example.com">e</a>',
           '<a href="java&#x09;script&colon;alert(1)">f</a>',
         ].join("\n"),
-      ),
+      ), undefined, PUBLIC_TEST_ALLOWLIST,
     );
     expect(result.errors).toEqual([
       'Line 7: <a href="/relative"> is relative; pages have no files beside them. Link an https: URL or a #fragment.',
@@ -117,7 +124,7 @@ describe("validateArtifact: URLs", () => {
           "@font-face { src: url(https://fonts.gstatic.com/s/x.woff2) }\n" +
           ".a { background: url('data:image/png;base64,AA') }\n" +
           ".b { background: url(\"https://example.com/b.png\") }</style>",
-      ),
+      ), undefined, PUBLIC_TEST_ALLOWLIST,
     );
     expect(result.errors).toEqual([
       "Line 2: <style> @import https://evil.example/x.css loads from outside the style allowlist " +
@@ -130,6 +137,24 @@ describe("validateArtifact: URLs", () => {
 });
 
 describe("validateArtifact: scripts and styles", () => {
+  it("refuses external scripts and styles by default with an operator action", () => {
+    const result = messages(wrap("", [
+      '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>',
+      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">',
+    ].join("\n")));
+    expect(result.errors).toEqual([
+      'Line 2: <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"> loads from outside the allowlist. ' +
+        'This deployment allows no external scripts. Inline the script, or ask the operator to trust its origin.',
+      'Line 3: <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter"> loads from outside the style allowlist. ' +
+        'This deployment allows no external stylesheets. Inline the CSS, or ask the operator to trust its origin.',
+    ]);
+    expect(messages(wrap("", "<style>@import url(https://fonts.googleapis.com/css2?family=Inter);</style>")).errors)
+      .toEqual([
+        'Line 2: <style> @import https://fonts.googleapis.com/css2?family=Inter loads from outside the style allowlist. ' +
+          'This deployment allows no external stylesheets. Inline the CSS, or ask the operator to trust its origin.',
+      ]);
+  });
+
   it("allows pinned scripts from the allowlist and explains the rest", () => {
     const result = messages(
       wrap(
@@ -142,7 +167,7 @@ describe("validateArtifact: scripts and styles", () => {
           '<script src="https://unpkg.com/d3"></script>',
           '<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>',
         ].join("\n"),
-      ),
+      ), undefined, PUBLIC_TEST_ALLOWLIST,
     );
     const allowlist =
       "(https://cdn.jsdelivr.net, https://cdnjs.cloudflare.com, https://esm.sh, https://unpkg.com). " +
@@ -168,7 +193,7 @@ describe("validateArtifact: scripts and styles", () => {
           '<link rel="stylesheet" href="https://example.com/x.css">',
           '<link rel="icon" href="data:image/png;base64,AA">',
         ].join("\n"),
-      ),
+      ), undefined, PUBLIC_TEST_ALLOWLIST,
     );
     expect(result.errors).toEqual([
       'Line 4: <link rel="stylesheet" href="https://example.com/x.css"> loads from outside the style allowlist ' +

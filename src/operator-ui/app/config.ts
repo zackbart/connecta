@@ -41,6 +41,7 @@ interface BrowserClerk {
 declare const AUTH: BrowserAuth;
 declare const MCP_URL: string;
 declare const INITIAL_PAGE: string;
+declare const HOME_URL: string;
 declare const TITLE_SUFFIX: string;
 declare const PRODUCT_NAME: string;
 declare const PRODUCT_DESCRIPTION: string;
@@ -55,6 +56,8 @@ declare global {
 export const auth = AUTH;
 export const mcpUrl = MCP_URL;
 export const initialPage = INITIAL_PAGE;
+/** The Connections page, which a dedicated artifact origin does not serve. */
+export const homeUrl = HOME_URL;
 export const titleSuffix = TITLE_SUFFIX;
 export const productName = PRODUCT_NAME;
 export const productDescription = PRODUCT_DESCRIPTION;

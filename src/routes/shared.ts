@@ -1,5 +1,9 @@
 import type { Implementation } from "@modelcontextprotocol/server";
-import type { ActivityModule, OperatorSurface } from "../module-contracts.js";
+import type {
+  ActivityModule,
+  ArtifactsModule,
+  OperatorSurface,
+} from "../module-contracts.js";
 import type { ActivityActor, ActivityReadGate, ActivityStore } from "../activity.js";
 import type { CredentialVault } from "../credential-contract.js";
 import type { DeferredWork } from "../connector-scope.js";
@@ -27,6 +31,7 @@ export interface ServerOptions {
   /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
   pools?: ReadonlyMap<string, ResolvedPool> | undefined;
   publicUrl?: string | undefined;
+  artifactOrigin?: string | undefined;
   allowedOrigins?: readonly string[] | "*" | undefined;
   // The SDK's Implementation shape: name/version plus optional title,
   // websiteUrl, and icons (MCP icons spec) that clients may render.
@@ -69,6 +74,8 @@ export interface ServerOptions {
   /** Optional browser routes, with no implementation import in core. */
   ui?: OperatorSurface | undefined;
   activityModule?: ActivityModule | undefined;
+  /** Optional team pages; their routes mount only beside `ui`. */
+  artifactsModule?: ArtifactsModule | undefined;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding | undefined;
 }
@@ -354,6 +361,20 @@ export function validateAuthPermissions(
       throw new Error("invalid identity permission connector ids");
     }
   }
+}
+
+/**
+ * Whether this identity may open artifact pages: exactly whoever may read the
+ * `artifacts` connector — it is visible to them and `get_artifact` is among
+ * its tools they were granted. Viewing grants nothing a program could not
+ * already read (ethos, "Human routes manage auth, never capability").
+ */
+export function mayViewArtifacts(authz: AuthorizedIdentity): boolean {
+  if (authz.connectorIds !== "all" && !authz.connectorIds.includes("artifacts")) {
+    return false;
+  }
+  const tools = authz.toolAccess?.get("artifacts");
+  return !tools || tools.has("get_artifact");
 }
 
 export function mayManageConnector(

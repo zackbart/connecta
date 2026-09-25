@@ -19,6 +19,7 @@ import {
 } from "./operator.js";
 import {
   mayManageConnector,
+  mayViewArtifacts,
   privateJson,
   type RouteContext,
 } from "./shared.js";
@@ -95,7 +96,12 @@ export async function routeUi(
   }
 
   const operatorPage = operatorPageForPath(path);
-  if (operatorPage && (operatorPage !== "activity" || opts.activity?.list)) {
+  const artifactPage = operatorPage === "artifacts" || operatorPage === "artifact";
+  if (
+    operatorPage &&
+    (operatorPage !== "activity" || opts.activity?.list) &&
+    (!artifactPage || opts.artifactsModule)
+  ) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
     }
@@ -118,17 +124,21 @@ export async function routeUi(
     // style/font/network needs and the page's inline <style> stay unrestricted
     // — only script execution, the XSS sink, is gated.
     const nonce = uiScriptNonce();
+    // An artifact shell frames the sandboxed page from its own origin and
+    // nothing else; Connections stays on the deployment's public origin.
+    const homeUrl = opts.publicUrl ? new URL("/", opts.publicUrl).toString() : "/";
     return new Response(
       request.method === "HEAD"
         ? null
-        : renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage),
+        : renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage, { homeUrl }),
       {
         status: 200,
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Security-Policy":
             `script-src 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline'; ` +
-            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'" +
+            (artifactPage ? "; frame-src 'self'" : ""),
           "X-Content-Type-Options": "nosniff",
         },
       },
@@ -225,6 +235,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       serverInfo: opts.serverInfo,
       connectaVersion: CONNECTA_VERSION,
       activityEnabled,
+      ...(opts.artifactsModule && mayViewArtifacts(authz) ? { artifactsEnabled: true } : {}),
       credentialManagement,
       oauthManagement: visible.some(c => mayManage(c.id)),
       connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),

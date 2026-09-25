@@ -38,7 +38,7 @@ carries them.
 | Approval exemptions | accepted | config-only, program-only, never read-only elsewhere ([#566](https://github.com/zackbart/connecta/issues/566)) |
 | Runtime connector registration | refused | config-as-code is the security model |
 | Optional deployment modules | accepted | typed slots select UI, activity, vault, and inbound auth; core keeps discovery, execution, invocation, and enforcement |
-| Artifacts module | planned | a built-in connector, not a meta-tool: team-only sandboxed pages over stored JSON, never calling tools. Immutable versions let writes skip approval. Supersedes [#287](https://github.com/zackbart/connecta/issues/287) on executor's artifacts |
+| Artifacts module | accepted | a built-in connector for team-only sandboxed pages over stored JSON; immutable versions let writes skip approval. Supersedes [#287](https://github.com/zackbart/connecta/issues/287) |
 | Plugin lifecycle, provider registry, or marketplace | refused | modules are deployment code, not runtime installs; prebuilt connections are imports, discovered in docs ([#297](https://github.com/zackbart/connecta/issues/297)) |
 | Connecta-issued access tokens | removed | inbound providers authenticate clients; bearer auth stays an optional adapter |
 | Expanded Notion page create/update options | refused | different workflows, not missing fields; use `api()` ([#408](https://github.com/zackbart/connecta/issues/408)) |
@@ -59,7 +59,7 @@ carries them.
 | Connector shortcut globals | removed | canonical addresses need no sanitization |
 | `connecta.batch` | removed | JavaScript promises suffice |
 | Automatic direct-call retries | removed | callers own retry timing |
-| Connector HTTP routes | removed | deployments own custom routes; artifact viewing is the planned exception |
+| Connector HTTP routes | removed | deployments own custom routes; the operator UI's artifact viewer is the exception |
 | Caller-selected toolkits | removed | config derives every view, grant-gated `/mcp/<pool>` pools included ([#178](https://github.com/zackbart/connecta/issues/178), [#531](https://github.com/zackbart/connecta/issues/531)) |
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Classic (executor-free) surface | removed | an executor is mandatory ([#273](https://github.com/zackbart/connecta/issues/273)) |
@@ -86,8 +86,8 @@ design decision.
 - **Credentials never leave the host.** Encrypted at rest, readable only by the owning connector (and principal, for personal auth), rendered by nothing.
 - **Import-graph purity.** Nothing reachable from the root entry imports a `node:` builtin or `effect/testing`.
 - **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath; Effect is the one hard dependency, named by no published type.
-- **Human routes manage auth, never capability.** Visibility grants use, not administration. Shared and personal auth mutations need separate config-derived permissions, both denied by default, and activity reads their own. Planned: viewing artifacts.
-- **Omitted modules do no work.** Core imports no UI bundle, vault, activity, or bearer implementation. OAuth callbacks work without UI.
+- **Human routes manage auth, never capability.** Visibility grants use, not administration. Auth mutations need separate config-derived permissions, denied by default; activity reads its own. Artifact viewing respects connector grants and cannot invoke tools.
+- **Omitted modules do no work.** Core imports no UI bundle, vault, activity, artifacts, or bearer implementation. OAuth callbacks work without UI.
 - **Status reads do not start authorization.** Only an explicit authorized action starts OAuth, never a page load.
 - **Structural mistakes throw at construction.** Booting into the wrong shape is worse than not booting.
 

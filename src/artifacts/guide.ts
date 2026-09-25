@@ -49,12 +49,16 @@ Pages run sandboxed in their own origin, so some things cannot work there:
 
 - **No network.** \`fetch\`, XHR, WebSocket, and beacons fail. Read
   \`window.artifact.data\` instead.
-- **Scripts** load only from ${origins(allowlist.scripts)}, over https, pinned
-  to an exact version (\`https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\`).
+- **External scripts** load only from ${origins(allowlist.scripts)}. None are
+  allowed by default; an operator must opt in to each trusted origin. A script
+  can read this page's data. When allowed, use https and pin an exact version
+  (\`https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\`).
   Libraries that need \`eval\` or \`new Function\` do not run. Inline
   \`<script>\` is fine.
-- **Stylesheets** load only from ${origins(allowlist.styles)}; fonts from
-  ${origins(allowlist.fonts)} or \`data:\`. Inline \`<style>\` is fine.
+- **External stylesheets** load only from ${origins(allowlist.styles)}; fonts
+  from ${origins(allowlist.fonts)} or \`data:\`. Both origin lists default to
+  empty. Trusted script, style, and font origins may receive page data in
+  request URLs. Inline \`<style>\` is fine.
 - **Images** are \`data:\` URLs or inline SVG. Nothing relative: a page has no
   files beside it.
 - No \`<iframe>\`, \`<form>\`, \`<object>\`, \`<embed>\`, \`<base>\`, or

@@ -1,6 +1,8 @@
 import type { CatalogDriftReport } from "../types.js";
 import type {
   CredentialManagementCapability,
+  UiArtifactRow,
+  UiArtifactView,
   UiConnector,
   UiData,
   UiProblem,
@@ -19,11 +21,15 @@ import type { FixPromptKind } from "./fix-prompts.js";
 
 export type OperatorPage =
   | "connections"
-  | "activity";
+  | "activity"
+  | "artifacts"
+  | "artifact";
 
+/** Pages the nav lists. A single artifact is reached from the library, not the nav. */
 export const OPERATOR_PAGES: readonly OperatorPage[] = [
   "connections",
   "activity",
+  "artifacts",
 ];
 
 export const PAGE_META: Readonly<
@@ -31,11 +37,35 @@ export const PAGE_META: Readonly<
 > = {
   connections: { path: "/", label: "Connections" },
   activity: { path: "/activity", label: "Activity" },
+  artifacts: { path: "/artifacts", label: "Artifacts" },
+  artifact: { path: "/artifacts", label: "Artifact" },
 };
 
 export function pageForPath(path: string): OperatorPage {
+  if (path.startsWith("/artifacts/")) return "artifact";
   const match = OPERATOR_PAGES.find((page) => PAGE_META[page].path === path);
   return match ?? "connections";
+}
+
+/** Artifact pages load their own data and never ask `/ui/data` whether to open. */
+export function isArtifactPage(page: OperatorPage): boolean {
+  return page === "artifacts" || page === "artifact";
+}
+
+/**
+ * Where a viewer's frame gets its page: `/artifacts/<id>` or a snapshot,
+ * `/artifacts/<id>/v/<version>?d=<name>:<version>…`, mapped to its API call.
+ */
+export function artifactViewRequest(pathname: string, search: string): string | undefined {
+  const match = /^\/artifacts\/([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?:\/v\/(\d{1,9}))?$/.exec(pathname);
+  if (!match?.[1]) return undefined;
+  const params = new URLSearchParams();
+  if (match[2]) {
+    params.set("v", match[2]);
+    for (const pin of new URLSearchParams(search).getAll("d")) params.append("d", pin);
+  }
+  const query = params.toString();
+  return `/artifacts/_api/view/${match[1]}${query ? `?${query}` : ""}`;
 }
 
 export interface UiActivityActor {
@@ -195,6 +225,13 @@ export interface OperatorState {
   activityEvents: UiActivityEvent[];
   activityCursor: string | null;
   activitySearch: string;
+  artifactPhase: LoadPhase;
+  artifactNotice: Notice | null;
+  artifactRows: UiArtifactRow[];
+  artifactCursor: string | null;
+  artifactQuery: string;
+  artifactArchived: boolean;
+  artifactView: UiArtifactView | null;
 }
 
 export function initialState(page: OperatorPage): OperatorState {
@@ -228,6 +265,13 @@ function identityScopedState() {
     activityEvents: [],
     activityCursor: null,
     activitySearch: "",
+    artifactPhase: "idle" as LoadPhase,
+    artifactNotice: null,
+    artifactRows: [],
+    artifactCursor: null,
+    artifactQuery: "",
+    artifactArchived: false,
+    artifactView: null,
   } satisfies Partial<OperatorState>;
 }
 
