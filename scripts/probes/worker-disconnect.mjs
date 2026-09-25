@@ -222,6 +222,9 @@ try {
           ? 'inconclusive: contention arrived after the conservative deadline'
           : whileLive?.status === 200 && !whileLive.clientEndBeforeCheck && whileLive.clientEndAtCheck
           ? 'inconclusive: original stream ended during contention'
+          : abandonedQueue && (!abandonedQueue.sameIsolate || !abandonedQueue.afterAbort.sameIsolate ||
+            abandonedQueue.elapsedMs >= maxDurationMs || abandonedQueue.afterAbort.elapsedMs >= maxDurationMs)
+          ? 'inconclusive: queue evidence missed the original isolate or pre-expiry window'
           : abandonedQueue && (abandonedQueue.orphanOutcome.kind !== 'client-abort' ||
             (!enabled && abandonedQueue.afterAbort.queued !== 1))
           ? 'inconclusive: abandoned queue was not reproduced'
