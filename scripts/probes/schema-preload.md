@@ -37,3 +37,5 @@ observations are `schema-preload-2026-09-25.json` beside this file.
 Decision for #578: report the cold-import cost upstream. Do not ship a dependency
 patch in Connecta or recommend removing preload in deployments, since that change
 has not been verified against all SDK schema paths on Workers.
+
+Upstream report: https://github.com/modelcontextprotocol/typescript-sdk/issues/2865.
