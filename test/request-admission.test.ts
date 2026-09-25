@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Executor, InboundAuth } from "../src/types.js";
+import type { Connector, Executor, InboundAuth } from "../src/types.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
 
@@ -33,6 +33,101 @@ async function waitFor(
 }
 
 describe("request admission", () => {
+  it("aborts an in-flight connector call at the total request deadline", async () => {
+    let started = 0;
+    let aborted = 0;
+    const connector: Connector = {
+      ...calcConnector,
+      async callTool(_name, _args, ctx) {
+        started++;
+        await new Promise<void>((resolve) => {
+          if (ctx.signal?.aborted) {
+            aborted++;
+            resolve();
+          } else {
+            ctx.signal?.addEventListener("abort", () => { aborted++; resolve(); }, { once: true });
+          }
+        });
+        return { stopped: true };
+      },
+    };
+    const connecta = createTestConnecta({
+      connectors: [connector],
+      logger: silentLogger,
+      admission: {
+        requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
+      },
+    });
+    const first = connecta.fetch(mcpRpc("tools/call", {
+      name: "call_tool",
+      arguments: { address: "calc.add", args: { a: 1, b: 2 } },
+    }, { id: 1 }));
+    await waitFor(() => started === 1);
+    await first.catch(() => undefined);
+    await waitFor(() => aborted === 1);
+    const health = await connecta.fetch(new Request(`${BASE}/health`));
+    expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
+  });
+
+  it("ends stalled authorization before a response and returns its permit", async () => {
+    const gate = blockingAuth();
+    const connecta = createTestConnecta({
+      connectors: [], auth: gate.auth, logger: silentLogger,
+      admission: {
+        requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
+      },
+    });
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
+    await waitFor(() => gate.calls() === 1);
+    expect((await first).status).toBe(504);
+    const health = await connecta.fetch(new Request(`${BASE}/health`));
+    expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
+    gate.release();
+  });
+
+  it("ends a still-live response at its configured lifetime and frees admission", async () => {
+    let cancellations = 0;
+    const auth: InboundAuth = {
+      kind: "streaming",
+      authorize() {
+        return {
+          ok: false,
+          response: new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("open"));
+            },
+            cancel() {
+              cancellations++;
+            },
+          }), { status: 401 }),
+        };
+      },
+    };
+    const connecta = createTestConnecta({
+      connectors: [],
+      auth,
+      logger: silentLogger,
+      admission: {
+        requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
+      },
+    });
+
+    const first = await connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
+    expect(first.status).toBe(401);
+    const blocked = await connecta.fetch(mcpRpc("tools/list", {}, { id: 2 }));
+    expect(blocked.status).toBe(503);
+    await blocked.text();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(cancellations).toBe(1);
+
+    const next = await connecta.fetch(mcpRpc("tools/list", {}, { id: 3 }));
+    expect(next.status).toBe(401);
+    await next.body?.cancel();
+    const health = await connecta.fetch(new Request(`${BASE}/health`));
+    expect(await health.json()).toMatchObject({ admission: { requests: { active: 0, maxDurationMs: 100 } } });
+    await first.body?.cancel().catch(() => {});
+  });
+
   it("bounds /mcp before auth and leaves health/operator routes responsive", async () => {
     const gate = blockingAuth();
     const logger = {
