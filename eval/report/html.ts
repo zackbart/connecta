@@ -186,7 +186,7 @@ function agentSection(file: AgentResultFile, base: AgentResultFile | undefined):
       </tbody></table>`
     : "";
   return `<h2>Agent task evals</h2>
-    <p class="note">${file.trials.length} trials · models ${file.config.models.map(shortModel).join(", ")} · ${file.config.repeats} repeat(s) · concurrency ${file.config.concurrency} · ${esc(file.claudeVersion)}${file.config.effort ? ` · effort ${esc(file.config.effort)}` : ""} · MAX_MCP_OUTPUT_TOKENS ${esc(file.config.mcpOutputTokens ?? "host default")}${file.stopped ? ` · <b class="worse">stopped early: ${esc(file.stopped)}</b>` : ""}</p>
+    <p class="note">${file.trials.length} trials · models ${file.config.models.map(shortModel).join(", ")} · ${file.config.repeats} repeat(s) · concurrency ${file.config.concurrency} · ${esc(file.codexVersion ?? file.claudeVersion ?? "unknown runner")}${file.config.effort ? ` · effort ${esc(file.config.effort)}` : ""}${file.config.runner === "codex" ? "" : ` · MCP output cap ${esc(file.config.mcpOutputTokens ?? "host default")}`}${file.stopped ? ` · <b class="worse">stopped early: ${esc(file.stopped)}</b>` : ""}</p>
     ${matrix(file)}
     ${base ? `<h2>Baseline vs current</h2>${comparison(file, base)}` : ""}
     <h2>Trials</h2>${tasks}${planned}`;

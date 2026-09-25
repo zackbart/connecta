@@ -1,10 +1,12 @@
 /**
- * Turn Claude Code's stream-json events into a bounded transcript and the
+ * Turn agent events into a bounded transcript and the
  * per-trial numbers the report compares. Nothing here reads the answer the
  * agent wrote; graders look at the fakes instead.
  */
 import type { CallRecord, RequestRecord } from "../fakes/service.js";
-import { SERVER_NAME, type StreamEvent } from "./claude.js";
+const SERVER_NAME = "connecta";
+export const toolId = (tool: string) => `mcp__${SERVER_NAME}__${tool}`;
+export type StreamEvent = Record<string, unknown> & { type: string };
 
 const TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
 const MAX_RESULT_CHARS = 6_000;
@@ -46,6 +48,7 @@ export interface AgentTrace {
   resultSubtypes: string[];
   model: string | undefined;
   claudeCodeVersion: string | undefined;
+  agentVersion?: string;
   loadedTools: string[];
   rateLimit: Record<string, unknown> | undefined;
 }
@@ -78,6 +81,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   const resultSubtypes: string[] = [];
   let model: string | undefined;
   let version: string | undefined;
+  let agentVersion: string | undefined;
   let loadedTools: string[] = [];
   let rateLimit: Record<string, unknown> | undefined;
   events.forEach((event, index) => {
@@ -88,12 +92,27 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
     if (event.type === "system" && event.subtype === "init") {
       model = String(event.model ?? "");
-      version = String(event.claude_code_version ?? "");
+      version = event.claude_code_version === undefined ? undefined : String(event.claude_code_version);
+      agentVersion = event.agent_version === undefined ? undefined : String(event.agent_version);
       loadedTools = Array.isArray(event.tools) ? event.tools.map(String) : [];
       return;
     }
     if (event.type === "rate_limit_event") {
       rateLimit = event.rate_limit_info as Record<string, unknown>;
+      return;
+    }
+    if (event.type === "codex_usage") {
+      const total = event.total as Record<string, number> | undefined;
+      if (total) tokens = {
+        input: total.inputTokens ?? 0,
+        output: total.outputTokens ?? 0,
+        cacheRead: total.cachedInputTokens ?? 0,
+        cacheCreation: total.cacheWriteInputTokens ?? 0,
+      };
+      return;
+    }
+    if (event.type === "codex_denial") {
+      permissionDenials.push(event.tool);
       return;
     }
     if (event.type === "assistant" || event.type === "user") {
@@ -183,6 +202,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     resultSubtypes,
     model,
     claudeCodeVersion: version,
+    ...(agentVersion ? { agentVersion } : {}),
     loadedTools,
     rateLimit,
   };

@@ -1,5 +1,5 @@
 /**
- * One trial = a fresh world, a fresh deployment, one Claude Code conversation,
+ * One trial = a fresh world, a fresh deployment, one Codex conversation,
  * a grade over the fakes. A batch runs task × model × repeat through a small
  * pool and stops scheduling when the account's rate-limit window is nearly
  * spent, rather than burning through somebody's weekly quota.
@@ -9,11 +9,13 @@ import { World } from "../fakes/world.js";
 import { startNodeDeployment } from "../deploy/node.js";
 import { connectMcp, type ListedTool } from "../support/mcp.js";
 import type { ActiveTask, Check } from "../tasks/types.js";
-import { runClaude, toolId, type StreamEvent } from "./claude.js";
+import { runCodex } from "./codex.js";
 import {
   countBy,
   downstreamMetrics,
   parseTrace,
+  toolId,
+  type StreamEvent,
   type DownstreamMetrics,
   type Tokens,
   type TranscriptEntry,
@@ -60,8 +62,9 @@ export interface TrialResult {
   };
   transcript: TranscriptEntry[];
   ledger: (Omit<CallRecord, "args"> & { args: string })[];
-  claude: {
-    model: string | undefined;
+  codex?: {
+    requestedModel: string;
+    servedModel: string | undefined;
     version: string | undefined;
     exitCode: number | null;
     timedOut: boolean;
@@ -70,14 +73,15 @@ export interface TrialResult {
     argv: string[];
     loadedTools: string[];
   };
+  /** Historical results only. New runs never invoke Claude Code. */
+  claude?: Record<string, unknown>;
   startedAt: string;
 }
 
 interface TrialOptions {
   timeoutMs: number;
-  maxBudgetUsd?: number;
+  signal?: AbortSignal;
   effort?: string;
-  mcpOutputTokens?: number;
   onEvent?(event: StreamEvent): void;
 }
 
@@ -107,6 +111,8 @@ function clipArgs(args: unknown): string {
 
 function infraError(events: StreamEvent[], exitCode: number | null, loadedTools: string[]): string | undefined {
   const results = events.filter((event) => event.type === "result");
+  const failed = results.find(event => event.subtype !== "success");
+  if (failed) return `Codex turn failed: ${String(failed.result ?? failed.subtype).slice(0, 300)}`;
   if (results.length && !loadedTools.includes(toolId("execute_code"))) {
     return "the connecta MCP server was not connected when the session started";
   }
@@ -118,7 +124,7 @@ function infraError(events: StreamEvent[], exitCode: number | null, loadedTools:
       (event.rate_limit_info as { status?: string } | undefined)?.status === "rejected",
   );
   if (rejected) return "rate limited (status: rejected)";
-  if (results.length === 0) return `claude produced no result (exit ${String(exitCode)})`;
+  if (results.length === 0) return `Codex produced no result (exit ${String(exitCode)})`;
   const authFailure = results.find((event) =>
     /invalid api key|please run \/login|authentication_error|oauth token/i.test(String(event.result ?? "")),
   );
@@ -148,18 +154,15 @@ async function runTrial(
     const notes: { beforeTurn: number; text: string }[] = [];
     let followUpsSent = 0;
     let nudges = 0;
-    const run = await runClaude({
+    const run = await runCodex({
       model,
       mcpUrl: deployment.mcpUrl,
       token: deployment.token,
-      allowedTools: allow.map(toolId),
-      disallowedTools: deny.map(toolId),
+      allowedTools: allow,
+      deniedTools: deny,
       timeoutMs: task.limits?.timeoutMs ?? options.timeoutMs,
-      ...(task.limits?.maxBudgetUsd ?? options.maxBudgetUsd
-        ? { maxBudgetUsd: task.limits?.maxBudgetUsd ?? options.maxBudgetUsd }
-        : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
-      ...(options.mcpOutputTokens ? { mcpOutputTokens: options.mcpOutputTokens } : {}),
       ...(options.onEvent ? { onEvent: options.onEvent } : {}),
       firstPrompt: task.prompt,
       nextTurn: async (turnIndex, events) => {
@@ -267,9 +270,10 @@ async function runTrial(
       },
       transcript: trace.transcript,
       ledger: world.ledger.calls.map((call) => ({ ...call, args: clipArgs(call.args) })),
-      claude: {
-        model: trace.model,
-        version: trace.claudeCodeVersion,
+      codex: {
+        requestedModel: model,
+        servedModel: run.model,
+        version: trace.agentVersion,
         exitCode: run.exitCode,
         timedOut: run.timedOut,
         resultSubtypes: trace.resultSubtypes,
@@ -293,7 +297,8 @@ export interface BatchOptions extends TrialOptions {
   concurrency: number;
   /** Stop scheduling once any reported rate-limit window reaches this. */
   maxUtilization: number;
-  onTrial?(trial: TrialResult, done: number, total: number): void;
+  signal?: AbortSignal;
+  onTrial?(trial: TrialResult, done: number, total: number): void | Promise<void>;
 }
 
 export async function runBatch(
@@ -326,16 +331,17 @@ export async function runBatch(
     }
   };
   const worker = async () => {
-    while (queue.length && !stopped) {
+    while (queue.length && !stopped && !options.signal?.aborted) {
       const next = queue.shift()!;
       const trial = await runTrial(next.task, next.model, next.repeat, { ...options, onEvent });
       trials.push(trial);
-      options.onTrial?.(trial, trials.length, total);
+      await options.onTrial?.(trial, trials.length, total);
       if (trial.status === "error" && /rate limited|authentication failure/.test(trial.error ?? "")) {
         stopped ??= trial.error;
       }
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, options.concurrency) }, worker));
+  if (options.signal?.aborted) stopped ??= "interrupted by operator";
   return { trials, ...(stopped ? { stopped } : {}) };
 }
