@@ -22,6 +22,14 @@ migrations, and secrets.
 | `src/r2-artifact-blobs.ts` | artifact bodies in an R2 bucket, beside a D1-backed `kvArtifactStore` (optional) |
 | `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
 
+Keep `enable_request_signal` in `wrangler.jsonc`. On Workers it lets a live
+response's client disconnect abort its request, so connecta cancels the stream
+and returns the admission permit promptly. The total admitted-request bound in
+`admission.requests.maxDurationMs` (default 300,000 ms) also reclaims capacity
+on a later request if workerd ends one without delivering a signal or stream
+cancellation. Set it above the longest authorization, tool call, and response
+delivery your deployment expects to serve.
+
 `cloudflare-kv.ts`, `d1-storage.ts`, and `d1-activity.ts` deliberately live
 here rather than in the package: storage backends are deployment-owned, so the
 package ships only the generic `KVStorage` and `ActivityStore` contracts.
