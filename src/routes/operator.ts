@@ -105,6 +105,7 @@ export function scopeFor(
   return {
     connectorIds,
     ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}),
+    ...(authz.guardedToolAccess ? { guardedToolAccess: authz.guardedToolAccess } : {}),
     ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
     ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
   };

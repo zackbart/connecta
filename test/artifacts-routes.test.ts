@@ -210,6 +210,11 @@ describe("the artifact API", () => {
     expect((await readerOnly.get("/artifacts/_api/view/q3-bugs")).status).toBe(404);
     const viewer = await deploy({ identity: { connectorAccess: () => ["artifacts.get_artifact"] } });
     expect((await viewer.get("/artifacts/_api/view/q3-bugs")).status).toBe(200);
+    const guardedViewer = await deploy({ identity: { connectorAccess: () => [
+      { tool: "artifacts.get_artifact", requireReadOnly: true },
+    ] } });
+    expect((await guardedViewer.get("/artifacts/_api/view/q3-bugs")).status).toBe(200);
+    expect(await (await guardedViewer.get("/ui/data")).json()).toMatchObject({ artifactsEnabled: true });
   });
 
   it("refuses every page request on an open deployment", async () => {

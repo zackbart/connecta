@@ -235,7 +235,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       serverInfo: opts.serverInfo,
       connectaVersion: CONNECTA_VERSION,
       activityEnabled,
-      ...(opts.artifactsModule && mayViewArtifacts(authz) ? { artifactsEnabled: true } : {}),
+      ...(opts.artifactsModule && mayViewArtifacts(authz, opts.registry) ? { artifactsEnabled: true } : {}),
       credentialManagement,
       oauthManagement: visible.some(c => mayManage(c.id)),
       connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),

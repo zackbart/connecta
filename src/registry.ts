@@ -65,6 +65,7 @@ import {
   storageSet,
 } from "./runtime/storage.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
+import { isExplicitlyReadOnly } from "./tool-safety.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -366,6 +367,7 @@ export type ToolAccess = ReadonlyMap<string, ReadonlySet<string>>;
 export interface RegistryScope {
   connectorIds: "all" | readonly string[];
   toolAccess?: ToolAccess;
+  guardedToolAccess?: ToolAccess;
   subjectKey?: string;
   principalKey?: string;
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
@@ -1960,14 +1962,17 @@ class ScopedRegistryView implements RegistryView {
       throw new Error(`Unknown connector "${args[0]}"`);
     }
     const tools = await registry.getTools(...args);
-    const granted = this.scope.toolAccess?.get(args[0]);
+    const guarded = this.scope.guardedToolAccess?.get(args[0]);
+    const granted = this.scope.toolAccess?.get(args[0]) ?? guarded;
     if (!granted) return tools;
     // Every consumer — search, describe, call_tool, and a program's
     // connecta.call — resolves through this list, so an ungranted tool is
     // indistinguishable from one the connector never had.
-    const visible = tools.filter((tool) => granted.has(tool.name));
+    const visible = tools.filter((tool) =>
+      granted.has(tool.name) &&
+      (!guarded?.has(tool.name) || isExplicitlyReadOnly(tool)));
     if (visible.length < granted.size) {
-      const present = new Set(visible.map((tool) => tool.name));
+      const present = new Set(tools.map((tool) => tool.name));
       for (const name of granted) {
         if (!present.has(name)) this.root.noteAbsentGrant(args[0], name);
       }
