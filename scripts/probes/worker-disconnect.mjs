@@ -132,7 +132,13 @@ try {
         let abandonedQueue;
         if (mode === 'queued-handoff') {
           const orphanAbort = new AbortController();
-          const orphan = listTools(orphanAbort.signal).then(r => r.body?.cancel()).catch(() => {});
+          let orphanOutcome;
+          const orphan = listTools(orphanAbort.signal).then(r => {
+            orphanOutcome = { kind: 'response', status: r.status };
+            return r.body?.cancel();
+          }).catch(error => {
+            orphanOutcome ??= { kind: orphanAbort.signal.aborted ? 'client-abort' : 'error', message: String(error) };
+          });
           try {
             for (let attempt = 0; attempt < 10; attempt++) {
               const before = await fetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
@@ -145,6 +151,13 @@ try {
             orphanAbort.abort();
             await orphan;
           }
+          await wait(50);
+          const after = await fetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
+          abandonedQueue.orphanOutcome = orphanOutcome;
+          abandonedQueue.afterAbort = { sameIsolate: after.isolate === isolate,
+            queued: after.health.admission.requests.queued, elapsedMs: Date.now() - responseAt };
+          abandonedQueue.scenario = abandonedQueue.afterAbort.queued === 1
+            ? 'orphan-retained' : 'queue-cancellation-control';
         } else if (route === 'mcp') {
           const clientEndBeforeCheck = clientEnd ?? null;
           const competing = await listTools();
@@ -200,13 +213,18 @@ try {
           observation.admission.active === 0 && observation.followup.status === 200 &&
           observation.followup.sameIsolate && toolCount === 8 &&
           (!abandonedQueue || (abandonedQueue.sameIsolate && abandonedQueue.queued === 1 &&
-            abandonedQueue.elapsedMs < maxDurationMs && observation.followup.elapsedMs < maxDurationMs + 1000)) &&
+            abandonedQueue.elapsedMs < maxDurationMs && abandonedQueue.afterAbort.sameIsolate &&
+            abandonedQueue.afterAbort.elapsedMs < maxDurationMs && abandonedQueue.orphanOutcome.kind === 'client-abort' &&
+            (enabled || abandonedQueue.afterAbort.queued === 1) && observation.followup.elapsedMs < maxDurationMs + 1000)) &&
           (!whileLive || (whileLive.sameIsolate && whileLive.elapsedMs >= 0 && whileLive.elapsedMs < maxDurationMs &&
             (whileLive.status === 503 || (whileLive.clientEndBeforeCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
         observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs < 0 || whileLive.elapsedMs >= maxDurationMs)
           ? 'inconclusive: contention arrived after the conservative deadline'
           : whileLive?.status === 200 && !whileLive.clientEndBeforeCheck && whileLive.clientEndAtCheck
           ? 'inconclusive: original stream ended during contention'
+          : abandonedQueue && (abandonedQueue.orphanOutcome.kind !== 'client-abort' ||
+            (!enabled && abandonedQueue.afterAbort.queued !== 1))
+          ? 'inconclusive: abandoned queue was not reproduced'
           : observation.passed ? 'pass' : 'fail';
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
