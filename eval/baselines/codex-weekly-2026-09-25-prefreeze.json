@@ -1,0 +1,1551 @@
+{
+ "kind": "connecta-eval/agent",
+ "version": 1,
+ "meta": {
+  "createdAt": "2026-09-25T05:32:21.650Z",
+  "git": {
+   "commit": "75893c30093a",
+   "branch": "feat/564-artifact-refresh",
+   "dirty": true,
+   "srcTree": "cc32f2a125ef",
+   "srcDirty": true
+  },
+  "packageVersion": "0.25.0",
+  "node": "v26.9.0",
+  "platform": "darwin-arm64"
+ },
+ "codexVersion": "codex-cli 0.156.1",
+ "config": {
+  "runner": "codex",
+  "models": [
+   "gpt-6-sol"
+  ],
+  "repeats": 3,
+  "tasks": [
+   "p2-refresh-weekly"
+  ],
+  "concurrency": 1,
+  "timeoutMs": 480000
+ },
+ "tasks": [
+  {
+   "id": "p2-refresh-weekly",
+   "title": "Make it refresh weekly",
+   "measures": "A weekly read-only program refreshes a page's data document after the tracker changes.",
+   "introducedIn": "P2"
+  }
+ ],
+ "planned": [],
+ "trials": [
+  {
+   "task": "p2-refresh-weekly",
+   "model": "gpt-6-sol",
+   "repeat": 1,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success, success"
+    },
+    {
+     "id": "weekly-program",
+     "description": "one weekly program targets the data document",
+     "pass": true
+    },
+    {
+     "id": "one-refresh-run",
+     "description": "the due tick produced one successful data version",
+     "pass": true
+    },
+    {
+     "id": "updated-counts",
+     "description": "the refreshed document reflects the new tracker state",
+     "pass": true
+    },
+    {
+     "id": "view-untouched",
+     "description": "refresh did not rewrite the HTML view",
+     "pass": true
+    },
+    {
+     "id": "read-only",
+     "description": "the refresh sent no downstream write",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 55100,
+    "conversationTurns": 2,
+    "tokens": {
+     "input": 200114,
+     "output": 1870,
+     "cacheRead": 179968,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "search_tools": 2,
+     "skills": 1,
+     "execute_code": 7
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 11,
+     "writes": 0,
+     "duplicateReads": 6,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "tracker.list_projects": 3,
+      "tracker.search_issues": 8
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Make the open-bugs page refresh its data document weekly from the issue tracker. The page shows open bug counts per project. Keep its HTML as it is."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-c721e750-a09e-4888-bae4-001a964ddcb3",
+     "tool": "search_tools",
+     "input": {
+      "query": "search artifacts files pages documents",
+      "includeSchemas": "compact"
+     },
+     "inputChars": 77
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-c721e750-a09e-4888-bae4-001a964ddcb3",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"tracker\",\"title\":\"Issue tracker\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":\"{ project?: \\\"web\\\" | \\\"api\\\" | \\\"mobile\\\", status?: \\\"open\\\" | \\\"closed\\\", label?: string, customer?: string, updatedBefore?: string, text?: string, limit?: integer /* >= 1; <= 50 */, cursor?: string }\",\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"create_artifact\",\"address\":\"artifacts.create_artifact\",\"description\":\"Publish a new page. Put its numbers in documents (the page's script reads each as window.artifact.data.<name>), not in the HTML. Validate it first.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, title: string /* length >= 1; length <= 1000 */, kind: \\\"html\\\" | \\\"markdown\\\", source: string, documents?: {} }\",\"inputKeys\":[\"id\",\"title\",\"kind\",\"source\",\"documents\"],\"requiredInputKeys\":[\"id\",\"title\",\"kind\",\"source\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"list_artifacts\",\"address\":\"artifacts.list_artifacts\",\"description\":\"List artifacts in id order, with each one's url; query searches titles and ids.\",\"inputSchema\":\"{ query?: string /* length <= 200 */, includeArchived?: boolean, limit?: integer /* >= 1; <= 100 */, cursor?: string /* length <= 64 */ }\",\"outputSchema\":\"{ artifacts?: { id?: string, title?: string, kind?: string, viewVersion?: integer, revision?: integer, updatedAt?: string, updatedBy?: {}, archived?: boolean, url?: string, freshness?: {} }[], nextCursor?: string }\",\"inputKeys\":[\"query\",\"includeArchived\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"outputKeys\":[\"artifacts\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"validate_artifact\",\"address\":\"artifacts.validate_artifact\",\"description\":\"Check a page and sample documents exactly as a save would, without saving. Errors name a line and the fix.\",\"inputSchema\":\"{ kind: \\\"html\\\" | \\\"markdown\\\", source: string, documents?: {} }\",\"outputSchema\":\"{ ok?: boolean, errors?: unknown[], warnings?: unknown[], errorsOmitted?: integer, renderCheck?: {} }\",\"inputKeys\":[\"kind\",\"source\",\"documents\"],\"requiredInputKeys\":[\"kind\",\"source\"],\"outputKeys\":[\"ok\",\"errors\",\"warnings\",\"errorsOmitted\",\"renderCheck\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"set_documents\",\"address\":\"artifacts.set_documents\",\"description\":\"Set, create (baseVersion 0), or remove (value null) data documents, atomically.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, documents: {} }\",\"inputKeys\":[\"id\",\"documents\"],\"requiredInputKeys\":[\"id\",\"documents\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"update_artifact\",\"address\":\"artifacts.update_artifact\",\"description\":\"Replace a page's whole source (and optionally its title). For small edits use patch_artifact.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, baseVersion: integer /* >= 1 */, source: string, title?: string /* length >= 1; length <= 1000 */ }\",\"inputKeys\":[\"id\",\"baseVersion\",\"source\",\"title\"],\"requiredInputKeys\":[\"id\",\"baseVersion\",\"source\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"patch_artifact\",\"address\":\"artifacts.patch_artifact\",\"description\":\"Edit a page by exact find-and-replace: each find must match once, all apply at once, or nothing changes.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, baseVersion: integer /* >= 1 */, edits: { find: string /* length >= 1 */, replace: string }[] }\",\"inputKeys\":[\"id\",\"baseVersion\",\"edits\"],\"requiredInputKeys\":[\"id\",\"baseVersion\",\"edits\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"get_artifact\",\"address\":\"artifacts.get_artifact\",\"description\":\"Read an artifact: its view source and history, document versions, revision, url, and snapshotUrl.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, version?: integer /* >= 1 */, includeSource?: boolean }\",\"outputSchema\":\"{ id?: string, title?: string, kind?: string, revision?: integer, archived?: boolean, url?: string, snapshotUrl?: string, view?: {}, documents?: unknown[], history?: unknown[], freshness?: {} }\",\"inputKeys\":[\"id\",\"version\",\"includeSource\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"kind\",\"revision\",\"archived\",\"url\",\"snapshotUrl\",\"view\",\"documents\",\"history\",\"freshness\"],\"annotations\":{\"readOnlyHint\":true}}]}],\"total\":14,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"search\",\"artifacts\",\"pages\",\"documents\"],\"otherResultTerms\":[],\"unmatchedTerms\":[\"files\"],\"guidance\":\"No single tool matched every term. Split distinct intents into separate searches.\"}}",
+     "chars": 5609
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-98ac8cca-537e-46aa-8166-0f5cdc079620",
+     "tool": "skills",
+     "input": {
+      "name": "connector:artifacts"
+     },
+     "inputChars": 30
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-fce05ce3-78cb-45f8-b678-83c107779763",
+     "tool": "search_tools",
+     "input": {
+      "connector": "artifacts",
+      "query": "schedule weekly refresh document issue tracker",
+      "includeSchemas": "compact",
+      "limit": 20
+     },
+     "inputChars": 120
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-fce05ce3-78cb-45f8-b678-83c107779763",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"get_refresh\",\"address\":\"artifacts.get_refresh\",\"description\":\"Read an artifact's refresh program, schedule, freshness, and recent run history.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */ }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"set_refresh\",\"address\":\"artifacts.set_refresh\",\"description\":\"Attach or replace a read-only refresh program for one data document. Pass the current refresh baseVersion (0 if absent).\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, document: string /* length >= 1; length <= 64 */, program: string, schedule: \\\"manual\\\" | \\\"daily\\\" | \\\"weekly\\\", baseVersion: integer /* >= 0 */ }\",\"inputKeys\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"requiredInputKeys\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"run_refresh\",\"address\":\"artifacts.run_refresh\",\"description\":\"Trigger one configured refresh now. Only shared connectors' explicitly read-only tools may run.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */ }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"get_document\",\"address\":\"artifacts.get_document\",\"description\":\"Read one data document's value, at its current or a past version, with its history.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, name: string /* length >= 1; length <= 64 */, version?: integer /* >= 1 */ }\",\"outputSchema\":\"{ name?: string, version?: integer, value?: {}, by?: {}, at?: string, history?: unknown[] }\",\"inputKeys\":[\"id\",\"name\",\"version\"],\"requiredInputKeys\":[\"id\",\"name\"],\"outputKeys\":[\"name\",\"version\",\"value\",\"by\",\"at\",\"history\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"set_documents\",\"address\":\"artifacts.set_documents\",\"description\":\"Set, create (baseVersion 0), or remove (value null) data documents, atomically.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, documents: {} }\",\"inputKeys\":[\"id\",\"documents\"],\"requiredInputKeys\":[\"id\",\"documents\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"get_artifact\",\"address\":\"artifacts.get_artifact\",\"description\":\"Read an artifact: its view source and history, document versions, revision, url, and snapshotUrl.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, version?: integer /* >= 1 */, includeSource?: boolean }\",\"outputSchema\":\"{ id?: string, title?: string, kind?: string, revision?: integer, archived?: boolean, url?: string, snapshotUrl?: string, view?: {}, documents?: unknown[], history?: unknown[], freshness?: {} }\",\"inputKeys\":[\"id\",\"version\",\"includeSource\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"kind\",\"revision\",\"archived\",\"url\",\"snapshotUrl\",\"view\",\"documents\",\"history\",\"freshness\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"rollback_artifact\",\"address\":\"artifacts.rollback_artifact\",\"description\":\"Restore an earlier view or document version as a new version; history is never rewritten.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, target: \\\"view\\\" | \\\"document\\\", version: integer /* >= 1 */, baseVersion: integer /* >= 1 */, name?: string }\",\"inputKeys\":[\"id\",\"target\",\"name\",\"version\",\"baseVersion\"],\"requiredInputKeys\":[\"id\",\"target\",\"version\",\"baseVersion\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"validate_artifact\",\"address\":\"artifacts.validate_artifact\",\"description\":\"Check a page and sample documents exactly as a save would, without saving. Errors name a line and the fix.\",\"inputSchema\":\"{ kind: \\\"html\\\" | \\\"markdown\\\", source: string, documents?: {} }\",\"outputSchema\":\"{ ok?: boolean, errors?: unknown[], warnings?: unknown[], errorsOmitted?: integer, renderCheck?: {} }\",\"inputKeys\":[\"kind\",\"source\",\"documents\"],\"requiredInputKeys\":[\"kind\",\"source\"],\"outputKeys\":[\"ok\",\"errors\",\"warnings\",\"errorsOmitted\",\"renderCheck\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"create_artifact\",\"address\":\"artifacts.create_artifact\",\"description\":\"Publish a new page. Put its numbers in documents (the page's script reads each as window.artifact.data.<name>), not in the HTML. Validate it first.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, title: string /* length >= 1; length <= 1000 */, kind: \\\"html\\\" | \\\"markdown\\\", source: string, documents?: {} }\",\"inputKeys\":[\"id\",\"title\",\"kind\",\"source\",\"documents\"],\"requiredInputKeys\":[\"id\",\"title\",\"kind\",\"source\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]}]}],\"total\":9,\"offset\":0,\"limit\":20,\"hasMore\":false,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"schedule\",\"refresh\",\"document\"],\"otherResultTerms\":[],\"unmatchedTerms\":[\"weekly\",\"issue\",\"tracker\"],\"connectorScope\":\"artifacts\",\"guidance\":\"No single tool on connector \\\"artifacts\\\" matched every term. Split distinct intents into separate searches.\"}}",
+     "chars": 5805
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-98ac8cca-537e-46aa-8166-0f5cdc079620",
+     "isError": false,
+     "text": "# Artifacts\n\nArtifacts are team pages that outlive a chat: dashboards, reports, plans. A page\nis self-contained HTML or Markdown; the numbers it shows live in named JSON\n**documents** that the page reads from a read-only global. Every write makes a\nnew immutable version, attributed to you, and any version can be rolled back.\nOnly people who can read this connector can open a page.\n\n## Writing a page\n\n- **HTML** (`kind: \"html\"`): a complete document starting `<!doctype html>`,\n  with exactly one element `id=\"artifact-root\"` (usually\n  `<main id=\"artifact-root\">`) holding the content.\n- **Markdown** (`kind: \"markdown\"`): headings, lists, tables, code, links, and\n  `data:` images. Raw HTML shows as text. Markdown pages cannot read data.\n- **Data**: a script reads `window.artifact.data.<name>` — each document by\n  name, already parsed and frozen. `window.artifact` also has `id`, `title`,\n  `view.version`, `documents.<name>.{version, updatedAt}`, and `snapshot`.\n  Document names are identifiers: letters, digits, `_`.\n- **Keep data out of the HTML.** Put every figure in a document and render it\n  from script; then fixing a number is `set_documents`, not a page rewrite,\n  and a refresh can replace the data without touching the view.\n\nPages run sandboxed in their own origin, so some things cannot work there:\n\n- **No network.** `fetch`, XHR, WebSocket, and beacons fail. Read\n  `window.artifact.data` instead.\n- **External scripts** load only from none. None are\n  allowed by default; an operator must opt in to each trusted origin. A script\n  can read this page's data. When allowed, use https and pin an exact version\n  (`https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js`).\n  Libraries that need `eval` or `new Function` do not run. Inline\n  `<script>` is fine.\n- **External stylesheets** load only from none; fonts\n  from none or `data:`. Both origin lists default to\n  empty. Trusted script, style, and font origins may receive page data in\n  request URLs. Inline `<style>` is fine.\n- **Images** are `data:` URLs or inline SVG. Nothing relative: a page has no\n  files beside it.\n- No `<iframe>`, `<form>`, `<object>`, `<embed>`, `<base>`, or\n  `<meta http-equiv>`. A link navigates the page's own frame and cannot open a\n  new window, so show URLs as text when readers need them elsewhere.\n\n## Tools\n\nReads run anywhere, including inside `execute_code`:\n\n- `list_artifacts { query?, includeArchived?, limit?, cursor? }` — check for an\n  existing page before creating one.\n- `get_artifact { id, version?, includeSource? }` — the view, its history, its\n  documents' versions, `revision`, `url`, and `snapshotUrl`.\n- `get_document { id, name, version? }` — one document's value and history.\n- `get_refresh { id }` — the configured program, schedule, freshness, and the\n  latest 20 run records. Logs and failure messages are for agents, not readers.\n- `validate_artifact { kind, source, documents? }` — every check a save runs without saving. **Validate before you save**; each error names a line and\n  the fix.\n\nWrites make new versions and never ask for approval inside `execute_code`\n(unless this deployment turned that off); each one spends the program's write\nbudget. At the top level, `call_tool` refuses them — use\n`call_destructive_tool`.\n\n- `create_artifact { id, title, kind, source, documents? }` — `id` is the\n  page's URL slug (lowercase letters, digits, hyphens). `documents` maps each\n  name straight to its value, `{ \"data\": { \"rows\": [...] } }`; supply\n  everything the first render needs in the same call.\n- `patch_artifact { id, baseVersion, edits: [{ find, replace }] }` — **prefer\n  this for small edits** such as a title or a label. Each `find` must occur\n  exactly once in the current source (include surrounding text if it would\n  match twice); every edit applies at once, and if any fails nothing changes.\n- `update_artifact { id, baseVersion, source, title? }` — replace the whole\n  source.\n- `set_documents { id, documents: { <name>: { baseVersion, value } } }` — set\n  several documents atomically; `baseVersion: 0` creates one, `value: null`\n  removes one.\n- `set_refresh { id, document, program, schedule, baseVersion }` — version a\n  complete `execute_code` async-arrow program returning the document's JSON\n  value. `schedule` is `manual`, `daily`, or `weekly`; use `baseVersion: 0`\n  for the first program, then the version from `get_refresh`. It can call\n  only explicitly read-only tools on shared connectors. Personal connectors\n  and writes fail the run even if the program catches the refusal. A failed\n  run keeps the last good document and marks the page stale.\n- `run_refresh { id }` — trigger one run now through\n  `call_destructive_tool`. It cannot run inside `execute_code` because that\n  would hold an executor permit while asking for another.\n- `rollback_artifact { id, target: \"view\" | \"document\", name?, version, baseVersion }`\n  — a new version with an old body; history is never rewritten.\n- `archive_artifact` / `restore_artifact { id, baseRevision }` — hide a page\n  from the library, or bring it back. Archived pages refuse writes.\n\n## Versions and conflicts\n\nEvery write names what it expects to replace: `baseVersion` is the current\nview version (or the document's version), `baseRevision` the artifact's\nrevision, all from `get_artifact`/`get_document`. If someone changed it\nfirst, the write fails with code `conflict` and nothing is saved; the error's\n`current` (`err.details.current` in a program) says where things stand.\nRe-read, reapply your change, and retry with the new base. Never retry the\nsame call unchanged.\n\n## Sharing\n\n`url` is the page as it is now; share that. `snapshotUrl` pins the view and\nevery document to their current versions, for \"as of\" links. Both are for the\nteam only.\n\n## Limits\n\n| What | Limit |\n| --- | --- |\n| Page source | 1 MiB |\n| One document, serialized | 512 KiB |\n| Documents per artifact | 16 |\n| Distinct document names over its lifetime | 64 (removed names keep their v… [484 more chars]",
+     "chars": 6484
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-0158f49c-6487-4de9-9aee-50795e931c98",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const t=connecta.search({connector:'artifacts',query:'list artifacts',includeSchemas:'json'}); const s=connecta.search({connector:'tracker',query:'count open bugs by project',includeSchemas:'json'}); const [a,b]=await Promise.all([t,s]); const tool=a.tools.find(x=>x.name==='list_artifacts'); const pages=await connecta.call(tool.address,{query:'open-bugs'}); return {pages,trackerTools:b.tools.map(x=>({name:x.name,address:x.address,inputSchema:x.inputSchema,annotations:x.annotations}))}; }"
+     },
+     "inputChars": 517
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-0158f49c-6487-4de9-9aee-50795e931c98",
+     "isError": false,
+     "text": "{\"result\":{\"pages\":{\"artifacts\":[{\"id\":\"open-bugs\",\"title\":\"Open bugs\",\"kind\":\"html\",\"viewVersion\":1,\"revision\":1,\"updatedAt\":\"2026-09-25T05:32:21.686Z\",\"updatedBy\":{\"kind\":\"unknown\"},\"archived\":false,\"url\":\"http://127.0.0.1:61981/artifacts/open-bugs\",\"freshness\":{\"state\":\"unconfigured\"}}]},\"trackerTools\":[{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"tracker.create_issue\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"title\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"project\",\"title\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false}}]}}",
+     "chars": 1791
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-a23ddc48-2dcd-4044-8db9-bc5861b0e6c7",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [a,f]=await Promise.all([connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:true}),connecta.call('artifacts.get_refresh',{id:'open-bugs'})]); return {artifact:a,refresh:f}; }"
+     },
+     "inputChars": 223
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-a23ddc48-2dcd-4044-8db9-bc5861b0e6c7",
+     "isError": false,
+     "text": "{\"result\":{\"artifact\":{\"id\":\"open-bugs\",\"title\":\"Open bugs\",\"kind\":\"html\",\"revision\":1,\"archived\":false,\"url\":\"http://127.0.0.1:61981/artifacts/open-bugs\",\"snapshotUrl\":\"http://127.0.0.1:61981/artifacts/open-bugs/v/1?d=data:1\",\"view\":{\"version\":1,\"source\":\"<!doctype html>\\n<html lang=\\\"en\\\"><head><meta charset=\\\"utf-8\\\"><title>Open bugs</title>\\n<style>.bar{background:#2f5fe0;color:#fff;margin:4px 0;padding:2px 6px}</style></head>\\n<body><main id=\\\"artifact-root\\\">\\n<h1>Open bugs</h1>\\n<section class=\\\"chart\\\"><h2 class=\\\"chart-title\\\">Bugs by team</h2><div id=\\\"bars\\\"></div></section>\\n<p>Counts come from the tracker.</p>\\n</main>\\n<script>\\nconst data = window.artifact.data.data;\\ndocument.getElementById('bars').innerHTML = data.projects\\n  .map((p) => '<div class=\\\"bar\\\" style=\\\"width:' + p.openBugs * 40 + 'px\\\">' + p.project + ' ' + p.openBugs + '</div>')\\n  .join('');\\n</script></body></html>\",\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:32:21.686Z\",\"op\":\"create\"},\"documents\":[{\"name\":\"data\",\"version\":1,\"bytes\":110,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:32:21.686Z\"}],\"history\":[{\"version\":1,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:32:21.686Z\",\"op\":\"create\"}],\"freshness\":{\"state\":\"unconfigured\"}},\"refresh\":{\"id\":\"open-bugs\",\"freshness\":{\"state\":\"unconfigured\"},\"runs\":[]}}}",
+     "chars": 1304
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-f41cc4c5-4e53-4e2d-b0f3-23db5fc1b31d",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [d,p,q]=await Promise.all([connecta.call('artifacts.get_document',{id:'open-bugs',name:'data'}),connecta.call('tracker.list_projects',{}),connecta.call('tracker.search_issues',{status:'open',label:'bug',limit:2})]); return {document:d,projects:p,issueSample:q}; }"
+     },
+     "inputChars": 294
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-f41cc4c5-4e53-4e2d-b0f3-23db5fc1b31d",
+     "isError": false,
+     "text": "{\"result\":{\"document\":{\"name\":\"data\",\"version\":1,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":7},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:32:21.686Z\",\"history\":[{\"version\":1,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:32:21.686Z\",\"op\":\"create\"}]},\"projects\":{\"projects\":[{\"id\":\"web\",\"key\":\"WEB\",\"name\":\"Web\",\"openIssues\":13},{\"id\":\"api\",\"key\":\"API\",\"name\":\"API\",\"openIssues\":9},{\"id\":\"mobile\",\"key\":\"MOB\",\"name\":\"Mobile\",\"openIssues\":8}]},\"issueSample\":{\"issues\":[{\"id\":\"WEB-101\",\"project\":\"web\",\"title\":\"Checkout button unresponsive on Safari\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-22T05:32:21.675Z\"},{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:32:21.675Z\"}],\"total\":12,\"nextCursor\":\"c2\"}}}",
+     "chars": 959
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-dae28d74-69ef-4a8b-bec5-0fb90128da91",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const projects = await connecta.call('tracker.list_projects', {}); if (!Array.isArray(projects.projects)) throw new Error('Missing projects'); const rows = await Promise.all(projects.projects.map(async p => { const r = await connecta.call('tracker.search_issues', {project:p.id,status:'open',label:'bug',limit:1}); if (!Number.isInteger(r.total) || r.total < 0) throw new Error('Missing total for '+p.id); return {project:p.id,openBugs:r.total}; })); return {projects:rows}; }"
+     },
+     "inputChars": 501
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-dae28d74-69ef-4a8b-bec5-0fb90128da91",
+     "isError": false,
+     "text": "{\"result\":{\"projects\":[{\"project\":\"web\",\"openBugs\":7},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]}}",
+     "chars": 121
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-302da8f7-9423-477a-82be-599d43b9f0a5",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const page=await connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:true}); if(page.kind!=='html'||!page.view?.source?.includes('window.artifact.data.data')||!page.documents?.some(d=>d.name==='data')) throw new Error('Unexpected page'); const refresh=await connecta.call('artifacts.get_refresh',{id:'open-bugs'}); const v=refresh.version??refresh.refresh?.version??0; return await connecta.call('artifacts.set_refresh',{id:'open-bugs',document:'data',program:\"async () => { const projects = await connecta.call('tracker.list_projects', {}); if (!Array.isArray(projects.projects)) throw new Error('Missing projects'); const rows = await Promise.all(projects.projects.map(async p => { const r = await connecta.call('tracker.search_issues', {project:p.id,status:'open',label:'bug',limit:1}); if (!Number.isInteger(r.total) || r.total < 0) throw new Error('Missing total for '+p.id); return {project:p.id,openBugs:r.total}; })); return {projects:rows}; }\",schedule:'weekly',baseVersion:v}); }"
+     },
+     "inputChars": 1033
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-302da8f7-9423-477a-82be-599d43b9f0a5",
+     "isError": false,
+     "text": "{\"result\":{\"id\":\"open-bugs\",\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:33:01.311Z\"}}}",
+     "chars": 153
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-48d86ecc-5cf6-4ce2-82c8-9d4d616371b5",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [a,f]=await Promise.all([connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:false}),connecta.call('artifacts.get_refresh',{id:'open-bugs'})]); return {url:a.url,viewVersion:a.view?.version,document:a.documents?.find(d=>d.name==='data'),refresh:{schedule:f.schedule,document:f.document,version:f.version,freshness:f.freshness,program:f.program}}; }"
+     },
+     "inputChars": 396
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-48d86ecc-5cf6-4ce2-82c8-9d4d616371b5",
+     "isError": false,
+     "text": "{\"result\":{\"url\":\"http://127.0.0.1:61981/artifacts/open-bugs\",\"viewVersion\":1,\"document\":{\"name\":\"data\",\"version\":1,\"bytes\":110,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:32:21.686Z\"},\"refresh\":{\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:33:01.311Z\"},\"program\":\"async () => { const projects = await connecta.call('tracker.list_projects', {}); if (!Array.isArray(projects.projects)) throw new Error('Missing projects'); const rows = await Promise.all(projects.projects.map(async p => { const r = await connecta.call('tracker.search_issues', {project:p.id,status:'open',label:'bug',limit:1}); if (!Number.isInteger(r.total) || r.total < 0) throw new Error('Missing total for '+p.id); return {project:p.id,openBugs:r.total}; })); return {projects:rows}; }\"}}}",
+     "chars": 825
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "The [open-bugs page](http://127.0.0.1:61981/artifacts/open-bugs) is now configured to refresh its `data` document weekly from the issue tracker, counting open bugs for each project. Its HTML was not changed."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    },
+    {
+     "kind": "operator",
+     "turn": 1,
+     "text": "A new web bug appeared; the weekly schedule became due and the deployment ran due refreshes."
+    },
+    {
+     "kind": "user",
+     "turn": 2,
+     "text": "The weekly tick ran after a new web bug arrived. Did the page's data update?"
+    },
+    {
+     "kind": "tool_use",
+     "turn": 2,
+     "id": "exec-21ccab0c-4b82-4143-8bde-9cc458139088",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [a,d,f,w]=await Promise.all([connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:false}),connecta.call('artifacts.get_document',{id:'open-bugs',name:'data'}),connecta.call('artifacts.get_refresh',{id:'open-bugs'}),connecta.call('tracker.search_issues',{project:'web',status:'open',label:'bug',limit:1})]); return {document:{version:d.version,value:d.value,at:d.at},page:{viewVersion:a.view?.version,freshness:a.freshness},refresh:{freshness:f.freshness,runs:f.runs},trackerWebCount:w.total}; }"
+     },
+     "inputChars": 541
+    },
+    {
+     "kind": "tool_result",
+     "turn": 2,
+     "id": "exec-21ccab0c-4b82-4143-8bde-9cc458139088",
+     "isError": false,
+     "text": "{\"result\":{\"document\":{\"version\":2,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":8},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"at\":\"2026-09-25T05:33:08.445Z\"},\"page\":{\"viewVersion\":1,\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:33:08.447Z\",\"last\":{\"runId\":\"c2ad5c17-e369-445e-a23a-0461e748f45c\",\"at\":\"2026-09-25T05:33:08.447Z\",\"status\":\"succeeded\",\"documentVersion\":2}}},\"refresh\":{\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:33:08.447Z\",\"last\":{\"runId\":\"c2ad5c17-e369-445e-a23a-0461e748f45c\",\"at\":\"2026-09-25T05:33:08.447Z\",\"status\":\"succeeded\",\"documentVersion\":2}},\"runs\":[{\"runId\":\"c2ad5c17-e369-445e-a23a-0461e748f45c\",\"startedAt\":\"2026-09-25T05:33:08.418Z\",\"status\":\"succeeded\",\"trigger\":\"schedule\",\"programVersion\":1,\"documentVersion\":2,\"finishedAt\":\"2026-09-25T05:33:08.447Z\"}]},\"trackerWebCount\":8}}",
+     "chars": 969
+    },
+    {
+     "kind": "assistant",
+     "turn": 2,
+     "text": "Yes. The scheduled refresh succeeded: the page’s data document is now version 2, with **web open bugs at 8** (up from 7). API remains 3 and mobile remains 2. The HTML is unchanged."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 2,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 15,
+     "at": 1790314364852,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 17,
+     "at": 1790314364855,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"limit\":2}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 430
+    },
+    {
+     "seq": 20,
+     "at": 1790314373795,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 22,
+     "at": 1790314373800,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 24,
+     "at": 1790314373802,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 26,
+     "at": 1790314373804,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 29,
+     "at": 1790314388433,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 31,
+     "at": 1790314388438,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 33,
+     "at": 1790314388441,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 35,
+     "at": 1790314388443,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 38,
+     "at": 1790314393724,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success",
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__authorize_connector",
+     "mcp__connecta__call_tool",
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__get_result",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__skills"
+    ]
+   },
+   "startedAt": "2026-09-25T05:32:21.675Z"
+  },
+  {
+   "task": "p2-refresh-weekly",
+   "model": "gpt-6-sol",
+   "repeat": 2,
+   "status": "fail",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success, success"
+    },
+    {
+     "id": "weekly-program",
+     "description": "one weekly program targets the data document",
+     "pass": true
+    },
+    {
+     "id": "one-refresh-run",
+     "description": "the due tick produced one successful data version",
+     "pass": false
+    },
+    {
+     "id": "updated-counts",
+     "description": "the refreshed document reflects the new tracker state",
+     "pass": true
+    },
+    {
+     "id": "view-untouched",
+     "description": "refresh did not rewrite the HTML view",
+     "pass": true
+    },
+    {
+     "id": "read-only",
+     "description": "the refresh sent no downstream write",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 54148,
+    "conversationTurns": 2,
+    "tokens": {
+     "input": 212750,
+     "output": 1720,
+     "cacheRead": 186240,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "skills": 1,
+     "execute_code": 4,
+     "call_tool": 1,
+     "search_tools": 2,
+     "call_destructive_tool": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 11,
+     "writes": 0,
+     "duplicateReads": 6,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "tracker.list_projects": 3,
+      "tracker.search_issues": 8
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "artifacts.set_refresh",
+      "reason": "Configure the existing data document to refresh open bug counts from the issue tracker each week without changing the HTML.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "artifacts.run_refresh",
+      "reason": "Run the new weekly refresh once to verify it updates the data document correctly.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Make the open-bugs page refresh its data document weekly from the issue tracker. The page shows open bug counts per project. Keep its HTML as it is."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-0f03e513-1b2c-49ee-a9a2-efbd795b7da8",
+     "tool": "skills",
+     "input": {
+      "name": "connector:artifacts"
+     },
+     "inputChars": 30
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-0f03e513-1b2c-49ee-a9a2-efbd795b7da8",
+     "isError": false,
+     "text": "# Artifacts\n\nArtifacts are team pages that outlive a chat: dashboards, reports, plans. A page\nis self-contained HTML or Markdown; the numbers it shows live in named JSON\n**documents** that the page reads from a read-only global. Every write makes a\nnew immutable version, attributed to you, and any version can be rolled back.\nOnly people who can read this connector can open a page.\n\n## Writing a page\n\n- **HTML** (`kind: \"html\"`): a complete document starting `<!doctype html>`,\n  with exactly one element `id=\"artifact-root\"` (usually\n  `<main id=\"artifact-root\">`) holding the content.\n- **Markdown** (`kind: \"markdown\"`): headings, lists, tables, code, links, and\n  `data:` images. Raw HTML shows as text. Markdown pages cannot read data.\n- **Data**: a script reads `window.artifact.data.<name>` — each document by\n  name, already parsed and frozen. `window.artifact` also has `id`, `title`,\n  `view.version`, `documents.<name>.{version, updatedAt}`, and `snapshot`.\n  Document names are identifiers: letters, digits, `_`.\n- **Keep data out of the HTML.** Put every figure in a document and render it\n  from script; then fixing a number is `set_documents`, not a page rewrite,\n  and a refresh can replace the data without touching the view.\n\nPages run sandboxed in their own origin, so some things cannot work there:\n\n- **No network.** `fetch`, XHR, WebSocket, and beacons fail. Read\n  `window.artifact.data` instead.\n- **External scripts** load only from none. None are\n  allowed by default; an operator must opt in to each trusted origin. A script\n  can read this page's data. When allowed, use https and pin an exact version\n  (`https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js`).\n  Libraries that need `eval` or `new Function` do not run. Inline\n  `<script>` is fine.\n- **External stylesheets** load only from none; fonts\n  from none or `data:`. Both origin lists default to\n  empty. Trusted script, style, and font origins may receive page data in\n  request URLs. Inline `<style>` is fine.\n- **Images** are `data:` URLs or inline SVG. Nothing relative: a page has no\n  files beside it.\n- No `<iframe>`, `<form>`, `<object>`, `<embed>`, `<base>`, or\n  `<meta http-equiv>`. A link navigates the page's own frame and cannot open a\n  new window, so show URLs as text when readers need them elsewhere.\n\n## Tools\n\nReads run anywhere, including inside `execute_code`:\n\n- `list_artifacts { query?, includeArchived?, limit?, cursor? }` — check for an\n  existing page before creating one.\n- `get_artifact { id, version?, includeSource? }` — the view, its history, its\n  documents' versions, `revision`, `url`, and `snapshotUrl`.\n- `get_document { id, name, version? }` — one document's value and history.\n- `get_refresh { id }` — the configured program, schedule, freshness, and the\n  latest 20 run records. Logs and failure messages are for agents, not readers.\n- `validate_artifact { kind, source, documents? }` — every check a save runs without saving. **Validate before you save**; each error names a line and\n  the fix.\n\nWrites make new versions and never ask for approval inside `execute_code`\n(unless this deployment turned that off); each one spends the program's write\nbudget. At the top level, `call_tool` refuses them — use\n`call_destructive_tool`.\n\n- `create_artifact { id, title, kind, source, documents? }` — `id` is the\n  page's URL slug (lowercase letters, digits, hyphens). `documents` maps each\n  name straight to its value, `{ \"data\": { \"rows\": [...] } }`; supply\n  everything the first render needs in the same call.\n- `patch_artifact { id, baseVersion, edits: [{ find, replace }] }` — **prefer\n  this for small edits** such as a title or a label. Each `find` must occur\n  exactly once in the current source (include surrounding text if it would\n  match twice); every edit applies at once, and if any fails nothing changes.\n- `update_artifact { id, baseVersion, source, title? }` — replace the whole\n  source.\n- `set_documents { id, documents: { <name>: { baseVersion, value } } }` — set\n  several documents atomically; `baseVersion: 0` creates one, `value: null`\n  removes one.\n- `set_refresh { id, document, program, schedule, baseVersion }` — version a\n  complete `execute_code` async-arrow program returning the document's JSON\n  value. `schedule` is `manual`, `daily`, or `weekly`; use `baseVersion: 0`\n  for the first program, then the version from `get_refresh`. It can call\n  only explicitly read-only tools on shared connectors. Personal connectors\n  and writes fail the run even if the program catches the refusal. A failed\n  run keeps the last good document and marks the page stale.\n- `run_refresh { id }` — trigger one run now through\n  `call_destructive_tool`. It cannot run inside `execute_code` because that\n  would hold an executor permit while asking for another.\n- `rollback_artifact { id, target: \"view\" | \"document\", name?, version, baseVersion }`\n  — a new version with an old body; history is never rewritten.\n- `archive_artifact` / `restore_artifact { id, baseRevision }` — hide a page\n  from the library, or bring it back. Archived pages refuse writes.\n\n## Versions and conflicts\n\nEvery write names what it expects to replace: `baseVersion` is the current\nview version (or the document's version), `baseRevision` the artifact's\nrevision, all from `get_artifact`/`get_document`. If someone changed it\nfirst, the write fails with code `conflict` and nothing is saved; the error's\n`current` (`err.details.current` in a program) says where things stand.\nRe-read, reapply your change, and retry with the new base. Never retry the\nsame call unchanged.\n\n## Sharing\n\n`url` is the page as it is now; share that. `snapshotUrl` pins the view and\nevery document to their current versions, for \"as of\" links. Both are for the\nteam only.\n\n## Limits\n\n| What | Limit |\n| --- | --- |\n| Page source | 1 MiB |\n| One document, serialized | 512 KiB |\n| Documents per artifact | 16 |\n| Distinct document names over its lifetime | 64 (removed names keep their v… [484 more chars]",
+     "chars": 6484
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-3a4343e7-9eb4-4dbf-aca0-f40f50844949",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const a=connecta.search({connector:'artifacts',query:'list_artifacts',includeSchemas:'json'}); const t=connecta.search({connector:'tracker',query:'search issues projects',includeSchemas:'json'}); const [ar,tr]=await Promise.all([a,t]); const at=ar.tools[0]; const av=await connecta.call(at.address,{query:'open-bugs'}); return {artifactTools:ar.tools,trackerTools:tr.tools,artifactResult:av}; }"
+     },
+     "inputChars": 419
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-3a4343e7-9eb4-4dbf-aca0-f40f50844949",
+     "isError": false,
+     "text": "{\"result\":{\"artifactTools\":[{\"name\":\"list_artifacts\",\"address\":\"artifacts.list_artifacts\",\"description\":\"List artifacts in id order, with each one's url; query searches titles and ids.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"maxLength\":200,\"description\":\"Case-insensitive title or id substring.\"},\"includeArchived\":{\"type\":\"boolean\",\"description\":\"Include archived artifacts. Default false.\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"description\":\"Default 50.\"},\"cursor\":{\"type\":\"string\",\"maxLength\":64,\"description\":\"nextCursor from the previous page.\"}},\"additionalProperties\":false},\"outputSchema\":{\"type\":\"object\",\"properties\":{\"artifacts\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"viewVersion\":{\"type\":\"integer\"},\"revision\":{\"type\":\"integer\"},\"updatedAt\":{\"type\":\"string\"},\"updatedBy\":{\"type\":\"object\"},\"archived\":{\"type\":\"boolean\"},\"url\":{\"type\":\"string\"},\"freshness\":{\"type\":\"object\"}}}},\"nextCursor\":{\"type\":\"string\"}}},\"inputKeys\":[\"query\",\"includeArchived\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"outputKeys\":[\"artifacts\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true},\"connectorTitle\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\"}],\"trackerTools\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"description\":\"List tracker projects with their keys and open issue counts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"create_issue\",\"address\":\"tracker.create_issue\",\"description\":\"Create an issue in a project.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"title\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"project\",\"title\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"title\",\"label\"],\"requiredInputKeys\":[\"project\",\"title\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"get_issue\",\"address\":\"tracker.get_issue\",\"description\":\"Get one issue with its comments.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key, e.g. WEB-101\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"close_issue\",\"address\":\"tracker.close_issue\",\"description\":\"Close an issue, optionally leaving a closing comment.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key\"},\"comment\":{\"description\":\"Closing comment\",\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"comment\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"delete_issue\",\"address\":\"tracker.delete_issue\",\"description\":\"Permanently delete an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"add_comment\",\"address\":\"tracker.add_comment\",\"description\":\"Add a comment to an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"id\",\"body\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"body\"],\"requiredInputKeys\":[\"id\",\"body\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"}],\"artifactResult\":{\"artifacts\":[{\"id\":\"open-bugs\",\"title\":\"Open bugs\",\"kind\":\"html\",\"viewVersion\":1,\"revision\":1,\"updatedAt\":\"2026-09-25T05:33:16.827Z\",\"updatedBy\":{\"kind\":\"unknown\"},\"archived\":false,\"url\":\"http://127.0.0.1:62148/artifacts/open-bugs\",\"freshness\":{\"state\":\"unconfigured\"}}]}}}",
+     "chars": 5575
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-4f43c100-7b4e-4c27-80e7-eec894aa4ae4",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const q=['get_artifact','get_document','get_refresh'].map(query=>connecta.search({connector:'artifacts',query,includeSchemas:'json'})); const s=await Promise.all(q); const a=s.map(x=>x.tools[0]); const [page,refresh,projects,issues]=await Promise.all([connecta.call(a[0].address,{id:'open-bugs',includeSource:true}),connecta.call(a[2].address,{id:'open-bugs'}),connecta.call('tracker.list_projects',{}),connecta.call('tracker.search_issues',{status:'open',label:'bug',limit:50})]); return {tools:a,page,refresh,projects,issuesSample:issues}; }"
+     },
+     "inputChars": 568
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-4f43c100-7b4e-4c27-80e7-eec894aa4ae4",
+     "isError": false,
+     "text": "{\"result\":{\"tools\":[{\"name\":\"get_artifact\",\"address\":\"artifacts.get_artifact\",\"description\":\"Read an artifact: its view source and history, document versions, revision, url, and snapshotUrl.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64},\"version\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"A past view version. Default: the current one.\"},\"includeSource\":{\"type\":\"boolean\",\"description\":\"Return the view source. Default true.\"}},\"additionalProperties\":false},\"outputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"revision\":{\"type\":\"integer\"},\"archived\":{\"type\":\"boolean\"},\"url\":{\"type\":\"string\"},\"snapshotUrl\":{\"type\":\"string\"},\"view\":{\"type\":\"object\"},\"documents\":{\"type\":\"array\"},\"history\":{\"type\":\"array\"},\"freshness\":{\"type\":\"object\"}}},\"inputKeys\":[\"id\",\"version\",\"includeSource\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"kind\",\"revision\",\"archived\",\"url\",\"snapshotUrl\",\"view\",\"documents\",\"history\",\"freshness\"],\"annotations\":{\"readOnlyHint\":true},\"connectorTitle\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\"},{\"name\":\"get_document\",\"address\":\"artifacts.get_document\",\"description\":\"Read one data document's value, at its current or a past version, with its history.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\",\"name\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64},\"name\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64},\"version\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"A past version. Default: the current one.\"}},\"additionalProperties\":false},\"outputSchema\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"version\":{\"type\":\"integer\"},\"value\":{},\"by\":{\"type\":\"object\"},\"at\":{\"type\":\"string\"},\"history\":{\"type\":\"array\"}}},\"inputKeys\":[\"id\",\"name\",\"version\"],\"requiredInputKeys\":[\"id\",\"name\"],\"outputKeys\":[\"name\",\"version\",\"value\",\"by\",\"at\",\"history\"],\"annotations\":{\"readOnlyHint\":true},\"connectorTitle\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\"},{\"name\":\"get_refresh\",\"address\":\"artifacts.get_refresh\",\"description\":\"Read an artifact's refresh program, schedule, freshness, and recent run history.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64}},\"additionalProperties\":false},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true},\"connectorTitle\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\"}],\"page\":{\"id\":\"open-bugs\",\"title\":\"Open bugs\",\"kind\":\"html\",\"revision\":1,\"archived\":false,\"url\":\"http://127.0.0.1:62148/artifacts/open-bugs\",\"snapshotUrl\":\"http://127.0.0.1:62148/artifacts/open-bugs/v/1?d=data:1\",\"view\":{\"version\":1,\"source\":\"<!doctype html>\\n<html lang=\\\"en\\\"><head><meta charset=\\\"utf-8\\\"><title>Open bugs</title>\\n<style>.bar{background:#2f5fe0;color:#fff;margin:4px 0;padding:2px 6px}</style></head>\\n<body><main id=\\\"artifact-root\\\">\\n<h1>Open bugs</h1>\\n<section class=\\\"chart\\\"><h2 class=\\\"chart-title\\\">Bugs by team</h2><div id=\\\"bars\\\"></div></section>\\n<p>Counts come from the tracker.</p>\\n</main>\\n<script>\\nconst data = window.artifact.data.data;\\ndocument.getElementById('bars').innerHTML = data.projects\\n  .map((p) => '<div class=\\\"bar\\\" style=\\\"width:' + p.openBugs * 40 + 'px\\\">' + p.project + ' ' + p.openBugs + '</div>')\\n  .join('');\\n</script></body></html>\",\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:33:16.827Z\",\"op\":\"create\"},\"documents\":[{\"name\":\"data\",\"version\":1,\"bytes\":110,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:33:16.827Z\"}],\"history\":[{\"version\":1,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:33:16.827Z\",\"op\":\"create\"}],\"freshness\":{\"state\":\"unconfigured\"}},\"refresh\":{\"id\":\"open-bugs\",\"freshness\":{\"state\":\"unconfigured\"},\"runs\":[]},\"projects\":{\"projects\":[{\"id\":\"web\",\"key\":\"WEB\",\"name\":\"Web\",\"openIssues\":13},{\"id\":\"api\",\"key\":\"API\",\"name\":\"API\",\"openIssues\":9},{\"id\":\"mobile\",\"key\":\"MOB\",\"name\":\"Mobile\",\"openIssues\":8}]},\"issuesSample\":{\"issues\":[{\"id\":\"WEB-101\",\"project\":\"web\",\"title\":\"Checkout button unresponsive on Safari\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-22T05:33:16.824Z\"},{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:33:16.824Z\"},{\"id\":\"WEB-106\",\"project\":\"web\",\"title\":\"Invoice PDF is missing the VAT line\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"soylent.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-13T05:33:16.824Z\"},{\"id\":\"WEB-108\",\"project\":\"web\",\"title\":\"Search debounce is too aggressive\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-28T05:33:16.824Z\"},{\"id\":\"WEB-110\",\"project\":\"web\",\"title\":\"Session expires during checkout\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"eli\",\"updatedAt\":\"2026-08-16T05:33:16.824Z\"},{\"id\":\"WEB-112\",\"project\":\"web\",\"title\":\"Avatar upload fails for HEIC images\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ben\",\"updatedAt\":\"2026-09-17T05:33:16.824Z\"},{\"id\":\"WEB-116\",\"project\":\"web\",\"title\":\"Footer overlaps content on small screens\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ana\",\"updatedAt\":\"2026-09-24T05:33:16.824Z\"},{\"id\":\"API-207\",\"project\":\"api\",\"title\":\"Bulk import times out above 10k rows\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"stark.com\",\"assignee\":\"chioma… [791 more chars]",
+     "chars": 6791
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-59366580-c601-457e-94b6-349ffac97479",
+     "tool": "call_tool",
+     "input": {
+      "address": "artifacts.get_document",
+      "args": {
+       "id": "open-bugs",
+       "name": "data"
+      },
+      "resultMode": "value"
+     },
+     "inputChars": 97
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-59366580-c601-457e-94b6-349ffac97479",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"name\":\"data\",\"version\":1,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":7},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:33:16.827Z\",\"history\":[{\"version\":1,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:33:16.827Z\",\"op\":\"create\"}]},\"durationMs\":1,\"attempts\":1}",
+     "chars": 345
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-67fd258e-11f1-40a9-9290-8cce9eb414b3",
+     "tool": "search_tools",
+     "input": {
+      "connector": "artifacts",
+      "query": "set_refresh",
+      "includeSchemas": "json",
+      "safety": "approvalRequired"
+     },
+     "inputChars": 99
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-67fd258e-11f1-40a9-9290-8cce9eb414b3",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"set_refresh\",\"address\":\"artifacts.set_refresh\",\"description\":\"Attach or replace a read-only refresh program for one data document. Pass the current refresh baseVersion (0 if absent).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64},\"document\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64},\"program\":{\"type\":\"string\"},\"schedule\":{\"type\":\"string\",\"enum\":[\"manual\",\"daily\",\"weekly\"]},\"baseVersion\":{\"type\":\"integer\",\"minimum\":0}},\"additionalProperties\":false},\"inputKeys\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"requiredInputKeys\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 1245
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-7ea7e664-e5b2-4c46-9ffd-843458856984",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "artifacts.set_refresh",
+      "args": {
+       "id": "open-bugs",
+       "document": "data",
+       "program": "async () => {\n  const projectsResult = await connecta.call('tracker.list_projects', {});\n  if (!Array.isArray(projectsResult.projects)) throw new Error('Tracker projects unavailable');\n  const projects = await Promise.all(projectsResult.projects.map(async (project) => {\n    if (typeof project.id !== 'string') throw new Error('Tracker project id missing');\n    const result = await connecta.call('tracker.search_issues', {\n      project: project.id,\n      status: 'open',\n      label: 'bug',\n      limit: 1\n    });\n    if (!Number.isSafeInteger(result.total) || result.total < 0) {\n      throw new Error('Tracker bug count unavailable for ' + project.id);\n    }\n    return { project: project.id, openBugs: result.total };\n  }));\n  return { projects };\n}",
+       "schedule": "weekly",
+       "baseVersion": 0
+      },
+      "reason": "Configure the existing data document to refresh open bug counts from the issue tracker each week without changing the HTML.",
+      "resultMode": "value"
+     },
+     "inputChars": 1055
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-7ea7e664-e5b2-4c46-9ffd-843458856984",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"id\":\"open-bugs\",\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:33:50.991Z\"}},\"durationMs\":1,\"attempts\":1}",
+     "chars": 189
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-10fc4673-7f8f-49a2-8fbd-bb2174d48ab7",
+     "tool": "search_tools",
+     "input": {
+      "connector": "artifacts",
+      "query": "run_refresh",
+      "includeSchemas": "json",
+      "safety": "approvalRequired"
+     },
+     "inputChars": 99
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-10fc4673-7f8f-49a2-8fbd-bb2174d48ab7",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"run_refresh\",\"address\":\"artifacts.run_refresh\",\"description\":\"Trigger one configured refresh now. Only shared connectors' explicitly read-only tools may run.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64}},\"additionalProperties\":false},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 867
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-9fb43a27-9556-4254-8a98-8176a4be3faf",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "artifacts.run_refresh",
+      "args": {
+       "id": "open-bugs"
+      },
+      "reason": "Run the new weekly refresh once to verify it updates the data document correctly.",
+      "resultMode": "value"
+     },
+     "inputChars": 175
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-9fb43a27-9556-4254-8a98-8176a4be3faf",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"status\":\"succeeded\",\"runId\":\"7287f632-eba0-44a6-ae0b-515137af38b5\",\"documentVersion\":2},\"durationMs\":25,\"attempts\":1}",
+     "chars": 137
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-6a19880e-b4d5-4582-bf57-0bf4491543ee",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [page,document,refresh]=await Promise.all([connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:false}),connecta.call('artifacts.get_document',{id:'open-bugs',name:'data'}),connecta.call('artifacts.get_refresh',{id:'open-bugs'})]); return {viewVersion:page.view.version,documentVersion:document.version,value:document.value,freshness:refresh.freshness,lastRun:refresh.runs?.[0],url:page.url}; }"
+     },
+     "inputChars": 441
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-6a19880e-b4d5-4582-bf57-0bf4491543ee",
+     "isError": false,
+     "text": "{\"result\":{\"viewVersion\":1,\"documentVersion\":2,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":7},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:33:56.092Z\",\"last\":{\"runId\":\"7287f632-eba0-44a6-ae0b-515137af38b5\",\"at\":\"2026-09-25T05:33:56.092Z\",\"status\":\"succeeded\",\"documentVersion\":2}},\"lastRun\":{\"runId\":\"7287f632-eba0-44a6-ae0b-515137af38b5\",\"startedAt\":\"2026-09-25T05:33:56.068Z\",\"status\":\"succeeded\",\"trigger\":{\"manual\":{\"kind\":\"bearer\",\"id\":\"operator\"}},\"programVersion\":1,\"documentVersion\":2,\"finishedAt\":\"2026-09-25T05:33:56.092Z\"},\"url\":\"http://127.0.0.1:62148/artifacts/open-bugs\"}}",
+     "chars": 724
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "The [open-bugs page](http://127.0.0.1:62148/artifacts/open-bugs) is configured to refresh its data document weekly from the issue tracker. I ran the refresh once successfully and verified that the HTML remains unchanged."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    },
+    {
+     "kind": "operator",
+     "turn": 1,
+     "text": "A new web bug appeared; the weekly schedule became due and the deployment ran due refreshes."
+    },
+    {
+     "kind": "user",
+     "turn": 2,
+     "text": "The weekly tick ran after a new web bug arrived. Did the page's data update?"
+    },
+    {
+     "kind": "tool_use",
+     "turn": 2,
+     "id": "exec-a02476c3-93ff-47f6-ae56-be0bcaad4cef",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [document,refresh,bugs]=await Promise.all([connecta.call('artifacts.get_document',{id:'open-bugs',name:'data'}),connecta.call('artifacts.get_refresh',{id:'open-bugs'}),connecta.call('tracker.search_issues',{project:'web',status:'open',label:'bug',limit:1})]); return {document:{version:document.version,value:document.value,at:document.at},refresh:{freshness:refresh.freshness,runs:refresh.runs?.slice(0,3)},trackerWebOpenBugs:bugs.total}; }"
+     },
+     "inputChars": 472
+    },
+    {
+     "kind": "tool_result",
+     "turn": 2,
+     "id": "exec-a02476c3-93ff-47f6-ae56-be0bcaad4cef",
+     "isError": false,
+     "text": "{\"result\":{\"document\":{\"version\":3,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":8},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"at\":\"2026-09-25T05:34:03.488Z\"},\"refresh\":{\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:34:03.490Z\",\"last\":{\"runId\":\"dc95b883-4091-427a-a55c-57146865356e\",\"at\":\"2026-09-25T05:34:03.490Z\",\"status\":\"succeeded\",\"documentVersion\":3}},\"runs\":[{\"runId\":\"dc95b883-4091-427a-a55c-57146865356e\",\"startedAt\":\"2026-09-25T05:34:03.461Z\",\"status\":\"succeeded\",\"trigger\":\"schedule\",\"programVersion\":1,\"documentVersion\":3,\"finishedAt\":\"2026-09-25T05:34:03.490Z\"},{\"runId\":\"7287f632-eba0-44a6-ae0b-515137af38b5\",\"startedAt\":\"2026-09-25T05:33:56.068Z\",\"status\":\"succeeded\",\"trigger\":{\"manual\":{\"kind\":\"bearer\",\"id\":\"operator\"}},\"programVersion\":1,\"documentVersion\":2,\"finishedAt\":\"2026-09-25T05:33:56.092Z\"}]},\"trackerWebOpenBugs\":8}}",
+     "chars": 937
+    },
+    {
+     "kind": "assistant",
+     "turn": 2,
+     "text": "Yes. The scheduled refresh succeeded and updated the data document to version 3. The page now has **8 open web bugs**, matching the issue tracker (up from 7). API remains at 3 and mobile at 2."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 2,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 5,
+     "at": 1790314414283,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 7,
+     "at": 1790314414285,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 2234
+    },
+    {
+     "seq": 10,
+     "at": 1790314436082,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 12,
+     "at": 1790314436086,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 14,
+     "at": 1790314436088,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 16,
+     "at": 1790314436089,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 19,
+     "at": 1790314443476,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 21,
+     "at": 1790314443482,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 23,
+     "at": 1790314443484,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 25,
+     "at": 1790314443486,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 28,
+     "at": 1790314448428,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success",
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__authorize_connector",
+     "mcp__connecta__get_result",
+     "mcp__connecta__call_tool",
+     "mcp__connecta__skills",
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__execute_code"
+    ]
+   },
+   "startedAt": "2026-09-25T05:33:16.824Z"
+  },
+  {
+   "task": "p2-refresh-weekly",
+   "model": "gpt-6-sol",
+   "repeat": 3,
+   "status": "fail",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success, success"
+    },
+    {
+     "id": "weekly-program",
+     "description": "one weekly program targets the data document",
+     "pass": true
+    },
+    {
+     "id": "one-refresh-run",
+     "description": "the due tick produced one successful data version",
+     "pass": false
+    },
+    {
+     "id": "updated-counts",
+     "description": "the refreshed document reflects the new tracker state",
+     "pass": true
+    },
+    {
+     "id": "view-untouched",
+     "description": "refresh did not rewrite the HTML view",
+     "pass": true
+    },
+    {
+     "id": "read-only",
+     "description": "the refresh sent no downstream write",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 60437,
+    "conversationTurns": 2,
+    "tokens": {
+     "input": 270592,
+     "output": 1737,
+     "cacheRead": 244224,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "search_tools": 3,
+     "skills": 1,
+     "execute_code": 5,
+     "call_tool": 1,
+     "call_destructive_tool": 2
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 14,
+     "writes": 0,
+     "duplicateReads": 9,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "tracker.list_projects": 3,
+      "tracker.search_issues": 11
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "artifacts.set_refresh",
+      "reason": "Configure the existing open-bugs data document to refresh weekly from read-only tracker counts without changing its HTML.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "artifacts.run_refresh",
+      "reason": "Run the newly configured weekly refresh once to verify its tracker counts and populate the data document.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Make the open-bugs page refresh its data document weekly from the issue tracker. The page shows open bug counts per project. Keep its HTML as it is."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-725b19dd-f4cc-4d58-9d16-ab5de4c11ba9",
+     "tool": "search_tools",
+     "input": {
+      "connector": "artifacts",
+      "query": "search list files documents pages",
+      "includeSchemas": "compact"
+     },
+     "inputChars": 96
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-725b19dd-f4cc-4d58-9d16-ab5de4c11ba9",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"list_artifacts\",\"address\":\"artifacts.list_artifacts\",\"description\":\"List artifacts in id order, with each one's url; query searches titles and ids.\",\"inputSchema\":\"{ query?: string /* length <= 200 */, includeArchived?: boolean, limit?: integer /* >= 1; <= 100 */, cursor?: string /* length <= 64 */ }\",\"outputSchema\":\"{ artifacts?: { id?: string, title?: string, kind?: string, viewVersion?: integer, revision?: integer, updatedAt?: string, updatedBy?: {}, archived?: boolean, url?: string, freshness?: {} }[], nextCursor?: string }\",\"inputKeys\":[\"query\",\"includeArchived\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"outputKeys\":[\"artifacts\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"set_documents\",\"address\":\"artifacts.set_documents\",\"description\":\"Set, create (baseVersion 0), or remove (value null) data documents, atomically.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, documents: {} }\",\"inputKeys\":[\"id\",\"documents\"],\"requiredInputKeys\":[\"id\",\"documents\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"validate_artifact\",\"address\":\"artifacts.validate_artifact\",\"description\":\"Check a page and sample documents exactly as a save would, without saving. Errors name a line and the fix.\",\"inputSchema\":\"{ kind: \\\"html\\\" | \\\"markdown\\\", source: string, documents?: {} }\",\"outputSchema\":\"{ ok?: boolean, errors?: unknown[], warnings?: unknown[], errorsOmitted?: integer, renderCheck?: {} }\",\"inputKeys\":[\"kind\",\"source\",\"documents\"],\"requiredInputKeys\":[\"kind\",\"source\"],\"outputKeys\":[\"ok\",\"errors\",\"warnings\",\"errorsOmitted\",\"renderCheck\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"create_artifact\",\"address\":\"artifacts.create_artifact\",\"description\":\"Publish a new page. Put its numbers in documents (the page's script reads each as window.artifact.data.<name>), not in the HTML. Validate it first.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, title: string /* length >= 1; length <= 1000 */, kind: \\\"html\\\" | \\\"markdown\\\", source: string, documents?: {} }\",\"inputKeys\":[\"id\",\"title\",\"kind\",\"source\",\"documents\"],\"requiredInputKeys\":[\"id\",\"title\",\"kind\",\"source\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"get_document\",\"address\":\"artifacts.get_document\",\"description\":\"Read one data document's value, at its current or a past version, with its history.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, name: string /* length >= 1; length <= 64 */, version?: integer /* >= 1 */ }\",\"outputSchema\":\"{ name?: string, version?: integer, value?: {}, by?: {}, at?: string, history?: unknown[] }\",\"inputKeys\":[\"id\",\"name\",\"version\"],\"requiredInputKeys\":[\"id\",\"name\"],\"outputKeys\":[\"name\",\"version\",\"value\",\"by\",\"at\",\"history\"],\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"update_artifact\",\"address\":\"artifacts.update_artifact\",\"description\":\"Replace a page's whole source (and optionally its title). For small edits use patch_artifact.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, baseVersion: integer /* >= 1 */, source: string, title?: string /* length >= 1; length <= 1000 */ }\",\"inputKeys\":[\"id\",\"baseVersion\",\"source\",\"title\"],\"requiredInputKeys\":[\"id\",\"baseVersion\",\"source\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"patch_artifact\",\"address\":\"artifacts.patch_artifact\",\"description\":\"Edit a page by exact find-and-replace: each find must match once, all apply at once, or nothing changes.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, baseVersion: integer /* >= 1 */, edits: { find: string /* length >= 1 */, replace: string }[] }\",\"inputKeys\":[\"id\",\"baseVersion\",\"edits\"],\"requiredInputKeys\":[\"id\",\"baseVersion\",\"edits\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"get_artifact\",\"address\":\"artifacts.get_artifact\",\"description\":\"Read an artifact: its view source and history, document versions, revision, url, and snapshotUrl.\",\"inputSchema\":\"{ id: string /* length >= 1; length <= 64 */, version?: integer /* >= 1 */, includeSource?: boolean }\",\"outputSchema\":\"{ id?: string, title?: string, kind?: string, revision?: integer, archived?: boolean, url?: string, snapshotUrl?: string, view?: {}, documents?: unknown[], history?: unknown[], freshness?: {} }\",\"inputKeys\":[\"id\",\"version\",\"includeSource\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"kind\",\"revision\",\"archived\",\"url\",\"snapshotUrl\",\"view\",\"documents\",\"history\",\"freshness\"],\"annotations\":{\"readOnlyHint\":true}}]}],\"total\":10,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"search\",\"list\",\"documents\",\"pages\"],\"otherResultTerms\":[],\"unmatchedTerms\":[\"files\"],\"connectorScope\":\"artifacts\",\"guidance\":\"No single tool on connector \\\"artifacts\\\" matched every term. Split distinct intents into separate searches.\"}}",
+     "chars": 5616
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-b012ba4e-4f1a-4549-adc2-da84d7164813",
+     "tool": "skills",
+     "input": {
+      "name": "connector:artifacts"
+     },
+     "inputChars": 30
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-b012ba4e-4f1a-4549-adc2-da84d7164813",
+     "isError": false,
+     "text": "# Artifacts\n\nArtifacts are team pages that outlive a chat: dashboards, reports, plans. A page\nis self-contained HTML or Markdown; the numbers it shows live in named JSON\n**documents** that the page reads from a read-only global. Every write makes a\nnew immutable version, attributed to you, and any version can be rolled back.\nOnly people who can read this connector can open a page.\n\n## Writing a page\n\n- **HTML** (`kind: \"html\"`): a complete document starting `<!doctype html>`,\n  with exactly one element `id=\"artifact-root\"` (usually\n  `<main id=\"artifact-root\">`) holding the content.\n- **Markdown** (`kind: \"markdown\"`): headings, lists, tables, code, links, and\n  `data:` images. Raw HTML shows as text. Markdown pages cannot read data.\n- **Data**: a script reads `window.artifact.data.<name>` — each document by\n  name, already parsed and frozen. `window.artifact` also has `id`, `title`,\n  `view.version`, `documents.<name>.{version, updatedAt}`, and `snapshot`.\n  Document names are identifiers: letters, digits, `_`.\n- **Keep data out of the HTML.** Put every figure in a document and render it\n  from script; then fixing a number is `set_documents`, not a page rewrite,\n  and a refresh can replace the data without touching the view.\n\nPages run sandboxed in their own origin, so some things cannot work there:\n\n- **No network.** `fetch`, XHR, WebSocket, and beacons fail. Read\n  `window.artifact.data` instead.\n- **External scripts** load only from none. None are\n  allowed by default; an operator must opt in to each trusted origin. A script\n  can read this page's data. When allowed, use https and pin an exact version\n  (`https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js`).\n  Libraries that need `eval` or `new Function` do not run. Inline\n  `<script>` is fine.\n- **External stylesheets** load only from none; fonts\n  from none or `data:`. Both origin lists default to\n  empty. Trusted script, style, and font origins may receive page data in\n  request URLs. Inline `<style>` is fine.\n- **Images** are `data:` URLs or inline SVG. Nothing relative: a page has no\n  files beside it.\n- No `<iframe>`, `<form>`, `<object>`, `<embed>`, `<base>`, or\n  `<meta http-equiv>`. A link navigates the page's own frame and cannot open a\n  new window, so show URLs as text when readers need them elsewhere.\n\n## Tools\n\nReads run anywhere, including inside `execute_code`:\n\n- `list_artifacts { query?, includeArchived?, limit?, cursor? }` — check for an\n  existing page before creating one.\n- `get_artifact { id, version?, includeSource? }` — the view, its history, its\n  documents' versions, `revision`, `url`, and `snapshotUrl`.\n- `get_document { id, name, version? }` — one document's value and history.\n- `get_refresh { id }` — the configured program, schedule, freshness, and the\n  latest 20 run records. Logs and failure messages are for agents, not readers.\n- `validate_artifact { kind, source, documents? }` — every check a save runs without saving. **Validate before you save**; each error names a line and\n  the fix.\n\nWrites make new versions and never ask for approval inside `execute_code`\n(unless this deployment turned that off); each one spends the program's write\nbudget. At the top level, `call_tool` refuses them — use\n`call_destructive_tool`.\n\n- `create_artifact { id, title, kind, source, documents? }` — `id` is the\n  page's URL slug (lowercase letters, digits, hyphens). `documents` maps each\n  name straight to its value, `{ \"data\": { \"rows\": [...] } }`; supply\n  everything the first render needs in the same call.\n- `patch_artifact { id, baseVersion, edits: [{ find, replace }] }` — **prefer\n  this for small edits** such as a title or a label. Each `find` must occur\n  exactly once in the current source (include surrounding text if it would\n  match twice); every edit applies at once, and if any fails nothing changes.\n- `update_artifact { id, baseVersion, source, title? }` — replace the whole\n  source.\n- `set_documents { id, documents: { <name>: { baseVersion, value } } }` — set\n  several documents atomically; `baseVersion: 0` creates one, `value: null`\n  removes one.\n- `set_refresh { id, document, program, schedule, baseVersion }` — version a\n  complete `execute_code` async-arrow program returning the document's JSON\n  value. `schedule` is `manual`, `daily`, or `weekly`; use `baseVersion: 0`\n  for the first program, then the version from `get_refresh`. It can call\n  only explicitly read-only tools on shared connectors. Personal connectors\n  and writes fail the run even if the program catches the refusal. A failed\n  run keeps the last good document and marks the page stale.\n- `run_refresh { id }` — trigger one run now through\n  `call_destructive_tool`. It cannot run inside `execute_code` because that\n  would hold an executor permit while asking for another.\n- `rollback_artifact { id, target: \"view\" | \"document\", name?, version, baseVersion }`\n  — a new version with an old body; history is never rewritten.\n- `archive_artifact` / `restore_artifact { id, baseRevision }` — hide a page\n  from the library, or bring it back. Archived pages refuse writes.\n\n## Versions and conflicts\n\nEvery write names what it expects to replace: `baseVersion` is the current\nview version (or the document's version), `baseRevision` the artifact's\nrevision, all from `get_artifact`/`get_document`. If someone changed it\nfirst, the write fails with code `conflict` and nothing is saved; the error's\n`current` (`err.details.current` in a program) says where things stand.\nRe-read, reapply your change, and retry with the new base. Never retry the\nsame call unchanged.\n\n## Sharing\n\n`url` is the page as it is now; share that. `snapshotUrl` pins the view and\nevery document to their current versions, for \"as of\" links. Both are for the\nteam only.\n\n## Limits\n\n| What | Limit |\n| --- | --- |\n| Page source | 1 MiB |\n| One document, serialized | 512 KiB |\n| Documents per artifact | 16 |\n| Distinct document names over its lifetime | 64 (removed names keep their v… [484 more chars]",
+     "chars": 6484
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-90f9a9fa-5da0-4c57-888d-436d20dd5f86",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const a=connecta.search({connector:'artifacts',query:'list_artifacts',includeSchemas:'json'}); const b=connecta.search({connector:'artifacts',query:'get_refresh',includeSchemas:'json'}); const c=connecta.search({connector:'tracker',query:'search issues bugs projects',includeSchemas:'json'}); const s=await Promise.all([a,b,c]); const x=await connecta.call('artifacts.list_artifacts',{query:'open-bugs'}); return {catalog:s,artifacts:x}; }"
+     },
+     "inputChars": 464
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-90f9a9fa-5da0-4c57-888d-436d20dd5f86",
+     "isError": false,
+     "text": "{\"result\":{\"catalog\":[{\"tools\":[{\"name\":\"list_artifacts\",\"address\":\"artifacts.list_artifacts\",\"description\":\"List artifacts in id order, with each one's url; query searches titles and ids.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"maxLength\":200,\"description\":\"Case-insensitive title or id substring.\"},\"includeArchived\":{\"type\":\"boolean\",\"description\":\"Include archived artifacts. Default false.\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"description\":\"Default 50.\"},\"cursor\":{\"type\":\"string\",\"maxLength\":64,\"description\":\"nextCursor from the previous page.\"}},\"additionalProperties\":false},\"outputSchema\":{\"type\":\"object\",\"properties\":{\"artifacts\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"viewVersion\":{\"type\":\"integer\"},\"revision\":{\"type\":\"integer\"},\"updatedAt\":{\"type\":\"string\"},\"updatedBy\":{\"type\":\"object\"},\"archived\":{\"type\":\"boolean\"},\"url\":{\"type\":\"string\"},\"freshness\":{\"type\":\"object\"}}}},\"nextCursor\":{\"type\":\"string\"}}},\"inputKeys\":[\"query\",\"includeArchived\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"outputKeys\":[\"artifacts\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true},\"connectorTitle\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false},{\"tools\":[{\"name\":\"get_refresh\",\"address\":\"artifacts.get_refresh\",\"description\":\"Read an artifact's refresh program, schedule, freshness, and recent run history.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64}},\"additionalProperties\":false},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true},\"connectorTitle\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false},{\"tools\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"description\":\"List tracker projects with their keys and open issue counts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"create_issue\",\"address\":\"tracker.create_issue\",\"description\":\"Create an issue in a project.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"title\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"project\",\"title\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"title\",\"label\"],\"requiredInputKeys\":[\"project\",\"title\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"get_issue\",\"address\":\"tracker.get_issue\",\"description\":\"Get one issue with its comments.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key, e.g. WEB-101\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"close_issue\",\"address\":\"tracker.close_issue\",\"description\":\"Close an issue, optionally leaving a closing comment.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key\"},\"comment\":{\"description\":\"Closing comment\",\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"comment\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"delete_issue\",\"address\":\"tracker.delete_issue\",\"description\":\"Permanently delete an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"add_comment\",\"address\":\"tracker.add_comment\",\"description\":\"Add a comment to an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"id\",\"body\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"body\"],\"requiredInputKeys\":[\"id\",\"body\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTit… [642 more chars]",
+     "chars": 6642
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-a3bfb133-0a04-4412-82ff-ef14c93cc940",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [a,b,c,d]=await Promise.all([connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:true}),connecta.call('artifacts.get_refresh',{id:'open-bugs'}),connecta.call('tracker.list_projects',{}),connecta.call('tracker.search_issues',{status:'open',label:'bug',limit:2})]); return {artifact:a,refresh:b,projects:c,issuesSample:d}; }"
+     },
+     "inputChars": 370
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-a3bfb133-0a04-4412-82ff-ef14c93cc940",
+     "isError": false,
+     "text": "{\"result\":{\"artifact\":{\"id\":\"open-bugs\",\"title\":\"Open bugs\",\"kind\":\"html\",\"revision\":1,\"archived\":false,\"url\":\"http://127.0.0.1:62310/artifacts/open-bugs\",\"snapshotUrl\":\"http://127.0.0.1:62310/artifacts/open-bugs/v/1?d=data:1\",\"view\":{\"version\":1,\"source\":\"<!doctype html>\\n<html lang=\\\"en\\\"><head><meta charset=\\\"utf-8\\\"><title>Open bugs</title>\\n<style>.bar{background:#2f5fe0;color:#fff;margin:4px 0;padding:2px 6px}</style></head>\\n<body><main id=\\\"artifact-root\\\">\\n<h1>Open bugs</h1>\\n<section class=\\\"chart\\\"><h2 class=\\\"chart-title\\\">Bugs by team</h2><div id=\\\"bars\\\"></div></section>\\n<p>Counts come from the tracker.</p>\\n</main>\\n<script>\\nconst data = window.artifact.data.data;\\ndocument.getElementById('bars').innerHTML = data.projects\\n  .map((p) => '<div class=\\\"bar\\\" style=\\\"width:' + p.openBugs * 40 + 'px\\\">' + p.project + ' ' + p.openBugs + '</div>')\\n  .join('');\\n</script></body></html>\",\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:34:10.986Z\",\"op\":\"create\"},\"documents\":[{\"name\":\"data\",\"version\":1,\"bytes\":110,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:34:10.986Z\"}],\"history\":[{\"version\":1,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:34:10.986Z\",\"op\":\"create\"}],\"freshness\":{\"state\":\"unconfigured\"}},\"refresh\":{\"id\":\"open-bugs\",\"freshness\":{\"state\":\"unconfigured\"},\"runs\":[]},\"projects\":{\"projects\":[{\"id\":\"web\",\"key\":\"WEB\",\"name\":\"Web\",\"openIssues\":13},{\"id\":\"api\",\"key\":\"API\",\"name\":\"API\",\"openIssues\":9},{\"id\":\"mobile\",\"key\":\"MOB\",\"name\":\"Mobile\",\"openIssues\":8}]},\"issuesSample\":{\"issues\":[{\"id\":\"WEB-101\",\"project\":\"web\",\"title\":\"Checkout button unresponsive on Safari\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-22T05:34:10.984Z\"},{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:34:10.984Z\"}],\"total\":12,\"nextCursor\":\"c2\"}}}",
+     "chars": 1942
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-c672b17d-c6a7-47ca-802a-8621606a11f8",
+     "tool": "call_tool",
+     "input": {
+      "address": "artifacts.get_document",
+      "args": {
+       "id": "open-bugs",
+       "name": "data"
+      }
+     },
+     "inputChars": 76
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-c672b17d-c6a7-47ca-802a-8621606a11f8",
+     "isError": false,
+     "text": "{\"name\":\"data\",\"version\":1,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":7},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:34:10.986Z\",\"history\":[{\"version\":1,\"by\":{\"kind\":\"unknown\"},\"at\":\"2026-09-25T05:34:10.986Z\",\"op\":\"create\"}]}",
+     "chars": 298
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-10deedb2-a180-45ec-af10-bc74815120e6",
+     "tool": "search_tools",
+     "input": {
+      "connector": "artifacts",
+      "query": "set_refresh",
+      "includeSchemas": "json"
+     },
+     "inputChars": 71
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-10deedb2-a180-45ec-af10-bc74815120e6",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"set_refresh\",\"address\":\"artifacts.set_refresh\",\"description\":\"Attach or replace a read-only refresh program for one data document. Pass the current refresh baseVersion (0 if absent).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64},\"document\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64},\"program\":{\"type\":\"string\"},\"schedule\":{\"type\":\"string\",\"enum\":[\"manual\",\"daily\",\"weekly\"]},\"baseVersion\":{\"type\":\"integer\",\"minimum\":0}},\"additionalProperties\":false},\"inputKeys\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"requiredInputKeys\":[\"id\",\"document\",\"program\",\"schedule\",\"baseVersion\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"approval\":\"exempt\",\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 1245
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-d76268ea-6c70-4a8c-9192-a248b5df5733",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const projects=['web','api','mobile']; const x=await Promise.all(projects.map(project=>connecta.call('tracker.search_issues',{project,status:'open',label:'bug',limit:1}))); return x.map((v,i)=>({project:projects[i],total:v.total,first:v.issues?.[0]?.id})); }"
+     },
+     "inputChars": 283
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-d76268ea-6c70-4a8c-9192-a248b5df5733",
+     "isError": false,
+     "text": "{\"result\":[{\"project\":\"web\",\"total\":7,\"first\":\"WEB-101\"},{\"project\":\"api\",\"total\":3,\"first\":\"API-207\"},{\"project\":\"mobile\",\"total\":2,\"first\":\"MOB-305\"}]}",
+     "chars": 153
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-cf67780f-d2b8-46dc-b56b-f0b9932e51c9",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "artifacts.set_refresh",
+      "args": {
+       "id": "open-bugs",
+       "document": "data",
+       "program": "async () => {\n  const response = await connecta.call('tracker.list_projects', {});\n  if (!Array.isArray(response.projects)) throw new Error('Tracker projects unavailable');\n  const projects = await Promise.all(response.projects.map(async ({ id }) => {\n    if (typeof id !== 'string') throw new Error('Invalid tracker project');\n    const result = await connecta.call('tracker.search_issues', {\n      project: id, status: 'open', label: 'bug', limit: 1\n    });\n    if (!Number.isInteger(result.total) || result.total < 0) {\n      throw new Error('Invalid open bug count for ' + id);\n    }\n    return { project: id, openBugs: result.total };\n  }));\n  return { projects };\n}",
+       "schedule": "weekly",
+       "baseVersion": 0
+      },
+      "reason": "Configure the existing open-bugs data document to refresh weekly from read-only tracker counts without changing its HTML."
+     },
+     "inputChars": 946
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-cf67780f-d2b8-46dc-b56b-f0b9932e51c9",
+     "isError": false,
+     "text": "{\"id\":\"open-bugs\",\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:34:51.042Z\"}}",
+     "chars": 142
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-c4da09b7-01dd-4450-a8d1-1b5b84c7dba5",
+     "tool": "search_tools",
+     "input": {
+      "connector": "artifacts",
+      "query": "run_refresh",
+      "includeSchemas": "json"
+     },
+     "inputChars": 71
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-c4da09b7-01dd-4450-a8d1-1b5b84c7dba5",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"artifacts\",\"title\":\"Artifacts\",\"guide\":\"connector:artifacts\",\"guideSummary\":\"Publish team pages: validate first, keep data in documents, patch small edits, pass baseVersion, share the url.\",\"tools\":[{\"name\":\"run_refresh\",\"address\":\"artifacts.run_refresh\",\"description\":\"Trigger one configured refresh now. Only shared connectors' explicitly read-only tools may run.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64}},\"additionalProperties\":false},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false,\"openWorldHint\":false},\"guideRequired\":true,\"guideRequiredReasons\":[\"approval_required\"]},{\"name\":\"get_refresh\",\"address\":\"artifacts.get_refresh\",\"description\":\"Read an artifact's refresh program, schedule, freshness, and recent run history.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The artifact's id: its URL slug, e.g. q3-bugs.\",\"minLength\":1,\"maxLength\":64}},\"additionalProperties\":false},\"outputSchema\":{\"type\":\"object\",\"properties\":{\"freshness\":{\"type\":\"object\",\"properties\":{\"state\":{\"type\":\"string\"}}},\"id\":{\"type\":\"string\"},\"runs\":{\"type\":\"array\"}}},\"outputSchemaSource\":\"observed\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"freshness\",\"id\",\"runs\"],\"annotations\":{\"readOnlyHint\":true}}]}],\"total\":2,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 1549
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-6ffb2cb7-ce13-47c7-82f4-d06d488e3c33",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "artifacts.run_refresh",
+      "args": {
+       "id": "open-bugs"
+      },
+      "reason": "Run the newly configured weekly refresh once to verify its tracker counts and populate the data document."
+     },
+     "inputChars": 178
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-6ffb2cb7-ce13-47c7-82f4-d06d488e3c33",
+     "isError": false,
+     "text": "{\"status\":\"succeeded\",\"runId\":\"40d0989d-7515-41f8-9b9c-74e459049cbe\",\"documentVersion\":2}",
+     "chars": 89
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-ef0538f2-9577-4c43-aeea-e955515800ec",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [a,b,c]=await Promise.all([connecta.call('artifacts.get_artifact',{id:'open-bugs',includeSource:false}),connecta.call('artifacts.get_document',{id:'open-bugs',name:'data'}),connecta.call('artifacts.get_refresh',{id:'open-bugs'})]); return {viewVersion:a.view?.version,documentVersion:b.version,value:b.value,freshness:c.freshness,lastRun:c.runs?.[0],url:a.url}; }"
+     },
+     "inputChars": 394
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-ef0538f2-9577-4c43-aeea-e955515800ec",
+     "isError": false,
+     "text": "{\"result\":{\"viewVersion\":1,\"documentVersion\":2,\"value\":{\"projects\":[{\"project\":\"web\",\"openBugs\":7},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:34:57.396Z\",\"last\":{\"runId\":\"40d0989d-7515-41f8-9b9c-74e459049cbe\",\"at\":\"2026-09-25T05:34:57.396Z\",\"status\":\"succeeded\",\"documentVersion\":2}},\"lastRun\":{\"runId\":\"40d0989d-7515-41f8-9b9c-74e459049cbe\",\"startedAt\":\"2026-09-25T05:34:57.375Z\",\"status\":\"succeeded\",\"trigger\":{\"manual\":{\"kind\":\"bearer\",\"id\":\"operator\"}},\"programVersion\":1,\"documentVersion\":2,\"finishedAt\":\"2026-09-25T05:34:57.396Z\"},\"url\":\"http://127.0.0.1:62310/artifacts/open-bugs\"}}",
+     "chars": 724
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "The [open-bugs page](http://127.0.0.1:62310/artifacts/open-bugs) now refreshes its data document weekly from the issue tracker. I ran the refresh once successfully; the HTML remains unchanged."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    },
+    {
+     "kind": "operator",
+     "turn": 1,
+     "text": "A new web bug appeared; the weekly schedule became due and the deployment ran due refreshes."
+    },
+    {
+     "kind": "user",
+     "turn": 2,
+     "text": "The weekly tick ran after a new web bug arrived. Did the page's data update?"
+    },
+    {
+     "kind": "tool_use",
+     "turn": 2,
+     "id": "exec-0f4ec365-0323-46c2-9c64-48904db9b253",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [refresh,document,web]=await Promise.all([connecta.call('artifacts.get_refresh',{id:'open-bugs'}),connecta.call('artifacts.get_document',{id:'open-bugs',name:'data'}),connecta.call('tracker.search_issues',{project:'web',status:'open',label:'bug',limit:1})]); return {freshness:refresh.freshness,runs:refresh.runs?.slice(0,3),documentVersion:document.version,documentAt:document.at,documentValue:document.value,trackerWebOpenBugs:web.total}; }"
+     },
+     "inputChars": 473
+    },
+    {
+     "kind": "tool_result",
+     "turn": 2,
+     "id": "exec-0f4ec365-0323-46c2-9c64-48904db9b253",
+     "isError": false,
+     "text": "{\"result\":{\"freshness\":{\"state\":\"current\",\"schedule\":\"weekly\",\"document\":\"data\",\"programVersion\":1,\"dueAt\":\"2026-10-02T05:35:04.063Z\",\"last\":{\"runId\":\"f32b8fbe-5d8e-45f2-9eb2-3bc825e04f11\",\"at\":\"2026-09-25T05:35:04.063Z\",\"status\":\"succeeded\",\"documentVersion\":3}},\"runs\":[{\"runId\":\"f32b8fbe-5d8e-45f2-9eb2-3bc825e04f11\",\"startedAt\":\"2026-09-25T05:35:04.037Z\",\"status\":\"succeeded\",\"trigger\":\"schedule\",\"programVersion\":1,\"documentVersion\":3,\"finishedAt\":\"2026-09-25T05:35:04.063Z\"},{\"runId\":\"40d0989d-7515-41f8-9b9c-74e459049cbe\",\"startedAt\":\"2026-09-25T05:34:57.375Z\",\"status\":\"succeeded\",\"trigger\":{\"manual\":{\"kind\":\"bearer\",\"id\":\"operator\"}},\"programVersion\":1,\"documentVersion\":2,\"finishedAt\":\"2026-09-25T05:34:57.396Z\"}],\"documentVersion\":3,\"documentAt\":\"2026-09-25T05:35:04.061Z\",\"documentValue\":{\"projects\":[{\"project\":\"web\",\"openBugs\":8},{\"project\":\"api\",\"openBugs\":3},{\"project\":\"mobile\",\"openBugs\":2}]},\"trackerWebOpenBugs\":8}}",
+     "chars": 936
+    },
+    {
+     "kind": "assistant",
+     "turn": 2,
+     "text": "Yes. The scheduled refresh succeeded, and the page’s data document now shows **8 open web bugs**, up from 7. That matches the issue tracker; the API and mobile counts remain 3 and 2."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 2,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 5,
+     "at": 1790314468893,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 7,
+     "at": 1790314468895,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"limit\":2}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 430
+    },
+    {
+     "seq": 10,
+     "at": 1790314483421,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 12,
+     "at": 1790314483422,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 14,
+     "at": 1790314483422,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 17,
+     "at": 1790314497386,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 19,
+     "at": 1790314497391,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 21,
+     "at": 1790314497392,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 23,
+     "at": 1790314497393,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 26,
+     "at": 1790314504050,
+     "service": "tracker",
+     "tool": "list_projects",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 180
+    },
+    {
+     "seq": 28,
+     "at": 1790314504056,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    },
+    {
+     "seq": 30,
+     "at": 1790314504058,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"api\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 235
+    },
+    {
+     "seq": 32,
+     "at": 1790314504060,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"mobile\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 214
+    },
+    {
+     "seq": 35,
+     "at": 1790314509042,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"label\":\"bug\",\"limit\":1}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 236
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success",
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__call_tool",
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__get_result",
+     "mcp__connecta__skills",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__authorize_connector"
+    ]
+   },
+   "startedAt": "2026-09-25T05:34:10.984Z"
+  }
+ ]
+}

@@ -51,3 +51,20 @@ a general reliability guarantee. They did not establish failed tasks caused by
 unawaited host calls. Decision for #598: preserve normal-result semantics and
 the existing cancellation of outstanding work; reconsider a warning when a
 representative failed task shows that it would help. No warning was added.
+
+## Weekly artifact refresh, 2026-09-25
+
+The active `p2-refresh-weekly` task passed 3/3 trials on frozen commit `52f7df8`
+with Codex CLI 0.156.1 and served model `gpt-6-sol`. Each trial configured the
+weekly program, updated the data after the deployment's scheduled tick, left
+the view unchanged, and made no downstream writes or tool errors. The worktree
+stayed clean and unchanged throughout. [Final observations](baselines/codex-weekly-2026-09-25-final.json)
+retain the conversations, calls, and grades.
+
+The [prefreeze run](baselines/codex-weekly-2026-09-25-prefreeze.json) is retained
+as well. Its old grader reported 1/3 passes because two agents also triggered a
+successful manual verification before the scheduled tick. That behavior is
+valid. The corrected grader requires exactly one successful scheduled run and
+allows manual verification; it still verifies changed data, an unchanged view,
+and no downstream writes. The prefreeze worktree changed during that batch,
+so the final frozen run is the release evidence.
