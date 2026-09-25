@@ -56,6 +56,7 @@ for diagnostics.
   call path, including `call_destructive_tool` and approval-exempt programs;
   new names are never added automatically. Existing string grants keep their
   additive meaning, and a pool can still only narrow the identity's view.
+  A stale catalog or a dishonest downstream annotation remains a trust limit.
 
 - **Resumable writes and `resume_execution` (#565).** A program's call to a
   tool that is not explicitly read-only pauses the run before anything is
@@ -129,9 +130,9 @@ for diagnostics.
   find/replace, every edit matching once or nothing changes),
   `set_documents` (plural and atomic), `rollback_artifact`,
   `archive_artifact`, `restore_artifact`, `set_refresh`, and `run_refresh`.
-  Version-changing writes name the base they
-  expects, records who made it from the request's authorization, and skips
-  approval inside `execute_code` through the connector's own `approval:
+  Version-changing writes name their expected base, and every write records
+  its actor from the request's authorization. The connector skips approval
+  inside `execute_code` through its own `approval:
   "never"` — `execute.approval: { artifacts: "ask" }` turns that off — while
   still spending the write budget and recording activity; `call_tool` still
   refuses it. The connector serves a publishing guide as
@@ -160,16 +161,6 @@ for diagnostics.
   stale without rendering raw failure text in the library or viewer. Each tick
   starts at most ten due pages; the Node template and Worker example show the
   optional wiring.
-- **Guarded read-only identity grants (#601).** A fixed reviewed address in
-  `identity.connectorAccess` may use `{ tool: "connector.tool",
-  requireReadOnly: true }`. The tool remains visible only while its loaded
-  catalog explicitly classifies it read-only without a contradictory hint.
-  A reclassified name disappears from discovery and every call path, including
-  destructive calls and approval-exempt programs; new names are never admitted
-  automatically. Existing bare and exact string grants retain their additive
-  meaning and can deliberately widen access. Pools still narrow the identity
-  view. A stale cache or a dishonest downstream annotation remains a trust
-  limit.
 - **`conflict` (#562).** A new `ConnectorCallErrorCode` for a write whose base
   someone else already moved past, never retryable as-is, with an optional
   bounded `current` map (at most 20 whole-number entries) on
