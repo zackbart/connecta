@@ -1,8 +1,7 @@
 /**
  * One trial = a fresh world, a fresh deployment, one Codex conversation,
  * a grade over the fakes. A batch runs task × model × repeat through a small
- * pool and stops scheduling when the account's rate-limit window is nearly
- * spent, rather than burning through somebody's weekly quota.
+ * pool and stops scheduling after an authentication or rate-limit failure.
  */
 import type { CallRecord } from "../fakes/service.js";
 import { World } from "../fakes/world.js";
@@ -31,8 +30,8 @@ interface ApprovalUse {
 
 interface TrialMetrics {
   wallMs: number;
-  apiMs: number;
-  modelTurns: number;
+  apiMs: number | undefined;
+  modelTurns: number | undefined;
   conversationTurns: number;
   tokens: Tokens;
   costUsd: number | undefined;
@@ -112,23 +111,18 @@ function clipArgs(args: unknown): string {
 function infraError(events: StreamEvent[], exitCode: number | null, loadedTools: string[]): string | undefined {
   const results = events.filter((event) => event.type === "result");
   const failed = results.find(event => event.subtype !== "success");
+  const failureText = String(failed?.result ?? "");
+  if (failed && /rate[ -]?limit|too many requests|\b429\b/i.test(failureText)) return `rate limited: ${failureText.slice(0, 300)}`;
+  if (failed && /authentication|unauthorized|invalid api key|please run \/login|\b401\b/i.test(failureText)) {
+    return `authentication failure: ${failureText.slice(0, 300)}`;
+  }
   if (failed) return `Codex turn failed: ${String(failed.result ?? failed.subtype).slice(0, 300)}`;
   if (results.length && !loadedTools.includes(toolId("execute_code"))) {
     return "the connecta MCP server was not connected when the session started";
   }
   const apiError = results.find((event) => event.api_error_status != null);
   if (apiError) return `API error ${String(apiError.api_error_status)}: ${String(apiError.result ?? "").slice(0, 300)}`;
-  const rejected = events.find(
-    (event) =>
-      event.type === "rate_limit_event" &&
-      (event.rate_limit_info as { status?: string } | undefined)?.status === "rejected",
-  );
-  if (rejected) return "rate limited (status: rejected)";
   if (results.length === 0) return `Codex produced no result (exit ${String(exitCode)})`;
-  const authFailure = results.find((event) =>
-    /invalid api key|please run \/login|authentication_error|oauth token/i.test(String(event.result ?? "")),
-  );
-  if (authFailure) return `authentication failure: ${String(authFailure.result).slice(0, 200)}`;
   return undefined;
 }
 
@@ -221,7 +215,8 @@ async function runTrial(
       confirmationNudges: nudges,
       downstream: downstreamMetrics(world.ledger.calls, world.ledger.requests),
     };
-    const error = infraError(run.events, run.exitCode, trace.loadedTools);
+    const error = run.aborted ? "interrupted by operator" : run.timedOut ? "Codex trial timed out" :
+      infraError(run.events, run.exitCode, trace.loadedTools);
     const completed = check(
       "conversation-completed",
       "every turn ended normally within the time limit",
@@ -295,9 +290,6 @@ function check(id: string, description: string, pass: boolean, detail?: string):
 
 export interface BatchOptions extends TrialOptions {
   concurrency: number;
-  /** Stop scheduling once any reported rate-limit window reaches this. */
-  maxUtilization: number;
-  signal?: AbortSignal;
   onTrial?(trial: TrialResult, done: number, total: number): void | Promise<void>;
 }
 
@@ -314,26 +306,10 @@ export async function runBatch(
   const total = queue.length;
   const trials: TrialResult[] = [];
   let stopped: string | undefined;
-  const onEvent = (event: StreamEvent) => {
-    options.onEvent?.(event);
-    if (event.type !== "rate_limit_event") return;
-    const info = event.rate_limit_info as {
-      status?: string;
-      unifiedWindows?: Record<string, { utilization?: number }>;
-    };
-    const utilization = Math.max(
-      0,
-      ...Object.values(info.unifiedWindows ?? {}).map((window) => window.utilization ?? 0),
-    );
-    if (info.status === "rejected") stopped ??= "rate limit rejected a request";
-    else if (utilization >= options.maxUtilization) {
-      stopped ??= `rate-limit utilization reached ${Math.round(utilization * 100)}% (limit ${Math.round(options.maxUtilization * 100)}%)`;
-    }
-  };
   const worker = async () => {
     while (queue.length && !stopped && !options.signal?.aborted) {
       const next = queue.shift()!;
-      const trial = await runTrial(next.task, next.model, next.repeat, { ...options, onEvent });
+      const trial = await runTrial(next.task, next.model, next.repeat, options);
       trials.push(trial);
       await options.onTrial?.(trial, trials.length, total);
       if (trial.status === "error" && /rate limited|authentication failure/.test(trial.error ?? "")) {

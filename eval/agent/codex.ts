@@ -12,6 +12,7 @@ export interface CodexRun {
   turnStarts: number[];
   exitCode: number | null;
   timedOut: boolean;
+  aborted: boolean;
   stderrTail: string;
   wallMs: number;
   argv: string[];
@@ -75,7 +76,7 @@ function codexEvent(event: { method?: string; params?: Record<string, any> }): S
   if (event.method === "turn/completed") {
     const turn = event.params?.turn;
     return [{ type: "result", subtype: turn?.status === "completed" ? "success" : String(turn?.status ?? "error"),
-      result: turn?.error?.message ?? "", num_turns: 1, duration_api_ms: turn?.durationMs ?? 0 }];
+      result: turn?.error?.message ?? "" }];
   }
   return [];
 }
@@ -151,6 +152,8 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
   const toolByItem = new Map<string, string>();
   let turnDone: ((value: Record<string, unknown>) => void) | undefined;
+  let stopWaiting: (() => void) | undefined;
+  const stopped = new Promise<undefined>(resolve => { stopWaiting = () => resolve(undefined); });
   const send = (value: unknown) => child.stdin.write(`${JSON.stringify(value)}\n`);
   const request = (method: string, params: unknown): Promise<any> => new Promise((resolve, reject) => {
     const id = nextId++;
@@ -230,6 +233,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   child.stderr.on("data", chunk => { stderrTail = (stderrTail + String(chunk)).slice(-4_000); });
   const exited = new Promise<number | null>(resolve => {
     child.on("close", code => {
+      stopWaiting?.();
       for (const waiter of pending.values()) waiter.reject(new Error("Codex app-server exited"));
       pending.clear();
       const done = turnDone;
@@ -239,6 +243,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       resolve(code);
     });
     child.on("error", error => {
+      stopWaiting?.();
       for (const waiter of pending.values()) waiter.reject(error);
       pending.clear();
       const done = turnDone;
@@ -250,10 +255,12 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   });
   const timer = setTimeout(() => {
     timedOut = true;
+    stopWaiting?.();
     child.kill("SIGTERM");
     setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
   }, options.timeoutMs);
   const onAbort = () => {
+    stopWaiting?.();
     child.kill("SIGTERM");
     setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
   };
@@ -294,7 +301,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       turnDone = undefined;
       turn += 1;
       if (result.status !== "completed") break;
-      prompt = await options.nextTurn(turn, events);
+      prompt = await Promise.race([options.nextTurn(turn, events), stopped]);
     }
   } catch (error) {
     push({ type: "result", subtype: "error", result: String(error), num_turns: 0 });
@@ -309,6 +316,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   }
   const exitCode = await exited;
   await rm(root, { recursive: true, force: true });
-  return { events, turnStarts, exitCode, timedOut, stderrTail: stderrTail.replaceAll(options.token, "<redacted>"),
+  return { events, turnStarts, exitCode, timedOut, aborted: options.signal?.aborted ?? false,
+    stderrTail: stderrTail.replaceAll(options.token, "<redacted>"),
     wallMs: Math.round(performance.now() - started), argv, model, loadedTools };
 }

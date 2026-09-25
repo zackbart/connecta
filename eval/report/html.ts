@@ -132,7 +132,7 @@ function transcriptHtml(entries: TranscriptEntry[]): string {
           return `<div class="t res${entry.isError ? " error" : ""}"><span class="who">← result${entry.isError ? " (isError)" : ""} · ${fmtBytes(entry.chars)}</span><pre>${esc(shown)}</pre></div>`;
         }
         case "turn_end":
-          return `<div class="t end">turn ${entry.turn} ended: ${esc(entry.subtype)} · ${entry.numTurns} model turns · ${fmtMs(entry.durationMs)}</div>`;
+          return `<div class="t end">turn ${entry.turn} ended: ${esc(entry.subtype)}${entry.numTurns === undefined ? "" : ` · ${entry.numTurns} model turns`}${entry.durationMs === undefined ? "" : ` · ${fmtMs(entry.durationMs)}`}</div>`;
       }
     })
     .join("");
@@ -153,7 +153,7 @@ function trialHtml(trial: TrialResult): string {
       <div><h4>Checks</h4><ul class="checks">${checks || `<li class="muted">not graded</li>`}</ul></div>
       <div><h4>Metrics</h4><table class="kv">
         <tr><td>wall / API</td><td>${fmtMs(m.wallMs)} / ${fmtMs(m.apiMs)}</td></tr>
-        <tr><td>turns (user / model)</td><td>${m.conversationTurns} / ${m.modelTurns}</td></tr>
+        <tr><td>turns (user / model)</td><td>${m.conversationTurns} / ${m.modelTurns ?? "unknown"}</td></tr>
         <tr><td>tokens in / out</td><td>${fmtNum(m.tokens.input, 0)} + cache ${fmtNum(m.tokens.cacheRead, 0)}r/${fmtNum(m.tokens.cacheCreation, 0)}w / ${fmtNum(m.tokens.output, 0)}</td></tr>
         <tr><td>cost</td><td>${fmtUsd(m.costUsd)}</td></tr>
         <tr><td>meta-tool calls</td><td>${Object.entries(m.metaTools).map(([tool, count]) => `${esc(tool)}×${count}`).join(", ") || "none"}${Object.keys(m.otherTools).length ? `; other: ${esc(JSON.stringify(m.otherTools))}` : ""}</td></tr>

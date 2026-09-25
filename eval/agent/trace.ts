@@ -19,7 +19,7 @@ export type TranscriptEntry =
   | { kind: "tool_use"; turn: number; id: string; tool: string; input: unknown; inputChars: number }
   | { kind: "tool_result"; turn: number; id: string; isError: boolean; text: string; chars: number }
   | { kind: "operator"; turn: number; text: string }
-  | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns: number; durationMs: number };
+  | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns?: number; durationMs?: number };
 
 export interface ToolUse {
   id: string;
@@ -42,8 +42,8 @@ export interface AgentTrace {
   toolUses: ToolUse[];
   tokens: Tokens;
   costUsd: number | undefined;
-  apiMs: number;
-  modelTurns: number;
+  apiMs: number | undefined;
+  modelTurns: number | undefined;
   permissionDenials: unknown[];
   resultSubtypes: string[];
   model: string | undefined;
@@ -74,8 +74,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   const toolUses = new Map<string, ToolUse>();
   let turn = 0;
   let costUsd: number | undefined;
-  let apiMs = 0;
-  let modelTurns = 0;
+  let apiMs: number | undefined;
+  let modelTurns: number | undefined;
   let tokens: Tokens = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
   const permissionDenials: unknown[] = [];
   const resultSubtypes: string[] = [];
@@ -166,8 +166,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
     if (event.type === "result") {
       costUsd = typeof event.total_cost_usd === "number" ? event.total_cost_usd : costUsd;
-      apiMs += typeof event.duration_api_ms === "number" ? event.duration_api_ms : 0;
-      modelTurns += typeof event.num_turns === "number" ? event.num_turns : 0;
+      if (typeof event.duration_api_ms === "number") apiMs = (apiMs ?? 0) + event.duration_api_ms;
+      if (typeof event.num_turns === "number") modelTurns = (modelTurns ?? 0) + event.num_turns;
       resultSubtypes.push(String(event.subtype));
       if (Array.isArray(event.permission_denials)) permissionDenials.push(...event.permission_denials);
       // modelUsage is cumulative across the conversation; the last one wins.
@@ -186,8 +186,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
         turn,
         subtype: String(event.subtype),
         isError: event.is_error === true,
-        numTurns: Number(event.num_turns ?? 0),
-        durationMs: Number(event.duration_ms ?? 0),
+        ...(typeof event.num_turns === "number" ? { numTurns: event.num_turns } : {}),
+        ...(typeof event.duration_ms === "number" ? { durationMs: event.duration_ms } : {}),
       });
     }
   });

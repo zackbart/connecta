@@ -67,7 +67,7 @@ process.once("SIGINT", () => interrupted.abort());
 process.once("SIGTERM", () => interrupted.abort());
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
-  concurrency, timeoutMs, maxUtilization: 0.97, signal: interrupted.signal,
+  concurrency, timeoutMs, signal: interrupted.signal,
   ...(effort ? { effort } : {}),
   onTrial: async (trial, done, total) => {
     file.trials.push(trial);

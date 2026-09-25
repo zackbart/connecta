@@ -34,7 +34,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
 });
 `;
 
-async function fixture(mode: "complete" | "hang", signal?: AbortSignal) {
+async function fixture(mode: "complete" | "hang", signal?: AbortSignal,
+  nextTurn: () => Promise<string | undefined> = async () => undefined, timeoutMs = 10_000) {
   const root = await mkdtemp(join(tmpdir(), "connecta-codex-test-"));
   try {
     const script = join(root, "server.cjs");
@@ -43,8 +44,8 @@ async function fixture(mode: "complete" | "hang", signal?: AbortSignal) {
     await writeFile(auth, "{}");
     return await runCodex({
       model: "gpt-6-sol", mcpUrl: "http://127.0.0.1:1/mcp", token: "fake-secret",
-      allowedTools: ["execute_code"], deniedTools: [], timeoutMs: 10_000,
-      firstPrompt: "test", nextTurn: async () => undefined,
+      allowedTools: ["execute_code"], deniedTools: [], timeoutMs,
+      firstPrompt: "test", nextTurn,
       ...(signal ? { signal } : {}),
       testHost: { executable: process.execPath, args: [script, mode], authFile: auth, version: "fake-codex" },
     });
@@ -60,6 +61,8 @@ describe("Codex eval app-server", () => {
     expect(trace.permissionDenials).toContain("mcpServer/elicitation/request");
     expect(trace.toolUses).toMatchObject([{ tool: "execute_code", resultText: "ok", isError: false }]);
     expect(trace.resultSubtypes).toEqual(["success"]);
+    expect(trace.modelTurns).toBeUndefined();
+    expect(trace.apiMs).toBeUndefined();
     expect(run.model).toBe("gpt-6-sol");
     expect(run.loadedTools).toEqual(["mcp__connecta__execute_code"]);
   });
@@ -75,5 +78,12 @@ describe("Codex eval app-server", () => {
     } finally {
       clearTimeout(timer);
     }
+  });
+
+  it("bounds a follow-up callback that never settles", async () => {
+    const started = performance.now();
+    const run = await fixture("complete", undefined, async () => await new Promise(() => {}), 250);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(run.timedOut).toBe(true);
   });
 });
