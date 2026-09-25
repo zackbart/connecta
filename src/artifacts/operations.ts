@@ -36,6 +36,8 @@ import type {
   ArtifactValidation,
   ArtifactVersionRecord,
   ArtifactVersionOp,
+  ArtifactRefreshSchedule,
+  ArtifactRunRecord,
 } from "./types.js";
 
 /** Physical head moves a write absorbs before giving up as busy. */
@@ -270,6 +272,7 @@ export class ArtifactOperations {
     id: string,
     plan: (current: ArtifactHeadRecord) => Promise<Plan | ArtifactFailure>,
     render?: RenderPage,
+    beforeSwap?: (next: ArtifactHeadRecord) => ArtifactFailure | undefined,
   ): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
       const current = await this.#store.head(id);
@@ -286,6 +289,8 @@ export class ArtifactOperations {
           this.#store.putVersion(id, stream, record.version, record),
         ),
       );
+      const refused = beforeSwap?.(planned.next);
+      if (refused) return refused;
       if (await this.#store.swapHead(id, current.token, planned.next)) {
         return { ok: true, head: planned.next, warnings: planned.warnings };
       }
@@ -625,6 +630,8 @@ export class ArtifactOperations {
     by: ArtifactActor;
     op?: "set" | "refresh";
     runId?: string;
+    /** A refresh result may publish only while its own claim still holds. */
+    programVersion?: number;
     render?: RenderPage;
   }): Promise<
     Result<{
@@ -676,6 +683,12 @@ export class ArtifactOperations {
     const op = input.op ?? "set";
     return this.#commit(input.id, async (head) => {
       if (head.archived) return this.#archived(input.id);
+      if (op === "refresh" && (
+        !input.runId ||
+        head.refresh?.claim?.runId !== input.runId ||
+        head.refresh.program.version !== input.programVersion ||
+        Date.parse(head.refresh.claim.until) <= this.#now()
+      )) return fail("conflict", "The refresh claim expired or its program changed; no data was saved.");
       const stale = keyed.filter(
         (change) => (head.documents[change.name]?.version ?? 0) !== change.base,
       );
@@ -740,7 +753,128 @@ export class ArtifactOperations {
       const tooLarge = await this.#checkRendered(nextHead);
       if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies, supersede, warnings: [] };
-    }, input.render);
+    }, input.render, op === "refresh" ? (next) => {
+      const claim = next.refresh?.claim;
+      return claim !== undefined && claim.runId === input.runId && Date.parse(claim.until) > this.#now()
+        ? undefined
+        : fail("conflict", "The refresh claim expired before data commit; no data was saved.");
+    } : undefined);
+  }
+
+  /** Configure one versioned program. A concurrent document edit is absorbed. */
+  async setRefresh(input: {
+    id: string;
+    program: string;
+    document: string;
+    schedule: ArtifactRefreshSchedule;
+    baseVersion: number;
+    by: ArtifactActor;
+    owner?: { identity: import("../types.js").AuthenticatedIdentity; pool?: string };
+  }): Promise<Result<{ head: ArtifactHeadRecord }>> {
+    const badId = this.#checkId(input.id);
+    if (badId) return badId;
+    const badName = this.#checkDocumentName(input.document);
+    if (badName) return badName;
+    const badBase = this.#checkVersion("baseVersion", input.baseVersion, 0);
+    if (badBase) return badBase;
+    if (!["manual", "daily", "weekly"].includes(input.schedule)) {
+      return fail("invalid_args", 'schedule must be "manual", "daily", or "weekly".');
+    }
+    if (typeof input.program !== "string" || !input.program.trim() ||
+        utf8Bytes(input.program) > this.#context.limits.programBytes) {
+      return fail("invalid_args", `program must be non-empty and at most ${this.#context.limits.programBytes} UTF-8 bytes.`);
+    }
+    const key = await sha256Hex(input.program);
+    for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
+      const current = await this.#store.head(input.id);
+      if (!current) return this.#notFound(input.id);
+      const head = current.head;
+      if (head.archived) return this.#archived(input.id);
+      const version = head.refresh?.program.version ?? 0;
+      if (version !== input.baseVersion) {
+        return fail("conflict", `Refresh program is at version ${version}, not ${input.baseVersion}.`, { current: currentOf(head) });
+      }
+      const at = this.#at();
+      const program: ArtifactVersionRecord = {
+        version: version + 1, body: key, bytes: utf8Bytes(input.program),
+        by: input.by, at, op: "update",
+      };
+      const next = {
+        ...this.#touch(head, input.by, at),
+        refresh: { program, document: input.document, schedule: input.schedule, configuredAt: at,
+          ...(input.owner ? { owner: input.owner } : {}) },
+      } satisfies ArtifactHeadRecord;
+      await this.#store.putBody(key, input.program);
+      if (head.refresh) await this.#store.putVersion(input.id, "refresh", version, head.refresh.program);
+      if (await this.#store.swapHead(input.id, current.token, next)) return { ok: true, head: next };
+    }
+    return fail("unavailable", "Refresh configuration kept changing; retry it.");
+  }
+
+  async refreshConfig(id: string): Promise<Result<{ head: ArtifactHeadRecord; program: string | undefined }>> {
+    const badId = this.#checkId(id);
+    if (badId) return badId;
+    const current = await this.#store.head(id);
+    if (!current) return this.#notFound(id);
+    return {
+      ok: true,
+      head: current.head,
+      program: current.head.refresh?.program.body
+        ? await this.#body(current.head.refresh.program.body)
+        : undefined,
+    };
+  }
+
+  async claimRefresh(id: string, runId: string, trigger: ArtifactRunRecord["trigger"], dueOnly: boolean, claimMs: number): Promise<Result<{
+    head: ArtifactHeadRecord;
+    program: string;
+    run: ArtifactRunRecord;
+  }> | { ok: false; skipped: true }> {
+    for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
+      const current = await this.#store.head(id);
+      if (!current) return this.#notFound(id);
+      const head = current.head;
+      const refresh = head.refresh;
+      if (!refresh || head.archived) return { ok: false, skipped: true };
+      const now = this.#now();
+      const period = refresh.schedule === "daily" ? 86_400_000
+        : refresh.schedule === "weekly" ? 604_800_000 : undefined;
+      if (dueOnly && (period === undefined || now < Date.parse(refresh.last?.at ?? refresh.configuredAt) + period)) {
+        return { ok: false, skipped: true };
+      }
+      if (refresh.claim && Date.parse(refresh.claim.until) > now) return { ok: false, skipped: true };
+      const startedAt = new Date(now).toISOString();
+      const claim = { runId, until: new Date(now + claimMs).toISOString() };
+      const next: ArtifactHeadRecord = {
+        ...head, revision: head.revision + 1,
+        refresh: { ...refresh, claim },
+      };
+      if (!(await this.#store.swapHead(id, current.token, next))) continue;
+      const run: ArtifactRunRecord = {
+        runId, startedAt, status: "running", trigger,
+        programVersion: refresh.program.version,
+      };
+      return { ok: true, head: next, program: refresh.program.body ?? "", run };
+    }
+    return fail("unavailable", "Refresh claim kept changing; retry it.");
+  }
+
+  async finishRefresh(id: string, run: ArtifactRunRecord): Promise<void> {
+    for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
+      const current = await this.#store.head(id);
+      if (!current?.head.refresh || current.head.refresh.claim?.runId !== run.runId) break;
+      const { claim: _claim, ...refresh } = current.head.refresh;
+      const next: ArtifactHeadRecord = {
+        ...current.head, revision: current.head.revision + 1,
+        refresh: { ...refresh, last: {
+          runId: run.runId, at: run.finishedAt ?? this.#at(),
+          status: run.status === "running" ? "failed" : run.status,
+          ...(run.documentVersion !== undefined ? { documentVersion: run.documentVersion } : {}),
+        } },
+      };
+      if (await this.#store.swapHead(id, current.token, next)) break;
+    }
+    await this.#store.putRun(id, run);
   }
 
   async rollback(input: {

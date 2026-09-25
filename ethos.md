@@ -64,7 +64,7 @@ carries them.
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Classic (executor-free) surface | removed | an executor is mandatory ([#273](https://github.com/zackbart/connecta/issues/273)) |
 | Per-result lexical query coverage | removed | failed a precommitted response-bytes gate ([#323](https://github.com/zackbart/connecta/issues/323)) |
-| Stabilized workflows | planned | only as artifact refresh: scheduled read-only programs, shared credentials ([#225](https://github.com/zackbart/connecta/issues/225)) |
+| Stabilized workflows | accepted | only as artifact refresh: deployment-triggered read-only programs, shared credentials ([#225](https://github.com/zackbart/connecta/issues/225), [#564](https://github.com/zackbart/connecta/issues/564)) |
 | Semantic tool search | gated | keyword search has not been shown to fail ([#27](https://github.com/zackbart/connecta/issues/27)) |
 | MRTR / `input_required` passthrough | gated | relayable statelessly; no host or downstream emits it yet ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Downstream `ttlMs` cache hints | gated | needs refresh-churn evidence ([#206](https://github.com/zackbart/connecta/issues/206)) |

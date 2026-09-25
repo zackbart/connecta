@@ -27,6 +27,7 @@ import { operatorUi } from "@zackbart/connecta/ui";
 import { api, createConnecta } from "@zackbart/connecta";
 import { fileStorage, listen } from "@zackbart/connecta/node";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+// import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
 // Operator sign-in. Needs `npm install @clerk/backend` — it is an optional
 // peer, so it does not install with Connecta.
 // import { clerkAuth } from "@zackbart/connecta/auth/clerk";
@@ -45,6 +46,8 @@ const port = Number(process.env.PORT ?? 8787);
 const stateFile = process.env.CONNECTA_STATE_FILE || "./.connecta-state.json";
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
 const storage = fileStorage(stateFile);
+// Optional artifact pages and refresh jobs use the same CAS-capable state file:
+// const artifactModule = artifacts({ store: kvArtifactStore(storage) });
 
 // Operator sign-in. A bearer token is a client key: it may call tools and read
 // connector status, but only a Clerk-authenticated human may write a visible
@@ -121,6 +124,7 @@ const connecta = createConnecta({
   //   },
   // }),
   ui: operatorUi(),
+  // artifacts: artifactModule,
   connectors: [
     api("time", {
       description: "Time — current timestamp",
@@ -143,3 +147,9 @@ const connecta = createConnecta({
 
 listen(connecta, port);
 console.log(`connecta listening on port ${port}; MCP at ${publicUrl}/mcp`);
+// The deployment owns this timer; core starts no background work. Uncomment
+// with artifactModule above. Each tick starts at most 10 due pages.
+// const refreshTimer = setInterval(() => {
+//   void artifactModule.runDue().catch((error) => console.error("artifact refresh failed", error));
+// }, 60 * 60 * 1000);
+// refreshTimer.unref();

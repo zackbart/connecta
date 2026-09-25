@@ -135,6 +135,11 @@ describe("the artifacts slot", () => {
     expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
       ["list_artifacts", { readOnlyHint: true }],
       ["get_artifact", { readOnlyHint: true }],
+      ["get_refresh", { readOnlyHint: true }],
+      ...["set_refresh", "run_refresh"].map((name) => [
+        name,
+        { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      ]),
       ["get_document", { readOnlyHint: true }],
       ["validate_artifact", { readOnlyHint: true }],
       ...[

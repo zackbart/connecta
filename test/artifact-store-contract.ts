@@ -92,6 +92,15 @@ export function artifactStoreContract(
     expect(results.filter(Boolean)).toHaveLength(1);
   });
 
+  it("persists the bounded refresh scan cursor", async () => {
+    const store = await open();
+    expect(await store.refreshScanCursor()).toBeUndefined();
+    await store.setRefreshScanCursor("page-1000");
+    expect(await store.refreshScanCursor()).toBe("page-1000");
+    await store.setRefreshScanCursor(undefined);
+    expect(await store.refreshScanCursor()).toBeUndefined();
+  });
+
   it("stores bodies by key, idempotently, and round-trips a mebibyte", async () => {
     const store = await open();
     expect(await store.body("a".repeat(64))).toBeNull();

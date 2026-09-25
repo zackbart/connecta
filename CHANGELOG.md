@@ -155,9 +155,11 @@ for diagnostics.
   `run_refresh` triggers it now, and `get_refresh` reports freshness and a
   bounded run history. The module's `runDue()` is called by the deployment's
   Node timer or Worker cron, never by a core background loop. Runs use only
-  shared connectors' explicitly read-only tools, claim the artifact by
-  compare-and-set, and validate the returned JSON before publishing a new
-  document version. A failure keeps the last good value and marks the page
+  shared connectors' explicitly read-only tools within the setter's current
+  identity and pool grants, and stop if publishing permission is revoked.
+  Connector approval exemptions cannot permit a scheduled write. Runs claim
+  the artifact by compare-and-set and validate returned JSON, including any
+  configured render check, before publishing a new document version. A failure keeps the last good value and marks the page
   stale without rendering raw failure text in the library or viewer. Each tick
   starts at most ten due pages; the Node template and Worker example show the
   optional wiring.

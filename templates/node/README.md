@@ -46,6 +46,14 @@ reproducible `npm ci` path.
 
 ## Select optional modules
 
+For scheduled artifact pages, uncomment the `artifacts()` module and hourly
+`setInterval` block in `src/index.ts`. The module uses the same CAS-capable
+state file and exposes `runDue()` for the timer; core starts no job on its own.
+Each tick starts at most 10 due pages. Refresh programs can call only shared
+connectors' explicitly read-only tools within the program owner's current
+grants. Revoking refresh or pool access stops future runs. Failed runs leave the last good data
+and mark the viewer stale.
+
 The template explicitly enables `ui: operatorUi()` from
 `@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply the configured
 bearer to inspect Connections. Omit that option and import for an API-only

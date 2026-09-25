@@ -156,6 +156,16 @@ export interface UiArtifactRow {
   updatedAt: string;
   updatedBy: { label: string };
   archived: boolean;
+  freshness?: UiArtifactFreshness;
+}
+
+interface UiArtifactFreshness {
+  state: "unconfigured" | "current" | "stale";
+  schedule?: "manual" | "daily" | "weekly";
+  document?: string;
+  dueAt?: string;
+  last?: { at: string; status: "succeeded" | "unchanged" | "failed" | "superseded" };
+  running?: boolean;
 }
 
 /** The viewer's payload: the page's facts and the one document its frame loads. */
@@ -171,6 +181,7 @@ export interface UiArtifactView {
   url: string;
   snapshotUrl: string;
   document: string;
+  freshness?: UiArtifactFreshness;
 }
 
 export interface FilteredUiConnector {

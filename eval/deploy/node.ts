@@ -52,6 +52,7 @@ export interface Deployment {
   /** Present when the task switched the artifacts module on. */
   artifacts?: {
     snapshot(): Promise<ArtifactSnapshot>;
+    runDueAfterWeek(): Promise<void>;
   };
   close(): Promise<void>;
 }
@@ -96,9 +97,15 @@ async function snapshotOf(store: ArtifactStore): Promise<ArtifactSnapshot> {
         ),
         documents,
         documentHistory,
+        ...(head.refresh ? { refresh: {
+          schedule: head.refresh.schedule,
+          document: head.refresh.document,
+          programVersion: head.refresh.program.version,
+        } } : {}),
         runs: (await store.runs(id, 50)).map((run) => ({
           runId: run.runId,
           status: run.status,
+          trigger: run.trigger === "schedule" ? "schedule" as const : "manual" as const,
           ...(run.documentVersion !== undefined ? { documentVersion: run.documentVersion } : {}),
           ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
         })),
@@ -181,7 +188,25 @@ export async function startNodeDeployment(
       await vault.set(connectorId, value, "operator");
     },
     ...(artifactStore
-      ? { artifacts: { snapshot: () => snapshotOf(artifactStore) } }
+      ? { artifacts: {
+        snapshot: () => snapshotOf(artifactStore),
+        runDueAfterWeek: async () => {
+          for (const { id, head } of (await artifactStore.heads({ limit: 1_000 })).heads) {
+            if (!head.refresh) continue;
+            const current = await artifactStore.head(id);
+            if (!current?.head.refresh) continue;
+            const at = new Date(Date.now() - 8 * 86_400_000).toISOString();
+            const refresh = current.head.refresh;
+            await artifactStore.swapHead(id, current.token, {
+              ...current.head,
+              refresh: { ...refresh,
+                ...(refresh.last ? { last: { ...refresh.last, at } } : { configuredAt: at }),
+              },
+            });
+          }
+          await artifactsModule?.runDue();
+        },
+      } }
       : {}),
     close: async () => {
       server.closeAllConnections();

@@ -4,9 +4,10 @@ import {
   describeCredentialTestMismatch,
 } from "./credential-rules.js";
 import { Registry } from "./registry.js";
-import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
+import { intersectAccess, parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess, ConnectorGrant, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
+import { createProgramRunner } from "./execute.js";
 import {
   droppedBrandingUrls,
   droppedThemeTokens,
@@ -988,6 +989,62 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         "implements acquire() and owns its admission pool; configure that " +
         "executor's concurrency and queue options instead.",
     );
+  }
+  if (config.artifacts?.bindRefresh) {
+    const sharedIds = registry.listConnectors()
+      .filter((connector) => connector.id !== "artifacts" && connector.authScope !== "personal")
+      .map((connector) => connector.id);
+    const refreshConfig = {
+        discoveryConcurrency: config.discovery?.concurrency,
+        probeTimeoutMs: config.discovery?.probeTimeoutMs,
+        maxEmittedBytes: config.execute?.maxEmittedBytes,
+        maxEmittedBlocks: config.execute?.maxEmittedBlocks,
+        maxHostCalls: config.execute?.maxHostCalls,
+        hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
+        watchdogMs: config.execute?.watchdogMs,
+        failOnInvocationFailure: true,
+        // A connector's own `approval: "never"` still applies when policy maps
+        // are empty. Override every shared connector explicitly for refresh.
+        approval: {
+          connectors: new Map(sharedIds.map((id) => [id, "ask" as const])),
+          tools: new Map(),
+        },
+    };
+    const refreshRunner = createProgramRunner(
+      registry.scoped({ connectorIds: [] }), config.publicUrl!, executor, logger, undefined, refreshConfig,
+    );
+    config.artifacts.bindRefresh({
+      claimMs: refreshRunner.claimMs,
+      execute: async (program, owner, signal) => {
+        if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");
+        let access = parseConnectorAccess(config.identity?.connectorAccess
+          ? await config.identity.connectorAccess(owner.identity) : "all", { allowReadOnly: true });
+        if (owner.pool) {
+          const pool = pools.get(owner.pool);
+          if (!pool || await pool.grant(owner.identity) !== true) {
+            throw new Error("Refresh owner's pool grant is no longer available.");
+          }
+          access = intersectAccess(access, pool.access);
+        }
+        if (access.connectorIds !== "all" && !access.connectorIds.includes("artifacts")) {
+          throw new Error("Refresh owner no longer has artifact publishing access.");
+        }
+        if (access.toolAccess?.get("artifacts") &&
+          !access.toolAccess.get("artifacts")!.has("set_refresh")) {
+          throw new Error("Refresh owner no longer has refresh configuration access.");
+        }
+        if (access.guardedToolAccess?.get("artifacts")?.has("set_refresh")) {
+          throw new Error("A read-only guarded grant cannot configure refresh.");
+        }
+        access = intersectAccess(access, { connectorIds: sharedIds });
+        if (signal.aborted) throw new Error("Refresh deadline expired before execution.");
+        const view = registry.scoped({ connectorIds: access.connectorIds,
+          ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
+          ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}) });
+        const runner = createProgramRunner(view, config.publicUrl!, executor, logger, undefined, refreshConfig);
+        return runner.execute({ code: program }, { signal });
+      },
+    });
   }
   // Every structural check has passed, so this is the configuration the
   // deployment runs with. Creating the runtime builds nothing — a Worker may

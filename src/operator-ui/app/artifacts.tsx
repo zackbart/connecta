@@ -25,6 +25,9 @@ function ArtifactRow({ row }: { row: UiArtifactRow }) {
       </div>
       <div class="artifact-badges">
         <span class="badge">{row.kind === "markdown" ? "Markdown" : "HTML"}</span>
+        {row.freshness?.state === "stale" ? <span class="badge warn">Stale data</span>
+          : row.freshness?.state === "current" ? <span class="badge">Current data</span> : null}
+        {row.freshness?.last ? <span class="artifact-meta">Last refresh: {row.freshness.last.status}</span> : null}
         {row.archived ? <span class="badge warn">Archived</span> : null}
       </div>
     </article>
@@ -190,6 +193,12 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
         {view?.archived ? (
           <div id="archivedBanner" class="artifact-banner" role="status">
             This artifact is archived. It keeps every version, and an agent can restore it.
+          </div>
+        ) : null}
+        {!view?.snapshot && view?.freshness?.state === "stale" ? (
+          <div id="staleBanner" class="artifact-banner" role="status">
+            Data may be out of date. The last refresh {view.freshness.last?.status === "failed"
+              ? "failed" : "is overdue"}; the last good document is still shown.
           </div>
         ) : null}
         <NoticeLine id="artifactNotice" notice={state.artifactNotice} />

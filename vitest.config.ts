@@ -9,6 +9,7 @@ export const WORKERS_SUITES = [
   "test/activity.test.ts",
   "test/api-connector.test.ts",
   "test/artifact-store.test.ts",
+  "test/artifact-refresh.test.ts",
   "test/artifacts-connector.test.ts",
   "test/artifacts-routes.test.ts",
   "test/artifacts-markdown.test.ts",

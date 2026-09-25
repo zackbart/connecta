@@ -51,6 +51,10 @@ export function isApprovalExempt(
   definition: ToolDef,
 ): boolean {
   if (isExplicitlyReadOnly(definition)) return false;
+  // This tool starts another program. Letting a program call it while holding
+  // the only executor permit would deadlock; manual refresh is a top-level
+  // action, even though other artifact writes are exempt inside programs.
+  if (connector.id === "artifacts" && toolName === "run_refresh") return false;
   const setting =
     policy.tools.get(`${connector.id}.${toolName}`) ??
     policy.connectors.get(connector.id) ??

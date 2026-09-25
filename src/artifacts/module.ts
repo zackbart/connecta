@@ -4,6 +4,7 @@ import type { ArtifactsModule } from "../module-contracts.js";
 import { artifactsConnector, type ArtifactRenderCheck } from "./connector.js";
 import { ArtifactOperations } from "./operations.js";
 import { artifactRoutes } from "./routes.js";
+import { ArtifactRefreshService, type ArtifactRefreshRuntime, type RefreshOutcome } from "./refresh.js";
 import type { ArtifactAllowlist, ArtifactLimits, ArtifactStore } from "./types.js";
 import { resolveAllowlist, resolveLimits } from "./validate.js";
 
@@ -40,6 +41,8 @@ const STORE_METHODS = [
   "versions",
   "putRun",
   "runs",
+  "refreshScanCursor",
+  "setRefreshScanCursor",
 ] as const;
 
 const OPTIONS = new Set(["store", "allowlist", "limits", "renderCheck"]);
@@ -49,7 +52,13 @@ const OPTIONS = new Set(["store", "allowlist", "limits", "renderCheck"]);
  * `artifacts` connector. Pass the result as `createConnecta({ artifacts })`.
  * Structural mistakes throw here, before a deployment boots.
  */
-export function artifacts(options: ArtifactsOptions): ArtifactsModule {
+export interface RefreshableArtifacts extends ArtifactsModule {
+  bindRefresh(runtime: ArtifactRefreshRuntime): void;
+  refresh(id: string, by: import("./types.js").ArtifactActor): Promise<RefreshOutcome>;
+  runDue(): ReturnType<ArtifactRefreshService["runDue"]>;
+}
+
+export function artifacts(options: ArtifactsOptions): RefreshableArtifacts {
   if (!options || typeof options !== "object") {
     throw new TypeError("artifacts() needs options with a store");
   }
@@ -76,8 +85,10 @@ export function artifacts(options: ArtifactsOptions): ArtifactsModule {
     allowlist,
     limits,
   });
+  const refresh = new ArtifactRefreshService(operations);
   const connector = artifactsConnector({
     operations,
+    refresh,
     allowlist,
     limits,
     ...(options.renderCheck ? { renderCheck: options.renderCheck } : {}),
@@ -85,5 +96,8 @@ export function artifacts(options: ArtifactsOptions): ArtifactsModule {
   return Object.freeze({
     connector,
     handle: artifactRoutes({ operations, allowlist }),
+    bindRefresh: (runtime: ArtifactRefreshRuntime) => refresh.bind(runtime),
+    refresh: (id: string, by: import("./types.js").ArtifactActor) => refresh.run(id, { manual: by }),
+    runDue: () => refresh.runDue(),
   });
 }
