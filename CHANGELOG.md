@@ -4,42 +4,47 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-Programs can write. A program that reaches a tool not explicitly annotated
-read-only no longer fails: it pauses before sending the write and hands the
-agent the exact call and a token, and the new eighth tool, `resume_execution`,
-repeats that call to approve it — the host's permission prompt shows the real
-write — and replays the program from a journal to send it once and carry on.
-"Close the stale issues and post a summary" becomes one program and a couple of
-approvals instead of thirty-one top-level calls. What breaks: `tools/list` is
-now eight tools on every deployment, so anything that pins the list — a client
-allowlist, `connecta doctor` from 0.25 — must learn `resume_execution`; on
-storage with `compareAndSet` (memory, file, the Worker example's D1 store)
-resumable writes are on by default, so a program's write that used to fail
-`destructive_tool_requires_approval` now pauses; `Date.now()` and
-`Math.random()` inside a program are pinned for the run; the MCP instructions
-and the `execute_code` description change with the mode; and the Worker
-example's D1 activity table needs an `approval` column before the updated
-adapter is deployed. A deployment on Cloudflare KV can ignore most of it: KV
-cannot claim atomically, so resumable writes stay off there — with one startup
-warning, or none with `execute.resumableWrites: false` — its programs refuse
-writes exactly as before, and `resume_execution` answers that there is nothing
-to resume.
+## 0.26.0 — 2026-09-25
 
-Artifacts arrive as an optional module. `artifacts()` from
-`@zackbart/connecta/artifacts` adds a built-in `artifacts` connector for team
-pages whose numbers live in versioned JSON documents; its writes skip approval
-inside programs, because every one is a new version anyone can roll back. A
-deployment that never imports it can ignore it entirely. One piece reaches
-everyone: `ConnectorCallErrorCode` gains `conflict`, a stale-base refusal,
-and a program's write that fails with it counts as refused rather than as an
-unknown outcome.
+Programs can now write with host approval. When a program reaches a tool that
+is not explicitly read-only, it pauses before the call and returns the exact
+address, arguments, and a token. The new eighth MCP tool,
+`resume_execution`, repeats that call to show the host the real write and
+replays the program from its journal without resending an uncertain outcome.
+`tools/list` now has eight tools on every deployment, so client allowlists and
+`connecta doctor` installations pinned to 0.25 need updating. Resumable
+writes turn on by default when storage supports `compareAndSet` (memory, file,
+or the Worker example's D1 adapter); a program write that previously failed
+now pauses. Cloudflare KV cannot make that claim atomically, so resumable
+writes stay off there. Set `execute.resumableWrites: false` to silence its
+startup warning. Program clocks and randomness are pinned for replay.
 
-Separately, the operator page's last route for downstream error text is closed. What
-changes on the wire: `POST` and `DELETE /ui/oauth/<id>` answer a failure in
-fixed words and a success without `message`, and `POST
-/ui/credentials/<id>/test` answers only `{ ok }`, so a script that read those
-fields finds the text in the server log instead. A deployment that only uses
-the page can ignore it.
+Artifacts arrive as an optional module with versioned JSON documents, a
+sandboxed viewer and library, and scheduled refresh of one data document from
+a read-only program. A deployment supplies a Node timer or Worker cron;
+connecta starts no background job. Stored pages use the operator sign-in,
+and a dedicated artifact origin may require signing in again because browser
+storage belongs to one origin. Page scripts run with an opaque origin and no
+network by default; only explicitly allowlisted script, style, and font
+origins may load. The connector's mutating tools are approval-exempt inside
+programs by default; deployment config can restore the approval prompt.
+Deployments that omit the module need no
+artifact storage, R2 bucket, cron, browser binding, or second domain.
+
+Before upgrading a Worker deployment that uses D1 activity, add the
+`approval` column shown below. Every admitted `/mcp` request, on Node and
+Workers, has a five-minute total lifetime by default; set
+`admission.requests.maxDurationMs` above any longer authorized request. The
+Worker example also enables `enable_request_signal` for live disconnects.
+To add artifacts to that example, use CAS-capable D1
+storage, optionally R2 for bodies, and explicitly configure any CDN origins.
+The Node template now pins 0.26.0 and shows the optional artifact timer.
+`ConnectorCallErrorCode` gains `conflict` for stale artifact edits, while an
+identity can opt into reviewed exact tool grants that remain visible only while
+the loaded catalog classifies them read-only. The operator UI no longer
+returns downstream OAuth or credential-test text in notices; callers that
+read those route messages must use the fixed outcome and consult server logs
+for diagnostics.
 
 ### Added
 
@@ -78,7 +83,7 @@ the page can ignore it.
   exempt write without pausing, while it still spends the write budget, is
   journaled, and records activity. The address wins over the connector entry,
   which wins over a connector's own `approval: "never"` default — reserved for
-  connectors connecta ships, such as the planned artifacts connector — so
+  connectors connecta ships, such as the artifacts connector — so
   `"ask"` switches such a default off. It works with resumable writes off
   too, where an exempt write the program leaves unawaited still finishes
   before the run ends, and one with an unknown outcome is the result. Exempt is never read-only: discovery keeps the tool approval-required
@@ -103,17 +108,19 @@ the page can ignore it.
   at construction, because a write that cannot compare-and-set its head can
   lose a teammate's edit. `validateArtifact({ kind, source, documents? })` is
   the static check every save runs: one `id="artifact-root"`, no frames,
-  plugins, forms, or `<base>`, scripts only from an allowlisted CDN origin, no
-  relative or network resource URLs, with a line number and a fix in every
-  message. The Worker example gains `r2-artifact-blobs.ts` for keeping bodies
+  plugins, forms, or `<base>`, external scripts only from explicitly
+  allowlisted origins, and no relative or unapproved network resource URLs,
+  with a line number and a fix in every message. The Worker example gains
+  `r2-artifact-blobs.ts` for keeping bodies
   in R2 beside a D1 store. The subpath adds no dependency and no Effect.
-- **The built-in artifacts connector (#562).** `createConnecta({ artifacts:
-  artifacts({ store }) })` appends an `artifacts` connector with four reads —
-  `list_artifacts`, `get_artifact`, `get_document`, `validate_artifact` — and
-  seven writes: `create_artifact`, `update_artifact`, `patch_artifact` (exact
+- **The built-in artifacts connector (#562, #564).** `createConnecta({ artifacts:
+  artifacts({ store }) })` appends an `artifacts` connector with five reads —
+  `list_artifacts`, `get_artifact`, `get_document`, `validate_artifact`, and
+  `get_refresh` — and nine writes: `create_artifact`, `update_artifact`, `patch_artifact` (exact
   find/replace, every edit matching once or nothing changes),
   `set_documents` (plural and atomic), `rollback_artifact`,
-  `archive_artifact`, and `restore_artifact`. Every write names the base it
+  `archive_artifact`, `restore_artifact`, `set_refresh`, and `run_refresh`.
+  Version-changing writes name the base they
   expects, records who made it from the request's authorization, and skips
   approval inside `execute_code` through the connector's own `approval:
   "never"` — `execute.approval: { artifacts: "ask" }` turns that off — while
@@ -124,6 +131,36 @@ the page can ignore it.
   load and can refuse a write; without one, static validation is the floor.
   The module needs `publicUrl`, and a configured connector named `artifacts`
   refuses to construct.
+- **Artifact library and sandboxed viewer (#563).** `/artifacts` lists pages;
+  `/artifacts/<id>` opens one after the same inbound sign-in as the operator
+  UI. A viewer snapshot pins exact view and document versions. Page HTML runs
+  in an opaque-origin frame with no fetch or worker access. A deployment may
+  allow exact CDN origins for scripts, styles, and fonts; none are allowed by
+  default. With `artifactOrigin`, the main host redirects artifact paths and
+  the dedicated host serves no MCP or operator routes. A browser bearer stored
+  on the main origin must be entered again on the artifact origin; the redirect
+  carries no credential.
+- **Scheduled artifact refresh (#564).** `set_refresh` attaches a versioned
+  program for one data document on a manual, daily, or weekly schedule;
+  `run_refresh` triggers it now, and `get_refresh` reports freshness and a
+  bounded run history. The module's `runDue()` is called by the deployment's
+  Node timer or Worker cron, never by a core background loop. Runs use only
+  shared connectors' explicitly read-only tools, claim the artifact by
+  compare-and-set, and validate the returned JSON before publishing a new
+  document version. A failure keeps the last good value and marks the page
+  stale without rendering raw failure text in the library or viewer. Each tick
+  starts at most ten due pages; the Node template and Worker example show the
+  optional wiring.
+- **Guarded read-only identity grants (#601).** A fixed reviewed address in
+  `identity.connectorAccess` may use `{ tool: "connector.tool",
+  requireReadOnly: true }`. The tool remains visible only while its loaded
+  catalog explicitly classifies it read-only without a contradictory hint.
+  A reclassified name disappears from discovery and every call path, including
+  destructive calls and approval-exempt programs; new names are never admitted
+  automatically. Existing bare and exact string grants retain their additive
+  meaning and can deliberately widen access. Pools still narrow the identity
+  view. A stale cache or a dishonest downstream annotation remains a trust
+  limit.
 - **`conflict` (#562).** A new `ConnectorCallErrorCode` for a write whose base
   someone else already moved past, never retryable as-is, with an optional
   bounded `current` map (at most 20 whole-number entries) on
@@ -134,6 +171,15 @@ the page can ignore it.
 
 ### Changed
 
+- **`execute_code` asks for a zero-argument program (#602).** Its guidance now
+  shows `async () => { ... }`, with `connecta` supplied as the sandbox global.
+  Passing `connecta` as an arrow parameter shadows that global and fails; the
+  accepted source forms and execution rules have not changed.
+- **Worker resource setup has an optional Alchemy guide (#567).** It covers
+  account resources and adoption while keeping the Worker script, domains,
+  Browser Rendering, and cron deployment with Wrangler until Alchemy's
+  script-upload path is shown to preserve `ctx.access`. Alchemy is not a
+  connecta dependency or a second deployment template.
 - **`execute_code` source intake (#576).** Programs over 64 KiB of UTF-8
   source fail before executor admission. The host recovers one fenced async
   arrow even when prose surrounds it, a default-exported arrow, or a named
@@ -161,7 +207,7 @@ the page can ignore it.
 
 ### Fixed
 
-- **Worker request admission recovers after missing cleanup (#595).** An
+- **Request admission recovers after missing Worker cleanup (#595).** An
   admitted `/mcp` request now has a configurable total lifetime, five minutes
   by default, covering auth, tools, and response delivery. Its own timer aborts
   live work, including connector calls. If workerd ends it without running
@@ -170,6 +216,11 @@ the page can ignore it.
   permit indefinitely, and late cleanup cannot release a successor's permit.
   The Worker example enables `enable_request_signal` for prompt live disconnect
   cleanup.
+
+- **Legacy MCP handshake close (#572).** A client that leaves while the older
+  protocol handshake is still initializing no longer leaves the SDK's
+  `notifications/initialized` promise rejected without a handler. Successful
+  handshakes still send the notification.
 
 - **Operator notices no longer render downstream error text**
   ([#568](https://github.com/zackbart/connecta/issues/568)). The OAuth
