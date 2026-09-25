@@ -1,0 +1,710 @@
+{
+  "testedAt": "2026-09-25T04:23:13.952Z",
+  "name": "connecta-disconnect-muggfeh1",
+  "observations": [
+    {
+      "enabled": false,
+      "servedVersion": "false",
+      "compatibilityDate": "2025-01-01",
+      "flags": [],
+      "route": "raw",
+      "mode": "heartbeat",
+      "id": "raw-heartbeat-false",
+      "isolate": "690f8eaf-608c-4e7c-a1f1-7c4a9da2e883",
+      "status": 200,
+      "first": "started raw-heartbeat-false\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "raw-heartbeat-false",
+          "kind": "start",
+          "at": 1790310150962
+        },
+        {
+          "id": "raw-heartbeat-false",
+          "kind": "tick",
+          "at": 1790310151212
+        },
+        {
+          "id": "raw-heartbeat-false",
+          "kind": "tick",
+          "at": 1790310151462
+        },
+        {
+          "id": "raw-heartbeat-false",
+          "kind": "tick",
+          "at": 1790310151712
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 0,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": false,
+      "servedVersion": "false",
+      "compatibilityDate": "2025-01-01",
+      "flags": [],
+      "route": "raw",
+      "mode": "idle-timer",
+      "id": "raw-idle-timer-false",
+      "isolate": "690f8eaf-608c-4e7c-a1f1-7c4a9da2e883",
+      "status": 200,
+      "first": "started raw-idle-timer-false\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "raw-idle-timer-false",
+          "kind": "start",
+          "at": 1790310153284
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 0,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": false,
+      "servedVersion": "false",
+      "compatibilityDate": "2025-01-01",
+      "flags": [],
+      "route": "raw",
+      "mode": "stalled",
+      "id": "raw-stalled-false",
+      "isolate": "690f8eaf-608c-4e7c-a1f1-7c4a9da2e883",
+      "status": 200,
+      "first": "started raw-stalled-false\n",
+      "clientEndedBeforeAbort": {
+        "kind": "end"
+      },
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "raw-stalled-false",
+          "kind": "start",
+          "at": 1790310155599
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 0,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": false,
+      "servedVersion": "false",
+      "compatibilityDate": "2025-01-01",
+      "flags": [],
+      "route": "mcp",
+      "mode": "heartbeat",
+      "id": "mcp-heartbeat-false",
+      "isolate": "690f8eaf-608c-4e7c-a1f1-7c4a9da2e883",
+      "status": 401,
+      "first": "started mcp-heartbeat-false\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "mcp-heartbeat-false",
+          "kind": "start",
+          "at": 1790310157912
+        },
+        {
+          "id": "mcp-heartbeat-false",
+          "kind": "admitted",
+          "at": 1790310157912
+        },
+        {
+          "id": "mcp-heartbeat-false",
+          "kind": "tick",
+          "at": 1790310158162
+        },
+        {
+          "id": "mcp-heartbeat-false",
+          "kind": "tick",
+          "at": 1790310158412
+        },
+        {
+          "id": "mcp-heartbeat-false",
+          "kind": "tick",
+          "at": 1790310158662
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 1,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 1,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 503,
+        "sameIsolate": true,
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-31001,\"message\":\"Server capacity is exhausted. Retry later.\",\"data\":{\"code\":\"server_overloaded\",\"retryable\":true,\"retryAfterMs\":1000}}}"
+      }
+    },
+    {
+      "enabled": false,
+      "servedVersion": "false",
+      "compatibilityDate": "2025-01-01",
+      "flags": [],
+      "route": "mcp",
+      "mode": "idle-timer",
+      "id": "mcp-idle-timer-false",
+      "isolate": "690f8eaf-608c-4e7c-a1f1-7c4a9da2e883",
+      "status": 401,
+      "first": "started mcp-idle-timer-false\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "mcp-idle-timer-false",
+          "kind": "start",
+          "at": 1790310160222
+        },
+        {
+          "id": "mcp-idle-timer-false",
+          "kind": "admitted",
+          "at": 1790310160222
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 1,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 1,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 503,
+        "sameIsolate": true,
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-31001,\"message\":\"Server capacity is exhausted. Retry later.\",\"data\":{\"code\":\"server_overloaded\",\"retryable\":true,\"retryAfterMs\":1000}}}"
+      }
+    },
+    {
+      "enabled": false,
+      "servedVersion": "false",
+      "compatibilityDate": "2025-01-01",
+      "flags": [],
+      "route": "mcp",
+      "mode": "stalled",
+      "id": "mcp-stalled-false",
+      "isolate": "690f8eaf-608c-4e7c-a1f1-7c4a9da2e883",
+      "status": 401,
+      "first": "started mcp-stalled-false\n",
+      "clientEndedBeforeAbort": {
+        "kind": "end"
+      },
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "mcp-stalled-false",
+          "kind": "start",
+          "at": 1790310162535
+        },
+        {
+          "id": "mcp-stalled-false",
+          "kind": "admitted",
+          "at": 1790310162535
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 1,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 1,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 503,
+        "sameIsolate": true,
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-31001,\"message\":\"Server capacity is exhausted. Retry later.\",\"data\":{\"code\":\"server_overloaded\",\"retryable\":true,\"retryAfterMs\":1000}}}"
+      }
+    },
+    {
+      "enabled": true,
+      "servedVersion": "true",
+      "compatibilityDate": "2025-01-01",
+      "flags": [
+        "enable_request_signal"
+      ],
+      "route": "raw",
+      "mode": "heartbeat",
+      "id": "raw-heartbeat-true",
+      "isolate": "b37bb26e-e599-4404-a298-961258229d9d",
+      "status": 200,
+      "first": "started raw-heartbeat-true\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "raw-heartbeat-true",
+          "kind": "start",
+          "at": 1790310179873
+        },
+        {
+          "id": "raw-heartbeat-true",
+          "kind": "tick",
+          "at": 1790310180123
+        },
+        {
+          "id": "raw-heartbeat-true",
+          "kind": "tick",
+          "at": 1790310180373
+        },
+        {
+          "id": "raw-heartbeat-true",
+          "kind": "tick",
+          "at": 1790310180623
+        },
+        {
+          "id": "raw-heartbeat-true",
+          "kind": "abort",
+          "at": 1790310180645
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 0,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": true,
+      "servedVersion": "true",
+      "compatibilityDate": "2025-01-01",
+      "flags": [
+        "enable_request_signal"
+      ],
+      "route": "raw",
+      "mode": "idle-timer",
+      "id": "raw-idle-timer-true",
+      "isolate": "b37bb26e-e599-4404-a298-961258229d9d",
+      "status": 200,
+      "first": "started raw-idle-timer-true\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "raw-idle-timer-true",
+          "kind": "start",
+          "at": 1790310182224
+        },
+        {
+          "id": "raw-idle-timer-true",
+          "kind": "abort",
+          "at": 1790310182991
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 0,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": true,
+      "servedVersion": "true",
+      "compatibilityDate": "2025-01-01",
+      "flags": [
+        "enable_request_signal"
+      ],
+      "route": "raw",
+      "mode": "stalled",
+      "id": "raw-stalled-true",
+      "isolate": "b37bb26e-e599-4404-a298-961258229d9d",
+      "status": 200,
+      "first": "started raw-stalled-true\n",
+      "clientEndedBeforeAbort": {
+        "kind": "end"
+      },
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "raw-stalled-true",
+          "kind": "start",
+          "at": 1790310184580
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 0,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": true,
+      "servedVersion": "true",
+      "compatibilityDate": "2025-01-01",
+      "flags": [
+        "enable_request_signal"
+      ],
+      "route": "mcp",
+      "mode": "heartbeat",
+      "id": "mcp-heartbeat-true",
+      "isolate": "b37bb26e-e599-4404-a298-961258229d9d",
+      "status": 401,
+      "first": "started mcp-heartbeat-true\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "start",
+          "at": 1790310186952
+        },
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "admitted",
+          "at": 1790310186952
+        },
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "tick",
+          "at": 1790310187202
+        },
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "tick",
+          "at": 1790310187452
+        },
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "tick",
+          "at": 1790310187702
+        },
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "abort",
+          "at": 1790310187725
+        },
+        {
+          "id": "mcp-heartbeat-true",
+          "kind": "cancel",
+          "at": 1790310187725
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 1,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": true,
+      "servedVersion": "true",
+      "compatibilityDate": "2025-01-01",
+      "flags": [
+        "enable_request_signal"
+      ],
+      "route": "mcp",
+      "mode": "idle-timer",
+      "id": "mcp-idle-timer-true",
+      "isolate": "b37bb26e-e599-4404-a298-961258229d9d",
+      "status": 401,
+      "first": "started mcp-idle-timer-true\n",
+      "clientEndedBeforeAbort": null,
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "mcp-idle-timer-true",
+          "kind": "start",
+          "at": 1790310189281
+        },
+        {
+          "id": "mcp-idle-timer-true",
+          "kind": "admitted",
+          "at": 1790310189281
+        },
+        {
+          "id": "mcp-idle-timer-true",
+          "kind": "abort",
+          "at": 1790310190057
+        },
+        {
+          "id": "mcp-idle-timer-true",
+          "kind": "cancel",
+          "at": 1790310190057
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 0,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 1,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 200,
+        "sameIsolate": true,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\""
+      }
+    },
+    {
+      "enabled": true,
+      "servedVersion": "true",
+      "compatibilityDate": "2025-01-01",
+      "flags": [
+        "enable_request_signal"
+      ],
+      "route": "mcp",
+      "mode": "stalled",
+      "id": "mcp-stalled-true",
+      "isolate": "b37bb26e-e599-4404-a298-961258229d9d",
+      "status": 401,
+      "first": "started mcp-stalled-true\n",
+      "clientEndedBeforeAbort": {
+        "kind": "end"
+      },
+      "sameIsolate": true,
+      "events": [
+        {
+          "id": "mcp-stalled-true",
+          "kind": "start",
+          "at": 1790310191607
+        },
+        {
+          "id": "mcp-stalled-true",
+          "kind": "admitted",
+          "at": 1790310191607
+        }
+      ],
+      "admission": {
+        "concurrency": 1,
+        "maxQueueSize": 0,
+        "queueTimeoutMs": 1000,
+        "retryAfterMs": 1000,
+        "active": 1,
+        "queued": 0,
+        "closed": false,
+        "totals": {
+          "admitted": 1,
+          "queued": 0,
+          "rejected": 0,
+          "cancelled": 0,
+          "closed": 0
+        },
+        "queueWaitMs": {
+          "count": 0,
+          "total": 0,
+          "max": 0
+        }
+      },
+      "followup": {
+        "status": 503,
+        "sameIsolate": true,
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-31001,\"message\":\"Server capacity is exhausted. Retry later.\",\"data\":{\"code\":\"server_overloaded\",\"retryable\":true,\"retryAfterMs\":1000}}}"
+      }
+    }
+  ]
+}
