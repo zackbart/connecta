@@ -803,12 +803,12 @@ pauses keep that deadline, so no replay mixes old reads with new. Another
 subject or pool finds no run.
 
 **W4.** `resume_execution` takes `token`, `address`, `args`, optional
-`approval`, and a `reason` it drops. The address must match and the args be the
-same JSON, key order aside and no `__proto__` key, or it is
-`approval_mismatch`. That, `execution_token_stale` (with the current pause),
-`execution_in_progress` (a live claim), `execution_expired` (with counts if
-writes were sent), and `execution_not_found` refuse before the claim and
-consume nothing. A repeat of an ended run returns its answer, even past expiry.
+`approval`, and a dropped `reason`. Address and args must match the pending
+write as JSON, key order aside, with no `__proto__` key; otherwise it returns
+`approval_mismatch`. That, `execution_token_stale` (current pause),
+`execution_in_progress` (live claim), `execution_expired` (counts if writes
+were sent), and `execution_not_found` refuse before the claim, spending nothing.
+A repeat returns the ended run's answer past expiry; oversized text or emitted blocks get a completion receipt instead.
 
 **W5.** An approved write is sent at most once. Resuming claims the run by
 compare-and-set; a racing resume gets `execution_in_progress`. Each live write
@@ -1016,7 +1016,7 @@ passing one table is also the check on the executor duties above, with
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself, `paused` and `approved` events), `test/activity.test.ts` (the shared code → friction table, the identity clamp, zero-attempt pauses and approvals) |
 | `V5` | `test/resumable.test.ts` (replay adds only the approval and the live write), `test/guest-api-contract.test.ts` |
 | `W1`, `W2` | `test/guest-api-contract.test.ts` (nothing after a pause gets through, a `__proto__` write refused, on both executors), `test/resumable.test.ts` (the pause shape, reproducible pause points, oversized pending writes, a write gated after the program returned), `test/invocation-pipeline.test.ts` (the gate after validation) |
-| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, a `__proto__` repetition through the MCP schema, stale tokens, a repeated resume, an expired run's counts) |
+| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, a `__proto__` repetition through the MCP schema, a repeated resume and emitted-content receipt, an expired run's counts) |
 | `W5` | `test/resumable.test.ts` (two resumes racing for a pause, a crashed claimant's `sending` write never sent, a lapsed claim taken over, a claim lost mid-play and the write it sent reported, executor failure returning to the pause, a cut-short or lapsed play that sent writes failing `execution_interrupted`, a claim outliving `expiresAt`, a live or lapsed claim checked before expiry, a failed takeover's answer stored with it, storage that never answers before and after dispatch, a deadline between mark and dispatch) |
 | `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a retry's scope replacing an unused approval, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
 | `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, check-first advice once a write landed, the write budget) |

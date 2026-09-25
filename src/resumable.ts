@@ -932,12 +932,17 @@ export class RunState {
       const text = reported.content[0]?.type === "text" ? reported.content[0].text ?? "" : "";
       const final = {
         isError: reported.isError === true,
-        text: text.length <= MAX_FINAL_CHARS
-          ? text
-          : JSON.stringify({
+        text: reported.content.length > 1
+          ? JSON.stringify({
+              completed: true,
+              note: "The run completed and its emitted content blocks were delivered once; they were not kept for a repeated resume_execution.",
+            })
+          : text.length > MAX_FINAL_CHARS
+            ? JSON.stringify({
               completed: true,
               note: "The run completed and its result was returned once; it was too large to keep for a repeated resume_execution.",
-            }),
+            })
+            : text,
       };
       // An erroring program ends the run `failed`: it is not replayed, and
       // its answer — error and counts — is what a repeated resume returns.

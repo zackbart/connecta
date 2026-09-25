@@ -512,6 +512,25 @@ describe("resumable writes: resume_execution", () => {
     expect(w.writes()).toHaveLength(1);
   });
 
+  it("returns a receipt when emitted blocks cannot be repeated", async () => {
+    const w = world();
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.post", { text: "once" });
+      await connecta.emit!({ type: "text", text: "caption" });
+      await connecta.emit!({ type: "image", data: "aGVsbG8=", mimeType: "image/png" });
+      return { posted: true };
+    })));
+    const done = await w.resume(approve(first));
+    expect(done.content).toHaveLength(3);
+    expect(value(done)).toEqual({ result: { posted: true }, emitted: 2 });
+    const again = await w.resume(approve(first));
+    expect(again.content).toHaveLength(1);
+    expect(value(again)).toMatchObject({ completed: true });
+    expect(JSON.stringify(again)).toContain("emitted content blocks were delivered once");
+    expect(JSON.stringify(again)).not.toContain('"emitted":2');
+    expect(w.writes()).toHaveLength(1);
+  });
+
   it("sends one set of writes when two resumes race for the same pause", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -1702,10 +1721,17 @@ describe("config approval exemptions (#566)", () => {
   });
 
   it("lets an unawaited exempt write finish when nothing can pause, and says how it went", async () => {
+    let writeStarted!: () => void;
+    let dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
     const w = world({
       readOnlyPrograms: true,
       settings: { approval: policy({ "tracker.close_issue": "never" }) },
+      read: async () => {
+        await dispatched;
+        return { id: 9, title: "An issue" };
+      },
       write: async (_name, args) => {
+        writeStarted();
         await new Promise((resolve) => setTimeout(resolve, 30));
         if (args.id === 2) throw new ConnectorCallError("timeout", "gateway timed out");
         return { ok: true };
@@ -1723,6 +1749,7 @@ describe("config approval exemptions (#566)", () => {
     expect(w.events.filter((event) => event.address === "tracker.close_issue")
       .map((event) => event.outcome)).toEqual(["success"]);
     // One that turns unknown is the result, not a plain success.
+    dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
     const unknown = await w.execute(w.program(fireAndReturn(2)));
     expect(unknown.isError).toBe(true);
     expect(value(unknown).error).toMatchObject({
