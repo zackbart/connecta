@@ -100,7 +100,7 @@ function statesCountDirectly(documents: unknown, project: string, count: number)
     const namesProject = Object.values(record).some(
       (inner) => typeof inner === "string" && name.test(inner.trim()),
     );
-    if (namesProject && Object.values(record).some((inner) => inner === count)) return true;
+    if (namesProject && Object.values(record).some(holds)) return true;
     return Object.values(record).some(visit);
   };
   return visit(documents);
@@ -183,8 +183,8 @@ const buildPage: ActiveTask = {
   // Names its sources the way cross-connector-join does: which service holds
   // MRR is not what this task measures, and billing looks like the answer.
   prompt:
-    "Using the issue tracker and product analytics, build a page showing open bugs per project with each " +
-    "affected customer's MRR, and share the link in #triage.",
+    "Using the issue tracker and product analytics, build an HTML page showing open bugs per project with each " +
+    "affected customer's MRR. Keep the figures in a named JSON document that the page reads, then share the link in #triage.",
   grade: ({ world }) => {
     const { artifact, checks } = onlyArtifact(world);
     const post = singlePost(world, "triage");
@@ -213,6 +213,11 @@ const buildPage: ActiveTask = {
         validation && !validation.ok
           ? validation.errors.map((issue) => issue.message).join(" | ").slice(0, 400)
           : undefined,
+      ),
+      check(
+        "page-reads-documents",
+        "the HTML reads its stored data document",
+        artifact?.kind === "html" && /\b(?:window\.)?artifact\.data\b/.test(artifact.source),
       ),
       check(
         "data-in-documents",
