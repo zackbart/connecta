@@ -610,6 +610,69 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "P1",
+    name: "one fenced program surrounded by prose runs on both executors",
+    code: "Read the value:\n```javascript\nasync () => ({ recovered: 42 });\n```\nThat is the program.",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ recovered: 42 });
+    },
+  },
+  {
+    clauses: "P1",
+    name: "a default-exported arrow runs on both executors",
+    code: "export default async () => ({ recovered: 42 });",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ recovered: 42 });
+    },
+  },
+  {
+    clauses: "P1",
+    name: "a named async declaration runs as one arrow on both executors",
+    code: "async function main() { return { recovered: 42 }; }",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ recovered: 42 });
+    },
+  },
+  {
+    clauses: "P1",
+    name: "a named async declaration keeps recursion and its arguments binding",
+    code: "async function recurse(n = 3) { if (n === 0) return { depth: 0, args: arguments.length }; const prior = await recurse(n - 1); return { depth: prior.depth + 1, args: arguments.length }; }",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ depth: 3, args: 0 });
+    },
+  },
+  {
+    clauses: "P1",
+    name: "a fence in a program comment does not replace later host calls",
+    code: `async () => {
+      /*
+      \`\`\`js
+      async () => 42
+      \`\`\`
+      */
+      const result = await connecta.call("reader.read", { value: "original" });
+      return result.echo;
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toBe("original");
+      expect(state.calls["reader.read"]).toBe(1);
+    },
+  },
+  {
+    clauses: "P1",
+    name: "two fenced programs remain invalid",
+    code: "```js\nasync () => 1\n```\n```js\nasync () => 2\n```",
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.result).toBeUndefined();
+    },
+  },
+  {
     clauses: "P4",
     name: "nothing a program leaves behind reaches the next one",
     code: `async () => {

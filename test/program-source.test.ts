@@ -4,7 +4,43 @@
 // not stripped.
 
 import { describe, expect, it } from "vitest";
-import { withoutProgramTerminator } from "../src/program-source.js";
+import { normalizeProgramSource, withoutProgramTerminator } from "../src/program-source.js";
+
+describe("normalizeProgramSource", () => {
+  it.each([
+    ["I will read the value.\n```js\nasync () => 42;\n```\nHere is the program.", "async () => 42"],
+    ["export default async () => ({ value: 42 });", "async () => ({ value: 42 })"],
+    ["async function main() { return 42; }", "async (...args) => (async function main() { return 42; })(...args)"],
+    ["async function read(value) { return { value, text: \"}\" }; };", "async (...args) => (async function read(value) { return { value, text: \"}\" }; })(...args)"],
+    ["async function read() { return /}/.test('}'); } // done", "async (...args) => (async function read() { return /}/.test('}'); })(...args) // done"],
+  ])("recovers one wrapped program", (code, expected) => {
+    expect(normalizeProgramSource(code)).toBe(expected);
+  });
+
+  it.each([
+    "return 42;",
+    "async () => 42; 1 + 1",
+    "async function first() { return 1; }\nasync function second() { return 2; }",
+    "Before\n```js\nasync () => 1\n```\n```js\nasync () => 2\n```",
+    "Before\n```js\nreturn 42;\n```\nAfter",
+  ])("leaves unsupported source %j unchanged", (code) => {
+    expect(normalizeProgramSource(code)).toBe(code);
+  });
+  it("keeps code after a default export for the executor to reject", () => {
+    expect(normalizeProgramSource("export default async () => 42; 1 + 1")).toBe("async () => 42; 1 + 1");
+  });
+  it("does not extract a fence from a valid arrow's comment", () => {
+    const code = `async () => {
+/*
+\`\`\`js
+async () => 42
+\`\`\`
+*/
+return "original";
+}`;
+    expect(normalizeProgramSource(code)).toBe(code);
+  });
+});
 
 describe("withoutProgramTerminator", () => {
   it.each([

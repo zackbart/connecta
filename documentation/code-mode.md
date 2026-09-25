@@ -113,16 +113,15 @@ is just another provider function (`M8`).
 
 ## The program
 
-**P1.** A program is one JavaScript `async` arrow-function expression, evaluated
-once; its resolved value is the result. The expression may end with a `;`, and
-with whitespace or comments after it: `execute_code` drops those terminators
-before either executor sees the program, because both evaluate it inside
-parentheses, where `};` was a syntax error on QuickJS and on a Dynamic Worker
-either the same error or a program that quietly returned `undefined`. Only
-semicolons that trail the expression go; `async () => 1; 2` is still more than
-one expression. Both executors also accept markdown-fenced code and a bare
-statement body, normalizing those differently — a courtesy to model output,
-not contract, so anything else may be accepted, rejected, or reinterpreted.
+**P1.** A program is one JavaScript `async` arrow expression, evaluated once;
+its resolved value is the result. Before either executor sees it, `execute_code`
+removes trailing semicolons (and retains comments) so parenthesized evaluation
+works on both. `async () => 1; 2` is still more than one expression. The host
+also recovers one JavaScript fence, even when prose surrounds it, `export default`
+around an async arrow, or one named `async function` declaration with simple
+parameters. The result remains one async arrow. Multiple fences, extra
+statements, and bare statement bodies are outside host recovery. QuickJS may
+wrap a bare body when driven directly; that is outside the portable contract.
 
 **P2.** The only capabilities in the contract are `connecta.search`,
 `connecta.describe`, `connecta.call`, `connecta.emit`, and `console.log` /
@@ -227,6 +226,7 @@ bounds:
 
 | Bound | Value |
 | --- | --- |
+| `execute_code` source | ≤ 65,536 UTF-8 bytes, checked before executor admission; over-limit source returns `invalid_args` |
 | Rendered shape | 1,024 UTF-8 bytes each |
 | Work per shape | 2,000 visits across schema nodes, property and required names, literal values, any constraint-free retry, and its key-only fallback |
 | Each enum node | 256 of those bytes |
@@ -986,7 +986,7 @@ passing one table is also the check on the executor duties above, with
 
 | Clauses | Test |
 | --- | --- |
-| `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax, trailing terminators), `test/program-source.test.ts` (which semicolons are terminators), `test/quickjs-executor.test.ts` (`normalizeCode`) |
+| `P1`, `P5` | both guest-contract executors (TypeScript syntax, trailing terminators, wrapper recovery), `test/program-source.test.ts` (which semicolons and wrappers are recovered), `test/quickjs-executor.test.ts` (`normalizeCode`) |
 | `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (a child-process environment holding only `TZ=UTC`), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
