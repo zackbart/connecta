@@ -20,6 +20,7 @@ import type {
   Logger,
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
+import { isExplicitlyReadOnly } from "../tool-safety.js";
 import type { ApprovalPolicy } from "../tool-safety.js";
 import type { ConnectorPermission, ConnectaIdentityConfig } from "../index.js";
 export { msg } from "../errors.js";
@@ -153,6 +154,8 @@ export async function authorize(
       connectorIds: "all" | readonly string[];
       /** Per-connector tool allowlist for connectors granted by address only. */
       toolAccess?: ToolAccess;
+      /** Granted addresses that still require the catalog's read-only hint. */
+      guardedToolAccess?: ToolAccess;
       operator: boolean;
       credentialAdministration: ConnectorPermission;
       personalConnection: ConnectorPermission;
@@ -168,6 +171,7 @@ export async function authorize(
     try {
       access = parseConnectorAccess(
         identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
+        { allowReadOnly: true },
       );
     } catch {
       return {
@@ -216,6 +220,7 @@ export async function authorize(
         }
         access = parseConnectorAccess(
           identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
+          { allowReadOnly: true },
         );
         if (interactive) {
           credentialAdministration = identityConfig?.credentialAdministration ? await identityConfig.credentialAdministration(identity) : "none";
@@ -369,12 +374,15 @@ export function validateAuthPermissions(
  * its tools they were granted. Viewing grants nothing a program could not
  * already read (ethos, "Human routes manage auth, never capability").
  */
-export function mayViewArtifacts(authz: AuthorizedIdentity): boolean {
+export function mayViewArtifacts(authz: AuthorizedIdentity, registry: Registry): boolean {
   if (authz.connectorIds !== "all" && !authz.connectorIds.includes("artifacts")) {
     return false;
   }
   const tools = authz.toolAccess?.get("artifacts");
-  return !tools || tools.has("get_artifact");
+  if (tools && !tools.has("get_artifact")) return false;
+  if (!authz.guardedToolAccess?.get("artifacts")?.has("get_artifact")) return true;
+  return registry.getConnector("artifacts")?.staticTools?.some((tool) =>
+    tool.name === "get_artifact" && isExplicitlyReadOnly(tool)) === true;
 }
 
 export function mayManageConnector(

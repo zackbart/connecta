@@ -5,7 +5,7 @@ import {
 } from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
-import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
+import type { ConnectorAccess, ConnectorGrant, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
 import {
   droppedBrandingUrls,
@@ -224,12 +224,15 @@ export interface ConnectaIdentityConfig {
   /**
    * What this admitted identity may discover and call: `"all"`, or a list
    * whose entries are connector ids (the whole connector) and `connector.tool`
-   * addresses (that tool only). Grants are additive. An address naming a tool
-   * the catalog lacks is unreachable and warned once, never widened.
+   * addresses (that tool only), or `{ tool: "connector.tool",
+   * requireReadOnly: true }` for an exact tool only while its loaded catalog
+   * explicitly classifies it read-only. Grants are additive: an unrestricted
+   * connector or address grant wins over the guarded form. An address naming
+   * a tool the catalog lacks is unreachable and warned once, never widened.
    */
   connectorAccess?(
     identity: Readonly<AuthenticatedIdentity>,
-  ): "all" | readonly string[] | Promise<"all" | readonly string[]>;
+  ): "all" | readonly ConnectorGrant[] | Promise<"all" | readonly ConnectorGrant[]>;
   /** Global payload-free activity reads. Defaults to interactive humans. */
   activityAccess?(
     principal: Readonly<IdentityReference>,
