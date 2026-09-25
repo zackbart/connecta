@@ -128,8 +128,10 @@ try {
         })();
         let whileLive;
         if (route === 'mcp') {
+          const clientEndBeforeCheck = clientEnd ?? null;
           const competing = await listTools();
           whileLive = { status: competing.status,
+            clientEndBeforeCheck,
             sameIsolate: competing.headers.get('x-probe-isolate') === isolate,
             // Compare two server timestamps. The original lease can only be
             // granted after its Worker entry, and the competing decision ran
@@ -179,9 +181,11 @@ try {
           observation.admission.active === 0 && observation.followup.status === 200 &&
           observation.followup.sameIsolate && toolCount === 8 &&
           (!whileLive || (whileLive.sameIsolate && whileLive.elapsedMs >= 0 && whileLive.elapsedMs < maxDurationMs &&
-            (whileLive.status === 503 || (whileLive.clientEndAtCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
+            (whileLive.status === 503 || (whileLive.clientEndBeforeCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
         observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs < 0 || whileLive.elapsedMs >= maxDurationMs)
           ? 'inconclusive: contention arrived after the conservative deadline'
+          : whileLive?.status === 200 && !whileLive.clientEndBeforeCheck && whileLive.clientEndAtCheck
+          ? 'inconclusive: original stream ended during contention'
           : observation.passed ? 'pass' : 'fail';
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
@@ -206,7 +210,7 @@ try {
         }
       }
       if (deletionError) throw new Error(
-        `Could not delete disposable Worker ${name}. Run wrangler delete --name ${name} --force.`,
+        `Could not delete disposable Worker ${name}. Run wrangler delete ${name} --force.`,
         { cause: deletionError },
       );
       console.log(`Deleted ${name}`);
