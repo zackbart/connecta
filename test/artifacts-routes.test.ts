@@ -232,9 +232,10 @@ describe("the artifact API", () => {
 describe("mounting", () => {
   it("isolates a dedicated artifact origin and redirects main-host artifact paths", async () => {
     const { app } = await deploy({ artifactOrigin: ARTIFACT_ORIGIN });
-    const fetchAt = (origin: string, path: string, token?: string) => app.fetch(new Request(`${origin}${path}`, {
-      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-    }));
+    const fetchAt = (origin: string, path: string, token?: string) => app.fetch(new Request(
+      `${origin}${path}`,
+      token ? { headers: { Authorization: `Bearer ${token}` } } : {},
+    ));
     for (const path of ["/artifacts", "/artifacts/q3-bugs", "/artifacts/q3-bugs/v/1?d=data:1", "/artifacts/_api/list", "/artifacts/_frame"]) {
       const response = await fetchAt(BASE, path);
       expect(response.status, path).toBe(308);

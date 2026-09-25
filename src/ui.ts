@@ -68,7 +68,7 @@ export function operatorPageForPath(path: string): OperatorPage | undefined {
 }
 
 /** Everything artifact pages own: shells, their API, and the frame. */
-export function isArtifactPath(path: string): boolean {
+function isArtifactPath(path: string): boolean {
   return path === "/artifacts" || path.startsWith("/artifacts/");
 }
 

@@ -18,6 +18,7 @@ const BASE = "https://deployment.example";
 const PAGE_CONSTANTS = {
   MCP_URL: `${BASE}/mcp`,
   INITIAL_PAGE: "connections",
+  HOME_URL: `${BASE}/`,
   TITLE_SUFFIX: " · Connecta",
   PRODUCT_NAME: "Connecta",
   PRODUCT_DESCRIPTION: "One MCP endpoint.",

@@ -544,7 +544,7 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
   });
 }
 
-export async function loadArtifactView(): Promise<void> {
+async function loadArtifactView(): Promise<void> {
   const current = fence();
   const request = artifactViewRequest(window.location.pathname, window.location.search);
   set({ artifactPhase: "loading", artifactNotice: null });
