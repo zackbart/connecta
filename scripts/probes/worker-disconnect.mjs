@@ -1,4 +1,4 @@
-// Production-only experiment for #573. Deploys a disposable Worker, uses only
+// Production-only regression probe for #573/#595. Deploys a disposable Worker, uses only
 // synthetic data, saves observations, and deletes the Worker in finally.
 // Usage: node scripts/probes/worker-disconnect.mjs [output.json]
 import { execFile } from "node:child_process";
@@ -18,6 +18,7 @@ const name = `connecta-disconnect-${Date.now().toString(36)}`;
 const key = randomBytes(24).toString("hex");
 const configPath = join(temp, "wrangler.json");
 const observations = [];
+const maxResponseMs = 2000;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let deploymentAttempted = false;
 
@@ -53,7 +54,8 @@ export default {
     let app = apps.get(id);
     if (!app) { app = createConnecta({
       connectors: [], logger: 'silent', executor: { execute: async () => ({ result: null }) },
-      admission: { requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1000 } },
+      admission: { requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1000,
+        maxResponseMs: ${maxResponseMs} } },
       auth: { kind: 'probe', authorize(req) {
         if (req.headers.get('x-probe-pass') === 'yes') return { ok: true };
         const u = new URL(req.url);
@@ -107,6 +109,7 @@ try {
         const timeout = setTimeout(() => controller.abort(), 15000);
         const headers = { authorization: `Bearer ${key}` };
         const response = await fetch(`${origin}/${route}?id=${id}&mode=${mode}`, { headers, signal: controller.signal });
+        const responseAt = Date.now();
         const isolate = response.headers.get("x-probe-isolate");
         const reader = response.body.getReader();
         let first;
@@ -122,7 +125,16 @@ try {
         clearTimeout(timeout);
         try { await reader.cancel(); } catch {}
         await drained;
-        await wait(1500);
+        // Do not read /health after expiry before this request. Admission must
+        // recover from acquire itself, without a monitoring request sweeping it.
+        await wait(Math.max(0, maxResponseMs + 500 - (Date.now() - responseAt)));
+        const followup = await fetch(`${origin}/mcp?id=${id}`, { method: "POST", headers: {
+          ...headers, "x-probe-pass": "yes", "content-type": "application/json",
+          accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
+        }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+        const followupBody = await followup.text();
+        let toolCount;
+        try { toolCount = JSON.parse(followupBody).result?.tools?.length; } catch {}
         const snapshots = [];
         for (let attempt = 0; attempt < 4; attempt++) {
           const statsResponse = await fetch(`${origin}/stats?id=${id}`, { headers });
@@ -135,20 +147,19 @@ try {
           await wait(100);
         }
         const same = snapshots.find(s => s.isolate === isolate);
-        const followup = await fetch(`${origin}/mcp?id=${id}`, { method: "POST", headers: {
-          ...headers, "x-probe-pass": "yes", "content-type": "application/json",
-          accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
-        }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
-        const followupBody = await followup.text();
         const observation = { enabled, servedVersion: response.headers.get('x-probe-version'),
-          compatibilityDate: "2025-01-01", flags, route, mode, id, isolate,
+          compatibilityDate: "2025-01-01", flags, maxResponseMs, route, mode, id, isolate,
           status: response.status, first: first?.value ? new TextDecoder().decode(first.value) : first,
           clientEndedBeforeAbort,
           sameIsolate: Boolean(same), events: same?.events.filter(e => e.id === id),
           admission: same?.health.admission.requests,
           followup: { status: followup.status, sameIsolate: followup.headers.get("x-probe-isolate") === isolate,
-            body: followupBody.slice(0, 300) },
+            toolCount, body: followupBody.slice(0, 300) },
         };
+        observation.passed = observation.servedVersion === String(enabled) &&
+          response.status === (route === 'mcp' ? 401 : 200) && observation.sameIsolate &&
+          observation.admission.active === 0 && observation.followup.status === 200 &&
+          observation.followup.sameIsolate && toolCount === 8;
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
         await writeFile(output, JSON.stringify({ testedAt: new Date().toISOString(), name, observations }, null, 2));
@@ -156,6 +167,7 @@ try {
       }
     }
   }
+  if (observations.some(row => !row.passed)) throw new Error(`Disconnect regression failed; see ${output}`);
 } finally {
   try {
     if (deploymentAttempted) {
