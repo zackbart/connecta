@@ -422,16 +422,18 @@ describe("compactSchema 2020-12 keyword compatibility", () => {
   });
 });
 
-function branchingSchema(width: number): JsonSchema {
+function branchingSchema(width: number, onLeafRead?: () => void): JsonSchema {
   const $defs: Record<string, unknown> = {};
   for (let level = 0; level < 4; level += 1) {
-    $defs[`Level${level}`] = {
-      allOf: Array.from({ length: width }, () =>
-        level === 3
-          ? { type: "object", properties: { id: { type: "string" } } }
-          : { $ref: `#/$defs/Level${level + 1}` },
-      ),
-    };
+    $defs[`Level${level}`] = { allOf: Array.from({ length: width }, () => {
+      if (level !== 3) return { $ref: `#/$defs/Level${level + 1}` };
+      const leaf = { type: "object", properties: { id: { type: "string" } } };
+      if (onLeafRead) Object.defineProperty(leaf, "type", {
+        get: () => { onLeafRead(); return "object"; },
+        enumerable: true,
+      });
+      return leaf;
+    }) };
   }
   return { $defs, $ref: "#/$defs/Level0" };
 }
@@ -439,13 +441,19 @@ function branchingSchema(width: number): JsonSchema {
 describe("bounded catalog rendering", () => {
   it("bounds repeated allOf references in both compact routes", () => {
     for (const render of [compactDiscoverySchema, compactSchema]) {
-      const schema = branchingSchema(40);
-      const started = performance.now();
+      let leafReads = 0;
+      const schema = branchingSchema(40, () => {
+        leafReads += 1;
+        // A broken work guard must not make this synchronous test walk 40⁴
+        // branches before its assertion gets a chance to run.
+        if (leafReads > 2_000) throw new Error("schema work guard exceeded");
+      });
       const result = render(schema);
-      const elapsed = performance.now() - started;
       const text = typeof result === "string" ? result : result.text;
       expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(1_024);
-      expect(elapsed).toBeLessThan(50);
+      expect(text).toContain("/* truncated */");
+      expect(leafReads).toBeGreaterThan(0);
+      expect(leafReads).toBeLessThanOrEqual(2_000);
       if (typeof result !== "string") expect(result.truncated).toBe(true);
     }
   });
