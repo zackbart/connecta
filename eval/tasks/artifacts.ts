@@ -398,6 +398,7 @@ const refreshWeekly: ActiveTask = {
     const expected = expectedFigures(world).counts;
     const data = artifact?.documents.data;
     const runs = artifact?.runs ?? [];
+    const scheduledRuns = runs.filter((run) => run.trigger === "schedule");
     const setCalls = trace.toolUses.filter((use) =>
       use.input.address === "artifacts.set_refresh" ||
       String(use.input.code ?? "").includes("artifacts.set_refresh"));
@@ -405,9 +406,9 @@ const refreshWeekly: ActiveTask = {
       check("weekly-program", "one weekly program targets the data document",
         artifact?.refresh?.schedule === "weekly" && artifact.refresh.document === "data" && setCalls.length === 1),
       check("one-refresh-run", "the due tick produced one successful data version",
-        runs.length === 1 && runs[0]?.status === "succeeded" &&
-          artifact?.documentHistory.data?.[0]?.op === "refresh" &&
-          artifact.documentHistory.data[0]?.runId === runs[0]?.runId),
+        scheduledRuns.length === 1 && scheduledRuns[0]?.status === "succeeded" &&
+          artifact?.documentHistory.data?.some((version) =>
+            version.op === "refresh" && version.runId === scheduledRuns[0]?.runId) === true),
       check("updated-counts", "the refreshed document reflects the new tracker state",
         artifact !== undefined && Object.entries(expected).every(([project, count]) => statesCount(data, project, count))),
       check("view-untouched", "refresh did not rewrite the HTML view",

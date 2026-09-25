@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { ArtifactOperations } from "../src/artifacts/operations.js";
+import { ArtifactRefreshService } from "../src/artifacts/refresh.js";
+import type { ArtifactRenderCheck } from "../src/artifacts/connector.js";
 import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
 import { createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -11,16 +13,17 @@ const actor = { kind: "test", id: "alice" };
 const owner = { identity: { actor, interactive: false } };
 const source = '<!doctype html><main id="artifact-root"><script>document.body.textContent=window.artifact.data.data.value</script></main>';
 
-function setup(execute: Executor["execute"], access?: () => readonly string[]) {
+function setup(execute: Executor["execute"], access?: () => readonly string[], renderCheck?: ArtifactRenderCheck) {
   let writeCalls = 0;
+  let readCalls = 0;
   const store = kvArtifactStore(memoryStorage());
-  const module = artifacts({ store });
+  const module = artifacts({ store, ...(renderCheck ? { renderCheck } : {}) });
   const operations = new ArtifactOperations({ store, limits: resolveLimits(), allowlist: resolveAllowlist() });
   const shared = { ...api("shared", {
     description: "Shared test data",
     tools: [
       { name: "read", description: "Read", annotations: { readOnlyHint: true },
-        handler: async () => ({ value: 2 }) },
+        handler: async () => { readCalls++; return { value: 2 }; } },
       { name: "write", description: "Write", annotations: { readOnlyHint: false },
         handler: async () => { writeCalls++; return { written: true }; } },
     ],
@@ -46,17 +49,92 @@ function setup(execute: Executor["execute"], access?: () => readonly string[]) {
     });
     if (!saved.ok) throw new Error(saved.message);
   };
-  return { app, module, operations, store, create, configure, writeCalls: () => writeCalls };
+  return { app, module, operations, store, create, configure,
+    writeCalls: () => writeCalls, readCalls: () => readCalls };
 }
 
 const hostCall = (providers: ExecutorProvider[], address: string) =>
   providers[0]!.fns.call!(address, {});
 
 describe("artifact refresh", () => {
+  it("settles an unresponsive admission wait at claim expiry before another run starts", async () => {
+    const { operations, create, configure } = setup(async () => ({ result: null }));
+    await create();
+    await configure("async () => ({ value: 2 })");
+    const refresh = new ArtifactRefreshService(operations);
+    let attempts = 0;
+    let dispatched = 0;
+    refresh.bind({ claimMs: 40, execute: async () => {
+      attempts++;
+      if (attempts === 1) {
+        await new Promise<void>(() => {});
+      }
+      dispatched++;
+      return { content: [{ type: "text", text: JSON.stringify({ result: { value: 2 } }) }] };
+    } });
+    const first = refresh.run("weekly", { manual: actor });
+    for (let n = 0; n < 100 && attempts === 0; n++) await Promise.resolve();
+    expect(attempts).toBe(1);
+    expect(await refresh.run("weekly", { manual: actor })).toEqual({ status: "skipped" });
+    expect(await first).toMatchObject({ status: "failed" });
+    expect(dispatched).toBe(0);
+    expect(await refresh.run("weekly", { manual: actor })).toMatchObject({ status: "succeeded" });
+    expect(dispatched).toBe(1);
+  });
+
+  it("records a failed run and releases its claim when the first history write fails", async () => {
+    const { module, operations, create, configure, store } = setup(async () => ({ result: { value: 2 } }));
+    await create();
+    await configure("async () => ({ value: 2 })");
+    const putRun = store.putRun.bind(store);
+    let fail = true;
+    store.putRun = async (...args) => {
+      if (fail) { fail = false; throw new Error("temporary run-store failure"); }
+      return putRun(...args);
+    };
+    expect(await module.refresh("weekly", actor)).toMatchObject({ status: "failed" });
+    expect((await store.head("weekly"))?.head.refresh?.claim).toBeUndefined();
+    expect((await store.head("weekly"))?.head.refresh?.last?.status).toBe("failed");
+    expect((await store.runs("weekly", 1))[0]?.message).toContain("temporary run-store failure");
+    expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
+  });
+
+  it("marks a prior good page stale when its refresh program body becomes unreadable", async () => {
+    const { module, operations, create, configure, store } = setup(async () => ({ result: { value: 2 } }));
+    await create();
+    await configure("async () => ({ value: 2 })");
+    expect(await module.refresh("weekly", actor)).toMatchObject({ status: "succeeded" });
+    const body = store.body.bind(store);
+    const key = (await store.head("weekly"))?.head.refresh?.program.body;
+    store.body = async (requested) => {
+      if (requested === key) throw new Error("temporary body-store failure");
+      return body(requested);
+    };
+    expect(await module.refresh("weekly", actor)).toMatchObject({ status: "failed" });
+    expect((await store.head("weekly"))?.head.refresh?.last?.status).toBe("failed");
+    expect((await store.head("weekly"))?.head.refresh?.claim).toBeUndefined();
+    expect((await store.runs("weekly", 2))[0]?.message).toContain("temporary body-store failure");
+    expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 2 } });
+  });
+  it("runs the configured render check before publishing refreshed data", async () => {
+    let checked = 0;
+    const { module, operations, create, configure, store } = setup(async () => ({ result: { value: 2 } }),
+      undefined, async ({ document }) => {
+        checked++;
+        expect(document).toContain('"value":2');
+        return { ok: false, errors: ["private render rejection"] };
+      });
+    await create();
+    await configure("async () => ({ value: 2 })");
+    expect(await module.refresh("weekly", actor)).toMatchObject({ status: "failed" });
+    expect(checked).toBe(1);
+    expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
+    expect((await store.head("weekly"))?.head.refresh?.last?.status).toBe("failed");
+  });
   it("rechecks the program owner's current connector grants before each run", async () => {
     let grant: readonly string[] = ["artifacts"];
     let dispatched = 0;
-    const { module, operations, create, configure } = setup(async (_code, providers) => {
+    const { module, operations, create, configure, readCalls } = setup(async (_code, providers) => {
       dispatched++;
       return { result: await hostCall(providers, "shared.read") };
     }, () => grant);
@@ -64,11 +142,14 @@ describe("artifact refresh", () => {
     await configure('async () => connecta.call("shared.read", {})');
     expect(await module.refresh("weekly", actor)).toMatchObject({ status: "failed" });
     expect(dispatched).toBe(1);
+    expect(readCalls()).toBe(0);
     expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
     grant = ["artifacts", "shared.read"];
     expect(await module.refresh("weekly", actor)).toMatchObject({ status: "succeeded" });
-    grant = ["artifacts"];
+    expect(readCalls()).toBe(1);
+    grant = ["artifacts.run_refresh", "shared.read"];
     expect(await module.refresh("weekly", actor)).toMatchObject({ status: "failed" });
+    expect(readCalls()).toBe(1);
     expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 2 } });
   });
   it("runs a shared read and makes one validated data version", async () => {
@@ -192,5 +273,46 @@ describe("artifact refresh", () => {
     expect(await module.runDue()).toMatchObject({ started: 1, failed: 1 });
     expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 2 } });
     expect((await store.head("weekly"))?.head.refresh?.last?.status).toBe("failed");
+  });
+
+  it("persists a scan cursor so a due head beyond the first 1,000 is reached", async () => {
+    const { module, store, create, configure } = setup(async () => ({ result: { value: 2 } }));
+    await create();
+    await configure("async () => ({ value: 2 })", "weekly");
+    const current = await store.head("weekly");
+    if (!current?.head.refresh) throw new Error("missing refresh");
+    expect(await store.swapHead("weekly", current.token, {
+      ...current.head, refresh: { ...current.head.refresh, configuredAt: "2000-01-01T00:00:00.000Z" },
+    })).toBe(true);
+    const due = (await store.head("weekly"))!.head;
+    const fakeHead = { ...due };
+    delete fakeHead.refresh;
+    const entries = Array.from({ length: 1_000 }, (_, n) => ({
+      id: `f${String(n).padStart(4, "0")}`, head: fakeHead,
+    })).concat([{ id: "weekly", head: due }]);
+    store.heads = async ({ after, limit }) => {
+      const start = after ? entries.findIndex((entry) => entry.id === after) + 1 : 0;
+      const heads = entries.slice(start, start + limit);
+      return { heads, ...(start + limit < entries.length ? { next: heads.at(-1)!.id } : {}) };
+    };
+    expect(await module.runDue()).toMatchObject({ scanned: 1_000, started: 0, capped: true });
+    expect(await store.refreshScanCursor()).toBe("f0999");
+    expect(await module.runDue()).toMatchObject({ scanned: 1, started: 1, succeeded: 1 });
+  });
+
+  it("advances past a listed page whose head records were deleted", async () => {
+    const { module, store, create, configure } = setup(async () => ({ result: { value: 2 } }));
+    await create();
+    await configure("async () => ({ value: 2 })", "weekly");
+    const current = await store.head("weekly");
+    if (!current?.head.refresh) throw new Error("missing refresh");
+    expect(await store.swapHead("weekly", current.token, {
+      ...current.head, refresh: { ...current.head.refresh, configuredAt: "2000-01-01T00:00:00.000Z" },
+    })).toBe(true);
+    const due = (await store.head("weekly"))!.head;
+    store.heads = async ({ after }) => after
+      ? { heads: [{ id: "weekly", head: due }] }
+      : { heads: [], next: "f0099" };
+    expect(await module.runDue()).toMatchObject({ scanned: 101, started: 1, succeeded: 1 });
   });
 });

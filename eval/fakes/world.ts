@@ -53,7 +53,7 @@ export interface ArtifactSnapshot {
     documentHistory: Record<string, { version: number; op: string; runId?: string; value: unknown }[]>;
     /** The refresh set on it, if any. */
     refresh?: { schedule: string; document: string; programVersion: number };
-    runs: { runId: string; status: string; documentVersion?: number; errorCode?: string }[];
+    runs: { runId: string; status: string; trigger: "schedule" | "manual"; documentVersion?: number; errorCode?: string }[];
   }[];
 }
 

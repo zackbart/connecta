@@ -272,6 +272,7 @@ export class ArtifactOperations {
     id: string,
     plan: (current: ArtifactHeadRecord) => Promise<Plan | ArtifactFailure>,
     render?: RenderPage,
+    beforeSwap?: (next: ArtifactHeadRecord) => ArtifactFailure | undefined,
   ): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
       const current = await this.#store.head(id);
@@ -288,6 +289,8 @@ export class ArtifactOperations {
           this.#store.putVersion(id, stream, record.version, record),
         ),
       );
+      const refused = beforeSwap?.(planned.next);
+      if (refused) return refused;
       if (await this.#store.swapHead(id, current.token, planned.next)) {
         return { ok: true, head: planned.next, warnings: planned.warnings };
       }
@@ -750,7 +753,12 @@ export class ArtifactOperations {
       const tooLarge = await this.#checkRendered(nextHead);
       if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies, supersede, warnings: [] };
-    }, input.render);
+    }, input.render, op === "refresh" ? (next) => {
+      const claim = next.refresh?.claim;
+      return claim !== undefined && claim.runId === input.runId && Date.parse(claim.until) > this.#now()
+        ? undefined
+        : fail("conflict", "The refresh claim expired before data commit; no data was saved.");
+    } : undefined);
   }
 
   /** Configure one versioned program. A concurrent document edit is absorbed. */
@@ -835,8 +843,6 @@ export class ArtifactOperations {
         return { ok: false, skipped: true };
       }
       if (refresh.claim && Date.parse(refresh.claim.until) > now) return { ok: false, skipped: true };
-      // A missing or unreadable program fails before taking the CAS claim.
-      const program = await this.#body(refresh.program.body);
       const startedAt = new Date(now).toISOString();
       const claim = { runId, until: new Date(now + claimMs).toISOString() };
       const next: ArtifactHeadRecord = {
@@ -848,7 +854,7 @@ export class ArtifactOperations {
         runId, startedAt, status: "running", trigger,
         programVersion: refresh.program.version,
       };
-      return { ok: true, head: next, program, run };
+      return { ok: true, head: next, program: refresh.program.body ?? "", run };
     }
     return fail("unavailable", "Refresh claim kept changing; retry it.");
   }

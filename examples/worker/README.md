@@ -414,7 +414,8 @@ and assign it to `scheduledArtifacts.module` as shown in `src/index.ts`.
 Uncomment the hourly cron in `wrangler.jsonc`. An hourly tick starts at most
 10 due pages; each page's `manual`, `daily`, or `weekly` schedule lives in its
 versioned refresh configuration. Refresh programs use only shared connectors'
-explicitly read-only tools. D1's compare-and-set prevents two cron invocations
+explicitly read-only tools within the program owner's current grants. Revoking
+refresh or pool access stops future runs. D1's compare-and-set prevents two cron invocations
 from claiming the same page. Failed runs keep the last good data and show a
 stale banner without exposing downstream error text to readers.
 

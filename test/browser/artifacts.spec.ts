@@ -2,10 +2,12 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { test, expect } from "@playwright/test";
 import { artifacts, kvArtifactStore } from "../../src/artifacts.js";
+import { attachCaller } from "../../src/connector-caller.js";
 import { bearerToken } from "../../src/auth/bearer.js";
 import { createConnecta } from "../../src/index.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { operatorUi } from "../../src/ui.js";
+import type { Executor } from "../../src/types.js";
 
 const TOKEN = "artifact-browser-token";
 let server: Server;
@@ -13,7 +15,7 @@ let origin: string;
 let requests: string[];
 let pageSource: string;
 
-async function start(scriptOrigins: string[] = []) {
+async function start(scriptOrigins: string[] = [], execute: Executor["execute"] = async () => ({ result: null })) {
   requests = [];
   server = createServer(async (incoming, outgoing) => {
     const chunks: Buffer[] = [];
@@ -33,10 +35,11 @@ async function start(scriptOrigins: string[] = []) {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("no test address");
   origin = `http://127.0.0.1:${address.port}`;
-  const module = artifacts({ store: kvArtifactStore(memoryStorage()),
+  const store = kvArtifactStore(memoryStorage());
+  const module = artifacts({ store,
     ...(scriptOrigins.length ? { allowlist: { scripts: scriptOrigins } } : {}) });
   const app = createConnecta({
-    connectors: [], executor: { execute: async () => ({ result: null }) },
+    connectors: [], executor: { execute },
     logger: "silent", publicUrl: origin, auth: bearerToken(TOKEN, { subjectId: "viewer" }),
     ui: operatorUi(), artifacts: module,
   });
@@ -52,7 +55,7 @@ async function start(scriptOrigins: string[] = []) {
     id: "second", title: "Second", kind: "html",
     source: '<!doctype html><main id="artifact-root">second page</main>',
   }, context);
-  return { app, module };
+  return { app, module, store };
 }
 
 test.afterEach(async () => {
@@ -182,13 +185,15 @@ test("library and browser history open a fresh frame for each page", async ({ pa
 
 test("a failed refresh shows stale data without showing its error to readers", async ({ page }) => {
   pageSource = '<!doctype html><main id="artifact-root"><script>document.getElementById("artifact-root").textContent=artifact.data.data.secret</script></main>';
-  const { module } = await start();
-  const context = { storage: memoryStorage(), logger: console, baseUrl: origin };
+  const { module, store } = await start([], async () => { throw new Error("private downstream detail"); });
+  const context = attachCaller({ storage: memoryStorage(), logger: console, baseUrl: origin },
+    { identity: { actor: { kind: "test" }, interactive: false } });
   await module.connector.callTool("set_refresh", {
     id: "probe", document: "data", schedule: "manual", baseVersion: 0,
     program: 'async () => { throw new Error("private downstream detail"); }',
   }, context);
   expect(await module.refresh("probe", { kind: "test" })).toMatchObject({ status: "failed" });
+  expect((await store.runs("probe", 1))[0]?.message).toContain("private downstream detail");
   await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
   await page.goto(`${origin}/artifacts/probe`);
   await expect(page.locator("#staleBanner")).toContainText("last good document");

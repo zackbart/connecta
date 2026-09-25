@@ -315,12 +315,17 @@ An artifact can version an `execute_code` program and target data document with
 `artifacts.runDue()` from a Node timer or Worker `scheduled()` handler; core
 starts no background jobs. One tick scans at most 1,000 heads and starts at
 most 10 due runs. Every run uses the configured executor, host-call budget,
-and watchdog, with a registry view containing only shared connectors.
+and watchdog, with a registry view containing only shared connectors. The
+owner admitted to `set_refresh` is stored with the program. Every run rechecks
+that identity's current `connectorAccess` and pool grant, including continued
+access to `artifacts.set_refresh`, then intersects those grants with shared
+connectors. Revoking either grant stops later runs.
 Resumable writes and approval exemptions are off. A refused call fails the
 entire refresh even if its program catches the error. The head CAS claims one
 run per artifact; the data commit checks the claim ID and program version in
-the same CAS. An expired old run may finish, but cannot publish over a newer
-claim. Run history retains 50 records with bounded logs. A failure leaves the
+the same CAS. The claim deadline starts before executor admission and aborts
+a queued or active play when it expires. An expired old run cannot publish over
+a newer claim. Run history retains 50 records with bounded logs. A failure leaves the
 last good data intact and marks the artifact stale. Library and viewer show
 only outcome enums and times, never downstream messages or logs.
 

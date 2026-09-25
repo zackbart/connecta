@@ -105,6 +105,7 @@ async function snapshotOf(store: ArtifactStore): Promise<ArtifactSnapshot> {
         runs: (await store.runs(id, 50)).map((run) => ({
           runId: run.runId,
           status: run.status,
+          trigger: run.trigger === "schedule" ? "schedule" as const : "manual" as const,
           ...(run.documentVersion !== undefined ? { documentVersion: run.documentVersion } : {}),
           ...(run.errorCode !== undefined ? { errorCode: run.errorCode } : {}),
         })),

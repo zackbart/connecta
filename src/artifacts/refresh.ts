@@ -32,7 +32,7 @@ export function freshnessOf(head: ArtifactHeadRecord, now = Date.now()) {
 
 export interface ArtifactRefreshRuntime {
   /** The core's bounded read-only program runner; no sandbox code enters this subpath. */
-  execute(program: string, owner: NonNullable<ArtifactHeadRecord["refresh"]>["owner"], signal: AbortSignal): Promise<{ content: { type: string; text?: string }[] }>;
+  execute(program: string, owner: NonNullable<ArtifactHeadRecord["refresh"]>["owner"], signal: AbortSignal): Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>;
   claimMs: number;
 }
 
@@ -48,7 +48,7 @@ function capture(text: unknown, bytes: number): string | undefined {
   return clipped;
 }
 
-function responsePayload(result: { content: { type: string; text?: string }[] }): {
+function responsePayload(result: { content: { type: string; text?: string }[]; isError?: boolean }): {
   result?: unknown;
   error?: { code?: string; message?: string };
   logs?: string;
@@ -59,7 +59,21 @@ function responsePayload(result: { content: { type: string; text?: string }[] })
     const parsed = JSON.parse(text) as Record<string, unknown>;
     return parsed as { result?: unknown; error?: { code?: string; message?: string }; logs?: string };
   } catch {
-    return { error: { code: "executor_failed", message: "Refresh program returned an invalid result." } };
+    return { error: { code: "executor_failed", message: result.isError ? text : "Refresh program returned an invalid result." } };
+  }
+}
+
+async function beforeDeadline<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new Error("Refresh deadline expired.");
+  let onAbort: (() => void) | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new Error("Refresh deadline expired."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -98,7 +112,12 @@ export class ArtifactRefreshService {
     try {
       await this.#ops.store.putRun(id, run);
       if (Date.now() >= deadline) throw new Error("Refresh claim expired before execution.");
-      const response = responsePayload(await runtime.execute(claimed.program, claimed.head.refresh!.owner, controller.signal));
+      if (!claimed.program) throw new Error("Refresh program body is unavailable.");
+      const program = await beforeDeadline(this.#ops.store.body(claimed.program), controller.signal);
+      if (program === null) throw new Error("Refresh program body is unavailable.");
+      const response = responsePayload(await beforeDeadline(
+        runtime.execute(program, claimed.head.refresh!.owner, controller.signal), controller.signal,
+      ));
       const logs = capture(response.logs, this.#ops.context.limits.runLogBytes);
       if (logs) run.logs = logs;
       if (response.error) {
@@ -161,21 +180,44 @@ export class ArtifactRefreshService {
     let succeeded = 0;
     let failed = 0;
     while (scanned < MAX_HEADS_PER_TICK && started < MAX_DUE_PER_TICK) {
+      const limit = Math.min(100, MAX_HEADS_PER_TICK - scanned);
       const page = await this.#ops.store.heads({
         ...(after ? { after } : {}),
-        limit: Math.min(100, MAX_HEADS_PER_TICK - scanned),
+        limit,
       });
-      if (!page.heads.length) { after = undefined; break; }
+      if (!page.heads.length) {
+        if (page.next) {
+          if (page.next === after) throw new Error("Artifact head scan did not advance.");
+          after = page.next;
+          scanned += limit;
+          continue;
+        }
+        after = undefined;
+        break;
+      }
       for (const { id, head } of page.heads) {
         scanned++;
         after = id;
         if (!head.refresh || head.archived) continue;
-        const outcome = await this.run(id, "schedule");
+        let outcome: RefreshOutcome;
+        try {
+          outcome = await this.run(id, "schedule");
+        } catch {
+          // One broken record or transient run write does not starve later heads.
+          started++;
+          failed++;
+          if (started >= MAX_DUE_PER_TICK) break;
+          continue;
+        }
         if (outcome.status === "skipped") continue;
         started++;
         if (outcome.status === "succeeded" || outcome.status === "unchanged") succeeded++;
         else failed++;
         if (started >= MAX_DUE_PER_TICK) break;
+      }
+      if (page.next) {
+        scanned += limit - page.heads.length;
+        if (started < MAX_DUE_PER_TICK) after = page.next;
       }
       if (!page.next || started >= MAX_DUE_PER_TICK) {
         if (!page.next && started < MAX_DUE_PER_TICK && scanned < MAX_HEADS_PER_TICK) after = undefined;

@@ -105,7 +105,9 @@ budget. At the top level, \`call_tool\` refuses them — use
   for the first program, then the version from \`get_refresh\`. It can call
   only explicitly read-only tools on shared connectors. Personal connectors
   and writes fail the run even if the program catches the refusal. A failed
-  run keeps the last good document and marks the page stale.
+  run keeps the last good document and marks the page stale. Each run rechecks
+  your current connector grants and pool access; removing permission to
+  configure refresh also stops your scheduled program.
 - \`run_refresh { id }\` — trigger one run now through
   \`call_destructive_tool\`. It cannot run inside \`execute_code\` because that
   would hold an executor permit while asking for another.
