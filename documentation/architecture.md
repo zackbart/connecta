@@ -149,7 +149,7 @@ client. A raw Worker stream established the runtime behavior; a custom auth
 provider returning a synthetic streaming 401 exercised Connecta's real admission
 wrapper. Each case had its own Connecta instance with one request permit and no
 queue. Health checks and subsequent MCP requests confirmed the same isolate ID.
-The [recorded observations](../scripts/probes/worker-disconnect-2026-09-25.json)
+The [recorded observations](https://github.com/zackbart/connecta/blob/a0ac904513fac735582b4bc9c817a48300134328/scripts/probes/worker-disconnect-2026-09-25.json)
 contain all twelve cases, including served flags and client-end timing.
 
 | Response and flag | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
@@ -175,9 +175,10 @@ capacity-recovery work is [#595](https://github.com/zackbart/connecta/issues/595
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
 
-To repeat, run `node scripts/probes/worker-disconnect.mjs` with an authenticated
-Wrangler. The script deploys a disposable Worker containing only synthetic
-data, verifies the served configuration, saves observations under `eval/results/`,
+To repeat from a repository checkout, run
+`node scripts/probes/worker-disconnect.mjs` with an authenticated Wrangler.
+The script is not in the npm package. It deploys a disposable Worker containing
+only synthetic data, verifies the served configuration, saves observations under `eval/results/`,
 and deletes the Worker in `finally`. It uses no `waitUntil`, which would change
 the lifetime being measured. The production runtime build number was not
 exposed by the deployment; these findings are tied to the date and flags above.
