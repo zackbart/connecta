@@ -7,6 +7,7 @@
  * into `world.artifacts` before grading.
  */
 import { validateArtifact } from "@zackbart/connecta/artifacts";
+import { hasExactOpenBugRows } from "./artifact-grader.js";
 import type { ArtifactSnapshot, World } from "../fakes/world.js";
 import { check, quote, singlePost } from "./baseline.js";
 import type { ActiveTask, Check } from "./types.js";
@@ -54,6 +55,7 @@ const PROJECT_NAMES: Record<string, RegExp> = {
 function statesCount(documents: unknown, project: string, count: number): boolean {
   return statesCountDirectly(documents, project, count) || rowsSumTo(documents, project, count);
 }
+
 
 function rowsSumTo(documents: unknown, project: string, count: number): boolean {
   const name = PROJECT_NAMES[project] ?? new RegExp(`^${project}$`, "i");
@@ -191,7 +193,10 @@ const buildPage: ActiveTask = {
     const figures = expectedFigures(world);
     const numbers = numbersIn(artifact?.documents ?? {});
     const missingMrr = figures.mrr.filter(({ mrr }) => !numbers.has(mrr));
-    const missingCounts = Object.entries(figures.counts).filter(
+    const rawRows = hasExactOpenBugRows(artifact?.documents ?? {}, world.tracker.issues
+      .filter(issue => issue.status === "open" && issue.labels.includes("bug"))
+      .map(issue => ({ id: issue.id, project: issue.project })));
+    const missingCounts = rawRows ? [] : Object.entries(figures.counts).filter(
       ([project, count]) => !statesCount(artifact?.documents ?? {}, project, count),
     );
     const validation = artifact

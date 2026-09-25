@@ -10,7 +10,9 @@ export interface AgentResultFile {
   kind: "connecta-eval/agent";
   version: 1;
   meta: RunMeta;
-  claudeVersion: string;
+  /** New runs use Codex. Historical Claude result files retain claudeVersion. */
+  codexVersion?: string;
+  claudeVersion?: string;
   config: {
     models: string[];
     repeats: number;
@@ -19,6 +21,7 @@ export interface AgentResultFile {
     timeoutMs: number;
     effort?: string;
     mcpOutputTokens?: number | "host default";
+    runner?: "codex" | "claude";
   };
   tasks: { id: string; title: string; measures: string; introducedIn: string }[];
   planned: PlannedTask[];

@@ -1,10 +1,12 @@
 /**
- * Turn Claude Code's stream-json events into a bounded transcript and the
+ * Turn agent events into a bounded transcript and the
  * per-trial numbers the report compares. Nothing here reads the answer the
  * agent wrote; graders look at the fakes instead.
  */
 import type { CallRecord, RequestRecord } from "../fakes/service.js";
-import { SERVER_NAME, type StreamEvent } from "./claude.js";
+const SERVER_NAME = "connecta";
+export const toolId = (tool: string) => `mcp__${SERVER_NAME}__${tool}`;
+export type StreamEvent = Record<string, unknown> & { type: string };
 
 const TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
 const MAX_RESULT_CHARS = 6_000;
@@ -17,7 +19,7 @@ export type TranscriptEntry =
   | { kind: "tool_use"; turn: number; id: string; tool: string; input: unknown; inputChars: number }
   | { kind: "tool_result"; turn: number; id: string; isError: boolean; text: string; chars: number }
   | { kind: "operator"; turn: number; text: string }
-  | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns: number; durationMs: number };
+  | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns?: number; durationMs?: number };
 
 export interface ToolUse {
   id: string;
@@ -40,12 +42,13 @@ export interface AgentTrace {
   toolUses: ToolUse[];
   tokens: Tokens;
   costUsd: number | undefined;
-  apiMs: number;
-  modelTurns: number;
+  apiMs: number | undefined;
+  modelTurns: number | undefined;
   permissionDenials: unknown[];
   resultSubtypes: string[];
   model: string | undefined;
   claudeCodeVersion: string | undefined;
+  agentVersion?: string;
   loadedTools: string[];
   rateLimit: Record<string, unknown> | undefined;
 }
@@ -71,13 +74,14 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   const toolUses = new Map<string, ToolUse>();
   let turn = 0;
   let costUsd: number | undefined;
-  let apiMs = 0;
-  let modelTurns = 0;
+  let apiMs: number | undefined;
+  let modelTurns: number | undefined;
   let tokens: Tokens = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
   const permissionDenials: unknown[] = [];
   const resultSubtypes: string[] = [];
   let model: string | undefined;
   let version: string | undefined;
+  let agentVersion: string | undefined;
   let loadedTools: string[] = [];
   let rateLimit: Record<string, unknown> | undefined;
   events.forEach((event, index) => {
@@ -88,12 +92,27 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
     if (event.type === "system" && event.subtype === "init") {
       model = String(event.model ?? "");
-      version = String(event.claude_code_version ?? "");
+      version = event.claude_code_version === undefined ? undefined : String(event.claude_code_version);
+      agentVersion = event.agent_version === undefined ? undefined : String(event.agent_version);
       loadedTools = Array.isArray(event.tools) ? event.tools.map(String) : [];
       return;
     }
     if (event.type === "rate_limit_event") {
       rateLimit = event.rate_limit_info as Record<string, unknown>;
+      return;
+    }
+    if (event.type === "codex_usage") {
+      const total = event.total as Record<string, number> | undefined;
+      if (total) tokens = {
+        input: total.inputTokens ?? 0,
+        output: total.outputTokens ?? 0,
+        cacheRead: total.cachedInputTokens ?? 0,
+        cacheCreation: total.cacheWriteInputTokens ?? 0,
+      };
+      return;
+    }
+    if (event.type === "codex_denial") {
+      permissionDenials.push(event.tool);
       return;
     }
     if (event.type === "assistant" || event.type === "user") {
@@ -147,8 +166,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
     if (event.type === "result") {
       costUsd = typeof event.total_cost_usd === "number" ? event.total_cost_usd : costUsd;
-      apiMs += typeof event.duration_api_ms === "number" ? event.duration_api_ms : 0;
-      modelTurns += typeof event.num_turns === "number" ? event.num_turns : 0;
+      if (typeof event.duration_api_ms === "number") apiMs = (apiMs ?? 0) + event.duration_api_ms;
+      if (typeof event.num_turns === "number") modelTurns = (modelTurns ?? 0) + event.num_turns;
       resultSubtypes.push(String(event.subtype));
       if (Array.isArray(event.permission_denials)) permissionDenials.push(...event.permission_denials);
       // modelUsage is cumulative across the conversation; the last one wins.
@@ -167,8 +186,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
         turn,
         subtype: String(event.subtype),
         isError: event.is_error === true,
-        numTurns: Number(event.num_turns ?? 0),
-        durationMs: Number(event.duration_ms ?? 0),
+        ...(typeof event.num_turns === "number" ? { numTurns: event.num_turns } : {}),
+        ...(typeof event.duration_ms === "number" ? { durationMs: event.duration_ms } : {}),
       });
     }
   });
@@ -183,6 +202,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     resultSubtypes,
     model,
     claudeCodeVersion: version,
+    ...(agentVersion ? { agentVersion } : {}),
     loadedTools,
     rateLimit,
   };

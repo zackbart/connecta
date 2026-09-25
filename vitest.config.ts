@@ -86,6 +86,14 @@ export const WORKERS_SUITES = [
 
 export const NODE_ONLY_SUITES = [
   {
+    file: "test/artifact-eval-grader.test.ts",
+    reason: "checks the Node-only fake-world artifact evaluation grader",
+  },
+  {
+    file: "test/codex-eval.test.ts",
+    reason: "spawns a fake Codex app-server to verify eval protocol and cancellation",
+  },
+  {
     file: "test/artifact-store-d1.test.ts",
     reason:
       "drives the artifact store over the example D1 and R2 adapters through wrangler's getPlatformProxy",
