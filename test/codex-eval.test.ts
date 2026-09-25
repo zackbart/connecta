@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCodex } from "../eval/agent/codex.js";
+import { infraError, stopsBatch } from "../eval/agent/run.js";
 import { parseTrace } from "../eval/agent/trace.js";
 
 const SERVER = String.raw`
@@ -85,5 +86,12 @@ describe("Codex eval app-server", () => {
     const run = await fixture("complete", undefined, async () => await new Promise(() => {}), 250);
     expect(performance.now() - started).toBeLessThan(5_000);
     expect(run.timedOut).toBe(true);
+  });
+
+  it("stops the batch on a typed usage limit even when its message has no rate keyword", () => {
+    const error = infraError([{ type: "result", subtype: "failed", result: "Usage cap reached",
+      codex_error_info: "usageLimitExceeded" }], 0, ["mcp__connecta__execute_code"]);
+    expect(error).toContain("usageLimitExceeded");
+    expect(stopsBatch(error)).toBe(true);
   });
 });

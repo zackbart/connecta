@@ -76,7 +76,7 @@ function codexEvent(event: { method?: string; params?: Record<string, any> }): S
   if (event.method === "turn/completed") {
     const turn = event.params?.turn;
     return [{ type: "result", subtype: turn?.status === "completed" ? "success" : String(turn?.status ?? "error"),
-      result: turn?.error?.message ?? "" }];
+      result: turn?.error?.message ?? "", codex_error_info: turn?.error?.codexErrorInfo }];
   }
   return [];
 }
