@@ -1,0 +1,86 @@
+// artifacts(): the typed module a deployment passes as `ConnectaConfig.artifacts`.
+
+import type { ArtifactsModule } from "../module-contracts.js";
+import { artifactsConnector, type ArtifactRenderCheck } from "./connector.js";
+import { ArtifactOperations } from "./operations.js";
+import type { ArtifactAllowlist, ArtifactLimits, ArtifactStore } from "./types.js";
+import { resolveAllowlist, resolveLimits } from "./validate.js";
+
+export interface ArtifactsOptions {
+  /**
+   * Where artifacts live: `kvArtifactStore(storage)` over storage with
+   * `compareAndSet` — the Worker example's D1 store (optionally with R2 for
+   * bodies), `fileStorage` on Node, `memoryStorage` in tests.
+   */
+  store: ArtifactStore;
+  /**
+   * Origins pages may load scripts, stylesheets, and fonts from, each an exact
+   * `https:` origin. Each list given replaces its default: jsDelivr, cdnjs,
+   * unpkg, and esm.sh for scripts; the same (without esm.sh) plus Google Fonts
+   * for styles and fonts. The viewer's CSP names exactly these.
+   */
+  allowlist?: Partial<ArtifactAllowlist>;
+  /** Tighten any limit below its default; none can be raised. */
+  limits?: Partial<ArtifactLimits>;
+  /**
+   * A real render check, such as a headless browser, run on
+   * `validate_artifact` and every write that changes what a page renders.
+   * Without one, static validation is the floor.
+   */
+  renderCheck?: ArtifactRenderCheck;
+}
+
+const STORE_METHODS = [
+  "head",
+  "swapHead",
+  "heads",
+  "putBody",
+  "body",
+  "putVersion",
+  "versions",
+  "putRun",
+  "runs",
+] as const;
+
+const OPTIONS = new Set(["store", "allowlist", "limits", "renderCheck"]);
+
+/**
+ * Team pages over stored data, reached by agents through the built-in
+ * `artifacts` connector. Pass the result as `createConnecta({ artifacts })`.
+ * Structural mistakes throw here, before a deployment boots.
+ */
+export function artifacts(options: ArtifactsOptions): ArtifactsModule {
+  if (!options || typeof options !== "object") {
+    throw new TypeError("artifacts() needs options with a store");
+  }
+  for (const key of Object.keys(options)) {
+    if (!OPTIONS.has(key)) throw new TypeError(`artifacts(): unknown option "${key}"`);
+  }
+  const store = options.store as Partial<ArtifactStore> | undefined;
+  if (
+    !store ||
+    typeof store !== "object" ||
+    STORE_METHODS.some((method) => typeof store[method] !== "function")
+  ) {
+    throw new TypeError(
+      "artifacts(): store must be an ArtifactStore, e.g. kvArtifactStore(storage)",
+    );
+  }
+  if (options.renderCheck !== undefined && typeof options.renderCheck !== "function") {
+    throw new TypeError("artifacts(): renderCheck must be a function");
+  }
+  const allowlist = resolveAllowlist(options.allowlist);
+  const limits = resolveLimits(options.limits);
+  const operations = new ArtifactOperations({
+    store: options.store,
+    allowlist,
+    limits,
+  });
+  const connector = artifactsConnector({
+    operations,
+    allowlist,
+    limits,
+    ...(options.renderCheck ? { renderCheck: options.renderCheck } : {}),
+  });
+  return Object.freeze({ connector });
+}

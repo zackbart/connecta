@@ -20,7 +20,11 @@ import {
   isAdmittingExecutor,
   withExecutorAdmission,
 } from "./executor-admission.js";
-import type { ActivityModule, OperatorSurface } from "./module-contracts.js";
+import type {
+  ActivityModule,
+  ArtifactsModule,
+  OperatorSurface,
+} from "./module-contracts.js";
 import {
   DEFAULT_MAX_WRITES,
   DEFAULT_PAUSED_RUN_TTL_SECONDS,
@@ -28,7 +32,11 @@ import {
 import { disposeEdgeRuntime } from "./runtime/run.js";
 import { NO_EXEMPTIONS, type ApprovalPolicy } from "./tool-safety.js";
 import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
-export type { ActivityModule, OperatorSurface } from "./module-contracts.js";
+export type {
+  ActivityModule,
+  ArtifactsModule,
+  OperatorSurface,
+} from "./module-contracts.js";
 export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
 import type {
   AuthenticatedIdentity,
@@ -274,6 +282,12 @@ export interface ConnectaConfig {
   vault?: CredentialVault;
   /** Optional connection UI, created by operatorUi() from /ui. */
   ui?: OperatorSurface;
+  /**
+   * Optional team pages over stored data, created by artifacts() from
+   * /artifacts. Adds the built-in `artifacts` connector; needs `publicUrl`,
+   * because the links it hands out are shared.
+   */
+  artifacts?: ArtifactsModule;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
@@ -382,6 +396,7 @@ const CONFIG_SCHEMA = {
   activity: null,
   vault: null,
   ui: null,
+  artifacts: null,
   discovery: {
     concurrency: null,
     catalogTtlSeconds: null,
@@ -502,6 +517,34 @@ function assertKnownConfig(config: ConnectaConfig): void {
     throw new Error(
       "ConnectaConfig.activity must be created with activityHistory(...)",
     );
+  }
+  const artifacts = config.artifacts as unknown;
+  if (artifacts !== undefined) {
+    const connector = (artifacts as Partial<ArtifactsModule> | null)?.connector;
+    if (
+      typeof artifacts !== "object" ||
+      artifacts === null ||
+      !connector ||
+      connector.id !== "artifacts" ||
+      typeof connector.callTool !== "function"
+    ) {
+      throw new Error(
+        "ConnectaConfig.artifacts must be created with artifacts(...) from @zackbart/connecta/artifacts",
+      );
+    }
+    if (config.connectors?.some((candidate) => candidate?.id === "artifacts")) {
+      throw new Error(
+        'Connector id "artifacts" is reserved by the artifacts module; rename ' +
+          "your connector or drop the artifacts option",
+      );
+    }
+    if (!config.publicUrl) {
+      throw new Error(
+        "ConnectaConfig.artifacts needs publicUrl: artifact links are shared " +
+          "with teammates, so they must name the deployment's own origin, never " +
+          "one taken from a request's Host header",
+      );
+    }
   }
 }
 
@@ -691,7 +734,7 @@ function warnInsecureConfig(
   // Any configured connector warrants the open-deployment warning.
   if (
     inboundAuth.length === 0 &&
-    config.connectors.length > 0
+    (config.connectors.length > 0 || config.artifacts)
   ) {
     logger.warn(
       "[connecta] running with no inbound authentication: any caller can " +
@@ -832,7 +875,12 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     name: config.serverInfo?.name ?? "connecta",
     version: config.serverInfo?.version ?? CONNECTA_VERSION,
   };
-  const registry = new Registry(config.connectors, {
+  // The artifacts module contributes one prebuilt connector, appended like any
+  // configured one: same catalog, invocation, admission, and activity.
+  const connectors = config.artifacts
+    ? [...config.connectors, config.artifacts.connector]
+    : config.connectors;
+  const registry = new Registry(connectors, {
     storage,
     logger,
     credentialVault,

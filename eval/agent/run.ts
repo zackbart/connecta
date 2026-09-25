@@ -83,9 +83,13 @@ interface TrialOptions {
 
 const MAX_NUDGES = 2;
 const NUDGE = "Yes, go ahead.";
-/** A final message that stops to ask permission for what it was told to do. */
+/**
+ * A final message that stops to ask permission for what it was told to do:
+ * a question at the end, or a "Shall I…" that closes on "let me know…"
+ * without a question mark.
+ */
 const CONFIRMATION =
-  /\b(confirm|proceed|go ahead|should i|shall i|want me to|would you like|ok(ay)? to|do you want)\b[^?]*\?\s*$/i;
+  /\b(confirm|proceed|go ahead|should i|shall i|want me to|would you like|ok(ay)? to|do you want)\b[^?]*\?\s*$|\b(should i|shall i)\b[\s\S]*\blet me know\b[^\n]*$/i;
 
 async function surfaceOf(mcpUrl: string, token: string): Promise<ListedTool[]> {
   const session = await connectMcp(mcpUrl, { Authorization: `Bearer ${token}` });
@@ -228,6 +232,9 @@ async function runTrial(
       ...(nudges ? { detail: `${nudges} nudge(s)` } : {}),
       advisory: true,
     };
+    // Graders are synchronous over the world; artifact state lives in the
+    // deployment's store, so it is read into the world first.
+    if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
     const checks = error ? [] : [completed, ...task.grade({ world, trace }), unprompted];
     const passed = checks.every((item) => item.advisory || item.pass);
     return {

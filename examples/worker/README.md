@@ -274,6 +274,38 @@ of connecta state lives in one store.
    connections must be re-authorized and vault credentials re-entered, because
    nothing copies them out of the KV namespace.
 
+## Artifacts (optional)
+
+`artifacts()` from `@zackbart/connecta/artifacts` adds the built-in `artifacts`
+connector: team pages whose data lives in versioned JSON documents. Every write
+commits by compare-and-set, so the store needs the D1 storage above — Workers
+KV is refused at construction. Artifacts share the `connecta_kv` table and need
+no schema of their own. Bodies (page sources and documents) can stay in D1 rows,
+which the default limits keep well under D1's row size, or go to R2 with
+`src/r2-artifact-blobs.ts`:
+
+```ts
+import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
+import { r2ArtifactBlobs } from "./r2-artifact-blobs.js";
+
+createConnecta({
+  // …
+  publicUrl: env.PUBLIC_URL, // required: artifact links are shared
+  artifacts: artifacts({
+    store: kvArtifactStore(d1Storage(env.STORAGE_DB), {
+      blobs: r2ArtifactBlobs(env.ARTIFACTS_BUCKET), // optional
+    }),
+  }),
+});
+```
+
+For R2, create the bucket (`wrangler r2 bucket create connecta-artifacts`) and
+add `"r2_buckets": [{ "binding": "ARTIFACTS_BUCKET", "bucket_name":
+"connecta-artifacts" }]` to `wrangler.jsonc` and `ARTIFACTS_BUCKET: R2Bucket`
+to `Env`. Nothing ever deletes a body: versions are immutable, a rollback
+points back at an old one, and a body written by a write that lost a conflict
+stays stored unreferenced.
+
 ## Activity history (optional)
 
 `src/d1-activity.ts` is a complete `ActivityStore` over D1 — keyset paging on

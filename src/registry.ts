@@ -53,6 +53,7 @@ import {
   normalizeGuideSummary,
 } from "./skills.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
+import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
 import { closeScopeOnExit } from "./runtime/connector-scope.js";
 import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
@@ -367,6 +368,8 @@ export interface RegistryScope {
   toolAccess?: ToolAccess;
   subjectKey?: string;
   principalKey?: string;
+  /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
+  caller?: ConnectorCaller;
 }
 
 const MAX_PERSONAL_REGISTRIES = 1_024;
@@ -1977,7 +1980,7 @@ class ScopedRegistryView implements RegistryView {
   ): ConnectorContext {
     const registry = this.registryFor(args[0]);
     if (!registry) throw new Error(`Unknown connector "${args[0]}"`);
-    return registry.contextFor(...args);
+    return attachCaller(registry.contextFor(...args), this.scope.caller);
   }
 
   admitCall(

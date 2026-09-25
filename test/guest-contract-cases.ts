@@ -343,10 +343,15 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "api",
     description: "Always rate limited",
     async listTools() {
-      return [readOnly("read")];
+      return [readOnly("read"), readOnly("stale")];
     },
-    async callTool() {
-      count("ratelimited.read");
+    async callTool(name) {
+      count(`ratelimited.${name}`);
+      if (name === "stale") {
+        throw new ConnectorCallError("conflict", "Page is at version 2, not 1.", {
+          current: { revision: 3, view: 2, negative: -1, fraction: 1.5 },
+        });
+      }
       throw new ConnectorCallError("rate_limited", "Try again later");
     },
   };
@@ -974,6 +979,23 @@ export const CONTRACT_CASES: ContractCase[] = [
         'Unknown tool "nope" on connector "reader"',
       );
       expect(String(result.shortcut)).toContain('Unknown tool "nope"');
+    },
+  },
+  {
+    clauses: "E1, E2",
+    name: "a conflict carries where things stand, bounded, into the program",
+    code: `async () => {
+      try { await connecta.call("ratelimited.stale", {}); return "no conflict"; }
+      catch (err) {
+        return { code: err.code, retryable: err.retryable, current: err.details.current };
+      }
+    }`,
+    check(outcome) {
+      expect(record(outcome)).toEqual({
+        code: "conflict",
+        retryable: false,
+        current: { revision: 3, view: 2 },
+      });
     },
   },
   {

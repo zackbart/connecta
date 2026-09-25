@@ -1,4 +1,4 @@
-import type { ConnectaBranding } from "./types.js";
+import type { ConnectaBranding, Connector } from "./types.js";
 import type {
   ActivityStore,
   ActivityReadGate,
@@ -21,4 +21,14 @@ export interface ActivityModule {
   handle(context: RouteContext): Promise<Response | null>;
   readonly recordTool: typeof recordToolActivity;
   readonly recordDrift: typeof recordCatalogDriftActivity;
+}
+/**
+ * The artifacts module, created by `artifacts()` from /artifacts. Core appends
+ * its one prebuilt connector to the configured set — the same catalog,
+ * invocation, admission, and activity paths as any other — and imports none
+ * of its implementation.
+ */
+export interface ArtifactsModule {
+  /** The built-in `artifacts` connector. */
+  readonly connector: Connector;
 }

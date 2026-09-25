@@ -258,7 +258,8 @@ export function classifyWriteOutcome(outcome: {
 
 /**
  * Codes that say the other side refused the call rather than acted on it:
- * the credential, the arguments, the resource, or the rate. Anything else a
+ * the credential, the arguments, the resource, the rate, or a base version
+ * someone else already moved past (`conflict`). Anything else a
  * connector reports after dispatch — `connector_call_failed` from a response
  * too large to read, a redirect it would not follow, a body it could not
  * parse, a 5xx — may come after the write landed, so only a downstream
@@ -270,6 +271,7 @@ const REFUSALS = new Set([
   "not_found",
   "rate_limited",
   "input_required_unsupported",
+  "conflict",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

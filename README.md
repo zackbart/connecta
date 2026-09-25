@@ -95,8 +95,8 @@ Fifty issues in, one small object out. Your context window notices.
 
 Deployments explicitly compose optional features: `operatorUi()` from
 `@zackbart/connecta/ui`, `encryptedCredentialVault()` from `/credentials`,
-`activityHistory()` from `/activity`, and inbound authentication adapters from
-`/auth/*`. Omit a module and its implementation does no runtime work. Core
+`activityHistory()` from `/activity`, `artifacts()` from `/artifacts`, and
+inbound authentication adapters from `/auth/*`. Omit a module and its implementation does no runtime work. Core
 keeps connector discovery, execution, invocation, and enforcement together.
 
 The optional UI shows each person's connections and effective permissions.

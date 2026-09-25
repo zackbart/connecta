@@ -740,11 +740,11 @@ export function validateArtifact(
     limits: resolveLimits(options.limits),
     allowlist: resolveAllowlist(options.allowlist),
   };
-  return validateWith(input, context);
+  return validateWithContext(input, context);
 }
 
 /** `validateArtifact` against an already-resolved context. */
-function validateWith(
+export function validateWithContext(
   input: ValidateArtifactInput,
   context: CheckContext,
 ): ArtifactValidation {
