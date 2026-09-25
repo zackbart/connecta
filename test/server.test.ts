@@ -1780,7 +1780,7 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain("No portable ambient capabilities");
     expect(executeTool.description).toContain('skills({ name: "usage" })');
     expect(executeTool.inputSchema.properties.code.description).toContain(
-      "discovers, calls, and returns the reduced answer",
+      "connecta global to discover, call, and return the reduced answer",
     );
     // The call form itself, not just the address: a bullet that says an
     // address is "callable" without showing the parentheses teaches nothing,

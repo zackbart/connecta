@@ -6,7 +6,7 @@ import { api } from "../src/connectors/api.js";
 import { callerOf } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, InboundAuth } from "../src/types.js";
+import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
@@ -380,7 +380,10 @@ describe("identity-scoped tools", () => {
   });
 
   it("fails closed on an unparseable grant", async () => {
-    for (const bad of [["notes."], [".delete"], ["notes.delete", 7], ["Notes.delete"]]) {
+    for (const bad of [["notes."], [".delete"], ["notes.delete", 7], ["Notes.delete"],
+      [{ tool: "notes.search", requireReadOnly: false }],
+      [{ tool: "notes", requireReadOnly: true }],
+      [{ tool: "notes.search", requireReadOnly: true, unexpected: true }]]) {
       const { connecta } = deployment(() => bad as readonly string[]);
       const response = await mcpRpc(connecta, "tools/list", {}, { token: "alice" });
       expect(response.status).toBe(403);
@@ -396,6 +399,162 @@ describe("identity-scoped tools", () => {
     const ghost = await rpc(connecta, "alice", "call_tool", { address: "notes.ghost", args: {} });
     expect(ghost.result.isError).toBe(true);
     expect(warnings.filter((line) => line.includes("notes.ghost"))).toHaveLength(1);
+  });
+
+  it("keeps an exact grant across catalog drift, including a read-to-write change", async () => {
+    let tools: ToolDef[] = [{ name: "read", annotations: { readOnlyHint: true } }];
+    const calls: string[] = [];
+    const notes: Connector = {
+      id: "notes",
+      kind: "api",
+      description: "Notes — read and update records",
+      async listTools() { return tools; },
+      async callTool(name) { calls.push(name); return { ok: true }; },
+    };
+    const connecta = createTestConnecta({
+      connectors: [notes], auth: users(),
+      identity: { connectorAccess: () => ["notes.read"] },
+      storage: memoryStorage(), publicUrl: BASE, logger: silentLogger,
+    });
+    const call = (name: string, address: string) =>
+      rpc(connecta, "alice", name, { address, args: {} });
+
+    expect((await call("call_tool", "notes.read")).result.isError).toBeFalsy();
+    tools = [
+      { name: "read", annotations: { readOnlyHint: false, destructiveHint: true } },
+      { name: "new_read", annotations: { readOnlyHint: true } },
+    ];
+    await connecta.registry.invalidateStored("notes");
+
+    const discovered = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }));
+    expect(discovered).toContain("notes.read");
+    expect(discovered).not.toContain("notes.new_read");
+    expect((await call("call_tool", "notes.read")).result.isError).toBe(true);
+    expect((await call("call_destructive_tool", "notes.read")).result.isError).toBeFalsy();
+    expect(calls).toEqual(["read", "read"]);
+    await connecta.close();
+  });
+});
+
+describe("guarded read-only identity grants", () => {
+  const guarded = (tool: string) => ({ tool, requireReadOnly: true as const });
+  const rpc = async (c: ReturnType<typeof createTestConnecta>, user: "alice" | "bob", name: string, args: unknown, path = "/mcp") =>
+    readJsonRpc(await c.fetch(request(path, user, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    }))) as Promise<any>;
+
+  it("filters static tools across discovery, direct calls, code, and the connection UI", async () => {
+    const called: string[] = [];
+    const observations: Record<string, unknown> = {};
+    const notes = api("notes", { description: "Notes", tools: [
+      { name: "read", description: "Read a note", annotations: { readOnlyHint: true }, handler: async () => { called.push("read"); return 1; } },
+      { name: "write", description: "Write a note", annotations: { readOnlyHint: false }, handler: async () => { called.push("write"); return 2; } },
+      { name: "conflict", description: "Test a contradictory hint", annotations: { readOnlyHint: true, destructiveHint: true }, handler: async () => { called.push("conflict"); return 3; } },
+    ] });
+    const connecta = createTestConnecta({
+      connectors: [notes], auth: users(),
+      identity: { connectorAccess: () => [guarded("notes.read"), guarded("notes.write"), guarded("notes.conflict")] },
+      execute: { approval: { notes: "never" } },
+      executor: { async execute(_code, providers) {
+        const fns = providers.find((provider) => provider.name === "connecta")!.fns;
+        observations.search = await fns.search!({ connector: "notes", query: "", limit: 20 });
+        observations.describe = await fns.describe!({ address: "notes.write" });
+        try { await fns.call!("notes.write", {}); }
+        catch (error) { observations.call = String(error); }
+        return { result: null };
+      } },
+      storage: memoryStorage(), publicUrl: BASE,
+    });
+    const page = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }));
+    expect(page).toContain("notes.read");
+    for (const name of ["write", "conflict"]) expect(page).not.toContain(`notes.${name}`);
+    expect((await rpc(connecta, "alice", "call_tool", { address: "notes.read", args: {} })).result.isError).toBeFalsy();
+    for (const name of ["write", "conflict"]) {
+      const denied = await rpc(connecta, "alice", "call_destructive_tool", { address: `notes.${name}`, args: {} });
+      expect(denied.result.isError).toBe(true);
+      expect(JSON.stringify(denied)).toContain("unknown_tool");
+    }
+    await rpc(connecta, "alice", "execute_code", { code: "return 1" });
+    expect(JSON.stringify(observations.search)).toContain("notes.read");
+    expect(JSON.stringify(observations.search)).not.toContain("notes.write");
+    expect(JSON.stringify(observations.describe)).toContain("unknown_tool");
+    expect(String(observations.call)).toContain("unknown_tool");
+    const ui = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
+    const data = await ui.json() as any;
+    expect(data.connectors.find((item: { id: string }) => item.id === "notes").tools.map((tool: { name: string }) => tool.name)).toEqual(["read"]);
+    expect(called).toEqual(["read"]);
+    await connecta.close();
+  });
+
+  it("rechecks a remote catalog after drift and never admits a new name", async () => {
+    let tools: ToolDef[] = [{ name: "read", annotations: { readOnlyHint: true } }];
+    let offline = false;
+    const calls: string[] = [];
+    const remote: Connector = {
+      id: "remote", kind: "mcp", description: "Remote records",
+      async listTools() { if (offline) throw new Error("offline"); return tools; },
+      async callTool(name) { calls.push(name); return { ok: true }; },
+    };
+    const connecta = createTestConnecta({
+      connectors: [remote], auth: users(),
+      identity: { connectorAccess: () => [guarded("remote.read")] },
+      storage: memoryStorage(), publicUrl: BASE,
+    });
+    expect((await rpc(connecta, "alice", "call_tool", { address: "remote.read", args: {} })).result.isError).toBeFalsy();
+    for (const annotations of [
+      { readOnlyHint: false, destructiveHint: true },
+      {},
+      { readOnlyHint: true, destructiveHint: true },
+    ]) {
+      tools = [
+        { name: "read", annotations },
+        { name: "new_read", annotations: { readOnlyHint: true } },
+      ];
+      await connecta.registry.invalidateStored("remote");
+      const page = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "remote", query: "", limit: 20 }));
+      expect(page).not.toContain("remote.read");
+      expect(page).not.toContain("remote.new_read");
+      for (const tool of ["read", "new_read"]) {
+        const denied = await rpc(connecta, "alice", "call_destructive_tool", { address: `remote.${tool}`, args: {} });
+        expect(JSON.stringify(denied)).toContain("unknown_tool");
+      }
+    }
+    offline = true;
+    await connecta.registry.invalidateStored("remote");
+    const unavailable = await rpc(connecta, "alice", "call_tool", { address: "remote.read", args: {} });
+    expect(unavailable.result.isError).toBe(true);
+    expect(calls).toEqual(["read"]);
+    await connecta.close();
+  });
+
+  it("preserves an explicit full grant and keeps guarded tools guarded through pools", async () => {
+    const called: string[] = [];
+    const notes = api("notes", { description: "Notes", tools: [
+      { name: "read", description: "Read a note", annotations: { readOnlyHint: true }, handler: async () => { called.push("read"); return 1; } },
+      { name: "write", description: "Write a note", annotations: { readOnlyHint: false }, handler: async () => { called.push("write"); return 2; } },
+    ] });
+    const connecta = createTestConnecta({
+      connectors: [notes], auth: users(),
+      identity: { connectorAccess: ({ principal }) => principal?.id === "alice"
+        ? [guarded("notes.write"), "notes"] : [guarded("notes.write"), guarded("notes.read")] },
+      pools: {
+        readers: { tools: ["notes"], grant: () => true },
+        narrow: { tools: ["notes.read"], grant: () => true },
+      },
+      storage: memoryStorage(), publicUrl: BASE,
+    });
+    const alice = await rpc(connecta, "alice", "call_destructive_tool", { address: "notes.write", args: {} }, "/mcp/readers");
+    const bob = await rpc(connecta, "bob", "call_destructive_tool", { address: "notes.write", args: {} }, "/mcp/readers");
+    expect(alice.result.isError).toBeFalsy();
+    expect(JSON.stringify(bob)).toContain("unknown_tool");
+    const narrowed = await rpc(connecta, "alice", "call_destructive_tool", { address: "notes.write", args: {} }, "/mcp/narrow");
+    expect(JSON.stringify(narrowed)).toContain("unknown_tool");
+    const bobRead = await rpc(connecta, "bob", "call_tool", { address: "notes.read", args: {} }, "/mcp/readers");
+    expect(bobRead.result.isError).toBeFalsy();
+    expect(called).toEqual(["write", "read"]);
+    await connecta.close();
   });
 });
 

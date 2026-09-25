@@ -1,0 +1,3075 @@
+{
+ "kind": "connecta-eval/agent",
+ "version": 1,
+ "meta": {
+  "createdAt": "2026-09-25T05:10:12.036Z",
+  "git": {
+   "commit": "8fec7152e0fc",
+   "branch": "main",
+   "dirty": false,
+   "srcTree": "a8b06951ffdd",
+   "srcDirty": false
+  },
+  "packageVersion": "0.25.0",
+  "node": "v26.9.0",
+  "platform": "darwin-arm64"
+ },
+ "codexVersion": "codex-cli 0.156.1",
+ "config": {
+  "runner": "codex",
+  "models": [
+   "gpt-6-sol"
+  ],
+  "repeats": 3,
+  "tasks": [
+   "cross-connector-join",
+   "stale-close-and-summarize"
+  ],
+  "concurrency": 2,
+  "timeoutMs": 480000
+ },
+ "tasks": [
+  {
+   "id": "cross-connector-join",
+   "title": "Cross-connector lookup and join",
+   "measures": "Joining two paged read-only sources (tracker issues by customer domain, analytics accounts and metrics) and writing one answer.",
+   "introducedIn": "baseline"
+  },
+  {
+   "id": "stale-close-and-summarize",
+   "title": "Find-then-write: close stale issues, post a summary",
+   "measures": "Discovering a write set with reads, landing each write exactly once through call_destructive_tool, then one summary write.",
+   "introducedIn": "baseline"
+  }
+ ],
+ "planned": [
+  {
+   "status": "planned",
+   "id": "p2-refresh-weekly",
+   "title": "Make it refresh weekly",
+   "introducedIn": "P2",
+   "measures": "Attaching a read-only refresh program to an existing artifact and proving it runs.",
+   "prompt": "Make the open-bugs page refresh every week.",
+   "sketch": {
+    "world": "as p2-build-page, seeded with an existing artifact; the follow-up hook calls the deployment's runDue() after moving tracker state",
+    "turns": [
+     "set the refresh",
+     "operator: advance the clock and run due refreshes; ask whether the page updated"
+    ],
+    "grading": [
+     "set_refresh called once with a weekly schedule",
+     "after runDue(), a new data version exists and reflects the changed tracker state",
+     "the refresh program made only read-only downstream calls"
+    ]
+   }
+  }
+ ],
+ "trials": [
+  {
+   "task": "cross-connector-join",
+   "model": "gpt-6-sol",
+   "repeat": 1,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success"
+    },
+    {
+     "id": "one-post",
+     "description": "exactly one message posted to #triage",
+     "pass": true,
+     "detail": "1 posted: \"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "no-stray-posts",
+     "description": "no messages posted to any other channel",
+     "pass": true
+    },
+    {
+     "id": "names-issue",
+     "description": "the post names API-207",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "names-customer",
+     "description": "the post names Stark Industries",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "states-mrr",
+     "description": "the post states $56,500",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\"",
+     "advisory": true
+    },
+    {
+     "id": "no-unrequested-writes",
+     "description": "no downstream writes other than chat.post_message",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 30274,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 100182,
+     "output": 847,
+     "cacheRead": 80512,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 3,
+     "call_tool": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 0,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 16,
+     "writes": 1,
+     "duplicateReads": 1,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "analytics.list_accounts": 2,
+      "tracker.search_issues": 1,
+      "analytics.get_account_metrics": 12,
+      "tracker.get_issue": 1,
+      "chat.post_message": 1
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "chat.post_message",
+      "reason": "Post the requested single triage message for the highest-MRR customer with an open bug.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Using the issue tracker and product analytics, find the open bug that affects our highest-paying customer (by MRR). Then post exactly one message to the #triage chat channel in the form `<ISSUE-KEY> <customer name> $<MRR>`."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-c1be711d-c7f3-432d-976e-6a11b66a5e03",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const q=await Promise.all([connecta.search({connector:'analytics',query:'list customers MRR revenue',includeSchemas:'json'}),connecta.search({connector:'tracker',query:'search issues bugs',includeSchemas:'json'}),connecta.search({connector:'chat',query:'post message channel',includeSchemas:'json'})]); for(let i=0;i<q.length;i++) console.log(JSON.stringify({connector:['analytics','tracker','chat'][i],tools:q[i].tools})); }"
+     },
+     "inputChars": 450
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-c1be711d-c7f3-432d-976e-6a11b66a5e03",
+     "isError": false,
+     "text": "{\"logs\":\"{\\\"connector\\\":\\\"analytics\\\",\\\"tools\\\":[{\\\"name\\\":\\\"list_accounts\\\",\\\"address\\\":\\\"analytics.list_accounts\\\",\\\"description\\\":\\\"List customer accounts (id, name, domain, plan). Paged; revenue lives in get_account_metrics.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"plan\\\":{\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"starter\\\",\\\"growth\\\",\\\"enterprise\\\"]},\\\"limit\\\":{\\\"description\\\":\\\"Page size, default 10, max 25\\\",\\\"type\\\":\\\"integer\\\",\\\"minimum\\\":1,\\\"maximum\\\":25},\\\"cursor\\\":{\\\"type\\\":\\\"string\\\"}},\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"plan\\\",\\\"limit\\\",\\\"cursor\\\"],\\\"requiredInputKeys\\\":[],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Product analytics\\\"},{\\\"name\\\":\\\"get_account_metrics\\\",\\\"address\\\":\\\"analytics.get_account_metrics\\\",\\\"description\\\":\\\"Current revenue and usage metrics for one account.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"accountId\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Account id, e.g. acc_01\\\"}},\\\"required\\\":[\\\"accountId\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"accountId\\\"],\\\"requiredInputKeys\\\":[\\\"accountId\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Product analytics\\\"}]}\\n{\\\"connector\\\":\\\"tracker\\\",\\\"tools\\\":[{\\\"name\\\":\\\"search_issues\\\",\\\"address\\\":\\\"tracker.search_issues\\\",\\\"description\\\":\\\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"project\\\":{\\\"description\\\":\\\"Project id\\\",\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"web\\\",\\\"api\\\",\\\"mobile\\\"]},\\\"status\\\":{\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"open\\\",\\\"closed\\\"]},\\\"label\\\":{\\\"description\\\":\\\"One label, e.g. bug, feature, chore\\\",\\\"type\\\":\\\"string\\\"},\\\"customer\\\":{\\\"description\\\":\\\"Customer domain, e.g. acme.com\\\",\\\"type\\\":\\\"string\\\"},\\\"updatedBefore\\\":{\\\"description\\\":\\\"ISO 8601 timestamp; only issues last updated before it\\\",\\\"type\\\":\\\"string\\\"},\\\"text\\\":{\\\"description\\\":\\\"Case-insensitive substring of the title\\\",\\\"type\\\":\\\"string\\\"},\\\"limit\\\":{\\\"description\\\":\\\"Page size, default 20, max 50\\\",\\\"type\\\":\\\"integer\\\",\\\"minimum\\\":1,\\\"maximum\\\":50},\\\"cursor\\\":{\\\"description\\\":\\\"nextCursor from the previous page\\\",\\\"type\\\":\\\"string\\\"}},\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"project\\\",\\\"status\\\",\\\"label\\\",\\\"customer\\\",\\\"updatedBefore\\\",\\\"text\\\",\\\"limit\\\",\\\"cursor\\\"],\\\"requiredInputKeys\\\":[],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"get_issue\\\",\\\"address\\\":\\\"tracker.get_issue\\\",\\\"description\\\":\\\"Get one issue with its comments.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Issue key, e.g. WEB-101\\\"}},\\\"required\\\":[\\\"id\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"id\\\"],\\\"requiredInputKeys\\\":[\\\"id\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"close_issue\\\",\\\"address\\\":\\\"tracker.close_issue\\\",\\\"description\\\":\\\"Close an issue, optionally leaving a closing comment.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Issue key\\\"},\\\"comment\\\":{\\\"description\\\":\\\"Closing comment\\\",\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"id\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"id\\\",\\\"comment\\\"],\\\"requiredInputKeys\\\":[\\\"id\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":false,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"create_issue\\\",\\\"address\\\":\\\"tracker.create_issue\\\",\\\"description\\\":\\\"Create an issue in a project.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"project\\\":{\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"web\\\",\\\"api\\\",\\\"mobile\\\"]},\\\"title\\\":{\\\"type\\\":\\\"string\\\"},\\\"label\\\":{\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"project\\\",\\\"title\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"project\\\",\\\"title\\\",\\\"label\\\"],\\\"requiredInputKeys\\\":[\\\"project\\\",\\\"title\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":false,\\\"idempotentHint\\\":false},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"delete_issue\\\",\\\"address\\\":\\\"tracker.delete_issue\\\",\\\"description\\\":\\\"Permanently delete an issue.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"id\\n--- TRUNCATED (6179 chars total) — filter/map/slice data inside your code and return only what you need ---\"}",
+     "chars": 4652
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-3c557423-cafa-4577-a991-61c5d3a62d49",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const c=await connecta.search({connector:'chat',query:'post message channel',includeSchemas:'json'}); console.log(JSON.stringify(c.tools.filter(x=>/post|send|list_channels/i.test(x.name)).map(x=>({name:x.name,address:x.address,inputSchema:x.inputSchema,annotations:x.annotations})))); const [a,i]=await Promise.all([connecta.call('analytics.list_accounts',{limit:25}),connecta.call('tracker.search_issues',{status:'open',label:'bug',limit:50})]); console.log(JSON.stringify({accountsSample:a,issuesSample:i})); }"
+     },
+     "inputChars": 537
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-3c557423-cafa-4577-a991-61c5d3a62d49",
+     "isError": false,
+     "text": "{\"logs\":\"[{\\\"name\\\":\\\"post_message\\\",\\\"address\\\":\\\"chat.post_message\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"channel\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Channel name (with or without #) or id\\\"},\\\"text\\\":{\\\"type\\\":\\\"string\\\",\\\"minLength\\\":1}},\\\"required\\\":[\\\"channel\\\",\\\"text\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":false,\\\"idempotentHint\\\":false}}]\\n{\\\"accountsSample\\\":{\\\"accounts\\\":[{\\\"id\\\":\\\"acc_01\\\",\\\"name\\\":\\\"Initech\\\",\\\"domain\\\":\\\"initech.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_02\\\",\\\"name\\\":\\\"Globex\\\",\\\"domain\\\":\\\"globex.com\\\",\\\"plan\\\":\\\"growth\\\"},{\\\"id\\\":\\\"acc_03\\\",\\\"name\\\":\\\"Hooli\\\",\\\"domain\\\":\\\"hooli.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_04\\\",\\\"name\\\":\\\"Umbrella Corp\\\",\\\"domain\\\":\\\"umbrella.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_05\\\",\\\"name\\\":\\\"Soylent\\\",\\\"domain\\\":\\\"soylent.com\\\",\\\"plan\\\":\\\"growth\\\"},{\\\"id\\\":\\\"acc_06\\\",\\\"name\\\":\\\"Stark Industries\\\",\\\"domain\\\":\\\"stark.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_07\\\",\\\"name\\\":\\\"Wayne Enterprises\\\",\\\"domain\\\":\\\"wayne.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_08\\\",\\\"name\\\":\\\"Acme\\\",\\\"domain\\\":\\\"acme.com\\\",\\\"plan\\\":\\\"starter\\\"},{\\\"id\\\":\\\"acc_09\\\",\\\"name\\\":\\\"Northwind Traders\\\",\\\"domain\\\":\\\"northwind.com\\\",\\\"plan\\\":\\\"growth\\\"},{\\\"id\\\":\\\"acc_10\\\",\\\"name\\\":\\\"Tyrell\\\",\\\"domain\\\":\\\"tyrell.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_11\\\",\\\"name\\\":\\\"Cyberdyne\\\",\\\"domain\\\":\\\"cyberdyne.com\\\",\\\"plan\\\":\\\"enterprise\\\"},{\\\"id\\\":\\\"acc_12\\\",\\\"name\\\":\\\"Oscorp\\\",\\\"domain\\\":\\\"oscorp.com\\\",\\\"plan\\\":\\\"starter\\\"}]},\\\"issuesSample\\\":{\\\"issues\\\":[{\\\"id\\\":\\\"WEB-101\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Checkout button unresponsive on Safari\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"initech.com\\\",\\\"assignee\\\":\\\"ana\\\",\\\"updatedAt\\\":\\\"2026-09-22T05:10:12.093Z\\\"},{\\\"id\\\":\\\"WEB-103\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Chart tooltips overlap the legend\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"globex.com\\\",\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-08-11T05:10:12.093Z\\\"},{\\\"id\\\":\\\"WEB-106\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Invoice PDF is missing the VAT line\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"soylent.com\\\",\\\"assignee\\\":\\\"ana\\\",\\\"updatedAt\\\":\\\"2026-09-13T05:10:12.093Z\\\"},{\\\"id\\\":\\\"WEB-108\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Search debounce is too aggressive\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-08-28T05:10:12.093Z\\\"},{\\\"id\\\":\\\"WEB-110\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Session expires during checkout\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"initech.com\\\",\\\"assignee\\\":\\\"eli\\\",\\\"updatedAt\\\":\\\"2026-08-16T05:10:12.093Z\\\"},{\\\"id\\\":\\\"WEB-112\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Avatar upload fails for HEIC images\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"assignee\\\":\\\"ben\\\",\\\"updatedAt\\\":\\\"2026-09-17T05:10:12.093Z\\\"},{\\\"id\\\":\\\"WEB-116\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Footer overlaps content on small screens\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"assignee\\\":\\\"ana\\\",\\\"updatedAt\\\":\\\"2026-09-24T05:10:12.093Z\\\"},{\\\"id\\\":\\\"API-207\\\",\\\"project\\\":\\\"api\\\",\\\"title\\\":\\\"Bulk import times out above 10k rows\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"stark.com\\\",\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-09-19T05:10:12.093Z\\\"},{\\\"id\\\":\\\"API-209\\\",\\\"project\\\":\\\"api\\\",\\\"title\\\":\\\"Timezone offset wrong in usage reports\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"assignee\\\":\\\"eli\\\",\\\"updatedAt\\\":\\\"2026-09-23T05:10:12.093Z\\\"},{\\\"id\\\":\\\"API-212\\\",\\\"project\\\":\\\"api\\\",\\\"title\\\":\\\"Refund endpoint ignores partial amounts\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"acme.com\\\",\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-09-14T05:10:12.093Z\\\"},{\\\"id\\\":\\\"MOB-305\\\",\\\"project\\\":\\\"mobile\\\",\\\"title\\\":\\\"Pull-to-refresh spinner never stops\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-08-06T05:10:12.093Z\\\"},{\\\"id\\\":\\\"MOB-310\\\",\\\"project\\\":\\\"mobile\\\",\\\"title\\\":\\\"Push notifications arrive twice\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"wayne.com\\\",\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-09-21T05:10:12.093Z\\\"}],\\\"total\\\":12}}\"}",
+     "chars": 4225
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-796692ef-188c-4a5e-9f9e-be62ac945439",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const a=await connecta.call('analytics.list_accounts',{limit:25}); const m=await Promise.all(a.accounts.map(x=>connecta.call('analytics.get_account_metrics',{accountId:x.id}))); console.log(JSON.stringify(a.accounts.map((x,i)=>({name:x.name,domain:x.domain,metrics:m[i]})))); }"
+     },
+     "inputChars": 302
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-796692ef-188c-4a5e-9f9e-be62ac945439",
+     "isError": false,
+     "text": "{\"logs\":\"[{\\\"name\\\":\\\"Initech\\\",\\\"domain\\\":\\\"initech.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_01\\\",\\\"mrrUsd\\\":48000,\\\"activeUsers30d\\\":812}},{\\\"name\\\":\\\"Globex\\\",\\\"domain\\\":\\\"globex.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_02\\\",\\\"mrrUsd\\\":31500,\\\"activeUsers30d\\\":404}},{\\\"name\\\":\\\"Hooli\\\",\\\"domain\\\":\\\"hooli.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_03\\\",\\\"mrrUsd\\\":120000,\\\"activeUsers30d\\\":2210}},{\\\"name\\\":\\\"Umbrella Corp\\\",\\\"domain\\\":\\\"umbrella.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_04\\\",\\\"mrrUsd\\\":95000,\\\"activeUsers30d\\\":1530}},{\\\"name\\\":\\\"Soylent\\\",\\\"domain\\\":\\\"soylent.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_05\\\",\\\"mrrUsd\\\":22000,\\\"activeUsers30d\\\":260}},{\\\"name\\\":\\\"Stark Industries\\\",\\\"domain\\\":\\\"stark.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_06\\\",\\\"mrrUsd\\\":56500,\\\"activeUsers30d\\\":990}},{\\\"name\\\":\\\"Wayne Enterprises\\\",\\\"domain\\\":\\\"wayne.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_07\\\",\\\"mrrUsd\\\":51000,\\\"activeUsers30d\\\":870}},{\\\"name\\\":\\\"Acme\\\",\\\"domain\\\":\\\"acme.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_08\\\",\\\"mrrUsd\\\":9000,\\\"activeUsers30d\\\":75}},{\\\"name\\\":\\\"Northwind Traders\\\",\\\"domain\\\":\\\"northwind.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_09\\\",\\\"mrrUsd\\\":14200,\\\"activeUsers30d\\\":140}},{\\\"name\\\":\\\"Tyrell\\\",\\\"domain\\\":\\\"tyrell.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_10\\\",\\\"mrrUsd\\\":77000,\\\"activeUsers30d\\\":1120}},{\\\"name\\\":\\\"Cyberdyne\\\",\\\"domain\\\":\\\"cyberdyne.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_11\\\",\\\"mrrUsd\\\":64000,\\\"activeUsers30d\\\":1004}},{\\\"name\\\":\\\"Oscorp\\\",\\\"domain\\\":\\\"oscorp.com\\\",\\\"metrics\\\":{\\\"accountId\\\":\\\"acc_12\\\",\\\"mrrUsd\\\":5000,\\\"activeUsers30d\\\":41}}]\"}",
+     "chars": 1583
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-389bc74a-ddc3-4fb5-9ef7-d0b075523335",
+     "tool": "call_tool",
+     "input": {
+      "address": "tracker.get_issue",
+      "args": {
+       "id": "API-207"
+      },
+      "resultMode": "value"
+     },
+     "inputChars": 76
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-389bc74a-ddc3-4fb5-9ef7-d0b075523335",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"id\":\"API-207\",\"project\":\"api\",\"title\":\"Bulk import times out above 10k rows\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"stark.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-19T05:10:12.093Z\",\"createdAt\":\"2026-08-30T05:10:12.093Z\",\"comments\":[]},\"durationMs\":14,\"attempts\":1}",
+     "chars": 295
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-9ffe740e-5a13-4376-b92f-b3c42c096052",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "chat.post_message",
+      "args": {
+       "channel": "#triage",
+       "text": "API-207 Stark Industries $56500"
+      },
+      "reason": "Post the requested single triage message for the highest-MRR customer with an open bug.",
+      "resultMode": "value"
+     },
+     "inputChars": 221
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-9ffe740e-5a13-4376-b92f-b3c42c096052",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"ok\":true,\"channel\":\"triage\",\"ts\":\"2026-09-25T05:10:39.899Z\"},\"durationMs\":6,\"attempts\":1}",
+     "chars": 109
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "Posted exactly one message to #triage: `API-207 Stark Industries $56500`"
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 10,
+     "at": 1790313025890,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 12,
+     "at": 1790313025893,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 2234
+    },
+    {
+     "seq": 15,
+     "at": 1790313032004,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 17,
+     "at": 1790313032012,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_01\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 19,
+     "at": 1790313032013,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_02\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 21,
+     "at": 1790313032014,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_03\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 60
+    },
+    {
+     "seq": 23,
+     "at": 1790313032014,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_04\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 25,
+     "at": 1790313032015,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_05\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 27,
+     "at": 1790313032015,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_06\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 29,
+     "at": 1790313032016,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_07\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 31,
+     "at": 1790313032016,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_08\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 56
+    },
+    {
+     "seq": 33,
+     "at": 1790313032017,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_09\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 35,
+     "at": 1790313032017,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_10\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 37,
+     "at": 1790313032018,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_11\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 39,
+     "at": 1790313032018,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_12\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 56
+    },
+    {
+     "seq": 42,
+     "at": 1790313036080,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"API-207\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 247
+    },
+    {
+     "seq": 45,
+     "at": 1790313039899,
+     "service": "chat",
+     "tool": "post_message",
+     "args": "{\"channel\":\"#triage\",\"text\":\"API-207 Stark Industries $56500\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 62
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__get_result",
+     "mcp__connecta__authorize_connector",
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__call_tool",
+     "mcp__connecta__skills"
+    ]
+   },
+   "startedAt": "2026-09-25T05:10:12.093Z"
+  },
+  {
+   "task": "stale-close-and-summarize",
+   "model": "gpt-6-sol",
+   "repeat": 1,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success"
+    },
+    {
+     "id": "closed-exactly-stale",
+     "description": "closed exactly WEB-103, WEB-105, WEB-107, WEB-110",
+     "pass": true,
+     "detail": "closed: WEB-103, WEB-105, WEB-107, WEB-110"
+    },
+    {
+     "id": "each-write-once",
+     "description": "every close_issue landed exactly once",
+     "pass": true
+    },
+    {
+     "id": "no-other-tracker-writes",
+     "description": "no tracker writes outside the stale set",
+     "pass": true
+    },
+    {
+     "id": "one-post",
+     "description": "exactly one message posted to #eng",
+     "pass": true,
+     "detail": "1 posted: \"Closed Web issues that had not been updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\""
+    },
+    {
+     "id": "no-stray-posts",
+     "description": "no messages posted to any other channel",
+     "pass": true
+    },
+    {
+     "id": "summary-lists-closed",
+     "description": "the summary lists exactly the closed keys",
+     "pass": true,
+     "detail": "mentioned: WEB-103, WEB-105, WEB-107, WEB-110"
+    },
+    {
+     "id": "summary-after-writes",
+     "description": "the summary was posted after the last close",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 57611,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 147150,
+     "output": 1618,
+     "cacheRead": 129024,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5,
+     "search_tools": 1,
+     "call_destructive_tool": 2,
+     "resume_execution": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 2,
+     "writes": 5,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "tracker.search_issues": 1,
+      "chat.list_channels": 1,
+      "tracker.close_issue": 4,
+      "chat.post_message": 1
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "tracker.close_issue",
+      "reason": "Close WEB-103 because it is open in Web and was last updated over 30 days ago.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "resume_execution",
+      "target": "tracker.close_issue",
+      "reason": "Close the remaining Web issues last updated more than 30 days ago.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "chat.post_message",
+      "reason": "Post the requested single summary in #eng listing the Web issue keys closed.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Close every open issue in the Web project that has not been updated in more than 30 days. Then post one summary message to #eng listing the issue keys you closed."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-8956bced-ff6d-4f70-a4a5-cfa6f0c99083",
+     "tool": "execute_code",
+     "input": {
+      "code": "async (connecta) => { const s=await connecta.search({connector:'tracker',query:'search issues project updated status',includeSchemas:'json'}); console.log(JSON.stringify(s.tools)); }"
+     },
+     "inputChars": 193
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-8956bced-ff6d-4f70-a4a5-cfa6f0c99083",
+     "isError": true,
+     "text": "Error: TypeError: cannot read property 'search' of undefined",
+     "chars": 60
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-1443be29-deb4-4c58-a750-2faf9cbafa12",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const s=await connecta.search({connector:'tracker',query:'search issues project updated status',includeSchemas:'json'}); console.log(JSON.stringify(s.tools)); }"
+     },
+     "inputChars": 185
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-1443be29-deb4-4c58-a750-2faf9cbafa12",
+     "isError": false,
+     "text": "{\"logs\":\"[{\\\"name\\\":\\\"search_issues\\\",\\\"address\\\":\\\"tracker.search_issues\\\",\\\"description\\\":\\\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"project\\\":{\\\"description\\\":\\\"Project id\\\",\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"web\\\",\\\"api\\\",\\\"mobile\\\"]},\\\"status\\\":{\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"open\\\",\\\"closed\\\"]},\\\"label\\\":{\\\"description\\\":\\\"One label, e.g. bug, feature, chore\\\",\\\"type\\\":\\\"string\\\"},\\\"customer\\\":{\\\"description\\\":\\\"Customer domain, e.g. acme.com\\\",\\\"type\\\":\\\"string\\\"},\\\"updatedBefore\\\":{\\\"description\\\":\\\"ISO 8601 timestamp; only issues last updated before it\\\",\\\"type\\\":\\\"string\\\"},\\\"text\\\":{\\\"description\\\":\\\"Case-insensitive substring of the title\\\",\\\"type\\\":\\\"string\\\"},\\\"limit\\\":{\\\"description\\\":\\\"Page size, default 20, max 50\\\",\\\"type\\\":\\\"integer\\\",\\\"minimum\\\":1,\\\"maximum\\\":50},\\\"cursor\\\":{\\\"description\\\":\\\"nextCursor from the previous page\\\",\\\"type\\\":\\\"string\\\"}},\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"project\\\",\\\"status\\\",\\\"label\\\",\\\"customer\\\",\\\"updatedBefore\\\",\\\"text\\\",\\\"limit\\\",\\\"cursor\\\"],\\\"requiredInputKeys\\\":[],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"list_projects\\\",\\\"address\\\":\\\"tracker.list_projects\\\",\\\"description\\\":\\\"List tracker projects with their keys and open issue counts.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{},\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[],\\\"requiredInputKeys\\\":[],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"create_issue\\\",\\\"address\\\":\\\"tracker.create_issue\\\",\\\"description\\\":\\\"Create an issue in a project.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"project\\\":{\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"web\\\",\\\"api\\\",\\\"mobile\\\"]},\\\"title\\\":{\\\"type\\\":\\\"string\\\"},\\\"label\\\":{\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"project\\\",\\\"title\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"project\\\",\\\"title\\\",\\\"label\\\"],\\\"requiredInputKeys\\\":[\\\"project\\\",\\\"title\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":false,\\\"idempotentHint\\\":false},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"get_issue\\\",\\\"address\\\":\\\"tracker.get_issue\\\",\\\"description\\\":\\\"Get one issue with its comments.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Issue key, e.g. WEB-101\\\"}},\\\"required\\\":[\\\"id\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"id\\\"],\\\"requiredInputKeys\\\":[\\\"id\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"close_issue\\\",\\\"address\\\":\\\"tracker.close_issue\\\",\\\"description\\\":\\\"Close an issue, optionally leaving a closing comment.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Issue key\\\"},\\\"comment\\\":{\\\"description\\\":\\\"Closing comment\\\",\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"id\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"id\\\",\\\"comment\\\"],\\\"requiredInputKeys\\\":[\\\"id\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":false,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"delete_issue\\\",\\\"address\\\":\\\"tracker.delete_issue\\\",\\\"description\\\":\\\"Permanently delete an issue.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"id\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"id\\\"],\\\"requiredInputKeys\\\":[\\\"id\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":true,\\\"idempotentHint\\\":true},\\\"connectorTitle\\\":\\\"Issue tracker\\\"},{\\\"name\\\":\\\"add_comment\\\",\\\"address\\\":\\\"tracker.add_comment\\\",\\\"description\\\":\\\"Add a comment to an issue.\\\",\\\"inputSchema\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"id\\\":{\\\"type\\\":\\\"string\\\"},\\\"body\\\":{\\\"type\\\":\\\"string\\\"}},\\\"required\\\":[\\\"id\\\",\\\"body\\\"],\\\"$schema\\\":\\\"https://json-schema.org/draft/2020-12/schema\\\"},\\\"inputKeys\\\":[\\\"id\\\",\\\"body\\\"],\\\"requiredInputKeys\\\":[\\\"id\\\",\\\"body\\\"],\\\"annotations\\\":{\\\"readOnlyHint\\\":false,\\\"destructiveHint\\\":false,\\\"idempotentHint\\\":false},\\\"connectorTitle\\\":\\\"Issue tracker\\\"}]\"}",
+     "chars": 4387
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-d0c1a949-7930-4c9e-a3a7-4f9e3890546c",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const cutoff=new Date(Date.now()-30*86400000).toISOString(); const v=await connecta.call('tracker.search_issues',{project:'web',status:'open',updatedBefore:cutoff,limit:50}); console.log(JSON.stringify({cutoff,sample:v})); }"
+     },
+     "inputChars": 249
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-d0c1a949-7930-4c9e-a3a7-4f9e3890546c",
+     "isError": false,
+     "text": "{\"logs\":\"{\\\"cutoff\\\":\\\"2026-08-26T05:10:32.857Z\\\",\\\"sample\\\":{\\\"issues\\\":[{\\\"id\\\":\\\"WEB-103\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Chart tooltips overlap the legend\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"globex.com\\\",\\\"assignee\\\":\\\"chioma\\\",\\\"updatedAt\\\":\\\"2026-08-11T05:10:12.097Z\\\"},{\\\"id\\\":\\\"WEB-105\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Upgrade the analytics SDK\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"chore\\\"],\\\"assignee\\\":\\\"eli\\\",\\\"updatedAt\\\":\\\"2026-07-25T05:10:12.097Z\\\"},{\\\"id\\\":\\\"WEB-107\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Dark mode for the settings pages\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"feature\\\"],\\\"assignee\\\":\\\"ben\\\",\\\"updatedAt\\\":\\\"2026-08-24T05:10:12.097Z\\\"},{\\\"id\\\":\\\"WEB-110\\\",\\\"project\\\":\\\"web\\\",\\\"title\\\":\\\"Session expires during checkout\\\",\\\"status\\\":\\\"open\\\",\\\"labels\\\":[\\\"bug\\\"],\\\"customer\\\":\\\"initech.com\\\",\\\"assignee\\\":\\\"eli\\\",\\\"updatedAt\\\":\\\"2026-08-16T05:10:12.097Z\\\"}],\\\"total\\\":4}}\"}",
+     "chars": 921
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-60f73c36-329c-4fa1-ac9b-7908072b9c6a",
+     "tool": "search_tools",
+     "input": {
+      "connector": "chat",
+      "query": "post message channel",
+      "includeSchemas": "compact",
+      "safety": "approvalRequired"
+     },
+     "inputChars": 106
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-60f73c36-329c-4fa1-ac9b-7908072b9c6a",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"chat\",\"title\":\"Team chat\",\"tools\":[{\"name\":\"post_message\",\"address\":\"chat.post_message\",\"description\":\"Post a message to a channel as the workspace bot.\",\"inputSchema\":\"{ channel: string, text: string /* length >= 1 */ }\",\"inputKeys\":[\"channel\",\"text\"],\"requiredInputKeys\":[\"channel\",\"text\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 449
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-983e528b-9d0c-40b0-bb10-8e5e9fbd6b4e",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const s=await connecta.search({connector:'chat',query:'list channels',includeSchemas:'json'}); const t=s.tools.find(x=>x.name==='list_channels'); if(!t){console.log(JSON.stringify(s.tools));return} const v=await connecta.call(t.address,{}); console.log(JSON.stringify(v)); }"
+     },
+     "inputChars": 299
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-983e528b-9d0c-40b0-bb10-8e5e9fbd6b4e",
+     "isError": false,
+     "text": "{\"logs\":\"{\\\"channels\\\":[{\\\"id\\\":\\\"C01\\\",\\\"name\\\":\\\"general\\\",\\\"topic\\\":\\\"Company-wide announcements\\\"},{\\\"id\\\":\\\"C02\\\",\\\"name\\\":\\\"eng\\\",\\\"topic\\\":\\\"Engineering\\\"},{\\\"id\\\":\\\"C03\\\",\\\"name\\\":\\\"triage\\\",\\\"topic\\\":\\\"Customer-impacting bugs\\\"},{\\\"id\\\":\\\"C04\\\",\\\"name\\\":\\\"finance\\\",\\\"topic\\\":\\\"Billing and revenue\\\"},{\\\"id\\\":\\\"C05\\\",\\\"name\\\":\\\"ci\\\",\\\"topic\\\":\\\"Build and test failures\\\"},{\\\"id\\\":\\\"C06\\\",\\\"name\\\":\\\"security\\\",\\\"topic\\\":\\\"Security and audit\\\"},{\\\"id\\\":\\\"C07\\\",\\\"name\\\":\\\"random\\\",\\\"topic\\\":\\\"Anything else\\\"}]}\"}",
+     "chars": 521
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-7c71fd6e-6ea7-4d5d-8b32-1cf21ee35597",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "tracker.close_issue",
+      "args": {
+       "id": "WEB-103"
+      },
+      "reason": "Close WEB-103 because it is open in Web and was last updated over 30 days ago."
+     },
+     "inputChars": 147
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-7c71fd6e-6ea7-4d5d-8b32-1cf21ee35597",
+     "isError": false,
+     "text": "{\"id\":\"WEB-103\",\"status\":\"closed\"}",
+     "chars": 34
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-5ea5c60a-f284-42cd-ac09-84730fc67e33",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const ids=['WEB-105','WEB-107','WEB-110']; const closed=[]; for(const id of ids){ const v=await connecta.call('tracker.close_issue',{id}); if(v && v.id===id && v.status==='closed') closed.push(id); else throw Error('Close result not confirmed for '+id+': '+JSON.stringify(v)); } console.log(JSON.stringify({closed})); }"
+     },
+     "inputChars": 344
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-5ea5c60a-f284-42cd-ac09-84730fc67e33",
+     "isError": false,
+     "text": "{\"paused\":{\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-105\"},\"token\":\"r1.a97e68bf53a5803314f83005eefa1056.3ce6f06de303005ddbfb637f7554ec62.1790314857588\",\"expiresAt\":\"2026-09-25T05:40:57.588Z\",\"nextAction\":{\"tool\":\"resume_execution\",\"arguments\":{\"token\":\"r1.a97e68bf53a5803314f83005eefa1056.3ce6f06de303005ddbfb637f7554ec62.1790314857588\",\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-105\"},\"approval\":\"call\"}},\"hint\":\"Not sent. To run it, call resume_execution repeating this address and args exactly; approval \\\"tool\\\" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated. If resume_execution is denied, that is the human's answer: report it rather than sending the write another way.\"}}",
+     "chars": 780
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-e216f772-7ed9-4e7f-a8f7-615d1b214933",
+     "tool": "resume_execution",
+     "input": {
+      "token": "r1.a97e68bf53a5803314f83005eefa1056.3ce6f06de303005ddbfb637f7554ec62.1790314857588",
+      "address": "tracker.close_issue",
+      "args": {
+       "id": "WEB-105"
+      },
+      "approval": "tool",
+      "reason": "Close the remaining Web issues last updated more than 30 days ago."
+     },
+     "inputChars": 246
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-e216f772-7ed9-4e7f-a8f7-615d1b214933",
+     "isError": false,
+     "text": "{\"logs\":\"{\\\"closed\\\":[\\\"WEB-105\\\",\\\"WEB-107\\\",\\\"WEB-110\\\"]}\"}",
+     "chars": 61
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-2f2ed04e-81d3-4b04-aadb-85cbe5c759a3",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "chat.post_message",
+      "args": {
+       "channel": "C02",
+       "text": "Closed Web issues that had not been updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110."
+      },
+      "reason": "Post the requested single summary in #eng listing the Web issue keys closed."
+     },
+     "inputChars": 255
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-2f2ed04e-81d3-4b04-aadb-85cbe5c759a3",
+     "isError": false,
+     "text": "{\"ok\":true,\"channel\":\"eng\",\"ts\":\"2026-09-25T05:11:05.567Z\"}",
+     "chars": 59
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "Closed WEB-103, WEB-105, WEB-107, and WEB-110. Posted one summary message in #eng."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 5,
+     "at": 1790313032866,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"updatedBefore\":\"2026-08-26T05:10:32.857Z\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 733
+    },
+    {
+     "seq": 10,
+     "at": 1790313045854,
+     "service": "chat",
+     "tool": "list_channels",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 424
+    },
+    {
+     "seq": 13,
+     "at": 1790313052745,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-103\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 16,
+     "at": 1790313062239,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-105\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 18,
+     "at": 1790313062242,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-107\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 20,
+     "at": 1790313062245,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-110\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 23,
+     "at": 1790313065567,
+     "service": "chat",
+     "tool": "post_message",
+     "args": "{\"channel\":\"C02\",\"text\":\"Closed Web issues that had not been updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 59
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__authorize_connector",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__skills",
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__get_result",
+     "mcp__connecta__call_tool"
+    ]
+   },
+   "startedAt": "2026-09-25T05:10:12.097Z"
+  },
+  {
+   "task": "cross-connector-join",
+   "model": "gpt-6-sol",
+   "repeat": 2,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success"
+    },
+    {
+     "id": "one-post",
+     "description": "exactly one message posted to #triage",
+     "pass": true,
+     "detail": "1 posted: \"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "no-stray-posts",
+     "description": "no messages posted to any other channel",
+     "pass": true
+    },
+    {
+     "id": "names-issue",
+     "description": "the post names API-207",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "names-customer",
+     "description": "the post names Stark Industries",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "states-mrr",
+     "description": "the post states $56,500",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\"",
+     "advisory": true
+    },
+    {
+     "id": "no-unrequested-writes",
+     "description": "no downstream writes other than chat.post_message",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 42194,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 142695,
+     "output": 1291,
+     "cacheRead": 122496,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6,
+     "skills": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 25,
+     "writes": 1,
+     "duplicateReads": 2,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "analytics.list_accounts": 2,
+      "tracker.search_issues": 6,
+      "analytics.get_account_metrics": 12,
+      "tracker.get_issue": 5,
+      "chat.post_message": 1
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "chat.post_message",
+      "reason": "User explicitly requested exactly one triage message for the highest-MRR customer with an open bug.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Using the issue tracker and product analytics, find the open bug that affects our highest-paying customer (by MRR). Then post exactly one message to the #triage chat channel in the form `<ISSUE-KEY> <customer name> $<MRR>`."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-09930cf1-06a2-4345-8563-993353867755",
+     "tool": "execute_code",
+     "input": {
+      "code": "async (connecta) => { const qs=[['analytics','customers MRR revenue list'],['tracker','search issues open bugs'],['chat','post message channel']]; const out=await Promise.all(qs.map(async ([connector,query])=>({connector,tools:(await connecta.search({connector,query,includeSchemas:'json'})).tools}))); connecta.emit({type:'text',text:JSON.stringify(out)}); }"
+     },
+     "inputChars": 370
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-09930cf1-06a2-4345-8563-993353867755",
+     "isError": true,
+     "text": "Error: TypeError: cannot read property 'search' of undefined",
+     "chars": 60
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-b455832c-11ad-492b-a39a-dfa4ae977614",
+     "tool": "skills",
+     "input": {
+      "name": "usage"
+     },
+     "inputChars": 16
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-b455832c-11ad-492b-a39a-dfa4ae977614",
+     "isError": false,
+     "text": "# Connecta usage\n\n## The surface\n\nEight tools: `execute_code`, `resume_execution`, `search_tools`, `call_tool`, `call_destructive_tool`, `authorize_connector`, `get_result`, `skills`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.\n\nFollow the MCP instructions for routing. Read at most once for syntax or repair.\n\n## Inside a program\n\nWrite one plain-JavaScript async arrow function, without TypeScript or imports. Return reduced JSON-shaped data.\n\nThe minimum guest API is:\n\n- `connecta.call(\"connector.tool\", args)` uses the canonical address and returns the unwrapped value.\n- `connecta.search(args)` returns `{ tools, total, offset, limit, hasMore }`; `connecta.describe(args)` returns `{ tools }`.\n- Use `Promise.all` for independent calls, or `Promise.allSettled` to keep successes and failures.\n- `console.log(...)` is captured. `connecta.emit(block)` produces rich output.\n\n## Discover and select\n\nSearch and call in one run when schemas suffice. For unfamiliar result formats, return a small sample and continue; do not guess a parser. Use 2–4 distinctive action/object terms; search distinct operations separately.\n\nFor top-level catalog inspection or approval-required discovery, omit `limit` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. `includeSchemas: \"compact\"` adds bounded input and available output shapes. An `outputSchemaSource: \"observed\"` shape is a hint, not a contract. Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`; truncation flags mark incomplete shapes; matches also carry declared annotations.\n\n- `connecta.search({})` loads all catalogs. Pass `connector: \"<id>\"` when the integration is obvious. Use `safety: \"readOnly\"` for reads. These inputs filter discovery; they grant no authority.\n- Use `includeSchemas: \"json\"` for programmatic schema inspection; compact schemas are text, not objects with `.properties`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.\n- Supply every `requiredInputKey` from the task or a prior result. For dependencies, match the earlier `outputKey` to the later required key. An empty required-key list does not permit invented arguments. Missing `outputKeys` means inspect `outputSchema`.\n- Use `connecta.describe({ address })` or `{ addresses }` when a compact schema is truncated or insufficient. Use `format: \"json\"` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.\n- Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as `items` or `results`. If a match is missing, re-search or describe. If a result shape is unclear, return a small sample for inspection before continuing.\n- Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.\n- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.\n- Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.\n\nOnly tools explicitly annotated `readOnlyHint: true` are reachable unasked. Where the MCP instructions say programs pause, any other call pauses unsent and `execute_code` returns `paused` with the write and a token; repeat all three unchanged in top-level `resume_execution` to approve (`approval: \"tool\"` covers that tool for the run). Replay reruns the program against a journal: make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.\n\n## Errors and repair\n\nCaught Connecta errors expose `message`, `code`, `retryable`, and `details`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry `retryable: false`, and do not retry `rate_limited` immediately because portable code has no timer.\n\n- `destructive_tool_requires_approval`: stop and send the returned address through top-level `call_destructive_tool`.\n- `execution_paused`: the run already stopped at a write; let it end.\n- `write_outcome_unknown`: sent but unanswered, never re-sent; check the target.\n- `execution_expired`, `_diverged`, `_interrupted`: check `writes`, then rerun.\n- `auth_required`: let the failure reach the model, then use top-level `authorize_connector`, give its handoff to the operator, and retry after recovery.\n- A truncated direct-call result: follow its `get_result` action. A truncated program result has no page handle; filter, map, or slice inside a new program.\n- Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.\n\nFor a direct call, `resultMode: \"value\"` unwraps the result. `timeoutMs` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. `diagnostics: true` adds timing.\n\n`get_result({ id, offset?, maxBytes? })` returns a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: `maxBytes` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; `offset` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow `nextAction` until `has… [2986 more chars]",
+     "chars": 8986
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-8f1d7dfa-df9a-4749-adde-f6a11d769e23",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const qs=[['analytics','customers MRR revenue list'],['tracker','search issues open bugs'],['chat','post message channel']]; const out=await Promise.all(qs.map(async ([connector,query])=>({connector,tools:(await connecta.search({connector,query,includeSchemas:'json'})).tools}))); return out; }"
+     },
+     "inputChars": 319
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-8f1d7dfa-df9a-4749-adde-f6a11d769e23",
+     "isError": false,
+     "text": "{\"result\":[{\"connector\":\"analytics\",\"tools\":[{\"name\":\"list_accounts\",\"address\":\"analytics.list_accounts\",\"description\":\"List customer accounts (id, name, domain, plan). Paged; revenue lives in get_account_metrics.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"plan\":{\"type\":\"string\",\"enum\":[\"starter\",\"growth\",\"enterprise\"]},\"limit\":{\"description\":\"Page size, default 10, max 25\",\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"cursor\":{\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"plan\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Product analytics\"},{\"name\":\"get_account_metrics\",\"address\":\"analytics.get_account_metrics\",\"description\":\"Current revenue and usage metrics for one account.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"accountId\":{\"type\":\"string\",\"description\":\"Account id, e.g. acc_01\"}},\"required\":[\"accountId\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"accountId\"],\"requiredInputKeys\":[\"accountId\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Product analytics\"}]},{\"connector\":\"tracker\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"description\":\"List tracker projects with their keys and open issue counts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"get_issue\",\"address\":\"tracker.get_issue\",\"description\":\"Get one issue with its comments.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key, e.g. WEB-101\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"close_issue\",\"address\":\"tracker.close_issue\",\"description\":\"Close an issue, optionally leaving a closing comment.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key\"},\"comment\":{\"description\":\"Closing comment\",\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"comment\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"create_issue\",\"address\":\"tracker.create_issue\",\"description\":\"Create an issue in a project.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"title\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"project\",\"title\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"title\",\"label\"],\"requiredInputKeys\":[\"project\",\"title\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"delete_issue\",\"address\":\"tracker.delete_issue\",\"description\":\"Permanently delete an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"add_comment\",\"address\":\"tracker.add_comment\",\"description\":\"Add a comment to an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"id\",\"body\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"body\"],\"requiredInputKeys\":[\"id\",\"body\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"}]},{\"connector\":\"chat\",\"tools\":[{\"name\":\"post_message\",\"address\":\"chat.post_message\",\"description\":\"Post a message to a channel as the workspace bot.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"description\":\"Channel name (with or without #) or id\"},\"text\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"channel\",\"text\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"channel\",\"text\"],\"requiredInputKeys\":[\"channel\",\"text\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Team chat\"},{\"name\":\"read_messages\",\"address\":\"chat.read_messages\",\"description\":\"Read the most recent messages in a channel, newest last.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"description\":\"Channel name (with or without #) or id\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100}},\"required\":[\"channel\"],\"$schema\":\"https://js… [192 more chars]",
+     "chars": 6192
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-e0f18c89-9eb7-4a0f-9449-4b9dcd9ed2b2",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const [a,i]=await Promise.all([connecta.call('analytics.list_accounts',{limit:25}),connecta.call('tracker.search_issues',{status:'open',label:'bug',limit:50})]); return {accountsSample:a,issuesSample:i}; }"
+     },
+     "inputChars": 230
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-e0f18c89-9eb7-4a0f-9449-4b9dcd9ed2b2",
+     "isError": false,
+     "text": "{\"result\":{\"accountsSample\":{\"accounts\":[{\"id\":\"acc_01\",\"name\":\"Initech\",\"domain\":\"initech.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_02\",\"name\":\"Globex\",\"domain\":\"globex.com\",\"plan\":\"growth\"},{\"id\":\"acc_03\",\"name\":\"Hooli\",\"domain\":\"hooli.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_04\",\"name\":\"Umbrella Corp\",\"domain\":\"umbrella.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_05\",\"name\":\"Soylent\",\"domain\":\"soylent.com\",\"plan\":\"growth\"},{\"id\":\"acc_06\",\"name\":\"Stark Industries\",\"domain\":\"stark.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_07\",\"name\":\"Wayne Enterprises\",\"domain\":\"wayne.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_08\",\"name\":\"Acme\",\"domain\":\"acme.com\",\"plan\":\"starter\"},{\"id\":\"acc_09\",\"name\":\"Northwind Traders\",\"domain\":\"northwind.com\",\"plan\":\"growth\"},{\"id\":\"acc_10\",\"name\":\"Tyrell\",\"domain\":\"tyrell.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_11\",\"name\":\"Cyberdyne\",\"domain\":\"cyberdyne.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_12\",\"name\":\"Oscorp\",\"domain\":\"oscorp.com\",\"plan\":\"starter\"}]},\"issuesSample\":{\"issues\":[{\"id\":\"WEB-101\",\"project\":\"web\",\"title\":\"Checkout button unresponsive on Safari\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-22T05:10:42.409Z\"},{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:10:42.409Z\"},{\"id\":\"WEB-106\",\"project\":\"web\",\"title\":\"Invoice PDF is missing the VAT line\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"soylent.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-13T05:10:42.409Z\"},{\"id\":\"WEB-108\",\"project\":\"web\",\"title\":\"Search debounce is too aggressive\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-28T05:10:42.409Z\"},{\"id\":\"WEB-110\",\"project\":\"web\",\"title\":\"Session expires during checkout\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"eli\",\"updatedAt\":\"2026-08-16T05:10:42.409Z\"},{\"id\":\"WEB-112\",\"project\":\"web\",\"title\":\"Avatar upload fails for HEIC images\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ben\",\"updatedAt\":\"2026-09-17T05:10:42.409Z\"},{\"id\":\"WEB-116\",\"project\":\"web\",\"title\":\"Footer overlaps content on small screens\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ana\",\"updatedAt\":\"2026-09-24T05:10:42.409Z\"},{\"id\":\"API-207\",\"project\":\"api\",\"title\":\"Bulk import times out above 10k rows\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"stark.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-19T05:10:42.409Z\"},{\"id\":\"API-209\",\"project\":\"api\",\"title\":\"Timezone offset wrong in usage reports\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"eli\",\"updatedAt\":\"2026-09-23T05:10:42.409Z\"},{\"id\":\"API-212\",\"project\":\"api\",\"title\":\"Refund endpoint ignores partial amounts\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"acme.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-14T05:10:42.409Z\"},{\"id\":\"MOB-305\",\"project\":\"mobile\",\"title\":\"Pull-to-refresh spinner never stops\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-06T05:10:42.409Z\"},{\"id\":\"MOB-310\",\"project\":\"mobile\",\"title\":\"Push notifications arrive twice\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"wayne.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-21T05:10:42.409Z\"}],\"total\":12}}}",
+     "chars": 3210
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-7c1b133b-28dc-481c-87e7-878cf194b52e",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const a=await connecta.call('analytics.list_accounts',{limit:25}); const m=await Promise.all(a.accounts.map(async x=>({account:x,metrics:await connecta.call('analytics.get_account_metrics',{accountId:x.id})}))); return {accountsMeta:{keys:Object.keys(a),count:a.accounts.length},metrics:m}; }"
+     },
+     "inputChars": 317
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-7c1b133b-28dc-481c-87e7-878cf194b52e",
+     "isError": false,
+     "text": "{\"result\":{\"accountsMeta\":{\"keys\":[\"accounts\"],\"count\":12},\"metrics\":[{\"account\":{\"id\":\"acc_01\",\"name\":\"Initech\",\"domain\":\"initech.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_01\",\"mrrUsd\":48000,\"activeUsers30d\":812}},{\"account\":{\"id\":\"acc_02\",\"name\":\"Globex\",\"domain\":\"globex.com\",\"plan\":\"growth\"},\"metrics\":{\"accountId\":\"acc_02\",\"mrrUsd\":31500,\"activeUsers30d\":404}},{\"account\":{\"id\":\"acc_03\",\"name\":\"Hooli\",\"domain\":\"hooli.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_03\",\"mrrUsd\":120000,\"activeUsers30d\":2210}},{\"account\":{\"id\":\"acc_04\",\"name\":\"Umbrella Corp\",\"domain\":\"umbrella.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_04\",\"mrrUsd\":95000,\"activeUsers30d\":1530}},{\"account\":{\"id\":\"acc_05\",\"name\":\"Soylent\",\"domain\":\"soylent.com\",\"plan\":\"growth\"},\"metrics\":{\"accountId\":\"acc_05\",\"mrrUsd\":22000,\"activeUsers30d\":260}},{\"account\":{\"id\":\"acc_06\",\"name\":\"Stark Industries\",\"domain\":\"stark.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_06\",\"mrrUsd\":56500,\"activeUsers30d\":990}},{\"account\":{\"id\":\"acc_07\",\"name\":\"Wayne Enterprises\",\"domain\":\"wayne.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_07\",\"mrrUsd\":51000,\"activeUsers30d\":870}},{\"account\":{\"id\":\"acc_08\",\"name\":\"Acme\",\"domain\":\"acme.com\",\"plan\":\"starter\"},\"metrics\":{\"accountId\":\"acc_08\",\"mrrUsd\":9000,\"activeUsers30d\":75}},{\"account\":{\"id\":\"acc_09\",\"name\":\"Northwind Traders\",\"domain\":\"northwind.com\",\"plan\":\"growth\"},\"metrics\":{\"accountId\":\"acc_09\",\"mrrUsd\":14200,\"activeUsers30d\":140}},{\"account\":{\"id\":\"acc_10\",\"name\":\"Tyrell\",\"domain\":\"tyrell.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_10\",\"mrrUsd\":77000,\"activeUsers30d\":1120}},{\"account\":{\"id\":\"acc_11\",\"name\":\"Cyberdyne\",\"domain\":\"cyberdyne.com\",\"plan\":\"enterprise\"},\"metrics\":{\"accountId\":\"acc_11\",\"mrrUsd\":64000,\"activeUsers30d\":1004}},{\"account\":{\"id\":\"acc_12\",\"name\":\"Oscorp\",\"domain\":\"oscorp.com\",\"plan\":\"starter\"},\"metrics\":{\"accountId\":\"acc_12\",\"mrrUsd\":5000,\"activeUsers30d\":41}}]}}",
+     "chars": 1961
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-cfa446f0-a31f-4a9a-826e-5e3c97074d94",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const x=await connecta.call('tracker.search_issues',{status:'open',label:'bug',customer:'hooli.com',limit:50}); return x; }"
+     },
+     "inputChars": 148
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-cfa446f0-a31f-4a9a-826e-5e3c97074d94",
+     "isError": false,
+     "text": "{\"result\":{\"issues\":[],\"total\":0}}",
+     "chars": 34
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-7888eaae-e970-478f-b6df-8501d3a36509",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const domains=['hooli.com','umbrella.com','tyrell.com','cyberdyne.com']; const ids=['WEB-108','WEB-112','WEB-116','API-209','MOB-305']; const [s,g]=await Promise.all([Promise.all(domains.map(async d=>({domain:d,result:await connecta.call('tracker.search_issues',{status:'open',label:'bug',customer:d,limit:50})}))),Promise.all(ids.map(async id=>({id,result:await connecta.call('tracker.get_issue',{id})})))]); return {higherCustomerSearches:s,unattributedIssues:g}; }"
+     },
+     "inputChars": 492
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-7888eaae-e970-478f-b6df-8501d3a36509",
+     "isError": false,
+     "text": "{\"result\":{\"higherCustomerSearches\":[{\"domain\":\"hooli.com\",\"result\":{\"issues\":[],\"total\":0}},{\"domain\":\"umbrella.com\",\"result\":{\"issues\":[],\"total\":0}},{\"domain\":\"tyrell.com\",\"result\":{\"issues\":[],\"total\":0}},{\"domain\":\"cyberdyne.com\",\"result\":{\"issues\":[],\"total\":0}}],\"unattributedIssues\":[{\"id\":\"WEB-108\",\"result\":{\"id\":\"WEB-108\",\"project\":\"web\",\"title\":\"Search debounce is too aggressive\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-28T05:10:42.409Z\",\"createdAt\":\"2026-08-08T05:10:42.409Z\",\"comments\":[]}},{\"id\":\"WEB-112\",\"result\":{\"id\":\"WEB-112\",\"project\":\"web\",\"title\":\"Avatar upload fails for HEIC images\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ben\",\"updatedAt\":\"2026-09-17T05:10:42.409Z\",\"createdAt\":\"2026-08-28T05:10:42.409Z\",\"comments\":[]}},{\"id\":\"WEB-116\",\"result\":{\"id\":\"WEB-116\",\"project\":\"web\",\"title\":\"Footer overlaps content on small screens\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ana\",\"updatedAt\":\"2026-09-24T05:10:42.409Z\",\"createdAt\":\"2026-09-04T05:10:42.409Z\",\"comments\":[]}},{\"id\":\"API-209\",\"result\":{\"id\":\"API-209\",\"project\":\"api\",\"title\":\"Timezone offset wrong in usage reports\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"eli\",\"updatedAt\":\"2026-09-23T05:10:42.409Z\",\"createdAt\":\"2026-09-03T05:10:42.409Z\",\"comments\":[]}},{\"id\":\"MOB-305\",\"result\":{\"id\":\"MOB-305\",\"project\":\"mobile\",\"title\":\"Pull-to-refresh spinner never stops\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-06T05:10:42.409Z\",\"createdAt\":\"2026-07-17T05:10:42.409Z\",\"comments\":[]}}]}}",
+     "chars": 1544
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-46066da6-d893-49c7-a735-d34df91d03bf",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "chat.post_message",
+      "args": {
+       "channel": "#triage",
+       "text": "API-207 Stark Industries $56500"
+      },
+      "reason": "User explicitly requested exactly one triage message for the highest-MRR customer with an open bug."
+     },
+     "inputChars": 212
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-46066da6-d893-49c7-a735-d34df91d03bf",
+     "isError": false,
+     "text": "{\"ok\":true,\"channel\":\"triage\",\"ts\":\"2026-09-25T05:11:20.410Z\"}",
+     "chars": 62
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "Posted exactly one message to #triage: `API-207 Stark Industries $56500`"
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 10,
+     "at": 1790313059365,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 12,
+     "at": 1790313059366,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 2234
+    },
+    {
+     "seq": 15,
+     "at": 1790313063238,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 17,
+     "at": 1790313063241,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_01\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 19,
+     "at": 1790313063242,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_02\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 21,
+     "at": 1790313063243,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_03\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 60
+    },
+    {
+     "seq": 23,
+     "at": 1790313063244,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_04\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 25,
+     "at": 1790313063246,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_05\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 27,
+     "at": 1790313063248,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_06\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 29,
+     "at": 1790313063251,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_07\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 31,
+     "at": 1790313063253,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_08\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 56
+    },
+    {
+     "seq": 33,
+     "at": 1790313063256,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_09\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 35,
+     "at": 1790313063257,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_10\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 37,
+     "at": 1790313063258,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_11\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 39,
+     "at": 1790313063258,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_12\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 56
+    },
+    {
+     "seq": 42,
+     "at": 1790313067011,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"customer\":\"hooli.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 23
+    },
+    {
+     "seq": 45,
+     "at": 1790313077088,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"customer\":\"hooli.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 23
+    },
+    {
+     "seq": 47,
+     "at": 1790313077090,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"customer\":\"umbrella.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 23
+    },
+    {
+     "seq": 49,
+     "at": 1790313077091,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"customer\":\"tyrell.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 23
+    },
+    {
+     "seq": 51,
+     "at": 1790313077091,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"customer\":\"cyberdyne.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 23
+    },
+    {
+     "seq": 53,
+     "at": 1790313077092,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"WEB-108\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 221
+    },
+    {
+     "seq": 55,
+     "at": 1790313077093,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"WEB-112\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 220
+    },
+    {
+     "seq": 57,
+     "at": 1790313077093,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"WEB-116\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 225
+    },
+    {
+     "seq": 59,
+     "at": 1790313077094,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"API-209\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 223
+    },
+    {
+     "seq": 61,
+     "at": 1790313077094,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"MOB-305\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 226
+    },
+    {
+     "seq": 64,
+     "at": 1790313080410,
+     "service": "chat",
+     "tool": "post_message",
+     "args": "{\"channel\":\"#triage\",\"text\":\"API-207 Stark Industries $56500\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 62
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__skills",
+     "mcp__connecta__authorize_connector",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__call_tool",
+     "mcp__connecta__get_result"
+    ]
+   },
+   "startedAt": "2026-09-25T05:10:42.409Z"
+  },
+  {
+   "task": "stale-close-and-summarize",
+   "model": "gpt-6-sol",
+   "repeat": 2,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success"
+    },
+    {
+     "id": "closed-exactly-stale",
+     "description": "closed exactly WEB-103, WEB-105, WEB-107, WEB-110",
+     "pass": true,
+     "detail": "closed: WEB-103, WEB-105, WEB-107, WEB-110"
+    },
+    {
+     "id": "each-write-once",
+     "description": "every close_issue landed exactly once",
+     "pass": true
+    },
+    {
+     "id": "no-other-tracker-writes",
+     "description": "no tracker writes outside the stale set",
+     "pass": true
+    },
+    {
+     "id": "one-post",
+     "description": "exactly one message posted to #eng",
+     "pass": true,
+     "detail": "1 posted: \"Closed Web issues not updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\""
+    },
+    {
+     "id": "no-stray-posts",
+     "description": "no messages posted to any other channel",
+     "pass": true
+    },
+    {
+     "id": "summary-lists-closed",
+     "description": "the summary lists exactly the closed keys",
+     "pass": true,
+     "detail": "mentioned: WEB-103, WEB-105, WEB-107, WEB-110"
+    },
+    {
+     "id": "summary-after-writes",
+     "description": "the summary was posted after the last close",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 53153,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 164587,
+     "output": 1667,
+     "cacheRead": 148864,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5,
+     "skills": 1,
+     "search_tools": 2,
+     "resume_execution": 3
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 5,
+     "duplicateReads": 2,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "tracker.search_issues": 3,
+      "tracker.close_issue": 4,
+      "chat.post_message": 1
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "resume_execution",
+      "target": "tracker.close_issue",
+      "reason": "Close Web issue last updated more than 30 days ago, as requested.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "resume_execution",
+      "target": "tracker.close_issue",
+      "reason": "Close all remaining stale open Web issues before posting the requested summary.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "resume_execution",
+      "target": "chat.post_message",
+      "reason": "Post the single requested summary to #eng after closing the four stale Web issues.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Close every open issue in the Web project that has not been updated in more than 30 days. Then post one summary message to #eng listing the issue keys you closed."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-ecc238df-1b1e-4774-8f0e-b90429d0b0ae",
+     "tool": "execute_code",
+     "input": {
+      "code": "async (connecta) => { const a=await connecta.search({connector:'tracker',query:'search issues project status updated',includeSchemas:'json'}); console.log(JSON.stringify(a.tools)); }"
+     },
+     "inputChars": 193
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-ecc238df-1b1e-4774-8f0e-b90429d0b0ae",
+     "isError": true,
+     "text": "Error: TypeError: cannot read property 'search' of undefined",
+     "chars": 60
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-d2f12df1-5736-4171-9cf4-adf5ad4b4f15",
+     "tool": "skills",
+     "input": {
+      "name": "usage"
+     },
+     "inputChars": 16
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-d2f12df1-5736-4171-9cf4-adf5ad4b4f15",
+     "isError": false,
+     "text": "# Connecta usage\n\n## The surface\n\nEight tools: `execute_code`, `resume_execution`, `search_tools`, `call_tool`, `call_destructive_tool`, `authorize_connector`, `get_result`, `skills`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.\n\nFollow the MCP instructions for routing. Read at most once for syntax or repair.\n\n## Inside a program\n\nWrite one plain-JavaScript async arrow function, without TypeScript or imports. Return reduced JSON-shaped data.\n\nThe minimum guest API is:\n\n- `connecta.call(\"connector.tool\", args)` uses the canonical address and returns the unwrapped value.\n- `connecta.search(args)` returns `{ tools, total, offset, limit, hasMore }`; `connecta.describe(args)` returns `{ tools }`.\n- Use `Promise.all` for independent calls, or `Promise.allSettled` to keep successes and failures.\n- `console.log(...)` is captured. `connecta.emit(block)` produces rich output.\n\n## Discover and select\n\nSearch and call in one run when schemas suffice. For unfamiliar result formats, return a small sample and continue; do not guess a parser. Use 2–4 distinctive action/object terms; search distinct operations separately.\n\nFor top-level catalog inspection or approval-required discovery, omit `limit` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. `includeSchemas: \"compact\"` adds bounded input and available output shapes. An `outputSchemaSource: \"observed\"` shape is a hint, not a contract. Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`; truncation flags mark incomplete shapes; matches also carry declared annotations.\n\n- `connecta.search({})` loads all catalogs. Pass `connector: \"<id>\"` when the integration is obvious. Use `safety: \"readOnly\"` for reads. These inputs filter discovery; they grant no authority.\n- Use `includeSchemas: \"json\"` for programmatic schema inspection; compact schemas are text, not objects with `.properties`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.\n- Supply every `requiredInputKey` from the task or a prior result. For dependencies, match the earlier `outputKey` to the later required key. An empty required-key list does not permit invented arguments. Missing `outputKeys` means inspect `outputSchema`.\n- Use `connecta.describe({ address })` or `{ addresses }` when a compact schema is truncated or insufficient. Use `format: \"json\"` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.\n- Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as `items` or `results`. If a match is missing, re-search or describe. If a result shape is unclear, return a small sample for inspection before continuing.\n- Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.\n- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.\n- Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.\n\nOnly tools explicitly annotated `readOnlyHint: true` are reachable unasked. Where the MCP instructions say programs pause, any other call pauses unsent and `execute_code` returns `paused` with the write and a token; repeat all three unchanged in top-level `resume_execution` to approve (`approval: \"tool\"` covers that tool for the run). Replay reruns the program against a journal: make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.\n\n## Errors and repair\n\nCaught Connecta errors expose `message`, `code`, `retryable`, and `details`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry `retryable: false`, and do not retry `rate_limited` immediately because portable code has no timer.\n\n- `destructive_tool_requires_approval`: stop and send the returned address through top-level `call_destructive_tool`.\n- `execution_paused`: the run already stopped at a write; let it end.\n- `write_outcome_unknown`: sent but unanswered, never re-sent; check the target.\n- `execution_expired`, `_diverged`, `_interrupted`: check `writes`, then rerun.\n- `auth_required`: let the failure reach the model, then use top-level `authorize_connector`, give its handoff to the operator, and retry after recovery.\n- A truncated direct-call result: follow its `get_result` action. A truncated program result has no page handle; filter, map, or slice inside a new program.\n- Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.\n\nFor a direct call, `resultMode: \"value\"` unwraps the result. `timeoutMs` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. `diagnostics: true` adds timing.\n\n`get_result({ id, offset?, maxBytes? })` returns a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: `maxBytes` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; `offset` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow `nextAction` until `has… [2986 more chars]",
+     "chars": 8986
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-aff7b325-083c-449d-9adc-a6dbdcd208cc",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const a=await connecta.search({connector:'tracker',query:'search issues project status updated',includeSchemas:'json',safety:'readOnly'}); return a.tools; }"
+     },
+     "inputChars": 181
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-aff7b325-083c-449d-9adc-a6dbdcd208cc",
+     "isError": false,
+     "text": "{\"result\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"description\":\"List tracker projects with their keys and open issue counts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"get_issue\",\"address\":\"tracker.get_issue\",\"description\":\"Get one issue with its comments.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key, e.g. WEB-101\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"}]}",
+     "chars": 1940
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-2dfbf235-eacc-495d-9ada-072395969e1e",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const cutoff=new Date(Date.now()-30*86400000).toISOString(); const r=await connecta.call('tracker.search_issues',{project:'web',status:'open',updatedBefore:cutoff,limit:50}); return {cutoff,sample:r}; }"
+     },
+     "inputChars": 227
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-2dfbf235-eacc-495d-9ada-072395969e1e",
+     "isError": false,
+     "text": "{\"result\":{\"cutoff\":\"2026-08-26T05:11:29.140Z\",\"sample\":{\"issues\":[{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:11:09.744Z\"},{\"id\":\"WEB-105\",\"project\":\"web\",\"title\":\"Upgrade the analytics SDK\",\"status\":\"open\",\"labels\":[\"chore\"],\"assignee\":\"eli\",\"updatedAt\":\"2026-07-25T05:11:09.744Z\"},{\"id\":\"WEB-107\",\"project\":\"web\",\"title\":\"Dark mode for the settings pages\",\"status\":\"open\",\"labels\":[\"feature\"],\"assignee\":\"ben\",\"updatedAt\":\"2026-08-24T05:11:09.744Z\"},{\"id\":\"WEB-110\",\"project\":\"web\",\"title\":\"Session expires during checkout\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"eli\",\"updatedAt\":\"2026-08-16T05:11:09.744Z\"}],\"total\":4}}}",
+     "chars": 791
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-4bfee55a-f468-4c2a-bb5d-5c3300999788",
+     "tool": "search_tools",
+     "input": {
+      "connector": "chat",
+      "query": "post message channel",
+      "safety": "approvalRequired",
+      "includeSchemas": "json"
+     },
+     "inputChars": 103
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-693a17dd-d258-4605-8037-3c811cc1ae8a",
+     "tool": "search_tools",
+     "input": {
+      "connector": "tracker",
+      "query": "close issue",
+      "safety": "approvalRequired",
+      "includeSchemas": "json"
+     },
+     "inputChars": 97
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-693a17dd-d258-4605-8037-3c811cc1ae8a",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"tracker\",\"title\":\"Issue tracker\",\"tools\":[{\"name\":\"close_issue\",\"address\":\"tracker.close_issue\",\"description\":\"Close an issue, optionally leaving a closing comment.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key\"},\"comment\":{\"description\":\"Closing comment\",\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"comment\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 609
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-4bfee55a-f468-4c2a-bb5d-5c3300999788",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"chat\",\"title\":\"Team chat\",\"tools\":[{\"name\":\"post_message\",\"address\":\"chat.post_message\",\"description\":\"Post a message to a channel as the workspace bot.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"description\":\"Channel name (with or without #) or id\"},\"text\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"channel\",\"text\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"channel\",\"text\"],\"requiredInputKeys\":[\"channel\",\"text\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 637
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-b56cdec5-e191-49a8-90f4-676141356576",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const cutoff='2026-08-26T05:11:29.140Z'; const r=await connecta.call('tracker.search_issues',{project:'web',status:'open',updatedBefore:cutoff,limit:50}); if (!Array.isArray(r.issues) || r.total!==r.issues.length) return {gap:'pagination or shape',sample:r}; const ids=r.issues.map(x=>x.id); const c=await connecta.call('tracker.close_issue',{id:ids[0]}); return {ids,firstClose:c}; }"
+     },
+     "inputChars": 409
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-b56cdec5-e191-49a8-90f4-676141356576",
+     "isError": false,
+     "text": "{\"paused\":{\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-103\"},\"token\":\"r1.870f5977be29ba78ce15dbe87ece2c10.c23586d86fd0b73be9d26eeb2b2eaef7.1790314901313\",\"expiresAt\":\"2026-09-25T05:41:41.313Z\",\"nextAction\":{\"tool\":\"resume_execution\",\"arguments\":{\"token\":\"r1.870f5977be29ba78ce15dbe87ece2c10.c23586d86fd0b73be9d26eeb2b2eaef7.1790314901313\",\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-103\"},\"approval\":\"call\"}},\"hint\":\"Not sent. To run it, call resume_execution repeating this address and args exactly; approval \\\"tool\\\" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated. If resume_execution is denied, that is the human's answer: report it rather than sending the write another way.\"}}",
+     "chars": 780
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-807ae2a6-d913-4a27-82a1-cd602b12c96f",
+     "tool": "resume_execution",
+     "input": {
+      "token": "r1.870f5977be29ba78ce15dbe87ece2c10.c23586d86fd0b73be9d26eeb2b2eaef7.1790314901313",
+      "address": "tracker.close_issue",
+      "args": {
+       "id": "WEB-103"
+      },
+      "approval": "call",
+      "reason": "Close Web issue last updated more than 30 days ago, as requested."
+     },
+     "inputChars": 245
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-807ae2a6-d913-4a27-82a1-cd602b12c96f",
+     "isError": false,
+     "text": "{\"result\":{\"ids\":[\"WEB-103\",\"WEB-105\",\"WEB-107\",\"WEB-110\"],\"firstClose\":{\"id\":\"WEB-103\",\"status\":\"closed\"}}}",
+     "chars": 108
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-17396d2d-b918-4d56-a740-921f7eda655d",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const cutoff='2026-08-26T05:11:29.140Z'; const r=await connecta.call('tracker.search_issues',{project:'web',status:'open',updatedBefore:cutoff,limit:50}); if (!Array.isArray(r.issues) || r.total!==r.issues.length || r.nextCursor) return {gap:'pagination or shape',sample:r}; const closed=['WEB-103']; const failures=[]; for (const issue of r.issues) { try { const c=await connecta.call('tracker.close_issue',{id:issue.id}); if (c.id===issue.id && c.status==='closed') closed.push(issue.id); else failures.push({id:issue.id,result:c}); } catch(e) { failures.push({id:issue.id,error:{code:e.code,message:e.message}}); } } if (failures.length) return {closed,failures,messagePosted:false}; const message='Closed Web issues not updated in more than 30 days: '+closed.join(', ')+'.'; const posted=await connecta.call('chat.post_message',{channel:'#eng',text:message}); return {closed,message,posted}; }"
+     },
+     "inputChars": 922
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-17396d2d-b918-4d56-a740-921f7eda655d",
+     "isError": false,
+     "text": "{\"paused\":{\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-105\"},\"token\":\"r1.b888b3ba237b9aa1ff54c1105b5d2bd9.439f0593f7b013954d3417b1a60fb2f3.1790314912706\",\"expiresAt\":\"2026-09-25T05:41:52.706Z\",\"nextAction\":{\"tool\":\"resume_execution\",\"arguments\":{\"token\":\"r1.b888b3ba237b9aa1ff54c1105b5d2bd9.439f0593f7b013954d3417b1a60fb2f3.1790314912706\",\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-105\"},\"approval\":\"call\"}},\"hint\":\"Not sent. To run it, call resume_execution repeating this address and args exactly; approval \\\"tool\\\" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated. If resume_execution is denied, that is the human's answer: report it rather than sending the write another way.\"}}",
+     "chars": 780
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-2ddc9cec-16cc-488d-925b-5ae0ab9849e0",
+     "tool": "resume_execution",
+     "input": {
+      "token": "r1.b888b3ba237b9aa1ff54c1105b5d2bd9.439f0593f7b013954d3417b1a60fb2f3.1790314912706",
+      "address": "tracker.close_issue",
+      "args": {
+       "id": "WEB-105"
+      },
+      "approval": "tool",
+      "reason": "Close all remaining stale open Web issues before posting the requested summary."
+     },
+     "inputChars": 259
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-2ddc9cec-16cc-488d-925b-5ae0ab9849e0",
+     "isError": false,
+     "text": "{\"paused\":{\"address\":\"chat.post_message\",\"args\":{\"channel\":\"#eng\",\"text\":\"Closed Web issues not updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\"},\"token\":\"r1.b888b3ba237b9aa1ff54c1105b5d2bd9.c127d0eccf5a2512a9c5d16e5692e8e2.1790314912706\",\"expiresAt\":\"2026-09-25T05:41:52.706Z\",\"nextAction\":{\"tool\":\"resume_execution\",\"arguments\":{\"token\":\"r1.b888b3ba237b9aa1ff54c1105b5d2bd9.c127d0eccf5a2512a9c5d16e5692e8e2.1790314912706\",\"address\":\"chat.post_message\",\"args\":{\"channel\":\"#eng\",\"text\":\"Closed Web issues not updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\"},\"approval\":\"call\"}},\"hint\":\"Not sent. To run it, call resume_execution repeating this address and args exactly; approval \\\"tool\\\" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated. If resume_execution is denied, that is the human's answer: report it rather than sending the write another way.\"}}",
+     "chars": 974
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-c3dbc40e-9fa8-4e3c-82ec-ea07f404d6b7",
+     "tool": "resume_execution",
+     "input": {
+      "token": "r1.b888b3ba237b9aa1ff54c1105b5d2bd9.c127d0eccf5a2512a9c5d16e5692e8e2.1790314912706",
+      "address": "chat.post_message",
+      "args": {
+       "channel": "#eng",
+       "text": "Closed Web issues not updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110."
+      },
+      "approval": "call",
+      "reason": "Post the single requested summary to #eng after closing the four stale Web issues."
+     },
+     "inputChars": 359
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-c3dbc40e-9fa8-4e3c-82ec-ea07f404d6b7",
+     "isError": false,
+     "text": "{\"result\":{\"closed\":[\"WEB-103\",\"WEB-105\",\"WEB-107\",\"WEB-110\"],\"message\":\"Closed Web issues not updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\",\"posted\":{\"ok\":true,\"channel\":\"eng\",\"ts\":\"2026-09-25T05:12:00.473Z\"}}}",
+     "chars": 232
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "Closed WEB-103, WEB-105, WEB-107, and WEB-110. Posted one summary message listing them in #eng."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 5,
+     "at": 1790313089145,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"updatedBefore\":\"2026-08-26T05:11:29.140Z\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 733
+    },
+    {
+     "seq": 10,
+     "at": 1790313101309,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"updatedBefore\":\"2026-08-26T05:11:29.140Z\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 733
+    },
+    {
+     "seq": 13,
+     "at": 1790313104893,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-103\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 16,
+     "at": 1790313112705,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"updatedBefore\":\"2026-08-26T05:11:29.140Z\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 540
+    },
+    {
+     "seq": 19,
+     "at": 1790313116407,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-105\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 21,
+     "at": 1790313116415,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-107\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 23,
+     "at": 1790313116425,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-110\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 26,
+     "at": 1790313120473,
+     "service": "chat",
+     "tool": "post_message",
+     "args": "{\"channel\":\"#eng\",\"text\":\"Closed Web issues not updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 59
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__call_tool",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__skills",
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__get_result",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__authorize_connector"
+    ]
+   },
+   "startedAt": "2026-09-25T05:11:09.744Z"
+  },
+  {
+   "task": "cross-connector-join",
+   "model": "gpt-6-sol",
+   "repeat": 3,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success"
+    },
+    {
+     "id": "one-post",
+     "description": "exactly one message posted to #triage",
+     "pass": true,
+     "detail": "1 posted: \"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "no-stray-posts",
+     "description": "no messages posted to any other channel",
+     "pass": true
+    },
+    {
+     "id": "names-issue",
+     "description": "the post names API-207",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "names-customer",
+     "description": "the post names Stark Industries",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\""
+    },
+    {
+     "id": "states-mrr",
+     "description": "the post states $56,500",
+     "pass": true,
+     "detail": "\"API-207 Stark Industries $56500\"",
+     "advisory": true
+    },
+    {
+     "id": "no-unrequested-writes",
+     "description": "no downstream writes other than chat.post_message",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 46838,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 218414,
+     "output": 1384,
+     "cacheRead": 195456,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 5,
+     "skills": 1,
+     "call_tool": 4,
+     "search_tools": 1,
+     "call_destructive_tool": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 20,
+     "writes": 1,
+     "duplicateReads": 3,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "analytics.list_accounts": 3,
+      "analytics.get_account_metrics": 13,
+      "tracker.search_issues": 3,
+      "tracker.get_issue": 1,
+      "chat.post_message": 1
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "chat.post_message",
+      "reason": "Post the requested single triage message for the highest-MRR customer with an open bug.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Using the issue tracker and product analytics, find the open bug that affects our highest-paying customer (by MRR). Then post exactly one message to the #triage chat channel in the form `<ISSUE-KEY> <customer name> $<MRR>`."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-a672a9e4-46cd-4865-bc1b-cce3feb4e69d",
+     "tool": "execute_code",
+     "input": {
+      "code": "async (connecta) => { const q=await Promise.all([connecta.search({connector:'analytics',query:'list customers MRR revenue',includeSchemas:'json'}),connecta.search({connector:'tracker',query:'search issues bugs customer',includeSchemas:'json'})]); return q.map((x,i)=>({connector:i?'tracker':'analytics',tools:x.tools})); }"
+     },
+     "inputChars": 333
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-a672a9e4-46cd-4865-bc1b-cce3feb4e69d",
+     "isError": true,
+     "text": "Error: TypeError: cannot read property 'search' of undefined",
+     "chars": 60
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-f9d130bb-5ea8-4597-b737-0ced3e672dc8",
+     "tool": "skills",
+     "input": {
+      "name": "usage"
+     },
+     "inputChars": 16
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-f9d130bb-5ea8-4597-b737-0ced3e672dc8",
+     "isError": false,
+     "text": "# Connecta usage\n\n## The surface\n\nEight tools: `execute_code`, `resume_execution`, `search_tools`, `call_tool`, `call_destructive_tool`, `authorize_connector`, `get_result`, `skills`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.\n\nFollow the MCP instructions for routing. Read at most once for syntax or repair.\n\n## Inside a program\n\nWrite one plain-JavaScript async arrow function, without TypeScript or imports. Return reduced JSON-shaped data.\n\nThe minimum guest API is:\n\n- `connecta.call(\"connector.tool\", args)` uses the canonical address and returns the unwrapped value.\n- `connecta.search(args)` returns `{ tools, total, offset, limit, hasMore }`; `connecta.describe(args)` returns `{ tools }`.\n- Use `Promise.all` for independent calls, or `Promise.allSettled` to keep successes and failures.\n- `console.log(...)` is captured. `connecta.emit(block)` produces rich output.\n\n## Discover and select\n\nSearch and call in one run when schemas suffice. For unfamiliar result formats, return a small sample and continue; do not guess a parser. Use 2–4 distinctive action/object terms; search distinct operations separately.\n\nFor top-level catalog inspection or approval-required discovery, omit `limit` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. `includeSchemas: \"compact\"` adds bounded input and available output shapes. An `outputSchemaSource: \"observed\"` shape is a hint, not a contract. Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`; truncation flags mark incomplete shapes; matches also carry declared annotations.\n\n- `connecta.search({})` loads all catalogs. Pass `connector: \"<id>\"` when the integration is obvious. Use `safety: \"readOnly\"` for reads. These inputs filter discovery; they grant no authority.\n- Use `includeSchemas: \"json\"` for programmatic schema inspection; compact schemas are text, not objects with `.properties`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.\n- Supply every `requiredInputKey` from the task or a prior result. For dependencies, match the earlier `outputKey` to the later required key. An empty required-key list does not permit invented arguments. Missing `outputKeys` means inspect `outputSchema`.\n- Use `connecta.describe({ address })` or `{ addresses }` when a compact schema is truncated or insufficient. Use `format: \"json\"` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.\n- Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as `items` or `results`. If a match is missing, re-search or describe. If a result shape is unclear, return a small sample for inspection before continuing.\n- Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.\n- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.\n- Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.\n\nOnly tools explicitly annotated `readOnlyHint: true` are reachable unasked. Where the MCP instructions say programs pause, any other call pauses unsent and `execute_code` returns `paused` with the write and a token; repeat all three unchanged in top-level `resume_execution` to approve (`approval: \"tool\"` covers that tool for the run). Replay reruns the program against a journal: make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.\n\n## Errors and repair\n\nCaught Connecta errors expose `message`, `code`, `retryable`, and `details`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry `retryable: false`, and do not retry `rate_limited` immediately because portable code has no timer.\n\n- `destructive_tool_requires_approval`: stop and send the returned address through top-level `call_destructive_tool`.\n- `execution_paused`: the run already stopped at a write; let it end.\n- `write_outcome_unknown`: sent but unanswered, never re-sent; check the target.\n- `execution_expired`, `_diverged`, `_interrupted`: check `writes`, then rerun.\n- `auth_required`: let the failure reach the model, then use top-level `authorize_connector`, give its handoff to the operator, and retry after recovery.\n- A truncated direct-call result: follow its `get_result` action. A truncated program result has no page handle; filter, map, or slice inside a new program.\n- Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.\n\nFor a direct call, `resultMode: \"value\"` unwraps the result. `timeoutMs` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. `diagnostics: true` adds timing.\n\n`get_result({ id, offset?, maxBytes? })` returns a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: `maxBytes` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; `offset` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow `nextAction` until `has… [2986 more chars]",
+     "chars": 8986
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-ec4cd9cc-689f-4a9b-9884-5f88b19a6364",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const q=await Promise.all([connecta.search({connector:'analytics',query:'list customers MRR revenue',includeSchemas:'json'}),connecta.search({connector:'tracker',query:'search issues bugs customer',includeSchemas:'json'})]); return q.map((x,i)=>({connector:i?'tracker':'analytics',tools:x.tools})); }"
+     },
+     "inputChars": 325
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-ec4cd9cc-689f-4a9b-9884-5f88b19a6364",
+     "isError": false,
+     "text": "{\"result\":[{\"connector\":\"analytics\",\"tools\":[{\"name\":\"list_accounts\",\"address\":\"analytics.list_accounts\",\"description\":\"List customer accounts (id, name, domain, plan). Paged; revenue lives in get_account_metrics.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"plan\":{\"type\":\"string\",\"enum\":[\"starter\",\"growth\",\"enterprise\"]},\"limit\":{\"description\":\"Page size, default 10, max 25\",\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"cursor\":{\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"plan\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Product analytics\"},{\"name\":\"get_account_metrics\",\"address\":\"analytics.get_account_metrics\",\"description\":\"Current revenue and usage metrics for one account.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"accountId\":{\"type\":\"string\",\"description\":\"Account id, e.g. acc_01\"}},\"required\":[\"accountId\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"accountId\"],\"requiredInputKeys\":[\"accountId\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Product analytics\"}]},{\"connector\":\"tracker\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"get_issue\",\"address\":\"tracker.get_issue\",\"description\":\"Get one issue with its comments.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key, e.g. WEB-101\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"close_issue\",\"address\":\"tracker.close_issue\",\"description\":\"Close an issue, optionally leaving a closing comment.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key\"},\"comment\":{\"description\":\"Closing comment\",\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"comment\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"create_issue\",\"address\":\"tracker.create_issue\",\"description\":\"Create an issue in a project.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"title\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"project\",\"title\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"title\",\"label\"],\"requiredInputKeys\":[\"project\",\"title\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"delete_issue\",\"address\":\"tracker.delete_issue\",\"description\":\"Permanently delete an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"description\":\"List tracker projects with their keys and open issue counts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"add_comment\",\"address\":\"tracker.add_comment\",\"description\":\"Add a comment to an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"id\",\"body\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"body\"],\"requiredInputKeys\":[\"id\",\"body\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"}]}]}",
+     "chars": 5059
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-f32274ef-de30-4bf4-b399-40821305ec14",
+     "tool": "call_tool",
+     "input": {
+      "address": "analytics.list_accounts",
+      "args": {
+       "limit": 25
+      },
+      "resultMode": "value"
+     },
+     "inputChars": 78
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-f32274ef-de30-4bf4-b399-40821305ec14",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"accounts\":[{\"id\":\"acc_01\",\"name\":\"Initech\",\"domain\":\"initech.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_02\",\"name\":\"Globex\",\"domain\":\"globex.com\",\"plan\":\"growth\"},{\"id\":\"acc_03\",\"name\":\"Hooli\",\"domain\":\"hooli.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_04\",\"name\":\"Umbrella Corp\",\"domain\":\"umbrella.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_05\",\"name\":\"Soylent\",\"domain\":\"soylent.com\",\"plan\":\"growth\"},{\"id\":\"acc_06\",\"name\":\"Stark Industries\",\"domain\":\"stark.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_07\",\"name\":\"Wayne Enterprises\",\"domain\":\"wayne.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_08\",\"name\":\"Acme\",\"domain\":\"acme.com\",\"plan\":\"starter\"},{\"id\":\"acc_09\",\"name\":\"Northwind Traders\",\"domain\":\"northwind.com\",\"plan\":\"growth\"},{\"id\":\"acc_10\",\"name\":\"Tyrell\",\"domain\":\"tyrell.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_11\",\"name\":\"Cyberdyne\",\"domain\":\"cyberdyne.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_12\",\"name\":\"Oscorp\",\"domain\":\"oscorp.com\",\"plan\":\"starter\"}]},\"durationMs\":12,\"attempts\":1}",
+     "chars": 978
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-aba73ebe-5c66-4a4a-98b4-43c0b4d893a6",
+     "tool": "call_tool",
+     "input": {
+      "address": "analytics.get_account_metrics",
+      "args": {
+       "accountId": "acc_01"
+      },
+      "resultMode": "value"
+     },
+     "inputChars": 94
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-aba73ebe-5c66-4a4a-98b4-43c0b4d893a6",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"accountId\":\"acc_01\",\"mrrUsd\":48000,\"activeUsers30d\":812},\"durationMs\":14,\"attempts\":1}",
+     "chars": 106
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-fc0752fe-6593-4177-9f15-5fcb25852ff8",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const p=await connecta.call('analytics.list_accounts',{limit:25}); if(!p?.data?.accounts || p.data.nextCursor) return {sample:p}; const a=p.data.accounts; const m=await Promise.allSettled(a.map(x=>connecta.call('analytics.get_account_metrics',{accountId:x.id}))); return a.map((x,i)=>({name:x.name,domain:x.domain,id:x.id,metric:m[i].status==='fulfilled'?m[i].value?.data:{error:String(m[i].reason)}})).sort((x,y)=>(y.metric?.mrrUsd??-1)-(x.metric?.mrrUsd??-1)); }"
+     },
+     "inputChars": 489
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-fc0752fe-6593-4177-9f15-5fcb25852ff8",
+     "isError": false,
+     "text": "{\"result\":{\"sample\":{\"accounts\":[{\"id\":\"acc_01\",\"name\":\"Initech\",\"domain\":\"initech.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_02\",\"name\":\"Globex\",\"domain\":\"globex.com\",\"plan\":\"growth\"},{\"id\":\"acc_03\",\"name\":\"Hooli\",\"domain\":\"hooli.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_04\",\"name\":\"Umbrella Corp\",\"domain\":\"umbrella.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_05\",\"name\":\"Soylent\",\"domain\":\"soylent.com\",\"plan\":\"growth\"},{\"id\":\"acc_06\",\"name\":\"Stark Industries\",\"domain\":\"stark.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_07\",\"name\":\"Wayne Enterprises\",\"domain\":\"wayne.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_08\",\"name\":\"Acme\",\"domain\":\"acme.com\",\"plan\":\"starter\"},{\"id\":\"acc_09\",\"name\":\"Northwind Traders\",\"domain\":\"northwind.com\",\"plan\":\"growth\"},{\"id\":\"acc_10\",\"name\":\"Tyrell\",\"domain\":\"tyrell.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_11\",\"name\":\"Cyberdyne\",\"domain\":\"cyberdyne.com\",\"plan\":\"enterprise\"},{\"id\":\"acc_12\",\"name\":\"Oscorp\",\"domain\":\"oscorp.com\",\"plan\":\"starter\"}]}}}",
+     "chars": 952
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-87a4dac0-7fff-4192-9e90-df29453bf9fc",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const p=await connecta.call('analytics.list_accounts',{limit:25}); if(!Array.isArray(p.accounts) || p.nextCursor) return {sample:p}; const a=p.accounts; const m=await Promise.allSettled(a.map(x=>connecta.call('analytics.get_account_metrics',{accountId:x.id}))); return a.map((x,i)=>({name:x.name,domain:x.domain,id:x.id,metric:m[i].status==='fulfilled'?m[i].value:{error:String(m[i].reason)}})).sort((x,y)=>(y.metric?.mrrUsd??-1)-(x.metric?.mrrUsd??-1)); }"
+     },
+     "inputChars": 481
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-87a4dac0-7fff-4192-9e90-df29453bf9fc",
+     "isError": false,
+     "text": "{\"result\":[{\"name\":\"Hooli\",\"domain\":\"hooli.com\",\"id\":\"acc_03\",\"metric\":{\"accountId\":\"acc_03\",\"mrrUsd\":120000,\"activeUsers30d\":2210}},{\"name\":\"Umbrella Corp\",\"domain\":\"umbrella.com\",\"id\":\"acc_04\",\"metric\":{\"accountId\":\"acc_04\",\"mrrUsd\":95000,\"activeUsers30d\":1530}},{\"name\":\"Tyrell\",\"domain\":\"tyrell.com\",\"id\":\"acc_10\",\"metric\":{\"accountId\":\"acc_10\",\"mrrUsd\":77000,\"activeUsers30d\":1120}},{\"name\":\"Cyberdyne\",\"domain\":\"cyberdyne.com\",\"id\":\"acc_11\",\"metric\":{\"accountId\":\"acc_11\",\"mrrUsd\":64000,\"activeUsers30d\":1004}},{\"name\":\"Stark Industries\",\"domain\":\"stark.com\",\"id\":\"acc_06\",\"metric\":{\"accountId\":\"acc_06\",\"mrrUsd\":56500,\"activeUsers30d\":990}},{\"name\":\"Wayne Enterprises\",\"domain\":\"wayne.com\",\"id\":\"acc_07\",\"metric\":{\"accountId\":\"acc_07\",\"mrrUsd\":51000,\"activeUsers30d\":870}},{\"name\":\"Initech\",\"domain\":\"initech.com\",\"id\":\"acc_01\",\"metric\":{\"accountId\":\"acc_01\",\"mrrUsd\":48000,\"activeUsers30d\":812}},{\"name\":\"Globex\",\"domain\":\"globex.com\",\"id\":\"acc_02\",\"metric\":{\"accountId\":\"acc_02\",\"mrrUsd\":31500,\"activeUsers30d\":404}},{\"name\":\"Soylent\",\"domain\":\"soylent.com\",\"id\":\"acc_05\",\"metric\":{\"accountId\":\"acc_05\",\"mrrUsd\":22000,\"activeUsers30d\":260}},{\"name\":\"Northwind Traders\",\"domain\":\"northwind.com\",\"id\":\"acc_09\",\"metric\":{\"accountId\":\"acc_09\",\"mrrUsd\":14200,\"activeUsers30d\":140}},{\"name\":\"Acme\",\"domain\":\"acme.com\",\"id\":\"acc_08\",\"metric\":{\"accountId\":\"acc_08\",\"mrrUsd\":9000,\"activeUsers30d\":75}},{\"name\":\"Oscorp\",\"domain\":\"oscorp.com\",\"id\":\"acc_12\",\"metric\":{\"accountId\":\"acc_12\",\"mrrUsd\":5000,\"activeUsers30d\":41}}]}",
+     "chars": 1523
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-191530d2-f894-4bbb-bdea-9f8e024ccc9a",
+     "tool": "call_tool",
+     "input": {
+      "address": "tracker.search_issues",
+      "args": {
+       "status": "open",
+       "label": "bug",
+       "customer": "hooli.com",
+       "limit": 50
+      },
+      "resultMode": "value"
+     },
+     "inputChars": 129
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-191530d2-f894-4bbb-bdea-9f8e024ccc9a",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"issues\":[],\"total\":0},\"durationMs\":7,\"attempts\":1}",
+     "chars": 70
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-af90ea53-6cf4-4102-912e-cd73edb65b83",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const x=await Promise.all([connecta.call('tracker.search_issues',{status:'open',customer:'hooli.com',limit:50}),connecta.call('tracker.search_issues',{status:'open',label:'bug',limit:50})]); return x; }"
+     },
+     "inputChars": 227
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-af90ea53-6cf4-4102-912e-cd73edb65b83",
+     "isError": false,
+     "text": "{\"result\":[{\"issues\":[{\"id\":\"WEB-102\",\"project\":\"web\",\"title\":\"Bulk export for dashboards\",\"status\":\"open\",\"labels\":[\"feature\"],\"customer\":\"hooli.com\",\"assignee\":\"ben\",\"updatedAt\":\"2026-09-20T05:11:24.614Z\"}],\"total\":1},{\"issues\":[{\"id\":\"WEB-101\",\"project\":\"web\",\"title\":\"Checkout button unresponsive on Safari\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-22T05:11:24.614Z\"},{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:11:24.614Z\"},{\"id\":\"WEB-106\",\"project\":\"web\",\"title\":\"Invoice PDF is missing the VAT line\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"soylent.com\",\"assignee\":\"ana\",\"updatedAt\":\"2026-09-13T05:11:24.614Z\"},{\"id\":\"WEB-108\",\"project\":\"web\",\"title\":\"Search debounce is too aggressive\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-28T05:11:24.614Z\"},{\"id\":\"WEB-110\",\"project\":\"web\",\"title\":\"Session expires during checkout\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"eli\",\"updatedAt\":\"2026-08-16T05:11:24.614Z\"},{\"id\":\"WEB-112\",\"project\":\"web\",\"title\":\"Avatar upload fails for HEIC images\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ben\",\"updatedAt\":\"2026-09-17T05:11:24.614Z\"},{\"id\":\"WEB-116\",\"project\":\"web\",\"title\":\"Footer overlaps content on small screens\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"ana\",\"updatedAt\":\"2026-09-24T05:11:24.614Z\"},{\"id\":\"API-207\",\"project\":\"api\",\"title\":\"Bulk import times out above 10k rows\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"stark.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-19T05:11:24.614Z\"},{\"id\":\"API-209\",\"project\":\"api\",\"title\":\"Timezone offset wrong in usage reports\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"eli\",\"updatedAt\":\"2026-09-23T05:11:24.614Z\"},{\"id\":\"API-212\",\"project\":\"api\",\"title\":\"Refund endpoint ignores partial amounts\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"acme.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-14T05:11:24.614Z\"},{\"id\":\"MOB-305\",\"project\":\"mobile\",\"title\":\"Pull-to-refresh spinner never stops\",\"status\":\"open\",\"labels\":[\"bug\"],\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-06T05:11:24.614Z\"},{\"id\":\"MOB-310\",\"project\":\"mobile\",\"title\":\"Push notifications arrive twice\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"wayne.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-21T05:11:24.614Z\"}],\"total\":12}]}",
+     "chars": 2456
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-9286adc9-a0b3-401a-8ee1-1d1af606078a",
+     "tool": "call_tool",
+     "input": {
+      "address": "tracker.get_issue",
+      "args": {
+       "id": "API-207"
+      },
+      "resultMode": "value"
+     },
+     "inputChars": 76
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-9286adc9-a0b3-401a-8ee1-1d1af606078a",
+     "isError": false,
+     "text": "{\"ok\":true,\"data\":{\"id\":\"API-207\",\"project\":\"api\",\"title\":\"Bulk import times out above 10k rows\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"stark.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-09-19T05:11:24.614Z\",\"createdAt\":\"2026-08-30T05:11:24.614Z\",\"comments\":[]},\"durationMs\":4,\"attempts\":1}",
+     "chars": 294
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-3c580554-8fc1-40d3-98e5-48aba1157168",
+     "tool": "search_tools",
+     "input": {
+      "connector": "chat",
+      "query": "post message channel",
+      "includeSchemas": "json",
+      "safety": "approvalRequired"
+     },
+     "inputChars": 103
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-3c580554-8fc1-40d3-98e5-48aba1157168",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"chat\",\"title\":\"Team chat\",\"tools\":[{\"name\":\"post_message\",\"address\":\"chat.post_message\",\"description\":\"Post a message to a channel as the workspace bot.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"description\":\"Channel name (with or without #) or id\"},\"text\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"channel\",\"text\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"channel\",\"text\"],\"requiredInputKeys\":[\"channel\",\"text\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 637
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-e1b59464-29ee-4d72-a569-7afe09717a66",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "chat.post_message",
+      "args": {
+       "channel": "#triage",
+       "text": "API-207 Stark Industries $56500"
+      },
+      "reason": "Post the requested single triage message for the highest-MRR customer with an open bug."
+     },
+     "inputChars": 200
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-e1b59464-29ee-4d72-a569-7afe09717a66",
+     "isError": false,
+     "text": "{\"ok\":true,\"channel\":\"triage\",\"ts\":\"2026-09-25T05:12:09.649Z\"}",
+     "chars": 62
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "Posted exactly one message to #triage: `API-207 Stark Industries $56500`"
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 7,
+     "at": 1790313100521,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 10,
+     "at": 1790313102924,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_01\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 13,
+     "at": 1790313107810,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 16,
+     "at": 1790313113209,
+     "service": "analytics",
+     "tool": "list_accounts",
+     "args": "{\"limit\":25}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 930
+    },
+    {
+     "seq": 18,
+     "at": 1790313113217,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_01\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 20,
+     "at": 1790313113219,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_02\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 22,
+     "at": 1790313113221,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_03\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 60
+    },
+    {
+     "seq": 24,
+     "at": 1790313113224,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_04\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 26,
+     "at": 1790313113225,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_05\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 28,
+     "at": 1790313113225,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_06\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 30,
+     "at": 1790313113226,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_07\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 32,
+     "at": 1790313113226,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_08\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 56
+    },
+    {
+     "seq": 34,
+     "at": 1790313113227,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_09\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 58
+    },
+    {
+     "seq": 36,
+     "at": 1790313113227,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_10\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 38,
+     "at": 1790313113228,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_11\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 59
+    },
+    {
+     "seq": 40,
+     "at": 1790313113228,
+     "service": "analytics",
+     "tool": "get_account_metrics",
+     "args": "{\"accountId\":\"acc_12\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 56
+    },
+    {
+     "seq": 43,
+     "at": 1790313117168,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"customer\":\"hooli.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 23
+    },
+    {
+     "seq": 46,
+     "at": 1790313120699,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"customer\":\"hooli.com\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 208
+    },
+    {
+     "seq": 48,
+     "at": 1790313120701,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"status\":\"open\",\"label\":\"bug\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 2234
+    },
+    {
+     "seq": 51,
+     "at": 1790313124339,
+     "service": "tracker",
+     "tool": "get_issue",
+     "args": "{\"id\":\"API-207\"}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 247
+    },
+    {
+     "seq": 56,
+     "at": 1790313129649,
+     "service": "chat",
+     "tool": "post_message",
+     "args": "{\"channel\":\"#triage\",\"text\":\"API-207 Stark Industries $56500\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 62
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__call_tool",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__skills",
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__get_result",
+     "mcp__connecta__authorize_connector"
+    ]
+   },
+   "startedAt": "2026-09-25T05:11:24.614Z"
+  },
+  {
+   "task": "stale-close-and-summarize",
+   "model": "gpt-6-sol",
+   "repeat": 3,
+   "status": "pass",
+   "checks": [
+    {
+     "id": "conversation-completed",
+     "description": "every turn ended normally within the time limit",
+     "pass": true,
+     "detail": "success"
+    },
+    {
+     "id": "closed-exactly-stale",
+     "description": "closed exactly WEB-103, WEB-105, WEB-107, WEB-110",
+     "pass": true,
+     "detail": "closed: WEB-103, WEB-105, WEB-107, WEB-110"
+    },
+    {
+     "id": "each-write-once",
+     "description": "every close_issue landed exactly once",
+     "pass": true
+    },
+    {
+     "id": "no-other-tracker-writes",
+     "description": "no tracker writes outside the stale set",
+     "pass": true
+    },
+    {
+     "id": "one-post",
+     "description": "exactly one message posted to #eng",
+     "pass": true,
+     "detail": "1 posted: \"Closed the Web project’s open issues that had not been updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\""
+    },
+    {
+     "id": "no-stray-posts",
+     "description": "no messages posted to any other channel",
+     "pass": true
+    },
+    {
+     "id": "summary-lists-closed",
+     "description": "the summary lists exactly the closed keys",
+     "pass": true,
+     "detail": "mentioned: WEB-103, WEB-105, WEB-107, WEB-110"
+    },
+    {
+     "id": "summary-after-writes",
+     "description": "the summary was posted after the last close",
+     "pass": true
+    },
+    {
+     "id": "no-confirmation-needed",
+     "description": "finished without stopping to ask permission it had been given",
+     "pass": true,
+     "advisory": true
+    }
+   ],
+   "metrics": {
+    "wallMs": 49823,
+    "conversationTurns": 1,
+    "tokens": {
+     "input": 184385,
+     "output": 1238,
+     "cacheRead": 168704,
+     "cacheCreation": 0
+    },
+    "metaTools": {
+     "execute_code": 6,
+     "skills": 1,
+     "search_tools": 1,
+     "call_destructive_tool": 2,
+     "resume_execution": 1
+    },
+    "otherTools": {},
+    "toolErrors": 1,
+    "confirmationNudges": 0,
+    "downstream": {
+     "reads": 3,
+     "writes": 5,
+     "duplicateReads": 0,
+     "duplicateWrites": 0,
+     "errors": 0,
+     "unauthorizedRequests": 0,
+     "byTool": {
+      "tracker.search_issues": 2,
+      "chat.list_channels": 1,
+      "tracker.close_issue": 4,
+      "chat.post_message": 1
+     }
+    }
+   },
+   "approvals": {
+    "allowed": [
+     "skills",
+     "search_tools",
+     "call_tool",
+     "call_destructive_tool",
+     "authorize_connector",
+     "get_result",
+     "execute_code",
+     "resume_execution"
+    ],
+    "denied": [],
+    "gated": [
+     "call_destructive_tool",
+     "authorize_connector",
+     "resume_execution"
+    ],
+    "exercised": [
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "tracker.close_issue",
+      "reason": "Close WEB-103 because it is open in the Web project and was last updated more than 30 days ago.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "resume_execution",
+      "target": "tracker.close_issue",
+      "reason": "Close the remaining three Web issues verified as open and older than 30 days.",
+      "isError": false
+     },
+     {
+      "turn": 1,
+      "tool": "call_destructive_tool",
+      "target": "chat.post_message",
+      "reason": "Post the one requested summary to #eng after confirming all four issues were closed.",
+      "isError": false
+     }
+    ],
+    "permissionDenials": []
+   },
+   "transcript": [
+    {
+     "kind": "user",
+     "turn": 1,
+     "text": "Close every open issue in the Web project that has not been updated in more than 30 days. Then post one summary message to #eng listing the issue keys you closed."
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-afc5add3-26ff-4e50-93b3-a0856b2fddef",
+     "tool": "execute_code",
+     "input": {
+      "code": "async (connecta) => { const s=await connecta.search({connector:'tracker',query:'search issues project status updated',includeSchemas:'json'}); console.log(JSON.stringify(s.tools)); }"
+     },
+     "inputChars": 193
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-afc5add3-26ff-4e50-93b3-a0856b2fddef",
+     "isError": true,
+     "text": "Error: TypeError: cannot read property 'search' of undefined",
+     "chars": 60
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-6e6a1f64-c118-4f53-aedf-bed66038a5ac",
+     "tool": "skills",
+     "input": {
+      "name": "usage"
+     },
+     "inputChars": 16
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-6e6a1f64-c118-4f53-aedf-bed66038a5ac",
+     "isError": false,
+     "text": "# Connecta usage\n\n## The surface\n\nEight tools: `execute_code`, `resume_execution`, `search_tools`, `call_tool`, `call_destructive_tool`, `authorize_connector`, `get_result`, `skills`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.\n\nFollow the MCP instructions for routing. Read at most once for syntax or repair.\n\n## Inside a program\n\nWrite one plain-JavaScript async arrow function, without TypeScript or imports. Return reduced JSON-shaped data.\n\nThe minimum guest API is:\n\n- `connecta.call(\"connector.tool\", args)` uses the canonical address and returns the unwrapped value.\n- `connecta.search(args)` returns `{ tools, total, offset, limit, hasMore }`; `connecta.describe(args)` returns `{ tools }`.\n- Use `Promise.all` for independent calls, or `Promise.allSettled` to keep successes and failures.\n- `console.log(...)` is captured. `connecta.emit(block)` produces rich output.\n\n## Discover and select\n\nSearch and call in one run when schemas suffice. For unfamiliar result formats, return a small sample and continue; do not guess a parser. Use 2–4 distinctive action/object terms; search distinct operations separately.\n\nFor top-level catalog inspection or approval-required discovery, omit `limit` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. `includeSchemas: \"compact\"` adds bounded input and available output shapes. An `outputSchemaSource: \"observed\"` shape is a hint, not a contract. Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`; truncation flags mark incomplete shapes; matches also carry declared annotations.\n\n- `connecta.search({})` loads all catalogs. Pass `connector: \"<id>\"` when the integration is obvious. Use `safety: \"readOnly\"` for reads. These inputs filter discovery; they grant no authority.\n- Use `includeSchemas: \"json\"` for programmatic schema inspection; compact schemas are text, not objects with `.properties`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.\n- Supply every `requiredInputKey` from the task or a prior result. For dependencies, match the earlier `outputKey` to the later required key. An empty required-key list does not permit invented arguments. Missing `outputKeys` means inspect `outputSchema`.\n- Use `connecta.describe({ address })` or `{ addresses }` when a compact schema is truncated or insufficient. Use `format: \"json\"` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.\n- Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as `items` or `results`. If a match is missing, re-search or describe. If a result shape is unclear, return a small sample for inspection before continuing.\n- Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.\n- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.\n- Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.\n\nOnly tools explicitly annotated `readOnlyHint: true` are reachable unasked. Where the MCP instructions say programs pause, any other call pauses unsent and `execute_code` returns `paused` with the write and a token; repeat all three unchanged in top-level `resume_execution` to approve (`approval: \"tool\"` covers that tool for the run). Replay reruns the program against a journal: make the same calls in the same order. The catalog, credential, admission, and approval gates run below the sandbox; code cannot widen its authority.\n\n## Errors and repair\n\nCaught Connecta errors expose `message`, `code`, `retryable`, and `details`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry `retryable: false`, and do not retry `rate_limited` immediately because portable code has no timer.\n\n- `destructive_tool_requires_approval`: stop and send the returned address through top-level `call_destructive_tool`.\n- `execution_paused`: the run already stopped at a write; let it end.\n- `write_outcome_unknown`: sent but unanswered, never re-sent; check the target.\n- `execution_expired`, `_diverged`, `_interrupted`: check `writes`, then rerun.\n- `auth_required`: let the failure reach the model, then use top-level `authorize_connector`, give its handoff to the operator, and retry after recovery.\n- A truncated direct-call result: follow its `get_result` action. A truncated program result has no page handle; filter, map, or slice inside a new program.\n- Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.\n\nFor a direct call, `resultMode: \"value\"` unwraps the result. `timeoutMs` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. `diagnostics: true` adds timing.\n\n`get_result({ id, offset?, maxBytes? })` returns a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: `maxBytes` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; `offset` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow `nextAction` until `has… [2986 more chars]",
+     "chars": 8986
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-662baa9e-53ab-4ceb-aafa-128fe4a6df25",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const s=await connecta.search({connector:'tracker',query:'search issues project status updated',includeSchemas:'json'}); return s.tools; }"
+     },
+     "inputChars": 163
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-662baa9e-53ab-4ceb-aafa-128fe4a6df25",
+     "isError": false,
+     "text": "{\"result\":[{\"name\":\"search_issues\",\"address\":\"tracker.search_issues\",\"description\":\"Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"description\":\"Project id\",\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"status\":{\"type\":\"string\",\"enum\":[\"open\",\"closed\"]},\"label\":{\"description\":\"One label, e.g. bug, feature, chore\",\"type\":\"string\"},\"customer\":{\"description\":\"Customer domain, e.g. acme.com\",\"type\":\"string\"},\"updatedBefore\":{\"description\":\"ISO 8601 timestamp; only issues last updated before it\",\"type\":\"string\"},\"text\":{\"description\":\"Case-insensitive substring of the title\",\"type\":\"string\"},\"limit\":{\"description\":\"Page size, default 20, max 50\",\"type\":\"integer\",\"minimum\":1,\"maximum\":50},\"cursor\":{\"description\":\"nextCursor from the previous page\",\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"status\",\"label\",\"customer\",\"updatedBefore\",\"text\",\"limit\",\"cursor\"],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"list_projects\",\"address\":\"tracker.list_projects\",\"description\":\"List tracker projects with their keys and open issue counts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"create_issue\",\"address\":\"tracker.create_issue\",\"description\":\"Create an issue in a project.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\",\"enum\":[\"web\",\"api\",\"mobile\"]},\"title\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"}},\"required\":[\"project\",\"title\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"project\",\"title\",\"label\"],\"requiredInputKeys\":[\"project\",\"title\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"get_issue\",\"address\":\"tracker.get_issue\",\"description\":\"Get one issue with its comments.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key, e.g. WEB-101\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"close_issue\",\"address\":\"tracker.close_issue\",\"description\":\"Close an issue, optionally leaving a closing comment.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"Issue key\"},\"comment\":{\"description\":\"Closing comment\",\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"comment\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"delete_issue\",\"address\":\"tracker.delete_issue\",\"description\":\"Permanently delete an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Issue tracker\"},{\"name\":\"add_comment\",\"address\":\"tracker.add_comment\",\"description\":\"Add a comment to an issue.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}},\"required\":[\"id\",\"body\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"id\",\"body\"],\"requiredInputKeys\":[\"id\",\"body\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Issue tracker\"}]}",
+     "chars": 3873
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-fe614406-b3cb-4c9a-bad5-c57a3d7f83ac",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const x=await connecta.call('tracker.search_issues',{project:'web',status:'open',updatedBefore:'2026-08-26T00:00:00Z',limit:50}); return x; }"
+     },
+     "inputChars": 166
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-fe614406-b3cb-4c9a-bad5-c57a3d7f83ac",
+     "isError": false,
+     "text": "{\"result\":{\"issues\":[{\"id\":\"WEB-103\",\"project\":\"web\",\"title\":\"Chart tooltips overlap the legend\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"globex.com\",\"assignee\":\"chioma\",\"updatedAt\":\"2026-08-11T05:12:02.912Z\"},{\"id\":\"WEB-105\",\"project\":\"web\",\"title\":\"Upgrade the analytics SDK\",\"status\":\"open\",\"labels\":[\"chore\"],\"assignee\":\"eli\",\"updatedAt\":\"2026-07-25T05:12:02.912Z\"},{\"id\":\"WEB-107\",\"project\":\"web\",\"title\":\"Dark mode for the settings pages\",\"status\":\"open\",\"labels\":[\"feature\"],\"assignee\":\"ben\",\"updatedAt\":\"2026-08-24T05:12:02.912Z\"},{\"id\":\"WEB-110\",\"project\":\"web\",\"title\":\"Session expires during checkout\",\"status\":\"open\",\"labels\":[\"bug\"],\"customer\":\"initech.com\",\"assignee\":\"eli\",\"updatedAt\":\"2026-08-16T05:12:02.912Z\"}],\"total\":4}}",
+     "chars": 744
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-7dc7d841-0b85-4134-a79b-4779b370befe",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const x=await connecta.call('tracker.search_issues',{project:'web',status:'open',updatedBefore:'2026-08-27T00:00:00Z',limit:50}); return {issues:x.issues?.map(i=>({id:i.id,updatedAt:i.updatedAt})),total:x.total,nextCursor:x.nextCursor}; }"
+     },
+     "inputChars": 263
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-7dc7d841-0b85-4134-a79b-4779b370befe",
+     "isError": false,
+     "text": "{\"result\":{\"issues\":[{\"id\":\"WEB-103\",\"updatedAt\":\"2026-08-11T05:12:02.912Z\"},{\"id\":\"WEB-105\",\"updatedAt\":\"2026-07-25T05:12:02.912Z\"},{\"id\":\"WEB-107\",\"updatedAt\":\"2026-08-24T05:12:02.912Z\"},{\"id\":\"WEB-110\",\"updatedAt\":\"2026-08-16T05:12:02.912Z\"}],\"total\":4}}",
+     "chars": 257
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-cb072aa2-c684-46cb-8f2e-3a109e5b331a",
+     "tool": "search_tools",
+     "input": {
+      "connector": "chat",
+      "query": "list channels",
+      "includeSchemas": "compact",
+      "safety": "readOnly"
+     },
+     "inputChars": 91
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-cb072aa2-c684-46cb-8f2e-3a109e5b331a",
+     "isError": false,
+     "text": "{\"connectors\":[{\"id\":\"chat\",\"title\":\"Team chat\",\"tools\":[{\"name\":\"list_channels\",\"address\":\"chat.list_channels\",\"description\":\"List chat channels.\",\"inputSchema\":\"{}\",\"inputKeys\":[],\"requiredInputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}",
+     "chars": 314
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-26eca12d-52f7-45c4-a84b-19b65a325d0e",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const s=await connecta.search({connector:'chat',query:'post message channel',includeSchemas:'json'}); const c=await connecta.call('chat.list_channels',{}); return {tools:s.tools,channels:c}; }"
+     },
+     "inputChars": 217
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-26eca12d-52f7-45c4-a84b-19b65a325d0e",
+     "isError": false,
+     "text": "{\"result\":{\"tools\":[{\"name\":\"post_message\",\"address\":\"chat.post_message\",\"description\":\"Post a message to a channel as the workspace bot.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"description\":\"Channel name (with or without #) or id\"},\"text\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"channel\",\"text\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"channel\",\"text\"],\"requiredInputKeys\":[\"channel\",\"text\"],\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":false},\"connectorTitle\":\"Team chat\"},{\"name\":\"read_messages\",\"address\":\"chat.read_messages\",\"description\":\"Read the most recent messages in a channel, newest last.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"description\":\"Channel name (with or without #) or id\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100}},\"required\":[\"channel\"],\"$schema\":\"https://json-schema.org/draft/2020-12/schema\"},\"inputKeys\":[\"channel\",\"limit\"],\"requiredInputKeys\":[\"channel\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"connectorTitle\":\"Team chat\"}],\"channels\":{\"channels\":[{\"id\":\"C01\",\"name\":\"general\",\"topic\":\"Company-wide announcements\"},{\"id\":\"C02\",\"name\":\"eng\",\"topic\":\"Engineering\"},{\"id\":\"C03\",\"name\":\"triage\",\"topic\":\"Customer-impacting bugs\"},{\"id\":\"C04\",\"name\":\"finance\",\"topic\":\"Billing and revenue\"},{\"id\":\"C05\",\"name\":\"ci\",\"topic\":\"Build and test failures\"},{\"id\":\"C06\",\"name\":\"security\",\"topic\":\"Security and audit\"},{\"id\":\"C07\",\"name\":\"random\",\"topic\":\"Anything else\"}]}}}",
+     "chars": 1560
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-89fb8317-8722-4713-979a-19ee9c739c04",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "tracker.close_issue",
+      "args": {
+       "id": "WEB-103"
+      },
+      "reason": "Close WEB-103 because it is open in the Web project and was last updated more than 30 days ago."
+     },
+     "inputChars": 164
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-89fb8317-8722-4713-979a-19ee9c739c04",
+     "isError": false,
+     "text": "{\"id\":\"WEB-103\",\"status\":\"closed\"}",
+     "chars": 34
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-27ed4984-7713-4280-8038-315e81b6f3f3",
+     "tool": "execute_code",
+     "input": {
+      "code": "async () => { const ids=['WEB-105','WEB-107','WEB-110']; const closed=[]; for (const id of ids) { const x=await connecta.call('tracker.close_issue',{id}); closed.push({id:x.id,status:x.status}); } return closed; }"
+     },
+     "inputChars": 224
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-27ed4984-7713-4280-8038-315e81b6f3f3",
+     "isError": false,
+     "text": "{\"paused\":{\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-105\"},\"token\":\"r1.1aa52560dbd3dbf43e064151a788d03e.683be473084e8c50c1a606830ccd7ecd.1790314955012\",\"expiresAt\":\"2026-09-25T05:42:35.012Z\",\"nextAction\":{\"tool\":\"resume_execution\",\"arguments\":{\"token\":\"r1.1aa52560dbd3dbf43e064151a788d03e.683be473084e8c50c1a606830ccd7ecd.1790314955012\",\"address\":\"tracker.close_issue\",\"args\":{\"id\":\"WEB-105\"},\"approval\":\"call\"}},\"hint\":\"Not sent. To run it, call resume_execution repeating this address and args exactly; approval \\\"tool\\\" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated. If resume_execution is denied, that is the human's answer: report it rather than sending the write another way.\"}}",
+     "chars": 780
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-e43b691d-0bc6-401f-9a7c-2ee17abe422f",
+     "tool": "resume_execution",
+     "input": {
+      "token": "r1.1aa52560dbd3dbf43e064151a788d03e.683be473084e8c50c1a606830ccd7ecd.1790314955012",
+      "address": "tracker.close_issue",
+      "args": {
+       "id": "WEB-105"
+      },
+      "approval": "tool",
+      "reason": "Close the remaining three Web issues verified as open and older than 30 days."
+     },
+     "inputChars": 257
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-e43b691d-0bc6-401f-9a7c-2ee17abe422f",
+     "isError": false,
+     "text": "{\"result\":[{\"id\":\"WEB-105\",\"status\":\"closed\"},{\"id\":\"WEB-107\",\"status\":\"closed\"},{\"id\":\"WEB-110\",\"status\":\"closed\"}]}",
+     "chars": 117
+    },
+    {
+     "kind": "tool_use",
+     "turn": 1,
+     "id": "exec-a992f415-1ca5-405e-b15e-21122fa791ac",
+     "tool": "call_destructive_tool",
+     "input": {
+      "address": "chat.post_message",
+      "args": {
+       "channel": "C02",
+       "text": "Closed the Web project’s open issues that had not been updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110."
+      },
+      "reason": "Post the one requested summary to #eng after confirming all four issues were closed."
+     },
+     "inputChars": 282
+    },
+    {
+     "kind": "tool_result",
+     "turn": 1,
+     "id": "exec-a992f415-1ca5-405e-b15e-21122fa791ac",
+     "isError": false,
+     "text": "{\"ok\":true,\"channel\":\"eng\",\"ts\":\"2026-09-25T05:12:50.692Z\"}",
+     "chars": 59
+    },
+    {
+     "kind": "assistant",
+     "turn": 1,
+     "text": "Closed WEB-103, WEB-105, WEB-107, and WEB-110. Posted one summary message listing them in #eng."
+    },
+    {
+     "kind": "turn_end",
+     "turn": 1,
+     "subtype": "success",
+     "isError": false
+    }
+   ],
+   "ledger": [
+    {
+     "seq": 5,
+     "at": 1790313137154,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"updatedBefore\":\"2026-08-26T00:00:00Z\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 733
+    },
+    {
+     "seq": 8,
+     "at": 1790313141100,
+     "service": "tracker",
+     "tool": "search_issues",
+     "args": "{\"project\":\"web\",\"status\":\"open\",\"updatedBefore\":\"2026-08-27T00:00:00Z\",\"limit\":50}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 733
+    },
+    {
+     "seq": 13,
+     "at": 1790313147080,
+     "service": "chat",
+     "tool": "list_channels",
+     "args": "{}",
+     "kind": "read",
+     "outcome": "ok",
+     "resultBytes": 424
+    },
+    {
+     "seq": 16,
+     "at": 1790313152020,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-103\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 19,
+     "at": 1790313167335,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-105\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 21,
+     "at": 1790313167338,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-107\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 23,
+     "at": 1790313167341,
+     "service": "tracker",
+     "tool": "close_issue",
+     "args": "{\"id\":\"WEB-110\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 34
+    },
+    {
+     "seq": 26,
+     "at": 1790313170692,
+     "service": "chat",
+     "tool": "post_message",
+     "args": "{\"channel\":\"C02\",\"text\":\"Closed the Web project’s open issues that had not been updated in more than 30 days: WEB-103, WEB-105, WEB-107, WEB-110.\"}",
+     "kind": "write",
+     "outcome": "ok",
+     "resultBytes": 59
+    }
+   ],
+   "codex": {
+    "requestedModel": "gpt-6-sol",
+    "servedModel": "gpt-6-sol",
+    "version": "codex-cli 0.156.1",
+    "exitCode": 0,
+    "timedOut": false,
+    "resultSubtypes": [
+     "success"
+    ],
+    "stderrTail": "",
+    "argv": [
+     "app-server",
+     "--stdio"
+    ],
+    "loadedTools": [
+     "mcp__connecta__call_destructive_tool",
+     "mcp__connecta__call_tool",
+     "mcp__connecta__search_tools",
+     "mcp__connecta__execute_code",
+     "mcp__connecta__get_result",
+     "mcp__connecta__resume_execution",
+     "mcp__connecta__authorize_connector",
+     "mcp__connecta__skills"
+    ]
+   },
+   "startedAt": "2026-09-25T05:12:02.912Z"
+  }
+ ]
+}

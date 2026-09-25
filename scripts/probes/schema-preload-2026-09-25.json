@@ -1,0 +1,79 @@
+{
+  "testedAt": "2026-09-25T05:17:28.370Z",
+  "node": "v26.9.0",
+  "versions": {
+    "miniflare": "4.20260722.0",
+    "workerd": "1.20260722.1",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0"
+  },
+  "scope": "Worker example cold import after one synthetic request without forced GC; local workerd, not production isolate churn",
+  "rows": [
+    {
+      "repeat": 0,
+      "preload": true,
+      "removed": 0,
+      "targetId": "core:user:",
+      "bundleBytes": 2582652,
+      "usedSize": 23184168,
+      "totalSize": 37535744,
+      "embedderHeapUsedSize": 257936,
+      "backingStorageSize": 246598
+    },
+    {
+      "repeat": 0,
+      "preload": false,
+      "removed": 2,
+      "targetId": "core:user:",
+      "bundleBytes": 2581853,
+      "usedSize": 12485064,
+      "totalSize": 18137088,
+      "embedderHeapUsedSize": 257936,
+      "backingStorageSize": 246598
+    },
+    {
+      "repeat": 1,
+      "preload": true,
+      "removed": 0,
+      "targetId": "core:user:",
+      "bundleBytes": 2582652,
+      "usedSize": 22998196,
+      "totalSize": 37273600,
+      "embedderHeapUsedSize": 257936,
+      "backingStorageSize": 246598
+    },
+    {
+      "repeat": 1,
+      "preload": false,
+      "removed": 2,
+      "targetId": "core:user:",
+      "bundleBytes": 2581853,
+      "usedSize": 12478996,
+      "totalSize": 18137088,
+      "embedderHeapUsedSize": 257936,
+      "backingStorageSize": 246598
+    },
+    {
+      "repeat": 2,
+      "preload": true,
+      "removed": 0,
+      "targetId": "core:user:",
+      "bundleBytes": 2582652,
+      "usedSize": 22846584,
+      "totalSize": 37273600,
+      "embedderHeapUsedSize": 257936,
+      "backingStorageSize": 246598
+    },
+    {
+      "repeat": 2,
+      "preload": false,
+      "removed": 2,
+      "targetId": "core:user:",
+      "bundleBytes": 2581853,
+      "usedSize": 12503924,
+      "totalSize": 18137088,
+      "embedderHeapUsedSize": 257936,
+      "backingStorageSize": 246598
+    }
+  ]
+}

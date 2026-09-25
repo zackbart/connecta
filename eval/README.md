@@ -24,3 +24,30 @@ agent's final answer. Approval prompts for denied MCP tools are declined by
 the eval host. A denial test should show both a recorded permission denial and
 zero downstream writes; a passing task grade alone does not prove the host
 actually rejected an approval request.
+
+## Program calling-convention check, 2026-09-25
+
+For #598 and #602, `cross-connector-join` and `stale-close-and-summarize` each
+ran three times with Codex CLI 0.156.1 and served model `gpt-6-sol`. Each trial
+used the isolated fake deployment described above.
+
+| Wording | Task passes | Shadowed `connecta` parameter | Tool errors |
+| --- | --- | --- | --- |
+| [Before](baselines/codex-2026-09-25-before.json) | 6/6 | 5 | 5 |
+| [First clarification](baselines/codex-2026-09-25-first-wording.json) | 6/6 | 0 | 0 |
+| [Final clarification](baselines/codex-2026-09-25-final.json) | 6/6 | 0 | 0 |
+
+Before the change, five trials began with `async (connecta) => ...`. Programs
+receive no arguments, so that parameter hid the provided global and caused a
+TypeError; each agent repaired it. The final wording explicitly shows
+`async () => { ... }` and names `connecta` as global, while retaining the
+existing description-length limit. It changes advice, not accepted syntax or
+program execution. The first wording also worked in these trials, but exceeded
+that length limit and was shortened before shipping. The final batch made 27
+`execute_code` calls with no tool errors.
+
+These small, unpaired batches show a useful observed reduction in retries, not
+a general reliability guarantee. They did not establish failed tasks caused by
+unawaited host calls. Decision for #598: preserve normal-result semantics and
+the existing cancellation of outstanding work; reconsider a warning when a
+representative failed task shows that it would help. No warning was added.

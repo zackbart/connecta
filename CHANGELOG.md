@@ -48,6 +48,15 @@ for diagnostics.
 
 ### Added
 
+- **Guarded read-only identity grants (#601).** A deployment may put
+  `{ tool: "connector.tool", requireReadOnly: true }` in
+  `identity.connectorAccess`. The reviewed exact address stays visible only
+  while its loaded catalog explicitly says read-only without a contradictory
+  destructive hint. A reclassified tool disappears from discovery and every
+  call path, including `call_destructive_tool` and approval-exempt programs;
+  new names are never added automatically. Existing string grants keep their
+  additive meaning, and a pool can still only narrow the identity's view.
+
 - **Resumable writes and `resume_execution` (#565).** A program's call to a
   tool that is not explicitly read-only pauses the run before anything is
   sent and returns `{ paused: { address, args, token, expiresAt, nextAction,
