@@ -288,6 +288,8 @@ export interface ConnectaConfig {
    * because the links it hands out are shared.
    */
   artifacts?: ArtifactsModule;
+  /** Optional dedicated HTTPS origin that serves only artifact pages and their library. */
+  artifactOrigin?: string;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
@@ -397,6 +399,7 @@ const CONFIG_SCHEMA = {
   vault: null,
   ui: null,
   artifacts: null,
+  artifactOrigin: null,
   discovery: {
     concurrency: null,
     catalogTtlSeconds: null,
@@ -545,6 +548,27 @@ function assertKnownConfig(config: ConnectaConfig): void {
           "with teammates, so they must name the deployment's own origin, never " +
           "one taken from a request's Host header",
       );
+    }
+  }
+  if (config.artifactOrigin !== undefined) {
+    if (!config.artifacts || !config.ui || !config.publicUrl) {
+      throw new Error("ConnectaConfig.artifactOrigin needs artifacts, ui, and publicUrl");
+    }
+    if (typeof config.artifactOrigin !== "string") {
+      throw new Error("ConnectaConfig.artifactOrigin must be an HTTPS origin");
+    }
+    let origin: URL;
+    try {
+      origin = new URL(config.artifactOrigin);
+    } catch {
+      throw new Error("ConnectaConfig.artifactOrigin must be an HTTPS origin");
+    }
+    if (
+      origin.protocol !== "https:" ||
+      origin.toString() !== `${origin.origin}/` ||
+      origin.origin === new URL(config.publicUrl).origin
+    ) {
+      throw new Error("ConnectaConfig.artifactOrigin must be a distinct HTTPS origin");
     }
   }
 }
@@ -970,6 +994,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     identity: config.identity,
     pools,
     publicUrl: config.publicUrl,
+    artifactOrigin: config.artifactOrigin,
     allowedOrigins: config.allowedOrigins,
     serverInfo,
     logger,

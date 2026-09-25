@@ -118,6 +118,15 @@ function ArtifactFrame({ view }: { view: UiArtifactView }) {
       const data = event.data as { type?: unknown } | null;
       if (!data || data.type !== "ready") return;
       window.removeEventListener("message", onMessage);
+      // The only network navigation an opaque sandbox can still make is its
+      // own frame. Tighten the parent's frame policy after the fixed bootstrap
+      // loads and before any untrusted page script receives its document.
+      // CSP policies only accumulate, so removing this element later cannot
+      // reopen navigation during this shell's lifetime.
+      const policy = document.createElement("meta");
+      policy.httpEquiv = "Content-Security-Policy";
+      policy.content = "frame-src 'none'";
+      document.head.append(policy);
       element.contentWindow?.postMessage({ type: "document", html: view.document }, "*");
     };
     window.addEventListener("message", onMessage);

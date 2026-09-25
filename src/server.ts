@@ -15,6 +15,8 @@ import {
 
 export type { ServerOptions } from "./routes/shared.js";
 
+const isArtifactPath = (path: string) => path === "/artifacts" || path.startsWith("/artifacts/");
+
 /**
  * Build the Web-standard fetch handler.
  *
@@ -161,6 +163,30 @@ export function createFetchHandler(
       const defer = runtimeContext
         ? runtimeContext.waitUntil.bind(runtimeContext)
         : undefined;
+
+      // The artifact hostname has no MCP, health, OAuth, or operator routes.
+      // Dispatch before MCP origin checks so even a hostile /mcp is a plain 404.
+      if (opts.artifactOrigin && url.origin === new URL(opts.artifactOrigin).origin) {
+        if (!isArtifactPath(path) || !opts.ui || !opts.artifactsModule) {
+          return Effect.succeed(withSecurityHeaders(new Response("Not Found", { status: 404 }), url, path));
+        }
+        const context: RouteContext = {
+          request, url, path, baseUrl: opts.artifactOrigin, opts, defer, runtimeContext,
+        };
+        return Effect.map(Effect.promise(() => opts.ui!.handle(context)), response =>
+          withSecurityHeaders(response ?? new Response("Not Found", { status: 404 }), url, path),
+        );
+      }
+
+      if (opts.artifactOrigin && isArtifactPath(path) && opts.ui && opts.artifactsModule) {
+        const target = new URL(opts.artifactOrigin);
+        target.pathname = path;
+        target.search = url.search;
+        return Effect.succeed(withSecurityHeaders(new Response(null, {
+          status: 308,
+          headers: { Location: target.toString() },
+        }), url, path));
+      }
 
       const originRefusal = routeMcp.rejectOrigin(request);
       if (originRefusal) {

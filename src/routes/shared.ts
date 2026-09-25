@@ -31,6 +31,7 @@ export interface ServerOptions {
   /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
   pools?: ReadonlyMap<string, ResolvedPool> | undefined;
   publicUrl?: string | undefined;
+  artifactOrigin?: string | undefined;
   allowedOrigins?: readonly string[] | "*" | undefined;
   // The SDK's Implementation shape: name/version plus optional title,
   // websiteUrl, and icons (MCP icons spec) that clients may render.

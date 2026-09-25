@@ -12,12 +12,16 @@ import type { InboundAuth } from "../src/types.js";
 import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
+const ARTIFACT_ORIGIN = "https://pages.connecta.test";
 const TOKEN = "viewer-token";
 const executor = { execute: async () => ({ result: null }) };
 
 const page = (body: string) => `<!doctype html>\n<main id="artifact-root">${body}</main>\n`;
 
-async function deploy(config: Partial<ConnectaConfig> = {}) {
+async function deploy(config: Omit<Partial<ConnectaConfig>, "ui" | "artifacts"> & {
+  ui?: ConnectaConfig["ui"] | undefined;
+  artifacts?: ConnectaConfig["artifacts"] | undefined;
+} = {}) {
   const module = artifacts({ store: kvArtifactStore(memoryStorage()) });
   const app = createConnecta({
     connectors: [],
@@ -28,7 +32,7 @@ async function deploy(config: Partial<ConnectaConfig> = {}) {
     ui: operatorUi(),
     artifacts: module,
     ...config,
-  });
+  } as ConnectaConfig);
   const ctx = { storage: memoryStorage(), logger: console, baseUrl: BASE };
   const call = (name: string, args: Record<string, unknown>) =>
     module.connector.callTool(name, args, ctx) as Promise<Record<string, any>>;
@@ -226,6 +230,39 @@ describe("the artifact API", () => {
 });
 
 describe("mounting", () => {
+  it("isolates a dedicated artifact origin and redirects main-host artifact paths", async () => {
+    const { app } = await deploy({ artifactOrigin: ARTIFACT_ORIGIN });
+    const fetchAt = (origin: string, path: string, token?: string) => app.fetch(new Request(`${origin}${path}`, {
+      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+    }));
+    for (const path of ["/artifacts", "/artifacts/q3-bugs", "/artifacts/q3-bugs/v/1?d=data:1", "/artifacts/_api/list", "/artifacts/_frame"]) {
+      const response = await fetchAt(BASE, path);
+      expect(response.status, path).toBe(308);
+      expect(response.headers.get("Location"), path).toBe(`${ARTIFACT_ORIGIN}${path}`);
+    }
+    for (const path of ["/", "/ui/data", "/ui/connectors/artifacts", "/mcp", "/health", "/oauth/callback", "/.well-known/oauth-authorization-server"]) {
+      expect((await fetchAt(ARTIFACT_ORIGIN, path)).status, path).toBe(404);
+    }
+    expect((await fetchAt(ARTIFACT_ORIGIN, "/artifacts/_api/list")).status).toBe(401);
+    const listed = await fetchAt(ARTIFACT_ORIGIN, "/artifacts/_api/list", TOKEN);
+    expect(listed.status).toBe(200);
+    const view = await fetchAt(ARTIFACT_ORIGIN, "/artifacts/_api/view/q3-bugs", TOKEN);
+    expect((await view.json()) as object).toMatchObject({
+      url: `${ARTIFACT_ORIGIN}/artifacts/q3-bugs`,
+      snapshotUrl: `${ARTIFACT_ORIGIN}/artifacts/q3-bugs/v/2?d=data:2`,
+    });
+    expect((await fetchAt(ARTIFACT_ORIGIN, "/artifacts/q3-bugs")).status).toBe(200);
+  });
+
+  it("requires a separate HTTPS artifact origin and both page modules", async () => {
+    for (const artifactOrigin of [BASE, "http://pages.connecta.test", "https://pages.connecta.test/path", "https://pages.connecta.test/?x=1"]) {
+      await expect(deploy({ artifactOrigin })).rejects.toThrow(/artifactOrigin/);
+    }
+    await expect(deploy({ artifactOrigin: 5 as unknown as string })).rejects.toThrow(/artifactOrigin/);
+    await expect(deploy({ artifactOrigin: ARTIFACT_ORIGIN, ui: undefined })).rejects.toThrow(/artifactOrigin/);
+    await expect(deploy({ artifactOrigin: ARTIFACT_ORIGIN, artifacts: undefined })).rejects.toThrow(/artifactOrigin/);
+  });
+
   it("serves no artifact route without the operator UI, and warns that links have no viewer", async () => {
     const logger = { debug() {}, info() {}, warn: vi.fn(), error() {} };
     const { get } = await deploy({ ui: undefined, logger });
