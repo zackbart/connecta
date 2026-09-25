@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCodex } from "../eval/agent/codex.js";
-import { infraError, stopsBatch } from "../eval/agent/run.js";
+import { infraError, stopsBatch } from "../eval/agent/infra.js";
 import { parseTrace } from "../eval/agent/trace.js";
 
 const SERVER = String.raw`

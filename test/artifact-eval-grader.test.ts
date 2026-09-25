@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasExactOpenBugRows } from "../eval/tasks/artifacts.js";
+import { hasExactOpenBugRows } from "../eval/tasks/artifact-grader.js";
 
 const expected = [
   { id: "WEB-1", project: "web" },
