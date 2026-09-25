@@ -108,6 +108,10 @@ try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         const headers = { authorization: `Bearer ${key}` };
+        const listTools = () => fetch(`${origin}/mcp?id=${id}`, { method: "POST", headers: {
+          ...headers, "x-probe-pass": "yes", "content-type": "application/json",
+          accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
+        }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
         const response = await fetch(`${origin}/${route}?id=${id}&mode=${mode}`, { headers, signal: controller.signal });
         const responseAt = Date.now();
         const isolate = response.headers.get("x-probe-isolate");
@@ -121,6 +125,14 @@ try {
         })();
         await wait(750);
         const clientEndedBeforeAbort = clientEnd ?? null;
+        let whileLive;
+        if (route === 'mcp') {
+          const competing = await listTools();
+          whileLive = { status: competing.status,
+            sameIsolate: competing.headers.get('x-probe-isolate') === isolate,
+            elapsedMs: Date.now() - responseAt };
+          await competing.text();
+        }
         controller.abort();
         clearTimeout(timeout);
         try { await reader.cancel(); } catch {}
@@ -128,10 +140,7 @@ try {
         // Do not read /health after expiry before this request. Admission must
         // recover from acquire itself, without a monitoring request sweeping it.
         await wait(Math.max(0, maxResponseMs + 500 - (Date.now() - responseAt)));
-        const followup = await fetch(`${origin}/mcp?id=${id}`, { method: "POST", headers: {
-          ...headers, "x-probe-pass": "yes", "content-type": "application/json",
-          accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
-        }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+        const followup = await listTools();
         const followupBody = await followup.text();
         let toolCount;
         try { toolCount = JSON.parse(followupBody).result?.tools?.length; } catch {}
@@ -150,7 +159,7 @@ try {
         const observation = { enabled, servedVersion: response.headers.get('x-probe-version'),
           compatibilityDate: "2025-01-01", flags, maxResponseMs, route, mode, id, isolate,
           status: response.status, first: first?.value ? new TextDecoder().decode(first.value) : first,
-          clientEndedBeforeAbort,
+          clientEndedBeforeAbort, whileLive,
           sameIsolate: Boolean(same), events: same?.events.filter(e => e.id === id),
           admission: same?.health.admission.requests,
           followup: { status: followup.status, sameIsolate: followup.headers.get("x-probe-isolate") === isolate,
@@ -159,7 +168,8 @@ try {
         observation.passed = observation.servedVersion === String(enabled) &&
           response.status === (route === 'mcp' ? 401 : 200) && observation.sameIsolate &&
           observation.admission.active === 0 && observation.followup.status === 200 &&
-          observation.followup.sameIsolate && toolCount === 8;
+          observation.followup.sameIsolate && toolCount === 8 &&
+          (!whileLive || (whileLive.status === 503 && whileLive.sameIsolate && whileLive.elapsedMs < maxResponseMs));
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
         await writeFile(output, JSON.stringify({ testedAt: new Date().toISOString(), name, observations }, null, 2));
