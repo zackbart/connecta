@@ -72,6 +72,10 @@ export function createFetchHandler(
       ...(opts.executorName !== undefined
         ? { executor: { name: opts.executorName } }
         : {}),
+      // Whether a program's write pauses for resume_execution or fails E4.
+      // The tool is listed either way; this is the only place an operator
+      // can see which answer it gives (#565).
+      resumableWrites: opts.resumable !== undefined,
       // Counts only, from refreshes that already happened — the endpoint
       // asks no downstream anything, and `connecta doctor` reads it to
       // report a stale allowlist without a probe of its own (#343).

@@ -61,7 +61,7 @@ top to bottom.
 | 2 | MCP preflight | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth. |
 | 2 | Other `OPTIONS` | Auth metadata first, otherwise compatibility CORS preflight. |
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
-| 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata, with drift as stable short hashes. |
+| 4 | `/health` | Open and payload-free: health, executor, whether resumable writes are on, admission, and deployment metadata, with drift as stable short hashes. |
 | 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state and personal-ownership checked, independent of the UI. |
 | 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
@@ -94,12 +94,12 @@ An admitted non-preflight `/mcp` request then takes five steps in
 5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any
-   404 — then register the seven meta-tools on a fresh `McpServer`
+   404 — then register the eight meta-tools on a fresh `McpServer`
    (`test/server.test.ts`, `test/code-first-surface.test.ts`).
 
 ## Layers below the meta-tools
 
-The meta-tool handlers are thin. The work sits in five modules the registry owns
+The meta-tool handlers are thin. The work sits in six modules the registry owns
 or hands out, and a change usually belongs in exactly one of them:
 
 | Module | Owns |
@@ -109,6 +109,7 @@ or hands out, and a change usually belongs in exactly one of them:
 | `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows. |
 | `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
+| `src/resumable.ts`, `src/run-journal.ts` | Resumable writes: a program's host-call numbering, the write gate that pauses it, the journal a paused run becomes, the replay `resume_execution` plays from it, and the claim and write-ahead marks that keep an approved write to at most one send. |
 
 `src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same two
 services, `CatalogService` and `InvocationService`. That is the point: a
@@ -148,11 +149,15 @@ successful call's preview and a paging-unavailable notice rather than a result i
 A second optional method, `compareAndSet(key, expected, next, options?)`, is an
 atomic claim: `null` means absent (expired counts) on the way in and delete on
 the way out. A successful write accepts the same optional `ttlSeconds` as
-`set`. Nothing in core requires it yet. Downstream OAuth uses it where the
-store has it, so resealing legacy plaintext and discarding a refused grant
-cannot overwrite a consent that landed in between, and falls back to a read and
-a write where it does not. A subsystem that needs an exactly-once claim will
-require it explicitly rather than emulate it that way.
+`set`. Resumable writes require it: of two `resume_execution` calls racing
+for one paused run exactly one may win, and every write that run sends is
+marked on its header first, so a read and a write standing in for the claim
+could send an approved write twice. Omitted, `execute.resumableWrites` is on
+exactly when the store has it, and asking for it over a store without it
+refuses to construct. Downstream OAuth uses it where the store has it, so
+resealing legacy plaintext and discarding a refused grant cannot overwrite a
+consent that landed in between, and falls back to a read and a write where it
+does not.
 Adapters: `src/storage/memory.ts` and `src/storage/file.ts` (Node) both provide
 it, and the namespaced views core hands connectors forward it only when the
 underlying store has it. `examples/worker/` carries two more: Cloudflare KV,
@@ -314,6 +319,7 @@ would be another partition's.
 | Admission (`executor-admission.ts`, `call-admission.ts`) | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires. |
 | One tool call (`invocation.ts`) | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`. |
 | `execute_code` (`execute.ts`) | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own. |
+| Resumable writes (`resumable.ts`) | A play's stop is a Deferred its write gate completes, raced against the executor like the watchdog; the gate for call n awaits the decision Deferreds of every lower-numbered call; header writes are one compare-and-set at a time on a per-play turn. A paused run holds nothing request-bound — its journal is data, and the next play is a new request's. |
 | Discovery (`catalog-service.ts`) | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency. |
 | Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes, bounded by its owner's deadline (the default probe timeout when it has none); persisted-catalog writes take per-connector turns, each a Deferred its own request completes. Same-request loads share one read the way discovery's do. |
 | Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |

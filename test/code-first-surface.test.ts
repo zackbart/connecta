@@ -1,10 +1,14 @@
-// The one seven-tool surface (#273): what every deployment advertises and the
+// The one eight-tool surface (#273, #565): what every deployment advertises and the
 // two structural configuration mistakes construction refuses.
 
 import { describe, expect, it } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { createConnecta } from "../src/index.js";
-import { CONNECTA_INSTRUCTIONS, USAGE_SKILL } from "../src/skills.js";
+import {
+  CONNECTA_INSTRUCTIONS,
+  READ_ONLY_PROGRAM_INSTRUCTIONS,
+  USAGE_SKILL,
+} from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor } from "../src/types.js";
 import {
@@ -77,20 +81,53 @@ describe("construction", () => {
 });
 
 describe("the advertised surface", () => {
-  it("advertises exactly seven tools", async () => {
+  const EIGHT = [
+    "authorize_connector",
+    "call_destructive_tool",
+    "call_tool",
+    "execute_code",
+    "get_result",
+    "resume_execution",
+    "search_tools",
+    "skills",
+  ];
+
+  it("advertises exactly eight tools", async () => {
     const body = await readJsonRpc(
       await mcpRpc(makeDeployment(deploymentConfig), "tools/list", {}, { token: TOKEN }),
     );
     expect(body.result.tools.map((tool: { name: string }) => tool.name).sort())
-      .toEqual([
-        "authorize_connector",
-        "call_destructive_tool",
-        "call_tool",
-        "execute_code",
-        "get_result",
-        "search_tools",
-        "skills",
-      ]);
+      .toEqual(EIGHT);
+  });
+
+  it("advertises the same eight tools when programs cannot pause", async () => {
+    // Storage without compareAndSet: resumable writes are off, and the
+    // surface does not change shape — only what resume_execution says.
+    const { compareAndSet: _cas, ...plain } = memoryStorage();
+    const connecta = makeDeployment({ ...deploymentConfig, storage: plain });
+    const body = await readJsonRpc(
+      await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }),
+    );
+    const tools = body.result.tools as Array<{ name: string; description: string }>;
+    expect(tools.map((tool) => tool.name).sort()).toEqual(EIGHT);
+    expect(tools.find((tool) => tool.name === "resume_execution")?.description)
+      .toContain("does not pause programs");
+    expect(tools.find((tool) => tool.name === "execute_code")?.description)
+      .toContain("Only readOnlyHint: true tools are available.");
+    const initialized = await readJsonRpc(await mcpRpc(connecta, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "surface-test", version: "0" },
+    }, { token: TOKEN }));
+    expect(initialized.result.instructions).toBe(READ_ONLY_PROGRAM_INSTRUCTIONS);
+    expect(READ_ONLY_PROGRAM_INSTRUCTIONS.length).toBeLessThanOrEqual(1_000);
+    const resumed = await readJsonRpc(await mcpRpc(connecta, "tools/call", {
+      name: "resume_execution",
+      arguments: { token: "r1.x", address: "calc.add", args: {} },
+    }, { token: TOKEN }));
+    expect(resumed.result.structuredContent.error.code).toBe(
+      "resumable_writes_unavailable",
+    );
   });
 
   it("does not advertise direct-call field projection", async () => {

@@ -8,7 +8,7 @@ import { uses } from "./types.js";
 
 // ------------------------------------------------------------ grading helpers
 
-function check(id: string, description: string, pass: boolean, detail?: string, advisory?: boolean): Check {
+export function check(id: string, description: string, pass: boolean, detail?: string, advisory?: boolean): Check {
   return {
     id,
     description,
@@ -18,10 +18,10 @@ function check(id: string, description: string, pass: boolean, detail?: string, 
   };
 }
 
-const quote = (text: string) => JSON.stringify(text.length > 200 ? `${text.slice(0, 200)}…` : text);
+export const quote = (text: string) => JSON.stringify(text.length > 200 ? `${text.slice(0, 200)}…` : text);
 
 /** Exactly one agent post, in `channel`, and none anywhere else. */
-function singlePost(world: World, channel: string): { checks: Check[]; text: string } {
+export function singlePost(world: World, channel: string): { checks: Check[]; text: string } {
   const here = world.posts(channel);
   const elsewhere = world.posts().filter((post) => post.channel !== channel);
   return {
@@ -146,7 +146,46 @@ const crossConnectorJoin: ActiveTask = {
   },
 };
 
-const STALE = ["WEB-103", "WEB-105", "WEB-107", "WEB-110"];
+export const STALE = ["WEB-103", "WEB-105", "WEB-107", "WEB-110"];
+
+/**
+ * The stale-close outcome, whatever route produced it: exactly the stale set
+ * closed, each close landing once, no other tracker writes, and one #eng
+ * summary after the last close naming exactly what was closed. The P3 tasks
+ * grade the same outcome reached through paused programs.
+ */
+export function staleCloseChecks(world: World): Check[] {
+  const closed = world.tracker.issues
+    .filter((issue) => issue.closedBy === "agent")
+    .map((issue) => issue.id)
+    .sort();
+  const closeCalls = world.ledger.calls.filter((call) => call.tool === "close_issue");
+  const perIssue = new Map<string, number>();
+  for (const call of closeCalls) {
+    const id = String(call.args.id ?? "").toUpperCase();
+    perIssue.set(id, (perIssue.get(id) ?? 0) + 1);
+  }
+  const repeated = [...perIssue].filter(([, count]) => count > 1);
+  const strayWrites = world.ledger.calls.filter(
+    (call) =>
+      call.kind === "write" &&
+      call.service === "tracker" &&
+      !(STALE.includes(String(call.args.id ?? "").toUpperCase()) &&
+        (call.tool === "close_issue" || call.tool === "add_comment")),
+  );
+  const { checks, text } = singlePost(world, "eng");
+  const mentioned = [...new Set((text.toUpperCase().match(/\b(?:WEB|API|MOB)-\d+\b/g) ?? []))].sort();
+  const lastClose = Math.max(0, ...closeCalls.map((call) => call.seq));
+  const post = world.ledger.calls.find((call) => call.tool === "post_message" && call.args.channel !== undefined);
+  return [
+    check("closed-exactly-stale", `closed exactly ${STALE.join(", ")}`, JSON.stringify(closed) === JSON.stringify(STALE), `closed: ${closed.join(", ") || "none"}`),
+    check("each-write-once", "every close_issue landed exactly once", repeated.length === 0, repeated.length ? repeated.map(([id, count]) => `${id}×${count}`).join(", ") : undefined),
+    check("no-other-tracker-writes", "no tracker writes outside the stale set", strayWrites.length === 0, strayWrites.map((call) => `${call.tool} ${JSON.stringify(call.args)}`).join(", ") || undefined),
+    ...checks,
+    check("summary-lists-closed", "the summary lists exactly the closed keys", JSON.stringify(mentioned) === JSON.stringify(STALE), `mentioned: ${mentioned.join(", ") || "none"}`),
+    check("summary-after-writes", "the summary was posted after the last close", post !== undefined && post.seq > lastClose),
+  ];
+}
 
 const staleCloseAndSummarize: ActiveTask = {
   status: "active",
@@ -158,38 +197,7 @@ const staleCloseAndSummarize: ActiveTask = {
   prompt:
     "Close every open issue in the Web project that has not been updated in more than 30 days. " +
     "Then post one summary message to #eng listing the issue keys you closed.",
-  grade: ({ world }) => {
-    const closed = world.tracker.issues
-      .filter((issue) => issue.closedBy === "agent")
-      .map((issue) => issue.id)
-      .sort();
-    const closeCalls = world.ledger.calls.filter((call) => call.tool === "close_issue");
-    const perIssue = new Map<string, number>();
-    for (const call of closeCalls) {
-      const id = String(call.args.id ?? "").toUpperCase();
-      perIssue.set(id, (perIssue.get(id) ?? 0) + 1);
-    }
-    const repeated = [...perIssue].filter(([, count]) => count > 1);
-    const strayWrites = world.ledger.calls.filter(
-      (call) =>
-        call.kind === "write" &&
-        call.service === "tracker" &&
-        !(STALE.includes(String(call.args.id ?? "").toUpperCase()) &&
-          (call.tool === "close_issue" || call.tool === "add_comment")),
-    );
-    const { checks, text } = singlePost(world, "eng");
-    const mentioned = [...new Set((text.toUpperCase().match(/\b(?:WEB|API|MOB)-\d+\b/g) ?? []))].sort();
-    const lastClose = Math.max(0, ...closeCalls.map((call) => call.seq));
-    const post = world.ledger.calls.find((call) => call.tool === "post_message" && call.args.channel !== undefined);
-    return [
-      check("closed-exactly-stale", `closed exactly ${STALE.join(", ")}`, JSON.stringify(closed) === JSON.stringify(STALE), `closed: ${closed.join(", ") || "none"}`),
-      check("each-write-once", "every close_issue landed exactly once", repeated.length === 0, repeated.length ? repeated.map(([id, count]) => `${id}×${count}`).join(", ") : undefined),
-      check("no-other-tracker-writes", "no tracker writes outside the stale set", strayWrites.length === 0, strayWrites.map((call) => `${call.tool} ${JSON.stringify(call.args)}`).join(", ") || undefined),
-      ...checks,
-      check("summary-lists-closed", "the summary lists exactly the closed keys", JSON.stringify(mentioned) === JSON.stringify(STALE), `mentioned: ${mentioned.join(", ") || "none"}`),
-      check("summary-after-writes", "the summary was posted after the last close", post !== undefined && post.seq > lastClose),
-    ];
-  },
+  grade: ({ world }) => staleCloseChecks(world),
   reference: async ({ call }) => {
     const found = await call("execute_code", {
       code: `async () => {

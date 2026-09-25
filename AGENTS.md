@@ -4,12 +4,13 @@ This is the canonical instruction file for coding agents. `CLAUDE.md` is a
 symlink to this file so every agent works from the same conventions.
 
 A single MCP endpoint aggregating downstream connectors (remote MCP servers and
-plain HTTP APIs) behind seven meta-tools, `execute_code` among them. Every
+plain HTTP APIs) behind eight meta-tools, `execute_code` among them. Every
 deployment configures an executor, and agents reach connectors by writing
 JavaScript against it. One fetch-native core on Effect behind a Promise API,
-running on both Node and Cloudflare Workers. Two `planned` decisions change
-that picture — resumable writes with an eighth tool, and an artifacts module —
-and until they ship, the code and the guides describe what exists.
+running on both Node and Cloudflare Workers. A program's write pauses until
+`resume_execution` repeats it. One `planned` decision changes that picture — an
+artifacts module — and until it ships, the code and the guides describe what
+exists.
 
 - **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
   and isn't, and its decisions table carries a verdict for every shape already
@@ -73,7 +74,7 @@ pins the generated deployment to the CLI package's exact version, restores the
 template `.gitignore` and the `CLAUDE.md` symlink, and refuses to merge into an
 existing path.
 `connecta doctor` verifies a running deployment's health, executor, and exact
-seven-tool surface. The template carries its own `Dockerfile` and
+eight-tool surface. The template carries its own `Dockerfile` and
 `docker-compose.yml`, so the generated project is the container: setup changes
 must keep the root README, the template (source, container files, and README),
 and the `scripts/check-package.mjs` smoke — which builds and runs that

@@ -2,7 +2,7 @@
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
 //
 // This is the wire contract a client's model reads, and the Effect conversion
-// (P1-S16b) re-renders all seven from Effect Schema. A difference there is not
+// (P1-S16b) re-renders all eight from Effect Schema. A difference there is not
 // automatically wrong — but it has to be a decision, justified where it lands,
 // rather than a rendering accident. So this file changes only alongside an
 // intended change to a tool's input, never to make a refactor pass. Key order
@@ -91,6 +91,23 @@ const GOLDEN: Record<string, unknown> = {
     },
     required: ["id"],
   },
+  resume_execution: {
+    type: "object",
+    $schema: DRAFT,
+    properties: {
+      token: { type: "string", maxLength: 512 },
+      address: { type: "string" },
+      args: {
+        type: "object",
+        propertyNames: { type: "string" },
+        additionalProperties: {},
+      },
+      approval: { type: "string", enum: ["call", "tool"] },
+      reason: { type: "string", maxLength: 500 },
+    },
+    required: ["token", "address", "args"],
+    additionalProperties: false,
+  },
   execute_code: {
     type: "object",
     $schema: DRAFT,
@@ -111,7 +128,7 @@ const GOLDEN: Record<string, unknown> = {
 };
 
 describe("meta-tool input schemas", () => {
-  it("renders all seven exactly as the golden records", async () => {
+  it("renders all eight exactly as the golden records", async () => {
     const body = await readJsonRpc(
       await mcpRpc(
         makeDeployment({ executor: stubExecutor }),

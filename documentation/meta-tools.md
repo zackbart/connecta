@@ -2,24 +2,28 @@
 
 Connecta keeps one small tool surface in model context and resolves downstream
 tools behind it. `search_tools` finds addresses, the call tools enforce safety
-annotations, `execute_code` runs read-only work as a program, and `get_result`
-pages bounded results.
+annotations, `execute_code` runs work as a program that pauses at each write
+until `resume_execution` approves it, and `get_result` pages bounded results.
 
 This guide is the contract an MCP client sees. The in-program `connecta.*` API
 those tools imply belongs to [code mode](./code-mode.md); inbound identity and
 credential administration belong to [auth](./auth.md).
 
-## The seven tools
+## The eight tools
 
-Every deployment requires an executor, so `tools/list` is exactly seven. No
-configuration adds an eighth or removes one. Resumable writes plan an
-unconditional eighth, the destructive-annotated `resume_execution`
-([ethos](../ethos.md#decisions)); `execute_code` keeps its read-only hint,
-because writes will run only there or for config-exempt tools.
+Every deployment requires an executor, so `tools/list` is exactly eight. No
+configuration adds a ninth or removes one — not even turning resumable writes
+off, which changes what `resume_execution` answers and nothing about whether it
+is listed, so a client's cached tool list never depends on the storage behind
+the deployment. `execute_code` keeps its read-only hint although its programs
+may now reach writes, because no write runs there: a program stops before
+sending one, and the write runs only inside the destructive-annotated
+`resume_execution` that repeats it ([code mode](./code-mode.md#pausing-and-resuming)).
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
-| `execute_code` | `code`, `diagnostics?` | the program's reduced return value, plus a `diagnostics` block when asked |
+| `execute_code` | `code`, `diagnostics?` | the program's reduced return value, plus a `diagnostics` block when asked; or, when it reached a write, `{ paused: { address, args, token, expiresAt, nextAction, hint } }` |
+| `resume_execution` | `token`, `address`, `args`, `approval?: "call" \| "tool"`, `reason?` | what `execute_code` would have returned had the write been approved: the result, the next pause, or a typed failure |
 | `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
 | `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
 | `call_destructive_tool` | the same, plus `reason?` | the same |
@@ -48,9 +52,13 @@ credentials, logs, or raw error text.
 
 Connecta's own tools carry the annotations it demands of downstream tools:
 read-only hints on all but `authorize_connector`, which mutates stored auth
-state, and `call_destructive_tool`. Otherwise a host that gates on annotations
-would prompt for every search, and a connecta aggregated behind another connecta
-would be refused by its own policy.
+state, and the two that send writes, `call_destructive_tool` and
+`resume_execution`, both destructive. Otherwise a host that gates on
+annotations would prompt for every search, and a connecta aggregated behind
+another connecta would be refused by its own policy. `resume_execution` is
+where the prompt belongs: its arguments are the exact write, so the human
+approves what will be sent rather than a program that might send anything.
+Its `reason`, like `call_destructive_tool`'s, is dropped before anything runs.
 
 ## Routing between the call surfaces
 
@@ -66,12 +74,20 @@ as a small sample for inspection before continuing in another call, which avoids
 repeated guesses at text formats and collection roots without restoring a
 mandatory discovery-only round trip.
 
-That covers read-only work, because that is the only work a program can do.
-Anything unannotated, write-capable, or destructive is inadmissible inside the
-sandbox, so multi-step destructive work discovers at the top level and runs each
-step through `call_destructive_tool`, where the host can put the question to a
-human. Telling an agent never to search at the top level for multiple calls
-would close the only route that work has.
+Writes take the same route. A program that reaches a tool not explicitly
+annotated read-only stops before sending it and returns the exact call with a
+token; `resume_execution` repeating it is the approval, and the program
+replays from a journal to send it and carry on — to its answer, or to its next
+write. So "close the stale issues and post a summary" is one program and a few
+approvals, not one program and thirty-one top-level calls, and the program's
+reasoning survives between them. `approval: "tool"` covers the rest of the
+run's calls to that tool, so thirty closes cost one prompt. One known write
+still goes straight to `call_destructive_tool`, and top-level discovery stays
+for catalog inspection. On a deployment without resumable writes (storage
+without `compareAndSet`), a program cannot write at all: the call fails
+`destructive_tool_requires_approval`, multi-step writes discover at the top
+level and run each step through `call_destructive_tool`, and the MCP
+instructions say so.
 
 The three discovery routes use deliberately different envelopes. These are their
 smallest successful one-tool shapes:
@@ -109,7 +125,7 @@ discovery. Both take the same arguments.
 | --- | --- |
 | `query` | two to four action/object terms; empty or whitespace-only browses |
 | `connector` | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous |
-| `safety` | `"readOnly"` for what generated code may call, `"approvalRequired"` for the complementary set that must cross `call_destructive_tool`, omitted or `"all"` for the complete configured catalog |
+| `safety` | `"readOnly"` for what runs unasked, `"approvalRequired"` for the complementary set that pauses a program or crosses `call_destructive_tool`, omitted or `"all"` for the complete configured catalog |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small |
 | `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures)) |
 | `fullDescriptions` | unabridged tool purposes, at the obvious cost |
@@ -516,9 +532,10 @@ attempted tool name; an unknown tool scopes the same query to the connector that
 answered. The suggested route follows the route the caller took:
 `tool: "search_tools"` for a top-level call, `function: "connecta.search"` with
 the same arguments when the miss happened inside `execute_code`, which has no
-way to call a tool. A read path that reaches an unannotated, write-capable, or
+way to call a tool. `call_tool` reaching an unannotated, write-capable, or
 destructive tool returns `nextAction` for `call_destructive_tool` with the
-canonical address. Nothing is executed by these records.
+canonical address; inside a program the same call pauses, and the pause result
+names `resume_execution` instead. Nothing is executed by these records.
 
 `connecta.describe` keeps its failures inline instead, so one miss cannot
 discard the other schemas; each failed entry carries a human `error`, typed

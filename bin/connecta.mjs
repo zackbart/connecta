@@ -249,6 +249,7 @@ async function doctor() {
     "call_tool",
     "execute_code",
     "get_result",
+    "resume_execution",
     "search_tools",
     "skills",
   ];
@@ -301,7 +302,10 @@ async function doctor() {
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
       `${executorName ? `${executorName} executed` : "code executed"}, ` +
-      "prescribed seven-tool surface" +
+      "prescribed eight-tool surface" +
+      // resume_execution is listed either way; whether programs can write is
+      // what an operator cannot tell from the tool list, so say when not.
+      (health.resumableWrites === false ? ", resumable writes off" : "") +
       (drifted.length > 0
         ? `, catalog drift on ${drifted.length} connector(s).`
         : "."),

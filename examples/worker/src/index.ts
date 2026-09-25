@@ -8,7 +8,7 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  * by Cloudflare Access, with OAuth/cache state in a KV namespace. Access
  * authenticates the request before this Worker runs and supplies the trusted
  * identity through ctx.access. The required Worker Loader binding in
- * wrangler.jsonc backs the seven-tool surface.
+ * wrangler.jsonc backs the eight-tool surface.
  *
  * The operator surface is wired here except for activity history, which needs
  * a database this example does not create for you: sign-in and the credential
@@ -71,6 +71,14 @@ function build(env: Env) {
     publicUrl: env.PUBLIC_URL,
     storage,
     executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
+    // Resumable writes — a program pausing at a write until resume_execution
+    // approves it — need storage with an atomic compareAndSet, and Workers KV
+    // cannot provide one. On KV they are off: programs refuse writes and
+    // resume_execution says there is nothing to resume. This line states that
+    // choice (without it connecta would warn once at startup). To let programs
+    // pause, switch to the D1 store in README.md § "Strongly consistent
+    // storage" and delete this line.
+    execute: { resumableWrites: false },
     auth: [
       // Access owns admission policy. A human identity may use MCP and the
       // operator pages; a service token may use MCP but cannot mutate operator

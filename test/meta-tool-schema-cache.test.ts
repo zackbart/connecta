@@ -1,6 +1,6 @@
 // Every /mcp request builds a fresh McpServer, and the SDK renders each
 // registered tool's input schema at registration and again for tools/list.
-// The seven meta-tool inputs are module constants, so that rendering is
+// The eight meta-tool inputs are module constants, so that rendering is
 // derived once per process and reused. This suite counts zod's own JSON
 // Schema conversions to prove it, and checks that what legitimately varies —
 // descriptions by deployment and by identity-scoped view — still does.
@@ -44,7 +44,7 @@ vi.mock("zod", async (importOriginal) => {
 });
 
 const TOKEN = "test-token-123";
-const META_TOOLS = 7;
+const META_TOOLS = 8;
 
 const stubExecutor: Executor = {
   execute: async () => ({ result: null }),

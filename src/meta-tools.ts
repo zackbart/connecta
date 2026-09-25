@@ -1097,7 +1097,7 @@ export function createMetaTools(
   };
 }
 
-const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds direct or program calls; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses.`;
+const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses.`;
 const CALL_DESC =
   'Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a get_result action.';
 const CALL_DESTRUCTIVE_DESC =
@@ -1217,7 +1217,8 @@ const GET_RESULT_INPUT = advertisedSchema(
 
 /**
  * Register the six explicit meta-tools onto an McpServer instance.
- * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
+ * `registerExecuteTool` adds the seventh, `execute_code`, and
+ * `registerResumeTool` the eighth, `resume_execution`. Broad discovery and
  * multi-call work uses discovery and ordinary JavaScript promises inside a
  * program, which `execute_code` builds over the same
  * `CatalogService` and `InvocationService` these handlers use — one shared

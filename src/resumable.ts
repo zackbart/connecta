@@ -1180,7 +1180,7 @@ function pausedResult(
           approval: "call",
         },
       },
-      hint: 'Not sent. To run it, call resume_execution repeating this address and args exactly; approval "tool" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated.',
+      hint: 'Not sent. To run it, call resume_execution repeating this address and args exactly; approval "tool" also covers later calls to this tool for the rest of the run. Every read before this point is replayed from the journal, not repeated. If resume_execution is denied, that is the human\'s answer: report it rather than sending the write another way.',
     },
   });
 }
@@ -1561,6 +1561,10 @@ function flaggingProtoArgs<I, O>(
     },
   };
 }
+// Listed on every deployment, so the surface never changes shape; one whose
+// storage cannot claim atomically says plainly that nothing will pause.
+const RESUME_OFF_DESC =
+  "Resumes a program paused at a write. This deployment does not pause programs — execute_code refuses tools not annotated readOnlyHint: true — so there is nothing to resume. Send a write through call_destructive_tool.";
 
 // Built once at module scope, like the other meta-tool inputs.
 const RESUME_INPUT = flaggingProtoArgs(advertisedSchema(
@@ -1588,7 +1592,7 @@ export function registerResumeTool(
   server.registerTool(
     "resume_execution",
     {
-      description: RESUME_DESC,
+      description: ctx.settings ? RESUME_DESC : RESUME_OFF_DESC,
       inputSchema: RESUME_INPUT,
       // The one program tool that sends writes, so the host's permission
       // prompt shows it — with the exact write in its arguments.

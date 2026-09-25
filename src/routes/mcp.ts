@@ -301,7 +301,7 @@ function serveMcp(
   const servers: McpServer[] = [];
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
-      instructions: instructionsFor(),
+      instructions: instructionsFor(resumable !== undefined),
       cacheHints: {
         "tools/list": {
           ttlMs: 3_600_000,
@@ -376,14 +376,15 @@ function serveMcp(
         : {}),
       resumable,
     });
-    if (resumable) {
-      registerResumeTool(server, registry, {
-        runner,
-        settings: resumable,
-        ...(activity ? { activity } : {}),
-        requestSignal: request.signal,
-      });
-    }
+    // Always registered, so the surface is the same eight tools on every
+    // deployment; without resumable writes it answers that there is nothing
+    // to resume.
+    registerResumeTool(server, registry, {
+      runner,
+      settings: resumable,
+      ...(activity ? { activity } : {}),
+      requestSignal: request.signal,
+    });
     servers.push(server);
     return server;
   };
