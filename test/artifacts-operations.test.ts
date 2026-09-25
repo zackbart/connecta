@@ -351,6 +351,22 @@ describe("limits", () => {
     expect(!count.ok && count.validation?.errors[0]?.message).toMatch(/would have 3 documents; the limit is 2/);
   });
 
+  it("bounds distinct document names while retaining removed names' versions", async () => {
+    const { ops } = setup({ documents: 2 });
+    await created(ops);
+    for (let index = 1; index < 64; index++) {
+      const name = `d${index}`;
+      const added = await ops.setDocuments({ id: "q3-bugs", documents: { [name]: { baseVersion: 0, value: index } }, by: bob });
+      expect(added.ok).toBe(true);
+      const removed = await ops.setDocuments({ id: "q3-bugs", documents: { [name]: { baseVersion: 1, value: null } }, by: bob });
+      expect(removed.ok).toBe(true);
+    }
+    const overflow = await ops.setDocuments({ id: "q3-bugs", documents: { d64: { baseVersion: 0, value: 64 } }, by: bob });
+    expect(!overflow.ok && overflow.message).toMatch(/64 distinct document names/);
+    const reused = await ops.setDocuments({ id: "q3-bugs", documents: { d1: { baseVersion: 2, value: 1 } }, by: bob });
+    expect(reused.ok && reused.head.documents.d1?.version).toBe(3);
+  });
+
   it("refuses values a page could not read as data", async () => {
     const { ops } = setup();
     await created(ops);

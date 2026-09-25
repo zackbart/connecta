@@ -1035,7 +1035,5 @@ passing one table is also the check on the executor duties above, with
 | `X3`, `X6` | `test/quickjs-executor.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface itself is checked by `test/server.test.ts` (the exact eight-tool
-list) and `test/code-first-surface.test.ts` (the fold's construction rules, the
-required executor, the refusals a removed top-level tool now gets, copy, and
-measured size).
+The surface itself is checked by `test/server.test.ts` (the exact eight-tool list) and
+`test/code-first-surface.test.ts` (construction, executor, removed tools, copy, and size).

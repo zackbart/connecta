@@ -44,6 +44,8 @@ const HISTORY_LIMIT = 20;
 const LIST_SCAN_LIMIT = 1000;
 /** What the viewer adds around a page beyond its source and documents. */
 const FRAME_OVERHEAD_BYTES = 4096;
+/** Tombstones keep version numbers, so distinct names need their own bound. */
+const DOCUMENT_NAMES_LIMIT = 64;
 
 type ArtifactFailureCode =
   | "conflict"
@@ -684,6 +686,14 @@ export class ArtifactOperations {
         if (change.key !== undefined && change.text !== undefined) bodies.set(change.key, change.text);
       }
       const nextHead: ArtifactHeadRecord = { ...this.#touch(head, input.by, at), documents: next };
+      if (Object.keys(next).length > DOCUMENT_NAMES_LIMIT &&
+          Object.keys(next).length > Object.keys(head.documents).length) {
+        return fail(
+          "invalid_args",
+          `Artifact ${quoteId(input.id)} has used ${DOCUMENT_NAMES_LIMIT} distinct document names. ` +
+            "Reuse an existing name or create another artifact; removed names keep their version history.",
+        );
+      }
       const live = liveDocuments(nextHead);
       const total = dataBytesOf(nextHead);
       const totals = checkDocumentTotals(live.length, total, limits);

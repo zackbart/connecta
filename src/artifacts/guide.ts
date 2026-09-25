@@ -121,6 +121,7 @@ team only.
 | Page source | ${size(limits.sourceBytes)} |
 | One document, serialized | ${size(limits.documentBytes)} |
 | Documents per artifact | ${limits.documents} |
+| Distinct document names over its lifetime | 64 (removed names keep their versions) |
 | All documents together | ${size(limits.totalDocumentBytes)} |
 | Page plus documents | ${size(limits.renderedBytes)} |
 | Title | ${limits.titleChars} characters |
