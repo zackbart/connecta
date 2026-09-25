@@ -770,9 +770,9 @@ run had already stopped, which was never an attempt.
 ## Pausing and resuming
 
 A program pauses host-side at its first write needing approval;
-`resume_execution`, the one destructive-annotated way back, repeats that write
-to approve it, and the run replays from a journal to send it and carry on. A
-paused run is data, not a held program, so a restart loses nothing
+`resume_execution` repeats that write to approve it, and the run replays from a
+journal to send it and carry on. A paused run is data, not a held program, so a
+restart loses nothing
 ([#565](https://github.com/zackbart/connecta/issues/565)); `ExecuteResult` and
 the executor duties are unchanged.
 
@@ -802,21 +802,24 @@ pauses keep that deadline, so no replay mixes old reads with new. Another
 subject or pool finds no run.
 
 **W4.** `resume_execution` takes `token`, `address`, `args`, optional
-`approval`, and a `reason` it drops. The address must match and the args be
-the same JSON, key order aside, or it is `approval_mismatch`. That,
-`execution_token_stale` (answered with the current pause), `execution_expired`,
-and `execution_not_found` refuse before the claim and consume nothing. A
-repeated resume of an ended run returns its answer, even past expiry.
+`approval`, and a `reason` it drops. The address must match and the args be the
+same JSON, key order aside and no `__proto__` key, or it is
+`approval_mismatch`. That, `execution_token_stale` (with the current pause),
+`execution_in_progress` (a live claim), `execution_expired` (with counts if
+writes were sent), and `execution_not_found` refuse before the claim and
+consume nothing. A repeat of an ended run returns its answer, even past expiry.
 
 **W5.** An approved write is sent at most once. Resuming claims the run by
 compare-and-set; a racing resume gets `execution_in_progress`. Each live write
 is first marked `sending` on the header, and a claim found moved sends nothing
-further and stops `execution_claim_lost`. The header outlives `expiresAt`
-while a claim is live. Replay picks up only at a pause: a play that ended
-otherwise — executor failure (admission, cancellation, the `L3` watchdog) or a
-lapsed claim — returns the run to its pause only if it sent no write; a write
-left `sending` fails `write_outcome_unknown`, and sent writes fail
-`execution_interrupted`, since the reads after them were never journaled.
+further and stops `execution_claim_lost`. The header outlives `expiresAt` while
+a claim is live, and by 30 minutes once a write was sent. A storage call over
+its deadline (the host call's, at least 5 s) fails: before dispatch nothing is
+sent, after it the run stops with the write counted. Replay picks up only at a
+pause: a play ended otherwise — executor failure (admission, cancellation, the
+`L3` watchdog) or a lapsed claim — returns to its pause only if it sent no
+write; a write left `sending` fails `write_outcome_unknown`, and sent writes
+fail `execution_interrupted`, the reads after them never journaled.
 
 **W6.** A replay runs from the top on the journal's clock and seed. A recorded
 call — matched by operation, address as written, and canonical arguments, in
@@ -827,7 +830,7 @@ live. `emit` is not journaled; only the completing play delivers.
 
 **W7.** `approval: "call"`, the default, covers that one write; `"tool"` covers
 every later call to that canonical address for the run. Approvals live in the
-header; nothing else grants one.
+header, a retry's replacing one that sent nothing; nothing else grants one.
 
 **W8.** A replay fails `execution_diverged`, never replayed again, when (a) a
 call has no record before the approved write is repeated, (b) the program
@@ -837,11 +840,12 @@ finishes without repeating it, or (c) without repeating a write already sent.
 wherever it is found — beside a pause, after the program returned, at a
 takeover — with its address, its args within the 512-byte echo budget, and
 `writes: { succeeded, failed, unknown }`; a failed run is never replayed. Only
-a refusal (`auth_required`, `invalid_args`, `not_found`, `rate_limited`) or
-the tool's own `isError` answers; an `isError` reading as a timeout does not,
-and `connector_call_failed` — an oversized body, a refused redirect — may come
+a refusal (`auth_required`, `invalid_args`, `not_found`, `rate_limited`) or the
+tool's own `isError` answers; an `isError` reading as a timeout does not, and
+`connector_call_failed` — an oversized body, a refused redirect — may come
 after the write landed. Every error from a resumed play carries `writes`, and
-a program that throws after writing ends the run `failed` with them.
+once one landed or may have, `nextAction` says to check first; a program that
+throws after writing ends the run `failed` with them.
 
 **W10.** `execute.maxWrites` (default 10) bounds a run's writes beyond the host
 calls they spend, checked at the gate — so an over-budget write fails
@@ -996,10 +1000,10 @@ passing one table is also the check on the executor duties above, with
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself, `paused` and `approved` events), `test/activity.test.ts` (the shared code → friction table, the identity clamp, zero-attempt pauses and approvals) |
 | `V5` | `test/resumable.test.ts` (replay adds only the approval and the live write), `test/guest-api-contract.test.ts` |
 | `W1`, `W2` | `test/guest-api-contract.test.ts` (nothing after a pause gets through, a `__proto__` write refused, on both executors), `test/resumable.test.ts` (the pause shape, reproducible pause points, oversized pending writes, a write gated after the program returned), `test/invocation-pipeline.test.ts` (the gate after validation) |
-| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, stale tokens, a repeated resume) |
-| `W5` | `test/resumable.test.ts` (two resumes racing for a pause, a crashed claimant's `sending` write never sent, a lapsed claim taken over, a claim lost mid-play and the write it sent reported, executor failure returning to the pause, a cut-short or lapsed play that sent writes failing `execution_interrupted`, a claim outliving `expiresAt`, a deadline between mark and dispatch) |
-| `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
-| `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, the write budget) |
+| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, a `__proto__` repetition through the MCP schema, stale tokens, a repeated resume, an expired run's counts) |
+| `W5` | `test/resumable.test.ts` (two resumes racing for a pause, a crashed claimant's `sending` write never sent, a lapsed claim taken over, a claim lost mid-play and the write it sent reported, executor failure returning to the pause, a cut-short or lapsed play that sent writes failing `execution_interrupted`, a claim outliving `expiresAt`, a live or lapsed claim checked before expiry, a failed takeover's answer stored with it, storage that never answers before and after dispatch, a deadline between mark and dispatch) |
+| `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a retry's scope replacing an unused approval, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
+| `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, check-first advice once a write landed, the write budget) |
 | `W11` | `test/code-first-surface.test.ts`, `test/resumable.test.ts` (construction, the default, `/health`, the unavailable answer) |
 | `X12` | `test/guest-api-contract.test.ts` (a program that keeps calling after the pause, on both executors) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
