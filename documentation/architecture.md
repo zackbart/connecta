@@ -198,8 +198,12 @@ flag, the source still recorded no abort or cancellation, so recovery did not
 rely on runtime cleanup. The [recovery observations](https://github.com/zackbart/connecta/blob/32d8e94/scripts/probes/worker-disconnect-recovered-2026-09-25.json)
 also retain two inconclusive queue-handoff cases: concurrent client connections
 reached different isolates and could not establish an abandoned queued waiter.
-The Node and workerd regression suites cover expired waiters, orphaned handoffs,
-and identity-safe late release deterministically.
+A [second trial using HTTP/2](https://github.com/zackbart/connecta/blob/b174812/scripts/probes/worker-disconnect-h2-2026-09-25.json)
+repeated the twelve passing core cases and verified queued cancellation with
+request signals enabled. Even on one HTTP/2 connection, the no-signal queue case
+crossed isolates and remained inconclusive. The Node and workerd regression
+suites cover expired waiters, orphaned handoffs, and identity-safe late release
+deterministically.
 
 To repeat from a repository checkout, run
 `node scripts/probes/worker-disconnect.mjs` with an authenticated Wrangler.
