@@ -55,7 +55,8 @@ export default {
     let app = apps.get(id);
     if (!app) { app = createConnecta({
       connectors: [], logger: 'silent', executor: { execute: async () => ({ result: null }) },
-      admission: { requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1000,
+      admission: { requests: { concurrency: 1, maxQueueSize: url.searchParams.has('queue') ? 1 : 0,
+        queueTimeoutMs: url.searchParams.has('queue') ? 6000 : 1000,
         maxDurationMs: ${maxDurationMs} } },
       auth: { kind: 'probe', authorize(req) {
         if (req.headers.get('x-probe-pass') === 'yes') return { ok: true };
@@ -106,16 +107,17 @@ try {
       await wait(2000);
     }
     for (const route of ["raw", "mcp"]) {
-      for (const mode of ["heartbeat", "idle-timer", "stalled"]) {
+      for (const mode of ["heartbeat", "idle-timer", "stalled", ...(route === 'mcp' ? ['queued-handoff'] : [])]) {
         const id = `${route}-${mode}-${enabled}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         const headers = { authorization: `Bearer ${key}` };
-        const listTools = () => fetch(`${origin}/mcp?id=${id}`, { method: "POST", headers: {
+        const listTools = (signal) => fetch(`${origin}/mcp?id=${id}`, { method: "POST", signal, headers: {
           ...headers, "x-probe-pass": "yes", "content-type": "application/json",
           accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
         }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
-        const response = await fetch(`${origin}/${route}?id=${id}&mode=${mode}`, { headers, signal: controller.signal });
+        const suffix = mode === 'queued-handoff' ? 'mode=heartbeat&queue=1' : `mode=${mode}`;
+        const response = await fetch(`${origin}/${route}?id=${id}&${suffix}`, { headers, signal: controller.signal });
         const responseAt = Date.now();
         const isolate = response.headers.get("x-probe-isolate");
         const reader = response.body.getReader();
@@ -127,7 +129,23 @@ try {
           catch (error) { clientEnd = { kind: 'error', message: String(error) }; }
         })();
         let whileLive;
-        if (route === 'mcp') {
+        let abandonedQueue;
+        if (mode === 'queued-handoff') {
+          const orphanAbort = new AbortController();
+          const orphan = listTools(orphanAbort.signal).then(r => r.body?.cancel()).catch(() => {});
+          try {
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const before = await fetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
+              abandonedQueue = { sameIsolate: before.isolate === isolate,
+                queued: before.health.admission.requests.queued, elapsedMs: Date.now() - responseAt };
+              if (abandonedQueue.sameIsolate && abandonedQueue.queued === 1) break;
+              await wait(20);
+            }
+          } finally {
+            orphanAbort.abort();
+            await orphan;
+          }
+        } else if (route === 'mcp') {
           const clientEndBeforeCheck = clientEnd ?? null;
           const competing = await listTools();
           whileLive = { status: competing.status,
@@ -151,7 +169,8 @@ try {
         // Do not read /health after expiry before this request. Admission must
         // recover from acquire itself, without a monitoring request sweeping it.
         await wait(Math.max(0, maxDurationMs + 500 - (Date.now() - responseAt)));
-        const followup = await listTools();
+        const followupStartedAt = Date.now();
+        const followup = await listTools(AbortSignal.timeout(10000));
         const followupBody = await followup.text();
         let toolCount;
         try { toolCount = JSON.parse(followupBody).result?.tools?.length; } catch {}
@@ -170,16 +189,18 @@ try {
         const observation = { enabled, servedVersion: response.headers.get('x-probe-version'),
           compatibilityDate: "2025-01-01", flags, maxDurationMs, route, mode, id, isolate,
           status: response.status, first: first?.value ? new TextDecoder().decode(first.value) : first,
-          clientEndedBeforeAbort, whileLive,
+          clientEndedBeforeAbort, whileLive, abandonedQueue,
           sameIsolate: Boolean(same), events: same?.events.filter(e => e.id === id),
           admission: same?.health.admission.requests,
           followup: { status: followup.status, sameIsolate: followup.headers.get("x-probe-isolate") === isolate,
-            toolCount, body: followupBody.slice(0, 300) },
+            toolCount, elapsedMs: Date.now() - followupStartedAt, body: followupBody.slice(0, 300) },
         };
         observation.passed = observation.servedVersion === String(enabled) &&
           response.status === (route === 'mcp' ? 401 : 200) && observation.sameIsolate &&
           observation.admission.active === 0 && observation.followup.status === 200 &&
           observation.followup.sameIsolate && toolCount === 8 &&
+          (!abandonedQueue || (abandonedQueue.sameIsolate && abandonedQueue.queued === 1 &&
+            abandonedQueue.elapsedMs < maxDurationMs && observation.followup.elapsedMs < maxDurationMs + 1000)) &&
           (!whileLive || (whileLive.sameIsolate && whileLive.elapsedMs >= 0 && whileLive.elapsedMs < maxDurationMs &&
             (whileLive.status === 503 || (whileLive.clientEndBeforeCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
         observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs < 0 || whileLive.elapsedMs >= maxDurationMs)
