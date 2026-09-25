@@ -1162,6 +1162,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // SDK v2 selects its validator by runtime export condition: AJV on
       // Node and @cfworker/json-schema under workerd. The Workers-safe path
       // no longer needs Connecta-specific wiring.
+      const handshakeAbort = new AbortController();
       const c = new Client(
         { name: "connecta", version: CONNECTA_VERSION },
         {
@@ -1173,6 +1174,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           inputRequired: { autoFulfill: false },
         },
       );
+      // @modelcontextprotocol/client 2.0.0 can attempt the legacy initialized
+      // notification after we close its transport. Its rejected Promise is
+      // unhandled under workerd even though connect() has a caller. This
+      // connection is already abandoned, so skip only that final handshake
+      // notification after our abort. Remove when the SDK owns this race:
+      // https://github.com/modelcontextprotocol/typescript-sdk/issues/2864
+      const notify = c.notification.bind(c);
+      c.notification = (message, options) => {
+        if (handshakeAbort.signal.aborted && message.method === "notifications/initialized") {
+          return Promise.resolve();
+        }
+        return notify(message, options);
+      };
       const t = buildTransport(ctx, provider, credentialFramed);
       if (!owned()) {
         detach(closeConnection(null, t, ctx.logger));
@@ -1186,12 +1200,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const held: { client: Client | null } = { client: null };
       yield* Scope.addFinalizer(
         lease,
-        Effect.suspend(() => closeConnection(held.client, t, ctx.logger)),
+        Effect.sync(() => handshakeAbort.abort()).pipe(
+          Effect.andThen(Effect.suspend(() => closeConnection(held.client, t, ctx.logger))),
+        ),
       );
       state.lease = lease;
       state.transport = t;
       return yield* Effect.gen(function* () {
-        yield* promised(() => c.connect(t));
+        yield* promised(() => c.connect(t, { signal: handshakeAbort.signal }));
         // A probe deadline can end its scope while connect is still in flight.
         // The transport is closed immediately by closeScope; if connect wins
         // that race anyway, close the resulting client rather than resurrecting

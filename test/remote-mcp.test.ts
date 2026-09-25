@@ -1248,14 +1248,13 @@ describe("remoteMcp() connection lifecycle", () => {
    * last message goes out. The in-memory transport and storage do no I/O, so
    * each interleaving is deterministic, and sweeping `ticks` visits every
    * point from there to the call's result — including the one between a
-   * connect resolving and its waiter picking up the client. The sweep starts
-   * at the end of the handshake because the SDK drops a rejection of its own
-   * when a close lands inside it, which workerd reports as unhandled.
+   * connect resolving and its waiter picking up the client. An early sweep
+   * starts at connect itself and includes both handshake paths.
    */
   async function sweepTeardown(
     call: Step,
     teardown: Step,
-    opts: { oauth?: boolean } = {},
+    opts: { oauth?: boolean; startAt?: "beginning" | "initialized"; legacy?: boolean } = {},
   ): Promise<{ swept: number; outcomes: unknown[] }> {
     const outcomes: unknown[] = [];
     for (let ticks = 0; ticks < 5_000; ticks++) {
@@ -1287,6 +1286,7 @@ describe("remoteMcp() connection lifecycle", () => {
       const connector = remoteMcp("down", {
         url: "https://unused.example/mcp",
         description: "Downstream",
+        ...(opts.legacy ? { versionNegotiation: "legacy" as const } : {}),
         ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
         _transportFactory: () => watched,
       });
@@ -1299,7 +1299,9 @@ describe("remoteMcp() connection lifecycle", () => {
       void outcome.then(() => {
         settled = true;
       });
-      while (!initialized && !settled) await Promise.resolve();
+      if (opts.startAt !== "beginning") {
+        while (!initialized && !settled) await Promise.resolve();
+      }
       for (let tick = 0; tick < ticks && !settled; tick++) {
         await Promise.resolve();
       }
@@ -1316,6 +1318,19 @@ describe("remoteMcp() connection lifecycle", () => {
 
   const readsNulledClient = (outcome: unknown) =>
     outcome instanceof TypeError && /null/.test(outcome.message);
+
+  for (const legacy of [true, false]) {
+    it(`closes every point of the ${legacy ? "legacy" : "negotiated"} handshake without an unhandled rejection`, async () => {
+      const { swept, outcomes } = await sweepTeardown(
+        (connector, context) => connector.callTool("echo", { text: "x" }, context),
+        (connector, context) => connector.closeScope!(context),
+        { startAt: "beginning", legacy },
+      );
+      expect(swept).toBeGreaterThan(10);
+      expect(outcomes.at(-1)).toBe("ok");
+      expect(outcomes.slice(0, -1).some((outcome) => outcome !== "ok")).toBe(true);
+    });
+  }
 
   it("never hands a waiting call a client its scope has already torn down", async () => {
     const { swept, outcomes } = await sweepTeardown(
