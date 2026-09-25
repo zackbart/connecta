@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
+import { connect, constants } from "node:http2";
+import { Readable } from "node:stream";
 
 const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -18,9 +20,45 @@ const name = `connecta-disconnect-${Date.now().toString(36)}`;
 const key = randomBytes(24).toString("hex");
 const configPath = join(temp, "wrangler.json");
 const observations = [];
+const failures = [];
 const maxDurationMs = 2000;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let deploymentAttempted = false;
+const sessions = [];
+
+function h2Fetch(session, target, { method = "GET", headers = {}, body, signal } = {}) {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  if (session.probeError) return Promise.reject(session.probeError);
+  return new Promise((resolve, reject) => {
+    const url = new URL(target);
+    const request = session.request({ ":method": method, ":path": url.pathname + url.search, ...headers });
+    let settled = false;
+    const onAbort = () => request.close(constants.NGHTTP2_CANCEL);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    request.on("close", () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (!settled) reject(new Error("HTTP/2 stream closed before response"));
+    });
+    request.on("error", error => { if (!settled) reject(error); });
+    request.on("response", responseHeaders => {
+      try {
+        const responseHeadersWeb = new Headers();
+        for (const [name, value] of Object.entries(responseHeaders)) {
+          if (!name.startsWith(":")) responseHeadersWeb.set(name, String(value));
+        }
+        const response = new Response(Readable.toWeb(request), {
+          status: responseHeaders[":status"], headers: responseHeadersWeb,
+        });
+        settled = true;
+        resolve(response);
+      } catch (error) {
+        request.close(constants.NGHTTP2_CANCEL);
+        reject(error);
+      }
+    });
+    request.end(body);
+  });
+}
 
 const source = `
 import { createConnecta } from ${JSON.stringify(join(root, "src/index.ts"))};
@@ -109,15 +147,23 @@ try {
     for (const route of ["raw", "mcp"]) {
       for (const mode of ["heartbeat", "idle-timer", "stalled", ...(route === 'mcp' ? ['queued-handoff'] : [])]) {
         const id = `${route}-${mode}-${enabled}`;
+        // The queue case needs concurrent streams on one connection. Separate
+        // HTTP/1.1 connections were routed to different Worker isolates.
+        const session = mode === 'queued-handoff' ? connect(origin) : undefined;
+        if (session) {
+          sessions.push(session);
+          session.on('error', error => { session.probeError = error; });
+        }
+        const probeFetch = session ? (url, options) => h2Fetch(session, url, options) : fetch;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         const headers = { authorization: `Bearer ${key}` };
-        const listTools = (signal) => fetch(`${origin}/mcp?id=${id}`, { method: "POST", signal, headers: {
+        const listTools = (signal) => probeFetch(`${origin}/mcp?id=${id}`, { method: "POST", signal, headers: {
           ...headers, "x-probe-pass": "yes", "content-type": "application/json",
           accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
         }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
         const suffix = mode === 'queued-handoff' ? 'mode=heartbeat&queue=1' : `mode=${mode}`;
-        const response = await fetch(`${origin}/${route}?id=${id}&${suffix}`, { headers, signal: controller.signal });
+        const response = await probeFetch(`${origin}/${route}?id=${id}&${suffix}`, { headers, signal: controller.signal });
         const responseAt = Date.now();
         const isolate = response.headers.get("x-probe-isolate");
         const reader = response.body.getReader();
@@ -141,7 +187,7 @@ try {
           });
           try {
             for (let attempt = 0; attempt < 10; attempt++) {
-              const before = await fetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
+              const before = await probeFetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
               abandonedQueue = { sameIsolate: before.isolate === isolate,
                 queued: before.health.admission.requests.queued, elapsedMs: Date.now() - responseAt };
               if (abandonedQueue.sameIsolate && abandonedQueue.queued === 1) break;
@@ -152,7 +198,7 @@ try {
             await orphan;
           }
           await wait(50);
-          const after = await fetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
+          const after = await probeFetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
           abandonedQueue.orphanOutcome = orphanOutcome;
           abandonedQueue.afterAbort = { sameIsolate: after.isolate === isolate,
             queued: after.health.admission.requests.queued, elapsedMs: Date.now() - responseAt };
@@ -189,7 +235,7 @@ try {
         try { toolCount = JSON.parse(followupBody).result?.tools?.length; } catch {}
         const snapshots = [];
         for (let attempt = 0; attempt < 4; attempt++) {
-          const statsResponse = await fetch(`${origin}/stats?id=${id}`, { headers });
+          const statsResponse = await probeFetch(`${origin}/stats?id=${id}`, { headers });
           const statsText = await statsResponse.text();
           let stats;
           try { stats = JSON.parse(statsText); }
@@ -201,6 +247,7 @@ try {
         const same = snapshots.find(s => s.isolate === isolate);
         const observation = { enabled, servedVersion: response.headers.get('x-probe-version'),
           compatibilityDate: "2025-01-01", flags, maxDurationMs, route, mode, id, isolate,
+          transport: session ? 'h2' : 'fetch',
           status: response.status, first: first?.value ? new TextDecoder().decode(first.value) : first,
           clientEndedBeforeAbort, whileLive, abandonedQueue,
           sameIsolate: Boolean(same), events: same?.events.filter(e => e.id === id),
@@ -233,31 +280,35 @@ try {
         await mkdir(dirname(output), { recursive: true });
         await writeFile(output, JSON.stringify({ testedAt: new Date().toISOString(), name, observations }, null, 2));
         console.log(JSON.stringify(observation));
+        session?.destroy();
       }
     }
   }
   if (observations.some(row => !row.passed)) throw new Error(`Disconnect regression not verified; see ${output}`);
+} catch (error) {
+  failures.push(error);
 } finally {
-  try {
-    if (deploymentAttempted) {
-      let deletionError;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
-          deletionError = undefined;
-          break;
-        } catch (error) {
-          deletionError = error;
-          if (attempt < 2) await wait(500);
-        }
+  for (const session of sessions) session.destroy();
+  if (deploymentAttempted) {
+    let deletionError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
+        deletionError = undefined;
+        break;
+      } catch (error) {
+        deletionError = error;
+        if (attempt < 2) await wait(500);
       }
-      if (deletionError) throw new Error(
-        `Could not delete disposable Worker ${name}. Run wrangler delete ${name} --force.`,
-        { cause: deletionError },
-      );
-      console.log(`Deleted ${name}`);
     }
-  } finally {
-    await rm(temp, { recursive: true, force: true });
+    if (deletionError) failures.push(new Error(
+      `Could not delete disposable Worker ${name}. Run wrangler delete ${name} --force.`,
+      { cause: deletionError },
+    ));
+    else console.log(`Deleted ${name}`);
   }
+  try { await rm(temp, { recursive: true, force: true }); }
+  catch (error) { failures.push(error); }
 }
+if (failures.length > 1) throw new AggregateError(failures, "Probe and cleanup failed");
+if (failures.length === 1) throw failures[0];
