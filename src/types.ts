@@ -459,6 +459,8 @@ export interface AdmissionSnapshot {
   maxQueueSize: number;
   queueTimeoutMs: number;
   retryAfterMs: number;
+  /** Hard admitted-request lifetime, present only on the /mcp pool. */
+  maxDurationMs?: number;
   active: number;
   queued: number;
   closed: boolean;

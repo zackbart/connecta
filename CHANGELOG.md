@@ -161,6 +161,16 @@ the page can ignore it.
 
 ### Fixed
 
+- **Worker request admission recovers after missing cleanup (#595).** An
+  admitted `/mcp` request now has a configurable total lifetime, five minutes
+  by default, covering auth, tools, and response delivery. Its own timer aborts
+  live work, including connector calls. If workerd ends it without running
+  JavaScript cleanup, the next request or a queued request's timer reclaims
+  only the expired permit. An orphaned queued request cannot strand its next
+  permit indefinitely, and late cleanup cannot release a successor's permit.
+  The Worker example enables `enable_request_signal` for prompt live disconnect
+  cleanup.
+
 - **Operator notices no longer render downstream error text**
   ([#568](https://github.com/zackbart/connecta/issues/568)). The OAuth
   connect/disconnect notice and the credential Test result showed whatever the

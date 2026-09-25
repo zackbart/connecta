@@ -54,6 +54,8 @@ export class ExecutorExecutionError extends ExecutorAdmissionError {
 export interface AdmissionLease {
   /** Time spent waiting behind active work. Zero for immediate admission. */
   readonly waitMs: number;
+  /** Time left in the optional total admitted-request lifetime. */
+  remainingMs(): number | undefined;
   release(): void;
 }
 
@@ -74,6 +76,8 @@ export interface AdmissionControllerOptions {
   queueTimeoutMs: number;
   /** Suggested delay exposed with retryable overload failures. */
   retryAfterMs?: number;
+  /** Hard admitted-request lifetime; omitted for executor admission. */
+  maxDurationMs?: number;
 }
 
 function positiveWhole(value: number, name: string): number {
@@ -100,8 +104,10 @@ export class AdmissionController {
   readonly maxQueueSize: number;
   readonly queueTimeoutMs: number;
   readonly retryAfterMs: number;
+  readonly maxDurationMs: number | undefined;
 
   private active = 0;
+  private readonly leases = new Map<symbol, { expiresAt?: number }>();
   private closed = false;
   private readonly waiters: Waiter[] = [];
   private admittedTotal = 0;
@@ -127,6 +133,12 @@ export class AdmissionController {
       options.retryAfterMs ?? this.queueTimeoutMs,
       "retryAfterMs",
     );
+    this.maxDurationMs = options.maxDurationMs === undefined
+      ? undefined
+      : positiveWhole(options.maxDurationMs, "maxDurationMs");
+    if (this.maxDurationMs !== undefined && this.maxDurationMs > 2_147_483_647) {
+      throw new TypeError("maxDurationMs must be at most 2,147,483,647 milliseconds.");
+    }
   }
 
   get activeCount(): number {
@@ -138,11 +150,13 @@ export class AdmissionController {
   }
 
   snapshot(): AdmissionSnapshot {
+    this.reapExpired();
     return {
       concurrency: this.concurrency,
       maxQueueSize: this.maxQueueSize,
       queueTimeoutMs: this.queueTimeoutMs,
       retryAfterMs: this.retryAfterMs,
+      ...(this.maxDurationMs !== undefined ? { maxDurationMs: this.maxDurationMs } : {}),
       active: this.active,
       queued: this.waiters.length,
       closed: this.closed,
@@ -189,29 +203,82 @@ export class AdmissionController {
   }
 
   private makeLease(waitMs: number): AdmissionLease {
-    let released = false;
+    const id = Symbol("admission lease");
+    const record: { expiresAt?: number } = this.maxDurationMs !== undefined
+      ? { expiresAt: Date.now() + this.maxDurationMs }
+      : {};
+    this.leases.set(id, record);
     return {
       waitMs,
+      remainingMs: () => !this.leases.has(id)
+        ? 0
+        : record.expiresAt === undefined
+          ? undefined
+          : Math.max(0, record.expiresAt - Date.now()),
       release: () => {
-        if (released) return;
-        released = true;
-        this.release();
+        if (!this.leases.delete(id)) return;
+        this.releaseSlot();
       },
     };
   }
 
-  private release(): void {
+  private releaseSlot(): void {
     if (this.active > 0) this.active--;
     if (this.closed) return;
-    const waiter = this.waiters.shift();
-    if (!waiter) return;
-    const waitMs = Math.max(0, Date.now() - waiter.queuedAt);
-    this.admittedTotal++;
-    this.queueWaitCount++;
-    this.queueWaitTotalMs += waitMs;
-    this.queueWaitMaxMs = Math.max(this.queueWaitMaxMs, waitMs);
-    this.active++;
-    Deferred.doneUnsafe(waiter.outcome, Effect.succeed(this.makeLease(waitMs)));
+    this.fillSlots();
+  }
+
+  private fillSlots(): void {
+    this.pruneExpiredWaiters();
+    while (this.active < this.concurrency) {
+      const waiter = this.waiters.shift();
+      if (!waiter) return;
+      const waitMs = Math.max(0, Date.now() - waiter.queuedAt);
+      this.admittedTotal++;
+      this.queueWaitCount++;
+      this.queueWaitTotalMs += waitMs;
+      this.queueWaitMaxMs = Math.max(this.queueWaitMaxMs, waitMs);
+      this.active++;
+      Deferred.doneUnsafe(waiter.outcome, Effect.succeed(this.makeLease(waitMs)));
+    }
+  }
+
+  private pruneExpiredWaiters(): void {
+    const now = Date.now();
+    for (let index = this.waiters.length - 1; index >= 0; index--) {
+      const waiter = this.waiters[index]!;
+      if (now - waiter.queuedAt < this.queueTimeoutMs) continue;
+      this.waiters.splice(index, 1);
+      this.rejectedTotal++;
+      Deferred.doneUnsafe(waiter.outcome, Effect.fail(this.overloaded(
+        `Executor admission timed out after ${this.queueTimeoutMs}ms.`,
+      )));
+    }
+  }
+
+  private reapExpired(): void {
+    this.pruneExpiredWaiters();
+    if (this.maxDurationMs === undefined) return;
+    const now = Date.now();
+    for (const [id, lease] of this.leases) {
+      if (lease.expiresAt !== undefined && lease.expiresAt <= now) {
+        this.leases.delete(id);
+        this.active--;
+      }
+    }
+    if (!this.closed) this.fillSlots();
+  }
+
+  private nextReapDelay(): number {
+    let next = Number.POSITIVE_INFINITY;
+    for (const lease of this.leases.values()) {
+      if (lease.expiresAt !== undefined) next = Math.min(next, lease.expiresAt);
+    }
+    // A queued request's own timer reaps the earliest admitted lease. A
+    // fallback check covers a briefly empty lease map after a handoff.
+    return Number.isFinite(next)
+      ? Math.max(1, next - Date.now())
+      : 250;
   }
 
   private remove(waiter: Waiter): boolean {
@@ -246,6 +313,7 @@ export class AdmissionController {
   static {
     provideAdmissionProgram((controller, signal) =>
       Effect.suspend(() => {
+        controller.reapExpired();
         if (controller.closed) {
           controller.closedTotal++;
           return Effect.fail(
@@ -309,6 +377,13 @@ export class AdmissionController {
             ),
           ),
         ];
+        if (controller.maxDurationMs !== undefined) {
+          contenders.push(Effect.forever(
+            Effect.suspend(() => Effect.sleep(Duration.millis(controller.nextReapDelay()))).pipe(
+              Effect.andThen(Effect.sync(() => controller.reapExpired())),
+            ),
+          ));
+        }
         if (signal) {
           contenders.push(
             fromSignal(signal).pipe(

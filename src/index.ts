@@ -194,6 +194,11 @@ export interface AdmissionPoolConfig {
   retryAfterMs?: number;
 }
 
+export interface RequestAdmissionConfig extends AdmissionPoolConfig {
+  /** Hard lifetime of an admitted /mcp request. Default 300,000 ms. */
+  maxDurationMs?: number;
+}
+
 /**
  * Runtime-portable server-memory boundaries. `/health` and operator routes do
  * not consume these permits, so they remain responsive during MCP saturation.
@@ -203,7 +208,7 @@ export interface ConnectaAdmissionConfig {
    * The `/mcp` request boundary. Defaults to 16 active, 32 queued, and a
    * 5-second maximum wait.
    */
-  requests?: AdmissionPoolConfig;
+  requests?: RequestAdmissionConfig;
   /**
    * Fallback pool for an `executor` that does not implement its own `acquire`.
    * Defaults to 2 active, 8 queued, and a 5-second maximum wait. Bounded
@@ -337,6 +342,7 @@ const REQUEST_ADMISSION_DEFAULTS = {
   queueTimeoutMs: 5_000,
   retryAfterMs: 1_000,
 } as const;
+const DEFAULT_REQUEST_MAX_DURATION_MS = 300_000;
 
 const CODE_ADMISSION_DEFAULTS = {
   concurrency: 2,
@@ -348,12 +354,14 @@ const CODE_ADMISSION_DEFAULTS = {
 function admissionController(
   options: AdmissionPoolConfig | undefined,
   defaults: typeof REQUEST_ADMISSION_DEFAULTS | typeof CODE_ADMISSION_DEFAULTS,
+  maxDurationMs?: number,
 ): AdmissionController {
   return new AdmissionController({
     concurrency: options?.concurrency ?? defaults.concurrency,
     maxQueueSize: options?.maxQueueSize ?? defaults.maxQueueSize,
     queueTimeoutMs: options?.queueTimeoutMs ?? defaults.queueTimeoutMs,
     retryAfterMs: options?.retryAfterMs ?? defaults.retryAfterMs,
+    ...(maxDurationMs !== undefined ? { maxDurationMs } : {}),
   });
 }
 
@@ -381,6 +389,11 @@ const admissionPoolSchema = {
   queueTimeoutMs: null,
   retryAfterMs: null,
 } as const satisfies ClosedOptionSchema<AdmissionPoolConfig>;
+
+const requestAdmissionSchema = {
+  ...admissionPoolSchema,
+  maxDurationMs: null,
+} as const satisfies ClosedOptionSchema<RequestAdmissionConfig>;
 
 const CONFIG_SCHEMA = {
   connectors: null,
@@ -427,7 +440,7 @@ const CONFIG_SCHEMA = {
     approval: null,
   } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
-    requests: admissionPoolSchema,
+    requests: requestAdmissionSchema,
     code: admissionPoolSchema,
   } satisfies ClosedOptionSchema<ConnectaAdmissionConfig>,
   logger: null,
@@ -952,6 +965,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const requestAdmission = admissionController(
     config.admission?.requests,
     REQUEST_ADMISSION_DEFAULTS,
+    config.admission?.requests?.maxDurationMs ?? DEFAULT_REQUEST_MAX_DURATION_MS,
   );
   const configuredCodeAdmission = admissionController(
     config.admission?.code,

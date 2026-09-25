@@ -174,6 +174,20 @@ describe("ConnectaConfig boundary", () => {
         admission: { code: { queueTimeoutMs: Number.NaN } },
       }),
     ).toThrow("queueTimeoutMs must be a positive whole number");
+    expect(() =>
+      createConnecta({
+        connectors: [],
+        executor,
+        admission: { requests: { maxDurationMs: 0 } },
+      }),
+    ).toThrow("maxDurationMs must be a positive whole number");
+    expect(() =>
+      createConnecta({
+        connectors: [],
+        executor,
+        admission: { requests: { maxDurationMs: 3_000_000_000 } },
+      }),
+    ).toThrow("maxDurationMs must be at most 2,147,483,647 milliseconds");
   });
 
   it("forwards catalog freshness and persistence settings at the boundary", async () => {
@@ -263,6 +277,7 @@ describe("ConnectaConfig boundary", () => {
       "admission.requests.typo",
     ],
     ["admission", { code: { typo: true } }, "admission.code.typo"],
+    ["admission", { code: { maxDurationMs: 2_000 } }, "admission.code.maxDurationMs"],
     ["branding", { typo: true }, "branding"],
     [
       "branding",

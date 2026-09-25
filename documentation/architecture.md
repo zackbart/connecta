@@ -77,8 +77,8 @@ An admitted non-preflight `/mcp` request then takes five steps in
 
 1. **Admit.** One permit from the deployment-wide pool, taken before auth so an
    unauthenticated flood costs a permit rather than a Clerk lookup, and held
-   until the response *body* completes or the caller leaves, not until the
-   handler returns.
+   until the response *body* completes, the caller leaves, or its configured
+   lifetime ends, not until the handler returns.
 2. **Authorize.** Each `InboundAuth` provider's `authorize` in order, bearer
    before interactive. First `ok` admits; if all fail, the last provider's
    challenge is returned. No providers means open — development only, and it
@@ -130,6 +130,18 @@ settings win, and connecta warns the fallback was ignored. Invalid bounds throw
 at construction, because a pool that quietly became unbounded is worse than a
 deployment that refuses to boot. The queue is global FIFO across identities: a
 capacity boundary, not tenant fairness, and one deployment serves one tenant.
+`admission.requests.maxDurationMs` defaults to 300,000 ms and may be set to a
+positive whole number up to 2,147,483,647 ms. Its clock starts when admission
+grants a permit and covers authorization, tool execution, and response delivery.
+The owning request aborts its derived signal at that deadline, including signals
+passed to connector calls, and closes a live response. If workerd ends the
+request without running that timer or cancellation, the controller reclaims
+only the expired permit's scalar record on the next request (or a queued
+request's own timer). It never reads the old request's signal or touches its
+stream. Expired queued waiters are pruned before any handoff; every handed-off
+permit has its own deadline even if the recipient never resumes. Lease identities
+make an old late release harmless to a newer permit. Set the bound above the
+longest admitted request the deployment expects to serve.
 
 Call admission (`src/call-admission.ts`) answers what the envelope cannot see —
 a connector's optional policy over its own `Connector.callTool` attempts,
@@ -169,9 +181,11 @@ an actual MCP request; this measures retained capacity, not an infinite leak.
 
 Enable `enable_request_signal` when deploying on Workers: it let Connecta's
 abort listener cancel the source and release admission for live responses in
-this experiment. It does not solve runtime-ended streams. A timer owned by an
-already-ended request is not a reliable cleanup mechanism. The remaining
-capacity-recovery work is [#595](https://github.com/zackbart/connecta/issues/595).
+this experiment. It does not solve runtime-ended streams. The admitted-request
+bound above recovers capacity on the first later request at or after its
+deadline, even if the old request's timer never ran. This is capacity recovery,
+not proof that workerd cancelled an old stream. A still-live request reaches
+the same hard deadline and is aborted in its own context.
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
 
@@ -418,7 +432,7 @@ would be another partition's.
 
 | Area | Shape |
 | --- | --- |
-| Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, or at once if the handler fails first. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
+| Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, when its admitted-request lifetime ends in that request, or at once if the handler fails first. If workerd runs none of those callbacks, the next request reclaims only the expired admission record; it cannot close another request's Scope. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
 | Admission (`executor-admission.ts`, `call-admission.ts`) | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires. |
 | One tool call (`invocation.ts`) | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`. |
 | `execute_code` (`execute.ts`) | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own. |

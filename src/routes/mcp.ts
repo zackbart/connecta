@@ -4,7 +4,7 @@ import {
   McpServer,
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
-import { Effect, Exit, Result, Scope } from "effect";
+import { Duration, Effect, Exit, Option, Result, Scope } from "effect";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
 import { registerExecuteTool } from "../execute.js";
 import {
@@ -143,9 +143,9 @@ function closeWithBody(
   const reader = response.body.getReader();
   onAbort = () => {
     // `cancel()` belongs to an operator/auth/SDK-provided stream and may
-    // reject. Consume both outcomes: `.finally(release)` would release the
-    // permit but preserve the rejection as an unhandled promise.
-    void reader.cancel(signal.reason).then(release, release);
+    // reject or never settle. Release now; consume either outcome separately.
+    release();
+    void reader.cancel(signal.reason).catch(() => {});
   };
   signal.addEventListener("abort", onAbort, { once: true });
   if (signal.aborted) onAbort();
@@ -165,11 +165,8 @@ function closeWithBody(
       }
     },
     async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        release();
-      }
+      release();
+      await reader.cancel(reason);
     },
   });
   return new Response(body, {
@@ -282,6 +279,7 @@ function toolkitRetired(logger: Logger): Response {
 
 function serveMcp(
   request: Request,
+  requestSignal: AbortSignal,
   opts: ServerOptions,
   baseUrl: string,
   actor: ActivityActor,
@@ -339,7 +337,7 @@ function serveMcp(
       ...(opts.discoveryConcurrency !== undefined
         ? { discoveryConcurrency: opts.discoveryConcurrency }
         : {}),
-      requestSignal: request.signal,
+      requestSignal,
       ...(runtimeContext?.waitUntil
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
@@ -350,7 +348,7 @@ function serveMcp(
       executor: opts.executor,
       logger: opts.logger,
       ...(activity ? { activity } : {}),
-      requestSignal: request.signal,
+      requestSignal,
       ...(runtimeContext?.waitUntil
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
@@ -386,7 +384,7 @@ function serveMcp(
       runner,
       settings: resumable,
       ...(activity ? { activity } : {}),
-      requestSignal: request.signal,
+      requestSignal,
     });
     servers.push(server);
     return server;
@@ -503,7 +501,21 @@ export function createMcpRoute(
     if (request.method === "OPTIONS") {
       return Effect.succeed(cors(new Response(null, { status: 204 })));
     }
+    // This controller belongs to this request. Its signal reaches auth and
+    // every registered tool; a controller sweep never touches it.
+    const localAbort = new AbortController();
+    const onCallerAbort = () => localAbort.abort(request.signal.reason);
+    request.signal.addEventListener("abort", onCallerAbort, { once: true });
+    if (request.signal.aborted) onCallerAbort();
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     return scopedToBody(Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Effect.sync(() => {
+        if (!localAbort.signal.aborted) {
+          localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+        }
+        request.signal.removeEventListener("abort", onCallerAbort);
+        if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+      }));
       const admission = yield* Effect.result(
         admitted(opts.requestAdmission, request.signal),
       );
@@ -520,6 +532,17 @@ export function createMcpRoute(
         }
         return cors(requestAdmissionFailure(error));
       }
+      const remainingMs = admission.success.remainingMs();
+      if (remainingMs !== undefined && remainingMs <= 0) {
+        admission.success.release();
+        return cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
+      }
+      if (remainingMs !== undefined) {
+        deadlineTimer = setTimeout(() => {
+          localAbort.abort(new Error("MCP request lifetime exceeded."));
+        }, remainingMs);
+      }
+      const localRequest = new Request(request, { signal: localAbort.signal });
       if (admission.success.waitMs > 0) {
         opts.logger.debug("[connecta] MCP request admitted after queue wait", {
           waitMs: admission.success.waitMs,
@@ -531,8 +554,9 @@ export function createMcpRoute(
       // Effect `authorize` would put Effect in the /activity bundle, which
       // shares it, to save only the lookups an abandoned authorization
       // finishes on its own.
+      const handled = Effect.gen(function* () {
       const authz = yield* Effect.promise(() => authorize(
-        request,
+        localRequest,
         baseUrl,
         opts.auth,
         runtimeContext,
@@ -587,7 +611,8 @@ export function createMcpRoute(
         return cors(toolkitRetired(opts.logger));
       }
       return cors(yield* serveMcp(
-        request,
+        localRequest,
+        localAbort.signal,
         opts,
         baseUrl,
         authz.actor,
@@ -596,7 +621,16 @@ export function createMcpRoute(
         poolName,
         runtimeContext,
       ));
-    }), request.signal);
+      });
+      if (remainingMs === undefined) return yield* handled;
+      const bounded = yield* handled.pipe(
+        Effect.timeoutOption(Duration.millis(remainingMs)),
+      );
+      if (Option.isNone(bounded)) localAbort.abort(new Error("MCP request lifetime exceeded."));
+      return Option.isSome(bounded)
+        ? bounded.value
+        : cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
+    }), localAbort.signal);
   }
   return { handle: routeMcp, rejectOrigin };
 }
