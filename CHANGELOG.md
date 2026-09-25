@@ -26,8 +26,9 @@ connecta starts no background job. Stored pages use the operator sign-in,
 and a dedicated artifact origin may require signing in again because browser
 storage belongs to one origin. Page scripts run with an opaque origin and no
 network by default; only explicitly allowlisted script, style, and font
-origins may load. The connector's mutating tools are approval-exempt inside
+origins may load. Artifact version and configuration writes are approval-exempt inside
 programs by default; deployment config can restore the approval prompt.
+`run_refresh` requires host approval and is excluded from that exemption.
 Deployments that omit the module need no
 artifact storage, R2 bucket, cron, browser binding, or second domain.
 
@@ -131,7 +132,7 @@ for diagnostics.
   `set_documents` (plural and atomic), `rollback_artifact`,
   `archive_artifact`, `restore_artifact`, `set_refresh`, and `run_refresh`.
   Version-changing writes name their expected base, and every write records
-  its actor from the request's authorization. The connector skips approval
+  its actor from the request's authorization. The connector skips approval, except for `run_refresh`,
   inside `execute_code` through its own `approval:
   "never"` — `execute.approval: { artifacts: "ask" }` turns that off — while
   still spending the write budget and recording activity; `call_tool` still
