@@ -32,13 +32,15 @@ import {
 import { withoutProgramTerminator } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import {
-  MIN_STORAGE_TIMEOUT_MS,
   DEFAULT_MAX_WRITES,
+  ExemptWrites,
+  MIN_STORAGE_TIMEOUT_MS,
   RunState,
+  writeStateOf,
   type ResumableSettings,
   type RunStop,
 } from "./resumable.js";
-import { journalKey, type JournalOp } from "./run-journal.js";
+import { journalKey, type JournalOp, type WriteState } from "./run-journal.js";
 import { underAnySignal } from "./timeout.js";
 import {
   isApprovalExempt,
@@ -593,6 +595,8 @@ interface SandboxLimits {
   approval?: ApprovalPolicy | undefined;
   /** Writes one program may send; the run state keeps its own count. */
   maxWrites?: number | undefined;
+  /** Exempt writes when resumable writes are off, for close and drain. */
+  exemptWrites?: ExemptWrites | undefined;
 }
 
 /**
@@ -647,22 +651,35 @@ function sandboxProvider(
         )
       : Effect.void,
   );
-  const { runState } = limits;
+  const { runState, exemptWrites } = limits;
   const approval = limits.approval ?? NO_EXEMPTIONS;
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
-  let exemptWrites = 0;
+  let exemptWriteCount = 0;
   /**
    * Without resumable writes nothing can pause, but a config exemption
    * (#566) still lets its writes run: the gate covers exactly the exempt
    * calls, spends the write budget on each, and every other write keeps
-   * E4's refusal, ahead of validation as it always was.
+   * E4's refusal, ahead of validation as it always was. A dispatched write
+   * is tracked until it settles (`ExemptWrites`), so the play can wait for
+   * it rather than abort it.
    */
-  const exemptOnly = {
+  const exemptOnly = (sending: { settle?: (state: WriteState) => void }) => ({
     gates: (target: ResolvedCatalogTool) =>
       isApprovalExempt(approval, target.connector, target.toolName, target.definition),
     writeGate: (target: ResolvedCatalogTool): Effect.Effect<WriteGateDecision> =>
       Effect.sync((): WriteGateDecision => {
-        if (exemptWrites >= maxWrites) {
+        if (exemptWrites?.isClosed) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "cancelled",
+              message: "The program had already returned, so this write was not sent.",
+              retryable: false,
+            },
+            activity: "none",
+          };
+        }
+        if (exemptWriteCount >= maxWrites) {
           return {
             kind: "refuse",
             error: {
@@ -672,11 +689,16 @@ function sandboxProvider(
             },
           };
         }
-        exemptWrites++;
+        exemptWriteCount++;
+        if (exemptWrites) sending.settle = exemptWrites.begin();
         return { kind: "dispatch" };
       }),
-  };
-  const invocationContext = (seq: number | undefined, key: string | undefined) => ({
+  });
+  const invocationContext = (
+    seq: number | undefined,
+    key: string | undefined,
+    sending: { settle?: (state: WriteState) => void },
+  ) => ({
     source: runState?.source ?? ("execute_code" as const),
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
@@ -692,7 +714,7 @@ function sandboxProvider(
         }
       : runState
         ? {}
-        : exemptOnly),
+        : exemptOnly(sending)),
   });
 
   /**
@@ -739,10 +761,19 @@ function sandboxProvider(
       const callArgs = args ?? {};
       const front = yield* fromJournal(seq, "call", addressText, callArgs);
       if (front.kind === "replayed") return front.value;
+      // An exempt write dispatched without a run state settles here —
+      // unknown if the call never returned an outcome.
+      const sending: { settle?: (state: WriteState) => void } = {};
       const outcome = yield* invocation.pipeline(
         addressText,
         callArgs,
-        invocationContext(seq, front.key),
+        invocationContext(seq, front.key, sending),
+      ).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() =>
+            sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown"),
+          ),
+        ),
       );
       diagnostics?.recordCall(outcome);
       if (runState && seq !== undefined && front.key !== undefined) {
@@ -1194,6 +1225,7 @@ export function createProgramRunner(
         diagnostics,
       );
       const invocationFailures: InvocationFailure[] = [];
+      const exemptWrites = runState ? undefined : new ExemptWrites();
       // The run's scope holds its signal and its lease. However the run
       // ends — a result, a thrown executor, the watchdog, cancellation —
       // closing it releases the lease and then aborts the signal, so
@@ -1233,6 +1265,7 @@ export function createProgramRunner(
             runState,
             approval: config.approval,
             maxWrites: config.maxWrites,
+            exemptWrites,
           }),
         ));
         if (signal.aborted) {
@@ -1253,9 +1286,14 @@ export function createProgramRunner(
           { watchdog },
         ).pipe(Effect.map((settled): PlayEnd => ({ settled })));
         if (!runState) {
+          // Nothing pauses, but an exempt write may be on the wire: close,
+          // then let it finish before the scope aborts it.
           return yield* timed((elapsed) => {
             if (diagnostics) diagnostics.executorWallMs = elapsed;
-          }, executing);
+          }, executing.pipe(Effect.ensuring(Effect.suspend(() => {
+            exemptWrites?.close();
+            return exemptWrites?.drain() ?? Effect.void;
+          }))));
         }
         // The run stopping wins the race as soon as its gate decides, before
         // the program even sees the rejection. Either way the play closes —
@@ -1283,7 +1321,7 @@ export function createProgramRunner(
           const failed = failedRun(Cause.squash(exit.cause), logger, reported);
           return runState
             ? runState.finishExecutorFailure(failed)
-            : Effect.succeed(failed);
+            : Effect.succeed(exemptWrites?.finish(failed) ?? failed);
         }
         const ended = exit.value;
         if ("stop" in ended) {
@@ -1294,7 +1332,7 @@ export function createProgramRunner(
         const finished = finishedRun(ended.settled, reported);
         return runState
           ? runState.finishSettled(finished)
-          : Effect.succeed(finished);
+          : Effect.succeed(exemptWrites?.finish(finished) ?? finished);
       });
     });
 

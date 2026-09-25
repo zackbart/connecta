@@ -1612,6 +1612,54 @@ describe("config approval exemptions (#566)", () => {
     ]);
   });
 
+  it("lets an unawaited exempt write finish when nothing can pause, and says how it went", async () => {
+    const w = world({
+      readOnlyPrograms: true,
+      settings: { approval: policy({ "tracker.close_issue": "never" }) },
+      write: async (_name, args) => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        if (args.id === 2) throw new ConnectorCallError("timeout", "gateway timed out");
+        return { ok: true };
+      },
+    });
+    const fireAndReturn = (id: number): Program => async (connecta) => {
+      connecta.call!("tracker.close_issue", { id }).catch(() => {});
+      await connecta.call!("reader.get", { id: 9 });
+      return "done";
+    };
+    // The write outlives the program, finishes, and is recorded as it ended.
+    const done = await w.execute(w.program(fireAndReturn(1)));
+    expect(value(done).result).toBe("done");
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+    expect(w.events.filter((event) => event.address === "tracker.close_issue")
+      .map((event) => event.outcome)).toEqual(["success"]);
+    // One that turns unknown is the result, not a plain success.
+    const unknown = await w.execute(w.program(fireAndReturn(2)));
+    expect(unknown.isError).toBe(true);
+    expect(value(unknown).error).toMatchObject({
+      code: "write_outcome_unknown",
+      writes: { succeeded: 0, failed: 0, unknown: 1 },
+    });
+  });
+
+  it("keeps an exempt write's count on a paused run past its deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const w = world({
+      settings: { ttlSeconds: 5, approval: policy({ "tracker.close_issue": "never" }) },
+    });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      await connecta.call!("tracker.post", { text: "closed 1" });
+      return "done";
+    })));
+    vi.setSystemTime(Date.now() + 60_000);
+    expect(value(await w.resume(approve(first))).error).toMatchObject({
+      code: "execution_expired",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(w.writes().map((call) => call.address)).toEqual(["tracker.close_issue"]);
+  });
+
   it("never exempts a read-only tool or reads an annotation as an exemption", () => {
     const every = policy({}, { reader: "never" });
     const connector = { id: "reader" };

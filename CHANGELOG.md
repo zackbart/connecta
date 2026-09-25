@@ -71,7 +71,8 @@ the page can ignore it.
   which wins over a connector's own `approval: "never"` default — reserved for
   connectors connecta ships, such as the planned artifacts connector — so
   `"ask"` switches such a default off. It works with resumable writes off
-  too. Exempt is never read-only: discovery keeps the tool approval-required
+  too, where an exempt write the program leaves unawaited still finishes
+  before the run ends, and one with an unknown outcome is the result. Exempt is never read-only: discovery keeps the tool approval-required
   and marks its row `approval: "exempt"`, `call_tool` still refuses it, and no
   downstream annotation can grant it. An unknown connector id, or an `api()`
   address its tools do not include, refuses to construct. The operator UI's

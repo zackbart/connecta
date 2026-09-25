@@ -863,13 +863,13 @@ address wins over the connector entry, which wins over a connector's own
 built-in default (reserved for connectors connecta ships), which wins over
 `"ask"`. An exempt call is decided at the same gate as `W1` and dispatches
 instead of pausing, with everything else an approved write gets: the write
-budget (`W10`), the write-ahead mark (`W5`), the journal, a `V1` event. It
-works without resumable writes too, where every non-exempt write keeps `E4`.
-Exempt is never read-only: a read-only tool is never reported exempt,
-discovery keeps an exempt tool approval-required, `call_tool` still refuses it,
-and no annotation can grant it — a downstream could otherwise exempt itself.
-Unknown connectors and `api()` addresses its tools lack refuse to construct; a
-remote catalog loads later, so an address it never serves simply never matches.
+budget (`W10`), the write-ahead mark (`W5`), the journal, a `V1` event. Without
+resumable writes, other writes keep `E4`; an exempt one still finishes after
+the program returns, never hiding an unknown outcome (`W9`). Exempt is never
+read-only: no read-only tool is reported exempt, discovery keeps an exempt tool
+approval-required, `call_tool` refuses it, and no annotation grants it, or a
+downstream could exempt itself. Unknown connectors and `api()` addresses its
+tools lack refuse to construct; an unserved remote address never matches.
 
 ## Executor exceptions
 
@@ -1021,7 +1021,7 @@ passing one table is also the check on the executor duties above, with
 | `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a retry's scope replacing an unused approval, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
 | `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, check-first advice once a write landed, the write budget) |
 | `W11` | `test/code-first-surface.test.ts`, `test/resumable.test.ts` (construction, the default, `/health`, the unavailable answer) |
-| `W12` | `test/resumable.test.ts` (an exempt write runs where the same program otherwise pauses, precedence and a connector default switched off, the write budget, resumable writes off, journaled and never re-sent, `call_tool` still refusing, search and describe markers, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
+| `W12` | `test/resumable.test.ts` (an exempt write runs where the same program otherwise pauses, precedence and a connector default switched off, the write budget, resumable writes off, an unawaited exempt write finished and its unknown outcome reported, journaled and never re-sent, an exempt write's count past expiry, `call_tool` still refusing, search and describe markers, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
 | `X12` | `test/guest-api-contract.test.ts` (a program that keeps calling after the pause, on both executors) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
