@@ -74,6 +74,8 @@ Reads run anywhere, including inside \`execute_code\`:
 - \`get_artifact { id, version?, includeSource? }\` — the view, its history, its
   documents' versions, \`revision\`, \`url\`, and \`snapshotUrl\`.
 - \`get_document { id, name, version? }\` — one document's value and history.
+- \`get_refresh { id }\` — the configured program, schedule, freshness, and the
+  latest 20 run records. Logs and failure messages are for agents, not readers.
 - \`validate_artifact { kind, source, documents? }\` — every check a save runs${
     options.renderCheck ? ", including this deployment's render check," : ""
   } without saving. **Validate before you save**; each error names a line and
@@ -97,6 +99,16 @@ budget. At the top level, \`call_tool\` refuses them — use
 - \`set_documents { id, documents: { <name>: { baseVersion, value } } }\` — set
   several documents atomically; \`baseVersion: 0\` creates one, \`value: null\`
   removes one.
+- \`set_refresh { id, document, program, schedule, baseVersion }\` — version a
+  complete \`execute_code\` async-arrow program returning the document's JSON
+  value. \`schedule\` is \`manual\`, \`daily\`, or \`weekly\`; use \`baseVersion: 0\`
+  for the first program, then the version from \`get_refresh\`. It can call
+  only explicitly read-only tools on shared connectors. Personal connectors
+  and writes fail the run even if the program catches the refusal. A failed
+  run keeps the last good document and marks the page stale.
+- \`run_refresh { id }\` — trigger one run now through
+  \`call_destructive_tool\`. It cannot run inside \`execute_code\` because that
+  would hold an executor permit while asking for another.
 - \`rollback_artifact { id, target: "view" | "document", name?, version, baseVersion }\`
   — a new version with an old body; history is never rewritten.
 - \`archive_artifact\` / \`restore_artifact { id, baseRevision }\` — hide a page

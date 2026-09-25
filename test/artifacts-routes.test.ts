@@ -129,6 +129,7 @@ describe("the artifact API", () => {
       updatedAt: expect.any(String),
       updatedBy: { label: "unknown" },
       archived: false,
+      freshness: { state: "unconfigured" },
     });
     const searched = (await (await get("/artifacts/_api/list?q=planning")).json()) as { artifacts: { id: string }[] };
     expect(searched.artifacts.map((row) => row.id)).toEqual(["notes"]);

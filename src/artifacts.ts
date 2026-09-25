@@ -4,7 +4,8 @@
 // connector. Nothing here is reachable from the root entry: a deployment that
 // never imports this subpath carries none of it and does none of its work.
 
-export { artifacts, type ArtifactsOptions } from "./artifacts/module.js";
+export { artifacts, type ArtifactsOptions, type RefreshableArtifacts } from "./artifacts/module.js";
+export type { RefreshOutcome } from "./artifacts/refresh.js";
 export type {
   ArtifactRenderCheck,
   ArtifactRenderCheckInput,
@@ -24,6 +25,8 @@ export {
   type ArtifactAllowlist,
   type ArtifactBlobStore,
   type ArtifactHeadRecord,
+  type ArtifactRefreshState,
+  type ArtifactRefreshSchedule,
   type ArtifactIssue,
   type ArtifactKind,
   type ArtifactLimits,

@@ -52,7 +52,7 @@ async function start(scriptOrigins: string[] = []) {
     id: "second", title: "Second", kind: "html",
     source: '<!doctype html><main id="artifact-root">second page</main>',
   }, context);
-  return app;
+  return { app, module };
 }
 
 test.afterEach(async () => {
@@ -178,6 +178,25 @@ test("library and browser history open a fresh frame for each page", async ({ pa
   await page.goBack();
   await page.goBack();
   await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("first page");
+});
+
+test("a failed refresh shows stale data without showing its error to readers", async ({ page }) => {
+  pageSource = '<!doctype html><main id="artifact-root"><script>document.getElementById("artifact-root").textContent=artifact.data.data.secret</script></main>';
+  const { module } = await start();
+  const context = { storage: memoryStorage(), logger: console, baseUrl: origin };
+  await module.connector.callTool("set_refresh", {
+    id: "probe", document: "data", schedule: "manual", baseVersion: 0,
+    program: 'async () => { throw new Error("private downstream detail"); }',
+  }, context);
+  expect(await module.refresh("probe", { kind: "test" })).toMatchObject({ status: "failed" });
+  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
+  await page.goto(`${origin}/artifacts/probe`);
+  await expect(page.locator("#staleBanner")).toContainText("last good document");
+  await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("team-secret");
+  expect(await page.locator("body").innerText()).not.toContain("private downstream detail");
+  await page.getByRole("link", { name: "All artifacts" }).click();
+  await expect(page.getByText("Stale data")).toBeVisible();
+  expect(await page.locator("body").innerText()).not.toContain("private downstream detail");
 });
 
 test("allowed CDN scripts load while other script origins stay blocked", async ({ page }) => {

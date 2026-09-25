@@ -21,6 +21,7 @@ import {
 } from "../routes/shared.js";
 import { buildFrameDocument, frameCsp } from "./document.js";
 import { scriptSafeJson } from "./json.js";
+import { freshnessOf } from "./refresh.js";
 import type { ArtifactOperations } from "./operations.js";
 import type { ArtifactAllowlist } from "./types.js";
 import { ARTIFACT_ID } from "./validate.js";
@@ -114,6 +115,7 @@ export function artifactRoutes(options: {
         updatedAt: head.updatedAt,
         updatedBy: label(head.updatedBy),
         archived: head.archived,
+        freshness: freshnessOf(head),
       })),
       ...(listed.nextCursor !== undefined ? { nextCursor: listed.nextCursor } : {}),
     });
@@ -160,6 +162,7 @@ export function artifactRoutes(options: {
         by: label(page.view.by),
       },
       documents,
+      freshness: freshnessOf(page.head),
       url,
       snapshotUrl: `${url}/v/${page.view.version}${pins.length ? `?${pins.join("&")}` : ""}`,
       document: buildFrameDocument({

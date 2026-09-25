@@ -34,6 +34,12 @@ everyone: `ConnectorCallErrorCode` gains `conflict`, a stale-base refusal,
 and a program's write that fails with it counts as refused rather than as an
 unknown outcome.
 
+Artifact refresh adds versioned read-only programs on manual, daily, or weekly
+schedules. Deployments opt in to a Node timer or Worker cron; core starts none.
+The program's JSON return value replaces one document after validation and a
+CAS run claim. A failed or superseded run leaves the last good data in place;
+library and viewer freshness indicators show stale data without showing logs.
+
 Separately, the operator page's last route for downstream error text is closed. What
 changes on the wire: `POST` and `DELETE /ui/oauth/<id>` answer a failure in
 fixed words and a success without `message`, and `POST

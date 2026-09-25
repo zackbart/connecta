@@ -43,6 +43,8 @@ import {
 } from "@zackbart/connecta";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
 import { cloudflareKvStorage } from "./cloudflare-kv.js";
+// import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
+// import { d1Storage } from "./d1-storage.js";
 // Activity history, off by default because it needs a D1 database.
 // import { d1ActivityStore } from "./d1-activity.js";
 
@@ -67,6 +69,9 @@ interface Env {
 
 function build(env: Env) {
   const storage = cloudflareKvStorage(env.CONNECTA_KV);
+  // Optional refreshable pages need the D1 binding, not Workers KV:
+  // const artifactModule = artifacts({ store: kvArtifactStore(d1Storage(env.STORAGE_DB)) });
+  // scheduledArtifacts.module = artifactModule;
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage,
@@ -128,6 +133,7 @@ function build(env: Env) {
     //   },
     // }),
     ui: operatorUi(),
+    // artifacts: artifactModule,
     identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
     // Payload-free activity at /activity, off until a database exists to hold
     // it. Uncomment the `d1_databases` binding in wrangler.jsonc, apply the
@@ -186,6 +192,7 @@ function build(env: Env) {
 // Lazy per-isolate singleton: reuses the plain-data tool cache. Downstream MCP
 // clients are request-scoped internally so Worker I/O never crosses requests.
 let connecta: ReturnType<typeof build> | undefined;
+const scheduledArtifacts: { module?: { runDue(): Promise<unknown> } } = {};
 
 export default {
   // Pass `ctx` through: connecta hands deferred work (activity sinks) to
@@ -198,5 +205,9 @@ export default {
   ): Promise<Response> {
     connecta ??= build(env);
     return connecta.fetch(request, env, ctx);
+  },
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    connecta ??= build(env);
+    await scheduledArtifacts.module?.runDue();
   },
 };

@@ -314,6 +314,15 @@ to `Env`. Nothing ever deletes a body: versions are immutable, a rollback
 points back at an old one, and a body written by a write that lost a conflict
 stays stored unreferenced.
 
+To refresh pages, keep the module in a variable, pass it to `createConnecta`,
+and assign it to `scheduledArtifacts.module` as shown in `src/index.ts`.
+Uncomment the hourly cron in `wrangler.jsonc`. An hourly tick starts at most
+10 due pages; each page's `manual`, `daily`, or `weekly` schedule lives in its
+versioned refresh configuration. Refresh programs use only shared connectors'
+explicitly read-only tools. D1's compare-and-set prevents two cron invocations
+from claiming the same page. Failed runs keep the last good data and show a
+stale banner without exposing downstream error text to readers.
+
 ## Activity history (optional)
 
 `src/d1-activity.ts` is a complete `ActivityStore` over D1 — keyset paging on

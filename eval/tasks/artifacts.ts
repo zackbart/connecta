@@ -359,4 +359,72 @@ const fixChartTitle: ActiveTask = {
   },
 };
 
-export const ARTIFACT_TASKS: ActiveTask[] = [buildPage, fixChartTitle];
+const WEEKLY_PROGRAM = `async () => {
+  const issues = [];
+  let cursor;
+  do {
+    const page = await connecta.call("tracker.search_issues", Object.assign(
+      { status: "open", label: "bug", limit: 50 }, cursor ? { cursor } : {}));
+    issues.push(...page.issues);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return { projects: ["web", "api", "mobile"].map((project) => ({
+    project, openBugs: issues.filter((issue) => issue.project === project).length
+  })) };
+}`;
+
+const refreshWeekly: ActiveTask = {
+  status: "active",
+  id: "p2-refresh-weekly",
+  title: "Make it refresh weekly",
+  introducedIn: "P2",
+  measures: "A weekly read-only program refreshes a page's data document after the tracker changes.",
+  deployment: {
+    artifacts: { seed: [{ id: "open-bugs", title: "Open bugs", kind: "html", source: CHART_PAGE, documents: CHART_DATA }] },
+  },
+  prompt: "Make the open-bugs page refresh its data document weekly from the issue tracker. The page shows open bug counts per project. Keep its HTML as it is.",
+  followUps: [{
+    before: async ({ world, deployment, note }) => {
+      const original = world.tracker.issues.find((issue) => issue.project === "web" && issue.status === "open" && issue.labels.includes("bug"));
+      if (!original || !deployment.artifacts) return false;
+      world.tracker.issues.push({ ...original, id: "WEB-999", title: "New web bug" });
+      await deployment.artifacts.runDueAfterWeek();
+      note("A new web bug appeared; the weekly schedule became due and the deployment ran due refreshes.");
+    },
+    prompt: "The weekly tick ran after a new web bug arrived. Did the page's data update?",
+  }],
+  grade: ({ world, trace }) => {
+    const artifact = world.artifacts?.artifacts.find((item) => item.id === "open-bugs");
+    const expected = expectedFigures(world).counts;
+    const data = artifact?.documents.data;
+    const runs = artifact?.runs ?? [];
+    const setCalls = trace.toolUses.filter((use) =>
+      use.input.address === "artifacts.set_refresh" ||
+      String(use.input.code ?? "").includes("artifacts.set_refresh"));
+    return [
+      check("weekly-program", "one weekly program targets the data document",
+        artifact?.refresh?.schedule === "weekly" && artifact.refresh.document === "data" && setCalls.length === 1),
+      check("one-refresh-run", "the due tick produced one successful data version",
+        runs.length === 1 && runs[0]?.status === "succeeded" &&
+          artifact?.documentHistory.data?.[0]?.op === "refresh" &&
+          artifact.documentHistory.data[0]?.runId === runs[0]?.runId),
+      check("updated-counts", "the refreshed document reflects the new tracker state",
+        artifact !== undefined && Object.entries(expected).every(([project, count]) => statesCount(data, project, count))),
+      check("view-untouched", "refresh did not rewrite the HTML view",
+        artifact?.views.length === 1),
+      check("read-only", "the refresh sent no downstream write",
+        world.ledger.calls.every((call) => call.kind === "read")),
+    ];
+  },
+  reference: async ({ call, nextTurn }) => {
+    await call("call_destructive_tool", {
+      address: "artifacts.set_refresh",
+      args: { id: "open-bugs", document: "data", program: WEEKLY_PROGRAM,
+        schedule: "weekly", baseVersion: 0 },
+      reason: "Keep this dashboard's data current",
+    });
+    await nextTurn();
+  },
+};
+
+export const ARTIFACT_TASKS: ActiveTask[] = [buildPage, fixChartTitle, refreshWeekly];

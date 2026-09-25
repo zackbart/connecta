@@ -20,6 +20,7 @@ import {
   type RenderPage,
 } from "./operations.js";
 import { scriptSafeJson } from "./json.js";
+import { freshnessOf, type ArtifactRefreshService } from "./refresh.js";
 import type {
   ArtifactActor,
   ArtifactAllowlist,
@@ -216,6 +217,7 @@ const history = (records: ArtifactVersionRecord[]) =>
 
 export interface ArtifactsConnectorOptions {
   operations: ArtifactOperations;
+  refresh: ArtifactRefreshService;
   allowlist: ArtifactAllowlist;
   limits: ArtifactLimits;
   renderCheck?: ArtifactRenderCheck;
@@ -225,6 +227,7 @@ export interface ArtifactsConnectorOptions {
 
 export function artifactsConnector(options: ArtifactsConnectorOptions): Connector {
   const ops = options.operations;
+  const refresh = options.refresh;
   const csp = frameCsp(options.allowlist);
   const hook = options.renderCheck;
   const actorOf = (ctx: ConnectorContext): ArtifactActor =>
@@ -321,6 +324,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
                   updatedBy: { type: "object" },
                   archived: { type: "boolean" },
                   url: { type: "string" },
+                  freshness: { type: "object" },
                 },
               },
             },
@@ -347,6 +351,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
               updatedBy: head.updatedBy,
               archived: head.archived,
               url: urlOf(ctx, artifactId),
+              freshness: freshnessOf(head),
             })),
             ...(listed.nextCursor !== undefined ? { nextCursor: listed.nextCursor } : {}),
           };
@@ -379,6 +384,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
             view: { type: "object" },
             documents: { type: "array" },
             history: { type: "array" },
+            freshness: { type: "object" },
           },
         },
         handler: async (args, ctx) => {
@@ -413,8 +419,56 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
               at: record.at,
             })),
             history: history(got.history),
+            freshness: freshnessOf(got.head),
           };
         },
+      },
+      {
+        name: "get_refresh",
+        description: "Read an artifact's refresh program, schedule, freshness, and recent run history.",
+        annotations: READ,
+        inputSchema: { type: "object", required: ["id"], properties: { id }, additionalProperties: false },
+        handler: async (args) => {
+          const got = unwrap(await ops.refreshConfig(args.id));
+          return {
+            id: args.id,
+            freshness: freshnessOf(got.head),
+            ...(got.program !== undefined ? { program: got.program } : {}),
+            runs: await ops.store.runs(args.id, 20),
+          };
+        },
+      },
+      {
+        name: "set_refresh",
+        description: "Attach or replace a read-only refresh program for one data document. Pass the current refresh baseVersion (0 if absent).",
+        annotations: WRITE,
+        inputSchema: {
+          type: "object", required: ["id", "document", "program", "schedule", "baseVersion"],
+          properties: {
+            id,
+            document: { type: "string", minLength: 1, maxLength: 64 },
+            program: { type: "string" },
+            schedule: { type: "string", enum: ["manual", "daily", "weekly"] },
+            baseVersion: { type: "integer", minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+        handler: async (args, ctx) => {
+          const owner = callerOf(ctx);
+          const saved = unwrap(await ops.setRefresh({
+            id: args.id, document: args.document, program: args.program,
+            schedule: args.schedule, baseVersion: args.baseVersion, by: actorOf(ctx),
+            ...(owner ? { owner } : {}),
+          }));
+          return { id: args.id, freshness: freshnessOf(saved.head) };
+        },
+      },
+      {
+        name: "run_refresh",
+        description: "Trigger one configured refresh now. Only shared connectors' explicitly read-only tools may run.",
+        annotations: WRITE,
+        inputSchema: { type: "object", required: ["id"], properties: { id }, additionalProperties: false },
+        handler: async (args, ctx) => refresh.run(args.id, { manual: actorOf(ctx) }),
       },
       {
         name: "get_document",
