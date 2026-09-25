@@ -1178,7 +1178,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // notification after we close its transport. Its rejected Promise is
       // unhandled under workerd even though connect() has a caller. This
       // connection is already abandoned, so skip only that final handshake
-      // notification after our abort. Remove when the SDK owns this race.
+      // notification after our abort. Remove when the SDK owns this race:
+      // https://github.com/modelcontextprotocol/typescript-sdk/issues/2864
       const notify = c.notification.bind(c);
       c.notification = (message, options) => {
         if (handshakeAbort.signal.aborted && message.method === "notifications/initialized") {
