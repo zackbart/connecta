@@ -75,7 +75,8 @@ repeated guesses at text formats and collection roots without restoring a
 mandatory discovery-only round trip.
 
 Writes take the same route. A program that reaches a tool not explicitly
-annotated read-only stops before sending it and returns the exact call with a
+annotated read-only stops before sending it — unless the deployment's config
+exempts that tool, and then it runs unasked — and returns the exact call with a
 token; `resume_execution` repeating it is the approval, and the program
 replays from a journal to send it and carry on — to its answer, or to its next
 write. So "close the stale issues and post a summary" is one program and a few
@@ -125,7 +126,7 @@ discovery. Both take the same arguments.
 | --- | --- |
 | `query` | two to four action/object terms; empty or whitespace-only browses |
 | `connector` | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous |
-| `safety` | `"readOnly"` for what runs unasked, `"approvalRequired"` for the complementary set that pauses a program or crosses `call_destructive_tool`, omitted or `"all"` for the complete configured catalog |
+| `safety` | `"readOnly"` for what runs unasked, `"approvalRequired"` for the complementary set that pauses a program or crosses `call_destructive_tool`, omitted or `"all"` for the complete configured catalog. A config-exempt write stays `"approvalRequired"` and its row says `approval: "exempt"`: a program calls it without pausing, and `call_tool` still refuses it ([code mode](./code-mode.md#pausing-and-resuming) `W12`) |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small |
 | `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures)) |
 | `fullDescriptions` | unabridged tool purposes, at the obvious cost |

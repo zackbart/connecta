@@ -274,6 +274,17 @@ export interface Connector {
   title?: string;
   /** How call_tool wraps results. "mcp" passes the content array through; anything else is JSON-wrapped. */
   kind?: "mcp" | "api";
+  /**
+   * This connector's own default for its tools that are not explicitly
+   * read-only, inside `execute_code`: `"never"` lets a program call them
+   * without pausing for approval. Reserved for connectors connecta ships
+   * whose writes are cheap to undo (the planned artifacts connector, whose
+   * every write is a new immutable version); a deployment's own connectors
+   * leave it unset and exempt through `execute.approval`, which overrides
+   * this either way. Never read from a downstream catalog — a server cannot
+   * exempt its own tools — and never makes a tool read-only anywhere else.
+   */
+  approval?: "never";
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before

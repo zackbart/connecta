@@ -64,6 +64,19 @@ the page can ignore it.
   `/health` reports `resumableWrites`, and `connecta doctor` expects the eight
   tools and says when resumable writes are off. See code mode "Pausing and
   resuming" (`W1`–`W11`, `X12`).
+- **Config approval exemptions (#566).** `execute.approval` maps connector ids
+  and `connector.tool` addresses to `"never"` or `"ask"`: a program calls an
+  exempt write without pausing, while it still spends the write budget, is
+  journaled, and records activity. The address wins over the connector entry,
+  which wins over a connector's own `approval: "never"` default — reserved for
+  connectors connecta ships, such as the planned artifacts connector — so
+  `"ask"` switches such a default off. It works with resumable writes off
+  too, where an exempt write the program leaves unawaited still finishes
+  before the run ends, and one with an unknown outcome is the result. Exempt is never read-only: discovery keeps the tool approval-required
+  and marks its row `approval: "exempt"`, `call_tool` still refuses it, and no
+  downstream annotation can grant it. An unknown connector id, or an `api()`
+  address its tools do not include, refuses to construct. The operator UI's
+  per-tool badge gains its third state, "exempt from approval".
 - **Activity for pauses and approvals.** `ActivityOutcome` gains `paused` and
   `approved`, both with zero attempts; `ActivityCallSource` gains
   `resume_execution`; `ToolCallActivityEvent` gains an optional `approval`
@@ -83,6 +96,9 @@ the page can ignore it.
   its search example (a program looking for a write would not find it), and
   the `usage` skill gains the pause, resume, and unknown-outcome guidance;
   without them, the instructions and description read as they did in 0.25.
+- **The operator UI's "needs approval" badge reads "asks for approval"**, and
+  the tool legend says a program pauses for `resume_execution` while a direct
+  call crosses `call_destructive_tool`.
 - **A program's clock and randomness are pinned (code mode `P6`).**
   `Date.now()`, `new Date()`, and `Date()` inside `execute_code` return the
   instant the run started and do not advance, and `Math.random()` is an sfc32

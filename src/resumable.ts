@@ -51,6 +51,11 @@ import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge } from "./runtime/run.js";
 import { underAnySignal } from "./timeout.js";
+import {
+  isApprovalExempt,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "./tool-safety.js";
 import type { KVStorage } from "./types.js";
 import {
   canonicalJson,
@@ -81,6 +86,8 @@ export interface ResumableSettings {
   ttlSeconds: number;
   /** The `/mcp/<pool>` this request came in on; `null` for `/mcp`. */
   pool: string | null;
+  /** Config approval exemptions; none when omitted. */
+  approval?: ApprovalPolicy | undefined;
 }
 
 /**
@@ -253,7 +260,7 @@ function unknownOutcome(): RunFailure {
 
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
 
-function countWrites(writes: RunHeader["writes"]): WriteCounts {
+function countWrites(writes: ReadonlyArray<{ state: WriteState }>): WriteCounts {
   return {
     succeeded: writes.filter((write) => write.state === "ok").length,
     failed: writes.filter((write) => write.state === "failed").length,
@@ -547,7 +554,19 @@ export class RunState {
         } as const;
       }
       const address = `${target.connector.id}.${target.toolName}`;
-      if (args === null || typeof args !== "object" || Array.isArray(args)) {
+      // A config exemption (#566) dispatches like an approval would, with
+      // everything an approved write gets — the write budget, the
+      // write-ahead mark, the journal — except the pause.
+      const exempt = isApprovalExempt(
+        this.settings.approval ?? NO_EXEMPTIONS,
+        target.connector,
+        target.toolName,
+        target.definition,
+      );
+      if (
+        !exempt &&
+        (args === null || typeof args !== "object" || Array.isArray(args))
+      ) {
         // Neither approval route takes arguments that are not an object, so
         // there is nothing a pause could ask a human to repeat.
         return {
@@ -568,7 +587,7 @@ export class RunState {
           },
         } as const;
       }
-      const approved = this.approvalFor(address, args);
+      const approved = exempt ? { index: -1 } : this.approvalFor(address, args);
       if (approved) return yield* this.reserve(seq, address, approved.index);
       // Not approved: this is where the run pauses — unless the write cannot
       // be shown to a human faithfully. A `__proto__` key survives JSON but
@@ -721,16 +740,7 @@ export class RunState {
   ): Effect.Effect<InvocationFailure | undefined> {
     return Effect.gen({ self: this }, function* () {
       if (!this.liveWrites.has(seq)) return undefined;
-      const state = classifyWriteOutcome(
-        outcome.ok
-          ? { ok: true, dispatched: outcome.dispatched }
-          : {
-              ok: false,
-              dispatched: outcome.dispatched,
-              error: outcome.error,
-              ...(outcome.answered !== undefined ? { answered: outcome.answered } : {}),
-            },
-      );
+      const state = writeStateOf(outcome);
       const entry: JournalEntry = {
         seq,
         op: "call",
@@ -922,16 +932,21 @@ export class RunState {
       const text = reported.content[0]?.type === "text" ? reported.content[0].text ?? "" : "";
       const final = {
         isError: reported.isError === true,
-        text: text.length <= MAX_FINAL_CHARS
-          ? text
-          : JSON.stringify({
+        text: reported.content.length > 1
+          ? JSON.stringify({
+              completed: true,
+              note: "The run completed and its emitted content blocks were delivered once; they were not kept for a repeated resume_execution.",
+            })
+          : text.length > MAX_FINAL_CHARS
+            ? JSON.stringify({
               completed: true,
               note: "The run completed and its result was returned once; it was too large to keep for a repeated resume_execution.",
-            }),
+            })
+            : text,
       };
       // An erroring program ends the run `failed`: it is not replayed, and
       // its answer — error and counts — is what a repeated resume returns.
-      yield* this.mutateHeader((header) => {
+      const moved = yield* this.mutateHeader((header) => {
         const { claim: _released, ...rest } = header;
         return {
           ...rest,
@@ -939,6 +954,32 @@ export class RunState {
           final,
         };
       });
+      if (moved !== "ok") {
+        // A timed-out CAS may have committed before storage reported an
+        // error. If its final answer is readable, completion is durable and
+        // the same resume can return it again. Otherwise never report a
+        // successful completion that the header cannot repeat.
+        const read = yield* Effect.tryPromise(() => this.journal.readHeader()).pipe(
+          Effect.catch(() => Effect.succeed(undefined)),
+        );
+        if (
+          read?.header.final?.text === final.text &&
+          read.header.final.isError === final.isError &&
+          read.header.state === (reported.isError ? "failed" : "completed")
+        ) return reported;
+        if (moved === "lost") {
+          return errorEnvelope(counted(
+            failure(
+              "execution_claim_lost",
+              "Another resume_execution took this run over before its final answer could be recorded.",
+            ),
+            this.writeCounts(),
+          ));
+        }
+        return yield* this.finishFailed(interrupted(
+          "The program finished, but paused-run storage failed before its final answer could be recorded.",
+        ));
+      }
       return reported;
     });
   }
@@ -1111,6 +1152,83 @@ export class RunState {
         expiresAt,
       );
     });
+  }
+}
+
+/** What a dispatched write's outcome says about whether it landed. */
+export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteState {
+  return classifyWriteOutcome(
+    outcome.ok
+      ? { ok: true, dispatched: outcome.dispatched }
+      : {
+          ok: false,
+          dispatched: outcome.dispatched,
+          error: outcome.error,
+          ...(outcome.answered !== undefined ? { answered: outcome.answered } : {}),
+        },
+  );
+}
+
+/**
+ * The writes a program sends under a config exemption (#566) when nothing
+ * can pause: resumable writes are off, so there is no run state, but an
+ * exempt write is still a write. The play closes this when the program
+ * settles — a write that reaches the gate after is not sent — and drains
+ * what is on the wire before the run's scope aborts it, so the write
+ * finishes and its activity says how it did. As with a resumable run, the
+ * result never hides a write whose outcome is unknown, and a program that
+ * fails after writing reports the counts.
+ */
+export class ExemptWrites {
+  private closed = false;
+  private readonly inFlight = new Set<Promise<void>>();
+  private readonly states: WriteState[] = [];
+
+  /** Whether the program has settled: a write gated now is not sent. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  /** A write is being dispatched; the function returned records how it ended. */
+  begin(): (state: WriteState) => void {
+    let done: () => void = () => {};
+    const settled = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    this.inFlight.add(settled);
+    let recorded = false;
+    return (state) => {
+      if (recorded) return;
+      recorded = true;
+      this.states.push(state);
+      this.inFlight.delete(settled);
+      done();
+    };
+  }
+
+  /** Wait for dispatched writes, each bounded by its host-call deadline. */
+  drain(): Effect.Effect<void> {
+    return Effect.promise(async () => {
+      while (this.inFlight.size > 0) await Promise.all(this.inFlight);
+    });
+  }
+
+  finish(result: ToolResult): ToolResult {
+    if (this.states.length === 0) return result;
+    const writes = countWrites(this.states.map((state) => ({ state })));
+    if (writes.unknown > 0) {
+      return errorEnvelope({
+        code: "write_outcome_unknown",
+        message: "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it.",
+        retryable: false,
+        writes,
+      });
+    }
+    return result.isError ? withWrites(result, writes) : result;
   }
 }
 

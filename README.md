@@ -87,7 +87,8 @@ Fifty issues in, one small object out. Your context window notices.
   runs only once `resume_execution` repeats it — a visible call your client
   can gate. A paused run is a journal in storage, not a held program, so it
   survives a restart; it expires, and a write whose outcome is unknown is
-  never sent twice.
+  never sent twice. Config — and only config — can exempt a cheap,
+  reversible write from asking, per tool or per connector.
 - **Run it on Node or Cloudflare Workers.** The core is shared; each deployment
   supplies its platform's executor and storage. The Node template also runs
   unchanged in Docker.

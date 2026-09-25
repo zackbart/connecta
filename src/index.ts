@@ -26,6 +26,7 @@ import {
   DEFAULT_PAUSED_RUN_TTL_SECONDS,
 } from "./resumable.js";
 import { disposeEdgeRuntime } from "./runtime/run.js";
+import { NO_EXEMPTIONS, type ApprovalPolicy } from "./tool-safety.js";
 import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
 export type { ActivityModule, OperatorSurface } from "./module-contracts.js";
 export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
@@ -158,6 +159,20 @@ export interface ConnectaExecuteConfig {
    * the default.
    */
   pausedRunTtlSeconds?: number;
+  /**
+   * Which writes a program may make without pausing for approval. Keys are
+   * connector ids (all of that connector's tools) or `connector.tool`
+   * addresses (that tool); values are `"never"` (never ask) or `"ask"`. The
+   * most specific key wins, and `"ask"` switches off a connector's own
+   * default. An exempt write still spends the write budget, is recorded in
+   * activity, and is journaled like any other; it is never read-only
+   * anywhere else — discovery still lists it as approval-required and
+   * `call_tool` still refuses it. Works with resumable writes off too. An
+   * unknown connector id, or an `api()` address its tools do not include,
+   * refuses to construct; a remote connector's tool names load later, so an
+   * address naming one it never serves simply never matches.
+   */
+  approval?: Readonly<Record<string, "never" | "ask">>;
 }
 
 export interface AdmissionPoolConfig {
@@ -391,6 +406,7 @@ const CONFIG_SCHEMA = {
     resumableWrites: null,
     maxWrites: null,
     pausedRunTtlSeconds: null,
+    approval: null,
   } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
     requests: admissionPoolSchema,
@@ -549,6 +565,59 @@ function resolvePools(
     resolved.set(name, { access, grant: pool.grant ?? (() => false) });
   }
   return resolved;
+}
+
+/**
+ * Validate `execute.approval` against the connector set, like the pools: a
+ * malformed key or value, an unknown connector, and an `api()` address its
+ * tools do not include all throw. Remote catalogs load lazily, so an address
+ * on one is kept and simply never matches a tool it does not serve.
+ */
+function resolveApprovalPolicy(
+  approval: ConnectaExecuteConfig["approval"],
+  registry: Registry,
+): ApprovalPolicy {
+  for (const connector of registry.listConnectors()) {
+    if (connector.approval !== undefined && connector.approval !== "never") {
+      throw new Error(
+        `Connector "${connector.id}": approval must be "never" or omitted`,
+      );
+    }
+  }
+  if (approval === undefined) return NO_EXEMPTIONS;
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+    throw new Error(
+      "ConnectaConfig.execute.approval must be an object keyed by connector ids and connector.tool addresses",
+    );
+  }
+  const connectors = new Map<string, "never" | "ask">();
+  const tools = new Map<string, "never" | "ask">();
+  for (const [key, value] of Object.entries(approval)) {
+    const where = `ConnectaConfig.execute.approval[${JSON.stringify(key)}]`;
+    if (value !== "never" && value !== "ask") {
+      throw new Error(`${where} must be "never" or "ask"`);
+    }
+    const dot = key.indexOf(".");
+    const id = dot === -1 ? key : key.slice(0, dot);
+    const tool = dot === -1 ? undefined : key.slice(dot + 1);
+    if (!id || tool === "") {
+      throw new Error(`${where}: keys are connector ids or connector.tool addresses`);
+    }
+    const connector = registry.getConnector(id);
+    if (!connector) throw new Error(`${where}: unknown connector "${id}"`);
+    if (tool === undefined) {
+      connectors.set(id, value);
+      continue;
+    }
+    if (
+      connector.staticTools &&
+      !connector.staticTools.some((candidate) => candidate.name === tool)
+    ) {
+      throw new Error(`${where}: connector "${id}" has no tool "${tool}"`);
+    }
+    tools.set(key, value);
+  }
+  return { connectors, tools };
 }
 
 /** A positive whole number, or the default when the value is unusable. */
@@ -787,6 +856,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const inboundAuth = configuredAuth;
   const pools = resolvePools(config.pools, registry);
   const resumable = resolveResumableWrites(config.execute, storage, logger);
+  const approval = resolveApprovalPolicy(config.execute?.approval, registry);
+  // Exempt writes need a budget whether or not programs can pause.
+  const maxWrites = positiveWhole(config.execute?.maxWrites, DEFAULT_MAX_WRITES);
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,
@@ -852,6 +924,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
     watchdogMs: config.execute?.watchdogMs,
     resumable,
+    approval,
+    maxWrites,
     credentialVault,
     ui: config.ui,
     deploymentInfo: config.deploymentInfo,

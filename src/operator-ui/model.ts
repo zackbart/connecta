@@ -10,13 +10,16 @@ import type {
  * the rule is a second place for it to be wrong.
  *
  * - `runs_in_programs` — explicitly read-only, so `execute_code` may call it.
- * - `needs_approval` — everything else, which crosses `call_destructive_tool`.
+ * - `exempt` — not read-only, but the deployment's `execute.approval` lets a
+ *   program call it without pausing (#566). Still approval-required
+ *   everywhere else.
+ * - `needs_approval` — everything else: a program pauses for
+ *   `resume_execution`, and a direct call crosses `call_destructive_tool`.
  *
- * Planned resumable writes add a third value for a config `approval: "never"`
- * exemption; the badge renders from a table keyed by this union so that value
- * is one entry, not a new branch.
+ * The badge renders from a table keyed by this union, so each value is one
+ * entry, not a branch.
  */
-export type UiToolSafety = "runs_in_programs" | "needs_approval";
+export type UiToolSafety = "runs_in_programs" | "exempt" | "needs_approval";
 
 export interface UiTool {
   name: string;

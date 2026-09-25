@@ -38,7 +38,7 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
-import { isExplicitlyReadOnly } from "./tool-safety.js";
+import { isExplicitlyReadOnly, type ApprovalPolicy } from "./tool-safety.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -603,6 +603,8 @@ export function createMetaTools(
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
     defer?: DeferredWork | undefined;
+    /** Config approval exemptions (#566), shown on discovery rows. */
+    approval?: ApprovalPolicy | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -623,6 +625,7 @@ export function createMetaTools(
     concurrency: discoveryConcurrency,
     defer: opts.defer,
     requestSignal: opts.requestSignal,
+    approval: opts.approval,
     // searchRoute keeps its top-level default. In-program callers use a
     // separate CatalogService configured for connecta.search.
   });
@@ -1237,6 +1240,7 @@ export function registerMetaTools(
     credentialHandoffUrl?: string | undefined;
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
+    approval?: ApprovalPolicy | undefined;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
@@ -1248,6 +1252,7 @@ export function registerMetaTools(
     credentialHandoffUrl: ctx.credentialHandoffUrl,
     requestSignal: ctx.requestSignal,
     defer: ctx.defer,
+    approval: ctx.approval,
   });
 
   server.registerTool(

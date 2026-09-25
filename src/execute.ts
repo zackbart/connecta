@@ -27,17 +27,26 @@ import {
   InvocationFailure,
   InvocationService,
   timed,
+  type WriteGateDecision,
 } from "./invocation.js";
 import { withoutProgramTerminator } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import {
+  DEFAULT_MAX_WRITES,
+  ExemptWrites,
   MIN_STORAGE_TIMEOUT_MS,
   RunState,
+  writeStateOf,
   type ResumableSettings,
   type RunStop,
 } from "./resumable.js";
-import { journalKey, type JournalOp } from "./run-journal.js";
+import { journalKey, type JournalOp, type WriteState } from "./run-journal.js";
 import { underAnySignal } from "./timeout.js";
+import {
+  isApprovalExempt,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "./tool-safety.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import {
   connectorGuide,
@@ -582,6 +591,12 @@ interface SandboxLimits {
   environment?: PinnedEnvironment | undefined;
   /** One play of a resumable run; absent when resumable writes are off. */
   runState?: RunState | undefined;
+  /** Config approval exemptions (#566). */
+  approval?: ApprovalPolicy | undefined;
+  /** Writes one program may send; the run state keeps its own count. */
+  maxWrites?: number | undefined;
+  /** Exempt writes when resumable writes are off, for close and drain. */
+  exemptWrites?: ExemptWrites | undefined;
 }
 
 /**
@@ -610,6 +625,7 @@ function sandboxProvider(
     concurrency: limits.discoveryConcurrency,
     probeTimeoutMs: limits.probeTimeoutMs,
     defer: limits.defer,
+    approval: limits.approval,
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
@@ -635,8 +651,54 @@ function sandboxProvider(
         )
       : Effect.void,
   );
-  const { runState } = limits;
-  const invocationContext = (seq: number | undefined, key: string | undefined) => ({
+  const { runState, exemptWrites } = limits;
+  const approval = limits.approval ?? NO_EXEMPTIONS;
+  const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
+  let exemptWriteCount = 0;
+  /**
+   * Without resumable writes nothing can pause, but a config exemption
+   * (#566) still lets its writes run: the gate covers exactly the exempt
+   * calls, spends the write budget on each, and every other write keeps
+   * E4's refusal, ahead of validation as it always was. A dispatched write
+   * is tracked until it settles (`ExemptWrites`), so the play can wait for
+   * it rather than abort it.
+   */
+  const exemptOnly = (sending: { settle?: (state: WriteState) => void }) => ({
+    gates: (target: ResolvedCatalogTool) =>
+      isApprovalExempt(approval, target.connector, target.toolName, target.definition),
+    writeGate: (target: ResolvedCatalogTool): Effect.Effect<WriteGateDecision> =>
+      Effect.sync((): WriteGateDecision => {
+        if (exemptWrites?.isClosed) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "cancelled",
+              message: "The program had already returned, so this write was not sent.",
+              retryable: false,
+            },
+            activity: "none",
+          };
+        }
+        if (exemptWriteCount >= maxWrites) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "budget_exceeded",
+              message: `execute_code write budget exceeded (${maxWrites} writes maximum, execute.maxWrites); ${target.connector.id}.${target.toolName} was not sent`,
+              retryable: false,
+            },
+          };
+        }
+        exemptWriteCount++;
+        if (exemptWrites) sending.settle = exemptWrites.begin();
+        return { kind: "dispatch" };
+      }),
+  });
+  const invocationContext = (
+    seq: number | undefined,
+    key: string | undefined,
+    sending: { settle?: (state: WriteState) => void },
+  ) => ({
     source: runState?.source ?? ("execute_code" as const),
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
@@ -650,7 +712,9 @@ function sandboxProvider(
           writeGate: (target: ResolvedCatalogTool, args: unknown) =>
             runState.gate(seq, key, target, args),
         }
-      : {}),
+      : runState
+        ? {}
+        : exemptOnly(sending)),
   });
 
   /**
@@ -697,10 +761,19 @@ function sandboxProvider(
       const callArgs = args ?? {};
       const front = yield* fromJournal(seq, "call", addressText, callArgs);
       if (front.kind === "replayed") return front.value;
+      // An exempt write dispatched without a run state settles here —
+      // unknown if the call never returned an outcome.
+      const sending: { settle?: (state: WriteState) => void } = {};
       const outcome = yield* invocation.pipeline(
         addressText,
         callArgs,
-        invocationContext(seq, front.key),
+        invocationContext(seq, front.key, sending),
+      ).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() =>
+            sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown"),
+          ),
+        ),
       );
       diagnostics?.recordCall(outcome);
       if (runState && seq !== undefined && front.key !== undefined) {
@@ -1078,6 +1151,10 @@ interface RunnerConfig {
    * refused; absent, E4's refusal stands.
    */
   resumable?: ResumableSettings | undefined;
+  /** Config approval exemptions (#566): writes a program sends unasked. */
+  approval?: ApprovalPolicy | undefined;
+  /** Writes one program may send (`execute.maxWrites`). Default 10. */
+  maxWrites?: number | undefined;
 }
 
 /** Plays programs: `execute_code` fresh, `resume_execution` from a journal. */
@@ -1148,6 +1225,7 @@ export function createProgramRunner(
         diagnostics,
       );
       const invocationFailures: InvocationFailure[] = [];
+      const exemptWrites = runState ? undefined : new ExemptWrites();
       // The run's scope holds its signal and its lease. However the run
       // ends — a result, a thrown executor, the watchdog, cancellation —
       // closing it releases the lease and then aborts the signal, so
@@ -1185,6 +1263,9 @@ export function createProgramRunner(
             defer: config.defer,
             environment: config.environment,
             runState,
+            approval: config.approval,
+            maxWrites: config.maxWrites,
+            exemptWrites,
           }),
         ));
         if (signal.aborted) {
@@ -1205,9 +1286,14 @@ export function createProgramRunner(
           { watchdog },
         ).pipe(Effect.map((settled): PlayEnd => ({ settled })));
         if (!runState) {
+          // Nothing pauses, but an exempt write may be on the wire: close,
+          // then let it finish before the scope aborts it.
           return yield* timed((elapsed) => {
             if (diagnostics) diagnostics.executorWallMs = elapsed;
-          }, executing);
+          }, executing.pipe(Effect.ensuring(Effect.suspend(() => {
+            exemptWrites?.close();
+            return exemptWrites?.drain() ?? Effect.void;
+          }))));
         }
         // The run stopping wins the race as soon as its gate decides, before
         // the program even sees the rejection. Either way the play closes —
@@ -1235,7 +1321,7 @@ export function createProgramRunner(
           const failed = failedRun(Cause.squash(exit.cause), logger, reported);
           return runState
             ? runState.finishExecutorFailure(failed)
-            : Effect.succeed(failed);
+            : Effect.succeed(exemptWrites?.finish(failed) ?? failed);
         }
         const ended = exit.value;
         if ("stop" in ended) {
@@ -1246,7 +1332,7 @@ export function createProgramRunner(
         const finished = finishedRun(ended.settled, reported);
         return runState
           ? runState.finishSettled(finished)
-          : Effect.succeed(finished);
+          : Effect.succeed(exemptWrites?.finish(finished) ?? finished);
       });
     });
 
@@ -1595,6 +1681,10 @@ export function registerExecuteTool(
     defer?: DeferredWork | undefined;
     /** Resumable writes, when this deployment turned them on. */
     resumable?: ResumableSettings | undefined;
+    /** Config approval exemptions (#566). */
+    approval?: ApprovalPolicy | undefined;
+    /** Writes one program may send. Default 10. */
+    maxWrites?: number | undefined;
   },
 ): ProgramRunner {
   // Resolved once so the description and the collector cannot disagree about
@@ -1632,6 +1722,8 @@ export function registerExecuteTool(
       watchdogMs: ctx.watchdogMs,
       defer: ctx.defer,
       resumable: ctx.resumable,
+      approval: ctx.approval,
+      maxWrites: ctx.maxWrites,
     },
   );
   server.registerTool(

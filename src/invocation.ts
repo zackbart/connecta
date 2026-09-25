@@ -240,6 +240,13 @@ export interface InvocationContext<T> {
     target: ResolvedCatalogTool,
     args: unknown,
   ) => Effect.Effect<WriteGateDecision>;
+  /**
+   * Which consequential calls `writeGate` decides; all of them when omitted.
+   * One it does not cover keeps the flat refusal, ahead of validation as
+   * always — so a program without resumable writes gates only its
+   * config-exempt calls and refuses the rest exactly as before.
+   */
+  gates?: (target: ResolvedCatalogTool) => boolean;
 }
 
 export class InvocationFailure extends Error {
@@ -510,7 +517,10 @@ export class InvocationService {
 
           const consequential =
             !isExplicitlyReadOnly(target.definition) && !context.allowDestructive;
-          if (consequential && !context.writeGate) {
+          const gate = consequential && (context.gates?.(target) ?? true)
+            ? context.writeGate
+            : undefined;
+          if (consequential && !gate) {
             const canonicalAddress = `${target.connector.id}.${target.toolName}`;
             return framingError(
               "destructive_tool_requires_approval",
@@ -542,8 +552,8 @@ export class InvocationService {
             if (invalid) return classifyCallError(invalid);
           }
 
-          if (consequential && context.writeGate) {
-            const decision = yield* context.writeGate(target, args ?? {});
+          if (gate) {
+            const decision = yield* gate(target, args ?? {});
             if (decision.kind === "refuse") {
               gateActivity = decision.activity;
               return decision.error;

@@ -263,9 +263,10 @@ integration is ambiguous, because an unscoped search fans out across every
 configured connector. `safety: "readOnly"` returns exactly the tools
 `connecta.call` runs unasked; `"approvalRequired"` returns the complementary
 fail-closed class, false, missing, and contradictory annotations included,
-whose calls pause (`W1`); omitted or `"all"` preserves the complete catalog, as
-a program that means to write needs. These filters grant no authority and
-change no admission decision.
+whose calls pause (`W1`) unless config exempts them (`W12`), which a row marks
+with `approval: "exempt"` without moving it out of that class; omitted or
+`"all"` preserves the complete catalog, as a program that means to write needs.
+These filters grant no authority and change no admission decision.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -802,12 +803,12 @@ pauses keep that deadline, so no replay mixes old reads with new. Another
 subject or pool finds no run.
 
 **W4.** `resume_execution` takes `token`, `address`, `args`, optional
-`approval`, and a `reason` it drops. The address must match and the args be the
-same JSON, key order aside and no `__proto__` key, or it is
-`approval_mismatch`. That, `execution_token_stale` (with the current pause),
-`execution_in_progress` (a live claim), `execution_expired` (with counts if
-writes were sent), and `execution_not_found` refuse before the claim and
-consume nothing. A repeat of an ended run returns its answer, even past expiry.
+`approval`, and a dropped `reason`. Address and args must match the pending
+write as JSON, key order aside, with no `__proto__` key; otherwise it returns
+`approval_mismatch`. That, `execution_token_stale` (current pause),
+`execution_in_progress` (live claim), `execution_expired` (counts if writes
+were sent), and `execution_not_found` refuse before the claim, spending nothing.
+A repeat returns the ended run's answer past expiry; oversized text or emitted blocks get a completion receipt instead.
 
 **W5.** An approved write is sent at most once. Resuming claims the run by
 compare-and-set; a racing resume gets `execution_in_progress`. Each live write
@@ -854,6 +855,21 @@ calls they spend, checked at the gate — so an over-budget write fails
 **W11.** Without resumable writes — storage without `compareAndSet`, or
 `execute.resumableWrites: false` — `E4` stands and `resume_execution` answers
 `resumable_writes_unavailable`.
+
+**W12.** Config may exempt a write from asking, and nothing else may
+([#566](https://github.com/zackbart/connecta/issues/566)). `execute.approval`
+maps connector ids and `connector.tool` addresses to `"never"` or `"ask"`; the
+address wins over the connector entry, which wins over a connector's own
+built-in default (reserved for connectors connecta ships), which wins over
+`"ask"`. An exempt call is decided at the same gate as `W1` and dispatches
+instead of pausing, with everything else an approved write gets: the write
+budget (`W10`), the write-ahead mark (`W5`), the journal, a `V1` event. Without
+resumable writes, other writes keep `E4`; an exempt one still finishes after
+the program returns, never hiding an unknown outcome (`W9`). Exempt is never
+read-only: no read-only tool is reported exempt, discovery keeps an exempt tool
+approval-required, `call_tool` refuses it, and no annotation grants it, or a
+downstream could exempt itself. Unknown connectors and `api()` addresses its
+tools lack refuse to construct; an unserved remote address never matches.
 
 ## Executor exceptions
 
@@ -1000,11 +1016,12 @@ passing one table is also the check on the executor duties above, with
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself, `paused` and `approved` events), `test/activity.test.ts` (the shared code → friction table, the identity clamp, zero-attempt pauses and approvals) |
 | `V5` | `test/resumable.test.ts` (replay adds only the approval and the live write), `test/guest-api-contract.test.ts` |
 | `W1`, `W2` | `test/guest-api-contract.test.ts` (nothing after a pause gets through, a `__proto__` write refused, on both executors), `test/resumable.test.ts` (the pause shape, reproducible pause points, oversized pending writes, a write gated after the program returned), `test/invocation-pipeline.test.ts` (the gate after validation) |
-| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, a `__proto__` repetition through the MCP schema, stale tokens, a repeated resume, an expired run's counts) |
+| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, a `__proto__` repetition through the MCP schema, a repeated resume and emitted-content receipt, an expired run's counts) |
 | `W5` | `test/resumable.test.ts` (two resumes racing for a pause, a crashed claimant's `sending` write never sent, a lapsed claim taken over, a claim lost mid-play and the write it sent reported, executor failure returning to the pause, a cut-short or lapsed play that sent writes failing `execution_interrupted`, a claim outliving `expiresAt`, a live or lapsed claim checked before expiry, a failed takeover's answer stored with it, storage that never answers before and after dispatch, a deadline between mark and dispatch) |
 | `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a retry's scope replacing an unused approval, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
 | `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, check-first advice once a write landed, the write budget) |
 | `W11` | `test/code-first-surface.test.ts`, `test/resumable.test.ts` (construction, the default, `/health`, the unavailable answer) |
+| `W12` | `test/resumable.test.ts` (an exempt write runs where the same program otherwise pauses, precedence and a connector default switched off, the write budget, resumable writes off, an unawaited exempt write finished and its unknown outcome reported, journaled and never re-sent, an exempt write's count past expiry, `call_tool` still refusing, search and describe markers, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
 | `X12` | `test/guest-api-contract.test.ts` (a program that keeps calling after the pause, on both executors) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |

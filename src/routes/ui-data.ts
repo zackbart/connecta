@@ -24,6 +24,11 @@ import type {
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
+import {
+  isApprovalExempt,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "../tool-safety.js";
 import type { Connector, ConnectorStatus } from "../types.js";
 import { uiProblemFor, uiToolSafety } from "../ui.js";
 import { CONNECTA_VERSION } from "../version.js";
@@ -40,6 +45,8 @@ export interface UiDataOptions {
   mayManage?: ((id: string) => boolean) | undefined;
   timeoutMs?: number | undefined;
   signal?: AbortSignal | undefined;
+  /** Config approval exemptions (#566), for the per-tool safety badge. */
+  approval?: ApprovalPolicy | undefined;
 }
 
 interface Observed {
@@ -111,7 +118,10 @@ export function uiData(
               name: t.name,
               address: `${c.id}.${t.name}`,
               ...(t.description ? { description: t.description } : {}),
-              safety: uiToolSafety(t),
+              safety: uiToolSafety(
+                t,
+                isApprovalExempt(options.approval ?? NO_EXEMPTIONS, c, t.name, t),
+              ),
             }),
           ),
         ).pipe(

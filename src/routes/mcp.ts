@@ -293,7 +293,7 @@ function serveMcp(
   // A paused run belongs to the endpoint it started on: resuming it through
   // another pool's endpoint finds nothing, as another subject would.
   const resumable = opts.resumable
-    ? { ...opts.resumable, pool: poolName ?? null }
+    ? { ...opts.resumable, pool: poolName ?? null, approval: opts.approval }
     : undefined;
   // Every McpServer the request builds is fresh and closes with its scope.
   // The modern handler tears its own down after the exchange; the legacy
@@ -343,6 +343,7 @@ function serveMcp(
       ...(runtimeContext?.waitUntil
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
+      approval: opts.approval,
     });
     const runner = registerExecuteTool(server, registry, {
       baseUrl,
@@ -375,6 +376,8 @@ function serveMcp(
         ? { watchdogMs: opts.watchdogMs }
         : {}),
       resumable,
+      approval: opts.approval,
+      maxWrites: opts.maxWrites,
     });
     // Always registered, so the surface is the same eight tools on every
     // deployment; without resumable writes it answers that there is nothing

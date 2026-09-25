@@ -37,7 +37,12 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
-import { isExplicitlyReadOnly } from "./tool-safety.js";
+import {
+  isApprovalExempt,
+  isExplicitlyReadOnly,
+  NO_EXEMPTIONS,
+  type ApprovalPolicy,
+} from "./tool-safety.js";
 import type {
   Connector,
   JsonSchema,
@@ -463,6 +468,7 @@ export class CatalogService {
   private readonly searchRoute: SearchRoute;
   private readonly readOptions: CatalogReadOptions | undefined;
   private readonly requestSignal: AbortSignal | undefined;
+  private readonly approval: ApprovalPolicy;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
   // success stays for the rest of the request, so a search and the call after
@@ -490,8 +496,14 @@ export class CatalogService {
       defer?: DeferredWork | undefined;
       /** The request's cancellation; discovery probes end with it. */
       requestSignal?: AbortSignal | undefined;
+      /**
+       * Config approval exemptions (#566), so a row can say a write runs in
+       * programs unasked. Display only: nothing here changes a safety filter.
+       */
+      approval?: ApprovalPolicy | undefined;
     } = {},
   ) {
+    this.approval = options.approval ?? NO_EXEMPTIONS;
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs =
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -949,6 +961,16 @@ export class CatalogService {
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
             : {}),
+          // Config lets a program call this write without pausing (#566).
+          // A marker, not a class: the tool stays approval-required.
+          ...(isApprovalExempt(
+            this.approval,
+            match.connector,
+            match.tool.name,
+            match.tool,
+          )
+            ? { approval: "exempt" as const }
+            : {}),
           ...(requiredReasons
             ? {
                 guideRequired: true as const,
@@ -1311,6 +1333,14 @@ export class CatalogService {
           : {}),
         ...(output.source ? { outputSchemaSource: output.source } : {}),
         ...(tool.annotations ? { annotations: tool.annotations } : {}),
+        ...(isApprovalExempt(
+          this.approval,
+          addressResolution.connector,
+          tool.name,
+          tool,
+        )
+          ? { approval: "exempt" as const }
+          : {}),
       };
     });
   }
