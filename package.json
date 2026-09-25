@@ -110,6 +110,10 @@
     "./auth/bearer": {
       "types": "./dist/auth/bearer.d.ts",
       "import": "./dist/auth/bearer.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts.d.ts",
+      "import": "./dist/artifacts.js"
     }
   },
   "scripts": {

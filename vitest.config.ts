@@ -8,6 +8,10 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 export const WORKERS_SUITES = [
   "test/activity.test.ts",
   "test/api-connector.test.ts",
+  "test/artifact-store.test.ts",
+  "test/artifacts-markdown.test.ts",
+  "test/artifacts-operations.test.ts",
+  "test/artifacts-validate.test.ts",
   "test/bearer.test.ts",
   "test/branding.test.ts",
   "test/call-admission.test.ts",
@@ -79,6 +83,15 @@ export const WORKERS_SUITES = [
 ] as const;
 
 export const NODE_ONLY_SUITES = [
+  {
+    file: "test/artifact-store-d1.test.ts",
+    reason:
+      "drives the artifact store over the example D1 and R2 adapters through wrangler's getPlatformProxy",
+  },
+  {
+    file: "test/artifact-store-file.test.ts",
+    reason: "runs the artifact store over the Node filesystem storage adapter",
+  },
   {
     file: "test/d1-storage-example.test.ts",
     reason:
