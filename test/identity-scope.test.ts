@@ -6,7 +6,7 @@ import { api } from "../src/connectors/api.js";
 import { callerOf } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, InboundAuth } from "../src/types.js";
+import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
@@ -396,6 +396,40 @@ describe("identity-scoped tools", () => {
     const ghost = await rpc(connecta, "alice", "call_tool", { address: "notes.ghost", args: {} });
     expect(ghost.result.isError).toBe(true);
     expect(warnings.filter((line) => line.includes("notes.ghost"))).toHaveLength(1);
+  });
+
+  it("keeps an exact grant across catalog drift, including a read-to-write change", async () => {
+    let tools: ToolDef[] = [{ name: "read", annotations: { readOnlyHint: true } }];
+    const calls: string[] = [];
+    const notes: Connector = {
+      id: "notes",
+      kind: "api",
+      description: "Notes — read and update records",
+      async listTools() { return tools; },
+      async callTool(name) { calls.push(name); return { ok: true }; },
+    };
+    const connecta = createTestConnecta({
+      connectors: [notes], auth: users(),
+      identity: { connectorAccess: () => ["notes.read"] },
+      storage: memoryStorage(), publicUrl: BASE,
+    });
+    const call = (name: string, address: string) =>
+      rpc(connecta, "alice", name, { address, args: {} });
+
+    expect((await call("call_tool", "notes.read")).result.isError).toBeFalsy();
+    tools = [
+      { name: "read", annotations: { readOnlyHint: false, destructiveHint: true } },
+      { name: "new_read", annotations: { readOnlyHint: true } },
+    ];
+    await connecta.registry.invalidateStored("notes");
+
+    const discovered = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }));
+    expect(discovered).toContain("notes.read");
+    expect(discovered).not.toContain("notes.new_read");
+    expect((await call("call_tool", "notes.read")).result.isError).toBe(true);
+    expect((await call("call_destructive_tool", "notes.read")).result.isError).toBeFalsy();
+    expect(calls).toEqual(["read", "read"]);
+    await connecta.close();
   });
 });
 

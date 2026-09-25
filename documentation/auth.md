@@ -69,6 +69,81 @@ There is no *caller-selected* tool set. A narrower slice is a branch in this
 resolver or a config-declared pool; a bot that needs its own slice is its own
 bearer subject. What a request may never do is name its own scope.
 
+### Team read sets today
+
+`connectorAccess` is the supported way to give Engineering and Marketing
+different views of one deployment. Keep membership in deployment code and
+review the exact tool addresses you intend to grant:
+
+```ts
+const engineering = new Set(["engineer-id"]);
+const marketing = new Set(["marketer-id"]);
+const engineeringGrants = ["issues", "campaigns.list"] as const;
+const marketingGrants = ["campaigns", "issues.search"] as const;
+
+createConnecta({
+  auth: cloudflareAccessAuth(),
+  identity: {
+    connectorAccess: ({ principal }) => {
+      const id = principal?.id;
+      if (!id) return [];
+      return [...new Set([
+        ...(engineering.has(id) ? engineeringGrants : []),
+        ...(marketing.has(id) ? marketingGrants : []),
+      ])];
+    },
+  },
+  connectors: [issues, campaigns, billing],
+  executor,
+});
+```
+
+Here Engineering sees every `issues` tool and only `campaigns.list`;
+Marketing sees every `campaigns` tool and only `issues.search`. Neither sees
+`billing`. Someone in both groups gets both connectors in full because grants
+are additive. An unknown or unprincipalled identity gets an empty view. The
+example assumes the two exact tools have been reviewed as read-only; the names
+themselves carry no safety meaning. Use a stable authenticated principal or
+subject for membership, never a request header or tool argument. A pool can
+narrow any of these views on its endpoint, but cannot make plain `/mcp` narrower.
+
+This is a reviewed-name recipe, not a durable read-only grant mode. New tool
+names are excluded until added to the list, and a removed or renamed name is
+unreachable and warned when the scoped view reads its catalog. A granted name
+that later changes schema or loses its read-only annotation stays granted. Connecta then
+classifies it as approval-required. `call_tool` refuses it; a program follows
+the write-approval path, and `call_destructive_tool` can invoke it. A config
+exemption may let a program send the write unasked. A downstream can also keep a
+read-only annotation while changing the behavior behind it. Review the
+catalog, annotations, schemas, and downstream behavior before changing these
+lists or upgrading a maintained provider. Repeat that review when an arbitrary
+remote MCP catalog refreshes; it can drift without a package upgrade. For
+`api()` tools, the deployment author owns both the declaration and handler.
+Connecta enforces the declared visibility and call path, not the downstream's
+promise that a call has no side effects. A restricted downstream credential is
+useful defense in depth where the provider offers one, but it does not replace
+the per-identity grant.
+
+When the resolver returns `[]`, connector-level discovery and the connection
+UI have no connectors to show. An address-only grant can leave a connector
+visible while its named tool is absent; the tool stays unreachable. A failed
+remote catalog load is an error, not an empty successful catalog; a valid stale
+catalog may be served within its configured stale window. Personal OAuth
+ownership and credential-administration permissions remain separate from
+visibility. These are the checks for a team read set:
+
+| Boundary | Expected result for a reviewed address and an excluded write |
+| --- | --- |
+| `search_tools`, `describe_tools`, connector guides | Show the granted address; omit the write. |
+| `call_tool` | Invoke an explicitly read-only granted address; return `unknown_tool` for the write. |
+| `call_destructive_tool` | Return `unknown_tool` for the excluded write, without dispatch. |
+| `execute_code` search, describe, call | See granted tools only; refuse the excluded write. A granted write still follows the separate approval rules. |
+| Connection UI | List granted tools only; never turn visibility into credential administration. |
+| `/mcp/<pool>` | Intersect its grants with the identity view; plain `/mcp` keeps the identity view. |
+
+Existing integration tests in `test/identity-scope.test.ts` exercise these
+paths. They also pin the current limitation when a granted name is reclassified.
+
 ## Pools
 
 A pool is a named slice of the deployment served at its own endpoint,
