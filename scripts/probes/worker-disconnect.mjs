@@ -47,6 +47,7 @@ function stream(request, id, mode) {
 }
 export default {
   async fetch(request, env) {
+    const requestStartedAt = Date.now();
     if (request.headers.get('authorization') !== 'Bearer ' + env.PROBE_KEY) return new Response(null, { status: 404 });
     isolate ??= crypto.randomUUID();
     const url = new URL(request.url);
@@ -74,6 +75,8 @@ export default {
     else response = await app.fetch(request);
     response.headers.set('x-probe-isolate', isolate);
     response.headers.set('x-probe-version', env.PROBE_VERSION);
+    response.headers.set('x-probe-started-at', String(requestStartedAt));
+    response.headers.set('x-probe-finished-at', String(Date.now()));
     response.headers.set('cache-control', 'no-store');
     return response;
   }
@@ -123,16 +126,20 @@ try {
           try { while (!(await reader.read()).done) {} clientEnd = { kind: 'end' }; }
           catch (error) { clientEnd = { kind: 'error', message: String(error) }; }
         })();
-        await wait(750);
-        const clientEndedBeforeAbort = clientEnd ?? null;
         let whileLive;
         if (route === 'mcp') {
           const competing = await listTools();
           whileLive = { status: competing.status,
             sameIsolate: competing.headers.get('x-probe-isolate') === isolate,
-            elapsedMs: Date.now() - responseAt };
+            // Compare two server timestamps. The original lease can only be
+            // granted after its Worker entry, and the competing decision ran
+            // before its response returned. This is a conservative bound.
+            elapsedMs: Number(competing.headers.get('x-probe-finished-at')) -
+              Number(response.headers.get('x-probe-started-at')) };
           await competing.text();
         }
+        await wait(750);
+        const clientEndedBeforeAbort = clientEnd ?? null;
         controller.abort();
         clearTimeout(timeout);
         try { await reader.cancel(); } catch {}
@@ -170,6 +177,9 @@ try {
           observation.admission.active === 0 && observation.followup.status === 200 &&
           observation.followup.sameIsolate && toolCount === 8 &&
           (!whileLive || (whileLive.status === 503 && whileLive.sameIsolate && whileLive.elapsedMs < maxDurationMs));
+        observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs >= maxDurationMs)
+          ? 'inconclusive: contention arrived after the conservative deadline'
+          : observation.passed ? 'pass' : 'fail';
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
         await writeFile(output, JSON.stringify({ testedAt: new Date().toISOString(), name, observations }, null, 2));
@@ -177,7 +187,7 @@ try {
       }
     }
   }
-  if (observations.some(row => !row.passed)) throw new Error(`Disconnect regression failed; see ${output}`);
+  if (observations.some(row => !row.passed)) throw new Error(`Disconnect regression not verified; see ${output}`);
 } finally {
   try {
     if (deploymentAttempted) {
