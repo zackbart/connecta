@@ -18,7 +18,7 @@ const name = `connecta-disconnect-${Date.now().toString(36)}`;
 const key = randomBytes(24).toString("hex");
 const configPath = join(temp, "wrangler.json");
 const observations = [];
-const maxResponseMs = 2000;
+const maxDurationMs = 2000;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let deploymentAttempted = false;
 
@@ -55,7 +55,7 @@ export default {
     if (!app) { app = createConnecta({
       connectors: [], logger: 'silent', executor: { execute: async () => ({ result: null }) },
       admission: { requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1000,
-        maxResponseMs: ${maxResponseMs} } },
+        maxDurationMs: ${maxDurationMs} } },
       auth: { kind: 'probe', authorize(req) {
         if (req.headers.get('x-probe-pass') === 'yes') return { ok: true };
         const u = new URL(req.url);
@@ -139,7 +139,7 @@ try {
         await drained;
         // Do not read /health after expiry before this request. Admission must
         // recover from acquire itself, without a monitoring request sweeping it.
-        await wait(Math.max(0, maxResponseMs + 500 - (Date.now() - responseAt)));
+        await wait(Math.max(0, maxDurationMs + 500 - (Date.now() - responseAt)));
         const followup = await listTools();
         const followupBody = await followup.text();
         let toolCount;
@@ -157,7 +157,7 @@ try {
         }
         const same = snapshots.find(s => s.isolate === isolate);
         const observation = { enabled, servedVersion: response.headers.get('x-probe-version'),
-          compatibilityDate: "2025-01-01", flags, maxResponseMs, route, mode, id, isolate,
+          compatibilityDate: "2025-01-01", flags, maxDurationMs, route, mode, id, isolate,
           status: response.status, first: first?.value ? new TextDecoder().decode(first.value) : first,
           clientEndedBeforeAbort, whileLive,
           sameIsolate: Boolean(same), events: same?.events.filter(e => e.id === id),
@@ -169,7 +169,7 @@ try {
           response.status === (route === 'mcp' ? 401 : 200) && observation.sameIsolate &&
           observation.admission.active === 0 && observation.followup.status === 200 &&
           observation.followup.sameIsolate && toolCount === 8 &&
-          (!whileLive || (whileLive.status === 503 && whileLive.sameIsolate && whileLive.elapsedMs < maxResponseMs));
+          (!whileLive || (whileLive.status === 503 && whileLive.sameIsolate && whileLive.elapsedMs < maxDurationMs));
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
         await writeFile(output, JSON.stringify({ testedAt: new Date().toISOString(), name, observations }, null, 2));
