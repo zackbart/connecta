@@ -7,13 +7,15 @@ import {
 } from "preact/hooks";
 import {
   gateCopy,
+  isArtifactPage,
   PAGE_META,
   OPERATOR_PAGES,
   type OperatorPage,
   type OperatorState,
 } from "../view.js";
-import { auth, productDescription, titleSuffix } from "./config.js";
+import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
 import { ActivityPage } from "./activity.js";
+import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
 import { ConnectionsPage } from "./connections.js";
 import { NoticeLine, PageLink } from "./parts.js";
 import {
@@ -52,8 +54,12 @@ function useOperatorState(): OperatorState {
 
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
+  // Artifact pages never read /ui/data, so they cannot know whether Activity
+  // is open to this identity; they offer the way back to Connections instead.
+  if (isArtifactPage(state.page)) return ["connections", "artifacts"];
   return OPERATOR_PAGES.filter((page) => {
     if (page === "activity") return Boolean(state.data?.activityEnabled);
+    if (page === "artifacts") return Boolean(state.data?.artifactsEnabled);
     return true;
   });
 }
@@ -61,19 +67,33 @@ function visiblePages(state: OperatorState): OperatorPage[] {
 function OperatorNav() {
   const state = useOperatorState();
   if (state.session !== "ready") return null;
+  const onArtifactPage = isArtifactPage(state.page);
   return (
     <div class="mast-actions">
       <nav class="page-nav" aria-label="Operator pages">
-        {visiblePages(state).map((page) => (
-          <PageLink
-            key={page}
-            page={page}
-            class="navlink"
-            current={state.page === page}
-          >
-            {PAGE_META[page].label}
-          </PageLink>
-        ))}
+        {visiblePages(state).map((page) =>
+          // Crossing between artifact pages and the rest is a full navigation:
+          // with a dedicated artifact origin, the two live on different hosts.
+          page === "artifacts" || (onArtifactPage && page === "connections") ? (
+            <a
+              key={page}
+              class="navlink"
+              href={page === "artifacts" ? PAGE_META.artifacts.path : homeUrl}
+              {...(state.page === page ? { "aria-current": "page" as const } : {})}
+            >
+              {PAGE_META[page].label}
+            </a>
+          ) : (
+            <PageLink
+              key={page}
+              page={page}
+              class="navlink"
+              current={state.page === page}
+            >
+              {PAGE_META[page].label}
+            </PageLink>
+          ),
+        )}
       </nav>
       <div class="session-actions" aria-label="Session actions">
         {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
@@ -158,6 +178,8 @@ function Gate({ state }: { state: OperatorState }) {
 
 function CurrentPage({ state }: { state: OperatorState }) {
   if (state.page === "activity") return <ActivityPage state={state} />;
+  if (state.page === "artifacts") return <ArtifactsPage state={state} />;
+  if (state.page === "artifact") return <ArtifactPage state={state} />;
   return <ConnectionsPage state={state} />;
 }
 
@@ -166,8 +188,11 @@ function OperatorApp() {
   const ready = state.session === "ready";
 
   useEffect(() => {
-    document.title = `${PAGE_META[state.page].label} — ${titleSuffix}`;
-  }, [state.page]);
+    const label = state.page === "artifact" && state.artifactView
+      ? state.artifactView.title
+      : PAGE_META[state.page].label;
+    document.title = `${label} — ${titleSuffix}`;
+  }, [state.page, state.artifactView]);
 
   // Deferred loads: a page fetches its own collection the first time an
   // identity opens it, and again after an identity change resets it to idle.

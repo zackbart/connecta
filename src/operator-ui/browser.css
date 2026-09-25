@@ -516,6 +516,36 @@
   .activity-empty { color: var(--muted); padding: 1.5rem var(--pad); text-align: center; }
   .activity-more { margin-top: .75rem; }
 
+  /* Artifacts */
+
+  .artifact-row {
+    align-items: center;
+    display: grid;
+    gap: .25rem var(--gap);
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: .6rem var(--pad);
+  }
+  .artifact-row .artifact-title { font-weight: 600; overflow-wrap: anywhere; }
+  .artifact-row .artifact-meta, .artifact-meta { color: var(--muted); font-size: .8125rem; }
+  .artifact-badges { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; }
+  .artifact-head { display: grid; gap: .35rem; margin-bottom: .75rem; }
+  .artifact-banner {
+    background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: .5rem .75rem;
+  }
+  .artifact-frame {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: block;
+    height: calc(100vh - 14rem);
+    min-height: 28rem;
+    width: 100%;
+  }
+
   /* Gate */
 
   .gate {

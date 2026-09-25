@@ -31,4 +31,11 @@ export interface ActivityModule {
 export interface ArtifactsModule {
   /** The built-in `artifacts` connector. */
   readonly connector: Connector;
+  /**
+   * Serve the pages' JSON API (`/artifacts/_api/*`) and the sandboxed frame
+   * (`/artifacts/_frame`); null for any other path. The operator UI delegates
+   * here and serves the page shells itself, so without `ui` there are no
+   * artifact routes at all.
+   */
+  handle(context: RouteContext): Promise<Response | null>;
 }

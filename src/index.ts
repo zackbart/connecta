@@ -526,7 +526,8 @@ function assertKnownConfig(config: ConnectaConfig): void {
       artifacts === null ||
       !connector ||
       connector.id !== "artifacts" ||
-      typeof connector.callTool !== "function"
+      typeof connector.callTool !== "function" ||
+      typeof (artifacts as Partial<ArtifactsModule>).handle !== "function"
     ) {
       throw new Error(
         "ConnectaConfig.artifacts must be created with artifacts(...) from @zackbart/connecta/artifacts",
@@ -746,6 +747,22 @@ function warnInsecureConfig(
     );
   }
 
+  // Artifact pages mount inside the operator UI and open only for an
+  // authenticated viewer; either missing leaves the connector with no page.
+  if (config.artifacts && !config.ui) {
+    logger.warn(
+      "[connecta] artifacts is configured without ui: agents can publish and " +
+        "read artifacts, but there is no viewer, so their links answer 404. " +
+        "Add ui: operatorUi() to serve artifact pages.",
+    );
+  } else if (config.artifacts && inboundAuth.length === 0) {
+    logger.warn(
+      "[connecta] artifacts is configured with no inbound authentication: " +
+        "artifact pages refuse every request, because there is no team to " +
+        "show them to. Configure `auth` to open them.",
+    );
+  }
+
   // Unset publicUrl with OAuth connectors: the downstream redirect_uri is
   // derived per-request from the attacker-influenced inbound Host header.
   if (oauthConnectors.length > 0 && !config.publicUrl) {
@@ -958,6 +975,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     logger,
     activity: config.activity?.store,
     activityModule: config.activity,
+    artifactsModule: config.artifacts,
     activityReadGate: config.activity?.readGate,
     activityDeploymentId: config.activity?.deploymentId,
     executor,

@@ -1,5 +1,11 @@
-import type { UiConnector, UiData } from "../model.js";
+import type {
+  UiArtifactRow,
+  UiArtifactView,
+  UiConnector,
+  UiData,
+} from "../model.js";
 import {
+  artifactViewRequest,
   credentialTestNotice,
   failure,
   info,
@@ -262,7 +268,7 @@ export function setActivitySearch(activitySearch: string): void {
 export function signInWithBearer(value: string): void {
   gate(null);
   localStorage.setItem(TOKEN_KEY, value);
-  void loadData().then(() => {
+  void loadCurrent().then(() => {
     if (state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
   });
 }
@@ -448,6 +454,155 @@ export async function loadActivity(reset: boolean): Promise<void> {
   }
 }
 
+/* Artifacts --------------------------------------------------------------- */
+
+/**
+ * An artifact API read with the session's token. Artifact pages never read
+ * `/ui/data` — a dedicated artifact origin does not serve it — so this is
+ * where they learn whether the session is accepted. Only a status decides
+ * what the page says; no refusal's text reaches it.
+ */
+async function artifactRead(
+  path: string,
+  current: () => boolean,
+): Promise<Response | undefined> {
+  let token;
+  try {
+    token = await sessionToken();
+  } catch {
+    if (current()) gate(failure("Could not read the sign-in session."));
+    return undefined;
+  }
+  if (!current()) return undefined;
+  if (!token && auth.kind !== "cloudflare-access") {
+    gate(null);
+    return undefined;
+  }
+  let res: Response;
+  try {
+    res = await fetch(path, { headers: requestHeaders(token), credentials: "same-origin" });
+  } catch {
+    if (current()) gate(failure("Network error: the artifact could not be reached."));
+    return undefined;
+  }
+  if (!current()) return undefined;
+  if (res.status === 401) {
+    if (auth.kind !== "clerk" && auth.kind !== "cloudflare-access") {
+      localStorage.removeItem(TOKEN_KEY);
+      gate(failure("Token rejected — enter a valid bearer token."));
+    } else {
+      gate(failure("Your session was not accepted. Sign out and try again."));
+    }
+    return undefined;
+  }
+  if (res.status === 403) {
+    gate(failure("This deployment does not open artifact pages to this identity."));
+    return undefined;
+  }
+  return res;
+}
+
+export async function loadArtifacts(reset: boolean): Promise<void> {
+  const current = fence();
+  set({
+    artifactPhase: "loading",
+    artifactNotice: null,
+    ...(reset ? { artifactRows: [], artifactCursor: null } : {}),
+  });
+  const params = new URLSearchParams();
+  if (state.artifactQuery.trim()) params.set("q", state.artifactQuery.trim());
+  if (state.artifactArchived) params.set("archived", "1");
+  if (!reset && state.artifactCursor) params.set("cursor", state.artifactCursor);
+  const query = params.toString();
+  const res = await artifactRead(`/artifacts/_api/list${query ? `?${query}` : ""}`, current);
+  if (!res || !current()) return;
+  if (!res.ok) {
+    return set({
+      session: "ready",
+      gate: null,
+      artifactPhase: "error",
+      artifactNotice: failure(
+        res.status === 404
+          ? "Artifacts are not available to this identity."
+          : "Artifacts could not be loaded.",
+      ),
+    });
+  }
+  let payload: { artifacts?: UiArtifactRow[]; nextCursor?: string };
+  try {
+    payload = (await res.json()) as typeof payload;
+  } catch {
+    payload = {};
+  }
+  if (!current()) return;
+  set({
+    session: "ready",
+    gate: null,
+    artifactPhase: "ready",
+    artifactRows: [...(reset ? [] : state.artifactRows), ...(payload.artifacts ?? [])],
+    artifactCursor: payload.nextCursor ?? null,
+  });
+}
+
+export async function loadArtifactView(): Promise<void> {
+  const current = fence();
+  const request = artifactViewRequest(window.location.pathname, window.location.search);
+  set({ artifactPhase: "loading", artifactNotice: null });
+  if (!request) {
+    return set({
+      session: "ready",
+      artifactPhase: "error",
+      artifactNotice: failure("There is no artifact at this address."),
+    });
+  }
+  const res = await artifactRead(request, current);
+  if (!res || !current()) return;
+  if (!res.ok) {
+    return set({
+      session: "ready",
+      gate: null,
+      artifactPhase: "error",
+      artifactNotice: failure(
+        res.status === 404
+          ? "There is no artifact here, or this identity cannot open it."
+          : "The artifact could not be loaded.",
+      ),
+    });
+  }
+  let view: UiArtifactView | null = null;
+  try {
+    view = (await res.json()) as UiArtifactView;
+  } catch {
+    view = null;
+  }
+  if (!current()) return;
+  if (!view || typeof view.document !== "string") {
+    return set({
+      session: "ready",
+      gate: null,
+      artifactPhase: "error",
+      artifactNotice: failure("The artifact could not be read."),
+    });
+  }
+  set({ session: "ready", gate: null, artifactPhase: "ready", artifactView: view });
+}
+
+export function setArtifactQuery(artifactQuery: string): void {
+  set({ artifactQuery });
+}
+
+export function setArtifactArchived(artifactArchived: boolean): void {
+  set({ artifactArchived });
+  void loadArtifacts(true);
+}
+
+/** Load what the current page shows, deciding gated or ready on the way. */
+function loadCurrent(): Promise<void> {
+  if (state.page === "artifacts") return loadArtifacts(true);
+  if (state.page === "artifact") return loadArtifactView();
+  return loadData();
+}
+
 /* Boot -------------------------------------------------------------------- */
 
 export function signIn(): void {
@@ -495,14 +650,14 @@ export async function boot(): Promise<void> {
         // listeners. Clear synchronously so stale identity-scoped data cannot
         // be repainted while the replacement identity is being fetched.
         gate(null);
-        void loadData();
+        void loadCurrent();
       });
     } catch (error) {
       const why = message(error, "unknown error");
       return gate(failure(`Clerk could not initialize: ${why}`));
     }
   }
-  await loadData();
+  await loadCurrent();
 }
 
 let detailGeneration = 0;

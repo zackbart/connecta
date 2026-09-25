@@ -45,17 +45,31 @@ function stringForInlineScript(value: string): string {
 
 export type OperatorPage =
   | "connections"
-  | "activity";
+  | "activity"
+  | "artifacts"
+  | "artifact";
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
   connections: "Connections",
   activity: "Activity",
+  artifacts: "Artifacts",
+  artifact: "Artifact",
 };
+
+/** `/artifacts/<id>` and its snapshots, `/artifacts/<id>/v/<version>`. */
+const ARTIFACT_PAGE = /^\/artifacts\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\/v\/\d{1,9})?$/;
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
   if (path === "/") return "connections";
   if (path === "/activity") return "activity";
+  if (path === "/artifacts") return "artifacts";
+  if (ARTIFACT_PAGE.test(path)) return "artifact";
   return undefined;
+}
+
+/** Everything artifact pages own: shells, their API, and the frame. */
+export function isArtifactPath(path: string): boolean {
+  return path === "/artifacts" || path.startsWith("/artifacts/");
 }
 
 export function operatorPageTitle(
@@ -171,6 +185,10 @@ export function renderUiHtml(
   branding?: ConnectaBranding,
   nonce?: string,
   page: OperatorPage = "connections",
+  options: {
+    /** Where the Connections page lives, when this shell is on another origin. */
+    homeUrl?: string;
+  } = {},
 ): string {
   const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
   // The Clerk loader's origin. A value that fails the gate is dropped rather
@@ -274,6 +292,7 @@ ${clerkScript}
 const AUTH = ${jsonForInlineScript(auth)};
 const MCP_URL = ${jsonForInlineScript(mcpUrl)};
 const INITIAL_PAGE = ${jsonForInlineScript(page)};
+const HOME_URL = ${jsonForInlineScript(options.homeUrl ?? "/")};
 const TITLE_SUFFIX = ${jsonForInlineScript(brand.pageTitle)};
 const PRODUCT_NAME = ${stringForInlineScript(brand.productName)};
 const PRODUCT_DESCRIPTION = ${stringForInlineScript(brand.description)};
@@ -308,7 +327,16 @@ export function operatorUi(
       // route here, and no activity module, runs for a path this surface does
       // not own. The Activity page is the one addition; the server reserves
       // it only when history is readable, and routeUi checks the same thing.
-      if (!ownsOperatorPath(reservedPaths, context.path)) return null;
+      // Artifact pages are the other: they exist only beside the module.
+      const artifacts = context.opts.artifactsModule;
+      const artifactPath = Boolean(artifacts) && isArtifactPath(context.path);
+      if (!artifactPath && !ownsOperatorPath(reservedPaths, context.path)) return null;
+      if (artifactPath && !operatorPageForPath(context.path)) {
+        // The pages' JSON API and the sandboxed frame; the module owns both,
+        // and this bundle imports none of it.
+        return (await artifacts?.handle(context)) ??
+          new Response("Not Found", { status: 404 });
+      }
       const routes = [
         ...(context.opts.credentialVault ? [routeCredentials] : []),
         routeOAuthManagement,

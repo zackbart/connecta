@@ -3,6 +3,7 @@
 import type { ArtifactsModule } from "../module-contracts.js";
 import { artifactsConnector, type ArtifactRenderCheck } from "./connector.js";
 import { ArtifactOperations } from "./operations.js";
+import { artifactRoutes } from "./routes.js";
 import type { ArtifactAllowlist, ArtifactLimits, ArtifactStore } from "./types.js";
 import { resolveAllowlist, resolveLimits } from "./validate.js";
 
@@ -82,5 +83,8 @@ export function artifacts(options: ArtifactsOptions): ArtifactsModule {
     limits,
     ...(options.renderCheck ? { renderCheck: options.renderCheck } : {}),
   });
-  return Object.freeze({ connector });
+  return Object.freeze({
+    connector,
+    handle: artifactRoutes({ operations, allowlist }),
+  });
 }

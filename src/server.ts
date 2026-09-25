@@ -105,6 +105,7 @@ export function createFetchHandler(
           "/health",
           ...(opts.ui?.reservedPaths ?? []),
           ...(opts.ui && opts.activity?.list ? ["/activity"] : []),
+          ...(opts.ui && opts.artifactsModule ? ["/artifacts", "/artifacts/*"] : []),
         ],
       },
       ...(opts.deploymentInfo ? { deployment: opts.deploymentInfo } : {}),
