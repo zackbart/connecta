@@ -25,6 +25,15 @@ warning, or none with `execute.resumableWrites: false` — its programs refuse
 writes exactly as before, and `resume_execution` answers that there is nothing
 to resume.
 
+Artifacts arrive as an optional module. `artifacts()` from
+`@zackbart/connecta/artifacts` adds a built-in `artifacts` connector for team
+pages whose numbers live in versioned JSON documents; its writes skip approval
+inside programs, because every one is a new version anyone can roll back. A
+deployment that never imports it can ignore it entirely. One piece reaches
+everyone: `ConnectorCallErrorCode` gains `conflict`, a stale-base refusal,
+and a program's write that fails with it counts as refused rather than as an
+unknown outcome.
+
 Separately, the operator page's last route for downstream error text is closed. What
 changes on the wire: `POST` and `DELETE /ui/oauth/<id>` answer a failure in
 fixed words and a success without `message`, and `POST
@@ -98,6 +107,30 @@ the page can ignore it.
   relative or network resource URLs, with a line number and a fix in every
   message. The Worker example gains `r2-artifact-blobs.ts` for keeping bodies
   in R2 beside a D1 store. The subpath adds no dependency and no Effect.
+- **The built-in artifacts connector (#562).** `createConnecta({ artifacts:
+  artifacts({ store }) })` appends an `artifacts` connector with four reads —
+  `list_artifacts`, `get_artifact`, `get_document`, `validate_artifact` — and
+  seven writes: `create_artifact`, `update_artifact`, `patch_artifact` (exact
+  find/replace, every edit matching once or nothing changes),
+  `set_documents` (plural and atomic), `rollback_artifact`,
+  `archive_artifact`, and `restore_artifact`. Every write names the base it
+  expects, records who made it from the request's authorization, and skips
+  approval inside `execute_code` through the connector's own `approval:
+  "never"` — `execute.approval: { artifacts: "ask" }` turns that off — while
+  still spending the write budget and recording activity; `call_tool` still
+  refuses it. The connector serves a publishing guide as
+  `connector:artifacts`, required before the first write. An optional
+  `renderCheck` hook receives the exact frame document and CSP a viewer will
+  load and can refuse a write; without one, static validation is the floor.
+  The module needs `publicUrl`, and a configured connector named `artifacts`
+  refuses to construct.
+- **`conflict` (#562).** A new `ConnectorCallErrorCode` for a write whose base
+  someone else already moved past, never retryable as-is, with an optional
+  bounded `current` map (at most 20 whole-number entries) on
+  `ConnectorCallError` and `CallErrorDetails` saying where things stand. A
+  program reads it as `err.details.current`; a top-level call returns it in
+  the structured error. A write refused with `conflict` inside a program is a
+  known failure (`W9`), not an unknown outcome.
 
 ### Changed
 

@@ -748,6 +748,8 @@ export function createMetaTools(
         // Sanitized `unavailable` diagnostics ride the structured shape too;
         // the plain-text path would drop them (#539).
         outcome.error.details !== undefined ||
+        // So does a conflict's `current`: where things stand is the retry.
+        outcome.error.current !== undefined ||
         [
           "auth_required",
           "invalid_args",

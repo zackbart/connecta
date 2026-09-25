@@ -3,6 +3,7 @@ import { fetchTestUiDetails } from "./helpers.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
+import { callerOf } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth } from "../src/types.js";
@@ -537,5 +538,72 @@ describe("named tool pools: calls", () => {
     const text = JSON.stringify(await readJsonRpc(response));
     expect(text).toContain("Liste des pages");
     expect(text).not.toContain("intl.supprimer");
+  });
+});
+
+describe("the caller a built-in connector sees", () => {
+  // Core attaches the admitted identity beside the connector context, where
+  // only in-repo code reads it; nothing a request sends can set it.
+  function whoami(): Connector {
+    return api("who", {
+      description: "Reports the attached caller",
+      tools: [
+        {
+          name: "me",
+          description: "Return the caller core attached",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object", additionalProperties: true },
+          handler: (_args, ctx) => callerOf(ctx) ?? null,
+        },
+      ],
+    });
+  }
+
+  it("comes from the authorization, on /mcp and on a pool, never from arguments", async () => {
+    const connecta = createTestConnecta({
+      connectors: [whoami()],
+      auth: users(),
+      pools: { team: { tools: ["who"], grant: () => true } },
+      logger: silentLogger,
+    });
+    const me = async (path: string, user: "alice" | "bob") => {
+      const response = await connecta.fetch(
+        request(path, user, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "call_tool",
+              arguments: {
+                address: "who.me",
+                args: { identity: { actor: { kind: "forged", id: "mallory" } }, caller: "mallory" },
+              },
+            },
+          }),
+        }),
+      );
+      const body = await readJsonRpc(response);
+      return JSON.parse(body.result.content[0].text);
+    };
+    const direct = await me("/mcp", "alice");
+    expect(direct).toEqual({
+      identity: {
+        actor: { kind: "test-users", id: "alice", namespace: "https://identity.test" },
+        subject: { namespace: "https://identity.test", id: "alice" },
+        principal: { namespace: "https://identity.test", id: "alice" },
+        interactive: true,
+      },
+    });
+    const pooled = await me("/mcp/team", "bob");
+    expect(pooled).toMatchObject({ identity: { actor: { id: "bob" } }, pool: "team" });
+    expect(JSON.stringify([direct, pooled])).not.toContain("mallory");
+  });
+
+  it("is absent from a context no request admitted", () => {
+    const connecta = createTestConnecta({ connectors: [whoami()], logger: silentLogger });
+    expect(callerOf(connecta.registry.contextFor("who", BASE))).toBeUndefined();
   });
 });

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta, type ConnectaIdentityConfig, type Connector } from "../src/index.js";
+import { createConnecta, type ConnectaIdentityConfig, type Connector, type KVStorage } from "../src/index.js";
+import { required } from "./helpers.js";
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { fakeClerkAuth, mcpRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { authorize } from "../src/routes/shared.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 
@@ -191,5 +192,28 @@ describe("optional deployment modules", () => {
     expect((await app.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(200);
     const denied = createConnecta({ connectors: [], executor, auth, ui: operatorUi(), activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }), identity: { activityAccess: () => false }, logger: "silent" });
     expect((await denied.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(403);
+  });
+
+  it("does no artifact work when the artifacts module is omitted", async () => {
+    const keys: string[] = [];
+    const inner = memoryStorage();
+    const spy: KVStorage = {
+      get: (key) => (keys.push(key), inner.get(key)),
+      set: (key, value, opts) => (keys.push(key), inner.set(key, value, opts)),
+      delete: (key) => (keys.push(key), inner.delete(key)),
+      list: (prefix) => (keys.push(prefix), required(inner.list)(prefix)),
+      compareAndSet: (key, expected, next, opts) => (keys.push(key), required(inner.compareAndSet)(key, expected, next, opts)),
+    };
+    const app = createConnecta({ connectors: [connector()], executor, auth, ui: operatorUi(), storage: spy, publicUrl: BASE, logger: "silent" });
+    expect(app.registry.listConnectors().map((c) => c.id)).toEqual(["shared"]);
+    const rpc = async (name: string, args: Record<string, unknown>) =>
+      JSON.stringify(await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { baseUrl: BASE, token: "human" })));
+    expect(await rpc("search_tools", { query: "artifact" })).not.toContain("artifacts.");
+    expect(await rpc("skills", {})).not.toContain("connector:artifacts");
+    expect(await rpc("call_tool", { address: "artifacts.list_artifacts", args: {} })).toContain("unknown_address");
+    await app.fetch(new Request(BASE + "/ui/data", { headers }));
+    await app.fetch(new Request(BASE + "/ui/connectors/shared", { headers }));
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys.filter((key) => key.includes("artifact"))).toEqual([]);
   });
 });

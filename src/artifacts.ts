@@ -4,6 +4,12 @@
 // connector. Nothing here is reachable from the root entry: a deployment that
 // never imports this subpath carries none of it and does none of its work.
 
+export { artifacts, type ArtifactsOptions } from "./artifacts/module.js";
+export type {
+  ArtifactRenderCheck,
+  ArtifactRenderCheckInput,
+  ArtifactRenderCheckResult,
+} from "./artifacts/connector.js";
 export { kvArtifactStore, type KvArtifactStoreOptions } from "./artifacts/kv-store.js";
 export {
   validateArtifact,

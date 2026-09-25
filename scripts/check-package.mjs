@@ -474,6 +474,12 @@ const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
 }
+const artifactsSlot = artifactsModule.artifacts({
+  store: artifactsModule.kvArtifactStore(core.memoryStorage()),
+});
+if (artifactsSlot.connector?.id !== "artifacts") {
+  throw new Error("artifacts() did not return the artifacts connector");
+}
 if (!artifactsModule.validateArtifact({ kind: "markdown", source: "# smoke" }).ok) {
   throw new Error("packed validateArtifact refused a valid page");
 }
@@ -840,6 +846,7 @@ try {
     "    activity?: ActivityModule;",
     "    vault?: CredentialVault;",
     "    ui?: OperatorSurface;",
+    "    artifacts?: ArtifactsModule;",
     "    discovery?: ConnectaDiscoveryConfig;",
     "    calls?: ConnectaCallsConfig;",
     "    close: () => Promise<void>;",

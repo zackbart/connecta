@@ -758,6 +758,8 @@ describe("resumable writes: unknown outcomes", () => {
       [{ ok: false, dispatched: true, answered: false, error: { code: "invalid_args" } }, "failed"],
       [{ ok: false, dispatched: true, answered: true, error: { code: "not_found" } }, "failed"],
       [{ ok: false, dispatched: true, answered: true, error: { code: "rate_limited" } }, "failed"],
+      // A stale base is a verdict: the connector refused before changing anything.
+      [{ ok: false, dispatched: true, answered: false, error: { code: "conflict" } }, "failed"],
       [{ ok: false, dispatched: true, error: { code: "result_processing_failed" } }, "ok"],
     ];
     for (const [outcome, expected] of table) {

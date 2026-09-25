@@ -11,7 +11,7 @@ import { boundedEchoText } from "../errors.js";
 import { utf8Bytes } from "../run-journal.js";
 import { lineLocator, scanHtml, type HtmlAttribute } from "./html-scan.js";
 import { jsonProblem, scriptSafeJson } from "./json.js";
-import { markdownPage } from "./markdown.js";
+import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {
   DEFAULT_ARTIFACT_ALLOWLIST,
   DEFAULT_ARTIFACT_LIMITS,
@@ -26,6 +26,12 @@ import {
 export const ARTIFACT_ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 /** A document name: what a page reads as `artifact.data.<name>`. */
 const DOCUMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
+/** Plain-object document maps must never resolve a name through their prototype. */
+export function validDocumentName(name: unknown): name is string {
+  return typeof name === "string" && DOCUMENT_NAME.test(name) &&
+    !Object.hasOwn(Object.prototype, name) && name !== "prototype";
+}
 
 const MAX_REPORTED = 20;
 const QUOTE_BYTES = 120;
@@ -250,7 +256,14 @@ export function checkView(input: ViewCheckInput, context: CheckContext): Finding
     return findings;
   }
   if (kind === "markdown") {
-    const rendered = utf8Bytes(markdownPage(source, input.title ?? "")) + FRAME_OVERHEAD_BYTES;
+    let rendered: number;
+    try {
+      rendered = utf8Bytes(markdownPage(source, input.title ?? "")) + input.dataBytes + FRAME_OVERHEAD_BYTES;
+    } catch (error) {
+      if (!(error instanceof MarkdownNestingError)) throw error;
+      findings.errors.push({ code: "E_NESTING", severity: "error", message: error.message });
+      return findings;
+    }
     if (rendered > limits.renderedBytes) {
       findings.errors.push({
         code: "E_TOO_LARGE",
@@ -631,7 +644,7 @@ export function checkDocument(
   value: unknown,
   limits: ArtifactLimits,
 ): DocumentCheck {
-  if (typeof name !== "string" || !DOCUMENT_NAME.test(name) || name === "__proto__") {
+  if (!validDocumentName(name)) {
     return {
       bytes: 0,
       error: {
@@ -639,7 +652,7 @@ export function checkDocument(
         severity: "error",
         message:
           `Document name ${quote(String(name))} is not allowed. Use letters, digits, and _, starting with a letter ` +
-          "or _, at most 64 characters, so a page can read it as artifact.data.<name>.",
+          "or _, at most 64 characters, and avoid reserved object property names, so a page can read it as artifact.data.<name>.",
       },
     };
   }
@@ -740,11 +753,11 @@ export function validateArtifact(
     limits: resolveLimits(options.limits),
     allowlist: resolveAllowlist(options.allowlist),
   };
-  return validateWith(input, context);
+  return validateWithContext(input, context);
 }
 
 /** `validateArtifact` against an already-resolved context. */
-function validateWith(
+export function validateWithContext(
   input: ValidateArtifactInput,
   context: CheckContext,
 ): ArtifactValidation {

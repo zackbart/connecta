@@ -417,6 +417,7 @@ caller what to do next, and never invents a cause it was not told.
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
 | `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap | false |
+| `conflict` | the write named a base version someone else already moved past; nothing changed. `details.current` says where things stand (at most 20 whole-number entries) — re-read, reapply, retry with that base | false |
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose | true |
@@ -841,7 +842,8 @@ finishes without repeating it, or (c) without repeating a write already sent.
 wherever it is found — beside a pause, after the program returned, at a
 takeover — with its address, its args within the 512-byte echo budget, and
 `writes: { succeeded, failed, unknown }`; a failed run is never replayed. Only
-a refusal (`auth_required`, `invalid_args`, `not_found`, `rate_limited`) or the
+a refusal (`auth_required`, `invalid_args`, `not_found`, `rate_limited`,
+`conflict`) or the
 tool's own `isError` answers; an `isError` reading as a timeout does not, and
 `connector_call_failed` — an oversized body, a refused redirect — may come
 after the write landed. Every error from a resumed play carries `writes`, and
@@ -997,7 +999,7 @@ passing one table is also the check on the executor duties above, with
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
 | `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, budget, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.test.ts` (oversized messages, private transport, forged frames) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
-| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
+| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/resumable.test.ts` (the refusal without resumable writes) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.test.ts` (mid-run shutdown) |
 | `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, wrapped-message precedence), `test/quickjs-executor.test.ts` |
@@ -1033,7 +1035,5 @@ passing one table is also the check on the executor duties above, with
 | `X3`, `X6` | `test/quickjs-executor.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface itself is checked by `test/server.test.ts` (the exact eight-tool
-list) and `test/code-first-surface.test.ts` (the fold's construction rules, the
-required executor, the refusals a removed top-level tool now gets, copy, and
-measured size).
+The surface itself is checked by `test/server.test.ts` (the exact eight-tool list) and
+`test/code-first-surface.test.ts` (construction, executor, removed tools, copy, and size).

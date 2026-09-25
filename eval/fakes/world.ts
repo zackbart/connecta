@@ -31,6 +31,32 @@ export interface ConnectorSpec {
   credential?: { label: string; value?: string };
 }
 
+/**
+ * The deployment's artifacts as plain data, taken after the conversation so
+ * graders — which are synchronous over the world — can read them. Filled in
+ * by the runner only when the deployment has the artifacts module.
+ */
+export interface ArtifactSnapshot {
+  artifacts: {
+    id: string;
+    title: string;
+    kind: string;
+    archived: boolean;
+    revision: number;
+    /** The current view's source. */
+    source: string;
+    /** Every view version, newest first, each with its source. */
+    views: { version: number; op: string; source: string; by: { kind: string; id?: string } }[];
+    /** Current value of every live document. */
+    documents: Record<string, unknown>;
+    /** Every version of every document ever set, newest first. */
+    documentHistory: Record<string, { version: number; op: string; runId?: string; value: unknown }[]>;
+    /** The refresh set on it, if any. */
+    refresh?: { schedule: string; document: string; programVersion: number };
+    runs: { runId: string; status: string; documentVersion?: number; errorCode?: string }[];
+  }[];
+}
+
 export interface WorldOptions {
   /** Whether the billing API key is already saved when the trial starts. */
   billingCredential?: "preset" | "missing";
@@ -55,6 +81,8 @@ export class World {
   readonly audit: AuditState = { exports: [] };
   readonly services: Map<ServiceId, FakeService>;
   readonly billingToken = BILLING_TOKEN;
+  /** Set by the runner before grading, when the deployment has artifacts. */
+  artifacts?: ArtifactSnapshot;
 
   constructor(readonly options: WorldOptions = {}) {
     this.tracker = trackerState(this.now);

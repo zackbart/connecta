@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { markdownPage, renderMarkdown } from "../src/artifacts/markdown.js";
+import { buildFrameDocument } from "../src/artifacts/document.js";
+import { validateArtifact } from "../src/artifacts/validate.js";
 
 describe("renderMarkdown", () => {
   it("renders headings, paragraphs, emphasis, code, and breaks", () => {
@@ -59,6 +61,19 @@ describe("renderMarkdown", () => {
     renderMarkdown("`".repeat(50_000) + "x" + "``".repeat(10_000));
     renderMarkdown("**".repeat(100_000));
     expect(performance.now() - started).toBeLessThan(5_000);
+  });
+
+  it("reports excessive block nesting and renders fixed text for an old stored page", () => {
+    const source = "> ".repeat(5000) + "x";
+    expect(() => renderMarkdown(source)).toThrow(/nested more than 64 levels/);
+    expect(validateArtifact({ kind: "markdown", source }).errors[0]?.code).toBe("E_NESTING");
+    const frame = buildFrameDocument({
+      kind: "markdown", source,
+      global: { id: "deep", title: "Deep", view: { version: 1 }, documents: {}, snapshot: false },
+      data: {},
+    });
+    expect(frame).toContain("too many nested block quotes or lists to display");
+    expect(frame).not.toContain(source);
   });
 
   it("wraps the body in the page root with the title escaped", () => {

@@ -16,12 +16,14 @@
 // error; a throw means storage failed.
 
 import { sha256Hex, utf8Bytes } from "../run-journal.js";
+import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {
   ARTIFACT_ID,
   checkDocument,
   checkDocumentTotals,
   checkView,
   finish,
+  validDocumentName,
   type CheckContext,
 } from "./validate.js";
 import type {
@@ -44,6 +46,8 @@ const HISTORY_LIMIT = 20;
 const LIST_SCAN_LIMIT = 1000;
 /** What the viewer adds around a page beyond its source and documents. */
 const FRAME_OVERHEAD_BYTES = 4096;
+/** Tombstones keep version numbers, so distinct names need their own bound. */
+const DOCUMENT_NAMES_LIMIT = 64;
 
 type ArtifactFailureCode =
   | "conflict"
@@ -62,6 +66,18 @@ export interface ArtifactFailure {
 }
 
 type Result<T> = ({ ok: true } & T) | ArtifactFailure;
+
+/**
+ * A deployment's render check, bound to one call: it gets the page as the
+ * write would leave it — the prospective head, its source, and every live
+ * document's stored JSON — and answers with warnings or a failure.
+ */
+export type RenderPage = (page: {
+  id: string;
+  head: ArtifactHeadRecord;
+  source: string;
+  data: Record<string, string>;
+}) => Promise<{ ok: true; warnings: ArtifactIssue[] } | ArtifactFailure>;
 
 export interface OperationsOptions extends CheckContext {
   store: ArtifactStore;
@@ -87,14 +103,28 @@ const fail = (
 
 const quoteId = (id: string) => `'${id}'`;
 
-function invalidContent(what: string, validation: ArtifactValidation): ArtifactFailure {
-  const first = validation.errors[0]?.message ?? "validation failed";
-  const more = validation.errors.length + (validation.errorsOmitted ?? 0) - 1;
-  return fail(
-    "invalid_args",
-    `${what} failed validation: ${first}${more > 0 ? ` (and ${more} more; see validation.errors)` : ""}`,
-    { validation },
-  );
+/** Bound on the error list a refusal carries in its message. */
+const MAX_REFUSAL_CHARS = 1_800;
+
+/**
+ * A validation refusal. The message lists every finding — each names a line
+ * and a fix — so an agent can repair the page from the error alone; it stays
+ * under the guest error bound, pointing at `validate_artifact` for the rest.
+ */
+export function invalidContent(what: string, validation: ArtifactValidation): ArtifactFailure {
+  const total = validation.errors.length + (validation.errorsOmitted ?? 0);
+  let message = `${what} failed validation with ${total} error${total === 1 ? "" : "s"}; nothing was saved.`;
+  let listed = 0;
+  for (const issue of validation.errors) {
+    const line = `\n- ${issue.message}`;
+    if (message.length + line.length > MAX_REFUSAL_CHARS) break;
+    message += line;
+    listed++;
+  }
+  if (listed < total) {
+    message += `\n- …and ${total - listed} more; run artifacts.validate_artifact to see them all.`;
+  }
+  return fail("invalid_args", message, { validation });
 }
 
 /** Where every stream stands, for a conflict. Bounded: revision, view, and at most 18 documents. */
@@ -179,6 +209,15 @@ export class ArtifactOperations {
       : fail("invalid_args", `${name} must be a whole number of at least ${min}.`);
   }
 
+  #checkDocumentName(name: unknown): ArtifactFailure | undefined {
+    if (validDocumentName(name)) return undefined;
+    return fail(
+      "invalid_args",
+      `Document name ${quoteId(String(name))} is not allowed. Use 1–64 letters, digits, or _, ` +
+        "starting with a letter or _, and avoid reserved object property names.",
+    );
+  }
+
   #notFound(id: string): ArtifactFailure {
     return fail(
       "not_found",
@@ -230,11 +269,14 @@ export class ArtifactOperations {
   async #commit(
     id: string,
     plan: (current: ArtifactHeadRecord) => Promise<Plan | ArtifactFailure>,
+    render?: RenderPage,
   ): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
       const current = await this.#store.head(id);
       if (!current) return this.#notFound(id);
-      const planned = await plan(current.head);
+      const drafted = await plan(current.head);
+      if (!drafted.ok) return drafted;
+      const planned = await this.#rendered(id, drafted, render);
       if (!planned.ok) return planned;
       await Promise.all(
         [...planned.bodies].map(([key, body]) => this.#store.putBody(key, body)),
@@ -252,6 +294,36 @@ export class ArtifactOperations {
       "unavailable",
       `Artifact ${quoteId(id)} kept changing while this write was being saved. Retry it.`,
     );
+  }
+
+  /**
+   * Run the deployment's render check against the page a plan would commit.
+   * Bodies the plan already holds are passed in; the rest are read. Warnings
+   * join the plan's; a failure replaces it.
+   */
+  async #rendered(
+    id: string,
+    plan: Plan,
+    render: RenderPage | undefined,
+  ): Promise<Plan | ArtifactFailure> {
+    if (!render) return plan;
+    const known = (key: string | undefined) =>
+      key !== undefined && plan.bodies.has(key)
+        ? (plan.bodies.get(key) as string)
+        : this.#body(key);
+    const data: Record<string, string> = {};
+    for (const [name, record] of liveDocuments(plan.next)) {
+      data[name] = await known(record.body);
+    }
+    const verdict = await render({
+      id,
+      head: plan.next,
+      source: await known(plan.next.view.body),
+      data,
+    });
+    return verdict.ok
+      ? { ...plan, warnings: [...plan.warnings, ...verdict.warnings] }
+      : verdict;
   }
 
   #touch(head: ArtifactHeadRecord, by: ArtifactActor, at: string): ArtifactHeadRecord {
@@ -296,6 +368,34 @@ export class ArtifactOperations {
     return finish(findings);
   }
 
+  /** A document change must fit the frame, including rendered Markdown. */
+  async #checkRendered(head: ArtifactHeadRecord): Promise<ArtifactFailure | undefined> {
+    const total = dataBytesOf(head);
+    let viewBytes = head.view.bytes;
+    if (head.kind === "markdown") {
+      try {
+        viewBytes = utf8Bytes(markdownPage(await this.#body(head.view.body), head.title));
+      } catch (error) {
+        if (!(error instanceof MarkdownNestingError)) throw error;
+        return invalidContent("The page", finish({
+          errors: [{ code: "E_NESTING", severity: "error", message: error.message }],
+          warnings: [],
+        }));
+      }
+    }
+    const rendered = viewBytes + total + FRAME_OVERHEAD_BYTES;
+    if (rendered <= this.#context.limits.renderedBytes) return undefined;
+    return invalidContent("The page and its documents", finish({
+      errors: [{
+        code: "E_TOO_LARGE",
+        severity: "error",
+        message: `The page plus its documents would be ${rendered.toLocaleString("en-US")} bytes; ` +
+          `the limit is ${this.#context.limits.renderedBytes.toLocaleString("en-US")}. Trim the page or its documents.`,
+      }],
+      warnings: [],
+    }));
+  }
+
   async create(input: {
     id: string;
     title: string;
@@ -303,6 +403,7 @@ export class ArtifactOperations {
     source: string;
     documents?: Record<string, unknown>;
     by: ArtifactActor;
+    render?: RenderPage;
   }): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     const badId = this.#checkId(input.id);
     if (badId) return badId;
@@ -364,6 +465,12 @@ export class ArtifactOperations {
       view: { version: 1, body: viewKey, bytes: utf8Bytes(input.source), by, at, op: "create" },
       documents: records,
     };
+    const rendered = await this.#rendered(
+      input.id,
+      { ok: true, next: head, bodies, supersede: [], warnings: validation.warnings },
+      input.render,
+    );
+    if (!rendered.ok) return rendered;
     await Promise.all([...bodies].map(([key, body]) => this.#store.putBody(key, body)));
     if (!(await this.#store.swapHead(input.id, null, head))) {
       return fail(
@@ -372,7 +479,7 @@ export class ArtifactOperations {
           "Update it with artifacts.update_artifact, or choose another id.",
       );
     }
-    return { ok: true, head, warnings: validation.warnings };
+    return { ok: true, head, warnings: rendered.warnings };
   }
 
   async update(input: {
@@ -381,6 +488,7 @@ export class ArtifactOperations {
     source: string;
     title?: string;
     by: ArtifactActor;
+    render?: RenderPage;
   }): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     const badId = this.#checkId(input.id);
     if (badId) return badId;
@@ -409,7 +517,7 @@ export class ArtifactOperations {
         warnings: validation.warnings,
         ...(title === undefined ? {} : { title }),
       });
-    });
+    }, input.render);
   }
 
   #replaceView(
@@ -452,6 +560,7 @@ export class ArtifactOperations {
     baseVersion: number;
     edits: PatchEdit[];
     by: ArtifactActor;
+    render?: RenderPage;
   }): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     const badId = this.#checkId(input.id);
     if (badId) return badId;
@@ -507,7 +616,7 @@ export class ArtifactOperations {
         by: input.by,
         warnings: validation.warnings,
       });
-    });
+    }, input.render);
   }
 
   async setDocuments(input: {
@@ -516,6 +625,7 @@ export class ArtifactOperations {
     by: ArtifactActor;
     op?: "set" | "refresh";
     runId?: string;
+    render?: RenderPage;
   }): Promise<
     Result<{
       head: ArtifactHeadRecord;
@@ -615,29 +725,22 @@ export class ArtifactOperations {
         if (change.key !== undefined && change.text !== undefined) bodies.set(change.key, change.text);
       }
       const nextHead: ArtifactHeadRecord = { ...this.#touch(head, input.by, at), documents: next };
+      if (Object.keys(next).length > DOCUMENT_NAMES_LIMIT &&
+          Object.keys(next).length > Object.keys(head.documents).length) {
+        return fail(
+          "invalid_args",
+          `Artifact ${quoteId(input.id)} has used ${DOCUMENT_NAMES_LIMIT} distinct document names. ` +
+            "Reuse an existing name or create another artifact; removed names keep their version history.",
+        );
+      }
       const live = liveDocuments(nextHead);
       const total = dataBytesOf(nextHead);
       const totals = checkDocumentTotals(live.length, total, limits);
       if (totals) return invalidContent("The documents", finish({ errors: [totals], warnings: [] }));
-      if (head.kind === "html" && head.view.bytes + total + FRAME_OVERHEAD_BYTES > limits.renderedBytes) {
-        return invalidContent(
-          "The documents",
-          finish({
-            errors: [
-              {
-                code: "E_TOO_LARGE",
-                severity: "error",
-                message:
-                  `The page plus its documents would be ${(head.view.bytes + total + FRAME_OVERHEAD_BYTES).toLocaleString("en-US")} ` +
-                  `bytes; the limit is ${limits.renderedBytes.toLocaleString("en-US")}. Trim the documents.`,
-              },
-            ],
-            warnings: [],
-          }),
-        );
-      }
+      const tooLarge = await this.#checkRendered(nextHead);
+      if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies, supersede, warnings: [] };
-    });
+    }, input.render);
   }
 
   async rollback(input: {
@@ -647,6 +750,7 @@ export class ArtifactOperations {
     version: number;
     baseVersion: number;
     by: ArtifactActor;
+    render?: RenderPage;
   }): Promise<Result<{ head: ArtifactHeadRecord; warnings: ArtifactIssue[] }>> {
     const badId = this.#checkId(input.id);
     if (badId) return badId;
@@ -657,6 +761,10 @@ export class ArtifactOperations {
     if (badVersion) return badVersion;
     if (input.target === "document" && (typeof input.name !== "string" || !input.name)) {
       return fail("invalid_args", 'name is required when target is "document".');
+    }
+    if (input.target === "document") {
+      const badName = this.#checkDocumentName(input.name);
+      if (badName) return badName;
     }
     const name = input.name ?? "";
     const stream: ArtifactStream = input.target === "view" ? "view" : `doc:${name}`;
@@ -722,8 +830,10 @@ export class ArtifactOperations {
       };
       const totals = checkDocumentTotals(liveDocuments(nextHead).length, dataBytesOf(nextHead), this.#context.limits);
       if (totals) return invalidContent("The documents", finish({ errors: [totals], warnings: [] }));
+      const tooLarge = await this.#checkRendered(nextHead);
+      if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies: new Map(), supersede: [[stream, latest]], warnings: [] };
-    });
+    }, input.render);
   }
 
   async setArchived(input: {
@@ -806,6 +916,8 @@ export class ArtifactOperations {
     const badId = this.#checkId(id);
     if (badId) return badId;
     if (typeof name !== "string" || !name) return fail("invalid_args", "name is required.");
+    const badName = this.#checkDocumentName(name);
+    if (badName) return badName;
     if (version !== undefined) {
       const bad = this.#checkVersion("version", version);
       if (bad) return bad;
@@ -853,6 +965,8 @@ export class ArtifactOperations {
       : liveDocuments(head).map(([name, record]) => [name, record.version]);
     const documents: Record<string, { record: ArtifactVersionRecord; value: unknown }> = {};
     for (const [name, version] of wanted) {
+      const badName = this.#checkDocumentName(name);
+      if (badName) return badName;
       const record = await this.#version(id, `doc:${name}`, head.documents[name], version);
       if (!record) return this.#notFound(id);
       if (record.removed) continue;

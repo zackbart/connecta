@@ -190,9 +190,9 @@ change who owns its auth.
 
 ## Optional deployment modules
 
-`createConnecta` takes closed typed `ui`, `vault`, and `activity` slots, with
-factories at `/ui`, `/credentials`, and `/activity` and bearer auth at
-`/auth/bearer`. Root exports the contracts, never the implementations, and there
+`createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`
+slots, with factories at `/ui`, `/credentials`, `/activity`, and `/artifacts`
+and bearer auth at `/auth/bearer`. Root exports the contracts, never the implementations, and there
 is no module array, runtime registration, or plugin lifecycle. Core keeps
 discovery, the executor contract, invocation, permissions, and OAuth callback
 verification; an omitted module contributes no runtime work at all.
@@ -222,6 +222,41 @@ by a narrow syntactic check: deployment config reaches a `<style>` element here,
 and an unvalidated value would be CSS injection. The dark palette is the same
 tokens under `prefers-color-scheme`; `colorScheme` pins one with a `data-scheme`
 attribute on the page.
+
+The artifacts module — `artifacts()` from `/artifacts`, implemented in
+`src/artifacts/` — is the one module that contributes a connector. Core
+appends its prebuilt `artifacts` connector to the configured set, so its reads
+and writes take the same catalog, invocation, admission, and activity paths as
+any other connector; the slot carries no hook core must run, and a deployment
+without it has no connector, no guide, and no artifact storage traffic. Its
+writes are not read-only anywhere — `call_tool` refuses them and discovery
+lists them approval-required — but they skip approval inside programs through
+the connector's own `approval: "never"`, which `execute.approval` switches off,
+because every write is a new immutable version anyone can roll back. The
+module needs `publicUrl`: the links it hands out are shared, so they must never
+come from a request's `Host`.
+
+Storage is an `ArtifactStore`, and `kvArtifactStore` is the reference: over any
+`KVStorage` with `compareAndSet` and `list`, one head record per artifact is
+the only key ever compared-and-set, earlier versions sit beside it immutable,
+and bodies are content-addressed — in the key-value store, or in R2 through the
+Worker example's `r2-artifact-blobs.ts`. Workers KV is refused at construction,
+because a write that cannot swap its head can lose a teammate's edit. Every
+rule lives once, in `src/artifacts/operations.ts`: a write checks its base
+against the one stream it touches, so of two writes from the same base exactly
+one wins and the other is a `conflict` carrying a bounded `current` map, while
+a head that moved for an unrelated reason is re-read and retried rather than
+reported. Patches match exactly once or change nothing, rollback is a new
+version reusing an old body, and the limits are checked on every write.
+Validation is a hand-written tokenizer and CommonMark subset rather than a
+dependency, because it is a lint: the page's CSP is the boundary.
+
+Who made a version is the one fact a built-in connector needs that
+`ConnectorContext` deliberately does not carry. `src/connector-caller.ts`
+attaches the admitted identity beside the context on the request's scoped
+view, the way the OAuth sealer rides beside it — readable only by in-repo
+code, set from the authorization and never from arguments
+(`test/identity-scope.test.ts`, `test/artifacts-connector.test.ts`).
 
 ## Import-graph purity
 

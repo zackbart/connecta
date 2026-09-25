@@ -24,6 +24,13 @@ export type ConnectorCallErrorCode =
    * states the ambiguity (H11).
    */
   | "not_found"
+  /**
+   * The write named a base version or revision that is no longer current:
+   * someone else changed the thing first. The caller re-reads, reapplies its
+   * change, and retries with the base `current` reports — repeating the same
+   * call can never succeed, and waiting will not help either.
+   */
+  | "conflict"
   | "input_required_unsupported"
   | "connector_call_failed";
 
@@ -250,9 +257,35 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   auth_required: false,
   invalid_args: false,
   not_found: false,
+  conflict: false,
   input_required_unsupported: false,
   connector_call_failed: false,
 };
+
+/** Entries a conflict's `current` map may carry. */
+const MAX_CURRENT_ENTRIES = 20;
+const MAX_CURRENT_KEY_CHARS = 128;
+
+/**
+ * Where each thing a conflicting write touched stands now: short names to
+ * whole non-negative numbers, at most 20 of them. Anything else is dropped
+ * whole rather than clipped, because a truncated key names a different thing.
+ */
+function boundedCurrent(
+  current: Readonly<Record<string, number>> | undefined,
+): Readonly<Record<string, number>> | undefined {
+  if (!current || typeof current !== "object") return undefined;
+  const entries = Object.entries(current).filter(
+    ([key, value]) =>
+      key.length > 0 &&
+      key.length <= MAX_CURRENT_KEY_CHARS &&
+      key !== "__proto__" &&
+      Number.isSafeInteger(value) &&
+      value >= 0,
+  );
+  if (entries.length === 0) return undefined;
+  return Object.freeze(Object.fromEntries(entries.slice(0, MAX_CURRENT_ENTRIES)));
+}
 
 /** Non-negative integer milliseconds, or undefined for anything else. */
 function normalizeRetryAfterMs(value: number | undefined): number | undefined {
@@ -289,6 +322,11 @@ export class ConnectorCallError extends Error {
   readonly validation: ArgumentValidationDetails | undefined;
   /** Sanitized transport diagnostics for `unavailable` only. */
   readonly details: UnavailableDetails | undefined;
+  /**
+   * For `conflict` only: where each thing the write touched stands now, e.g.
+   * `{ revision: 12, view: 7 }`. Bounded to 20 whole-number entries.
+   */
+  readonly current: Readonly<Record<string, number>> | undefined;
 
   constructor(
     code: ConnectorCallErrorCode,
@@ -299,6 +337,7 @@ export class ConnectorCallError extends Error {
       cause?: unknown;
       validation?: ArgumentValidationDetails;
       details?: UnavailableDetails;
+      current?: Readonly<Record<string, number>>;
     } = {},
   ) {
     super(
@@ -313,6 +352,7 @@ export class ConnectorCallError extends Error {
       code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
     this.validation =
       code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
+    this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;
   }
 }
 
@@ -327,6 +367,8 @@ export interface CallErrorDetails {
   retryAfterMs?: number;
   /** Bounded input-schema findings; paths and expectations, never values. */
   validation?: ArgumentValidationDetails;
+  /** On a `conflict`: where each thing the write touched stands now. */
+  current?: Readonly<Record<string, number>>;
   /** Connector whose failed operation needs recovery. */
   connector?: string;
   /** Canonical downstream address the agent may retry after recovery. */
@@ -439,6 +481,7 @@ export function classifyCallError(
         : {}),
       ...(err.validation ? { validation: err.validation } : {}),
       ...(err.details ? { details: err.details } : {}),
+      ...(err.current ? { current: err.current } : {}),
     };
   }
   // An aborted fetch rejects with a DOMException named "AbortError" whose

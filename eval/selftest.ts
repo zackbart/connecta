@@ -67,6 +67,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
         },
       });
     }
+    if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
     return task.grade({ world, trace: emptyTrace(toolUses) });
   } finally {
     await session.close();

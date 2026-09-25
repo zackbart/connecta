@@ -570,6 +570,10 @@ export function createMcpRoute(
           ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
           ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+          caller: {
+            identity: authz.identity,
+            ...(poolName !== undefined ? { pool: poolName } : {}),
+          },
         });
       } catch (error) {
         return cors(
