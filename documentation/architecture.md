@@ -154,7 +154,7 @@ accounting error a budget exists to prevent. Both layers are pinned by
 
 ### Production Worker disconnects
 
-The production probe for [#573](https://github.com/zackbart/connecta/issues/573)
+The original production probe for [#573](https://github.com/zackbart/connecta/issues/573)
 ran on 2026-09-25 with compatibility date `2025-01-01`, first with no flags and
 then with `enable_request_signal`. It used Wrangler 4.114.0 and a Node 26.9.0
 client. A raw Worker stream established the runtime behavior; a custom auth
@@ -188,6 +188,18 @@ not proof that workerd cancelled an old stream. A still-live request reaches
 the same hard deadline and is aborted in its own context.
 Cloudflare documents the flag in its
 [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
+
+A second production run on the same date tested the request bound at 2,000 ms.
+All twelve raw-stream and MCP cases passed with both flag configurations. Live
+MCP requests still rejected a competing request with 503 before the deadline;
+the first MCP request after the deadline returned all eight tools with 200 in
+the original isolate. Admission then reported zero active requests. Without the
+flag, the source still recorded no abort or cancellation, so recovery did not
+rely on runtime cleanup. The [recovery observations](https://github.com/zackbart/connecta/blob/32d8e94/scripts/probes/worker-disconnect-recovered-2026-09-25.json)
+also retain two inconclusive queue-handoff cases: concurrent client connections
+reached different isolates and could not establish an abandoned queued waiter.
+The Node and workerd regression suites cover expired waiters, orphaned handoffs,
+and identity-safe late release deterministically.
 
 To repeat from a repository checkout, run
 `node scripts/probes/worker-disconnect.mjs` with an authenticated Wrangler.
