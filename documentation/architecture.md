@@ -140,6 +140,46 @@ rule refuses would charge a call that never reached the provider, the exact
 accounting error a budget exists to prevent. Both layers are pinned by
 `test/request-admission.test.ts` and `test/call-admission.test.ts`.
 
+### Production Worker disconnects
+
+The production probe for [#573](https://github.com/zackbart/connecta/issues/573)
+ran on 2026-09-25 with compatibility date `2025-01-01`, first with no flags and
+then with `enable_request_signal`. It used Wrangler 4.114.0 and a Node 26.9.0
+client. A raw Worker stream established the runtime behavior; a custom auth
+provider returning a synthetic streaming 401 exercised Connecta's real admission
+wrapper. Each case had its own Connecta instance with one request permit and no
+queue. Health checks and subsequent MCP requests confirmed the same isolate ID.
+
+| Response and flag | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
+| --- | --- | --- | --- |
+| Heartbeats, no flag | neither | neither | active 1; 503 |
+| Idle with a pending timer, no flag | neither | neither | active 1; 503 |
+| Heartbeats, request signal enabled | abort only | both | active 0; 200 |
+| Idle with a pending timer, request signal enabled | abort only | both | active 0; 200 |
+| One chunk, then no timer or I/O, either configuration | neither | neither | active 1; 503 |
+
+The last row is a different failure. The client observed the response end
+*before* its planned disconnect, although the source never closed itself.
+The runtime ended the response without running JavaScript cleanup. This does
+not show a missing abort on a still-live request. The other cases remained open
+until the client aborted. Admission was sampled 1.5 seconds later, followed by
+an actual MCP request; this measures retained capacity, not an infinite leak.
+
+Enable `enable_request_signal` when deploying on Workers: it let Connecta's
+abort listener cancel the source and release admission for live responses in
+this experiment. It does not solve runtime-ended streams. A timer owned by an
+already-ended request is not a reliable cleanup mechanism. The remaining
+capacity-recovery work is [#595](https://github.com/zackbart/connecta/issues/595).
+Cloudflare documents the flag in its
+[Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
+
+To repeat, run `node scripts/probes/worker-disconnect.mjs` with an authenticated
+Wrangler. The script deploys a disposable Worker containing only synthetic
+data, verifies the served configuration, saves observations under `eval/results/`,
+and deletes the Worker in `finally`. It uses no `waitUntil`, which would change
+the lifetime being measured. The production runtime build number was not
+exposed by the deployment; these findings are tied to the date and flags above.
+
 ## Storage, credentials, and connectors
 
 `KVStorage` is `get`/`set`/`delete` with optional `list(prefix)`; core uses it for
