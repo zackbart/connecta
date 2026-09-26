@@ -104,6 +104,150 @@ describe("operator data routes", () => {
     expect(await storage.get("catalog:oauth")).toBeNull();
   });
 
+  describe("POST /ui/oauth/<id> start modes", () => {
+    function oauthConnecta(
+      status: Awaited<ReturnType<NonNullable<Connector["startAuth"]>>>,
+    ) {
+      const starts: Array<{ force?: boolean } | undefined> = [];
+      const connector: Connector = {
+        id: "oauth",
+        kind: "mcp",
+        async listTools() {
+          return [];
+        },
+        async callTool() {
+          return null;
+        },
+        async disconnectAuth() {},
+        async startAuth(_ctx, opts) {
+          starts.push(opts);
+          return status;
+        },
+      };
+      const storage = memoryStorage();
+      const connecta = createTestConnecta({
+        connectors: [connector],
+        auth: fakeClerkAuth(CLERK_OPTIONS),
+        storage,
+        publicUrl: BASE,
+      });
+      return { connecta, storage, starts };
+    }
+    const fresh = {
+      state: "auth_required" as const,
+      authorizationUrl: "https://auth.example/authorize?fresh",
+    };
+
+    it("restarts when no mode is given, as it always has", async () => {
+      const { connecta, storage, starts } = oauthConnecta(fresh);
+      await storage.set("catalog:oauth", "stale catalog");
+
+      const response = await credentialRequest(connecta, "/ui/oauth/oauth", {
+        method: "POST",
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        state: "auth_required",
+        authorizationUrl: fresh.authorizationUrl,
+        reused: false,
+      });
+      expect(starts).toEqual([{ force: true }]);
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    });
+
+    it("maps mode=restart to a forced start and mode=continue to an unforced one", async () => {
+      const { connecta, starts } = oauthConnecta(fresh);
+
+      for (const mode of ["restart", "continue"]) {
+        const response = await credentialRequest(
+          connecta,
+          `/ui/oauth/oauth?mode=${mode}`,
+          { method: "POST" },
+        );
+        expect(response.status).toBe(200);
+      }
+
+      expect(starts).toEqual([{ force: true }, { force: false }]);
+    });
+
+    it("says a continued start reused its URL, and invalidates nothing for it", async () => {
+      const { connecta, storage, starts } = oauthConnecta({
+        ...fresh,
+        authorizationReused: true,
+      });
+      await storage.set("catalog:oauth", "still valid catalog");
+
+      const response = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=continue",
+        { method: "POST" },
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        state: "auth_required",
+        authorizationUrl: fresh.authorizationUrl,
+        reused: true,
+      });
+      expect(starts).toEqual([{ force: false }]);
+      expect(await storage.get("catalog:oauth")).toBe("still valid catalog");
+    });
+
+    it("keeps the catalog when a continued start finds the connection healthy", async () => {
+      const { connecta, storage } = oauthConnecta({ state: "ok" });
+      await storage.set("catalog:oauth", "still valid catalog");
+
+      const continued = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=continue",
+        { method: "POST" },
+      );
+      expect(continued.status).toBe(200);
+      await expect(continued.json()).resolves.toEqual({ state: "ok" });
+      expect(await storage.get("catalog:oauth")).toBe("still valid catalog");
+
+      // A restart that ends healthy still reset the grant under the catalog.
+      const restarted = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=restart",
+        { method: "POST" },
+      );
+      expect(restarted.status).toBe(200);
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    });
+
+    it("invalidates the catalog when a continued start had to begin a new flow", async () => {
+      const { connecta, storage } = oauthConnecta(fresh);
+      await storage.set("catalog:oauth", "stale catalog");
+
+      const continued = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=continue",
+        { method: "POST" },
+      );
+      await expect(continued.json()).resolves.toMatchObject({ reused: false });
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    });
+
+    it("refuses an unknown or repeated mode before starting anything", async () => {
+      const { connecta, starts } = oauthConnecta(fresh);
+
+      for (const query of ["?mode=resume", "?mode=", "?mode=continue&mode=restart"]) {
+        const response = await credentialRequest(
+          connecta,
+          `/ui/oauth/oauth${query}`,
+          { method: "POST" },
+        );
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({
+          error: 'mode must be "continue" or "restart"',
+        });
+      }
+      expect(starts).toEqual([]);
+    });
+  });
+
   it("stops resolving activity labels once the reader has gone", async () => {
     const pending: Array<() => void> = [];
     const activityActorLabel = vi.fn(

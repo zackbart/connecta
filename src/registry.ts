@@ -1210,9 +1210,10 @@ export class Registry implements RegistryView {
     });
   }
 
-  // Remove the persisted catalog: the manifest always, then the chunks it
-  // names. Every delete is attempted; the effect fails with the manifest
-  // read's error first, then the first chunk delete's.
+  // Remove the persisted catalog: the manifest and every chunk it names, all
+  // at once under the chunk I/O bound. Every delete is attempted; the effect
+  // fails with the manifest read's error first, then the manifest delete's,
+  // then the first chunk delete's by index.
   private deleteCatalog(id: string): Effect.Effect<void, unknown, Storage> {
     return Effect.gen({ self: this }, function* () {
       const read = yield* Effect.result(storageGet(this.catalogKey(id)));
@@ -1220,17 +1221,20 @@ export class Registry implements RegistryView {
         ? this.parseCatalogManifest(read.success)
         : null;
       // The root is authoritative, so attempt its deletion even when the
-      // best-effort read needed for physical chunk cleanup failed.
-      yield* storageDelete(this.catalogKey(id));
-      let firstError: Result.Failure<void, unknown> | undefined;
-      for (let index = 0; manifest && index < manifest.chunkCount; index++) {
-        const deleted = yield* Effect.result(
-          storageDelete(this.catalogChunkKey(id, manifest.revision, index)),
-        );
-        if (Result.isFailure(deleted)) firstError ??= deleted;
-      }
+      // best-effort read needed for physical chunk cleanup failed. It need
+      // not land first: a reader that finds the root but not a chunk has an
+      // incomplete catalog, which is never served, and an eventually
+      // consistent store could show it that way whatever the order.
+      const keys = [
+        this.catalogKey(id),
+        ...Array.from({ length: manifest?.chunkCount ?? 0 }, (_, index) =>
+          this.catalogChunkKey(id, manifest!.revision, index),
+        ),
+      ];
+      const deleted = yield* forEachChunk(keys, (key) => storageDelete(key));
       if (Result.isFailure(read)) return yield* Effect.fail(read.failure);
-      if (firstError) return yield* Effect.fail(firstError.failure);
+      const failed = deleted.find(Result.isFailure);
+      if (failed) return yield* Effect.fail(failed.failure);
     });
   }
 
