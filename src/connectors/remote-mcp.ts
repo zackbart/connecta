@@ -19,6 +19,7 @@ import {
   KvOAuthProvider,
   OAuthRefreshCoordinator,
 } from "../auth/downstream-oauth.js";
+import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import {
   boundedEchoText,
@@ -932,6 +933,22 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       refreshCoordinator,
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
+      ctx.signal,
+      JSON.stringify({
+        url: new URL(opts.url).href,
+        redirectUri: `${ctx.baseUrl}/oauth/callback/${id}`,
+        clientMetadata: {
+          redirect_uris: [`${ctx.baseUrl}/oauth/callback/${id}`],
+          client_name: "connecta",
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+        },
+        authScope: opts.authScope ?? "shared",
+        versionNegotiation: opts.versionNegotiation ?? "auto",
+        redirects: opts.redirects ?? "none",
+      }),
+      (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
     );
     if (state) state.provider = provider;
     return provider;
@@ -1274,13 +1291,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ctx: ConnectorContext,
     state: ConnectionState,
     operatorDisconnected = false,
+    preserveClient = false,
   ): Promise<void> => {
     const provider = newProvider(ctx, state);
     // Publish the replacement epoch before waiting on or closing any
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
+    const reset = provider.resetAuthorization(operatorDisconnected, preserveClient);
     try {
-      await provider.resetAuthorization(operatorDisconnected);
+      await reset;
     } finally {
       // Abandon any connect in flight and close whichever half of the
       // client/transport exists. Reset is unconditional because KV may already
@@ -1619,8 +1638,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       state.provider = null;
       const p = newProvider(ctx, state);
-      if (startOpts?.force || (await p.operatorDisconnected())) {
-        await disconnectAuthorization(ctx, state);
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      const disconnected = startOpts?.force ? false : await p.operatorDisconnected();
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      if (startOpts?.force || disconnected) {
+        await disconnectAuthorization(ctx, state, false, startOpts?.force === true);
       } else {
         // A consent URL already outstanding? Re-issue it rather than re-running
         // the SDK flow, which would overwrite the PKCE verifier and invalidate
@@ -1637,6 +1659,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           };
         }
       }
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
       try {
         await ensureConnected(ctx, state);
         return {

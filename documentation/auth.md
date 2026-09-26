@@ -510,6 +510,28 @@ instead of a base64 stack on every route.
 
 ## Human authentication management
 
+An operator's OAuth Connect or Restart request gives the start and its handoff
+30 seconds. The request's abort signal and that deadline reach downstream OAuth
+fetches, including metadata discovery and dynamic registration. If the deadline
+expires, the route returns `504` with `OAuth authorization start timed out` after
+an already-started reset finishes. Storage has no cancellation contract: its
+generation write must drain before a response, or it could publish an old epoch
+over a newer flow. Catalog invalidation and connector scope close also finish
+outside the deadline. Those storage and cleanup waits can extend the click past
+30 seconds; the bound is on downstream work, where a hung authorization server
+was the failure. The OAuth provider checks its signal before writing and removes
+a cancelled value write that finishes late. An operator Disconnect keeps its
+existing commit-through behavior even if the browser leaves.
+
+Restart retains a dynamically registered client only when its stored issuer and
+the connector's URL, redirect URI, client metadata, auth scope, transport settings,
+and owner partition still match. It drops the grant and one-shot flow state,
+selects the authorization server again, and re-seals the retained client under
+the replacement epoch key. A different issuer registers a new client. Disconnect
+and issuer-mismatch recovery discard it. The SDK has no client-validation
+exchange while constructing a fresh consent URL; a provider that revokes a
+retained client may refuse it only at consent or callback, after this request.
+
 Credential and OAuth mutation require an admitted interactive human, connector
 visibility, the appropriate shared or personal permission, and an exact
 same-origin `Origin` for browser requests. A configured MCP bearer never becomes
