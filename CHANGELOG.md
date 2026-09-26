@@ -64,8 +64,6 @@ All notable changes to this package are documented here.
 
 ### Fixed
 
-### Fixed
-
 - **A restart's cleanup no longer grows with every earlier restart.** Each
   OAuth restart re-deleted every epoch the connector had ever retired, one key
   at a time, and restart 1,001 failed forever with a full cleanup backlog. A
