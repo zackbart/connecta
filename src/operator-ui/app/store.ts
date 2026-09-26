@@ -5,7 +5,9 @@ import type {
   UiData,
 } from "../model.js";
 import {
+  actionFailedNotice,
   artifactViewRequest,
+  collectionFailureCopy,
   credentialTestNotice,
   failure,
   info,
@@ -14,13 +16,19 @@ import {
   pageForPath,
   refusedNotice,
   resetIdentity,
+  safeHttpHref,
   withPage,
+  type ConnectorLoadFailure,
   type Notice,
   type OperatorPage,
   type OperatorState,
+  type PendingConfirm,
+  type RequestFailureFacts,
+  type RequestFailureKind,
+  type RowAction,
   type UiActivityEvent,
 } from "../view.js";
-import { auth, initialPage, TOKEN_KEY } from "./config.js";
+import { auth, initialPage, productName, TOKEN_KEY } from "./config.js";
 
 /**
  * One store, one identity. Components read this state and dispatch these
@@ -59,10 +67,6 @@ function fence(): () => boolean {
   return () => generation === state.generation;
 }
 
-function message(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
 function sessionToken(): Promise<string | null | undefined> {
   if (auth.kind === "cloudflare-access") return Promise.resolve(undefined);
   return auth.kind === "clerk"
@@ -80,7 +84,49 @@ function requestHeaders(
   };
 }
 
+/* Nav hint ----------------------------------------------------------------- */
+
+/**
+ * Artifact pages never read `/ui/data`, so on their own they cannot know
+ * whether Activity is open to this identity. The pages that do read it leave
+ * the answer here, in this tab only, and every identity change wipes it — so
+ * the nav reads the same on every page instead of losing a link on two of
+ * them. A dedicated artifact origin has its own storage and no hint, and
+ * keeps the old behavior: it offers only what it can vouch for.
+ */
+const NAV_HINT_KEY = "connecta:nav";
+
+function rememberNav(data: UiData): void {
+  try {
+    sessionStorage.setItem(NAV_HINT_KEY, JSON.stringify({ activity: data.activityEnabled }));
+  } catch {
+    // No storage, no hint: the artifact pages fall back to what they know.
+  }
+}
+
+function forgetNav(): void {
+  try {
+    sessionStorage.removeItem(NAV_HINT_KEY);
+  } catch {
+    // Nothing was stored.
+  }
+}
+
+/** Whether the pages that read `/ui/data` last said Activity is open. */
+export function activityHinted(): boolean {
+  try {
+    const hint = JSON.parse(sessionStorage.getItem(NAV_HINT_KEY) ?? "null") as
+      | { activity?: unknown }
+      | null;
+    return hint?.activity === true;
+  } catch {
+    return false;
+  }
+}
+
 function gate(notice: Notice | null = null): void {
+  forgetNav();
+  awaitingAuthorization.clear();
   state = resetIdentity(state, notice);
   for (const listener of listeners) listener();
 }
@@ -88,25 +134,34 @@ function gate(notice: Notice | null = null): void {
 interface OperatorResponse {
   ok?: boolean;
   state?: string;
-  error?: string;
   problem?: string;
   authorizationUrl?: string;
+  reused?: boolean;
   events?: UiActivityEvent[];
   nextCursor?: string;
 }
 
 /**
- * A route's non-2xx answer, as opposed to a failure this page describes
- * itself. Its message is the route's `error` text, which the credential form's
- * notices still show; the notices for actions that reach a downstream never
- * do, and read only `problem`.
+ * Why an operator request did not land, as facts: a kind, a status, and a
+ * `problem` the route chose from a closed set. The route's `error` text is
+ * not kept — a credential route's can echo validation detail or a vault's
+ * failure, and a downstream's can quote the secret it rejected — so nothing
+ * downstream of here can put it on the page by accident.
  */
-class Refusal extends Error {
+class RequestFailure extends Error implements RequestFailureFacts {
+  readonly kind: RequestFailureKind;
+  readonly status: number | undefined;
   readonly problem: unknown;
-  constructor(message: string, problem: unknown) {
-    super(message);
+  constructor(kind: RequestFailureKind, status?: number, problem?: unknown) {
+    super(`Operator request failed: ${kind}`);
+    this.kind = kind;
+    this.status = status;
     this.problem = problem;
   }
+}
+
+function factsOf(error: unknown): RequestFailureFacts {
+  return error instanceof RequestFailure ? error : { kind: "refused" };
 }
 
 async function operatorRequest(
@@ -115,47 +170,59 @@ async function operatorRequest(
   current: () => boolean,
   body?: object,
 ): Promise<OperatorResponse | null> {
-  const token = await sessionToken();
-  if (!current()) throw new Error("The operator session changed.");
-  if (!token && auth.kind !== "cloudflare-access") {
-    throw new Error("Your operator session has expired.");
+  let token;
+  try {
+    token = await sessionToken();
+  } catch {
+    throw new RequestFailure("session");
   }
-  const res = await fetch(path, {
-    method,
-    headers: requestHeaders(token, Boolean(body)),
-    credentials: "same-origin",
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  if (!current()) throw new RequestFailure("session");
+  if (!token && auth.kind !== "cloudflare-access") throw new RequestFailure("session");
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: requestHeaders(token, Boolean(body)),
+      credentials: "same-origin",
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch {
+    throw new RequestFailure("network");
+  }
   if (res.status === 204) return null;
   let payload: OperatorResponse = {};
   try {
     payload = (await res.json()) as OperatorResponse;
   } catch {
-    // The status code below still owns the operator-facing error.
+    // The status code below still decides what the page says.
   }
-  if (res.status === 401) {
-    throw new Error("Your operator session was not accepted. Sign in again.");
-  }
-  if (res.status === 403) {
-    throw new Error("This identity may not perform that action.");
-  }
-  if (!res.ok) {
-    throw new Refusal(payload.error || `Request failed (${res.status}).`, payload.problem);
-  }
+  // A 403 on a mutation is a permission this identity lacks, not a session
+  // that ended: it stays beside the control rather than signing anyone out.
+  if (res.status === 401) throw new RequestFailure("session", 401);
+  if (res.status === 403) throw new RequestFailure("forbidden", 403);
+  if (!res.ok) throw new RequestFailure("refused", res.status, payload.problem);
   return payload;
+}
+
+/**
+ * `/ui/data` could not be read, and not because of the session. The page
+ * stays signed in with its chrome and says so; a 500 or a dropped connection
+ * is no reason to ask for a token again.
+ */
+function unreachable(loadFailure: "server" | "network"): void {
+  set({ session: "ready", gate: null, refreshing: false, loadFailure });
 }
 
 /** Fetch `/ui/data`. The only route that decides gated versus signed in. */
 async function loadData(): Promise<void> {
   const current = fence();
-  if (state.session === "ready") set({ refreshing: true });
+  set(state.session === "ready" ? { refreshing: true, loadFailure: null } : { loadFailure: null });
   let token;
   try {
     token = await sessionToken();
-  } catch (error) {
+  } catch {
     if (!current()) return;
-    const why = message(error, "unknown error");
-    return gate(failure(`Could not read the Clerk session: ${why}`));
+    return gate(failure("Your sign-in session couldn't be read. Sign in again."));
   }
   if (!current()) return;
   if (!token && auth.kind !== "cloudflare-access") return gate(null);
@@ -165,9 +232,9 @@ async function loadData(): Promise<void> {
       headers: requestHeaders(token),
       credentials: "same-origin",
     });
-  } catch (error) {
+  } catch {
     if (!current()) return;
-    return gate(failure(`Network error: ${message(error, "unknown error")}`));
+    return unreachable("network");
   }
   if (!current()) return;
   if (res.status === 401 || res.status === 403) {
@@ -175,47 +242,45 @@ async function loadData(): Promise<void> {
       return gate(
         failure(
           res.status === 403
-            ? "This Clerk account is not allowed to access connecta."
-            : "Your Clerk session was not accepted. Sign out and try again.",
+            ? `This Clerk account can't open ${productName}'s operator pages.`
+            : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
         ),
       );
     }
     if (auth.kind === "cloudflare-access") {
       return gate(
-        failure(
-          "Cloudflare Access admitted the request, but this identity is not an eligible operator.",
-        ),
+        failure("Cloudflare Access let this browser in, but this identity isn't an operator here."),
       );
     }
     localStorage.removeItem(TOKEN_KEY);
-    return gate(failure("Token rejected — enter a valid bearer token."));
+    return gate(failure("That token wasn't accepted. Paste a valid operator token."));
   }
-  if (!res.ok) return gate(failure(`Error ${res.status}`));
+  if (!res.ok) return unreachable("server");
   let data: UiData;
   try {
     data = (await res.json()) as UiData;
   } catch {
     if (!current()) return;
-    return gate(failure("Operator data could not be read."));
+    return unreachable("server");
   }
   if (!current()) return;
-  if (!Array.isArray(data.connectors)) return gate(failure("Connection list could not be read."));
-  set({ data, session: "ready", gate: null, refreshing: false });
+  if (!Array.isArray(data.connectors)) return unreachable("server");
+  set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
+  rememberNav(data);
   void loadConnectorDetails(data, current, token);
 }
 
 /**
  * Every mutation in the same shape: mark the control busy, send exactly one
  * request, then land on a notice — success or failure, never neither. `reload`
- * refreshes `/ui/data` before landing, including after a failure, because a
+ * refreshes the connector before landing, including after a failure, because a
  * partially applied reset must not leave stale tools and actions on screen.
  */
 async function mutate(options: {
   request: (current: () => boolean) => Promise<OperatorResponse | null>;
   busy: Partial<OperatorState>;
   done: (payload: OperatorResponse | null) => Partial<OperatorState>;
-  failed: (notice: Notice, error: unknown) => Partial<OperatorState>;
-  fallback: string;
+  failed: (facts: RequestFailureFacts) => Partial<OperatorState>;
   reload?: string | undefined;
 }): Promise<void> {
   const current = fence();
@@ -224,18 +289,18 @@ async function mutate(options: {
   try {
     const payload = await options.request(current);
     if (!current()) return;
-    if (!current()) return;
     set(options.done(payload));
     if (options.reload) void refreshConnector(options.reload);
   } catch (error) {
     if (!current()) return;
-    set(options.failed(failure(message(error, options.fallback)), error));
-
+    set(options.failed(factsOf(error)));
   }
 }
 
 export function focusHandled(): void {
-  if (state.pendingFocus !== null) set({ pendingFocus: null });
+  if (state.pendingFocus !== null || state.focusIfLost !== null) {
+    set({ pendingFocus: null, focusIfLost: null });
+  }
 }
 
 function setPage(page: OperatorPage, focus = false): void {
@@ -279,50 +344,166 @@ export function forgetBearer(): void {
   set({ pendingFocus: "token" });
 }
 
+/* In-page confirmation ------------------------------------------------------ */
+
+/**
+ * Ask before a row action that takes something away. The question renders in
+ * the row, under the control that asked it, so nothing jumps and the browser's
+ * modal — which named the connector by its id — is gone.
+ */
+export function askConfirm(connectorId: string, action: PendingConfirm["action"]): void {
+  set({ confirming: { connectorId, action }, pendingFocus: `confirm-cancel-${connectorId}` });
+}
+
+export function cancelConfirm(returnFocusTo: string): void {
+  set({ confirming: null, pendingFocus: returnFocusTo });
+}
+
 /* Downstream OAuth -------------------------------------------------------- */
 
-export function oauthAction(
-  connector: string,
-  action: "disconnect" | "reconnect",
-): Promise<void> {
-  const disconnecting = action === "disconnect";
-  const kind = disconnecting ? "oauth_disconnect" : "oauth_reconnect";
-  const confirmed = window.confirm(
-    disconnecting
-      ? `Disconnect OAuth for ${connector}? Stored credentials and any pending authorization will be removed.`
-      : `Restart OAuth for ${connector}? Stored credentials and any pending authorization will be replaced.`,
-  );
-  if (!confirmed) return Promise.resolve();
+export type OAuthStartMode = "continue" | "restart";
+
+/**
+ * The one place an OAuth start's mode meets the wire. `continue` reuses a
+ * fresh pending authorization instead of resetting it, and on a connector
+ * that is already healthy changes nothing; `restart` is the forced reset, and
+ * is what the route assumes when no mode is sent.
+ */
+function oauthStartPath(connector: string, mode: OAuthStartMode): string {
+  return `/ui/oauth/${encodeURIComponent(connector)}?mode=${mode}`;
+}
+
+/**
+ * Connectors this tab sent off to authorize. Coming back to the tab re-reads
+ * their status — and only their status: a status read never starts
+ * authorization, so nothing here can open another consent screen.
+ */
+const awaitingAuthorization = new Set<string>();
+
+/**
+ * A blank tab, opened while the click that asked for it is still on the
+ * stack — after an await, a browser treats the same call as a popup nobody
+ * asked for. It says what it is waiting for, and is sent to the provider once
+ * the route answers.
+ */
+function openBlankTab(): Window | null {
+  let tab: Window | null = null;
+  try {
+    tab = window.open("", "_blank");
+  } catch {
+    return null;
+  }
+  if (!tab) return null;
+  try {
+    tab.document.title = "Opening authorization…";
+    tab.document.body.textContent = "Opening the authorization page…";
+  } catch {
+    // A tab that cannot be written to still navigates.
+  }
+  return tab;
+}
+
+function oauthNoticePatch(connector: string, notice: Notice): Partial<OperatorState> {
+  return {
+    oauthBusy: null,
+    oauthNotice: notice,
+    oauthNoticeFor: connector,
+    focusIfLost: `oauthNotice-${connector}`,
+  };
+}
+
+/**
+ * Start authorization in a new tab. `continue` for a connector that needs it,
+ * `restart` for an explicit reconnect of a healthy one. If the browser refuses
+ * the tab, the route is still asked, and the row offers the link it returned.
+ */
+export function startOAuth(connector: string, mode: OAuthStartMode): Promise<void> {
+  const tab = openBlankTab();
+  return mutate({
+    request: (current) => operatorRequest(oauthStartPath(connector, mode), "POST", current),
+    busy: {
+      oauthBusy: connector,
+      oauthNotice: null,
+      oauthNoticeFor: connector,
+      oauthBlocked: null,
+      confirming: null,
+    },
+    done: (payload) => {
+      const url = safeHttpHref(payload?.authorizationUrl);
+      if (!url) {
+        tab?.close();
+        // Already connected: `continue` on a healthy connector changes nothing.
+        if (payload?.state === "ok") {
+          return oauthNoticePatch(connector, oauthDoneNotice("oauth_reconnect", payload));
+        }
+        return oauthNoticePatch(connector, refusedNotice("oauth_reconnect", connector));
+      }
+      if (tab) {
+        // The provider's page gets no handle back to this one.
+        tab.opener = null;
+        tab.location.replace(url);
+      }
+      awaitingAuthorization.add(connector);
+      return {
+        ...(state.data
+          ? {
+              data: {
+                ...state.data,
+                connectors: state.data.connectors.map((c) =>
+                  c.id === connector
+                    ? { ...c, status: "auth_required" as const, tools: [], toolCount: 0, authorizationUrl: url }
+                    : c,
+                ),
+              },
+            }
+          : {}),
+        ...oauthNoticePatch(connector, oauthDoneNotice("oauth_reconnect", payload, Boolean(tab))),
+        oauthBlocked: tab ? null : connector,
+      };
+    },
+    // The route's words never reach this notice (see `refusedNotice`).
+    failed: (facts) => {
+      tab?.close();
+      return oauthNoticePatch(
+        connector,
+        actionFailedNotice("oauth_reconnect", connector, facts, productName),
+      );
+    },
+    reload: connector,
+  });
+}
+
+export function disconnectOAuth(connector: string): Promise<void> {
   return mutate({
     request: (current) =>
-      operatorRequest(
-        `/ui/oauth/${encodeURIComponent(connector)}`,
-        disconnecting ? "DELETE" : "POST",
-        current,
+      operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current),
+    busy: {
+      oauthBusy: connector,
+      oauthNotice: null,
+      oauthNoticeFor: connector,
+      oauthBlocked: null,
+      confirming: null,
+    },
+    done: () => ({
+      ...(state.data
+        ? {
+            data: {
+              ...state.data,
+              connectors: state.data.connectors.map((c) => {
+                if (c.id !== connector) return c;
+                const { authorizationUrl: _old, ...rest } = c;
+                return { ...rest, status: "auth_required" as const, tools: [], toolCount: 0 };
+              }),
+            },
+          }
+        : {}),
+      ...oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", null)),
+    }),
+    failed: (facts) =>
+      oauthNoticePatch(
+        connector,
+        actionFailedNotice("oauth_disconnect", connector, facts, productName),
       ),
-    busy: { oauthNotice: null, oauthBusy: connector },
-    done: (payload) => ({
-      ...(state.data ? { data: { ...state.data, connectors: state.data.connectors.map(c => {
-        if (c.id !== connector) return c;
-        const { authorizationUrl: _old, ...rest } = c;
-        return { ...rest, status: "auth_required" as const, tools: [], toolCount: 0, ...(!disconnecting && payload?.authorizationUrl ? { authorizationUrl: payload.authorizationUrl } : {}) };
-      }) } } : {}),
-      oauthBusy: null,
-      pendingFocus: "oauthNotice",
-      oauthNotice: oauthDoneNotice(kind, payload),
-    }),
-    // The route's words never reach this notice (see `refusedNotice`); a
-    // failure the page described itself — a lapsed session, a denied
-    // identity, a dropped connection — keeps its own.
-    failed: (notice, error) => ({
-      oauthBusy: null,
-      oauthNotice:
-        error instanceof Refusal
-          ? refusedNotice(kind, connector, error.problem)
-          : { ...notice, fix: { kind: "oauth_action_failed", connectorId: connector } },
-      pendingFocus: "oauthNotice",
-    }),
-    fallback: "OAuth action failed.",
     reload: connector,
   });
 }
@@ -330,32 +511,38 @@ export function oauthAction(
 /* Credentials ------------------------------------------------------------- */
 
 export function editCredential(connector: string | null): void {
-  set({ credentialEditing: connector, credentialNotice: null });
+  set({ credentialEditing: connector, credentialNotice: null, credentialNoticeFor: null });
 }
 
 /** A form the operator has not finished. Nothing is sent, and the page says why. */
-export function refuseCredential(copy: string): void {
-  set({ credentialNotice: failure(copy), pendingFocus: "credentialNotice" });
+export function refuseCredential(connector: string, copy: string): void {
+  set({ credentialNotice: failure(copy), credentialNoticeFor: connector });
 }
 
 function credentialMutation(
   connector: string,
+  action: RowAction,
   request: (current: () => boolean) => Promise<OperatorResponse | null>,
-  done: (payload: OperatorResponse | null) => Notice,
+  done: (payload: OperatorResponse | null) => Partial<OperatorState> & { credentialNotice: Notice },
   reload = true,
-  failed: (notice: Notice, error: unknown) => Notice = (notice) => notice,
 ): Promise<void> {
-  const land = (credentialNotice: Notice) => ({
+  const land = (patch: Partial<OperatorState>) => ({
     credentialBusy: null,
-    credentialNotice,
-    pendingFocus: "credentialNotice",
+    credentialNoticeFor: connector,
+    focusIfLost: `credentialNotice-${connector}`,
+    ...patch,
   });
   return mutate({
     request,
-    busy: { credentialBusy: connector, credentialNotice: null },
+    busy: {
+      credentialBusy: connector,
+      credentialNotice: null,
+      credentialNoticeFor: connector,
+      confirming: null,
+    },
     done: (payload) => land(done(payload)),
-    failed: (notice, error) => land(failed(notice, error)),
-    fallback: "Credential action failed.",
+    failed: (facts) =>
+      land({ credentialNotice: actionFailedNotice(action, connector, facts, productName) }),
     reload: reload ? connector : undefined,
   });
 }
@@ -366,6 +553,7 @@ export function saveCredential(
 ): Promise<void> {
   return credentialMutation(
     connector,
+    "credential_save",
     (current) =>
       operatorRequest(
         `/ui/credentials/${encodeURIComponent(connector)}`,
@@ -373,46 +561,36 @@ export function saveCredential(
         current,
         body,
       ),
-    () => {
-      set({ credentialEditing: null });
-      return info("Credential saved.");
-    },
+    () => ({ credentialEditing: null, credentialNotice: info("Credential saved.") }),
   );
 }
 
 export function removeCredential(connector: string): Promise<void> {
-  const confirmed = window.confirm(
-    "Remove this credential? The connector will stop authenticating until a replacement is added.",
-  );
-  if (!confirmed) return Promise.resolve();
   return credentialMutation(
     connector,
+    "credential_remove",
     (current) =>
       operatorRequest(
         `/ui/credentials/${encodeURIComponent(connector)}`,
         "DELETE",
         current,
       ),
-    () => info("Credential removed."),
+    () => ({ credentialNotice: info("Credential removed.") }),
   );
 }
 
 export function testCredential(connector: string): Promise<void> {
   return credentialMutation(
     connector,
+    "credential_test",
     (current) =>
       operatorRequest(
         `/ui/credentials/${encodeURIComponent(connector)}/test`,
         "POST",
         current,
       ),
-    (payload) => credentialTestNotice(connector, payload),
+    (payload) => ({ credentialNotice: credentialTestNotice(connector, payload) }),
     false,
-    // As for OAuth: the route's words never, the page's own always.
-    (notice, error) =>
-      error instanceof Refusal
-        ? refusedNotice("credential_test", connector, error.problem)
-        : { ...notice, fix: { kind: "credential_test_failed", connectorId: connector } },
   );
 }
 
@@ -449,7 +627,7 @@ export async function loadActivity(reset: boolean): Promise<void> {
     if (!current()) return;
     set({
       activityPhase: "error",
-      activityNotice: failure(message(error, "Activity could not be loaded.")),
+      activityNotice: failure(collectionFailureCopy("activity", factsOf(error), productName)),
     });
   }
 }
@@ -465,12 +643,13 @@ export async function loadActivity(reset: boolean): Promise<void> {
 async function artifactRead(
   path: string,
   current: () => boolean,
+  collection: "artifacts" | "artifact",
 ): Promise<Response | undefined> {
   let token;
   try {
     token = await sessionToken();
   } catch {
-    if (current()) gate(failure("Could not read the sign-in session."));
+    if (current()) gate(failure("Your sign-in session couldn't be read. Sign in again."));
     return undefined;
   }
   if (!current()) return undefined;
@@ -482,21 +661,29 @@ async function artifactRead(
   try {
     res = await fetch(path, { headers: requestHeaders(token), credentials: "same-origin" });
   } catch {
-    if (current()) gate(failure("Network error: the artifact could not be reached."));
+    // Not the session's fault: stay signed in, say so, and offer a retry.
+    if (current()) {
+      set({
+        session: "ready",
+        gate: null,
+        artifactPhase: "error",
+        artifactNotice: failure(collectionFailureCopy(collection, { kind: "network" }, productName)),
+      });
+    }
     return undefined;
   }
   if (!current()) return undefined;
   if (res.status === 401) {
     if (auth.kind !== "clerk" && auth.kind !== "cloudflare-access") {
       localStorage.removeItem(TOKEN_KEY);
-      gate(failure("Token rejected — enter a valid bearer token."));
+      gate(failure("That token wasn't accepted. Paste a valid operator token."));
     } else {
-      gate(failure("Your session was not accepted. Sign out and try again."));
+      gate(failure("Your session wasn't accepted. Sign out, then sign in again."));
     }
     return undefined;
   }
   if (res.status === 403) {
-    gate(failure("This deployment does not open artifact pages to this identity."));
+    gate(failure("This deployment doesn't open artifact pages to this identity."));
     return undefined;
   }
   return res;
@@ -514,7 +701,7 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
   if (state.artifactArchived) params.set("archived", "1");
   if (!reset && state.artifactCursor) params.set("cursor", state.artifactCursor);
   const query = params.toString();
-  const res = await artifactRead(`/artifacts/_api/list${query ? `?${query}` : ""}`, current);
+  const res = await artifactRead(`/artifacts/_api/list${query ? `?${query}` : ""}`, current, "artifacts");
   if (!res || !current()) return;
   if (!res.ok) {
     return set({
@@ -522,9 +709,7 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
       gate: null,
       artifactPhase: "error",
       artifactNotice: failure(
-        res.status === 404
-          ? "Artifacts are not available to this identity."
-          : "Artifacts could not be loaded.",
+        collectionFailureCopy("artifacts", { kind: "refused", status: res.status }, productName),
       ),
     });
   }
@@ -544,7 +729,7 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
   });
 }
 
-async function loadArtifactView(): Promise<void> {
+export async function loadArtifactView(): Promise<void> {
   const current = fence();
   const request = artifactViewRequest(window.location.pathname, window.location.search);
   set({ artifactPhase: "loading", artifactNotice: null });
@@ -555,7 +740,7 @@ async function loadArtifactView(): Promise<void> {
       artifactNotice: failure("There is no artifact at this address."),
     });
   }
-  const res = await artifactRead(request, current);
+  const res = await artifactRead(request, current, "artifact");
   if (!res || !current()) return;
   if (!res.ok) {
     return set({
@@ -563,9 +748,7 @@ async function loadArtifactView(): Promise<void> {
       gate: null,
       artifactPhase: "error",
       artifactNotice: failure(
-        res.status === 404
-          ? "There is no artifact here, or this identity cannot open it."
-          : "The artifact could not be loaded.",
+        collectionFailureCopy("artifact", { kind: "refused", status: res.status }, productName),
       ),
     });
   }
@@ -581,7 +764,7 @@ async function loadArtifactView(): Promise<void> {
       session: "ready",
       gate: null,
       artifactPhase: "error",
-      artifactNotice: failure("The artifact could not be read."),
+      artifactNotice: failure("The artifact couldn't be read. Retry in a moment."),
     });
   }
   set({ session: "ready", gate: null, artifactPhase: "ready", artifactView: view });
@@ -601,6 +784,11 @@ function loadCurrent(): Promise<void> {
   if (state.page === "artifacts") return loadArtifacts(true);
   if (state.page === "artifact") return loadArtifactView();
   return loadData();
+}
+
+/** The signed-in error state's Retry: the same read, from the top. */
+export function retryLoad(): Promise<void> {
+  return loadCurrent();
 }
 
 /* Boot -------------------------------------------------------------------- */
@@ -623,15 +811,56 @@ export function signOut(): void {
   void clerk?.signOut({ redirectUrl: window.location.href });
 }
 
+/**
+ * Coming back to this tab — from the provider's consent screen, usually —
+ * re-reads the status of every connector still waiting on authorization.
+ * Focus and visibility both fire on a return, so the two coalesce into one
+ * pass, and a pass that ran a moment ago is not repeated.
+ */
+let returnTimer: ReturnType<typeof setTimeout> | undefined;
+let lastReturnPass = 0;
+const RETURN_DEBOUNCE_MS = 150;
+const RETURN_MIN_INTERVAL_MS = 2000;
+
+function onReturn(): void {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  if (returnTimer !== undefined) return;
+  returnTimer = setTimeout(() => {
+    returnTimer = undefined;
+    const now = Date.now();
+    if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
+    lastReturnPass = now;
+    recheckAuthorization();
+  }, RETURN_DEBOUNCE_MS);
+}
+
+function recheckAuthorization(): void {
+  if (state.session !== "ready" || !state.data) return;
+  for (const connector of state.data.connectors) {
+    if (state.oauthBusy === connector.id) continue;
+    // Only authorization that happens in another tab can change while this
+    // one is away; a credential slot is filled on this page.
+    const authorizesElsewhere =
+      connector.status === "auth_required" &&
+      (connector.oauth === true || Boolean(connector.authorizationUrl));
+    if (authorizesElsewhere || awaitingAuthorization.has(connector.id)) {
+      void refreshConnector(connector.id, true);
+    }
+  }
+}
+
 export async function boot(): Promise<void> {
   const onPop = () => setPage(pageForPath(window.location.pathname), true);
   window.addEventListener("popstate", onPop);
+  window.addEventListener("focus", onReturn);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onReturn);
+  }
   // A document restored from the back-forward cache must not restore a secret.
   if (auth.kind === "clerk") {
     const clerk = window.Clerk;
     if (!clerk) {
-      const why = "Clerk could not load. Check your network and try again.";
-      return gate(failure(why));
+      return gate(failure("Clerk couldn't load. Check your connection and try again."));
     }
     try {
       await clerk.load({
@@ -652,12 +881,81 @@ export async function boot(): Promise<void> {
         gate(null);
         void loadCurrent();
       });
-    } catch (error) {
-      const why = message(error, "unknown error");
-      return gate(failure(`Clerk could not initialize: ${why}`));
+    } catch {
+      return gate(failure("Clerk couldn't start. Reload the page to try again."));
     }
   }
   await loadCurrent();
+}
+
+/* Connector details --------------------------------------------------------- */
+
+/**
+ * One connector's details, classified by whose side failed. A 401 or 403 is
+ * the session's; a request that never got an answer is the network's; any
+ * other failure is the connector's own, and only that one earns the
+ * downstream's copy and fix prompt.
+ */
+type DetailOutcome =
+  | { kind: "detail"; detail: UiConnector }
+  | { kind: "local"; failure: ConnectorLoadFailure }
+  | { kind: "downstream" };
+
+async function readConnector(id: string, token: string | null | undefined): Promise<DetailOutcome> {
+  let response: Response;
+  try {
+    response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, {
+      headers: requestHeaders(token),
+      credentials: "same-origin",
+    });
+  } catch {
+    return { kind: "local", failure: "network" };
+  }
+  if (response.status === 401 || response.status === 403) {
+    return { kind: "local", failure: "session" };
+  }
+  if (!response.ok) return { kind: "downstream" };
+  try {
+    return { kind: "detail", detail: (await response.json()) as UiConnector };
+  } catch {
+    return { kind: "downstream" };
+  }
+}
+
+function withoutKey<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
+  const { [key]: _gone, ...rest } = record;
+  return rest;
+}
+
+/** Land one connector's outcome on screen. */
+function applyDetail(id: string, outcome: DetailOutcome): void {
+  if (!state.data) return;
+  const patch: Partial<OperatorState> = {};
+  const connectors = state.data.connectors.map((c) => {
+    if (c.id !== id) return c;
+    if (outcome.kind === "detail") {
+      const { detail } = outcome;
+      return detail.status === "auth_required" && c.authorizationUrl && !detail.authorizationUrl
+        ? { ...detail, authorizationUrl: c.authorizationUrl }
+        : detail;
+    }
+    const { problem: _problem, ...rest } = c;
+    return outcome.kind === "downstream"
+      ? { ...rest, status: "error" as const, problem: "connector_unavailable" as const }
+      : { ...rest, status: "error" as const };
+  });
+  patch.connectorFailures =
+    outcome.kind === "local"
+      ? { ...state.connectorFailures, [id]: outcome.failure }
+      : withoutKey(state.connectorFailures, id);
+  // Authorization finished elsewhere: this row now says so in its own words.
+  if (outcome.kind === "detail" && outcome.detail.status === "ok" && awaitingAuthorization.delete(id)) {
+    if (state.oauthNoticeFor === id) {
+      patch.oauthNotice = info("Connected.");
+      patch.oauthBlocked = null;
+    }
+  }
+  set({ ...patch, data: { ...state.data, connectors } });
 }
 
 let detailGeneration = 0;
@@ -670,35 +968,40 @@ async function loadConnectorDetails(data: UiData, current: () => boolean, token:
       const connector = data.connectors[next++]!;
       const revision = (detailRevisions.get(connector.id) ?? 0) + 1;
       detailRevisions.set(connector.id, revision);
-      let detail: UiConnector;
-      try {
-        const response = await fetch(`/ui/connectors/${encodeURIComponent(connector.id)}`, { headers: requestHeaders(token), credentials: "same-origin" });
-        if (!response.ok) throw new Error(`Connection details unavailable (${response.status})`);
-        detail = await response.json() as UiConnector;
-      } catch { detail = { ...connector, status: "error", problem: "connector_unavailable" }; }
+      const outcome = await readConnector(connector.id, token);
       if (!current() || generation !== detailGeneration || !state.data) return;
       if (detailRevisions.get(connector.id) !== revision) continue;
-      set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === connector.id ? detail : c) } });
+      applyDetail(connector.id, outcome);
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, data.connectors.length) }, worker));
 }
 
-export async function refreshConnector(id: string): Promise<void> {
+/**
+ * Re-read one connector. A `quiet` read — the one a returning tab makes —
+ * keeps the row as it is while it waits, and keeps it as it was when the read
+ * could not get through: a passive check that fails has nothing new to say.
+ */
+export async function refreshConnector(id: string, quiet = false): Promise<void> {
   const current = fence();
   const revision = (detailRevisions.get(id) ?? 0) + 1;
   detailRevisions.set(id, revision);
-  if (state.data) set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "loading" } : c) } });
-  try {
-    const token = await sessionToken();
-    if (!current()) return;
-    const response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, { headers: requestHeaders(token), credentials: "same-origin" });
-    if (!response.ok) throw new Error(`Connection details unavailable (${response.status})`);
-    const detail = await response.json() as UiConnector;
-    if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
-    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...detail, ...(detail.status === "auth_required" && c.authorizationUrl ? { authorizationUrl: c.authorizationUrl } : {}) } : c) } });
-  } catch {
-    if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
-    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "error", problem: "connector_unavailable" } : c) } });
+  if (!quiet && state.data) {
+    set({
+      data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "loading" } : c) },
+      connectorFailures: withoutKey(state.connectorFailures, id),
+    });
   }
+  let token;
+  try {
+    token = await sessionToken();
+  } catch {
+    if (!current() || quiet || detailRevisions.get(id) !== revision) return;
+    return applyDetail(id, { kind: "local", failure: "session" });
+  }
+  if (!current()) return;
+  const outcome = await readConnector(id, token);
+  if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
+  if (quiet && outcome.kind === "local") return;
+  applyDetail(id, outcome);
 }

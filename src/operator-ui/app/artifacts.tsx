@@ -1,8 +1,19 @@
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import type { UiArtifactRow, UiArtifactView } from "../model.js";
-import { formatDate, type OperatorState } from "../view.js";
-import { NoticeLine } from "./parts.js";
-import { loadArtifacts, setArtifactArchived, setArtifactQuery } from "./store.js";
+import {
+  artifactRefreshBadge,
+  formatDate,
+  pageDescription,
+  type OperatorState,
+} from "../view.js";
+import { productDescription } from "./config.js";
+import { Badge, CopyButton, StateBlock } from "./parts.js";
+import {
+  loadArtifacts,
+  loadArtifactView,
+  setArtifactArchived,
+  setArtifactQuery,
+} from "./store.js";
 
 /**
  * The artifact library and viewer. Everything on these pages is trusted
@@ -12,6 +23,7 @@ import { loadArtifacts, setArtifactArchived, setArtifactQuery } from "./store.js
  */
 
 function ArtifactRow({ row }: { row: UiArtifactRow }) {
+  const refresh = artifactRefreshBadge(row.freshness?.last);
   return (
     <article class="artifact-row">
       <div>
@@ -24,11 +36,11 @@ function ArtifactRow({ row }: { row: UiArtifactRow }) {
         </div>
       </div>
       <div class="artifact-badges">
-        <span class="badge">{row.kind === "markdown" ? "Markdown" : "HTML"}</span>
-        {row.freshness?.state === "stale" ? <span class="badge warn">Stale data</span>
-          : row.freshness?.state === "current" ? <span class="badge">Current data</span> : null}
-        {row.freshness?.last ? <span class="artifact-meta">Last refresh: {row.freshness.last.status}</span> : null}
-        {row.archived ? <span class="badge warn">Archived</span> : null}
+        <Badge>{row.kind === "markdown" ? "Markdown" : "HTML"}</Badge>
+        {row.freshness?.state === "stale" ? <Badge tone="warn">Stale data</Badge>
+          : row.freshness?.state === "current" ? <Badge>Current data</Badge> : null}
+        {refresh ? <Badge tone={refresh.tone}>{refresh.label}</Badge> : null}
+        {row.archived ? <Badge tone="warn">Archived</Badge> : null}
       </div>
     </article>
   );
@@ -36,6 +48,7 @@ function ArtifactRow({ row }: { row: UiArtifactRow }) {
 
 export function ArtifactsPage({ state }: { state: OperatorState }) {
   const loading = state.artifactPhase === "loading";
+  const rows = state.artifactRows;
   return (
     <section id="artifactsView">
       <div class="lead">
@@ -43,7 +56,10 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
           Artifacts
         </h1>
         <div class="lead-copy">
-          <p>Pages agents published for the team. Each one keeps every version.</p>
+          <p>{pageDescription("artifacts", productDescription)}</p>
+        </div>
+      </div>
+      <div class="collection">
           <form
             class="row"
             onSubmit={(event) => {
@@ -62,7 +78,7 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
             <button id="searchArtifacts" class="btn" type="submit" disabled={loading}>
               Search
             </button>
-            <label class="artifact-meta">
+            <label class="check artifact-meta">
               <input
                 id="showArchived"
                 type="checkbox"
@@ -72,23 +88,29 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
               Show archived
             </label>
           </form>
-          <NoticeLine id="artifactNotice" notice={state.artifactNotice} />
-          <div id="artifactList" class="activity-list" aria-busy={loading ? "true" : "false"}>
-            {loading && state.artifactRows.length === 0 ? (
-              <div class="activity-empty">Loading artifacts…</div>
-            ) : state.artifactRows.length === 0 ? (
-              <div class="activity-empty">
-                {state.artifactPhase === "error"
-                  ? "No artifacts to show."
-                  : state.artifactQuery.trim()
-                    ? "No artifact title matches this search."
-                    : "No artifacts yet. Ask an agent to publish one."}
-              </div>
-            ) : (
-              state.artifactRows.map((row) => <ArtifactRow key={row.id} row={row} />)
-            )}
-          </div>
-          {state.artifactCursor ? (
+          {state.artifactPhase === "error" ? (
+            <StateBlock
+              id="artifactError"
+              tone="error"
+              title="Artifacts couldn't be loaded"
+              action={{ label: "Retry", onClick: () => void loadArtifacts(true) }}
+            >
+              {state.artifactNotice?.message}
+            </StateBlock>
+          ) : rows.length === 0 ? (
+            <StateBlock>
+              {loading
+                ? "Loading artifacts…"
+                : state.artifactQuery.trim()
+                  ? "No artifact title matches this search."
+                  : "No artifacts yet. Ask an agent to publish one."}
+            </StateBlock>
+          ) : (
+            <div id="artifactList" class="activity-list" aria-busy={loading ? "true" : "false"}>
+              {rows.map((row) => <ArtifactRow key={row.id} row={row} />)}
+            </div>
+          )}
+          {state.artifactCursor && state.artifactPhase !== "error" ? (
             <button
               id="moreArtifacts"
               class="btn activity-more"
@@ -99,7 +121,6 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
               {loading ? "Loading…" : "Load more"}
             </button>
           ) : null}
-        </div>
       </div>
     </section>
   );
@@ -150,7 +171,7 @@ function ArtifactFrame({ view }: { view: UiArtifactView }) {
 
 export function ArtifactPage({ state }: { state: OperatorState }) {
   const view = state.artifactView;
-  const [copied, setCopied] = useState(false);
+  const failed = state.artifactPhase === "error";
   return (
     <section id="artifactView">
       <div class="artifact-head">
@@ -173,19 +194,12 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
             ) : (
               <>
                 {" "}·{" "}
-                <button
+                <CopyButton
                   id="copySnapshot"
-                  class="navlink"
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(view.snapshotUrl).then(
-                      () => setCopied(true),
-                      () => setCopied(false),
-                    );
-                  }}
-                >
-                  {copied ? "Snapshot link copied" : "Copy snapshot link"}
-                </button>
+                  class="navlink inline"
+                  value={view.snapshotUrl}
+                  label="Copy snapshot link"
+                />
               </>
             )}
           </div>
@@ -201,9 +215,24 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
               ? "failed" : "is overdue"}; the last good document is still shown.
           </div>
         ) : null}
-        <NoticeLine id="artifactNotice" notice={state.artifactNotice} />
+        {!view && !failed ? (
+          <p class="meta">{pageDescription("artifact", productDescription)}</p>
+        ) : null}
       </div>
-      {view ? <ArtifactFrame key={view.snapshotUrl} view={view} /> : null}
+      {view ? (
+        <ArtifactFrame key={view.snapshotUrl} view={view} />
+      ) : failed ? (
+        <StateBlock
+          id="artifactError"
+          tone="error"
+          title="This artifact couldn't be opened"
+          action={{ label: "Retry", onClick: () => void loadArtifactView() }}
+        >
+          {state.artifactNotice?.message}
+        </StateBlock>
+      ) : (
+        <StateBlock>Loading artifact…</StateBlock>
+      )}
     </section>
   );
 }

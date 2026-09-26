@@ -6,8 +6,10 @@ import {
   useState,
 } from "preact/hooks";
 import {
+  checkingCopy,
   gateCopy,
   isArtifactPage,
+  pageDescription,
   PAGE_META,
   OPERATOR_PAGES,
   type OperatorPage,
@@ -19,6 +21,7 @@ import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
 import { ConnectionsPage } from "./connections.js";
 import { NoticeLine, PageLink } from "./parts.js";
 import {
+  activityHinted,
   boot,
   focusHandled,
   forgetBearer,
@@ -54,9 +57,14 @@ function useOperatorState(): OperatorState {
 
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
-  // Artifact pages never read /ui/data, so they cannot know whether Activity
-  // is open to this identity; they offer the way back to Connections instead.
-  if (isArtifactPage(state.page)) return ["connections", "artifacts"];
+  // Artifact pages never read /ui/data. The pages that do leave a hint for
+  // this tab (see `activityHinted`), so the nav keeps its shape across pages;
+  // with no hint — a dedicated artifact origin — Activity stays hidden.
+  if (isArtifactPage(state.page)) {
+    return activityHinted()
+      ? ["connections", "activity", "artifacts"]
+      : ["connections", "artifacts"];
+  }
   return OPERATOR_PAGES.filter((page) => {
     if (page === "activity") return Boolean(state.data?.activityEnabled);
     if (page === "artifacts") return Boolean(state.data?.artifactsEnabled);
@@ -74,11 +82,15 @@ function OperatorNav() {
         {visiblePages(state).map((page) =>
           // Crossing between artifact pages and the rest is a full navigation:
           // with a dedicated artifact origin, the two live on different hosts.
-          page === "artifacts" || (onArtifactPage && page === "connections") ? (
+          page === "artifacts" || onArtifactPage ? (
             <a
               key={page}
               class="navlink"
-              href={page === "artifacts" ? PAGE_META.artifacts.path : homeUrl}
+              href={
+                page === "artifacts"
+                  ? PAGE_META.artifacts.path
+                  : new URL(PAGE_META[page].path, new URL(homeUrl, window.location.href)).href
+              }
               {...(state.page === page ? { "aria-current": "page" as const } : {})}
             >
               {PAGE_META[page].label}
@@ -110,20 +122,24 @@ function OperatorNav() {
   );
 }
 
+/**
+ * The page before the session is known, laid out as the page it guards: the
+ * same heading, the same description, the same column. Signing in swaps the
+ * form for the content without moving anything above it.
+ */
 function Gate({ state }: { state: OperatorState }) {
   const [token, setToken] = useState("");
   const signedIn = auth.kind === "clerk" && Boolean(window.Clerk?.user);
   const loading = state.session === "loading";
   return (
-    <section id="gate" class="gate">
-      <div>
+    <section id="gate" class="gate lead" aria-busy={loading ? "true" : "false"}>
         <h1 id="gateHeading" tabIndex={-1}>
           {PAGE_META[state.page].label}
         </h1>
         <div class="lead-copy">
-          <p>{productDescription}</p>
+          <p>{pageDescription(state.page, productDescription)}</p>
           <p id="gateCopy" class="meta">
-            {loading ? "Checking your session…" : gateCopy(auth.kind, signedIn)}
+            {loading ? checkingCopy(state.page) : gateCopy(auth.kind, signedIn)}
           </p>
           {loading ? null : auth.kind === "clerk" ? (
             <div id="clerkGate" class="actions">
@@ -146,7 +162,7 @@ function Gate({ state }: { state: OperatorState }) {
           ) : (
             <form
               id="tokenGate"
-              class="row"
+              class="row gate-form"
               onSubmit={(event) => {
                 event.preventDefault();
                 const value = token.trim();
@@ -171,7 +187,6 @@ function Gate({ state }: { state: OperatorState }) {
           )}
           <NoticeLine id="err" notice={state.gate} className="" />
         </div>
-      </div>
     </section>
   );
 }
@@ -211,10 +226,22 @@ function OperatorApp() {
   // rendered at all, so a request for a page heading lands on the gate's own h1
   // — the only visible heading — rather than dropping focus to <body>.
   useEffect(() => {
-    if (!state.pendingFocus) return;
-    document.getElementById(state.pendingFocus)?.focus();
+    if (!state.pendingFocus && !state.focusIfLost) return;
+    if (state.pendingFocus) {
+      document.getElementById(state.pendingFocus)?.focus();
+    } else if (state.focusIfLost) {
+      // Only when the control that had focus is gone or disabled; otherwise the
+      // notice's live region speaks and the operator stays where they are.
+      const active = document.activeElement;
+      const lost =
+        !active ||
+        active === document.body ||
+        !active.isConnected ||
+        (active as HTMLButtonElement).disabled === true;
+      if (lost) document.getElementById(state.focusIfLost)?.focus();
+    }
     focusHandled();
-  }, [state.pendingFocus]);
+  }, [state.pendingFocus, state.focusIfLost]);
 
   return ready ? (
     <div id="app">

@@ -41,6 +41,28 @@ export const PAGE_META: Readonly<
   artifact: { path: "/artifacts", label: "Artifact" },
 };
 
+/**
+ * What each page is for, in one line under its heading — on the gate as well
+ * as once signed in, so the page an operator lands on reads the same before
+ * and after the session is checked.
+ */
+export function pageDescription(page: OperatorPage, productDescription: string): string {
+  if (page === "activity") {
+    return "Every connector tool call, by who made it and how it ended. Arguments and results are never stored.";
+  }
+  if (isArtifactPage(page)) {
+    return "Pages agents published for the team. Each one keeps every version.";
+  }
+  return productDescription;
+}
+
+/** What the gate says while the session is checked, page by page. */
+export function checkingCopy(page: OperatorPage): string {
+  if (page === "artifact") return "Loading artifact…";
+  if (page === "artifacts") return "Loading artifacts…";
+  return "Checking your session…";
+}
+
 export function pageForPath(path: string): OperatorPage {
   if (path.startsWith("/artifacts/")) return "artifact";
   const match = OPERATOR_PAGES.find((page) => PAGE_META[page].path === path);
@@ -115,6 +137,25 @@ export function failure(message: string, fix?: NoticeFix): Notice {
 }
 
 /**
+ * Why a request the page made did not land, as the store classifies it. Only
+ * this kind, a status code, and a closed `problem` enum ever reach a notice;
+ * the route's `error` text never does.
+ *
+ * - `session` — no usable session, or the route answered 401.
+ * - `forbidden` — the route answered 403: this identity may not do that. On a
+ *   mutation that is a permission, not an expired session, so it stays inline.
+ * - `network` — the browser could not reach the deployment at all.
+ * - `refused` — the route answered, and said no.
+ */
+export type RequestFailureKind = "session" | "forbidden" | "network" | "refused";
+
+export interface RequestFailureFacts {
+  kind: RequestFailureKind;
+  status?: number | undefined;
+  problem?: unknown;
+}
+
+/**
  * What the notices for an OAuth action and a credential Test say. Each of
  * those actions reaches a downstream, and a downstream's refusal can quote the
  * secret it was sent — so these notices are fixed sentences chosen by outcome,
@@ -124,26 +165,34 @@ export function failure(message: string, fix?: NoticeFix): Notice {
  */
 export type DownstreamAction = "oauth_disconnect" | "oauth_reconnect" | "credential_test";
 
+/** Every action a connector row can start, downstream or not. */
+export type RowAction = DownstreamAction | "credential_save" | "credential_remove";
+
 const REFUSED_COPY: Readonly<Record<DownstreamAction, string>> = {
   oauth_disconnect:
-    "OAuth disconnect failed. If the downstream refused it, the deployment's log has its reply.",
+    "Disconnect didn't finish. If the service refused it, the deployment's log has its reply.",
   oauth_reconnect:
-    "OAuth authorization could not restart. If the downstream refused it, the deployment's log has its reply.",
-  credential_test: "The credential test could not run.",
+    "Authorization couldn't start. If the service refused it, the deployment's log has its reply.",
+  credential_test: "The credential test couldn't run.",
 };
 
-/** The route's answer to a finished OAuth action. Its state picks the sentence. */
+/**
+ * The route's answer to a finished OAuth action. Its state picks the sentence;
+ * `opened` says whether the authorization page is already in a new tab.
+ */
 export function oauthDoneNotice(
   action: "oauth_disconnect" | "oauth_reconnect",
   answer: { state?: unknown } | null,
+  opened = true,
 ): Notice {
   if (action === "oauth_disconnect") {
-    return info("OAuth disconnected. Restart authorization when you are ready to reconnect.");
+    return info("Disconnected. Connect again whenever you are ready.");
   }
+  if (answer?.state === "ok") return info("Connected.");
   return info(
-    answer?.state === "ok"
-      ? "OAuth reconnected."
-      : "Authorization restarted. Open the authorization link to reconnect.",
+    opened
+      ? "Finish authorizing in the new tab. This page updates when you come back."
+      : "Your browser blocked the new tab. Open the authorization page from the link here.",
   );
 }
 
@@ -155,7 +204,7 @@ export function credentialTestNotice(
   return answer?.ok === true
     ? info("Credential is valid.")
     : failure(
-        "Credential test failed: the downstream rejected the stored credential, or the test could not reach it. The deployment's log has the downstream's reply.",
+        "Credential test failed: the service rejected the stored credential, or the test couldn't reach it. The deployment's log has the service's reply.",
         { kind: "credential_test_failed", connectorId },
       );
 }
@@ -185,6 +234,137 @@ export function refusedNotice(
 }
 
 /**
+ * A credential save or removal the route refused, by status. The route's
+ * `error` can name a vault failure or echo validation detail, so none of it
+ * is shown; the status is enough to say what to do next.
+ */
+function credentialRefusedCopy(
+  action: "credential_save" | "credential_remove",
+  status: number | undefined,
+  problem: unknown,
+): string {
+  if (problem === "credential_mismatch") return PROBLEM_COPY.credential_mismatch;
+  const verb = action === "credential_save" ? "saved" : "removed";
+  if (status === 400 || status === 413 || status === 415) {
+    return action === "credential_save"
+      ? "The credential wasn't saved: a value is empty or not in the expected format. Check it and save again."
+      : "The credential wasn't removed. Refresh the page and try again.";
+  }
+  if (status === 404) {
+    return "This connector no longer has a credential slot. Refresh the page to see its current setup.";
+  }
+  if (status === 503) {
+    return `Credential storage isn't configured on this deployment, so nothing was ${verb}.`;
+  }
+  return `The credential wasn't ${verb}. Try again; if it keeps failing, the deployment's log has the reason.`;
+}
+
+/**
+ * Every row action's failure, in one voice. The page's own failures — a
+ * lapsed session, a denied identity, a dropped connection — read the same for
+ * every action; a route's refusal picks the action's fixed sentence.
+ */
+export function actionFailedNotice(
+  action: RowAction,
+  connectorId: string,
+  facts: RequestFailureFacts,
+  productName: string,
+): Notice {
+  if (facts.kind === "session") {
+    return failure("Your session has ended. Sign in again, then retry.");
+  }
+  if (facts.kind === "forbidden") {
+    return failure("You don't have permission to change this connection's authentication.");
+  }
+  if (facts.kind === "network") {
+    return failure(`Couldn't reach ${productName}. Check your connection and try again.`);
+  }
+  if (action === "credential_save" || action === "credential_remove") {
+    return failure(credentialRefusedCopy(action, facts.status, facts.problem));
+  }
+  return refusedNotice(action, connectorId, facts.problem);
+}
+
+/**
+ * Why one connector's details did not load, when the reason is on this side
+ * of the deployment rather than the downstream's. A downstream failure is the
+ * server's `connector_unavailable` and keeps its own copy and fix prompt;
+ * these two have nothing for a coding agent to fix.
+ */
+export type ConnectorLoadFailure = "session" | "network";
+
+export function connectorLoadFailureCopy(
+  failure: ConnectorLoadFailure,
+  productName: string,
+): string {
+  return failure === "session"
+    ? "Your session wasn't accepted while loading this connector. Sign in again to see its status."
+    : `Couldn't reach ${productName} to load this connector. Check your connection, then refresh it.`;
+}
+
+/** The signed-in page's answer when `/ui/data` could not be read. */
+export function loadFailureCopy(
+  failure: "server" | "network",
+  productName: string,
+): { title: string; body: string } {
+  return {
+    title: `Couldn't reach ${productName}`,
+    body:
+      failure === "network"
+        ? "Your browser couldn't connect. Check your connection, then retry."
+        : "The deployment answered with an error. Retry in a moment; if it keeps failing, the deployment's log has the reason.",
+  };
+}
+
+/** A collection page's load failure: fixed words, whatever the route said. */
+export function collectionFailureCopy(
+  collection: "activity" | "artifacts" | "artifact",
+  facts: RequestFailureFacts,
+  productName: string,
+): string {
+  if (facts.kind === "network") {
+    return `Couldn't reach ${productName}. Check your connection, then retry.`;
+  }
+  if (facts.kind === "session") return "Your session has ended. Sign in again to see this page.";
+  if (facts.kind === "forbidden" || facts.status === 404) {
+    if (collection === "artifact") return "There is no artifact here, or this identity can't open it.";
+    return collection === "activity"
+      ? "Activity isn't available to this identity."
+      : "Artifacts aren't available to this identity.";
+  }
+  return "The deployment answered with an error. Retry in a moment; if it keeps failing, the deployment's log has the reason.";
+}
+
+/** A destructive or disruptive row action waiting for a second, in-page click. */
+export interface PendingConfirm {
+  connectorId: string;
+  action: "oauth_disconnect" | "oauth_restart" | "credential_remove";
+}
+
+/** The confirm's question, naming the connector by its title. */
+export function confirmCopy(
+  action: PendingConfirm["action"],
+  name: string,
+): { question: string; confirm: string } {
+  if (action === "oauth_disconnect") {
+    return {
+      question: `Disconnect ${name}? Its stored grant and any pending authorization are removed, and its tools stop working until it is connected again.`,
+      confirm: "Disconnect",
+    };
+  }
+  if (action === "oauth_restart") {
+    return {
+      question: `Reconnect ${name}? Its current grant stops working until you finish authorizing in the new tab.`,
+      confirm: "Reconnect",
+    };
+  }
+  return {
+    question: `Remove ${name}'s credential? The connector stops authenticating until a replacement is added.`,
+    confirm: "Remove",
+  };
+}
+
+/**
  * A remote collection's four states, named once so every page spells them the
  * same way. `idle` is "nobody has asked yet" and is what makes a re-entered
  * page fetch again after an identity change.
@@ -205,17 +385,42 @@ export interface OperatorState {
   /** True while a signed-in operator's /ui/data is in flight. */
   refreshing: boolean;
   /**
+   * Why the last /ui/data read failed when the session itself was not the
+   * reason: the page stays signed in, with its chrome, and offers a retry.
+   * Only a 401 or 403 on that read returns to the gate.
+   */
+  loadFailure: "server" | "network" | null;
+  /**
    * Element id the next render should focus. A rebuilt page has no stable node
    * to hand focus to from an event handler, so the request travels through
    * state and the shell spends it once the new markup exists.
    */
   pendingFocus: string | null;
+  /**
+   * Like `pendingFocus`, but spent only when focus has nowhere to be — the
+   * control that had it is gone. An action that lands next to its own control
+   * announces through its live region and leaves focus where the operator is.
+   */
+  focusIfLost: string | null;
   data: UiData | null;
   connectorFilter: string;
   oauthNotice: Notice | null;
+  /** The connector row `oauthNotice` answers, which is where it renders. */
+  oauthNoticeFor: string | null;
   /** Connector id whose OAuth mutation is in flight. */
   oauthBusy: string | null;
+  /**
+   * Connector id whose authorization started while the browser refused the
+   * new tab: its row offers the link instead of the button.
+   */
+  oauthBlocked: string | null;
+  /** A row action waiting for its in-page confirmation. */
+  confirming: PendingConfirm | null;
+  /** Connectors whose details failed on this side of the deployment. */
+  connectorFailures: Readonly<Record<string, ConnectorLoadFailure>>;
   credentialNotice: Notice | null;
+  /** The connector row `credentialNotice` answers. */
+  credentialNoticeFor: string | null;
   /** Connector id whose credential form is open. */
   credentialEditing: string | null;
   /** Connector id whose credential mutation is in flight. */
@@ -241,7 +446,9 @@ export function initialState(page: OperatorPage): OperatorState {
     session: "loading",
     gate: null,
     refreshing: false,
+    loadFailure: null,
     pendingFocus: null,
+    focusIfLost: null,
     ...identityScopedState(),
   };
 }
@@ -256,8 +463,13 @@ function identityScopedState() {
     data: null,
     connectorFilter: "",
     oauthNotice: null,
+    oauthNoticeFor: null,
     oauthBusy: null,
+    oauthBlocked: null,
+    confirming: null,
+    connectorFailures: {},
     credentialNotice: null,
+    credentialNoticeFor: null,
     credentialEditing: null,
     credentialBusy: null,
     activityPhase: "idle" as LoadPhase,
@@ -290,7 +502,9 @@ export function resetIdentity(
     session: "gated",
     gate,
     refreshing: false,
+    loadFailure: null,
     pendingFocus: null,
+    focusIfLost: null,
     ...identityScopedState(),
   };
 }
@@ -308,6 +522,8 @@ export function withPage(
     page,
     credentialEditing: null,
     credentialNotice: null,
+    credentialNoticeFor: null,
+    confirming: null,
   };
 }
 
@@ -356,6 +572,8 @@ export interface ConnectorSummary {
   connected: number;
   attention: number;
   unavailable: number;
+  /** Connectors whose details have not arrived yet. */
+  loading: number;
   tools: number;
   /** Connectors whose last observed catalog refresh differed from the manifest. */
   drifting: number;
@@ -369,13 +587,15 @@ export function summarizeConnectors(
     connected: 0,
     attention: 0,
     unavailable: 0,
+    loading: 0,
     tools: 0,
     drifting: 0,
   };
   for (const connector of connectors) {
     if (connector.status === "ok") summary.connected += 1;
     else if (connector.status === "auth_required") summary.attention += 1;
-    else if (connector.status !== "loading") summary.unavailable += 1;
+    else if (connector.status === "loading") summary.loading += 1;
+    else summary.unavailable += 1;
     summary.tools += connector.toolCount || 0;
     if (driftState(connector.catalogDrift) === "warning") summary.drifting += 1;
   }
@@ -390,6 +610,16 @@ export function summarizeConnectors(
 export function connectorSummaryParts(
   summary: ConnectorSummary,
 ): Array<{ text: string; tone: Tone }> {
+  // Nothing has answered yet: "0 connected · 0 tools" would be a claim, and
+  // a false one.
+  if (summary.total > 0 && summary.loading === summary.total) {
+    return [
+      {
+        text: `Checking ${summary.total} connector${summary.total === 1 ? "" : "s"}…`,
+        tone: "neutral",
+      },
+    ];
+  }
   return [
     { text: `${summary.connected} connected`, tone: "neutral" as Tone },
     ...(summary.attention
@@ -404,6 +634,9 @@ export function connectorSummaryParts(
       ? [{ text: `${summary.unavailable} unavailable`, tone: "danger" as Tone }]
       : []),
     { text: toolCountLabel(summary.tools), tone: "neutral" as Tone },
+    ...(summary.loading
+      ? [{ text: `${summary.loading} still loading`, tone: "neutral" as Tone }]
+      : []),
   ];
 }
 
@@ -457,6 +690,19 @@ const PROBLEM_COPY: Readonly<Record<UiProblem, string>> = {
 
 export function problemCopy(problem: UiProblem | undefined): string | null {
   return problem ? PROBLEM_COPY[problem] ?? null : null;
+}
+
+/**
+ * A problem someone can fix by authorizing is a warning, matching the amber
+ * "Authorization needed" badge above it; one where something broke is an
+ * error. The two used to share the red box, so the row contradicted itself.
+ */
+export function problemTone(problem: UiProblem): "warn" | "danger" {
+  return problem === "oauth_required" ||
+    problem === "credential_required" ||
+    problem === "auth_required"
+    ? "warn"
+    : "danger";
 }
 
 /** Who owns this connector's downstream credentials, in two words. */
@@ -564,13 +810,32 @@ export function safeHttpHref(url: string | undefined): string | null {
 export function formatDate(value?: string): string {
   if (!value) return "";
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "" : date.toLocaleString();
+  // Minutes, not seconds: nothing on these pages is read to the second, and
+  // the seconds were most of the noise in every row that carried a date.
+  return Number.isNaN(date.valueOf())
+    ? ""
+    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+const ACTOR_KINDS: Readonly<Record<string, string>> = {
+  clerk: "Clerk",
+  bearer: "Bearer token",
+  "cloudflare-access": "Cloudflare Access",
+  anonymous: "Anonymous",
+};
+
+/** How a caller signed in, as a person reads it. An unknown kind is shown as sent. */
+function actorKindLabel(kind: string | undefined): string {
+  if (!kind) return "Unknown caller";
+  return ACTOR_KINDS[kind] ?? kind;
+}
+
+/** Who made a call: their name when there is one, and how they signed in. */
 export function actorLabel(actor?: UiActivityActor): string {
-  if (!actor?.kind) return "unknown";
-  if (actor.label) return `${actor.kind} · ${actor.label}`;
-  return actor.id ? `${actor.kind} · ${actor.id}` : actor.kind;
+  if (!actor?.kind) return "Unknown caller";
+  const who = actor.label || actor.id;
+  const kind = actorKindLabel(actor.kind);
+  return who ? `${who} (${kind})` : kind;
 }
 
 /**
@@ -598,6 +863,9 @@ function activityMatches(event: UiActivityEvent, query: string): boolean {
     event.actor?.id,
     event.actor?.namespace,
     event.actor?.label,
+    activityOutcomeBadge(event.outcome).label,
+    activityDetail(event),
+    actorKindLabel(event.actor?.kind),
   ].some((value) => String(value ?? "").toLowerCase().includes(q));
 }
 
@@ -610,11 +878,11 @@ export function filterActivity(
 
 /** Counts only. What the deployment ran, never what it sent or received. */
 export function activitySummary(events: UiActivityEvent[]): string {
-  if (events.length === 0) return "Arguments and results are never stored.";
+  if (events.length === 0) return "";
   const tools = new Set(events.map((event) => event.address)).size;
   return `${events.length} loaded call${events.length === 1 ? "" : "s"} · ${tools} tool${
     tools === 1 ? "" : "s"
-  } · no arguments or results stored`;
+  }`;
 }
 
 // A pause and an approval are neither success nor failure: each gets its own
@@ -632,20 +900,88 @@ export function activityOutcomeClass(outcome: string): string {
   return ACTIVITY_OUTCOMES.includes(outcome) ? outcome : "error";
 }
 
-/** The one-line detail under an address: source, retries, and friction. */
+/** Each outcome as a badge: a word a person reads, and a tone that is never alone. */
+const OUTCOME_BADGE: Readonly<Record<string, { label: string; tone: Tone }>> = {
+  success: { label: "Succeeded", tone: "ok" },
+  error: { label: "Failed", tone: "danger" },
+  timeout: { label: "Timed out", tone: "danger" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+  paused: { label: "Waiting for approval", tone: "warn" },
+  approved: { label: "Approved", tone: "ok" },
+};
+
+export function activityOutcomeBadge(outcome: string): { label: string; tone: Tone } {
+  return OUTCOME_BADGE[outcome] ?? { label: "Failed", tone: "danger" };
+}
+
+const SOURCE_LABELS: Readonly<Record<string, string>> = {
+  execute_code: "In a program",
+  call_tool: "Direct call",
+  call_destructive_tool: "Direct call, approved by the host",
+  resume_execution: "Resumed program",
+  batch_call: "Batch call",
+};
+
+/**
+ * Friction classes and the error codes an operator meets most, in words. An
+ * unknown code falls back to itself with the underscores taken out, which is
+ * still more readable than the wire form and never a guess at its meaning.
+ */
+const REASON_LABELS: Readonly<Record<string, string>> = {
+  tool_not_found: "tool not found",
+  unknown_address: "tool not found",
+  unknown_tool: "tool not found",
+  ambiguous_tool_alias: "ambiguous tool name",
+  schema_retry: "arguments didn't match the schema",
+  invalid_args: "arguments didn't match the schema",
+  destructive_reroute: "needed host approval",
+  destructive_tool_requires_approval: "needed host approval",
+  approval_required: "needed approval",
+  auth_required: "needed authorization",
+  result_too_large: "result too large to return inline",
+  timeout: "timed out",
+};
+
+function reasonLabel(code: string): string {
+  return REASON_LABELS[code] ?? code.replaceAll("_", " ");
+}
+
+/** The one-line detail under an address: where it ran, retries, and why it stalled. */
 export function activityDetail(event: UiActivityEvent): string {
-  const parts = [event.source];
+  const parts = [SOURCE_LABELS[event.source] ?? event.source];
   if (event.approval === "tool") parts.push("approved for the rest of the run");
   if (event.approval === "call") parts.push("approved for this call");
   if (event.attempts > 1) parts.push(`${event.attempts} attempts`);
-  if (event.friction) parts.push(event.friction);
-  // The friction class and the code coincide for auth_required and
-  // result_too_large. Printing "· auth_required · auth_required" says nothing
-  // twice, so the coarse class stands in for both when they agree.
-  if (event.errorCode && event.errorCode !== event.friction) {
-    parts.push(event.errorCode);
-  }
+  const reasons = [event.friction, event.errorCode]
+    .filter((code): code is string => Boolean(code))
+    .map(reasonLabel);
+  // The friction class and the code often say the same thing in two
+  // vocabularies ("auth_required" twice); once is enough.
+  for (const reason of new Set(reasons)) parts.push(reason);
   return parts.join(" · ");
+}
+
+/**
+ * An artifact's last refresh, when it is worth a badge. Only a failure is: a
+ * success is what "Current data" already says, and a superseded run is
+ * nobody's concern.
+ */
+export function artifactRefreshBadge(
+  last: { status: string } | undefined,
+): { label: string; tone: Tone } | null {
+  return last?.status === "failed" ? { label: "Refresh failed", tone: "danger" } : null;
+}
+
+/**
+ * A stored credential that cannot be used, by cause. The payload's `error`
+ * beside it is not shown: it can carry a vault's own words.
+ */
+export function credentialProblemCopy(problem: string | undefined): string {
+  if (problem === "credential_mismatch") return PROBLEM_COPY.credential_mismatch;
+  if (problem === "credential_unreadable") {
+    return "The stored credential can't be read, so it can't be used. Replace it, or remove it and add a new one.";
+  }
+  return "The stored credential can't be used. Replace it, or remove it and add a new one.";
 }
 
 export function credentialStateLabel(credential: {
