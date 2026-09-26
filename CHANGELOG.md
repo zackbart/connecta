@@ -64,12 +64,6 @@ All notable changes to this package are documented here.
 
 ### Fixed
 
-- A failed or unreachable `/ui/data` no longer signs the operator out. Only a
-  401 or 403 on that read returns to the token gate; anything else keeps the
-  page and offers Retry. A connector whose details fail to load says whether
-  the session, the browser's connection, or the downstream service is at
-  fault, and only the last offers the fix prompt.
-
 ### Fixed
 
 - **A restart's cleanup no longer grows with every earlier restart.** Each
@@ -90,6 +84,11 @@ All notable changes to this package are documented here.
   epochs. A connector stuck at the old 1,000 wall restarts the day it
   upgrades. Rolling back is clean unless a lineage has grown past 1,000. See
   [auth](./documentation/auth.md#starting-restarting-and-retiring-an-oauth-epoch).
+- A failed or unreachable `/ui/data` no longer signs the operator out. Only a
+  401 or 403 on that read returns to the token gate; anything else keeps the
+  page and offers Retry. A connector whose details fail to load says whether
+  the session, the browser's connection, or the downstream service is at
+  fault, and only the last offers the fix prompt.
 
 ## 0.26.0 — 2026-09-25
 
