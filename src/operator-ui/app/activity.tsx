@@ -13,7 +13,7 @@ import {
 } from "../view.js";
 import { productDescription } from "./config.js";
 import { Badge, LoadFailure, NoticeLine, StateBlock, Unavailable } from "./parts.js";
-import { loadActivity, setActivitySearch } from "./store.js";
+import { loadActivity, retryCollection, setActivitySearch } from "./store.js";
 
 function ActivityRow({ event }: { event: UiActivityEvent }) {
   const outcome = activityOutcomeClass(event.outcome);
@@ -78,6 +78,9 @@ export function ActivityPage({ state }: { state: OperatorState }) {
         </Unavailable>
       ) : (
         <div id="activityAvailable" class="collection">
+          {/* Nothing loaded and the load failed: the block below has the one
+              Retry, and a search over nothing has nothing to find. */}
+          {failed && state.activityEvents.length === 0 ? null : (
           <div class="row">
             <input
               id="activitySearch"
@@ -97,6 +100,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
               {loading ? "Loading…" : "Refresh"}
             </button>
           </div>
+          )}
           <p id="activitySummary" class="meta" aria-live="polite">
             {summary}
           </p>
@@ -108,7 +112,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
                 id="activityError"
                 tone="error"
                 title="Activity couldn't be loaded"
-                action={{ label: "Retry", onClick: () => void loadActivity(true) }}
+                action={{ label: "Retry", onClick: () => void retryCollection() }}
               >
                 {state.activityNotice?.message}
               </StateBlock>

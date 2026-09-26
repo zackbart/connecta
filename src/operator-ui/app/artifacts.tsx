@@ -7,10 +7,10 @@ import {
   type OperatorState,
 } from "../view.js";
 import { productDescription } from "./config.js";
-import { Badge, CopyButton, StateBlock } from "./parts.js";
+import { Badge, CopyButton, NoticeLine, StateBlock } from "./parts.js";
 import {
   loadArtifacts,
-  loadArtifactView,
+  retryCollection,
   setArtifactArchived,
   setArtifactQuery,
 } from "./store.js";
@@ -88,12 +88,12 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
               Show archived
             </label>
           </form>
-          {state.artifactPhase === "error" ? (
+          {state.artifactPhase === "error" && rows.length === 0 ? (
             <StateBlock
               id="artifactError"
               tone="error"
               title="Artifacts couldn't be loaded"
-              action={{ label: "Retry", onClick: () => void loadArtifacts(true) }}
+              action={{ label: "Retry", onClick: () => void retryCollection() }}
             >
               {state.artifactNotice?.message}
             </StateBlock>
@@ -110,7 +110,12 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
               {rows.map((row) => <ArtifactRow key={row.id} row={row} />)}
             </div>
           )}
-          {state.artifactCursor && state.artifactPhase !== "error" ? (
+          {/* A failed "Load more" keeps what already loaded and says so under
+              it; the button stays, and is the retry. */}
+          {rows.length > 0 ? (
+            <NoticeLine id="artifactNotice" notice={state.artifactNotice} />
+          ) : null}
+          {state.artifactCursor ? (
             <button
               id="moreArtifacts"
               class="btn activity-more"
@@ -226,7 +231,7 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
           id="artifactError"
           tone="error"
           title="This artifact couldn't be opened"
-          action={{ label: "Retry", onClick: () => void loadArtifactView() }}
+          action={{ label: "Retry", onClick: () => void retryCollection() }}
         >
           {state.artifactNotice?.message}
         </StateBlock>

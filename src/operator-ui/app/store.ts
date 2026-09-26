@@ -98,7 +98,10 @@ const NAV_HINT_KEY = "connecta:nav";
 
 function rememberNav(data: UiData): void {
   try {
-    sessionStorage.setItem(NAV_HINT_KEY, JSON.stringify({ activity: data.activityEnabled }));
+    sessionStorage.setItem(
+      NAV_HINT_KEY,
+      JSON.stringify({ activity: data.activityEnabled, artifacts: Boolean(data.artifactsEnabled) }),
+    );
   } catch {
     // No storage, no hint: the artifact pages fall back to what they know.
   }
@@ -112,15 +115,19 @@ function forgetNav(): void {
   }
 }
 
-/** Whether the pages that read `/ui/data` last said Activity is open. */
-export function activityHinted(): boolean {
+/**
+ * What the pages that read `/ui/data` last said about Activity and Artifacts.
+ * Also what the nav falls back to while `/ui/data` is failing, so a 500 does
+ * not take two links away with it.
+ */
+export function navHint(): { activity: boolean; artifacts: boolean } {
   try {
     const hint = JSON.parse(sessionStorage.getItem(NAV_HINT_KEY) ?? "null") as
-      | { activity?: unknown }
+      | { activity?: unknown; artifacts?: unknown }
       | null;
-    return hint?.activity === true;
+    return { activity: hint?.activity === true, artifacts: hint?.artifacts === true };
   } catch {
-    return false;
+    return { activity: false, artifacts: false };
   }
 }
 
@@ -281,6 +288,8 @@ async function mutate(options: {
   busy: Partial<OperatorState>;
   done: (payload: OperatorResponse | null) => Partial<OperatorState>;
   failed: (facts: RequestFailureFacts) => Partial<OperatorState>;
+  /** The identity changed mid-request: nothing lands, but this still runs. */
+  abandoned?: () => void;
   reload?: string | undefined;
 }): Promise<void> {
   const current = fence();
@@ -288,11 +297,11 @@ async function mutate(options: {
   set(options.busy);
   try {
     const payload = await options.request(current);
-    if (!current()) return;
+    if (!current()) return options.abandoned?.();
     set(options.done(payload));
     if (options.reload) void refreshConnector(options.reload);
   } catch (error) {
-    if (!current()) return;
+    if (!current()) return options.abandoned?.();
     set(options.failed(factsOf(error)));
   }
 }
@@ -461,6 +470,9 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
         oauthBlocked: tab ? null : connector,
       };
     },
+    // Signed out or switched mid-request: the tab it opened goes too, rather
+    // than sitting on "Opening…" with nothing left to send it anywhere.
+    abandoned: () => tab?.close(),
     // The route's words never reach this notice (see `refusedNotice`).
     failed: (facts) => {
       tab?.close();
@@ -729,7 +741,7 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
   });
 }
 
-export async function loadArtifactView(): Promise<void> {
+async function loadArtifactView(): Promise<void> {
   const current = fence();
   const request = artifactViewRequest(window.location.pathname, window.location.search);
   set({ artifactPhase: "loading", artifactNotice: null });
@@ -786,9 +798,24 @@ function loadCurrent(): Promise<void> {
   return loadData();
 }
 
-/** The signed-in error state's Retry: the same read, from the top. */
+/**
+ * The signed-in error state's Retry: the same read, from the top. The block
+ * that held the button is about to go, so focus moves to the heading of the
+ * region being reloaded instead of dropping to the page.
+ */
 export function retryLoad(): Promise<void> {
+  set({
+    pendingFocus: state.page === "connections" ? "connectorLedgerHeading" : `${state.page}Heading`,
+  });
   return loadCurrent();
+}
+
+/** Retry for a collection page, with focus kept on its heading. */
+export function retryCollection(): Promise<void> {
+  set({ pendingFocus: `${state.page}Heading` });
+  if (state.page === "activity") return loadActivity(true);
+  if (state.page === "artifact") return loadArtifactView();
+  return loadArtifacts(true);
 }
 
 /* Boot -------------------------------------------------------------------- */
@@ -1002,6 +1029,8 @@ export async function refreshConnector(id: string, quiet = false): Promise<void>
   if (!current()) return;
   const outcome = await readConnector(id, token);
   if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
-  if (quiet && outcome.kind === "local") return;
+  // A passive read only reports good news: a transient failure on a focus
+  // check is not a reason to repaint an auth-needed row as broken.
+  if (quiet && outcome.kind !== "detail") return;
   applyDetail(id, outcome);
 }

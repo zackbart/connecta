@@ -539,10 +539,16 @@ export function credentialUnavailableCopy(
   return "Credential management requires an interactive user. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
 }
 
-export function connectorStatusLabel(status: string): string {
+/**
+ * The status badge. An auth-needed connector is named by what it needs, so a
+ * row whose fix is "Add credential" does not say "Authorization needed".
+ */
+export function connectorStatusLabel(status: string, problem?: UiProblem): string {
   if (status === "loading") return "Loading details";
   if (status === "ok") return "Connected";
-  if (status === "auth_required") return "Authorization needed";
+  if (status === "auth_required") {
+    return problem === "credential_required" ? "Credential needed" : "Authorization needed";
+  }
   return "Unavailable";
 }
 
@@ -570,7 +576,10 @@ export function connectorStatusTone(status: string): Tone {
 export interface ConnectorSummary {
   total: number;
   connected: number;
+  /** Waiting on authorization, whether OAuth or a secret in configuration. */
   attention: number;
+  /** Waiting on a credential someone can add on this page. */
+  credentials: number;
   unavailable: number;
   /** Connectors whose details have not arrived yet. */
   loading: number;
@@ -586,6 +595,7 @@ export function summarizeConnectors(
     total: connectors.length,
     connected: 0,
     attention: 0,
+    credentials: 0,
     unavailable: 0,
     loading: 0,
     tools: 0,
@@ -593,7 +603,10 @@ export function summarizeConnectors(
   };
   for (const connector of connectors) {
     if (connector.status === "ok") summary.connected += 1;
-    else if (connector.status === "auth_required") summary.attention += 1;
+    else if (connector.status === "auth_required") {
+      if (connector.problem === "credential_required") summary.credentials += 1;
+      else summary.attention += 1;
+    }
     else if (connector.status === "loading") summary.loading += 1;
     else summary.unavailable += 1;
     summary.tools += connector.toolCount || 0;
@@ -626,6 +639,14 @@ export function connectorSummaryParts(
       ? [
           {
             text: `${summary.attention} need${summary.attention === 1 ? "s" : ""} authorization`,
+            tone: "warn" as Tone,
+          },
+        ]
+      : []),
+    ...(summary.credentials
+      ? [
+          {
+            text: `${summary.credentials} need${summary.credentials === 1 ? "s" : ""} a credential`,
             tone: "warn" as Tone,
           },
         ]

@@ -46,6 +46,8 @@ let releaseDetails: Array<() => void> = [];
 let pools: string[] = [];
 /** Held open until released, so a test can look at the page mid-request. */
 let oauthStartBarrier: Promise<void> | undefined;
+/** What the OAuth start answers as its authorization URL, when not the fake provider. */
+let oauthStartUrl: string | undefined;
 /**
  * A downstream error body that quotes the secret it rejected. When armed, the
  * "drifted" connector's details answer as a failed status carrying it in a
@@ -363,7 +365,7 @@ test.beforeAll(async () => {
         oauthConnected = false;
         sendJson(response, 200, {
           state: "auth_required",
-          authorizationUrl: `${origin}/provider/authorize`,
+          authorizationUrl: oauthStartUrl ?? `${origin}/provider/authorize`,
           reused: false,
         });
         return;
@@ -404,6 +406,7 @@ test.beforeEach(() => {
   releaseDetails = [];
   pools = [];
   oauthStartBarrier = undefined;
+  oauthStartUrl = undefined;
   leakyStatus = false;
   realRoutes = undefined;
 });
@@ -800,9 +803,12 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
   // The operator sees the classified description, not the failure's text...
   await expect(row.locator(".msg")).toContainText("Unavailable: its status check or catalog load failed");
   await expect(row).not.toContainText("sk_live_leaked_value");
-  const prompt = row.locator('[data-fix-prompt="connector_unavailable"]');
-  await prompt.getByRole("button", { name: "Copy fix prompt for Hosted proxy" }).click();
-  await expect(prompt.getByRole("button", { name: "Copied" })).toBeVisible();
+  // The copy button sits among the row's actions; the preview under them.
+  const actions = row.locator(".actions").first();
+  await actions.getByRole("button", { name: "Copy fix prompt for Hosted proxy" }).click();
+  await expect(actions.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(actions.getByRole("button", { name: "Refresh Hosted proxy" })).toBeVisible();
+  await expect(row.locator('[data-fix-prompt="connector_unavailable"]')).toContainText("Preview prompt");
   // ...but the clipboard gets only the fixed catalogue text.
   const copied = String(await page.evaluate("navigator.clipboard.readText()"));
   expect(copied).toContain("Connector id: drifted");
@@ -998,6 +1004,15 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
   answer = "ok";
   await failure.getByRole("button", { name: "Retry" }).click();
   await expect(connectorRow(page, "CRM")).toBeVisible();
+  // The Retry button went with its block; focus is on the region it reloaded.
+  await expect(page.locator("#connectorLedgerHeading")).toBeFocused();
+
+  // With one good answer seen in this tab, a later failure keeps the nav's shape.
+  answer = "500";
+  await page.reload();
+  await expect(page.locator("#loadFailure")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Activity", exact: true })).toBeVisible();
+  answer = "ok";
 
   // Only a refused session sends the operator back to the token form.
   answer = "401";
@@ -1040,6 +1055,10 @@ test("tells a lost session and a dropped connection apart from a failing connect
   await expect(crm.locator('[data-load-failure="network"]')).toContainText("Couldn't reach Connecta");
   await expect(crm.locator(".conn-head")).toContainText("Couldn't load");
   await expect(crm.locator("[data-problem], [data-fix-prompt]")).toHaveCount(0);
+  // The browser's connection is the problem, so reading again is the action,
+  // not redoing authorization.
+  await expect(crm.getByRole("button", { name: /Connect|Reconnect|Disconnect/ })).toHaveCount(0);
+  await expect(crm.getByRole("button", { name: "Refresh CRM" })).toHaveClass(/primary/);
 });
 
 test("paints a problem fixed by authorizing as a warning, with one primary action", async ({ page }) => {
@@ -1056,6 +1075,10 @@ test("paints a problem fixed by authorizing as a warning, with one primary actio
 
   const vaulted = await openRow(page, "Vaulted service");
   await expect(vaulted.locator('[data-problem="credential_required"]')).toHaveClass(/\bwarn\b/);
+  // Named by what it needs: its fix is a credential, not authorization.
+  await expect(vaulted.locator(".conn-head")).toContainText("Credential needed");
+  await expect(page.locator("#connectorSummary")).toContainText("1 needs authorization");
+  await expect(page.locator("#connectorSummary")).toContainText("1 needs a credential");
   await expect(vaulted.locator(".btn.primary")).toHaveCount(1);
 
   // A broken connector is still an error.
@@ -1119,7 +1142,7 @@ test("falls back to the authorization link when the browser blocks the tab", asy
   await expect(crm.locator("#oauthNotice-oauth")).toContainText("Your browser blocked the new tab.");
   const link = crm.getByRole("link", { name: "Open authorization page" });
   await expect(link).toHaveAttribute("href", `${origin}/provider/authorize`);
-  await expect(link).toHaveAttribute("rel", "noopener");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
   await expect(crm.locator(".btn.primary")).toHaveCount(1);
 });
 
@@ -1186,4 +1209,107 @@ test("keeps the gate in the guarded page's layout and masthead height", async ({
   expect(Math.abs(gateHeading!.x - heading!.x)).toBeLessThan(1);
   expect(Math.abs(gateHeading!.y - heading!.y)).toBeLessThan(1);
   expect(Math.abs(gateMasthead!.height - masthead!.height)).toBeLessThan(1);
+});
+
+test("keeps a closed row's body out of sight and out of the tab order", async ({ page }) => {
+  await openAuthenticated(page);
+  const row = connectorRow(page, "CRM");
+  await expect(row.locator(".conn-head")).toContainText("Connected");
+  const body = row.locator(".conn-body");
+  await expect(body).toBeHidden();
+  expect((await body.boundingBox())?.height ?? 0).toBe(0);
+  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeHidden();
+  await openRow(page, "CRM");
+  await expect(body).toBeVisible();
+});
+
+test("closes the opened tab when the identity changes mid-request", async ({ page }) => {
+  oauthConnected = false;
+  let release!: () => void;
+  oauthStartBarrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await openAuthenticated(page);
+  const crm = await openRow(page, "CRM");
+  const popup = page.waitForEvent("popup");
+  await crm.getByRole("button", { name: "Connect CRM" }).click();
+  const tab = await popup;
+
+  await page.getByRole("button", { name: "Change token" }).click();
+  await expect(page.locator("#gate")).toBeVisible();
+  release();
+  // Nothing lands for the old identity, and nothing is left on "Opening…".
+  await expect.poll(() => tab.isClosed()).toBe(true);
+});
+
+test("never sends the tab to a non-http authorization URL", async ({ page }) => {
+  oauthConnected = false;
+  oauthStartUrl = "javascript:alert(document.domain)";
+  await openAuthenticated(page);
+  const crm = await openRow(page, "CRM");
+  const popup = page.waitForEvent("popup");
+  await crm.getByRole("button", { name: "Connect CRM" }).click();
+  const tab = await popup;
+  await expect.poll(() => tab.isClosed()).toBe(true);
+  await expect(crm.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
+  await expect(crm.getByRole("link", { name: /authoriz/i })).toHaveCount(0);
+});
+
+test("backs out of a confirm with Escape, and keeps focus when its trigger is gone", async ({ page }) => {
+  await openAuthenticated(page);
+  const crm = await openRow(page, "CRM");
+  await crm.getByRole("button", { name: "Disconnect CRM" }).click();
+  const confirm = crm.getByRole("group", { name: /Disconnect CRM\?/ });
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(crm.getByRole("button", { name: "Disconnect CRM" })).toBeFocused();
+
+  // A refresh takes the row's controls away while the confirm is open.
+  await crm.getByRole("button", { name: "Reconnect CRM" }).click();
+  const release = holdDetails("oauth");
+  await crm.getByRole("button", { name: "Refresh CRM" }).click();
+  await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
+  await crm.getByRole("group", { name: /Reconnect CRM\?/ }).getByRole("button", { name: "Cancel" }).click();
+  await expect(crm.getByRole("button", { name: "CRM", exact: true })).toBeFocused();
+  release();
+});
+
+test("ignores a failed background read instead of repainting the row", async ({ page }) => {
+  oauthConnected = false;
+  await openAuthenticated(page);
+  const crm = await openRow(page, "CRM");
+  await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
+
+  faults.set("GET /ui/connectors/oauth", "upstream hiccup");
+  await page.evaluate('document.dispatchEvent(new Event("visibilitychange"))');
+  await expect
+    .poll(() => requests.filter((request) => request.path === "/ui/connectors/oauth").length)
+    .toBe(2);
+  await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
+  await expect(crm.locator('[data-problem="connector_unavailable"], [data-fix-prompt]')).toHaveCount(0);
+});
+
+test("keeps loaded artifacts when loading more fails", async ({ page }) => {
+  const row = (id: string) => ({
+    id, title: `Artifact ${id}`, kind: "html", viewVersion: 1,
+    updatedAt: "2026-09-20T18:00:00Z", updatedBy: { label: "Ada" }, archived: false,
+  });
+  await page.route("**/artifacts/_api/list*", (route) =>
+    new URL(route.request().url()).searchParams.has("cursor")
+      ? route.fulfill({ status: 500, json: { error: "db down" } })
+      : route.fulfill({ json: { artifacts: [row("one"), row("two")], nextCursor: "c1" } }),
+  );
+  await page.addInitScript((token) => {
+    localStorage.setItem("connecta:token", token);
+  }, TOKEN);
+  await page.goto(origin + "/artifacts");
+  await expect(page.getByRole("link", { name: "Artifact one" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(page.locator("#artifactNotice")).toContainText("The deployment answered with an error.");
+  // What loaded stays, and the button that failed is still there to retry.
+  await expect(page.getByRole("link", { name: "Artifact two" })).toBeVisible();
+  await expect(page.locator("#artifactError")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Load more" })).toBeEnabled();
 });

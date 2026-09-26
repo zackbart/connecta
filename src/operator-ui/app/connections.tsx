@@ -33,6 +33,9 @@ import {
   CopyButton,
   Empty,
   FixPrompt,
+  FixPromptButton,
+  FixPromptPreview,
+  focusableId,
   LoadFailure,
   NoticeLine,
 } from "./parts.js";
@@ -192,7 +195,7 @@ function AuthActions({
   // one thing this identity can do.
   if (!connector.oauth || !manage) {
     return authorization && connector.status !== "ok" ? (
-      <a class="btn primary" href={authorization} target="_blank" rel="noopener">
+      <a class="btn primary" href={authorization} target="_blank" rel="noopener noreferrer">
         Authorize connector
       </a>
     ) : null;
@@ -206,7 +209,7 @@ function AuthActions({
         class="btn primary"
         href={authorization}
         target="_blank"
-        rel="noopener"
+        rel="noopener noreferrer"
       >
         Open authorization page
       </a>
@@ -292,7 +295,17 @@ function ConnectorRow({
   const confirming = state.confirming?.connectorId === id ? state.confirming : null;
   const oauthConfirm =
     confirming && confirming.action !== "credential_remove" ? confirming : null;
-  const statusLabel = local ? "Couldn't load" : connectorStatusLabel(connector.status);
+  const statusLabel = local
+    ? "Couldn't load"
+    : connectorStatusLabel(connector.status, connector.problem);
+  // Only a downstream failure has anything for a coding agent to fix; a
+  // credential mismatch already offers its prompt on the credential card.
+  const fixKind =
+    problem && connector.problem &&
+    problemTone(connector.problem) === "danger" &&
+    connector.problem !== connector.credential?.problem
+      ? connector.problem
+      : null;
   const statusTone = local ? "warn" : connectorStatusTone(connector.status);
   return (
     <div class={shown ? "conn open" : "conn"} data-connector={id}>
@@ -302,6 +315,7 @@ function ConnectorRow({
           <h2 class="conn-name">
             <button
               type="button"
+              id={`conn-toggle-${id}`}
               class="conn-toggle"
               aria-expanded={shown ? "true" : "false"}
               aria-controls={`conn-body-${id}`}
@@ -325,13 +339,10 @@ function ConnectorRow({
           <span class="conn-caret" aria-hidden="true" />
         </span>
       </div>
-      <div
-        class="conn-body"
-        id={`conn-body-${id}`}
-        // Closed rows stay findable: find-in-page opens the one it matches.
-        hidden={shown ? false : "until-found"}
-        {...{ onbeforematch: () => setOpen(true) }}
-      >
+      {/* A plain `hidden`, not `until-found`: WebKit implements the latter
+          but still lays out the closed body, and the filter above already
+          finds a connector or tool by name. */}
+      <div class="conn-body" id={`conn-body-${id}`} hidden={!shown}>
         {connector.description ? (
           <p class="conn-note">{connector.description}</p>
         ) : null}
@@ -350,21 +361,19 @@ function ConnectorRow({
             {connectorLoadFailureCopy(local, productName)}
           </p>
         ) : null}
-        {/* A credential mismatch is also on the credential card; one prompt is
-            enough. A problem someone fixes by authorizing needs no coding agent. */}
-        {problem && connector.problem &&
-        problemTone(connector.problem) === "danger" &&
-        connector.problem !== connector.credential?.problem ? (
-          <FixPrompt kind={connector.problem} connectorId={id} name={name} />
-        ) : null}
         {connector.authorizationUrl && !safeHttpHref(connector.authorizationUrl) ? (
           <p class="meta">Authorization URL: {connector.authorizationUrl}</p>
         ) : null}
         {manage ? null : <p class="meta">{permissionLabel(connector)}</p>}
         <div class="actions">
-          <AuthActions connector={connector} name={name} manage={manage} state={state} />
+          {/* A row that failed on this side of the deployment has one thing to
+              try — reading it again — and no authorization to redo. */}
+          {local ? null : (
+            <AuthActions connector={connector} name={name} manage={manage} state={state} />
+          )}
+          {fixKind ? <FixPromptButton kind={fixKind} connectorId={id} name={name} /> : null}
           <button
-            class="btn quiet"
+            class={local ? "btn primary" : "btn quiet"}
             type="button"
             aria-label={`Refresh ${name}`}
             disabled={connector.status === "loading"}
@@ -373,6 +382,7 @@ function ConnectorRow({
             Refresh
           </button>
         </div>
+        {fixKind ? <FixPromptPreview kind={fixKind} connectorId={id} standalone /> : null}
         {oauthConfirm ? (
           <ConfirmBar
             id={id}
@@ -383,7 +393,10 @@ function ConnectorRow({
             }}
             onCancel={() =>
               cancelConfirm(
-                oauthConfirm.action === "oauth_restart" ? `reconnect-${id}` : `disconnect-${id}`,
+                focusableId(
+                  oauthConfirm.action === "oauth_restart" ? `reconnect-${id}` : `disconnect-${id}`,
+                  `conn-toggle-${id}`,
+                ),
               )
             }
           />
@@ -518,7 +531,7 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
       </div>
       <section class="section" aria-labelledby="connectorLedgerHeading">
         <div class="section-head">
-          <h2 id="connectorLedgerHeading">Connectors</h2>
+          <h2 id="connectorLedgerHeading" tabIndex={-1}>Connectors</h2>
           <input
             id="filter"
             type="search"

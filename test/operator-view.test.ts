@@ -13,6 +13,7 @@ import {
   activitySummary,
   authScopeLabel,
   connectorSummaryParts,
+  connectorStatusLabel,
   connectorStatusTone,
   permissionLabel,
   summarizeConnectors,
@@ -464,6 +465,7 @@ describe("connector summary strip", () => {
       total: 4,
       connected: 2,
       attention: 1,
+      credentials: 0,
       unavailable: 1,
       loading: 0,
       tools: 7,
@@ -511,11 +513,27 @@ describe("connector summary strip", () => {
     ).toBe(1);
   });
 
+  it("names what an auth-needed connector needs, in the badge and the strip", () => {
+    const needsCredential = connector("auth_required", { problem: "credential_required" });
+    const needsOAuth = connector("auth_required", { problem: "oauth_required" });
+    expect(connectorStatusLabel("auth_required", "credential_required")).toBe("Credential needed");
+    expect(connectorStatusLabel("auth_required", "oauth_required")).toBe("Authorization needed");
+    const summary = summarizeConnectors([needsCredential, needsOAuth]);
+    expect(summary).toMatchObject({ attention: 1, credentials: 1 });
+    expect(connectorSummaryParts(summary).map((part) => part.text)).toEqual([
+      "0 connected",
+      "1 needs authorization",
+      "1 needs a credential",
+      "0 tools",
+    ]);
+  });
+
   it("names only the counts an operator has to act on", () => {
     const healthy = connectorSummaryParts({
       total: 2,
       connected: 2,
       attention: 0,
+      credentials: 0,
       unavailable: 0,
       loading: 0,
       tools: 9,
@@ -528,6 +546,7 @@ describe("connector summary strip", () => {
       total: 3,
       connected: 1,
       attention: 1,
+      credentials: 0,
       unavailable: 1,
       loading: 0,
       tools: 1,

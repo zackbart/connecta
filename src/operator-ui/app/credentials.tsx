@@ -16,7 +16,7 @@ import {
   saveCredential,
   testCredential,
 } from "./store.js";
-import { ConfirmBar, FixPrompt, NoticeLine } from "./parts.js";
+import { ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
@@ -226,7 +226,11 @@ export function CredentialCard({
           id={connector.id}
           {...confirmCopy("credential_remove", name)}
           onConfirm={() => void removeCredential(connector.id)}
-          onCancel={() => cancelConfirm(`remove-credential-${connector.id}`)}
+          onCancel={() =>
+            cancelConfirm(
+              focusableId(`remove-credential-${connector.id}`, `conn-toggle-${connector.id}`),
+            )
+          }
         />
       ) : null}
       {editing ? (

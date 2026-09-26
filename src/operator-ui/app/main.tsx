@@ -19,9 +19,8 @@ import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
 import { ActivityPage } from "./activity.js";
 import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
 import { ConnectionsPage } from "./connections.js";
-import { NoticeLine, PageLink } from "./parts.js";
+import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
-  activityHinted,
   boot,
   focusHandled,
   forgetBearer,
@@ -30,6 +29,7 @@ import {
   signIn,
   signInWithBearer,
   signOut,
+  navHint,
   subscribe,
 } from "./store.js";
 
@@ -57,17 +57,16 @@ function useOperatorState(): OperatorState {
 
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
-  // Artifact pages never read /ui/data. The pages that do leave a hint for
-  // this tab (see `activityHinted`), so the nav keeps its shape across pages;
-  // with no hint — a dedicated artifact origin — Activity stays hidden.
-  if (isArtifactPage(state.page)) {
-    return activityHinted()
-      ? ["connections", "activity", "artifacts"]
-      : ["connections", "artifacts"];
-  }
+  // Artifact pages never read /ui/data, and a failing /ui/data has not
+  // answered. The pages that did read it leave a hint for this tab (see
+  // `navHint`), so the nav keeps its shape; with no hint — a dedicated
+  // artifact origin, a first visit — only what this page can vouch for shows.
+  const hint = state.data ? null : navHint();
   return OPERATOR_PAGES.filter((page) => {
-    if (page === "activity") return Boolean(state.data?.activityEnabled);
-    if (page === "artifacts") return Boolean(state.data?.artifactsEnabled);
+    if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
+    if (page === "artifacts") {
+      return isArtifactPage(state.page) || (hint ? hint.artifacts : Boolean(state.data?.artifactsEnabled));
+    }
     return true;
   });
 }
@@ -138,9 +137,16 @@ function Gate({ state }: { state: OperatorState }) {
         </h1>
         <div class="lead-copy">
           <p>{pageDescription(state.page, productDescription)}</p>
-          <p id="gateCopy" class="meta">
-            {loading ? checkingCopy(state.page) : gateCopy(auth.kind, signedIn)}
-          </p>
+          {/* While the session is checked, the same block the signed-in page
+              shows while it loads, so the words and the shape do not change
+              when the check passes. */}
+          {loading ? (
+            <StateBlock id="gateCopy">{checkingCopy(state.page)}</StateBlock>
+          ) : (
+            <p id="gateCopy" class="meta">
+              {gateCopy(auth.kind, signedIn)}
+            </p>
+          )}
           {loading ? null : auth.kind === "clerk" ? (
             <div id="clerkGate" class="actions">
               {signedIn ? (

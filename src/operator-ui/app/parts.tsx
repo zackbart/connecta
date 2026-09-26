@@ -61,23 +61,55 @@ export function FixPrompt({
   connectorId: string;
   name?: string;
 }) {
-  const text = fixPrompt(kind, connectorId);
   return (
     <div class="fix-prompt" data-fix-prompt={kind}>
-      <CopyButton
-        value={text}
-        label="Copy fix prompt"
-        class="btn quiet"
-        ariaLabel={`Copy fix prompt for ${name ?? connectorId}`}
-      />
-      <details>
-        <summary class="disclosure">Preview prompt</summary>
-        <p class="meta">
-          Fixed text for a coding agent working on this deployment. It carries no error details or secrets.
-        </p>
-        <pre class="fix-prompt-text">{text}</pre>
-      </details>
+      <FixPromptButton kind={kind} connectorId={connectorId} {...(name ? { name } : {})} />
+      <FixPromptPreview kind={kind} connectorId={connectorId} />
     </div>
+  );
+}
+
+/**
+ * The fix prompt's two halves, for a row that puts the copy button among its
+ * actions and the preview under them.
+ */
+export function FixPromptButton({
+  kind,
+  connectorId,
+  name,
+}: {
+  kind: FixPromptKind;
+  connectorId: string;
+  name?: string;
+}) {
+  return (
+    <CopyButton
+      value={fixPrompt(kind, connectorId)}
+      label="Copy fix prompt"
+      class="btn quiet"
+      ariaLabel={`Copy fix prompt for ${name ?? connectorId}`}
+    />
+  );
+}
+
+export function FixPromptPreview({
+  kind,
+  connectorId,
+  standalone,
+}: {
+  kind: FixPromptKind;
+  connectorId: string;
+  /** Rendered on its own, away from its button: it carries the marker then. */
+  standalone?: boolean;
+}) {
+  return (
+    <details class="fix-prompt-preview" {...(standalone ? { "data-fix-prompt": kind } : {})}>
+      <summary class="disclosure">Preview prompt</summary>
+      <p class="meta">
+        Fixed text for a coding agent working on this deployment. It carries no error details or secrets.
+      </p>
+      <pre class="fix-prompt-text">{fixPrompt(kind, connectorId)}</pre>
+    </details>
   );
 }
 
@@ -176,7 +208,17 @@ export function ConfirmBar({
   onCancel: () => void;
 }) {
   return (
-    <div class="confirm" role="group" aria-labelledby={`confirm-question-${id}`}>
+    <div
+      class="confirm"
+      role="group"
+      aria-labelledby={`confirm-question-${id}`}
+      // Escape backs out, from either button, the way a dialog would.
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        onCancel();
+      }}
+    >
       <p id={`confirm-question-${id}`}>{question}</p>
       <div class="actions">
         <button class="btn danger" type="button" onClick={onConfirm}>
@@ -193,6 +235,19 @@ export function ConfirmBar({
       </div>
     </div>
   );
+}
+
+/**
+ * The first of these elements that can take focus now. A confirm's trigger
+ * can vanish under it — a refresh puts the row in its loading state — and
+ * focus then goes to the next target rather than to the page.
+ */
+export function focusableId(...ids: string[]): string {
+  for (const id of ids) {
+    const element = document.getElementById(id) as HTMLButtonElement | null;
+    if (element && !element.disabled) return id;
+  }
+  return ids[ids.length - 1] ?? "";
 }
 
 /**

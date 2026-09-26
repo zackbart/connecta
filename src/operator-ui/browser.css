@@ -161,8 +161,8 @@
   }
   .fix-prompt > details { flex: 1 1 12rem; }
   .fix-prompt > details[open] { flex-basis: 100%; }
-  .fix-prompt > details > .meta { margin-top: .4rem; }
-  .fix-prompt .fix-prompt-text {
+  .fix-prompt-preview > .meta { margin-top: .4rem; }
+  .fix-prompt-preview .fix-prompt-text {
     border: 1px solid var(--border);
     margin-top: .4rem;
     max-height: 18rem;
@@ -237,9 +237,8 @@
     gap: .75rem;
     padding: var(--pad);
   }
-  /* `hidden="until-found"` hides by content-visibility, not display, so a
-     closed body still lays out its own box; this makes that box nothing. */
-  .conn-body[hidden] { border: 0; padding: 0; }
+  /* The `display: grid` above would otherwise outrank the UA's `[hidden]`. */
+  .conn-body[hidden] { display: none; }
   .conn-note { color: var(--muted); max-width: 70ch; }
   .subcard {
     background: var(--surface-2);
