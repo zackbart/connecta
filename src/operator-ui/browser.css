@@ -6,9 +6,15 @@
 @import "./tokens.css";
 @import "./page.css";
 
-  /* Controls */
+  /* Chrome. The nav mounts after the session is checked; reserving its
+     height keeps the masthead from growing under a gate that just opened. */
 
-  input {
+  .masthead-inner { min-height: calc(.9375rem * 1.5 + .7rem); }
+
+  /* Controls. Text-like inputs only: a checkbox is not a text field, and a
+     full-width one pushes its own label off the row. */
+
+  input:not([type="checkbox"], [type="radio"], [type="hidden"]) {
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: calc(var(--radius) - 2px);
@@ -19,7 +25,10 @@
   }
   input::placeholder { color: var(--muted); }
   .row { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
-  .row input { flex: 1 1 14rem; width: auto; }
+  .row input:not([type="checkbox"], [type="radio"]) { flex: 1 1 14rem; width: auto; }
+  input:disabled { opacity: .6; }
+  .check { align-items: center; cursor: pointer; display: inline-flex; gap: .4rem; }
+  .check input { accent-color: var(--accent); margin: 0; }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 
   /* Status vocabulary */
@@ -32,8 +41,8 @@
     width: .5rem;
     background: var(--muted);
   }
-  .dot.ok, .dot.success { background: var(--ok); }
-  .dot.auth_required { background: var(--warn); }
+  .dot.ok, .dot.success, .dot.approved { background: var(--ok); }
+  .dot.auth_required, .dot.warn, .dot.paused { background: var(--warn); }
   .dot.error, .dot.timeout { background: var(--danger); }
   .dot.loading { background: var(--border-strong); }
 
@@ -46,15 +55,42 @@
     gap: var(--gap);
     justify-content: space-between;
   }
-  .empty, .unavailable {
+  .unavailable {
     background: var(--surface);
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius);
     color: var(--muted);
     padding: 1.5rem var(--pad);
+  }
+
+  /* One shape for empty, loading, and failed collections, on every page. */
+  .state-block {
+    align-items: center;
+    background: var(--surface);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    padding: 1.75rem var(--pad);
     text-align: center;
   }
-  .unavailable { text-align: left; }
+  .state-block.error {
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+    border-style: solid;
+  }
+  .state-title { color: var(--text); font-weight: 600; }
+  .state-copy { max-width: 52ch; }
+  .state-block .btn { margin-top: .25rem; }
+  .collection { display: grid; gap: .75rem; }
+
+  /* A problem someone fixes by authorizing: amber, like its badge. */
+  .msg.warn {
+    background: color-mix(in srgb, var(--warn) 9%, var(--surface));
+    border-color: color-mix(in srgb, var(--warn) 32%, var(--surface));
+    color: var(--text);
+  }
   .error-notice { color: var(--danger); }
   /* Notices stay mounted so focus and live regions have a stable target, which
      is also why an empty one collapses to no height instead of `display: none`:
@@ -117,9 +153,16 @@
 
   /* Fix prompts */
 
-  .fix-prompt { display: grid; gap: .35rem; }
-  .fix-prompt-head { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
-  .fix-prompt .fix-prompt-text {
+  .fix-prompt {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem .75rem;
+  }
+  .fix-prompt > details { flex: 1 1 12rem; }
+  .fix-prompt > details[open] { flex-basis: 100%; }
+  .fix-prompt-preview > .meta { margin-top: .4rem; }
+  .fix-prompt-preview .fix-prompt-text {
     border: 1px solid var(--border);
     margin-top: .4rem;
     max-height: 18rem;
@@ -135,23 +178,39 @@
     overflow: hidden;
   }
   .rows > * + * { border-top: 1px solid var(--border); }
-  .conn[open] { background: var(--surface-2); }
+  .conn.open > .conn-head { background: var(--surface-2); }
   .conn-head {
     align-items: center;
-    cursor: pointer;
     display: flex;
     gap: .75rem;
     justify-content: space-between;
-    list-style: none;
     padding: .7rem var(--pad);
+    position: relative;
   }
-  .conn-head::-webkit-details-marker { display: none; }
-  /* `.rows` clips to its radius, so the row's focus ring has to be inset or
-     the container crops it off. */
-  .conn-head:focus-visible { outline-offset: -2px; }
   .conn-head:hover { background: var(--surface-2); }
   .conn-main { align-items: center; display: flex; gap: .6rem; min-width: 0; }
   .conn-name { font-size: 1rem; font-weight: 500; overflow-wrap: anywhere; }
+  /* The heading's button toggles the row; its hit area stretches over the
+     whole head, so the badges and id are part of the target without being
+     part of the heading's name. */
+  .conn-toggle {
+    background: none;
+    border: 0;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-align: left;
+  }
+  .conn-toggle::after { content: ""; inset: 0; position: absolute; }
+  /* `.rows` clips to its radius, so the focus ring is drawn on the whole head,
+     inset, rather than around the name where it would be cropped. */
+  .conn-toggle:focus-visible { outline: none; }
+  .conn-toggle:focus-visible::after {
+    border-radius: calc(var(--radius) - 2px);
+    outline: 2px solid var(--link);
+    outline-offset: -2px;
+  }
   .conn-id { color: var(--muted); }
   .conn-badges {
     align-items: center;
@@ -170,7 +229,7 @@
     transform-origin: center;
     width: .4rem;
   }
-  .conn[open] .conn-caret { rotate: 45deg; }
+  .conn.open .conn-caret { rotate: 45deg; }
   .conn-body {
     background: var(--surface);
     border-top: 1px solid var(--border);
@@ -178,6 +237,8 @@
     gap: .75rem;
     padding: var(--pad);
   }
+  /* The `display: grid` above would otherwise outrank the UA's `[hidden]`. */
+  .conn-body[hidden] { display: none; }
   .conn-note { color: var(--muted); max-width: 70ch; }
   .subcard {
     background: var(--surface-2);
@@ -194,6 +255,18 @@
     gap: .5rem;
     justify-content: space-between;
   }
+  .subcard-head h3 { font-size: .9375rem; }
+
+  /* A second click, in place, for an action that takes something away. */
+  .confirm {
+    background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--surface));
+    border-radius: calc(var(--radius) - 2px);
+    display: grid;
+    gap: .5rem;
+    padding: .6rem .75rem;
+  }
+  .confirm p { max-width: 70ch; }
   details > .subcard, details > .tool-list { margin-top: .5rem; }
   /* A connector with a hundred tools scrolls inside its own panel instead of
      stretching the row list. */
@@ -278,12 +351,8 @@
   .activity-actor-id { color: var(--muted); }
   .activity-address { font-family: var(--mono); font-size: .8125rem; overflow-wrap: anywhere; }
   .activity-detail { color: var(--muted); font-size: .8125rem; }
-  .activity-outcome { text-align: right; }
-  .activity-item.error .activity-outcome,
-  .activity-item.timeout .activity-outcome { color: var(--danger); }
-  .activity-item.success .activity-outcome { color: var(--ok); }
-  .activity-empty { color: var(--muted); padding: 1.5rem var(--pad); text-align: center; }
-  .activity-more { margin-top: .75rem; }
+  .activity-result { display: grid; gap: .15rem; justify-items: end; }
+  .activity-more { justify-self: start; }
 
   /* Artifacts */
 
@@ -298,6 +367,7 @@
   .artifact-row .artifact-meta, .artifact-meta { color: var(--muted); font-size: .8125rem; }
   .artifact-badges { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; }
   .artifact-head { display: grid; gap: .35rem; margin-bottom: .75rem; }
+  .navlink.inline { font-size: inherit; padding: 0 .2rem; }
   .artifact-banner {
     background: color-mix(in srgb, var(--warn) 12%, var(--surface));
     border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
@@ -315,21 +385,32 @@
     width: 100%;
   }
 
-  /* Gate */
+  /* Gate: the guarded page's own lead, with the sign-in form under it. */
 
-  .gate {
-    display: grid;
-    gap: .75rem;
-    margin: 3rem auto 0;
-    max-width: 30rem;
-  }
-  .gate h1 { font-size: 1.25rem; }
-  .gate .row { flex-wrap: nowrap; }
+  .gate-form { max-width: 36rem; }
 
   @media (max-width: 40rem) {
+    /* Masthead: brand and the session action on one line, the page nav on
+       the next, scrolling sideways rather than wrapping. It stops sticking,
+       so a phone does not give a fifth of its height to chrome. */
+    .masthead { position: static; }
+    .masthead-inner { flex-wrap: wrap; row-gap: .35rem; }
+    #operatorNav, #operatorNav .mast-actions { display: contents; }
+    .session-actions { margin-left: auto; }
+    .page-nav {
+      flex: 1 0 100%;
+      flex-wrap: nowrap;
+      margin-left: -.6rem;
+      order: 3;
+      overflow-x: auto;
+    }
     .conn-head { align-items: flex-start; flex-direction: column; gap: .4rem; }
     .conn-badges { justify-content: flex-start; }
     .endpoint { flex-wrap: wrap; }
+    .section-head { flex-wrap: wrap; }
+    .filter { flex: 1 1 100%; }
     .activity-item { grid-template-columns: minmax(0, 1fr); }
-    .activity-outcome { text-align: left; }
+    .activity-result { justify-items: start; }
+    .artifact-row { grid-template-columns: minmax(0, 1fr); }
+    .artifact-badges { justify-content: flex-start; }
   }

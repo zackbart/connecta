@@ -8,10 +8,12 @@ import {
 } from "../src/ui.js";
 import {
   activityDetail,
+  activityOutcomeBadge,
   activityOutcomeClass,
   activitySummary,
   authScopeLabel,
   connectorSummaryParts,
+  connectorStatusLabel,
   connectorStatusTone,
   permissionLabel,
   summarizeConnectors,
@@ -55,10 +57,23 @@ describe("activity rows for resumed programs", () => {
 
   it("says what an approval covered", () => {
     expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "tool" })))
-      .toBe("resume_execution · approved for the rest of the run");
+      .toBe("Resumed program · approved for the rest of the run");
     expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "call" })))
-      .toBe("resume_execution · approved for this call");
-    expect(activityDetail(row({ outcome: "paused", attempts: 0 }))).toBe("execute_code");
+      .toBe("Resumed program · approved for this call");
+    expect(activityDetail(row({ outcome: "paused", attempts: 0 }))).toBe("In a program");
+  });
+
+  it("words sources, friction, and outcomes for a person, never twice", () => {
+    expect(
+      activityDetail(row({ source: "call_tool", outcome: "error", attempts: 2, friction: "auth_required", errorCode: "auth_required" })),
+    ).toBe("Direct call · 2 attempts · needed authorization");
+    // An unknown code is still shown, without its underscores, not guessed at.
+    expect(activityDetail(row({ outcome: "error", errorCode: "rate_limited" }))).toBe(
+      "In a program · rate limited",
+    );
+    expect(activityOutcomeBadge("paused")).toEqual({ label: "Waiting for approval", tone: "warn" });
+    expect(activityOutcomeBadge("success")).toEqual({ label: "Succeeded", tone: "ok" });
+    expect(activityOutcomeBadge("something new")).toEqual({ label: "Failed", tone: "danger" });
   });
 });
 
@@ -184,8 +199,15 @@ describe("operator app state", () => {
       },
       connectorFilter: "billing",
       oauthNotice: info("OAuth disconnected."),
+      oauthNoticeFor: "crm",
       oauthBusy: "crm",
+      oauthBlocked: "crm",
+      confirming: { connectorId: "crm", action: "oauth_disconnect" },
+      connectorFailures: { crm: "network" },
+      loadFailure: "server",
+      focusIfLost: "oauthNotice-crm",
       credentialNotice: info("identity-a secret-shaped notice"),
+      credentialNoticeFor: "vaulted",
       credentialEditing: "vaulted",
       credentialBusy: "vaulted",
       activityPhase: "ready",
@@ -211,8 +233,15 @@ describe("operator app state", () => {
       data: null,
       connectorFilter: "",
       oauthNotice: null,
+      oauthNoticeFor: null,
       oauthBusy: null,
+      oauthBlocked: null,
+      confirming: null,
+      connectorFailures: {},
+      loadFailure: null,
+      focusIfLost: null,
       credentialNotice: null,
+      credentialNoticeFor: null,
       credentialEditing: null,
       credentialBusy: null,
       pendingFocus: null,
@@ -244,11 +273,12 @@ describe("operator app state", () => {
   it("labels activity actors and shows a stable id only when it disambiguates", () => {
     expect(
       actorLabel({ kind: "clerk", id: "user_1", label: "Ada Lovelace" }),
-    ).toBe("clerk · Ada Lovelace");
+    ).toBe("Ada Lovelace (Clerk)");
     expect(actorLabel({ kind: "clerk", id: "user_fallback" })).toBe(
-      "clerk · user_fallback",
+      "user_fallback (Clerk)",
     );
-    expect(actorLabel(undefined)).toBe("unknown");
+    expect(actorLabel({ kind: "bearer" })).toBe("Bearer token");
+    expect(actorLabel(undefined)).toBe("Unknown caller");
     expect(
       actorStableId({
         kind: "clerk",
@@ -284,16 +314,14 @@ describe("operator app state", () => {
   });
 
   it("summarizes activity as counts and never as payloads", () => {
-    expect(activitySummary([])).toBe("Arguments and results are never stored.");
+    expect(activitySummary([])).toBe("");
     expect(
       activitySummary([
         event("calc.add"),
         event("calc.add"),
         event("notes.list"),
       ]),
-    ).toBe(
-      "3 loaded calls · 2 tools · no arguments or results stored",
-    );
+    ).toBe("3 loaded calls · 2 tools");
   });
 
   it("lets only http(s) values become an href", () => {
@@ -437,7 +465,9 @@ describe("connector summary strip", () => {
       total: 4,
       connected: 2,
       attention: 1,
+      credentials: 0,
       unavailable: 1,
+      loading: 0,
       tools: 7,
       drifting: 0,
     });
@@ -449,6 +479,11 @@ describe("connector summary strip", () => {
     const summary = summarizeConnectors([connector("loading")]);
     expect(summary.total).toBe(1);
     expect(summary.connected + summary.attention + summary.unavailable).toBe(0);
+    expect(summary.loading).toBe(1);
+    // And the strip says so, rather than "0 connected · 0 tools".
+    expect(connectorSummaryParts(summary)).toEqual([
+      { text: "Checking 1 connector…", tone: "neutral" },
+    ]);
   });
 
   it("counts a connector as drifting only when a refresh saw a difference", () => {
@@ -478,12 +513,29 @@ describe("connector summary strip", () => {
     ).toBe(1);
   });
 
+  it("names what an auth-needed connector needs, in the badge and the strip", () => {
+    const needsCredential = connector("auth_required", { problem: "credential_required" });
+    const needsOAuth = connector("auth_required", { problem: "oauth_required" });
+    expect(connectorStatusLabel("auth_required", "credential_required")).toBe("Credential needed");
+    expect(connectorStatusLabel("auth_required", "oauth_required")).toBe("Authorization needed");
+    const summary = summarizeConnectors([needsCredential, needsOAuth]);
+    expect(summary).toMatchObject({ attention: 1, credentials: 1 });
+    expect(connectorSummaryParts(summary).map((part) => part.text)).toEqual([
+      "0 connected",
+      "1 needs authorization",
+      "1 needs a credential",
+      "0 tools",
+    ]);
+  });
+
   it("names only the counts an operator has to act on", () => {
     const healthy = connectorSummaryParts({
       total: 2,
       connected: 2,
       attention: 0,
+      credentials: 0,
       unavailable: 0,
+      loading: 0,
       tools: 9,
       drifting: 0,
     });
@@ -494,7 +546,9 @@ describe("connector summary strip", () => {
       total: 3,
       connected: 1,
       attention: 1,
+      credentials: 0,
       unavailable: 1,
+      loading: 0,
       tools: 1,
       drifting: 0,
     });

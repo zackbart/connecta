@@ -279,32 +279,40 @@ describe("operator store action notices", () => {
 
     expect(
       await land(
-        () => store.oauthAction("svc", "reconnect"),
+        () => store.startOAuth("svc", "restart"),
         () => Response.json({ error: `token ${SECRET}` }, { status: 502 }),
         "oauthNotice",
       ),
     ).toMatchObject({
       tone: "error",
-      message: expect.stringContaining("OAuth authorization could not restart."),
+      message: expect.stringContaining("Authorization couldn't start."),
       fix: { kind: "oauth_action_failed", connectorId: "svc" },
     });
     expect(
       await land(
-        () => store.oauthAction("svc", "disconnect"),
+        () => store.disconnectOAuth("svc"),
         () => Response.json({ error: SECRET }, { status: 400 }),
         "oauthNotice",
       ),
-    ).toMatchObject({ tone: "error", message: expect.stringContaining("OAuth disconnect failed.") });
+    ).toMatchObject({ tone: "error", message: expect.stringContaining("Disconnect didn't finish.") });
+    // No window.open in this fake browser: the tab counts as blocked, and the
+    // notice points at the link the row now offers.
     expect(
       await land(
-        () => store.oauthAction("svc", "reconnect"),
-        () => Response.json({ state: "auth_required", message: SECRET }),
+        () => store.startOAuth("svc", "continue"),
+        () =>
+          Response.json({
+            state: "auth_required",
+            authorizationUrl: "https://provider.test/authorize",
+            message: SECRET,
+          }),
         "oauthNotice",
       ),
     ).toEqual({
       tone: "info",
-      message: "Authorization restarted. Open the authorization link to reconnect.",
+      message: "Your browser blocked the new tab. Open the authorization page from the link here.",
     });
+    expect(store.getState().oauthBlocked).toBe("svc");
     expect(
       await land(
         () => store.testCredential("svc"),
@@ -322,7 +330,7 @@ describe("operator store action notices", () => {
         () => Response.json({ error: SECRET }, { status: 502 }),
         "credentialNotice",
       ),
-    ).toMatchObject({ tone: "error", message: "The credential test could not run." });
+    ).toMatchObject({ tone: "error", message: "The credential test couldn't run." });
     expect(
       await land(
         () => store.testCredential("svc"),
@@ -330,15 +338,81 @@ describe("operator store action notices", () => {
         "credentialNotice",
       ),
     ).toMatchObject({ tone: "error", fix: { kind: "credential_mismatch" } });
-    // A failure the page words itself keeps its words.
+    // A save the route refused says what to do next, never what the route said.
+    expect(
+      await land(
+        () => store.saveCredential("svc", { value: "x" }),
+        () => Response.json({ error: `vault said ${SECRET}` }, { status: 400 }),
+        "credentialNotice",
+      ),
+    ).toMatchObject({ tone: "error", message: expect.stringContaining("wasn't saved") });
+    // A failure the page words itself keeps its words: a 403 on a mutation is
+    // a missing permission, answered inline, and never a trip to the gate.
     expect(
       await land(
         () => store.testCredential("svc"),
         () => Response.json({ error: SECRET }, { status: 403 }),
         "credentialNotice",
       ),
-    ).toMatchObject({ message: "This identity may not perform that action." });
+    ).toMatchObject({
+      message: "You don't have permission to change this connection's authentication.",
+    });
+    expect(store.getState().session).toBe("ready");
+    expect(store.getState().credentialNoticeFor).toBe("svc");
 
     expect(JSON.stringify(store.getState())).not.toContain(SECRET);
+  });
+
+  it("asks the route to continue or restart through the mode parameter", async () => {
+    const { store, fetchMock } = await loadStore({
+      id: "sess_a",
+      getToken: async () => "token-a",
+    });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    await store.boot();
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    await store.startOAuth("svc", "continue");
+    await store.startOAuth("svc", "restart");
+    const starts = fetchMock.mock.calls
+      .filter(([path]) => String(path).startsWith("/ui/oauth/"))
+      .map(([path, init]) => [path, (init as RequestInit).method]);
+    expect(starts).toEqual([
+      ["/ui/oauth/svc?mode=continue", "POST"],
+      ["/ui/oauth/svc?mode=restart", "POST"],
+    ]);
+    // `continue` on a healthy connector changes nothing and says so.
+    expect(store.getState().oauthNotice).toEqual({ tone: "info", message: "Connected." });
+  });
+});
+
+describe("operator store load failures", () => {
+  it("stays signed in with a retry when /ui/data fails for any reason but the session", async () => {
+    const { store, fetchMock } = await loadStore({
+      id: "sess_a",
+      getToken: async () => "token-a",
+    });
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "boom" }, { status: 500 }));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "server", gate: null });
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await store.retryLoad();
+    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "network" });
+
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    await store.retryLoad();
+    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: null });
+    expect(store.getState().data?.serverInfo.name).toBe("identity-a");
+  });
+
+  it("returns to the gate only when the session read is refused", async () => {
+    const { store, fetchMock } = await loadStore({
+      id: "sess_a",
+      getToken: async () => "token-a",
+    });
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "unauthorized" }, { status: 401 }));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "gated", loadFailure: null });
+    expect(store.getState().gate?.message).toContain("Clerk session wasn't accepted");
   });
 });
