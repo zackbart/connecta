@@ -1947,10 +1947,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * again, because a late write into it is unreadable behind the fence and
    * the late writer deletes it itself, or records the generation again if it
    * cannot; the sweep reclaims whatever is left once the grace has passed.
-   * The live manifest
-   * is never rewritten: an entry leaves the lineage only by being absent
-   * from the next epoch's manifest, which no other request writes until that
-   * epoch is active.
+   * The live manifest is never rewritten: an entry leaves the lineage only by
+   * being absent from the next epoch's manifest, which no other request
+   * writes until that epoch is active.
    */
   async resetAuthorization(operatorDisconnected = false): Promise<void> {
     const nonce = crypto.randomUUID();
