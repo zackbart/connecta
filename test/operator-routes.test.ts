@@ -356,6 +356,94 @@ describe("operator data routes", () => {
     }
   });
 
+  it("drains an issuer-mismatch reset before returning a timeout", async () => {
+    const inner = memoryStorage();
+    const mcpUrl = "https://downstream.example/mcp";
+    const metadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
+    let issuer = "https://auth-a.example";
+    let registrations = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === mcpUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${metadataUrl}"` },
+        });
+      }
+      if (url === metadataUrl) {
+        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+      }
+      if (url === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url === `${issuer}/register`) {
+        registrations++;
+        return Response.json({
+          ...(JSON.parse(String(init?.body)) as object),
+          client_id: `client-${registrations}`,
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    let generationWrites = 0;
+    let entered!: () => void;
+    const reachedMismatchReset = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const storage: KVStorage = {
+      get: (key) => inner.get(key),
+      delete: (key) => inner.delete(key),
+      compareAndSet: (key, expected, next, options) =>
+        inner.compareAndSet!(key, expected, next, options),
+      async set(key, value, options) {
+        if (key === "conn:oauth:oauth:generation" && ++generationWrites === 3) {
+          entered();
+          await blocked;
+        }
+        await inner.set(key, value, options);
+      },
+    };
+    try {
+      const connecta = createTestConnecta({
+        connectors: [remoteMcp("oauth", {
+          url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy",
+        })],
+        auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
+      });
+      expect((await credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" })).status).toBe(200);
+      expect(registrations).toBe(1);
+      issuer = "https://auth-b.example";
+      vi.useFakeTimers();
+      const restarted = credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      let answered = false;
+      void restarted.then(() => { answered = true; }, () => { answered = true; });
+      await reachedMismatchReset;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(answered).toBe(false);
+      release();
+      expect((await restarted).status).toBe(504);
+      vi.useRealTimers();
+
+      const next = await credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      expect(next.status).toBe(200);
+      const nextGeneration = await storage.get("conn:oauth:oauth:generation");
+      await settle(2);
+      expect(await storage.get("conn:oauth:oauth:generation")).toBe(nextGeneration);
+    } finally {
+      release();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("cancels a browser-abandoned start but lets disconnect finish", async () => {
     let reachedStart!: () => void;
     const startedHook = new Promise<void>((resolve) => { reachedStart = resolve; });

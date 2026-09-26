@@ -948,6 +948,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         versionNegotiation: opts.versionNegotiation ?? "auto",
         redirects: opts.redirects ?? "none",
       }),
+      (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
     );
     if (state) state.provider = provider;
     return provider;
@@ -1297,7 +1298,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
     const reset = provider.resetAuthorization(operatorDisconnected, preserveClient);
-    trackOAuthStartReset(ctx.requestScope ?? ctx, reset);
     try {
       await reset;
     } finally {

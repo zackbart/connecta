@@ -1126,6 +1126,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly signal?: AbortSignal,
     /** Stable connector configuration bound to dynamically registered clients. */
     private readonly clientBinding?: string,
+    /** Request-local observer so the operator route drains every reset it began. */
+    private readonly onReset?: (reset: Promise<void>) => void,
   ) {}
 
   /**
@@ -1554,6 +1556,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
     if (stored.issuer === ctx.issuer) return stored.value;
 
+    if (this.signal?.aborted) throw this.signal.reason;
     try {
       await this.resetAuthorization();
     } finally {
@@ -1980,9 +1983,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * being absent from the next epoch's manifest, which no other request
    * writes until that epoch is active.
    */
-  async resetAuthorization(
+  resetAuthorization(
     operatorDisconnected = false,
     preserveClient = false,
+  ): Promise<void> {
+    const reset = this.performResetAuthorization(operatorDisconnected, preserveClient);
+    this.onReset?.(reset);
+    return reset;
+  }
+
+  private async performResetAuthorization(
+    operatorDisconnected: boolean,
+    preserveClient: boolean,
   ): Promise<void> {
     const nonce = crypto.randomUUID();
     const previous = await this.generation();
