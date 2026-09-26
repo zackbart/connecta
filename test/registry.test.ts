@@ -568,6 +568,83 @@ describe("tool cache TTL", () => {
     expect(calls).toBe(1);
   });
 
+  it("invalidates a chunked catalog with every delete bounded and attempted", async () => {
+    const backing = memoryStorage();
+    let active = 0;
+    let maxActive = 0;
+    const deleted: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, options) => backing.set(key, value, options),
+      async delete(key) {
+        deleted.push(key);
+        active++;
+        maxActive = Math.max(maxActive, active);
+        try {
+          await gate;
+          if (key.endsWith(":chunk:" + revision + ":1")) {
+            throw new Error("chunk delete failed");
+          }
+          return await backing.delete(key);
+        } finally {
+          active--;
+        }
+      },
+    };
+    const warnings: string[] = [];
+    const connector: Connector = connectorWith({
+      id: "chunked_invalidation",
+      kind: "mcp",
+      tools: [
+        { name: "large", description: "x".repeat(MAX_CATALOG_CHUNK_BYTES * 5) },
+      ],
+      call: async () => null,
+    });
+    const registry = new Registry([connector], {
+      storage,
+      logger: {
+        ...silentLogger,
+        warn: (...args: unknown[]) => warnings.push(String(args[0])),
+      },
+    });
+    await registry.getTools("chunked_invalidation", BASE);
+    const manifest = await readManifest(backing, "chunked_invalidation");
+    const revision = manifest.revision;
+    expect(manifest.chunkCount).toBeGreaterThan(4);
+    const chunkKeys = Array.from(
+      { length: manifest.chunkCount },
+      (_, index) => `catalog:chunked_invalidation:chunk:${revision}:${index}`,
+    );
+
+    const pending = registry.invalidateStored("chunked_invalidation");
+    try {
+      await vi.waitFor(() => expect(active).toBe(4));
+      expect(deleted).toHaveLength(4);
+    } finally {
+      release();
+    }
+    await pending;
+
+    // The root and every chunk, each attempted once, at most four at a time.
+    expect([...deleted].sort()).toEqual(
+      ["catalog:chunked_invalidation", ...chunkKeys].sort(),
+    );
+    expect(maxActive).toBe(4);
+    expect(await backing.get("catalog:chunked_invalidation")).toBeNull();
+    for (const [index, key] of chunkKeys.entries()) {
+      expect(await backing.get(key)).toEqual(index === 1 ? expect.any(String) : null);
+    }
+    expect(
+      warnings.some((warning) =>
+        warning.includes("catalog invalidation failed: chunk delete failed"),
+      ),
+    ).toBe(true);
+  });
+
   it("withholds the manifest when a parallel chunk write fails", async () => {
     const backing = memoryStorage();
     let active = 0;

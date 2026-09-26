@@ -381,7 +381,7 @@ describe("operator action notices", () => {
         502,
         { error: "OAuth authorization requires consent but no safe URL is available" },
       ],
-      ["/ui/oauth/oauthok", "POST", 200, { state: "auth_required", authorizationUrl: CONSENT }],
+      ["/ui/oauth/oauthok", "POST", 200, { state: "auth_required", authorizationUrl: CONSENT, reused: false }],
       ["/ui/credentials/rejected/test", "POST", 200, { ok: false }],
       ["/ui/credentials/thrown/test", "POST", 200, { ok: false }],
       ["/ui/credentials/accepted/test", "POST", 200, { ok: true }],

@@ -56,7 +56,138 @@ const SEALED_OAUTH_KEYS: ReadonlySet<string> = new Set([
   "oauth:verifier",
 ]);
 const SEALED_VALUE_VERSION = 1;
-const MAX_CLEANUP_BACKLOG = 1_000;
+/**
+ * The longest cleanup lineage a reset publishes. A reset's storage work no
+ * longer depends on the lineage's length — it deletes one retired generation
+ * after the fence and sweeps at most MAX_EXPIRED_SWEEP before it — so this
+ * guards only the size of the two records every reset reads. A generation
+ * name is 39 characters, so 5,000 entries is about 210 KB of manifest and
+ * 280 KB of times: far under Workers KV's 25 MiB value limit, and a few
+ * milliseconds to parse. Reaching it takes more than 4,000 resets of one
+ * connector in a day on top of the 1,000 an earlier release allowed, which
+ * is a loop, not an operator. An earlier release refuses a lineage longer
+ * than 1,000, so rolling back past this one wedges only a connector that
+ * went beyond that — which that release would have wedged anyway.
+ */
+const MAX_CLEANUP_BACKLOG = 5_000;
+/**
+ * How long a retired generation stays in the cleanup lineage. A late write
+ * lands in a retired namespace only from a request that captured that
+ * generation before the reset and is still running — an OAuth flow, a token
+ * refresh, or a reader whose eventually consistent store (Workers KV serves a
+ * stale generation for a minute or more) has not yet seen the fence. None of
+ * those outlive a day. A late writer's own cleanup deletes what it wrote, and
+ * if that delete fails it records the generation as retired again from that
+ * moment; residue it leaves is unreadable behind the fence either way. Once
+ * the grace has passed, a reset sweeps the generation, and one whose keys
+ * are confirmed deleted cannot be written again, so it leaves the lineage.
+ * That is an assumption, not a proof: a request that holds a retired
+ * generation for longer than this and dies between its write and its own
+ * cleanup leaves residue no reset tracks. It is still unreadable — the epoch
+ * fence, not this cleanup, is what keeps an old namespace out of use.
+ */
+const CLEANUP_GRACE_MS = 24 * 60 * 60 * 1000;
+/**
+ * The most past-grace generations one reset sweeps before publishing. The
+ * rest stay in the lineage for a later reset, so a backlog built by a burst
+ * of resets drains over several resets instead of in one request.
+ */
+const MAX_EXPIRED_SWEEP = 16;
+/**
+ * Independent storage deletes one cleanup keeps in flight: Workers allows six
+ * simultaneous open connections per invocation, and more would only queue.
+ */
+const DELETE_CONCURRENCY = 6;
+/**
+ * How many of the most recently retired generations a reset checks for an
+ * unfinished cleanup. The case that matters is the one just before: an
+ * operator whose Disconnect or Restart reported a failed cleanup retries, and
+ * that retry must delete the grant the failure left behind. Eight covers that
+ * with room for a burst of failing restarts, costs eight small reads per
+ * reset, and bounds a retry to eight generations' deletes; anything older is
+ * reclaimed by the past-grace sweep instead.
+ */
+const RETRY_PROBES = 8;
+/**
+ * How long a pending authorization URL may be handed out again instead of
+ * starting a fresh flow. The URL itself never expires on connecta's side, but
+ * the authorization server's half of it does: a pushed request URI lives
+ * seconds to minutes (RFC 9126), and login transactions are commonly held
+ * for minutes, not hours. Past this age a reissued URL is more likely to land
+ * the operator on an expired-session page than on consent, and a fresh start
+ * costs one authorization request, not a client registration. It also sits
+ * inside the registry's 15-minute personal-auth handoff.
+ */
+const PENDING_AUTHORIZATION_MAX_AGE_MS = 10 * 60 * 1000;
+
+/** One entry of a cleanup lineage: a retired generation and when it retired. */
+interface RetiredGeneration {
+  generation: string;
+  /** Epoch milliseconds. An entry with no recorded time reads as "now". */
+  retiredAt: number;
+}
+
+/**
+ * Union two lineages by generation, keeping the later retirement time, so a
+ * merge can only ever lengthen a generation's grace. Order is first-seen.
+ */
+function mergeLineage(
+  ...lineages: ReadonlyArray<readonly RetiredGeneration[]>
+): RetiredGeneration[] {
+  const merged = new Map<string, number>();
+  for (const lineage of lineages) {
+    for (const { generation, retiredAt } of lineage) {
+      const known = merged.get(generation);
+      merged.set(
+        generation,
+        known === undefined ? retiredAt : Math.max(known, retiredAt),
+      );
+    }
+  }
+  return [...merged].map(([generation, retiredAt]) => ({
+    generation,
+    retiredAt,
+  }));
+}
+
+/**
+ * A limiter admitting at most `limit` storage operations at once. A finished
+ * operation hands its slot straight to the next waiter, so the bound holds
+ * even when new callers arrive between the two.
+ */
+function concurrencyLimit(
+  limit: number,
+): <A>(run: () => Promise<A>) => Promise<A> {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async (run) => {
+    if (active < limit) active++;
+    else await new Promise<void>((resume) => waiting.push(resume));
+    try {
+      return await run();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
+type StorageLimit = ReturnType<typeof concurrencyLimit>;
+
+/**
+ * The first rejection in input order, as `{ reason }`. The wrapper matters: a
+ * store may reject with `undefined` or another falsy value, and that is still
+ * a failed delete.
+ */
+function firstRejection(
+  results: readonly PromiseSettledResult<unknown>[],
+): { reason: unknown } | undefined {
+  for (const result of results) {
+    if (result.status === "rejected") return { reason: result.reason };
+  }
+  return undefined;
+}
 
 function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
   if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
@@ -828,6 +959,11 @@ interface StoredOAuthValue<T> {
   connectaOAuthVersion: typeof STORED_VALUE_VERSION;
   generation: string;
   issuer?: string;
+  /**
+   * Epoch milliseconds the value was written, where its age matters (the
+   * pending authorization URL). Older readers ignore the field.
+   */
+  writtenAt?: number;
   value: T;
 }
 
@@ -901,6 +1037,39 @@ export function oauthValueStorageKey(
 
 function cleanupBacklogKey(generation: string): string {
   return `oauth:cleanup:${encodeURIComponent(generation)}`;
+}
+
+/**
+ * Retirement times for a lineage, beside it rather than inside it: the
+ * manifest stays the plain array of generation names every release reads, so
+ * rolling back to one that predates the times still resets and cleans up.
+ * Membership belongs to the manifest alone. A time with no manifest entry is
+ * ignored, and an entry with no time reads as retired "now", so any
+ * interleaving of the two keys errs toward a longer grace.
+ */
+function cleanupTimesKey(generation: string): string {
+  return `oauth:cleanup-at:${encodeURIComponent(generation)}`;
+}
+
+/** Parse a times record, reading anything malformed as "no times known". */
+function retirementTimes(raw: string | null): Map<string, number> {
+  const times = new Map<string, number>();
+  if (raw === null) return times;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return times;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return times;
+  }
+  for (const [generation, retiredAt] of Object.entries(parsed)) {
+    if (typeof retiredAt === "number" && Number.isFinite(retiredAt)) {
+      times.set(generation, retiredAt);
+    }
+  }
+  return times;
 }
 
 /**
@@ -1090,6 +1259,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     value: T,
     serializeLegacy: (value: T) => string,
     issuer?: string,
+    writtenAt?: number,
   ): Promise<void> {
     const generation = await this.writeGeneration();
     await this.storeInGeneration(key, generation, () => {
@@ -1097,6 +1267,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
         connectaOAuthVersion: STORED_VALUE_VERSION,
         generation,
         ...(issuer !== undefined ? { issuer } : {}),
+        ...(writtenAt !== undefined ? { writtenAt } : {}),
         value,
       };
       return isModernGeneration(generation) || issuer !== undefined
@@ -1234,7 +1405,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     key: string,
     parseLegacy: (raw: string) => T,
   ): Promise<
-    { value: T; generation: string; issuer?: string } | undefined
+    | { value: T; generation: string; issuer?: string; writtenAt?: number }
+    | undefined
   > {
     const read = await this.readStoredValue(key, parseLegacy);
     if (!read) return undefined;
@@ -1253,7 +1425,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     parseLegacy: (raw: string) => T,
   ): Promise<
     | {
-        stored: { value: T; generation: string; issuer?: string };
+        stored: {
+          value: T;
+          generation: string;
+          issuer?: string;
+          writtenAt?: number;
+        };
         raw: string;
         plaintextCredential: boolean;
       }
@@ -1301,13 +1478,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
     parsed: unknown,
     generation: string,
     parseLegacy: (raw: string) => T,
-  ): { value: T; generation: string; issuer?: string } | undefined {
+  ):
+    | { value: T; generation: string; issuer?: string; writtenAt?: number }
+    | undefined {
     if (storedOAuthValue<T>(parsed)) {
       return parsed.generation === generation
         ? {
             value: parsed.value,
             generation,
             ...(parsed.issuer !== undefined ? { issuer: parsed.issuer } : {}),
+            // Only a finite number is a time; anything else reads as untimed.
+            ...(typeof parsed.writtenAt === "number" &&
+            Number.isFinite(parsed.writtenAt)
+              ? { writtenAt: parsed.writtenAt }
+              : {}),
           }
         : undefined;
     }
@@ -1354,22 +1538,64 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return undefined;
   }
 
-  /** Attempt every key deletion, then report the first backend failure. */
-  private async deleteAll(keys: readonly string[]): Promise<void> {
-    let firstError: unknown;
-    for (const key of keys) {
-      try {
-        await this.storage.delete(key);
-      } catch (error) {
-        firstError ??= error;
-      }
-    }
-    if (firstError) throw firstError;
+  /**
+   * Attempt every key deletion, a bounded number at a time, then report the
+   * first failure in key order. The deletes are independent, so none waits
+   * on another's round trip.
+   */
+  private async deleteAll(
+    keys: readonly string[],
+    limit: StorageLimit = concurrencyLimit(DELETE_CONCURRENCY),
+  ): Promise<void> {
+    const failure = firstRejection(
+      await Promise.allSettled(
+        keys.map((key) => limit(() => this.storage.delete(key))),
+      ),
+    );
+    if (failure) throw failure.reason;
   }
 
-  private async cleanupBacklog(generation: string): Promise<string[]> {
-    const raw = await this.storage.get(cleanupBacklogKey(generation));
-    if (raw === null) return [];
+  /**
+   * Delete each retired generation's values, then its own manifest and times
+   * once every value is gone, sharing one bound across all of them. Settles
+   * one result per generation, in input order.
+   */
+  private cleanupGenerations(
+    generations: readonly string[],
+    limit: StorageLimit,
+  ): Promise<PromiseSettledResult<void>[]> {
+    return Promise.allSettled(
+      generations.map(async (generation) => {
+        await this.deleteAll(this.valueKeysForGeneration(generation), limit);
+        await this.deleteAll(
+          [cleanupBacklogKey(generation), cleanupTimesKey(generation)],
+          limit,
+        );
+      }),
+    );
+  }
+
+  /**
+   * The cleanup lineage published for `generation`, with retirement times,
+   * and the times record exactly as stored. An entry with no recorded time —
+   * written by an earlier release, or whose time write failed — reads as
+   * retired `now`, which can only lengthen its grace.
+   */
+  private async cleanupBacklog(
+    generation: string,
+    now: number,
+  ): Promise<{ lineage: RetiredGeneration[]; recorded: Map<string, number> }> {
+    const reads = await Promise.allSettled([
+      this.storage.get(cleanupBacklogKey(generation)),
+      this.storage.get(cleanupTimesKey(generation)),
+    ]);
+    const failure = firstRejection(reads);
+    if (failure) throw failure.reason;
+    const [raw, rawTimes] = reads.map((read) =>
+      read.status === "fulfilled" ? read.value : null,
+    );
+    const recorded = retirementTimes(rawTimes ?? null);
+    if (raw === null || raw === undefined) return { lineage: [], recorded };
     const parsed: unknown = JSON.parse(raw);
     if (
       !Array.isArray(parsed) ||
@@ -1380,24 +1606,81 @@ export class KvOAuthProvider implements OAuthClientProvider {
         `Invalid OAuth cleanup backlog for "${this.connectorId}"`,
       );
     }
-    return [...new Set(parsed)];
+    return {
+      lineage: mergeLineage(
+        (parsed as string[]).map((entry) => ({
+          generation: entry,
+          retiredAt: recorded.get(entry) ?? now,
+        })),
+      ),
+      recorded,
+    };
   }
 
+  private timesRecord(
+    lineage: Iterable<readonly [string, number]>,
+  ): string {
+    return JSON.stringify(Object.fromEntries(lineage));
+  }
+
+  /** Write a lineage's manifest and its times, reporting the first failure. */
+  private async publishLineage(
+    generation: string,
+    lineage: readonly RetiredGeneration[],
+  ): Promise<void> {
+    const failure = firstRejection(
+      await Promise.allSettled([
+        this.storage.set(
+          cleanupBacklogKey(generation),
+          JSON.stringify(lineage.map((entry) => entry.generation)),
+        ),
+        this.storage.set(
+          cleanupTimesKey(generation),
+          this.timesRecord(
+            lineage.map((entry) => [entry.generation, entry.retiredAt] as const),
+          ),
+        ),
+      ]),
+    );
+    if (failure) throw failure.reason;
+  }
+
+  /**
+   * Record that a write just landed in `retired` after `active` fenced it,
+   * so its grace starts over from now. A generation not yet listed is
+   * appended. One already listed keeps its place in the manifest and has
+   * only its time moved: a reset that is sweeping it re-reads the lineage
+   * before publishing, sees the new time, and keeps it.
+   *
+   * Only the times record is rewritten for a listed generation, so this can
+   * never drop a manifest entry. Two late writers racing here can lose one
+   * time update to the other: a lost bump leaves the older time, which
+   * shortens that generation's grace back to what it was before the write
+   * (no worse than never recording it), and a time dropped from the record
+   * reads as retired "now", which only lengthens a grace.
+   */
   private async rememberRetiredGeneration(
     active: string,
     retired: string,
   ): Promise<void> {
-    const backlog = await this.cleanupBacklog(active);
-    if (backlog.includes(retired)) return;
-    if (backlog.length >= MAX_CLEANUP_BACKLOG) {
+    const now = Date.now();
+    const { lineage, recorded } = await this.cleanupBacklog(active, now);
+    if (lineage.some((entry) => entry.generation === retired)) {
+      await this.storage.set(
+        cleanupTimesKey(active),
+        this.timesRecord([...recorded, [retired, now] as const]),
+      );
+      return;
+    }
+    if (lineage.length >= MAX_CLEANUP_BACKLOG) {
       throw new Error(
         `OAuth cleanup backlog for "${this.connectorId}" is full`,
       );
     }
-    await this.storage.set(
-      cleanupBacklogKey(active),
-      JSON.stringify([...backlog, retired]),
-    );
+    await this.publishLineage(active, [
+      ...lineage,
+      { generation: retired, retiredAt: now },
+    ]);
   }
 
   private valueKeysForGeneration(generation: string): string[] {
@@ -1563,10 +1846,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     try {
       if (!this.allowAuthorization) throw this.authorizationRefused();
+      // Timestamped so a later start can tell a URL worth reissuing from a
+      // stale one. A pre-envelope (legacy-generation) write keeps its raw
+      // format for older readers and carries no time.
       await this.writeValue(
         "oauth:pending",
         authorizationUrl.toString(),
         (raw) => raw,
+        undefined,
+        Date.now(),
       );
       this.failRefreshFlight(
         new Error(
@@ -1584,6 +1872,22 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return (
       await this.readValue("oauth:pending", (raw) => raw)
     )?.value;
+  }
+
+  /**
+   * The pending authorization URL, only while it is still worth handing out
+   * again: written within PENDING_AUTHORIZATION_MAX_AGE_MS of now, in either
+   * direction to tolerate clock skew between isolates. A URL with no write
+   * time — stored by an earlier release, or under a pre-envelope generation —
+   * is treated as stale, so the caller starts a fresh flow instead.
+   */
+  async reusablePendingAuthorizationUrl(): Promise<string | undefined> {
+    const pending = await this.readValue("oauth:pending", (raw) => raw);
+    if (pending?.writtenAt === undefined) return undefined;
+    return Math.abs(Date.now() - pending.writtenAt) <
+      PENDING_AUTHORIZATION_MAX_AGE_MS
+      ? pending.value
+      : undefined;
   }
 
   /** Clear one-shot flow state after the callback completes. */
@@ -1631,17 +1935,59 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * Once the fence is durable, attempt every deletion even if one fails. A
    * partial backend outage should not leave unrelated secrets behind merely
    * because an earlier key happened to be the first failed delete.
+   *
+   * A reset's storage work does not grow with the resets before it. After
+   * the fence it deletes the one generation it retired, and retries any of
+   * the RETRY_PROBES most recent ones whose cleanup failed. Before publishing,
+   * it sweeps at most MAX_EXPIRED_SWEEP generations retired more than
+   * CLEANUP_GRACE_MS ago — every value, then its manifest and times — and
+   * only a generation whose sweep fully succeeded is left out of the new
+   * lineage. Everything else is carried with its retirement time: a
+   * generation still inside its grace whose cleanup finished is not deleted
+   * again, because a late write into it is unreadable behind the fence and
+   * the late writer deletes it itself, or records the generation again if it
+   * cannot; the sweep reclaims whatever is left once the grace has passed.
+   * The live manifest is never rewritten: an entry leaves the lineage only by
+   * being absent from the next epoch's manifest, which no other request
+   * writes until that epoch is active.
    */
   async resetAuthorization(operatorDisconnected = false): Promise<void> {
     const nonce = crypto.randomUUID();
     const previous = await this.generation();
-    const inherited = await this.cleanupBacklog(previous);
+    const now = Date.now();
+    const inherited = await this.cleanupBacklog(previous, now);
     const active = `${
       operatorDisconnected
         ? DISCONNECTED_GENERATION_PREFIX
         : ACTIVE_GENERATION_PREFIX
     }${nonce}`;
-    const retired = [...new Set([...inherited, previous])];
+    const limit = concurrencyLimit(DELETE_CONCURRENCY);
+    const withinGrace = (entry: RetiredGeneration) =>
+      now - entry.retiredAt < CLEANUP_GRACE_MS;
+
+    let lineage = inherited.lineage;
+    const expired = lineage
+      .filter((entry) => !withinGrace(entry))
+      .sort((a, b) => a.retiredAt - b.retiredAt)
+      .slice(0, MAX_EXPIRED_SWEEP)
+      .map((entry) => entry.generation);
+    if (expired.length > 0) {
+      const swept = await this.cleanupGenerations(expired, limit);
+      const reclaimed = new Set(
+        expired.filter((_, index) => swept[index]?.status === "fulfilled"),
+      );
+      // The sweep widened the window between reading the live manifest and
+      // publishing its successor. A stale writer's cleanup may have appended
+      // to it meanwhile, so read it again and carry the union — and keep a
+      // swept generation after all if that append restarted its grace.
+      const latest = await this.cleanupBacklog(previous, now);
+      lineage = mergeLineage(lineage, latest.lineage).filter(
+        (entry) => withinGrace(entry) || !reclaimed.has(entry.generation),
+      );
+    }
+    const retired = mergeLineage(lineage, [
+      { generation: previous, retiredAt: now },
+    ]);
     if (retired.length > MAX_CLEANUP_BACKLOG) {
       throw new Error(
         `OAuth cleanup backlog for "${this.connectorId}" is full`,
@@ -1650,10 +1996,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // Publish the complete inherited cleanup work under the prospective epoch
     // before making that epoch active. A crash or later retry can therefore
     // always recover the older namespaces without a storage prefix scan.
-    await this.storage.set(
-      cleanupBacklogKey(active),
-      JSON.stringify(retired),
-    );
+    await this.publishLineage(active, retired);
     // This is the one authoritative transition. From this point onward every
     // old physical namespace is unreadable. There is deliberately no second
     // "finalize" write: concurrent resets therefore cannot overwrite a newer
@@ -1663,28 +2006,50 @@ export class KvOAuthProvider implements OAuthClientProvider {
       this.refreshCoordinator?.retire(previous);
     } catch (error) {
       try {
-        await this.storage.delete(cleanupBacklogKey(active));
+        await this.deleteAll([
+          cleanupBacklogKey(active),
+          cleanupTimesKey(active),
+        ]);
       } catch {
         // Best-effort removal of a manifest for an epoch never activated.
       }
       throw error;
     }
 
-    let firstError: unknown;
-    for (const generation of retired) {
-      try {
-        await this.deleteAll(this.valueKeysForGeneration(generation));
-        await this.storage.delete(cleanupBacklogKey(generation));
-      } catch (error) {
-        firstError ??= error;
-      }
-    }
+    // Delete the generation just retired: its values, then the lineage it
+    // published, which the new epoch has copied. Then retry the newest few
+    // younger entries whose own cleanup failed. A generation's manifest is
+    // deleted only after all of its values, so a manifest still present means
+    // its cleanup did not finish (or a late writer recorded into it after it
+    // did); an absent one means there is nothing to retry. That keeps the
+    // 0.26.0 promise that the next reset retries a failed cleanup of the
+    // grant being retired, at a bounded cost: RETRY_PROBES reads, and a full
+    // cleanup only for generations that need one. Everything older waits for
+    // its grace to pass (see above).
+    const probed = retired
+      .filter((entry) => entry.generation !== previous && withinGrace(entry))
+      .sort((a, b) => b.retiredAt - a.retiredAt)
+      .slice(0, RETRY_PROBES)
+      .map((entry) => entry.generation);
+    const probes = await Promise.allSettled(
+      probed.map((generation) =>
+        limit(() => this.storage.get(cleanupBacklogKey(generation))),
+      ),
+    );
+    const unfinished = probed.filter((_, index) => {
+      const probe = probes[index];
+      // A probe that could not read is retried rather than assumed clean.
+      return probe?.status !== "fulfilled" || probe.value !== null;
+    });
+    const failure = firstRejection(
+      await this.cleanupGenerations([previous, ...unfinished], limit),
+    );
     // Keep the active manifest immutable for the epoch's whole lifetime, even
     // after successful cleanup. A late old-epoch write can land after cleanup;
     // if its self-delete fails, the next reset must still inherit the complete
     // lineage without racing a manifest shrink/delete. The successor copies
     // this manifest before activation and then removes this retired copy.
-    if (firstError) throw firstError;
+    if (failure) throw failure.reason;
   }
 
   async invalidateCredentials(
