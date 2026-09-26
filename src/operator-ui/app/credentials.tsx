@@ -1,17 +1,22 @@
 import { useState } from "preact/hooks";
 import type { UiConnector } from "../model.js";
 import {
+  confirmCopy,
+  credentialProblemCopy,
   credentialStateLabel,
   formatDate,
+  type Notice,
 } from "../view.js";
 import {
+  askConfirm,
+  cancelConfirm,
   editCredential,
   refuseCredential,
   removeCredential,
   saveCredential,
   testCredential,
 } from "./store.js";
-import { FixPrompt } from "./parts.js";
+import { ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
@@ -31,7 +36,7 @@ function CredentialForm({
   const submit = () => {
     if (single) {
       const value = (values.value ?? "").trim();
-      if (!value) return refuseCredential("Paste a credential before saving.");
+      if (!value) return refuseCredential(connector, "Paste a credential before saving.");
       return void saveCredential(connector, { value });
     }
     const entries: Record<string, string> = {};
@@ -39,6 +44,7 @@ function CredentialForm({
       const value = (values[field.name] ?? "").trim();
       if (!value) {
         return refuseCredential(
+          connector,
           "Complete every credential field before saving.",
         );
       }
@@ -120,12 +126,19 @@ export function CredentialCard({
   credential,
   editing,
   busy,
+  confirming,
+  notice,
 }: {
   connector: UiConnector;
   credential: Credential;
   editing: boolean;
   busy: boolean;
+  /** Removal is waiting on its in-page confirm. */
+  confirming: boolean;
+  /** This card's own notice: it renders here, beside the control that caused it. */
+  notice: Notice | null;
 }) {
+  const name = connector.title || connector.id;
   const configured = Boolean(credential.configured);
   const removable = configured || Boolean(credential.removable);
   return (
@@ -159,7 +172,11 @@ export function CredentialCard({
           ))}
         </div>
       ) : null}
-      {credential.error ? <div class="msg">{credential.error}</div> : null}
+      {/* The payload's error text can name a vault failure; the page says a
+          fixed sentence keyed by the problem instead. */}
+      {credential.error ? (
+        <p class="msg">{credentialProblemCopy(credential.problem)}</p>
+      ) : null}
       {credential.error && credential.problem ? (
         <FixPrompt
           kind={credential.problem}
@@ -174,8 +191,9 @@ export function CredentialCard({
       ) : null}
       <div class="actions">
         <button
-          class="btn"
+          class={removable ? "btn" : "btn primary"}
           type="button"
+          aria-expanded={editing ? "true" : "false"}
           disabled={busy}
           onClick={() => editCredential(editing ? null : connector.id)}
         >
@@ -193,15 +211,28 @@ export function CredentialCard({
         ) : null}
         {removable ? (
           <button
+            id={`remove-credential-${connector.id}`}
             class="btn danger"
             type="button"
             disabled={busy}
-            onClick={() => void removeCredential(connector.id)}
+            onClick={() => askConfirm(connector.id, "credential_remove")}
           >
             Remove
           </button>
         ) : null}
       </div>
+      {confirming ? (
+        <ConfirmBar
+          id={connector.id}
+          {...confirmCopy("credential_remove", name)}
+          onConfirm={() => void removeCredential(connector.id)}
+          onCancel={() =>
+            cancelConfirm(
+              focusableId(`remove-credential-${connector.id}`, `conn-toggle-${connector.id}`),
+            )
+          }
+        />
+      ) : null}
       {editing ? (
         <CredentialForm
           connector={connector.id}
@@ -209,6 +240,7 @@ export function CredentialCard({
           busy={busy}
         />
       ) : null}
+      <NoticeLine id={`credentialNotice-${connector.id}`} notice={notice} />
     </section>
   );
 }

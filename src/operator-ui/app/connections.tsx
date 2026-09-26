@@ -1,7 +1,10 @@
+import { useState } from "preact/hooks";
 import { CredentialCard } from "./credentials.js";
 import { filterUiConnectors, type UiConnector } from "../model.js";
 import {
   authScopeLabel,
+  confirmCopy,
+  connectorLoadFailureCopy,
   connectorStatusLabel,
   connectorStatusTone,
   connectorSummaryParts,
@@ -11,6 +14,7 @@ import {
   formatDate,
   permissionLabel,
   problemCopy,
+  problemTone,
   safeHttpHref,
   summarizeConnectors,
   TOOL_SAFETY_BADGE,
@@ -23,8 +27,26 @@ import {
   poolEndpointUrl,
 } from "../setup-commands.js";
 import { mcpUrl, productName, productOperatorLabel } from "./config.js";
-import { Badge, CopyButton, Empty, FixPrompt, NoticeLine } from "./parts.js";
-import { oauthAction, refreshConnector, setConnectorFilter } from "./store.js";
+import {
+  Badge,
+  ConfirmBar,
+  CopyButton,
+  Empty,
+  FixPrompt,
+  FixPromptButton,
+  FixPromptPreview,
+  focusableId,
+  LoadFailure,
+  NoticeLine,
+} from "./parts.js";
+import {
+  askConfirm,
+  cancelConfirm,
+  disconnectOAuth,
+  refreshConnector,
+  setConnectorFilter,
+  startOAuth,
+} from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
   clean: "Catalog drift · none",
@@ -148,47 +170,164 @@ function Endpoint({
 }
 
 /**
+ * The row's authentication controls: at most one primary action, chosen by
+ * the connector's state. A connector that needs authorizing offers Connect,
+ * which asks the route to continue any fresh pending authorization rather
+ * than reset it; a healthy one offers Reconnect and Disconnect, each behind
+ * an in-page confirm, because each takes a working grant away.
+ */
+function AuthActions({
+  connector,
+  name,
+  manage,
+  state,
+}: {
+  connector: UiConnector;
+  name: string;
+  manage: boolean;
+  state: OperatorState;
+}) {
+  const id = connector.id;
+  const authorization = safeHttpHref(connector.authorizationUrl);
+  const busy = state.oauthBusy === id;
+  if (connector.status === "loading") return null;
+  // No lifecycle hooks, or no right to use them: a pending link is still the
+  // one thing this identity can do.
+  if (!connector.oauth || !manage) {
+    return authorization && connector.status !== "ok" ? (
+      <a class="btn primary" href={authorization} target="_blank" rel="noopener noreferrer">
+        Authorize connector
+      </a>
+    ) : null;
+  }
+  // The browser refused the new tab; the route answered anyway, so the link
+  // it returned is the action.
+  if (state.oauthBlocked === id && authorization) {
+    return (
+      <a
+        id={`authorize-${id}`}
+        class="btn primary"
+        href={authorization}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Open authorization page
+      </a>
+    );
+  }
+  if (connector.status !== "ok") {
+    const needsAuth = connector.status === "auth_required";
+    return (
+      <button
+        type="button"
+        id={`connect-${id}`}
+        class={needsAuth ? "btn primary" : "btn"}
+        aria-label={`${needsAuth ? "Connect" : "Reconnect"} ${name}`}
+        disabled={busy}
+        onClick={() => void startOAuth(id, "continue")}
+      >
+        {busy ? "Opening…" : needsAuth ? "Connect account" : "Reconnect"}
+      </button>
+    );
+  }
+  const switching = connector.authScope === "personal";
+  return (
+    <>
+      <button
+        type="button"
+        id={`reconnect-${id}`}
+        class="btn"
+        aria-label={`${switching ? "Switch account for" : "Reconnect"} ${name}`}
+        disabled={busy}
+        onClick={() => askConfirm(id, "oauth_restart")}
+      >
+        {busy ? "Working…" : switching ? "Switch account" : "Reconnect"}
+      </button>
+      <button
+        type="button"
+        id={`disconnect-${id}`}
+        class="btn danger"
+        aria-label={`Disconnect ${name}`}
+        disabled={busy}
+        onClick={() => askConfirm(id, "oauth_disconnect")}
+      >
+        Disconnect
+      </button>
+    </>
+  );
+}
+
+/**
  * One connector as a single line until an operator asks for more. The closed
  * row shows state, tool count, and who owns the authentication; everything
  * that needs reading or acting on is in the body, which keeps a twenty-
  * connector deployment to one screen.
  *
- * The disclosure is a native `<details>` and not store state, so an identity
- * change cannot leave one connector's panel open over another's data.
+ * The heading holds a button that toggles the body — the disclosure pattern,
+ * rather than a `<summary>`, whose button role would swallow the heading.
+ * The open state is this component's own, and the list unmounts on every
+ * identity change, so one identity's panel never stays open over another's.
  */
 function ConnectorRow({
   connector,
   tools,
-  expanded,
-  oauthManagement,
-  busy,
+  forceOpen,
   state,
 }: {
   connector: UiConnector;
   tools: UiConnector["tools"];
-  expanded: boolean;
-  oauthManagement: boolean;
-  busy: boolean;
+  forceOpen: boolean;
   state: OperatorState;
 }) {
-  const name = connector.title || connector.id;
-  const authorization = safeHttpHref(connector.authorizationUrl);
+  const [open, setOpen] = useState(false);
+  const shown = open || forceOpen;
+  const id = connector.id;
+  const name = connector.title || id;
   const drift = driftState(connector.catalogDrift);
+  const manage = Boolean(
+    connector.permissions?.manageSharedAuth || connector.permissions?.connectPersonal,
+  );
+  const local = state.connectorFailures[id];
   // A connector being refreshed has no settled problem yet; the last one would
   // describe a state the page is no longer showing.
   const problem =
-    connector.status === "loading" ? null : problemCopy(connector.problem);
+    connector.status === "loading" || local ? null : problemCopy(connector.problem);
+  const confirming = state.confirming?.connectorId === id ? state.confirming : null;
+  const oauthConfirm =
+    confirming && confirming.action !== "credential_remove" ? confirming : null;
+  const statusLabel = local
+    ? "Couldn't load"
+    : connectorStatusLabel(connector.status, connector.problem);
+  // Only a downstream failure has anything for a coding agent to fix; a
+  // credential mismatch already offers its prompt on the credential card.
+  const fixKind =
+    problem && connector.problem &&
+    problemTone(connector.problem) === "danger" &&
+    connector.problem !== connector.credential?.problem
+      ? connector.problem
+      : null;
+  const statusTone = local ? "warn" : connectorStatusTone(connector.status);
   return (
-    <details class="conn" open={expanded}>
-      <summary class="conn-head">
+    <div class={shown ? "conn open" : "conn"} data-connector={id}>
+      <div class="conn-head">
         <span class="conn-main">
-          <span class={`dot ${connector.status}`} aria-hidden="true" />
-          <h2 class="conn-name">{name}</h2>
-          {connector.title ? (
-            <span class="conn-id mono">{connector.id}</span>
-          ) : null}
+          <span class={`dot ${local ? "warn" : connector.status}`} aria-hidden="true" />
+          <h2 class="conn-name">
+            <button
+              type="button"
+              id={`conn-toggle-${id}`}
+              class="conn-toggle"
+              aria-expanded={shown ? "true" : "false"}
+              aria-controls={`conn-body-${id}`}
+              aria-describedby={`conn-state-${id}`}
+              onClick={() => setOpen(!shown)}
+            >
+              {name}
+            </button>
+          </h2>
+          {connector.title ? <span class="conn-id mono">{id}</span> : null}
         </span>
-        <span class="conn-badges">
+        <span class="conn-badges" id={`conn-state-${id}`}>
           {drift === "warning" ? <Badge tone="warn">drift</Badge> : null}
           <Badge>{authScopeLabel(connector.authScope)}</Badge>
           <Badge>
@@ -196,84 +335,88 @@ function ConnectorRow({
               ? "tools not loaded"
               : toolCountLabel(connector.toolCount)}
           </Badge>
-          <Badge tone={connectorStatusTone(connector.status)}>
-            {connectorStatusLabel(connector.status)}
-          </Badge>
+          <Badge tone={statusTone}>{statusLabel}</Badge>
           <span class="conn-caret" aria-hidden="true" />
         </span>
-      </summary>
-      <div class="conn-body">
+      </div>
+      {/* A plain `hidden`, not `until-found`: WebKit implements the latter
+          but still lays out the closed body, and the filter above already
+          finds a connector or tool by name. */}
+      <div class="conn-body" id={`conn-body-${id}`} hidden={!shown}>
         {connector.description ? (
           <p class="conn-note">{connector.description}</p>
         ) : null}
         {/* Fixed copy keyed by the server's classification — never a status
             message, which can quote a downstream error body (see PROBLEM_COPY). */}
-        {problem ? (
-          <p class="msg" data-problem={connector.problem}>{problem}</p>
+        {problem && connector.problem ? (
+          <p
+            class={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"}
+            data-problem={connector.problem}
+          >
+            {problem}
+          </p>
         ) : null}
-        {/* A credential mismatch is also on the credential card; one prompt is enough. */}
-        {problem && connector.problem &&
-        connector.problem !== connector.credential?.problem ? (
-          <FixPrompt kind={connector.problem} connectorId={connector.id} name={name} />
+        {local ? (
+          <p class="msg warn" data-load-failure={local}>
+            {connectorLoadFailureCopy(local, productName)}
+          </p>
         ) : null}
-        {connector.authorizationUrl && !authorization ? (
+        {connector.authorizationUrl && !safeHttpHref(connector.authorizationUrl) ? (
           <p class="meta">Authorization URL: {connector.authorizationUrl}</p>
         ) : null}
-        <p class="meta">{permissionLabel(connector)}</p>
+        {manage ? null : <p class="meta">{permissionLabel(connector)}</p>}
         <div class="actions">
-          {authorization ? (
-            <a class="btn primary" href={authorization} target="_blank" rel="noopener">
-              Authorize connector
-            </a>
-          ) : null}
-          {connector.oauth && oauthManagement ? (
-            <>
-              <button
-                type="button"
-                class="btn"
-                aria-label={`${
-                  connector.status === "ok"
-                    ? "Reconnect OAuth for"
-                    : "Restart authorization for"
-                } ${name}`}
-                disabled={busy}
-                onClick={() => void oauthAction(connector.id, "reconnect")}
-              >
-                {connector.status === "ok" ? "Reconnect OAuth" : "Connect account"}
-              </button>
-              {connector.status === "ok" ? (
-                <button
-                  type="button"
-                  class="btn danger"
-                  aria-label={`Disconnect OAuth for ${name}`}
-                  disabled={busy}
-                  onClick={() => void oauthAction(connector.id, "disconnect")}
-                >
-                  Disconnect OAuth
-                </button>
-              ) : null}
-            </>
-          ) : null}
+          {/* A row that failed on this side of the deployment has one thing to
+              try — reading it again — and no authorization to redo. */}
+          {local ? null : (
+            <AuthActions connector={connector} name={name} manage={manage} state={state} />
+          )}
+          {fixKind ? <FixPromptButton kind={fixKind} connectorId={id} name={name} /> : null}
           <button
-            class="btn quiet"
+            class={local ? "btn primary" : "btn quiet"}
             type="button"
             aria-label={`Refresh ${name}`}
             disabled={connector.status === "loading"}
-            onClick={() => void refreshConnector(connector.id)}
+            onClick={() => void refreshConnector(id)}
           >
             Refresh
           </button>
         </div>
+        {fixKind ? <FixPromptPreview kind={fixKind} connectorId={id} standalone /> : null}
+        {oauthConfirm ? (
+          <ConfirmBar
+            id={id}
+            {...confirmCopy(oauthConfirm.action, name)}
+            onConfirm={() => {
+              if (oauthConfirm.action === "oauth_restart") void startOAuth(id, "restart");
+              else void disconnectOAuth(id);
+            }}
+            onCancel={() =>
+              cancelConfirm(
+                focusableId(
+                  oauthConfirm.action === "oauth_restart" ? `reconnect-${id}` : `disconnect-${id}`,
+                  `conn-toggle-${id}`,
+                ),
+              )
+            }
+          />
+        ) : null}
+        <NoticeLine
+          id={`oauthNotice-${id}`}
+          notice={state.oauthNoticeFor === id ? state.oauthNotice : null}
+        />
         {connector.credential ? (
           <CredentialCard
             connector={connector}
             credential={connector.credential}
-            editing={state.credentialEditing === connector.id}
-            busy={state.credentialBusy === connector.id}
+            editing={state.credentialEditing === id}
+            busy={state.credentialBusy === id}
+            confirming={confirming?.action === "credential_remove"}
+            notice={state.credentialNoticeFor === id ? state.credentialNotice : null}
           />
         ) : null}
         {tools.length ? (
-          <details open={expanded}>
+          <details open={forceOpen}>
             <summary class="disclosure">Tools ({tools.length})</summary>
             <div class="tool-list">
               {tools.some((tool) => tool.safety) ? (
@@ -305,14 +448,16 @@ function ConnectorRow({
             <DriftPanel connector={connector} />
             {connector.catalogAccess ? (
               <p class="meta">
-                Last agent catalog read · {connector.catalogAccess.state} ·{" "}
+                Agents last read its catalog{" "}
+                {connector.catalogAccess.state === "stale" ? "from a stale cache" : "fresh"}
+                {" · "}
                 {formatDate(connector.catalogAccess.observedAt)}
               </p>
             ) : null}
           </div>
         </details>
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -382,13 +527,11 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
               : productOperatorLabel}
           </p>
           {data ? <SummaryLine connectors={data.connectors} /> : null}
-          <NoticeLine id="oauthNotice" notice={state.oauthNotice} />
-          <NoticeLine id="credentialNotice" notice={state.credentialNotice} />
         </div>
       </div>
       <section class="section" aria-labelledby="connectorLedgerHeading">
         <div class="section-head">
-          <h2 id="connectorLedgerHeading">Connectors</h2>
+          <h2 id="connectorLedgerHeading" tabIndex={-1}>Connectors</h2>
           <input
             id="filter"
             type="search"
@@ -396,16 +539,21 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
             placeholder="Filter connectors or tools…"
             aria-label="Filter connectors or tools"
             value={state.connectorFilter}
+            disabled={!data}
             onInput={(event) => setConnectorFilter(event.currentTarget.value)}
           />
         </div>
         <div
           id="list"
           class={!data || filtered.length === 0 ? "" : "rows"}
-          aria-busy={state.refreshing || !data ? "true" : "false"}
+          aria-busy={state.refreshing || (!data && !state.loadFailure) ? "true" : "false"}
         >
           {!data ? (
-            <Empty>Loading connectors…</Empty>
+            state.loadFailure ? (
+              <LoadFailure state={state} />
+            ) : (
+              <Empty>Loading connectors…</Empty>
+            )
           ) : filtered.length === 0 ? (
             <Empty>
               {query
@@ -418,13 +566,8 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
                 key={connector.id}
                 connector={connector}
                 tools={tools}
-                expanded={Boolean(query)}
-                oauthManagement={Boolean(
-                  connector.permissions?.manageSharedAuth ||
-                    connector.permissions?.connectPersonal,
-                )}
+                forceOpen={Boolean(query)}
                 state={state}
-                busy={state.oauthBusy === connector.id}
               />
             ))
           )}

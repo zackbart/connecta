@@ -1,9 +1,10 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { Notice, OperatorPage, Tone } from "../view.js";
-import { PAGE_META } from "../view.js";
+import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
+import { loadFailureCopy, PAGE_META } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
-import { navigate } from "./store.js";
+import { productName } from "./config.js";
+import { navigate, retryLoad } from "./store.js";
 
 /** The handful of shapes every page repeats: notices, links, copy, and nothing-here. */
 
@@ -47,7 +48,9 @@ export function NoticeLine({
 /**
  * "Copy fix prompt" and the text it copies. The text comes from the fixed
  * catalogue in `fix-prompts.ts` by kind, so whatever the notice above it says,
- * what reaches the clipboard is the same text a test walked.
+ * what reaches the clipboard is the same text a test walked. One button and a
+ * disclosure: the sentence explaining what the prompt is sits inside the
+ * preview, so a page of failing rows does not repeat it on every one.
  */
 export function FixPrompt({
   kind,
@@ -58,25 +61,55 @@ export function FixPrompt({
   connectorId: string;
   name?: string;
 }) {
-  const text = fixPrompt(kind, connectorId);
   return (
     <div class="fix-prompt" data-fix-prompt={kind}>
-      <div class="fix-prompt-head">
-        <CopyButton
-          value={text}
-          label="Copy fix prompt"
-          class="btn quiet"
-          ariaLabel={`Copy fix prompt for ${name ?? connectorId}`}
-        />
-        <span class="meta">
-          Fixed text for a coding agent working on this deployment. It carries no error details or secrets.
-        </span>
-      </div>
-      <details>
-        <summary class="disclosure">Preview prompt</summary>
-        <pre class="fix-prompt-text">{text}</pre>
-      </details>
+      <FixPromptButton kind={kind} connectorId={connectorId} {...(name ? { name } : {})} />
+      <FixPromptPreview kind={kind} connectorId={connectorId} />
     </div>
+  );
+}
+
+/**
+ * The fix prompt's two halves, for a row that puts the copy button among its
+ * actions and the preview under them.
+ */
+export function FixPromptButton({
+  kind,
+  connectorId,
+  name,
+}: {
+  kind: FixPromptKind;
+  connectorId: string;
+  name?: string;
+}) {
+  return (
+    <CopyButton
+      value={fixPrompt(kind, connectorId)}
+      label="Copy fix prompt"
+      class="btn quiet"
+      ariaLabel={`Copy fix prompt for ${name ?? connectorId}`}
+    />
+  );
+}
+
+export function FixPromptPreview({
+  kind,
+  connectorId,
+  standalone,
+}: {
+  kind: FixPromptKind;
+  connectorId: string;
+  /** Rendered on its own, away from its button: it carries the marker then. */
+  standalone?: boolean;
+}) {
+  return (
+    <details class="fix-prompt-preview" {...(standalone ? { "data-fix-prompt": kind } : {})}>
+      <summary class="disclosure">Preview prompt</summary>
+      <p class="meta">
+        Fixed text for a coding agent working on this deployment. It carries no error details or secrets.
+      </p>
+      <pre class="fix-prompt-text">{fixPrompt(kind, connectorId)}</pre>
+    </details>
   );
 }
 
@@ -91,12 +124,130 @@ export function Badge({
   return <span class={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
 }
 
+/**
+ * The one shape for "nothing to show here": a list that is empty, still
+ * loading, or could not load. Centered, with the next step under it, so every
+ * page's empty and error states read the same. An error is an alert; the
+ * rest are status.
+ */
+export function StateBlock({
+  title,
+  children,
+  tone = "neutral",
+  action,
+  id,
+}: {
+  title?: string;
+  children?: ComponentChildren;
+  tone?: "neutral" | "error";
+  action?: { label: string; onClick: () => void; id?: string };
+  id?: string;
+}) {
+  return (
+    <div
+      class={tone === "error" ? "state-block error" : "state-block"}
+      role={tone === "error" ? "alert" : "status"}
+      {...(id ? { id } : {})}
+    >
+      {title ? <p class="state-title">{title}</p> : null}
+      {children ? <p class="state-copy">{children}</p> : null}
+      {action ? (
+        <button
+          class="btn"
+          type="button"
+          onClick={action.onClick}
+          {...(action.id ? { id: action.id } : {})}
+        >
+          {action.label}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Why `/ui/data` could not be read, still signed in, with the one way forward. */
+export function LoadFailure({ state }: { state: OperatorState }) {
+  if (!state.loadFailure) return null;
+  const copy = loadFailureCopy(state.loadFailure, productName);
+  return (
+    <StateBlock
+      id="loadFailure"
+      tone="error"
+      title={copy.title}
+      action={{ label: "Retry", onClick: () => void retryLoad(), id: "retryLoad" }}
+    >
+      {copy.body}
+    </StateBlock>
+  );
+}
+
 export function Empty({ children }: { children: ComponentChildren }) {
-  return <p class="empty">{children}</p>;
+  return <StateBlock>{children}</StateBlock>;
 }
 
 export function Unavailable({ children }: { children: ComponentChildren }) {
   return <div class="unavailable">{children}</div>;
+}
+
+/**
+ * A second, in-page click for a row action that takes something away. It
+ * renders where the first click happened, names the connector by its title,
+ * and starts with focus on Cancel so a stray Enter undoes nothing.
+ */
+export function ConfirmBar({
+  id,
+  question,
+  confirm,
+  onConfirm,
+  onCancel,
+}: {
+  id: string;
+  question: string;
+  confirm: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      class="confirm"
+      role="group"
+      aria-labelledby={`confirm-question-${id}`}
+      // Escape backs out, from either button, the way a dialog would.
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        onCancel();
+      }}
+    >
+      <p id={`confirm-question-${id}`}>{question}</p>
+      <div class="actions">
+        <button class="btn danger" type="button" onClick={onConfirm}>
+          {confirm}
+        </button>
+        <button
+          id={`confirm-cancel-${id}`}
+          class="btn quiet"
+          type="button"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The first of these elements that can take focus now. A confirm's trigger
+ * can vanish under it — a refresh puts the row in its loading state — and
+ * focus then goes to the next target rather than to the page.
+ */
+export function focusableId(...ids: string[]): string {
+  for (const id of ids) {
+    const element = document.getElementById(id) as HTMLButtonElement | null;
+    if (element && !element.disabled) return id;
+  }
+  return ids[ids.length - 1] ?? "";
 }
 
 /**
@@ -150,12 +301,14 @@ export function CopyButton({
   label,
   class: className = "btn",
   ariaLabel,
+  id,
 }: {
   value: string;
   label: string;
   class?: string;
   /** For a row of identical labels, the name that tells them apart. */
   ariaLabel?: string;
+  id?: string;
 }) {
   const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
   useEffect(() => {
@@ -167,9 +320,14 @@ export function CopyButton({
     <button
       class={className}
       type="button"
+      {...(id ? { id } : {})}
       {...(ariaLabel && status === "idle" ? { "aria-label": ariaLabel } : {})}
       onClick={() => {
-        navigator.clipboard.writeText(value).then(
+        // No clipboard at all — an insecure origin, an old browser — is a
+        // failed copy too, and says so rather than doing nothing.
+        const write =
+          navigator.clipboard?.writeText(value) ?? Promise.reject(new Error("no clipboard"));
+        write.then(
           () => setStatus("copied"),
           () => setStatus("failed"),
         );
