@@ -2,6 +2,7 @@
 // Effect (P1-S18). Each case failed against the async handlers it replaced.
 import { describe, expect, it, vi } from "vitest";
 import { activityHistory } from "../src/activity.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth } from "../src/types.js";
@@ -246,6 +247,113 @@ describe("operator data routes", () => {
       }
       expect(starts).toEqual([]);
     });
+  });
+
+  it("aborts a stalled downstream OAuth start at the deadline and invalidates the catalog", async () => {
+    vi.useFakeTimers();
+    const mcpUrl = "https://downstream.example/mcp";
+    const metadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
+    let reachedMetadata!: () => void;
+    const reached = new Promise<void>((resolve) => { reachedMetadata = resolve; });
+    let aborted = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === mcpUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${metadataUrl}"` },
+        });
+      }
+      if (url === metadataUrl) {
+        reachedMetadata();
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(init.signal?.reason);
+          }, { once: true });
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    try {
+      const storage = memoryStorage();
+      await storage.set("catalog:oauth", "stale catalog");
+      const connecta = createTestConnecta({
+        connectors: [remoteMcp("oauth", {
+          url: mcpUrl,
+          auth: { type: "oauth" },
+          versionNegotiation: "legacy",
+        })],
+        auth: fakeClerkAuth(CLERK_OPTIONS),
+        storage,
+        publicUrl: BASE,
+      });
+      const started = credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      await reached;
+      await vi.advanceTimersByTimeAsync(30_000);
+      const response = await started;
+
+      expect(response.status).toBe(504);
+      await expect(response.json()).resolves.toEqual({ error: "OAuth authorization start timed out" });
+      expect(aborted).toBe(true);
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a browser-abandoned start but lets disconnect finish", async () => {
+    let reachedStart!: () => void;
+    const startedHook = new Promise<void>((resolve) => { reachedStart = resolve; });
+    let startAborted = false;
+    let finishDisconnect!: () => void;
+    const disconnectGate = new Promise<void>((resolve) => { finishDisconnect = resolve; });
+    let reachedDisconnect!: () => void;
+    const disconnectStarted = new Promise<void>((resolve) => { reachedDisconnect = resolve; });
+    const connector: Connector = {
+      id: "oauth",
+      kind: "mcp",
+      listTools: async () => [],
+      callTool: async () => null,
+      startAuth: (ctx) => new Promise((_, reject) => {
+        reachedStart();
+        ctx.signal?.addEventListener("abort", () => {
+          startAborted = true;
+          reject(ctx.signal?.reason);
+        }, { once: true });
+      }),
+      disconnectAuth: () => {
+        reachedDisconnect();
+        return disconnectGate;
+      },
+    };
+    const storage = memoryStorage();
+    await storage.set("catalog:oauth", "stale");
+    const connecta = createTestConnecta({
+      connectors: [connector], auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
+    });
+    const browser = new AbortController();
+    const starting = credentialRequest(connecta, "/ui/oauth/oauth", {
+      method: "POST", signal: browser.signal,
+    });
+    await startedHook;
+    browser.abort();
+    await expect(starting).rejects.toMatchObject({ name: "AbortError" });
+    expect(startAborted).toBe(true);
+    expect(await storage.get("catalog:oauth")).toBeNull();
+
+    await storage.set("catalog:oauth", "stale again");
+    const abandonedDisconnect = new AbortController();
+    const disconnecting = credentialRequest(connecta, "/ui/oauth/oauth", {
+      method: "DELETE", signal: abandonedDisconnect.signal,
+    });
+    await disconnectStarted;
+    abandonedDisconnect.abort();
+    finishDisconnect();
+    await expect(disconnecting).rejects.toMatchObject({ name: "AbortError" });
+    await settle(2);
+    expect(await storage.get("catalog:oauth")).toBeNull();
   });
 
   it("stops resolving activity labels once the reader has gone", async () => {

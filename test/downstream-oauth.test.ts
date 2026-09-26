@@ -62,6 +62,39 @@ describe("KvOAuthProvider over memoryStorage", () => {
     return new KvOAuthProvider("svc", memoryStorage(), REDIRECT);
   }
 
+  it("removes a client write whose storage call finishes after cancellation", async () => {
+    const inner = memoryStorage();
+    const blocked = deferred<void>();
+    const writing = deferred<void>();
+    const storage: KVStorage = {
+      get: (key) => inner.get(key),
+      delete: (key) => inner.delete(key),
+      async set(key, value, options) {
+        if (key.startsWith("oauth:client:epoch:")) {
+          writing.resolve();
+          await blocked.promise;
+        }
+        await inner.set(key, value, options);
+      },
+      compareAndSet: (key, expected, next, options) =>
+        inner.compareAndSet!(key, expected, next, options),
+    };
+    const controller = new AbortController();
+    const p = new KvOAuthProvider(
+      "svc", storage, REDIRECT, undefined, true, undefined,
+      controller.signal, "binding",
+    );
+    const generation = await p.bumpGeneration();
+    p.captureGeneration(generation);
+    const save = p.saveClientInformation({ client_id: "late" }, { issuer: "https://auth.example" });
+    await writing.promise;
+    controller.abort();
+    blocked.resolve();
+    await save;
+
+    expect(await inner.get(oauthValueStorageKey("oauth:client", generation))).toBeNull();
+  });
+
   it("exposes redirectUrl and the connecta client metadata", () => {
     const p = provider();
     expect(p.redirectUrl).toBe(REDIRECT);
@@ -1579,6 +1612,31 @@ describe("KvOAuthProvider sealed state", () => {
     client_secret: "dcr-secret",
     redirect_uris: [REDIRECT],
   };
+
+  it("reseals a preserved registration under the replacement physical key", async () => {
+    const storage = memoryStorage();
+    const p = new KvOAuthProvider(
+      "svc", storage, REDIRECT, undefined, true, sealerFor(), undefined,
+      "same-config",
+    );
+    const firstGeneration = await p.bumpGeneration();
+    await p.saveClientInformation(client, issuer);
+    const firstKey = oauthValueStorageKey("oauth:client", firstGeneration);
+    const firstCiphertext = await storage.get(firstKey);
+    expect(isSealed(firstCiphertext)).toBe(true);
+
+    await p.resetAuthorization(false, true);
+    const secondGeneration = required((await storage.get("oauth:generation")) ?? undefined);
+    const secondKey = oauthValueStorageKey("oauth:client", secondGeneration);
+    const secondCiphertext = await storage.get(secondKey);
+    expect(isSealed(secondCiphertext)).toBe(true);
+    expect(secondCiphertext).not.toBe(firstCiphertext);
+    expect(await storage.get(firstKey)).toBeNull();
+    await expect(p.clientInformation(issuer)).resolves.toMatchObject(client);
+
+    await p.resetAuthorization(true);
+    expect(await p.clientInformation(issuer)).toBeUndefined();
+  });
 
   it("seals tokens, client registration, and the verifier; flow bookkeeping stays plaintext", async () => {
     const storage = memoryStorage();
@@ -4402,29 +4460,33 @@ describe("remoteMcp() continue and restart starts", () => {
 
   function authorizationServer() {
     const counts = { register: 0, fetches: 0 };
+    let selectedIssuer = issuer;
     const fetchStub: FetchLike = async (input, init = {}) => {
       counts.fetches++;
       const url = new URL(input);
       if (url.href === resourceMetadataUrl) {
-        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+        return Response.json({ resource: mcpUrl, authorization_servers: [selectedIssuer] });
       }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+      if (url.href === `${selectedIssuer}/.well-known/oauth-authorization-server`) {
         return Response.json({
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          registration_endpoint: `${issuer}/register`,
+          issuer: selectedIssuer,
+          authorization_endpoint: `${selectedIssuer}/authorize`,
+          token_endpoint: `${selectedIssuer}/token`,
+          registration_endpoint: `${selectedIssuer}/register`,
           response_types_supported: ["code"],
           code_challenge_methods_supported: ["S256"],
           token_endpoint_auth_methods_supported: ["none"],
         });
       }
-      if (url.href === `${issuer}/register`) {
+      if (url.href === `${selectedIssuer}/register`) {
         counts.register++;
         return Response.json({
           ...(JSON.parse(String(init.body)) as object),
           client_id: `client-${counts.register}`,
         });
+      }
+      if (url.href === `${selectedIssuer}/token`) {
+        return Response.json({ error: "invalid_client" }, { status: 401 });
       }
       if (url.href === mcpUrl) {
         return new Response(null, {
@@ -4436,7 +4498,7 @@ describe("remoteMcp() continue and restart starts", () => {
       }
       throw new Error(`Unexpected OAuth test request: ${url.href}`);
     };
-    return { fetchStub, counts };
+    return { fetchStub, counts, selectIssuer: (next: string) => { selectedIssuer = next; } };
   }
 
   async function withServer(
@@ -4542,7 +4604,7 @@ describe("remoteMcp() continue and restart starts", () => {
     });
   });
 
-  it("restart still re-registers and replaces the epoch on every start", async () => {
+  it("restart reuses an issuer-bound registration while replacing each flow epoch", async () => {
     await withServer(async (server) => {
       const storage = memoryStorage();
       const c = connector();
@@ -4553,9 +4615,65 @@ describe("remoteMcp() continue and restart starts", () => {
 
       expect(second.authorizationReused).toBeUndefined();
       expect(second.authorizationUrl).not.toBe(first.authorizationUrl);
+      expect(clientOf(second.authorizationUrl)).toBe("client-1");
+      expect(server.counts.register).toBe(1);
+      expect(await storage.get("oauth:generation")).not.toBe(firstGeneration);
+    });
+  });
+
+  it("registers again when fresh discovery selects a different issuer", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await c.startAuth!(scope(storage), { force: true });
+      server.selectIssuer("https://new-auth.example");
+
+      const second = await c.startAuth!(scope(storage), { force: true });
+
       expect(clientOf(second.authorizationUrl)).toBe("client-2");
       expect(server.counts.register).toBe(2);
-      expect(await storage.get("oauth:generation")).not.toBe(firstGeneration);
+    });
+  });
+
+  it("registers again when redirect URI or connector configuration changes", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      await connector().startAuth!(scope(storage), { force: true });
+      const changedRedirect = scope(storage);
+      changedRedirect.baseUrl = "https://another-operator.example";
+      await connector().startAuth!(changedRedirect, { force: true });
+      expect(server.counts.register).toBe(2);
+
+      const changedConfig = remoteMcp("svc", {
+        url: mcpUrl,
+        auth: { type: "oauth" },
+        versionNegotiation: "legacy",
+        redirects: "same-origin",
+      });
+      await changedConfig.startAuth!(changedRedirect, { force: true });
+      expect(server.counts.register).toBe(3);
+    });
+  });
+
+  it("re-registers on the next restart after a callback rejects the client", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await c.startAuth!(scope(storage), { force: true });
+      await c.startAuth!(scope(storage), { force: true });
+      expect(server.counts.register).toBe(1);
+
+      const callback = new KvOAuthProvider("svc", storage, `${BASE}/oauth/callback/svc`);
+      await expect(auth(callback, {
+        serverUrl: mcpUrl,
+        authorizationCode: "rejected-code",
+        fetchFn: server.fetchStub,
+      })).rejects.toThrow();
+      expect(await callback.clientInformation({ issuer })).toBeUndefined();
+
+      const retried = await c.startAuth!(scope(storage), { force: true });
+      expect(clientOf(retried.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
     });
   });
 
