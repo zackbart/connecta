@@ -13,7 +13,7 @@ const RECOVERY =
  * only that programs *may* write reads each write after a lookup as a known
  * one and sends them one prompt at a time.
  */
-export const CONNECTA_INSTRUCTIONS = `Choose a route before discovery. One known read: call_tool; one known write: call_destructive_tool. Everything else starts with execute_code to discover, call, and return the answer: unknown addresses, reduction, multiple or dependent calls, and writes that follow reads. Keep authorized batches in one program. Sample unfamiliar reads. Reduce a one-time write's full result there or page a direct call with get_result; never sample away or repeat a write. Program writes pause unsent; resume_execution with the returned token, address, and args approves the call and continues the program. Approval "tool" covers later same-address calls in this run; other tools need their own approval. Catalog inspection stays top level with search_tools. ${RECOVERY}`;
+export const CONNECTA_INSTRUCTIONS = `Choose a route before discovery. One known read: call_tool; one known write: call_destructive_tool. Everything else starts with execute_code to discover, call, and return the answer: unknown addresses, reduction, multiple or dependent calls, and writes that follow reads. Keep authorized batches in one program. Sample unfamiliar reads. Reduce a one-time write's full result there or page a direct call with get_result; never repeat it to recover output. Non-exempt program writes pause unsent; resume_execution with the returned token, address, and args approves the call and continues the program. Approval "tool" covers later same-address calls in this run; other approval-required writes need their own approval. ${RECOVERY}`;
 
 /**
  * The instructions of a deployment without resumable writes, whose programs
@@ -42,7 +42,7 @@ The minimum guest API is:
 
 ## Discover and select
 
-Search and call in one run when schemas suffice. Sample unfamiliar reads. Reduce a one-time write's full result here or page a direct call with get_result; never sample away or repeat a write. Search distinct operations separately with 2–4 distinctive action/object terms.
+Search and call in one run when schemas suffice. Sample unfamiliar reads. Reduce a one-time write's full result here or page a direct call with get_result; never repeat the write to recover output. Search distinct operations separately with 2–4 distinctive action/object terms.
 
 For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An \`outputSchemaSource: "observed"\` shape is a hint, not a contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
 
@@ -50,12 +50,12 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Use \`includeSchemas: "json"\` for programmatic schema inspection; compact schemas are text, not objects with \`.properties\`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.
 - Supply every \`requiredInputKey\` from the task or a prior result. For dependencies, match the earlier \`outputKey\` to the later required key. An empty required-key list does not permit invented arguments. Missing \`outputKeys\` means inspect \`outputSchema\`.
 - Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
-- Reduce through available output keys. An observed key is a hint; later results may differ. Do not guess collection roots such as \`items\` or \`results\`. If a match is missing, re-search or describe. Inspect and reduce write results before returning.
+- Reduce through available output keys. An observed key is a hint; later results may differ. Do not guess collection roots such as \`items\` or \`results\`. If a match is missing, re-search or describe.
 - Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
-Only tools explicitly annotated \`readOnlyHint: true\` are reachable unasked. Other calls pause unsent; repeat the returned write and token unchanged in \`resume_execution\`. Keep an authorized batch, including its final post, in one program. Default \`approval: "call"\` covers one write; \`approval: "tool"\` covers later same-address calls in this run. Other tools need separate approval. Replay uses a journal: make the same calls in order. Host gates run below the sandbox; code cannot widen its authority.
+Only tools explicitly annotated \`readOnlyHint: true\` are reachable unasked. With resumable writes, non-exempt approval-required calls pause unsent; \`resume_execution\` repeats the pending address, args, and token. Without them, use \`call_destructive_tool\` for writes. Keep each authorized batch in one resumable program, final post included. \`approval: "call"\` covers one write; \`approval: "tool"\` covers later same-address calls in this run. Other approval-required writes need approval. Replay requires the same call order. Sandbox code cannot widen host gates.
 
 ## Errors and repair
 

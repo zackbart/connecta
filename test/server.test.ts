@@ -1772,7 +1772,7 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain(
       "Sample unfamiliar reads",
     );
-    expect(executeTool.description).toContain("never sample away or repeat a write");
+    expect(executeTool.description).toContain("never repeat it to recover output");
     expect(executeTool.description).toContain("Keep an authorized batch in one program");
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).toContain(

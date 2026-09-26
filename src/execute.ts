@@ -1633,7 +1633,7 @@ const executeDescription = (
   resumable ? "work, writes included," : "read-only work"
 } uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${
   resumable
-    ? `Writes pause for resume_execution. Keep an authorized batch in one program; approval "tool" covers later same-address calls, other tools pause separately. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
+    ? `Writes pause for resume_execution. Keep an authorized batch in one program; approval "tool" covers later same-address calls, other approval-required writes pause separately. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
     : `Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls`
 }, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
@@ -1646,7 +1646,7 @@ Read guides with top-level skills. Write async () => { ... } using the global co
 - Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status; missing values are unknown, never false or zero.
 - connecta.emit(block): { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }; success-only, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. console.log(...) is captured.
 
-No portable ambient capabilities. Return reduced JSON. Sample unfamiliar reads. Reduce a one-time write's full result here, or use a direct call and get_result paging; never sample away or repeat a write to recover output. Never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
+No portable ambient capabilities. Return reduced JSON. Sample unfamiliar reads. Reduce a one-time write's full result here, or use a direct call and get_result paging; never repeat it to recover output. Never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
 
 // Module scope, like the other six meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

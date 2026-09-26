@@ -532,11 +532,11 @@ how many hops the value takes.
 the honest report is that its answer was too large. The fix is a program that
 returns less, which is why the envelope says so.
 
-**R4 (verdict: no result paging for programs).** A truncated program result
-carries no `get_result` handle, unlike `call_tool`. `get_result` exists so a
-model can page a *downstream payload* it could not shrink; a program can shrink
-anything, so paging its result would reward the behavior code mode exists to
-remove. For non-repeatable writes, inspect and reduce the full result in this program, or use a direct `call_destructive_tool` call and page it with `get_result`; sampling a program's write result may discard the only copy.
+**R4 (verdict: no result paging for programs).** Program results have no
+`get_result` handle. Programs can shrink their returns without host paging.
+
+For non-repeatable writes, inspect and reduce the full result before return,
+or page a direct `call_destructive_tool` result with `get_result`; sampling may discard the only copy.
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call
 order and returned as one `logs` string, capped at 4,000 characters with a
 truncation marker. Logs survive program failure through either a returned error
