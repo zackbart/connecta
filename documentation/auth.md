@@ -296,11 +296,15 @@ successor's.
 
 A restart does the same storage work however many came before it. After the
 fence it deletes the one epoch it retired: six values, then that epoch's own
-lineage records. Before publishing, it sweeps up to 16 epochs retired more
-than `CLEANUP_GRACE_MS` (24 hours) ago, oldest first, and leaves out only
-those whose values and records were all deleted. A failed sweep is carried
-and tried again later, and never fails the restart. An epoch inside its grace
-is not deleted again. A late write into it is unreadable behind the fence,
+lineage records. An epoch's manifest outlives its values only when their
+deletion failed, so the restart also reads the manifests of the eight most
+recently retired epochs (`RETRY_PROBES`) and cleans up again any that still
+have one. A Disconnect or Restart that reported a failed cleanup therefore
+deletes the old grant when the operator retries it. Before publishing, it
+sweeps up to 16 epochs retired more than `CLEANUP_GRACE_MS` (24 hours) ago,
+oldest first, and leaves out only those whose values and records were all
+deleted. A failed sweep is carried and tried again later, and never fails
+the restart. Any other epoch inside its grace is not deleted again. A late write into it is unreadable behind the fence,
 and the late writer deletes it itself. If that delete fails, the writer
 records the epoch again as retired at that moment, appending it or, when it
 is already listed, moving only its time. A restart that swept it re-reads the

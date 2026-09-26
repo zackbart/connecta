@@ -99,6 +99,16 @@ const MAX_EXPIRED_SWEEP = 16;
  */
 const DELETE_CONCURRENCY = 6;
 /**
+ * How many of the most recently retired generations a reset checks for an
+ * unfinished cleanup. The case that matters is the one just before: an
+ * operator whose Disconnect or Restart reported a failed cleanup retries, and
+ * that retry must delete the grant the failure left behind. Eight covers that
+ * with room for a burst of failing restarts, costs eight small reads per
+ * reset, and bounds a retry to eight generations' deletes; anything older is
+ * reclaimed by the past-grace sweep instead.
+ */
+const RETRY_PROBES = 8;
+/**
  * How long a pending authorization URL may be handed out again instead of
  * starting a fresh flow. The URL itself never expires on connecta's side, but
  * the authorization server's half of it does: a pushed request URI lives
@@ -1927,15 +1937,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * because an earlier key happened to be the first failed delete.
    *
    * A reset's storage work does not grow with the resets before it. After
-   * the fence it deletes the one generation it retired. Before publishing,
+   * the fence it deletes the one generation it retired, and retries any of
+   * the RETRY_PROBES most recent ones whose cleanup failed. Before publishing,
    * it sweeps at most MAX_EXPIRED_SWEEP generations retired more than
    * CLEANUP_GRACE_MS ago — every value, then its manifest and times — and
    * only a generation whose sweep fully succeeded is left out of the new
    * lineage. Everything else is carried with its retirement time: a
-   * generation still inside its grace is not deleted again, because a late
-   * write into it is unreadable behind the fence and the late writer deletes
-   * it itself, or records the generation again if it cannot; the sweep
-   * reclaims whatever is left once the grace has passed. The live manifest
+   * generation still inside its grace whose cleanup finished is not deleted
+   * again, because a late write into it is unreadable behind the fence and
+   * the late writer deletes it itself, or records the generation again if it
+   * cannot; the sweep reclaims whatever is left once the grace has passed.
+   * The live manifest
    * is never rewritten: an entry leaves the lineage only by being absent
    * from the next epoch's manifest, which no other request writes until that
    * epoch is active.
@@ -2006,11 +2018,32 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
 
     // Delete the generation just retired: its values, then the lineage it
-    // published, which the new epoch has copied. Every other entry waits for
-    // its grace to pass (see above), so this is the same work at the first
-    // reset as at the thousandth.
+    // published, which the new epoch has copied. Then retry the newest few
+    // younger entries whose own cleanup failed. A generation's manifest is
+    // deleted only after all of its values, so a manifest still present means
+    // its cleanup did not finish (or a late writer recorded into it after it
+    // did); an absent one means there is nothing to retry. That keeps the
+    // 0.26.0 promise that the next reset retries a failed cleanup of the
+    // grant being retired, at a bounded cost: RETRY_PROBES reads, and a full
+    // cleanup only for generations that need one. Everything older waits for
+    // its grace to pass (see above).
+    const probed = retired
+      .filter((entry) => entry.generation !== previous && withinGrace(entry))
+      .sort((a, b) => b.retiredAt - a.retiredAt)
+      .slice(0, RETRY_PROBES)
+      .map((entry) => entry.generation);
+    const probes = await Promise.allSettled(
+      probed.map((generation) =>
+        limit(() => this.storage.get(cleanupBacklogKey(generation))),
+      ),
+    );
+    const unfinished = probed.filter((_, index) => {
+      const probe = probes[index];
+      // A probe that could not read is retried rather than assumed clean.
+      return probe?.status !== "fulfilled" || probe.value !== null;
+    });
     const failure = firstRejection(
-      await this.cleanupGenerations([previous], limit),
+      await this.cleanupGenerations([previous, ...unfinished], limit),
     );
     // Keep the active manifest immutable for the epoch's whole lifetime, even
     // after successful cleanup. A late old-epoch write can land after cleanup;

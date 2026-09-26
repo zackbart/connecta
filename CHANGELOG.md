@@ -40,10 +40,13 @@ All notable changes to this package are documented here.
 - **A restart's cleanup no longer grows with every earlier restart.** Each
   OAuth restart re-deleted every epoch the connector had ever retired, one key
   at a time, and restart 1,001 failed forever with a full cleanup backlog. A
-  restart now deletes only the epoch it retires, plus a sweep of at most 16
-  epochs retired more than 24 hours ago, dropping each from the lineage only
-  when all of its keys are gone. The reset itself is 14 storage operations,
-  or 24 with one epoch to sweep, whatever came before. Residue a late
+  restart now deletes the epoch it retires, retries any of the eight most
+  recent epochs whose cleanup failed (their manifest outlives their values),
+  and sweeps at most 16 epochs retired more than 24 hours ago, dropping each
+  from the lineage only when all of its keys are gone. A Disconnect that
+  reported a failed cleanup still deletes the old grant when retried. The
+  reset itself is at most 22 storage operations when nothing needs retrying,
+  plus 10 with one epoch to sweep, whatever came before. Residue a late
   writer leaves in a younger epoch stays unreadable behind the fence until the
   sweep reaches it. A late writer whose cleanup fails in an epoch already
   listed now restarts that epoch's grace. The accepted assumption is that no

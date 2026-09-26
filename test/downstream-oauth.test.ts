@@ -633,11 +633,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await backing.get("oauth:generation")).toBe(secondGeneration);
   });
 
-  it("retries failed cleanup of an older modern epoch once its grace has passed", async () => {
-    const realNow = Date.now();
-    let offset = 0;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow + offset);
-    onTestFinished(() => clock.mockRestore());
+  it("retries failed cleanup of an older modern epoch on the next reset", async () => {
     const backing = memoryStorage();
     let failTokenDelete = false;
     let oldTokenKey = "";
@@ -667,17 +663,78 @@ describe("KvOAuthProvider over memoryStorage", () => {
       "transient token cleanup failure",
     );
     expect(await backing.get(oldTokenKey)).not.toBeNull();
+    // Its manifest outlives the failed values: that is the retry's signal.
+    expect(
+      await backing.get(`oauth:cleanup:${encodeURIComponent(firstGeneration)}`),
+    ).not.toBeNull();
 
-    // A same-day reset deletes only the epoch it retires. The failed one is
-    // carried, and unreadable behind the fence meanwhile.
-    const next = new KvOAuthProvider("svc", storage, REDIRECT);
-    await next.resetAuthorization();
-    expect(await backing.get(oldTokenKey)).not.toBeNull();
-    expect(await next.tokens()).toBeUndefined();
-
-    offset = 24 * 60 * 60 * 1000 + 1;
-    await next.resetAuthorization();
+    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
     expect(await backing.get(oldTokenKey)).toBeNull();
+    expect(
+      await backing.get(`oauth:cleanup:${encodeURIComponent(firstGeneration)}`),
+    ).toBeNull();
+  });
+
+  it("deletes a grant whose disconnect failed when the operator retries it", async () => {
+    const backing = memoryStorage();
+    let failures = 1;
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        if (failures > 0 && key.startsWith("conn:svc:oauth:tokens:epoch:")) {
+          failures--;
+          throw new Error("token delete unavailable");
+        }
+        await backing.delete(key);
+      },
+    };
+    const connecta = createTestConnecta({
+      connectors: [
+        remoteMcp("svc", { url: "https://unused.example/mcp", auth: { type: "oauth" } }),
+      ],
+      auth: {
+        kind: "operator",
+        interactiveOperator: true,
+        activityActorNamespace: "https://identity.test",
+        authorize: () => ({ ok: true, userId: "operator" }),
+      },
+      storage,
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const grant = new KvOAuthProvider("svc", {
+      get: (key) => backing.get(`conn:svc:${key}`),
+      set: (key, value, opts) => backing.set(`conn:svc:${key}`, value, opts),
+      delete: (key) => backing.delete(`conn:svc:${key}`),
+    }, REDIRECT);
+    await grant.resetAuthorization();
+    const granted = await grant.generation();
+    await grant.saveTokens({
+      access_token: "live-access",
+      token_type: "Bearer",
+      refresh_token: "live-refresh",
+    });
+    const tokenKey = `conn:svc:${oauthValueStorageKey("oauth:tokens", granted)}`;
+    expect(await backing.get(tokenKey)).toContain("live-refresh");
+    const disconnect = () =>
+      connecta.fetch(
+        new Request(`${BASE}/ui/oauth/svc`, {
+          method: "DELETE",
+          headers: { Origin: BASE },
+        }),
+      );
+
+    const failed = await disconnect();
+    expect(failed.status).toBe(400);
+    await expect(failed.json()).resolves.toEqual({
+      error: "OAuth disconnect failed",
+    });
+    expect(await backing.get(tokenKey)).toContain("live-refresh");
+
+    expect((await disconnect()).status).toBe(204);
+    expect(await backing.get(tokenKey)).toBeNull();
+    await connecta.close();
   });
 
   it("keeps lineage while a late stale-write cleanup races the next reset", async () => {
@@ -977,9 +1034,13 @@ describe("KvOAuthProvider cleanup lineage", () => {
     }
 
     // The generation, manifest, and times reads (3), the publication (2),
-    // the fence (1), and the retired epoch's six values, manifest, and times
-    // (8) — at reset 150 as at reset 1.
-    expect(perReset).toEqual(Array(150).fill(14));
+    // the fence (1), the retired epoch's six values, manifest, and times (8),
+    // and one manifest probe for each of up to eight younger epochs, whose
+    // cleanups all finished — the same from reset 9 to reset 150.
+    expect(perReset).toEqual(
+      Array.from({ length: 150 }, (_, reset) => 14 + Math.min(reset, 8)),
+    );
+    expect(new Set(perReset.slice(8))).toEqual(new Set([22]));
     expect(await lineageOf(backing, await p.generation())).toHaveLength(150);
   });
 
@@ -1393,9 +1454,13 @@ describe("KvOAuthProvider cleanup lineage", () => {
     let arrivals = 0;
     const { promise: bothSweeping, resolve: releaseSweeps } = deferred<void>();
     const gatedKey = oauthValueStorageKey("oauth:tokens", "v2:old-0");
+    const fences: string[] = [];
     const storage: KVStorage = {
       get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
+      async set(key, value, opts) {
+        if (key === "oauth:generation") fences.push(value);
+        await backing.set(key, value, opts);
+      },
       async delete(key) {
         if (key === gatedKey) {
           if (++arrivals === 2) releaseSweeps();
@@ -1434,12 +1499,37 @@ describe("KvOAuthProvider cleanup lineage", () => {
       expect(await backing.get(manifestKey(generation))).toBeNull();
     }
 
-    // The epoch that lost the fence race was never active where it ended,
-    // and the next reset proceeds from the winner.
+    // A reader whose replica still shows the losing epoch as current writes
+    // a grant into it. Every reader of the authoritative generation reads the
+    // winner's namespace, where that grant does not exist.
+    expect(fences).toHaveLength(2);
+    const loser = required(fences.find((fence) => fence !== winner));
+    const staleReplica = new KvOAuthProvider("svc", {
+      get: (key) =>
+        key === "oauth:generation" ? Promise.resolve(loser) : backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      delete: (key) => backing.delete(key),
+    }, REDIRECT);
+    await staleReplica.saveTokens({
+      access_token: "loser-access",
+      token_type: "Bearer",
+      refresh_token: "loser-refresh",
+    });
+    const loserTokens = oauthValueStorageKey("oauth:tokens", loser);
+    expect(await backing.get(loserTokens)).toContain("loser-refresh");
+    expect(await a.tokens()).toBeUndefined();
+    expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens())
+      .toBeUndefined();
+
+    // The next reset proceeds from the winner, and the losing epoch's write
+    // stays out of every namespace a reader can reach.
     now += MINUTE;
     await a.resetAuthorization();
     expect((await lineageOf(backing, await a.generation())).map(generationOf))
       .toEqual(["v2:current", winner]);
+    expect(await a.tokens()).toBeUndefined();
+    expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens())
+      .toBeUndefined();
   });
 });
 
