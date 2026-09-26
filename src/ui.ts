@@ -33,7 +33,13 @@ export {
   type UiData,
 } from "./operator-ui/model.js";
 
-import { resolveBranding, isSafeHttpsUrl, themeCss } from "./branding.js";
+import {
+  escapeHtml,
+  isSafeHttpsUrl,
+  notFoundResponse,
+  renderPage,
+  resolveBranding,
+} from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
 /**
  * A JS string literal safe to inline in a script element. Escaping `/` keeps
@@ -160,14 +166,6 @@ export async function buildUiData(
   );
 }
 
-function escapeHtmlAttr(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
 function jsonForInlineScript(value: unknown): string {
   return JSON.stringify(value)
     .replaceAll("<", "\\u003c")
@@ -220,75 +218,37 @@ export function renderUiHtml(
       }
     : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);
-  const title = operatorPageTitle(page, brand.pageTitle);
   // When an operator shell ships a nonce-based CSP, every script it emits must
   // carry that nonce to run; without a nonce the markup is unchanged.
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-  // Top-left corner. With an owner set it reads "<owner> <product>"; without
-  // one the product label stands alone. Either half links out when the
-  // matching URL is configured.
-  const owner = brand.ownerName
-    ? brand.ownerUrl
-      ? `<a class="brand navlink" href="${escapeHtmlAttr(brand.ownerUrl)}">${escapeHtmlAttr(brand.ownerName)}</a>`
-      : `<span class="brand">${escapeHtmlAttr(brand.ownerName)}</span>`
-    : brand.productUrl
-      ? `<a class="brand navlink" href="${escapeHtmlAttr(brand.productUrl)}">${escapeHtmlAttr(brand.productName)}</a>`
-      : `<span class="brand">${escapeHtmlAttr(brand.productName)}</span>`;
-  const product = brand.ownerName
-    ? brand.productUrl
-      ? `<a class="product navlink" href="${escapeHtmlAttr(brand.productUrl)}">${escapeHtmlAttr(brand.productName)}</a>`
-      : `<span class="product">${escapeHtmlAttr(brand.productName)}</span>`
-    : "";
   const clerkScript =
     clerk && clerkScriptOrigin
-      ? `<script${nonceAttr} crossorigin="anonymous" data-clerk-publishable-key="${escapeHtmlAttr(clerk.publishableKey)}" src="${escapeHtmlAttr(clerkScriptOrigin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
+      ? `<script${nonceAttr} crossorigin="anonymous" data-clerk-publishable-key="${escapeHtml(clerk.publishableKey)}" src="${escapeHtml(clerkScriptOrigin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
       : "";
 
-  // A pinned scheme is an attribute, not a stylesheet edit: the dark palette
-  // keys off `html[data-scheme]`, so "system" leaves the attribute off and the
-  // media query decides.
-  const schemeAttr =
-    brand.theme.colorScheme === "system"
-      ? ""
-      : ` data-scheme="${brand.theme.colorScheme}"`;
-
-  return `<!doctype html>
-<html lang="en"${schemeAttr}>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="${escapeHtmlAttr(brand.themeColor)}">
-<meta name="description" content="${escapeHtmlAttr(brand.description)}">
-<link rel="icon" href="${escapeHtmlAttr(brand.faviconHref)}" type="image/svg+xml">
-<link rel="shortcut icon" href="/favicon.ico">
-<title>${escapeHtmlAttr(title)}</title>
-${clerkScript}
-<style>${OPERATOR_UI_CSS}${themeCss(brand.theme)}</style>
-</head>
-<body>
-<a class="skip-link" href="#operatorContent">Skip to operator page</a>
-<header class="masthead shell">
-  <div class="masthead-inner">
-    <div class="mast-nav">
-      ${owner}
-      ${product}
-    </div>
-    <div id="operatorNav"></div>
-  </div>
-</header>
-
+  // The shared layout owns the head, scheme, theme, and masthead; the shell
+  // adds its own bundle (which already imports the shared tokens), the nav
+  // mount, and the app.
+  return renderPage(branding, {
+    title: operatorPageTitle(page, brand.pageTitle),
+    uiMounted: true,
+    styles: OPERATOR_UI_CSS,
+    head: clerkScript,
+    skipTo: { id: "operatorContent", label: "Skip to operator page" },
+    mastheadEnd: '<div id="operatorNav"></div>',
+    body: `
 <main id="operatorContent" class="page shell" tabindex="-1">
   <div class="lead">
     <h1>${OPERATOR_PAGE_LABELS[page]}</h1>
     <div class="lead-copy">
-      <p>${escapeHtmlAttr(brand.description)}</p>
+      <p>${escapeHtml(brand.description)}</p>
       <noscript><p class="msg">The operator pages need JavaScript. Nothing else here
       does — agents reach this deployment through <span class="mono">/mcp</span>.</p></noscript>
     </div>
   </div>
 </main>
-
-<script${nonceAttr}>
+`,
+    tail: `<script${nonceAttr}>
 const AUTH = ${jsonForInlineScript(auth)};
 const MCP_URL = ${jsonForInlineScript(mcpUrl)};
 const INITIAL_PAGE = ${jsonForInlineScript(page)};
@@ -297,9 +257,8 @@ const TITLE_SUFFIX = ${jsonForInlineScript(brand.pageTitle)};
 const PRODUCT_NAME = ${stringForInlineScript(brand.productName)};
 const PRODUCT_DESCRIPTION = ${stringForInlineScript(brand.description)};
 const PRODUCT_OPERATOR_LABEL = ${stringForInlineScript(brand.productName + " operator")};
-${OPERATOR_UI_SCRIPT}</script>
-</body>
-</html>`;
+${OPERATOR_UI_SCRIPT}</script>`,
+  });
 }
 
 function ownsOperatorPath(reserved: readonly string[], path: string): boolean {
@@ -335,7 +294,7 @@ export function operatorUi(
         // The pages' JSON API and the sandboxed frame; the module owns both,
         // and this bundle imports none of it.
         return (await artifacts?.handle(context)) ??
-          new Response("Not Found", { status: 404 });
+          notFoundResponse(context.request, context.opts);
       }
       const routes = [
         ...(context.opts.credentialVault ? [routeCredentials] : []),

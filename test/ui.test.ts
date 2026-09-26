@@ -222,11 +222,33 @@ describe("status UI", () => {
     const body = await res.text();
 
     expect(res.status).toBe(400);
-    expect(body).toContain("<title>Connecta</title>");
+    expect(body).toContain("<title>Authorization could not be completed — Connecta</title>");
     expect(body).toContain('href="/favicon.svg"');
-    expect(body).toContain("Connection status");
+    expect(body).toContain('<header class="masthead shell">');
+    expect(body).toContain("<h1>Authorization could not be completed</h1>");
     expect(body).toContain('href="/">Return to Connecta</a>');
-    expect(body).toContain("Connecta");
+  });
+
+  it("renders the operator shell through the shared page layout", async () => {
+    const c = makeDeployment(uiDeploymentConfig());
+    const shell = await (await c.fetch(new Request(`${BASE}/`))).text();
+    const callback = await (await c.fetch(
+      new Request(`${BASE}/oauth/callback/unknown?code=test`),
+    )).text();
+    // One head and masthead, byte for byte, up to each page's own title and
+    // stylesheet: the shell's bundle carries the same tokens the callback does.
+    const head = (page: string) => page
+      .replace(/<title>[^<]*<\/title>/, "")
+      .replace(/<style>[\s\S]*?<\/style>/, "")
+      .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
+      .replace(/\s*<div id="operatorNav"><\/div>/, "")
+      .split("</header>")[0];
+    expect(head(shell)).toBe(head(callback));
+    for (const page of [shell, callback]) {
+      expect(page).toContain("--surface-2:");
+      expect(page).toContain("html[data-scheme=dark]");
+      expect(page).toContain('<meta name="theme-color" content="#151a21" media="(prefers-color-scheme: dark)">');
+    }
   });
 
   it("supports deployment-specific branding", async () => {

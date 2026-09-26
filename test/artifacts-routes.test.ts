@@ -107,6 +107,47 @@ describe("the sandboxed frame", () => {
     expect(await (await get("/artifacts/_frame", TOKEN)).text()).toBe(body);
     expect((await get("/artifacts/_frame", null, { method: "POST" })).status).toBe(405);
   });
+
+  it("waits on the viewer's surface in the deployment's scheme, not a blank white box", async () => {
+    const { get } = await deploy();
+    const system = await (await get("/artifacts/_frame", null)).text();
+    expect(system).toContain('<p id="frame-status" role="status">Loading page…</p>');
+    expect(system).toContain("This page did not load. Reload to try again.");
+    expect(system).toContain("html{background:var(--surface)}");
+    expect(system).toContain("--surface-2:");
+    expect(system).toMatch(/<html lang="en">/);
+    // The line is replaced along with everything else when the page arrives.
+    expect(system.indexOf("clearTimeout(stalled)")).toBeLessThan(system.indexOf("document.open()"));
+
+    const { get: pinned } = await deploy({
+      ui: operatorUi({ branding: { theme: { colorScheme: "dark", accent: "#0a7d55" } } }),
+    });
+    const dark = await (await pinned("/artifacts/_frame", null)).text();
+    expect(dark).toContain('<html lang="en" data-scheme="dark">');
+    expect(dark).toContain(":root{--accent:#0a7d55}");
+    expect(dark).not.toContain("Q3");
+  });
+});
+
+describe("artifact pages follow the deployment's appearance", () => {
+  it("gives a Markdown page the resolved scheme and tokens, and leaves authored HTML alone", async () => {
+    const { get } = await deploy({
+      ui: operatorUi({ branding: { theme: { colorScheme: "dark", accent: "#0a7d55" } } }),
+    });
+    const markdown = (await (await get("/artifacts/_api/view/notes")).json()) as Record<string, any>;
+    expect(markdown.document).toContain('<html lang="en" data-scheme="dark">');
+    expect(markdown.document).toContain(":root{--accent:#0a7d55}");
+    expect(markdown.document).toContain("background:var(--surface)");
+    expect(markdown.document).not.toContain("prefers-color-scheme:dark){body");
+    // "# Notes" is not the title "Planning notes", so the author's heading stays.
+    expect(markdown.document).toContain("<h1>Notes</h1>");
+
+    const html = (await (await get("/artifacts/_api/view/q3-bugs")).json()) as Record<string, any>;
+    expect(html.document.startsWith("<!doctype html><script>")).toBe(true);
+    expect(html.document).not.toContain("data-scheme");
+    expect(html.document).not.toContain("--surface");
+    expect(html.document).not.toContain("0a7d55");
+  });
 });
 
 describe("the artifact API", () => {
@@ -245,9 +286,28 @@ describe("mounting", () => {
       expect(response.status, path).toBe(308);
       expect(response.headers.get("Location"), path).toBe(`${ARTIFACT_ORIGIN}${path}`);
     }
+    const pages = new Set<string>();
     for (const path of ["/", "/ui/data", "/ui/connectors/artifacts", "/mcp", "/health", "/oauth/callback", "/.well-known/oauth-authorization-server"]) {
       expect((await fetchAt(ARTIFACT_ORIGIN, path)).status, path).toBe(404);
+      const browser = await app.fetch(new Request(`${ARTIFACT_ORIGIN}${path}`, {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      }));
+      expect(browser.status, path).toBe(404);
+      pages.add(await browser.text());
     }
+    for (const url of [`${BASE}/nowhere`, `${ARTIFACT_ORIGIN}/artifacts/q3-bugs/extra`]) {
+      const path = url;
+      const browser = await app.fetch(new Request(url, {
+        headers: { Accept: "text/html", Authorization: `Bearer ${TOKEN}` },
+      }));
+      expect(browser.status, path).toBe(404);
+      pages.add(await browser.text());
+    }
+    // One themed page for every unserved path on either host, linking home to
+    // the public origin rather than to the artifact host's own 404.
+    expect(pages.size).toBe(1);
+    expect([...pages][0]).toContain("<h1>Page not found</h1>");
+    expect([...pages][0]).toContain(`href="${BASE}/">Go to Connecta</a>`);
     expect((await fetchAt(ARTIFACT_ORIGIN, "/artifacts/_api/list")).status).toBe(401);
     const listed = await fetchAt(ARTIFACT_ORIGIN, "/artifacts/_api/list", TOKEN);
     expect(listed.status).toBe(200);

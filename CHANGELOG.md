@@ -4,6 +4,24 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Every page connecta renders for a person now shares one token layer and one
+  layout: the operator shell, the OAuth callback, a browser's 404, and the
+  artifact frame follow `branding.theme` and light or dark. The OAuth callback
+  names the outcome in its heading with a status mark, names the connector by
+  title only after the state check, uses `branding.productName` in its copy,
+  and folds the agent fix prompt under "Details for the operator". Refusals
+  stay byte-identical across connectors and paths.
+- A request whose `Accept` names `text/html` gets a themed 404 page; every
+  other client keeps the plain `Not Found` body.
+- Markdown artifacts take the deployment's resolved scheme and tokens instead
+  of the OS palette, and drop an opening `# Heading` that only repeats the
+  title the viewer already shows. The frame waits on the viewer's surface with
+  a loading line, and says so if the page never arrives.
+- Without the operator UI, callback and 404 pages no longer link the default
+  `/favicon.svg`, which only the UI serves.
+
 ## 0.26.0 — 2026-09-25
 
 Programs can now write with host approval. When a program reaches a tool that

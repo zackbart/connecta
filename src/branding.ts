@@ -1,3 +1,4 @@
+import { PAGE_CSS, TOKENS_CSS } from "./page-styles.js";
 import type { ConnectaBranding, ConnectaTheme, UiAuthConfig } from "./types.js";
 /** Connecta's default monochrome "C" mark. */
 export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -187,6 +188,207 @@ export function themeCss(theme: ResolvedTheme): string {
   ].filter(Boolean);
   return declarations.length ? `:root{${declarations.join(";")}}` : "";
 }
+
+/**
+ * The resolved scheme as the root element's attribute. The dark palette keys
+ * off `html[data-scheme]`, so "system" leaves it off and the media query
+ * decides.
+ */
+export function schemeAttribute(theme: ResolvedTheme): string {
+  return theme.colorScheme === "system"
+    ? ""
+    : ` data-scheme="${theme.colorScheme}"`;
+}
+
+/** Text or attribute value, escaped for any position in an HTML document. */
+export function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+/**
+ * The masthead's `--surface` in each palette, for the browser chrome a
+ * `theme-color` paints. A configured `themeColor` wins; without one a dark
+ * page should not sit under a white status bar.
+ */
+const SURFACE = { light: "#ffffff", dark: "#151a21" } as const;
+
+function themeColorMeta(branding: ConnectaBranding | undefined, theme: ResolvedTheme): string {
+  const configured = trimmedString(branding?.themeColor);
+  if (configured) return `<meta name="theme-color" content="${escapeHtml(configured)}">`;
+  if (theme.colorScheme !== "system") {
+    return `<meta name="theme-color" content="${SURFACE[theme.colorScheme]}">`;
+  }
+  return `<meta name="theme-color" content="${SURFACE.light}" media="(prefers-color-scheme: light)">\n` +
+    `<meta name="theme-color" content="${SURFACE.dark}" media="(prefers-color-scheme: dark)">`;
+}
+
+export interface PageLayout {
+  /** The complete `<title>`. */
+  title: string;
+  /** Whether the operator UI is mounted, and so serves `/favicon.*` and `/`. */
+  uiMounted: boolean;
+  /** Markup after the masthead: the page's `<main>`. */
+  body: string;
+  /**
+   * The page's stylesheet before the theme block. Defaults to the shared
+   * tokens and primitives; the operator shell passes its own bundle, which
+   * already imports both.
+   */
+  styles?: string;
+  /** Page-specific rules appended to `styles`, still before the theme. */
+  extraStyles?: string;
+  /** Additional head markup, emitted verbatim (the Clerk loader). */
+  head?: string;
+  /** Emitted verbatim at the masthead's end (the operator nav mount). */
+  mastheadEnd?: string;
+  /** A skip link to this element id, for pages with navigation to skip. */
+  skipTo?: { id: string; label: string };
+  /** Markup after the body content, emitted verbatim (the operator script). */
+  tail?: string;
+}
+
+/**
+ * The one page layout every server-rendered page shares: the operator shell,
+ * the OAuth callback, and browser-facing 404s. Doctype and meta, the favicon a
+ * deployment actually serves, the resolved scheme, the token stylesheet with
+ * the theme block after it, and the masthead.
+ *
+ * `/favicon.svg` and `/favicon.ico` are operator UI routes. Without the UI they
+ * are 404s, so the default links are left out rather than pointing at nothing
+ * (a browser then asks for `/favicon.ico` on its own and gets the same 404). A
+ * configured `favicon.href` is the operator's own icon and is linked either way.
+ *
+ * Every interpolated branding value is escaped here; `body`, `head`,
+ * `mastheadEnd`, and `tail` are the caller's markup and are not.
+ */
+export function renderPage(
+  branding: ConnectaBranding | undefined,
+  layout: PageLayout,
+): string {
+  const brand = resolveBranding(branding);
+  // Top-left corner. With an owner set it reads "<owner> <product>"; without
+  // one the product label stands alone. Either half links out when the
+  // matching URL is configured.
+  const label = (className: string, text: string, href?: string) =>
+    href
+      ? `<a class="${className} navlink" href="${escapeHtml(href)}">${escapeHtml(text)}</a>`
+      : `<span class="${className}">${escapeHtml(text)}</span>`;
+  const owner = brand.ownerName
+    ? label("brand", brand.ownerName, brand.ownerUrl)
+    : label("brand", brand.productName, brand.productUrl);
+  const product = brand.ownerName
+    ? label("product", brand.productName, brand.productUrl)
+    : "";
+  const customIcon = brand.faviconHref !== DEFAULT_FAVICON_HREF;
+  const icons = [
+    ...(customIcon || layout.uiMounted
+      ? [`<link rel="icon" href="${escapeHtml(brand.faviconHref)}" type="image/svg+xml">`]
+      : []),
+    ...(layout.uiMounted ? ['<link rel="shortcut icon" href="/favicon.ico">'] : []),
+  ];
+  const skip = layout.skipTo
+    ? `<a class="skip-link" href="#${escapeHtml(layout.skipTo.id)}">${escapeHtml(layout.skipTo.label)}</a>\n`
+    : "";
+  const styles = (layout.styles ?? TOKENS_CSS + PAGE_CSS) + (layout.extraStyles ?? "");
+  return `<!doctype html>
+<html lang="en"${schemeAttribute(brand.theme)}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${themeColorMeta(branding, brand.theme)}
+<meta name="description" content="${escapeHtml(brand.description)}">
+${icons.join("\n")}
+<title>${escapeHtml(layout.title)}</title>
+${layout.head ?? ""}
+<style>${styles}${themeCss(brand.theme)}</style>
+</head>
+<body>
+${skip}<header class="masthead shell">
+  <div class="masthead-inner">
+    <div class="mast-nav">
+      ${owner}${product ? `\n      ${product}` : ""}
+    </div>${layout.mastheadEnd ? `\n    ${layout.mastheadEnd}` : ""}
+  </div>
+</header>
+${layout.body}${layout.tail ? `\n${layout.tail}` : ""}
+</body>
+</html>`;
+}
+
+/**
+ * Status marks for one-message pages. Decorative: the label and heading beside
+ * each carry the meaning, so the shape repeats it and color is never alone.
+ */
+export const STATUS_ICONS = {
+  ok: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10.5l3.2 3.2L15 6.8"/></svg>',
+  problem: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 5.5v5.5"/><path d="M10 14.6v.1"/></svg>',
+  declined: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 10h8"/></svg>',
+  missing: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="4.5"/><path d="M12.4 12.4L16 16"/></svg>',
+} as const;
+
+/**
+ * A request a person's browser made for a page, as opposed to a client asking
+ * for data: navigations send `text/html` in `Accept`, `fetch()` and MCP
+ * clients do not.
+ */
+function wantsHtml(request: Request): boolean {
+  return /\btext\/html\b/i.test(request.headers.get("Accept") ?? "");
+}
+
+/**
+ * The 404 a browser gets for a path nothing serves, and everyone else's plain
+ * `Not Found`. The body is built from deployment configuration alone and names
+ * no path, so every unserved path — on the main host or an artifact host —
+ * answers with the same bytes for the same `Accept`: a 404 must not tell one
+ * route from another. The home link appears only when the operator UI is
+ * mounted to land on, and points at the public origin so an artifact host's
+ * 404 does not link to another 404.
+ */
+export function notFoundResponse(
+  request: Request,
+  opts: {
+    branding?: ConnectaBranding | undefined;
+    ui?: object | undefined;
+    publicUrl?: string | undefined;
+  },
+): Response {
+  if (!wantsHtml(request)) {
+    return new Response("Not Found", { status: 404, headers: { Vary: "Accept" } });
+  }
+  const brand = resolveBranding(opts.branding);
+  const uiMounted = Boolean(opts.ui);
+  const homeHref = opts.publicUrl ? new URL("/", opts.publicUrl).toString() : "/";
+  const home = uiMounted
+    ? `<div class="status-actions"><a class="btn" href="${escapeHtml(homeHref)}">Go to ${escapeHtml(brand.productName)}</a></div>`
+    : "";
+  const body = `<main class="page shell">
+  <section class="status-page" data-not-found>
+    <div class="status-head">
+      <span class="status-mark" aria-hidden="true">${STATUS_ICONS.missing}</span>
+      <p class="status-label">404</p>
+    </div>
+    <h1>Page not found</h1>
+    <p class="status-copy">Nothing is served at this address. Check the link, or ask whoever runs ${escapeHtml(brand.productName)} for the right one.</p>
+    ${home}
+  </section>
+</main>`;
+  return new Response(
+    renderPage(opts.branding, {
+      title: `Page not found — ${brand.pageTitle}`,
+      uiMounted,
+      body,
+    }),
+    {
+      status: 404,
+      headers: { "Content-Type": "text/html; charset=utf-8", Vary: "Accept" },
+    },
+  );
+}
+
 
 /**
  * Whether the operator meant to supply a value here — the question every
