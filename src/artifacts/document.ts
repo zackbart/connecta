@@ -6,6 +6,7 @@
 // tokenizer, never by a regex — so injecting it can never knock a page into
 // quirks mode, and it runs before any script the author wrote.
 
+import type { ResolvedTheme } from "../branding.js";
 import { scanHtml } from "./html-scan.js";
 import { scriptSafeJson } from "./json.js";
 import { markdownPage, MarkdownNestingError } from "./markdown.js";
@@ -58,22 +59,27 @@ const DEFINE_GLOBAL =
 /**
  * The complete document a viewer or render check loads. `data` maps document
  * names to their stored, script-safe JSON text, which is spliced in as-is.
+ *
+ * `theme` reaches a Markdown page only, whose styling is connecta's own. An
+ * HTML page is the author's, down to its colors, and is never restyled; the
+ * frame around it is what follows the deployment's scheme.
  */
 export function buildFrameDocument(input: {
   kind: ArtifactKind;
   source: string;
   global: ArtifactGlobal;
   data: Readonly<Record<string, string>>;
+  theme?: ResolvedTheme;
 }): string {
   let page = input.source;
   if (input.kind === "markdown") {
     try {
-      page = markdownPage(input.source, input.global.title);
+      page = markdownPage(input.source, input.global.title, input.theme);
     } catch (error) {
       if (!(error instanceof MarkdownNestingError)) throw error;
       // Old or externally populated stores may hold a page that today's
       // validator would reject. Render fixed text instead of throwing here.
-      page = markdownPage("This page has too many nested block quotes or lists to display.", input.global.title);
+      page = markdownPage("This page has too many nested block quotes or lists to display.", input.global.title, input.theme);
     }
   }
   const meta = scriptSafeJson(input.global);

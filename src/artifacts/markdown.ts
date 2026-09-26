@@ -14,6 +14,14 @@
 // nesting stops at a fixed depth. A megabyte of `[[[[` or `**` renders in
 // linear time, because this runs on every page view.
 
+import {
+  resolveTheme,
+  schemeAttribute,
+  themeCss,
+  type ResolvedTheme,
+} from "../branding.js";
+import { TOKENS_CSS } from "../page-styles.js";
+
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (c) =>
     c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
@@ -443,24 +451,53 @@ export function renderMarkdown(source: string): string {
   return blocks(lines);
 }
 
+/**
+ * Every color, font, and radius comes from the shared tokens, so a Markdown
+ * page reads as part of the viewer around it: the deployment's accent and
+ * fonts, and the palette of the scheme the page was given rather than whatever
+ * the OS prefers. The background is the frame's `--surface`, so the page sits
+ * flush in its card instead of painting a second one.
+ */
 const MARKDOWN_STYLE =
-  ":root{color-scheme:light dark}body{margin:0;font:16px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif;" +
-  "color:#1f2328;background:#fff}main{max-width:820px;margin:0 auto;padding:40px 24px}" +
+  "body{margin:0;font:16px/1.6 var(--sans);color:var(--text);background:var(--surface)}" +
+  "main{max-width:820px;margin:0 auto;padding:32px 24px}main>:first-child{margin-top:0}" +
   "h1,h2,h3,h4{line-height:1.25;margin:1.6em 0 .6em}h1{font-size:2em}h2{font-size:1.5em}" +
-  "a{color:#0969da}code{font:0.9em ui-monospace,SFMono-Regular,Menlo,monospace;background:#f3f4f6;padding:.1em .3em;border-radius:4px}" +
-  "pre{overflow:auto;padding:16px;background:#f3f4f6;border-radius:8px}pre code{background:none;padding:0}" +
-  "blockquote{margin:0;padding:0 1em;color:#59636e;border-left:4px solid #d1d9e0}" +
-  "table{border-collapse:collapse;display:block;overflow:auto}th,td{padding:6px 12px;border:1px solid #d1d9e0}" +
-  "img{max-width:100%}hr{border:0;border-top:1px solid #d1d9e0}" +
-  "@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}a{color:#4493f8}" +
-  "code,pre{background:#161b22}blockquote{color:#9198a1;border-color:#3d444d}th,td,hr{border-color:#3d444d}}";
+  "a{color:var(--link)}code{font:.9em var(--mono);background:var(--surface-2);padding:.1em .3em;border-radius:4px}" +
+  "pre{overflow:auto;padding:16px;background:var(--surface-2);border-radius:calc(var(--radius) - 2px)}pre code{background:none;padding:0}" +
+  "blockquote{margin:0;padding:0 1em;color:var(--muted);border-left:4px solid var(--border-strong)}" +
+  "table{border-collapse:collapse;display:block;overflow:auto}th,td{padding:6px 12px;border:1px solid var(--border-strong)}" +
+  "th{background:var(--surface-2)}img{max-width:100%}hr{border:0;border-top:1px solid var(--border)}";
 
-/** A complete page for a Markdown artifact: the rendered body in `<main id="artifact-root">`. */
-export function markdownPage(source: string, title: string): string {
+const collapse = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * The source without a leading `# Heading` that only repeats the title. The
+ * viewer shows the title as the page's heading directly above the frame, so a
+ * page opening with the same words would say them twice. Any other opening
+ * heading is the author's and stays.
+ */
+function withoutRepeatedTitle(source: string, title: string): string {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  const first = lines.findIndex((line) => line.trim() !== "");
+  const heading = first < 0 ? undefined : HEADING.exec(lines[first] ?? "");
+  if (heading?.[1] !== "#" || !collapse(title) || collapse(heading[2] ?? "") !== collapse(title)) {
+    return source;
+  }
+  return lines.slice(first + 1).join("\n");
+}
+
+/**
+ * A complete page for a Markdown artifact: the rendered body in
+ * `<main id="artifact-root">`. `theme` is the deployment's resolved theme; the
+ * viewer passes it so a pinned scheme and the operator's tokens reach the
+ * frame. Without one the page follows the OS scheme with default tokens.
+ */
+export function markdownPage(source: string, title: string, theme?: ResolvedTheme): string {
+  const resolved = theme ?? resolveTheme();
   return (
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<!doctype html><html lang="en"${schemeAttribute(resolved)}><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<title>${escapeHtml(title)}</title><style>${MARKDOWN_STYLE}</style></head>` +
-    `<body><main id="artifact-root">\n${renderMarkdown(source)}\n</main></body></html>`
+    `<title>${escapeHtml(title)}</title><style>${TOKENS_CSS}${themeCss(resolved)}${MARKDOWN_STYLE}</style></head>` +
+    `<body><main id="artifact-root">\n${renderMarkdown(withoutRepeatedTitle(source, title))}\n</main></body></html>`
   );
 }

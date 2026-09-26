@@ -287,14 +287,24 @@ answers only `{ ok }`), log its text, and the page picks a sentence by outcome
 without ever rendering what the server sent. Credential handoff URLs exist only while the UI is
 mounted; OAuth callbacks never need it.
 
-Its appearance is one token layer. `src/operator-ui/browser.css` resolves every
-color, radius, and font through a custom property and mixes the rest from those
-with `color-mix`, so `branding.theme` only has to append a `:root` block after
-that stylesheet. The five tokens it accepts are gated in `src/branding.ts`, each
-by a narrow syntactic check: deployment config reaches a `<style>` element here,
-and an unvalidated value would be CSS injection. The dark palette is the same
-tokens under `prefers-color-scheme`; `colorScheme` pins one with a `data-scheme`
-attribute on the page.
+Its appearance is one token layer, and it is not the UI's alone: every page
+connecta shows a person — the operator shell, the OAuth callback, a browser's
+404, the artifact frame and Markdown pages — reads it. `src/operator-ui/tokens.css`
+resolves every color, radius, and font through a custom property and mixes the
+rest from those with `color-mix`; `page.css` holds the base typography and the
+primitives (shell, masthead, buttons, badges, messages, the one-message status
+page). The UI's `browser.css` imports both, and the build writes the same CSS,
+minified, into `src/page-styles.ts`, a module of two strings that core imports
+without the UI bundle, so an OAuth callback still renders with the UI omitted.
+`renderPage` in `src/branding.ts` is the one layout: head, favicon (the default
+is linked only when the UI serves it), `data-scheme`, the tokens with the theme
+after them, and the masthead. So `branding.theme` only has to append a `:root`
+block after the stylesheet. The five tokens it accepts are gated in
+`src/branding.ts`, each by a narrow syntactic check: deployment config reaches a
+`<style>` element here, and an unvalidated value would be CSS injection. The
+dark palette is the same tokens under `prefers-color-scheme`; `colorScheme` pins
+one with a `data-scheme` attribute on the page, and the artifact viewer passes
+the same attribute into a Markdown page, never into authored HTML.
 
 The artifacts module — `artifacts()` from `/artifacts`, implemented in
 `src/artifacts/` — is the one module that contributes a connector. Core

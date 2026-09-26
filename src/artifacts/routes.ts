@@ -19,6 +19,8 @@ import {
   validateAuthPermissions,
   type RouteContext,
 } from "../routes/shared.js";
+import { resolveBranding, schemeAttribute, themeCss, type ResolvedTheme } from "../branding.js";
+import { TOKENS_CSS } from "../page-styles.js";
 import { buildFrameDocument, frameCsp } from "./document.js";
 import { scriptSafeJson } from "./json.js";
 import { freshnessOf } from "./refresh.js";
@@ -33,19 +35,39 @@ const PIN = /^([A-Za-z_][A-Za-z0-9_]{0,63}):(\d{1,9})$/;
 
 const notFound = () => privateJson({ error: "not found" }, { status: 404 });
 
-/** The frame's bootstrap: wait for exactly one document from the parent, then become it. */
-function frameBootstrap(expectedOrigin: string): string {
+/** How long the frame waits for its document before saying it did not come. */
+const FRAME_STALL_MS = 15_000;
+
+/**
+ * The frame's bootstrap: wait for exactly one document from the parent, then
+ * become it.
+ *
+ * Until the document arrives the frame shows one quiet line on the viewer's
+ * own surface, in the deployment's scheme and tokens, instead of a blank white
+ * box; if the handshake never completes, the line says so. None of it is page
+ * data — the scheme and tokens are deployment configuration — and all of it is
+ * gone the moment `document.open` replaces this document with the page.
+ */
+function frameBootstrap(expectedOrigin: string, theme: ResolvedTheme): string {
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"></head><body>
+<html lang="en"${schemeAttribute(theme)}><head><meta charset="utf-8"><meta name="referrer" content="no-referrer">
+<style>${TOKENS_CSS}${themeCss(theme)}html{background:var(--surface)}body{color:var(--muted);font:.875rem/1.5 var(--sans);margin:0;padding:1.25rem 1.5rem}</style>
+</head><body>
+<p id="frame-status" role="status">Loading page…</p>
 <script>
 (() => {
   const expected = ${scriptSafeJson(expectedOrigin)};
   if (window.parent === window) return;
+  const status = document.getElementById("frame-status");
+  const stalled = setTimeout(() => {
+    status.textContent = "This page did not load. Reload to try again.";
+  }, ${FRAME_STALL_MS});
   const receive = (event) => {
     if (event.source !== window.parent || event.origin !== expected) return;
     const message = event.data;
     if (!message || message.type !== "document" || typeof message.html !== "string") return;
     window.removeEventListener("message", receive);
+    clearTimeout(stalled);
     document.open();
     document.write(message.html);
     document.close();
@@ -168,6 +190,7 @@ export function artifactRoutes(options: {
       document: buildFrameDocument({
         kind: page.head.kind,
         source: page.source,
+        theme: resolveBranding(context.opts.branding).theme,
         global: {
           id,
           title: page.head.title,
@@ -189,7 +212,11 @@ export function artifactRoutes(options: {
     const read = request.method === "GET" || request.method === "HEAD";
     if (path === "/artifacts/_frame") {
       if (!read) return privateJson({ error: "method not allowed" }, { status: 405 });
-      return new Response(request.method === "HEAD" ? null : frameBootstrap(new URL(context.baseUrl).origin), {
+      const bootstrap = frameBootstrap(
+        new URL(context.baseUrl).origin,
+        resolveBranding(context.opts.branding).theme,
+      );
+      return new Response(request.method === "HEAD" ? null : bootstrap, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Security-Policy": csp,

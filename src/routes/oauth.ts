@@ -1,10 +1,7 @@
 import { Effect } from "effect";
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
-import type {
-  ConnectorContext,
-  ConnectaBranding,
-} from "../types.js";
-import { resolveBranding } from "../branding.js";
+import type { ConnectorContext } from "../types.js";
+import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
 import {
   oauthCallbackOutcome,
   providerErrorReason,
@@ -19,97 +16,63 @@ import {
   type RouteContext,
 } from "./shared.js";
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
+const TONE_MARKS = {
+  ok: { className: " ok", icon: STATUS_ICONS.ok, label: "Connected" },
+  declined: { className: "", icon: STATUS_ICONS.declined, label: "Not connected" },
+  problem: { className: " danger", icon: STATUS_ICONS.problem, label: "Not connected" },
+} as const;
 
 /**
- * The callback's one page. It renders a reason from a closed set and that
- * reason's fixed copy, so nothing the request carried — the provider's `error`
- * parameter, an exchange failure's message — can reach the body. Escaping
- * stays anyway: branding and the configured connector id are still strings.
+ * The callback's one page, in the shared layout. It renders a reason from a
+ * closed set and that reason's fixed copy, so nothing the request carried —
+ * the provider's `error` parameter, an exchange failure's message — can reach
+ * the body. The connector's title appears only when `connector` is passed,
+ * which the route does only after the state check, and `oauthCallbackOutcome`
+ * gates it by reason again; every refusal before that point is the same bytes
+ * for every connector id and path. Escaping stays anyway: branding and a
+ * configured title are still strings.
+ *
+ * The fix prompt is for whoever runs the deployment, and the person reading
+ * this page is often a teammate finishing personal auth, so it sits folded
+ * under a quiet disclosure rather than in the message.
  */
 function html(
   reason: OAuthCallbackReason,
-  branding?: ConnectaBranding,
-  hasUi = false,
-  connectorId?: string,
+  opts: Pick<RouteContext["opts"], "branding" | "ui">,
+  connector?: { id: string; title?: string | undefined },
 ): Response {
-  const outcome = oauthCallbackOutcome(reason, connectorId);
-  const brand = resolveBranding(branding);
-  const title = brand.pageTitle;
-  const owner = brand.ownerName
-    ? brand.ownerUrl
-      ? `<a class="brand" href="${escapeHtml(brand.ownerUrl)}">${escapeHtml(brand.ownerName)}</a>`
-      : `<span class="brand">${escapeHtml(brand.ownerName)}</span>`
-    : brand.productUrl
-      ? `<a class="brand" href="${escapeHtml(brand.productUrl)}">${escapeHtml(brand.productName)}</a>`
-      : `<span class="brand">${escapeHtml(brand.productName)}</span>`;
-  const product = brand.ownerName
-    ? brand.productUrl
-      ? `<a class="product" href="${escapeHtml(brand.productUrl)}">${escapeHtml(brand.productName)}</a>`
-      : `<span class="product">${escapeHtml(brand.productName)}</span>`
+  const brand = resolveBranding(opts.branding);
+  const outcome = oauthCallbackOutcome(reason, connector, brand.productName);
+  const mark = TONE_MARKS[outcome.tone];
+  const uiMounted = Boolean(opts.ui);
+  const home = uiMounted
+    ? `<div class="status-actions"><a class="btn${outcome.tone === "ok" ? "" : " primary"}" href="/">Return to ${escapeHtml(brand.productName)}</a></div>`
     : "";
-  return new Response(
-    `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="${escapeHtml(brand.themeColor)}">
-<link rel="icon" href="${escapeHtml(brand.faviconHref)}" type="image/svg+xml">
-<link rel="shortcut icon" href="/favicon.ico">
-<title>${escapeHtml(title)}</title>
-<style>
-  * { border-radius: 0; box-sizing: border-box; }
-  html { color: #000; background: #fff; font: 16px/1.5 "Helvetica Neue",
-    Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
-  body { margin: 0; min-height: 100vh; }
-  ::selection { color: #fff; background: #000; }
-  .shell { margin: 0 auto; max-width: 70rem; padding: 1rem; }
-  .grid { display: grid; gap: 1rem 1.5rem;
-    grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .brand { font-weight: 500; grid-column: 1; text-decoration: none; }
-  .product { grid-column: 2 / -1; }
-  main { margin-top: 5rem; }
-  h1, p { font: inherit; margin: 0; }
-  h1 { grid-column: 1; }
-  .copy { grid-column: 2 / -1; max-width: 34em; }
-  .copy > * + * { margin-top: 1.5rem; }
-  a { color: inherit; text-decoration: underline; text-decoration-thickness: 1.5px;
-    text-underline-offset: .22em; }
-  a:hover { text-decoration-color: transparent; }
-  a:focus-visible, summary:focus-visible { outline: 1px solid #000; outline-offset: 2px; }
-  summary { cursor: pointer; }
-  pre { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; margin: .75rem 0 0;
-    padding: .75rem; white-space: pre-wrap; border: 1px solid #000; user-select: all; }
-  @media (max-width: 36.99rem) {
-    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .product { grid-column: 2; }
-    main { margin-top: 3rem; }
-    h1, .copy { grid-column: 1 / -1; }
-  }
-</style>
-</head>
-<body>
-  <header class="shell grid">
-    ${owner}
-    ${product}
-  </header>
-  <main class="shell grid" data-oauth-callback="${outcome.reason}">
-    <h1>Connection status</h1>
-    <div class="copy">
-      <p>${escapeHtml(outcome.message)}</p>
-      ${outcome.fixPrompt ? `<details><summary>Fix prompt for a coding agent</summary><pre>${escapeHtml(outcome.fixPrompt)}</pre></details>` : ""}
-      ${hasUi ? `<p><a href="/">Return to ${escapeHtml(brand.productName)}</a></p>` : ""}
+  const details = outcome.fixPrompt
+    ? `<details class="status-details">
+      <summary>Details for the operator</summary>
+      <p>If this keeps happening, send this to whoever runs ${escapeHtml(brand.productName)}. It is written for a coding agent working on the deployment and carries nothing from the provider's response.</p>
+      <pre>${escapeHtml(outcome.fixPrompt)}</pre>
+    </details>`
+    : "";
+  const body = `<main class="page shell" data-oauth-callback="${outcome.reason}">
+  <section class="status-page">
+    <div class="status-head">
+      <span class="status-mark${mark.className}" aria-hidden="true">${mark.icon}</span>
+      <p class="status-label${mark.className}">${mark.label}</p>
     </div>
-  </main>
-</body>
-</html>`,
+    <h1>${escapeHtml(outcome.heading)}</h1>
+    <p class="status-copy">${escapeHtml(outcome.message)}</p>
+    ${home}
+    ${details}
+  </section>
+</main>`;
+  return new Response(
+    renderPage(opts.branding, {
+      title: `${outcome.heading} — ${brand.pageTitle}`,
+      uiMounted,
+      body,
+    }),
     { status: outcome.status, headers: { "Content-Type": "text/html; charset=utf-8" } },
   );
 }
@@ -173,9 +136,9 @@ async function finishOAuthCallback(
 ): Promise<Response> {
   const { path, url, baseUrl, opts } = context;
   const error = url.searchParams.get("error");
-  if (error) return html(providerErrorReason(error), opts.branding, Boolean(opts.ui));
+  if (error) return html(providerErrorReason(error), opts);
   const code = url.searchParams.get("code");
-  if (!code) return html("invalid_callback", opts.branding, Boolean(opts.ui));
+  if (!code) return html("invalid_callback", opts);
   const id = path.slice("/oauth/callback/".length);
   const state = url.searchParams.get("state");
   const callbackTarget = await opts.registry.oauthCallbackView(id, state);
@@ -189,7 +152,7 @@ async function finishOAuthCallback(
   const connectorContext = callbackRegistry
     ? callbackRegistry.contextFor(id, baseUrl)
     : opts.registry.contextFor(id, baseUrl);
-  const refused = () => html("invalid_callback", opts.branding, Boolean(opts.ui));
+  const refused = () => html("invalid_callback", opts);
   if (!connector || !connector.finishAuth) {
     await equalizeRefusalCost(connectorContext);
     return refused();
@@ -253,13 +216,13 @@ async function finishOAuthCallback(
           `${loggableValue(id)} with 500: its principal handoff could not be ` +
           `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
       );
-      return html("handoff_failed", opts.branding, Boolean(opts.ui), id);
+      return html("handoff_failed", opts, connector);
     }
   }
   try {
     await connector.finishAuth(code, connectorContext, url.searchParams);
     await callbackRegistry!.invalidateStored(id);
-    return html("connected", opts.branding, Boolean(opts.ui), id);
+    return html("connected", opts, connector);
   } catch (err) {
     // The page names the reason and nothing else; what the exchange threw can
     // quote a token endpoint's body, so it goes only to the operator log.
@@ -267,6 +230,6 @@ async function finishOAuthCallback(
       `[connecta] OAuth callback for connector ${loggableValue(id)} failed ` +
         `with 500: the authorization code exchange threw ${loggableValue(msg(err))}.`,
     );
-    return html("exchange_failed", opts.branding, Boolean(opts.ui), id);
+    return html("exchange_failed", opts, connector);
   }
 }
