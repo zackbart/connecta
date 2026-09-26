@@ -69,10 +69,14 @@ an earlier result, or several operations. A program keeps discovery, calls, and
 reduction together when the schemas and result shapes suffice, and gives each
 distinct operation its own short `connecta.search` query. That is cheaper than it
 looks: discovery inside the program returns no candidate schema to the model and
-costs no round trip. One exception — an unfamiliar provider result may come back
-as a small sample for inspection before continuing in another call, which avoids
+costs no round trip. One exception — an unfamiliar read result may come back as
+a small sample for inspection before continuing in another call, which avoids
 repeated guesses at text formats and collection roots without restoring a
-mandatory discovery-only round trip.
+mandatory discovery-only round trip. A one-time write can return the only copy
+of its result. Inspect and reduce the full value before a program returns, or
+use a direct `call_destructive_tool` result and page it with `get_result` after
+the write runs once. A program return has no page handle; sampling or slicing
+a write's output there can discard the answer.
 
 Writes take the same route. A program that reaches a tool not explicitly
 annotated read-only stops before sending it — unless the deployment's config
@@ -81,8 +85,11 @@ token; `resume_execution` repeating it is the approval, and the program
 replays from a journal to send it and carry on — to its answer, or to its next
 write. So "close the stale issues and post a summary" is one program and a few
 approvals, not one program and thirty-one top-level calls, and the program's
-reasoning survives between them. `approval: "tool"` covers the rest of the
-run's calls to that tool, so thirty closes cost one prompt. One known write
+reasoning survives between them. Keep the entire authorized batch in that
+program, including its final post. The default `approval: "call"` covers only
+the pending write. Choosing `approval: "tool"` when the batch repeats an
+address covers later calls to that tool in this run, so thirty closes cost one
+prompt; the summary post still needs its own approval. One known write
 still goes straight to `call_destructive_tool`, and top-level discovery stays
 for catalog inspection. On a deployment without resumable writes (storage
 without `compareAndSet`), a program cannot write at all: the call fails

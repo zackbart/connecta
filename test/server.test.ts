@@ -146,7 +146,7 @@ describe("server /mcp end-to-end", () => {
       "Guidance is on demand",
     );
     expect(body.result.instructions).toContain(
-      "Inspect unfamiliar result shapes with a small sample",
+      "Sample unfamiliar reads",
     );
     expect(body.result.instructions).toContain(
       "discover, call, and return the answer",
@@ -424,7 +424,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("## Discover and select");
     expect(skill).toContain("## Errors and repair");
     expect(skill).toContain(
-      "Only tools explicitly annotated `readOnlyHint: true` are reachable unasked",
+      "Only explicitly `readOnlyHint: true` or config-exempt calls run unasked",
     );
     expect(skill).toContain("Dynamic Workers must use only `{ loader }`");
     expect(skill).toContain("node:fs/http/https are absent");
@@ -1770,8 +1770,10 @@ describe("execute_code registration (code mode)", () => {
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
     expect(executeTool.description).toContain(
-      "return a small sample and continue in another call",
+      "Sample unfamiliar reads",
     );
+    expect(executeTool.description).toContain("never repeat it to recover output");
+    expect(executeTool.description).toContain("Keep an authorized batch in one program");
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).toContain(
       "Unknown-address and wider work, writes included, uses one execute_code program",
