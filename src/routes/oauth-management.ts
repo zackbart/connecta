@@ -87,15 +87,19 @@ function oauthManagementRequest(
         catch: (error) => error,
       }),
     );
-    // The old grant and its cached catalog are invalid after either operation,
-    // including a partially failed physical cleanup whose epoch fence succeeded.
-    // A reused pending URL is the one exception: that start changed nothing.
-    // Only a continued start can reuse one; a restart always reset.
+    // A disconnect or a restart invalidates the old grant and its cached
+    // catalog, even when a partially failed physical cleanup left its epoch
+    // fence standing. So does a continued start that had to begin a new flow:
+    // the grant it found was missing or refused. A continued start that
+    // reused a pending URL or found the connection healthy changed nothing,
+    // so the catalog stays. (A continue does reset a disconnected connector,
+    // but the disconnect already invalidated that catalog.)
+    const started = Result.isSuccess(operation) ? operation.success : undefined;
     const reused =
-      mode === "continue" &&
-      Result.isSuccess(operation) &&
-      operation.success?.authorizationReused === true;
-    const invalidated = reused
+      mode === "continue" && started?.authorizationReused === true;
+    const unchanged =
+      mode === "continue" && (reused || started?.state === "ok");
+    const invalidated = unchanged
       ? Result.succeed(undefined)
       : yield* Effect.result(
           Effect.tryPromise({

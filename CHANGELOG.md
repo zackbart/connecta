@@ -13,9 +13,12 @@ All notable changes to this package are documented here.
   authorization URL when it was written in the last ten minutes. Otherwise it
   starts a flow in the current epoch with the stored registration, so there
   is no dynamic client registration. A disconnected connector still resets
-  first. A response with a URL now carries `reused`; a reused start leaves the
-  cached catalog alone. Any other `mode` is a 400. `ConnectorStatus` gains the
-  optional `authorizationReused`, set by `remoteMcp()`'s `startAuth`.
+  first. A response with a URL now carries `reused`. A continue that reused a
+  URL or found the connection healthy leaves the cached catalog alone. Any
+  other `mode` is a 400. After a `publicUrl` change, continue keeps a client
+  registered for the old callback, which the authorization server refuses;
+  restart recovers. `ConnectorStatus` gains the optional
+  `authorizationReused`, set by `remoteMcp()`'s `startAuth`.
 
 ### Changed
 
@@ -25,25 +28,29 @@ All notable changes to this package are documented here.
   write time, which older readers ignore. A URL written before this release,
   or under a pre-epoch generation, starts a fresh flow instead.
 - **OAuth cleanup deletes run concurrently.** A restart's epoch cleanup,
-  `clearPending`, and `invalidateCredentials("all")` keep up to eight deletes
-  in flight. Every delete is still attempted, and a falsy rejection now counts
-  as a failure. A retired epoch's manifest is still removed only after all of
-  its values. Catalog invalidation deletes the root and its chunks together
-  under the registry's chunk I/O bound, so a failed root delete no longer
-  skips the chunks.
+  `clearPending`, and `invalidateCredentials("all")` keep up to six deletes
+  in flight, the Workers limit on simultaneous connections. Every delete is
+  still attempted, and a falsy rejection now counts as a failure. A retired
+  epoch's manifest is still removed only after all of its values. Catalog
+  invalidation deletes the root and its chunks together under the registry's
+  chunk I/O bound, so a failed root delete no longer skips the chunks.
 
 ### Fixed
 
 - **A restart's cleanup no longer grows with every earlier restart.** Each
   OAuth restart re-deleted every epoch the connector had ever retired, one key
-  at a time, and restart 1,001 failed forever with a full cleanup backlog. The
-  lineage now records when each epoch retired, in a sibling record that older
-  releases ignore, so rolling back still works. An epoch retired more than
-  24 hours ago is swept before the next lineage is published, up to 16 per
-  restart, and dropped only when all of its keys are gone. The accepted
-  assumption is that no request holds a retired epoch for a day. The cap now
-  refuses only more than 1,000 restarts within 24 hours, and a lineage an
-  earlier release had already filled drains once its grace passes. See
+  at a time, and restart 1,001 failed forever with a full cleanup backlog. A
+  restart now deletes only the epoch it retires, plus a sweep of at most 16
+  epochs retired more than 24 hours ago, dropping each from the lineage only
+  when all of its keys are gone. The reset itself is 14 storage operations,
+  or 24 with one epoch to sweep, whatever came before. Residue a late
+  writer leaves in a younger epoch stays unreadable behind the fence until the
+  sweep reaches it. A late writer whose cleanup fails in an epoch already
+  listed now restarts that epoch's grace. The accepted assumption is that no
+  request holds a retired epoch for a day. The lineage records retirement
+  times in a sibling record older releases ignore, and its cap rises to 5,000
+  epochs. A connector stuck at the old 1,000 wall restarts the day it
+  upgrades. Rolling back is clean unless a lineage has grown past 1,000. See
   [auth](./documentation/auth.md#starting-restarting-and-retiring-an-oauth-epoch).
 
 ## 0.26.0 — 2026-09-25

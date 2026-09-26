@@ -268,48 +268,64 @@ The operator's `POST /ui/oauth/<id>` takes a `mode` query parameter:
 
 Any other `mode`, or more than one, is a 400 before anything starts; the
 management permission, visibility, and principal checks are the same for
-both modes. A 200 answers `{ state, authorizationUrl?, reused? }`, with
-`reused` present beside every URL: `true` when an earlier start's URL came
-back unchanged. A reused start changed nothing, so it is also the one start
-that leaves the cached catalog alone. The ten minutes are
-`PENDING_AUTHORIZATION_MAX_AGE_MS`. Connecta never expires its own half of a
-URL, but authorization servers expire theirs, and a fresh start that keeps
-the registration costs one authorization request. A URL stored without a
-write time — by an earlier release, or by a connector never reset since
-epochs arrived — is stale by definition. `authorize_connector` without
-`force` follows the same rule.
+both modes, and a personal connector continues only the caller's own flow.
+A 200 answers `{ state, authorizationUrl?, reused? }`, with `reused` present
+beside every URL: `true` when an earlier start's URL came back unchanged. A
+continue that reused a URL or found the connection healthy changed nothing,
+so it leaves the cached catalog alone; every other start invalidates it. The
+ten minutes are `PENDING_AUTHORIZATION_MAX_AGE_MS`. Connecta never expires
+its own half of a URL, but authorization servers expire theirs, and a fresh
+start that keeps the registration costs one authorization request. A URL
+stored without a write time — by an earlier release, or by a connector never
+reset since epochs arrived — is stale by definition. `authorize_connector`
+without `force` follows the same rule.
 
-A restart deletes the keys of every epoch it retires, and it cannot know
-which ones a late write reached since, so it publishes a **cleanup lineage**
-under the new epoch before activating it: the retired epochs, as the same
-plain list of names every release reads, and beside it a record of when each
-retired. The next restart inherits that list and deletes those namespaces
-again. A published lineage is never rewritten. A stale writer whose own
-cleanup fails appends to the live lineage, and a restart that rewrote the
-list it had read could drop that append. An epoch leaves the lineage only by
-being left out of its successor's.
+Continue trusts the stored registration, which carries the `redirect_uris`
+it was registered with. After a `publicUrl` change the authorization server
+refuses that client's new callback at consent. Restart registers a client
+for the current URL and recovers.
 
-It leaves after `CLEANUP_GRACE_MS`, 24 hours. **The assumption:** no request
-holds a retired epoch for a day. The writers that can land late are OAuth
-flows, refreshes, and readers whose Workers KV replica still serves the old
-generation for a minute or more; none of them run that long. A restart sweeps
-up to 16 epochs past the grace, oldest first, before it publishes. Only an
-epoch whose six values and own manifest were all deleted is left out.
-Anything that failed is carried and swept again later, and a sweep failure
-never fails the restart. Everything inside the grace is swept after the fence
-moves, as before. The lineage then tracks resets from the last day instead of
-all time, and the 1,000-entry cap only refuses more than 1,000 restarts of one
-connector within 24 hours. An entry with no recorded time, whether an earlier
-release wrote the lineage or a time write failed, reads as retired at the
-moment of the restart that reads it. That can only lengthen a grace. The
-first restart to stamp a lineage may publish one entry over the cap, so a
-connector that hit the old wall drains a day later. An older release reads
-the list and ignores the times, so a rollback still restarts. Deletes run
-eight at a time, and catalog invalidation deletes its chunks the same way
-under the registry's chunk I/O bound. If the assumption fails, a late writer
-still deletes its own write and records the epoch again if that delete fails.
-Only a writer that dies between its write and that check leaves residue no
-restart tracks, and that residue is never readable.
+A restart cannot know which retired epochs a late write reached, so it
+publishes a **cleanup lineage** under the new epoch before activating it:
+the retired epochs, as the same plain list of names every release reads, and
+beside it a record of when each retired. A published lineage is never
+rewritten. A stale writer whose own cleanup fails appends to the live
+lineage, and a restart that rewrote the list it had read could drop that
+append. An epoch leaves the lineage only by being left out of its
+successor's.
+
+A restart does the same storage work however many came before it. After the
+fence it deletes the one epoch it retired: six values, then that epoch's own
+lineage records. Before publishing, it sweeps up to 16 epochs retired more
+than `CLEANUP_GRACE_MS` (24 hours) ago, oldest first, and leaves out only
+those whose values and records were all deleted. A failed sweep is carried
+and tried again later, and never fails the restart. An epoch inside its grace
+is not deleted again. A late write into it is unreadable behind the fence,
+and the late writer deletes it itself. If that delete fails, the writer
+records the epoch again as retired at that moment, appending it or, when it
+is already listed, moving only its time. A restart that swept it re-reads the
+lineage before publishing and keeps it. Whatever remains is swept once the
+grace has passed. Two such writers racing can lose one time update, which
+leaves the earlier time; a time missing altogether reads as retired at the
+moment of the restart that reads it, which only lengthens a grace.
+
+**The assumption:** no request holds a retired epoch for a day. The writers
+that can land late are OAuth flows, refreshes, and readers whose Workers KV
+replica still serves the old generation for a minute or more; none of them
+run that long. If it fails, only a writer that dies between its write and
+its own cleanup leaves residue no restart tracks, and that residue is never
+readable.
+
+The lineage holds at most 5,000 epochs, the ones retired within the last day
+plus any the sweep has not reached. A restart that would exceed that is
+refused before the fence moves, which takes more than 4,000 restarts of one
+connector in a day on top of the 1,000 an earlier release allowed. A
+connector that reached that release's 1,000 wall restarts again the day it
+upgrades, and its old entries drain 16 per restart a day later. An older
+release ignores the times, so a rollback still restarts unless a lineage has
+grown past its own 1,000 cap. Deletes run six at a time, the Workers limit
+on simultaneous connections, and catalog invalidation deletes its chunks
+concurrently under the registry's chunk I/O bound.
 
 ## Refresh failures
 

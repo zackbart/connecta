@@ -9,7 +9,7 @@ import type {
   Transport,
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   KvOAuthProvider,
   OAuthRefreshCoordinator,
@@ -633,7 +633,11 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await backing.get("oauth:generation")).toBe(secondGeneration);
   });
 
-  it("retries failed cleanup of an older modern epoch on the next reset", async () => {
+  it("retries failed cleanup of an older modern epoch once its grace has passed", async () => {
+    const realNow = Date.now();
+    let offset = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow + offset);
+    onTestFinished(() => clock.mockRestore());
     const backing = memoryStorage();
     let failTokenDelete = false;
     let oldTokenKey = "";
@@ -664,7 +668,15 @@ describe("KvOAuthProvider over memoryStorage", () => {
     );
     expect(await backing.get(oldTokenKey)).not.toBeNull();
 
-    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    // A same-day reset deletes only the epoch it retires. The failed one is
+    // carried, and unreadable behind the fence meanwhile.
+    const next = new KvOAuthProvider("svc", storage, REDIRECT);
+    await next.resetAuthorization();
+    expect(await backing.get(oldTokenKey)).not.toBeNull();
+    expect(await next.tokens()).toBeUndefined();
+
+    offset = 24 * 60 * 60 * 1000 + 1;
+    await next.resetAuthorization();
     expect(await backing.get(oldTokenKey)).toBeNull();
   });
 
@@ -730,10 +742,25 @@ describe("KvOAuthProvider over memoryStorage", () => {
     await atRememberRead;
     // A successor copies the immutable lineage while the stale writer is
     // paused after reading it.
-    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    const successor = new KvOAuthProvider("svc", storage, REDIRECT);
+    await successor.resetAuthorization();
     releaseRememberRead();
     await lateWrite;
 
+    // The residue is unreadable, and still in the lineage the successor
+    // published, so the first reset past its grace reclaims it.
+    expect(await backing.get("oauth:tokens")).not.toBeNull();
+    expect(await successor.tokens()).toBeUndefined();
+    const successorManifest = `oauth:cleanup:${encodeURIComponent(await successor.generation())}`;
+    expect(JSON.parse((await backing.get(successorManifest))!)).toContain(
+      "legacy",
+    );
+    const realNow = Date.now();
+    const clock = vi
+      .spyOn(Date, "now")
+      .mockImplementation(() => realNow + 24 * 60 * 60 * 1000 + 1);
+    onTestFinished(() => clock.mockRestore());
+    await successor.resetAuthorization();
     expect(await backing.get("oauth:tokens")).toBeNull();
   });
 
@@ -859,14 +886,12 @@ describe("KvOAuthProvider over memoryStorage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sealed OAuth state: tokens, client registration, and the PKCE verifier are
-// ciphertext at rest when the deployment has a vault that can seal.
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// The cleanup lineage is bounded by a retirement grace, not by reset count.
+// A reset's storage work does not grow with the resets before it: it deletes
+// the epoch it retires and sweeps a bounded number past their grace.
 // ---------------------------------------------------------------------------
 describe("KvOAuthProvider cleanup lineage", () => {
   const DAY = 24 * 60 * 60 * 1000;
+  const MINUTE = 60 * 1000;
   const T0 = Date.UTC(2026, 0, 1);
   const manifestKey = (generation: string) =>
     `oauth:cleanup:${encodeURIComponent(generation)}`;
@@ -928,44 +953,68 @@ describe("KvOAuthProvider cleanup lineage", () => {
     }
   }
 
+  function countingStorage(backing: KVStorage) {
+    const counter = { ops: 0 };
+    const storage: KVStorage = {
+      get: (key) => (counter.ops++, backing.get(key)),
+      set: (key, value, opts) => (counter.ops++, backing.set(key, value, opts)),
+      delete: (key) => (counter.ops++, backing.delete(key)),
+    };
+    return { storage, counter };
+  }
+
+  it("does the same storage work for every reset on one day, however many came before", async () => {
+    useClock();
+    const backing = memoryStorage();
+    const { storage, counter } = countingStorage(backing);
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    const perReset: number[] = [];
+    for (let reset = 0; reset < 150; reset++) {
+      now += MINUTE;
+      counter.ops = 0;
+      await p.resetAuthorization();
+      perReset.push(counter.ops);
+    }
+
+    // The generation, manifest, and times reads (3), the publication (2),
+    // the fence (1), and the retired epoch's six values, manifest, and times
+    // (8) — at reset 150 as at reset 1.
+    expect(perReset).toEqual(Array(150).fill(14));
+    expect(await lineageOf(backing, await p.generation())).toHaveLength(150);
+  });
+
   it("keeps each reset's storage work flat once earlier generations pass the grace", async () => {
     useClock();
     const backing = memoryStorage();
-    let ops = 0;
-    const storage: KVStorage = {
-      get: (key) => (ops++, backing.get(key)),
-      set: (key, value, opts) => (ops++, backing.set(key, value, opts)),
-      delete: (key) => (ops++, backing.delete(key)),
-    };
+    const { storage, counter } = countingStorage(backing);
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
     const perReset: number[] = [];
     for (let reset = 0; reset < 40; reset++) {
       now += DAY + 1;
-      ops = 0;
+      counter.ops = 0;
       await p.resetAuthorization();
-      perReset.push(ops);
+      perReset.push(counter.ops);
     }
 
-    // The generation and lineage reads (3), one sweep of the past-grace
-    // generation (six values, its manifest and times: 8), the lineage
-    // re-read (2), the publication (2), the fence (1), and the sweep of the
-    // generation just retired (8): the same at reset 40 as at reset 3.
-    expect(perReset.slice(2)).toEqual(Array(38).fill(24));
+    // Past the first, each reset also sweeps the one past-grace epoch (8)
+    // and re-reads the lineage (2) before publishing.
+    expect(perReset[0]).toBe(14);
+    expect(perReset.slice(1)).toEqual(Array(39).fill(24));
     expect(await lineageOf(backing, await p.generation())).toHaveLength(1);
   });
 
-  it("resets past a thousand once the old lineage is past the grace", async () => {
+  it("refuses a full lineage inside the grace and drains it once the grace passes", async () => {
     useClock();
     const storage = memoryStorage();
     await seedLineage(
       storage,
       "v2:current",
-      Array.from({ length: 1_000 }, (_, i) => ({
+      Array.from({ length: 5_000 }, (_, i) => ({
         generation: `v2:old-${i}`,
         retiredAt: T0,
       })),
     );
-    for (const index of [0, 15, 16, 999]) {
+    for (const index of [0, 15, 16, 4_999]) {
       await storage.set(
         oauthValueStorageKey("oauth:tokens", `v2:old-${index}`),
         "residue",
@@ -973,7 +1022,7 @@ describe("KvOAuthProvider cleanup lineage", () => {
     }
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
 
-    now = T0 + 60 * 60 * 1000;
+    now = T0 + 60 * MINUTE;
     await expect(p.resetAuthorization()).rejects.toThrow(/backlog .* is full/);
     expect(await p.generation()).toBe("v2:current");
 
@@ -981,7 +1030,7 @@ describe("KvOAuthProvider cleanup lineage", () => {
     await p.resetAuthorization();
     const lineage = await lineageOf(storage, await p.generation());
     // The sixteen oldest were swept and left; the rest wait their turn.
-    expect(lineage).toHaveLength(1_000 - 16 + 1);
+    expect(lineage).toHaveLength(5_000 - 16 + 1);
     expect(lineage).toContainEqual({ generation: "v2:current", retiredAt: now });
     expect(lineage.map(generationOf)).not.toContain("v2:old-15");
     expect(lineage.map(generationOf)).toContain("v2:old-16");
@@ -993,7 +1042,7 @@ describe("KvOAuthProvider cleanup lineage", () => {
 
     for (let reset = 0; reset < 5; reset++) await p.resetAuthorization();
     expect(await lineageOf(storage, await p.generation())).toHaveLength(
-      1_000 - 6 * 16 + 6,
+      5_000 - 6 * 16 + 6,
     );
   });
 
@@ -1036,7 +1085,7 @@ describe("KvOAuthProvider cleanup lineage", () => {
     ]);
   });
 
-  it("unblocks a lineage an earlier release filled, once its grace has passed", async () => {
+  it("restarts, on the day it upgrades, a connector an earlier release had filled", async () => {
     useClock();
     const storage = memoryStorage();
     await seedLineage(
@@ -1046,17 +1095,19 @@ describe("KvOAuthProvider cleanup lineage", () => {
     );
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
 
-    // The stamping reset may publish one over the cap…
+    // The earlier release refused this reset and every one after it.
     await p.resetAuthorization();
-    expect(await lineageOf(storage, await p.generation())).toHaveLength(1_001);
-    // …the cap still refuses the next one inside the grace…
-    now = T0 + 60 * 60 * 1000;
-    await expect(p.resetAuthorization()).rejects.toThrow(/backlog .* is full/);
-    // …and the lineage drains once the grace has passed.
+    now += MINUTE;
+    await p.resetAuthorization();
+    now += MINUTE;
+    await p.resetAuthorization();
+    expect(await lineageOf(storage, await p.generation())).toHaveLength(1_003);
+
+    // A day later the stamped backlog starts to drain.
     now = T0 + DAY + 1;
     await p.resetAuthorization();
     expect(await lineageOf(storage, await p.generation())).toHaveLength(
-      1_001 - 16 + 1,
+      1_003 - 16 + 1,
     );
   });
 
@@ -1127,17 +1178,18 @@ describe("KvOAuthProvider cleanup lineage", () => {
       backing,
       "v2:current",
       Array.from({ length: 10 }, (_, i) => ({
-        generation: `v2:recent-${i}`,
-        retiredAt: T0,
+        generation: `v2:expired-${i}`,
+        retiredAt: T0 - DAY - 1,
       })),
     );
 
     await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
 
-    // Eleven generations inside the grace: six values, a manifest, and times.
+    // Ten past-grace sweeps and the retired epoch: six values, a manifest,
+    // and times each.
     expect(deleted).toHaveLength(88);
     expect(new Set(deleted).size).toBe(88);
-    expect(maxInFlight).toBe(8);
+    expect(maxInFlight).toBe(6);
   });
 
   it("fails on a falsy rejection and keeps the manifest of the generation it left behind", async () => {
@@ -1174,6 +1226,7 @@ describe("KvOAuthProvider cleanup lineage", () => {
     expect(await backing.get(clientKey)).toBeNull();
     expect(await backing.get(manifestKey(first))).not.toBeNull();
 
+    now += DAY + 1;
     await p.resetAuthorization();
     expect(await backing.get(tokenKey)).toBeNull();
     expect(await backing.get(manifestKey(first))).toBeNull();
@@ -1228,7 +1281,8 @@ describe("KvOAuthProvider cleanup lineage", () => {
     await backing.set("oauth:generation", current);
 
     now = T0 + DAY + 1;
-    const reset = new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
+    const reset = resetter.resetAuthorization();
     await atSweep;
     // While the reset sweeps, the stale write lands, fails to remove itself,
     // and appends its epoch to the live manifest the reset has already read.
@@ -1241,14 +1295,158 @@ describe("KvOAuthProvider cleanup lineage", () => {
     releaseSweep();
     await reset;
 
-    expect(await backing.get(siblingTokens)).toBeNull();
-    expect(await lineageOf(backing, await first.generation())).toEqual([
+    expect(await lineageOf(backing, await resetter.generation())).toEqual([
       { generation: sibling, retiredAt: now },
       { generation: current, retiredAt: now },
     ]);
+    expect(await resetter.tokens()).toBeUndefined();
+    expect(await backing.get(siblingTokens)).not.toBeNull();
+
+    now += DAY + 1;
+    await resetter.resetAuthorization();
+    expect(await backing.get(siblingTokens)).toBeNull();
+  });
+
+  it("restarts the grace of a listed generation that a late write lands in mid-sweep", async () => {
+    useClock();
+    const backing = memoryStorage();
+    const expired = "v2:expired";
+    const expiredTokens = oauthValueStorageKey("oauth:tokens", expired);
+    const expiredClient = oauthValueStorageKey("oauth:client", expired);
+    const { promise: atLateSet, resolve: lateSetReached } = deferred<void>();
+    const { promise: lateSetGate, resolve: releaseLateSet } = deferred<void>();
+    const { promise: atSweep, resolve: sweepReached } = deferred<void>();
+    const { promise: sweepGate, resolve: releaseSweep } = deferred<void>();
+    let lateWriteLanded = false;
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      async set(key, value, opts) {
+        if (key === expiredTokens) {
+          lateSetReached();
+          await lateSetGate;
+          await backing.set(key, value, opts);
+          lateWriteLanded = true;
+          return;
+        }
+        await backing.set(key, value, opts);
+      },
+      async delete(key) {
+        if (key === expiredClient) {
+          sweepReached();
+          await sweepGate;
+        }
+        if (lateWriteLanded && key === expiredTokens) {
+          throw new Error("late cleanup unavailable");
+        }
+        await backing.delete(key);
+      },
+    };
+    await seedLineage(backing, "v2:current", [
+      { generation: expired, retiredAt: T0 },
+    ]);
+
+    // A writer that captured the expired epoch long ago, and whose write
+    // passed its fence check before that epoch was retired.
+    await backing.set("oauth:generation", expired);
+    const late = new KvOAuthProvider("svc", storage, REDIRECT);
+    late.captureGeneration(expired);
+    const lateWrite = late.saveTokens({
+      access_token: "late-secret",
+      token_type: "Bearer",
+    });
+    await atLateSet;
+    await backing.set("oauth:generation", "v2:current");
+
+    now = T0 + DAY + 1;
+    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
+    const reset = resetter.resetAuthorization();
+    // The sweep has deleted the expired tokens and is still running when the
+    // late write lands and fails to delete itself. The epoch is already
+    // listed, so only its time moves.
+    await atSweep;
+    releaseLateSet();
+    await lateWrite;
+    expect(await lineageOf(backing, "v2:current")).toEqual([
+      { generation: expired, retiredAt: now },
+    ]);
+    releaseSweep();
+    await reset;
+
+    // Its sweep succeeded, but the re-read saw the new time and kept it.
+    expect(await backing.get(expiredTokens)).not.toBeNull();
+    expect(await resetter.tokens()).toBeUndefined();
+    expect(await lineageOf(backing, await resetter.generation())).toEqual([
+      { generation: expired, retiredAt: now },
+      { generation: "v2:current", retiredAt: now },
+    ]);
+
+    lateWriteLanded = false;
+    now += DAY + 1;
+    await resetter.resetAuthorization();
+    expect(await backing.get(expiredTokens)).toBeNull();
+  });
+
+  it("lets two resets from one predecessor sweep the same generations", async () => {
+    useClock();
+    const backing = memoryStorage();
+    const old = ["v2:old-0", "v2:old-1", "v2:old-2"];
+    let arrivals = 0;
+    const { promise: bothSweeping, resolve: releaseSweeps } = deferred<void>();
+    const gatedKey = oauthValueStorageKey("oauth:tokens", "v2:old-0");
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        if (key === gatedKey) {
+          if (++arrivals === 2) releaseSweeps();
+          await bothSweeping;
+        }
+        await backing.delete(key);
+      },
+    };
+    await seedLineage(
+      backing,
+      "v2:current",
+      old.map((generation) => ({ generation, retiredAt: T0 })),
+    );
+    for (const generation of [...old, "v2:current"]) {
+      await backing.set(oauthValueStorageKey("oauth:tokens", generation), "residue");
+    }
+
+    now = T0 + DAY + 1;
+    const a = new KvOAuthProvider("svc", storage, REDIRECT);
+    const b = new KvOAuthProvider("svc", storage, REDIRECT);
+    await Promise.all([a.resetAuthorization(), b.resetAuthorization()]);
+
+    expect(arrivals).toBe(2);
+    const winner = await a.generation();
+    expect(winner).toMatch(/^v2:/);
+    expect(winner).not.toBe("v2:current");
+    // Both swept, both reclaimed, and whichever fence landed last publishes
+    // a lineage holding only the predecessor.
+    expect(await lineageOf(backing, winner)).toEqual([
+      { generation: "v2:current", retiredAt: now },
+    ]);
+    for (const generation of [...old, "v2:current"]) {
+      expect(
+        await backing.get(oauthValueStorageKey("oauth:tokens", generation)),
+      ).toBeNull();
+      expect(await backing.get(manifestKey(generation))).toBeNull();
+    }
+
+    // The epoch that lost the fence race was never active where it ended,
+    // and the next reset proceeds from the winner.
+    now += MINUTE;
+    await a.resetAuthorization();
+    expect((await lineageOf(backing, await a.generation())).map(generationOf))
+      .toEqual(["v2:current", winner]);
   });
 });
 
+// ---------------------------------------------------------------------------
+// Sealed OAuth state: tokens, client registration, and the PKCE verifier are
+// ciphertext at rest when the deployment has a vault that can seal.
+// ---------------------------------------------------------------------------
 describe("KvOAuthProvider sealed state", () => {
   const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
   const OTHER_SEAL_KEY = Buffer.alloc(32, 9).toString("base64");
@@ -4285,6 +4483,74 @@ describe("remoteMcp() continue and restart starts", () => {
       expect(continued.authorizationReused).toBeUndefined();
       expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
       expect(server.counts.register).toBe(2);
+    });
+  });
+
+  it("continues only the calling principal's own flow on a personal connector", async () => {
+    await withServer(async (server) => {
+      const users: InboundAuth = {
+        kind: "test-users",
+        interactiveOperator: true,
+        activityActorNamespace: "https://identity.test",
+        authorize(request) {
+          const user = /^Bearer (alice|bob)$/u.exec(
+            request.headers.get("authorization") ?? "",
+          )?.[1];
+          return user
+            ? { ok: true, userId: user, subjectId: user }
+            : { ok: false, response: new Response(null, { status: 401 }) };
+        },
+      };
+      const connecta = createTestConnecta({
+        connectors: [
+          remoteMcp("svc", {
+            url: mcpUrl,
+            auth: { type: "oauth" },
+            authScope: "personal",
+            versionNegotiation: "legacy",
+          }),
+        ],
+        auth: users,
+        storage: memoryStorage(),
+        publicUrl: BASE,
+      });
+      const start = async (user: "alice" | "bob", query = "") => {
+        const response = await connecta.fetch(
+          new Request(`${BASE}/ui/oauth/svc${query}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${user}`, Origin: BASE },
+          }),
+        );
+        expect(response.status).toBe(200);
+        return (await response.json()) as {
+          authorizationUrl: string;
+          reused: boolean;
+        };
+      };
+      const principalOf = async (url: string) =>
+        (await connecta.registry.oauthCallbackView(
+          "svc",
+          new URL(url).searchParams.get("state"),
+        ))?.principalKey;
+
+      const aliceFirst = await start("alice");
+      const aliceAgain = await start("alice", "?mode=continue");
+      expect(aliceAgain).toEqual({ ...aliceFirst, reused: true });
+      expect(server.counts.register).toBe(1);
+
+      // Bob's partition holds no pending flow, so his continue starts his own.
+      const bob = await start("bob", "?mode=continue");
+      expect(bob.reused).toBe(false);
+      expect(bob.authorizationUrl).not.toBe(aliceFirst.authorizationUrl);
+      expect(server.counts.register).toBe(2);
+
+      // The reused URL still hands its callback to Alice, never to Bob.
+      const alice = await principalOf(aliceAgain.authorizationUrl);
+      const bobPrincipal = await principalOf(bob.authorizationUrl);
+      expect(alice).toBeTypeOf("string");
+      expect(bobPrincipal).toBeTypeOf("string");
+      expect(bobPrincipal).not.toBe(alice);
+      await connecta.close();
     });
   });
 });

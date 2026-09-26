@@ -57,23 +57,34 @@ const SEALED_OAUTH_KEYS: ReadonlySet<string> = new Set([
 ]);
 const SEALED_VALUE_VERSION = 1;
 /**
- * The longest cleanup lineage a reset publishes. With the grace below,
- * reaching it takes more than this many resets of one connector inside one
- * grace period.
+ * The longest cleanup lineage a reset publishes. A reset's storage work no
+ * longer depends on the lineage's length — it deletes one retired generation
+ * after the fence and sweeps at most MAX_EXPIRED_SWEEP before it — so this
+ * guards only the size of the two records every reset reads. A generation
+ * name is 39 characters, so 5,000 entries is about 210 KB of manifest and
+ * 280 KB of times: far under Workers KV's 25 MiB value limit, and a few
+ * milliseconds to parse. Reaching it takes more than 4,000 resets of one
+ * connector in a day on top of the 1,000 an earlier release allowed, which
+ * is a loop, not an operator. An earlier release refuses a lineage longer
+ * than 1,000, so rolling back past this one wedges only a connector that
+ * went beyond that — which that release would have wedged anyway.
  */
-const MAX_CLEANUP_BACKLOG = 1_000;
+const MAX_CLEANUP_BACKLOG = 5_000;
 /**
  * How long a retired generation stays in the cleanup lineage. A late write
  * lands in a retired namespace only from a request that captured that
  * generation before the reset and is still running — an OAuth flow, a token
  * refresh, or a reader whose eventually consistent store (Workers KV serves a
  * stale generation for a minute or more) has not yet seen the fence. None of
- * those outlive a day. The lineage keeps being swept for that long; after it,
- * a generation whose keys are confirmed deleted cannot be written again, so
- * it can leave the lineage. That is an assumption, not a proof: a request
- * that held a retired generation for longer than this could leave residue no
- * reset tracks. It would still be unreadable — the epoch fence, not this
- * cleanup, is what keeps an old namespace out of use.
+ * those outlive a day. A late writer's own cleanup deletes what it wrote, and
+ * if that delete fails it records the generation as retired again from that
+ * moment; residue it leaves is unreadable behind the fence either way. Once
+ * the grace has passed, a reset sweeps the generation, and one whose keys
+ * are confirmed deleted cannot be written again, so it leaves the lineage.
+ * That is an assumption, not a proof: a request that holds a retired
+ * generation for longer than this and dies between its write and its own
+ * cleanup leaves residue no reset tracks. It is still unreadable — the epoch
+ * fence, not this cleanup, is what keeps an old namespace out of use.
  */
 const CLEANUP_GRACE_MS = 24 * 60 * 60 * 1000;
 /**
@@ -82,8 +93,11 @@ const CLEANUP_GRACE_MS = 24 * 60 * 60 * 1000;
  * of resets drains over several resets instead of in one request.
  */
 const MAX_EXPIRED_SWEEP = 16;
-/** Independent storage deletes one cleanup keeps in flight. */
-const DELETE_CONCURRENCY = 8;
+/**
+ * Independent storage deletes one cleanup keeps in flight: Workers allows six
+ * simultaneous open connections per invocation, and more would only queue.
+ */
+const DELETE_CONCURRENCY = 6;
 /**
  * How long a pending authorization URL may be handed out again instead of
  * starting a fresh flow. The URL itself never expires on connecta's side, but
@@ -1552,16 +1566,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * The cleanup lineage published for `generation`, with retirement times.
-   * An entry with no recorded time — written by an earlier release, or whose
-   * time write failed — reads as retired `now`, which can only lengthen its
-   * grace, and `migrated` says a caller that publishes will persist that
-   * time for the first time.
+   * The cleanup lineage published for `generation`, with retirement times,
+   * and the times record exactly as stored. An entry with no recorded time —
+   * written by an earlier release, or whose time write failed — reads as
+   * retired `now`, which can only lengthen its grace.
    */
   private async cleanupBacklog(
     generation: string,
     now: number,
-  ): Promise<{ lineage: RetiredGeneration[]; migrated: boolean }> {
+  ): Promise<{ lineage: RetiredGeneration[]; recorded: Map<string, number> }> {
     const reads = await Promise.allSettled([
       this.storage.get(cleanupBacklogKey(generation)),
       this.storage.get(cleanupTimesKey(generation)),
@@ -1571,31 +1584,33 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const [raw, rawTimes] = reads.map((read) =>
       read.status === "fulfilled" ? read.value : null,
     );
-    if (raw === null || raw === undefined) {
-      return { lineage: [], migrated: false };
-    }
+    const recorded = retirementTimes(rawTimes ?? null);
+    if (raw === null || raw === undefined) return { lineage: [], recorded };
     const parsed: unknown = JSON.parse(raw);
     if (
       !Array.isArray(parsed) ||
-      // One over the cap: see the migration exemption in resetAuthorization.
-      parsed.length > MAX_CLEANUP_BACKLOG + 1 ||
+      parsed.length > MAX_CLEANUP_BACKLOG ||
       !parsed.every((value) => typeof value === "string")
     ) {
       throw new Error(
         `Invalid OAuth cleanup backlog for "${this.connectorId}"`,
       );
     }
-    const generations = parsed as string[];
-    const times = retirementTimes(rawTimes ?? null);
     return {
       lineage: mergeLineage(
-        generations.map((entry) => ({
+        (parsed as string[]).map((entry) => ({
           generation: entry,
-          retiredAt: times.get(entry) ?? now,
+          retiredAt: recorded.get(entry) ?? now,
         })),
       ),
-      migrated: generations.some((entry) => !times.has(entry)),
+      recorded,
     };
+  }
+
+  private timesRecord(
+    lineage: Iterable<readonly [string, number]>,
+  ): string {
+    return JSON.stringify(Object.fromEntries(lineage));
   }
 
   /** Write a lineage's manifest and its times, reporting the first failure. */
@@ -1611,10 +1626,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
         ),
         this.storage.set(
           cleanupTimesKey(generation),
-          JSON.stringify(
-            Object.fromEntries(
-              lineage.map((entry) => [entry.generation, entry.retiredAt]),
-            ),
+          this.timesRecord(
+            lineage.map((entry) => [entry.generation, entry.retiredAt] as const),
           ),
         ),
       ]),
@@ -1622,20 +1635,38 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (failure) throw failure.reason;
   }
 
+  /**
+   * Record that a write just landed in `retired` after `active` fenced it,
+   * so its grace starts over from now. A generation not yet listed is
+   * appended. One already listed keeps its place in the manifest and has
+   * only its time moved: a reset that is sweeping it re-reads the lineage
+   * before publishing, sees the new time, and keeps it.
+   *
+   * Only the times record is rewritten for a listed generation, so this can
+   * never drop a manifest entry. Two late writers racing here can lose one
+   * time update to the other: a lost bump leaves the older time, which
+   * shortens that generation's grace back to what it was before the write
+   * (no worse than never recording it), and a time dropped from the record
+   * reads as retired "now", which only lengthens a grace.
+   */
   private async rememberRetiredGeneration(
     active: string,
     retired: string,
   ): Promise<void> {
     const now = Date.now();
-    const { lineage } = await this.cleanupBacklog(active, now);
-    if (lineage.some((entry) => entry.generation === retired)) return;
+    const { lineage, recorded } = await this.cleanupBacklog(active, now);
+    if (lineage.some((entry) => entry.generation === retired)) {
+      await this.storage.set(
+        cleanupTimesKey(active),
+        this.timesRecord([...recorded, [retired, now] as const]),
+      );
+      return;
+    }
     if (lineage.length >= MAX_CLEANUP_BACKLOG) {
       throw new Error(
         `OAuth cleanup backlog for "${this.connectorId}" is full`,
       );
     }
-    // Retired "now": a write just landed in that namespace, so its grace
-    // starts over from here.
     await this.publishLineage(active, [
       ...lineage,
       { generation: retired, retiredAt: now },
@@ -1895,14 +1926,19 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * partial backend outage should not leave unrelated secrets behind merely
    * because an earlier key happened to be the first failed delete.
    *
-   * The lineage a reset inherits is bounded by time, not by how many resets
-   * came before. A generation retired more than CLEANUP_GRACE_MS ago is swept
-   * — every value, then its manifest — before the replacement lineage is
-   * published, and only a generation whose sweep fully succeeded is left out
-   * of it. Everything else is carried with its original retirement time.
-   * The live manifest is never rewritten: an entry leaves the lineage only
-   * by being absent from the next epoch's manifest, which no other request
-   * writes until that epoch is active.
+   * A reset's storage work does not grow with the resets before it. After
+   * the fence it deletes the one generation it retired. Before publishing,
+   * it sweeps at most MAX_EXPIRED_SWEEP generations retired more than
+   * CLEANUP_GRACE_MS ago — every value, then its manifest and times — and
+   * only a generation whose sweep fully succeeded is left out of the new
+   * lineage. Everything else is carried with its retirement time: a
+   * generation still inside its grace is not deleted again, because a late
+   * write into it is unreadable behind the fence and the late writer deletes
+   * it itself, or records the generation again if it cannot; the sweep
+   * reclaims whatever is left once the grace has passed. The live manifest
+   * is never rewritten: an entry leaves the lineage only by being absent
+   * from the next epoch's manifest, which no other request writes until that
+   * epoch is active.
    */
   async resetAuthorization(operatorDisconnected = false): Promise<void> {
     const nonce = crypto.randomUUID();
@@ -1919,7 +1955,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
       now - entry.retiredAt < CLEANUP_GRACE_MS;
 
     let lineage = inherited.lineage;
-    let migrated = inherited.migrated;
     const expired = lineage
       .filter((entry) => !withinGrace(entry))
       .sort((a, b) => a.retiredAt - b.retiredAt)
@@ -1935,7 +1970,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
       // to it meanwhile, so read it again and carry the union — and keep a
       // swept generation after all if that append restarted its grace.
       const latest = await this.cleanupBacklog(previous, now);
-      migrated ||= latest.migrated;
       lineage = mergeLineage(lineage, latest.lineage).filter(
         (entry) => withinGrace(entry) || !reclaimed.has(entry.generation),
       );
@@ -1943,11 +1977,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const retired = mergeLineage(lineage, [
       { generation: previous, retiredAt: now },
     ]);
-    // An earlier release capped its untimed lineage at MAX_CLEANUP_BACKLOG,
-    // and refused every reset once it was full. The reset that first stamps
-    // such a lineage may publish one entry over the cap, so a connector that
-    // hit the old wall can drain it once the grace passes.
-    if (retired.length > MAX_CLEANUP_BACKLOG + (migrated ? 1 : 0)) {
+    if (retired.length > MAX_CLEANUP_BACKLOG) {
       throw new Error(
         `OAuth cleanup backlog for "${this.connectorId}" is full`,
       );
@@ -1975,15 +2005,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
       throw error;
     }
 
-    // Sweep every generation still inside its grace, the one just retired
-    // included: a late write may have landed in any of them since the last
-    // reset. A past-grace entry carried above (its sweep failed, or it was
-    // past this reset's sweep budget) waits for a later reset's sweep.
+    // Delete the generation just retired: its values, then the lineage it
+    // published, which the new epoch has copied. Every other entry waits for
+    // its grace to pass (see above), so this is the same work at the first
+    // reset as at the thousandth.
     const failure = firstRejection(
-      await this.cleanupGenerations(
-        retired.filter(withinGrace).map((entry) => entry.generation),
-        limit,
-      ),
+      await this.cleanupGenerations([previous], limit),
     );
     // Keep the active manifest immutable for the epoch's whole lifetime, even
     // after successful cleanup. A late old-epoch write can land after cleanup;

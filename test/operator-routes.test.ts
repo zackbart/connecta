@@ -194,6 +194,42 @@ describe("operator data routes", () => {
       expect(await storage.get("catalog:oauth")).toBe("still valid catalog");
     });
 
+    it("keeps the catalog when a continued start finds the connection healthy", async () => {
+      const { connecta, storage } = oauthConnecta({ state: "ok" });
+      await storage.set("catalog:oauth", "still valid catalog");
+
+      const continued = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=continue",
+        { method: "POST" },
+      );
+      expect(continued.status).toBe(200);
+      await expect(continued.json()).resolves.toEqual({ state: "ok" });
+      expect(await storage.get("catalog:oauth")).toBe("still valid catalog");
+
+      // A restart that ends healthy still reset the grant under the catalog.
+      const restarted = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=restart",
+        { method: "POST" },
+      );
+      expect(restarted.status).toBe(200);
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    });
+
+    it("invalidates the catalog when a continued start had to begin a new flow", async () => {
+      const { connecta, storage } = oauthConnecta(fresh);
+      await storage.set("catalog:oauth", "stale catalog");
+
+      const continued = await credentialRequest(
+        connecta,
+        "/ui/oauth/oauth?mode=continue",
+        { method: "POST" },
+      );
+      await expect(continued.json()).resolves.toMatchObject({ reused: false });
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    });
+
     it("refuses an unknown or repeated mode before starting anything", async () => {
       const { connecta, starts } = oauthConnecta(fresh);
 
