@@ -504,13 +504,11 @@ provider prose remains `connector_call_failed`.
 
 ## Results and projection
 
-**R1 (verdict: projection stays explicit).** A program's return value reaches
-the model unchanged except for the size guard in `R2`. Connecta does not
-summarize, reshape, or field-select it, and there is no automatic projection
-mode: the measured byte win came from *program-authored* projection, while a
-host heuristic would drop deliberately returned fields invisibly. Helpers earn
-their way in only if [#222](https://github.com/zackbart/connecta/issues/222)
-shows programs failing to project on their own.
+**R1 (verdict: projection stays explicit).** A program's return reaches the model
+unchanged except for `R2`'s size guard. Connecta does not summarize or select
+fields. Program-authored projection saved bytes; host heuristics could drop
+deliberately returned fields. Helpers need [#222](https://github.com/zackbart/connecta/issues/222)
+evidence that programs fail to project.
 
 **R2.** The boundary is 24,000 serialized characters (~6k tokens). A value over
 it is replaced by exactly one envelope:
@@ -528,15 +526,17 @@ The envelope is itself bounded as serialized, so `totalChars` is always the true
 size of what the program returned and truncation happens exactly once no matter
 how many hops the value takes.
 
-**R3.** Truncation is a *successful* result, not an error: the program ran, and
-the honest report is that its answer was too large. The fix is a program that
-returns less, which is why the envelope says so.
+**R3.** Truncation is a *successful* result: the program ran but returned too
+much. Run a program that returns less; that is why the envelope says so.
 
 **R4 (verdict: no result paging for programs).** Program results have no
-`get_result` handle. Programs can shrink their returns without host paging.
+`get_result` handle. A program can shrink its return; paging would reward
+unprojected data.
 
 For non-repeatable writes, inspect and reduce the full result before return,
-or page a direct `call_destructive_tool` result with `get_result`; sampling may discard the only copy.
+or page a direct `call_destructive_tool` result with `get_result`. Sampling a
+program result may discard the only copy.
+
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call
 order and returned as one `logs` string, capped at 4,000 characters with a
 truncation marker. Logs survive program failure through either a returned error

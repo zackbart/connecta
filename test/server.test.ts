@@ -424,7 +424,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("## Discover and select");
     expect(skill).toContain("## Errors and repair");
     expect(skill).toContain(
-      "Only tools explicitly annotated `readOnlyHint: true` are reachable unasked",
+      "Only explicitly `readOnlyHint: true` or config-exempt calls run unasked",
     );
     expect(skill).toContain("Dynamic Workers must use only `{ loader }`");
     expect(skill).toContain("node:fs/http/https are absent");

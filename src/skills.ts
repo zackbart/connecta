@@ -55,7 +55,7 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
-Only tools explicitly annotated \`readOnlyHint: true\` are reachable unasked. With resumable writes, non-exempt approval-required calls pause unsent; \`resume_execution\` repeats the pending address, args, and token. Without them, use \`call_destructive_tool\` for writes. Keep each authorized batch in one resumable program, final post included. \`approval: "call"\` covers one write; \`approval: "tool"\` covers later same-address calls in this run. Other approval-required writes need approval. Replay requires the same call order. Sandbox code cannot widen host gates.
+Only explicitly \`readOnlyHint: true\` or config-exempt calls run unasked. With resumable writes, non-exempt approval-required calls pause unsent; \`resume_execution\` repeats the pending address, args, and token. Without them, use \`call_destructive_tool\` for writes. Keep each authorized batch in one resumable program, final post included. \`approval: "call"\` covers one write; \`approval: "tool"\` covers later same-address calls in this run. Other approval-required writes need approval. Replay requires the same call order. Sandbox code cannot widen host gates.
 
 ## Errors and repair
 
