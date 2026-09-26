@@ -1624,12 +1624,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       } else {
         // A consent URL already outstanding? Re-issue it rather than re-running
         // the SDK flow, which would overwrite the PKCE verifier and invalidate
-        // the URL the operator may be mid-consent on.
-        const pending = await p.pendingAuthorizationUrl();
+        // the URL the operator may be mid-consent on. Only a recent one: an
+        // old or untimed URL falls through to a fresh flow in this same
+        // epoch, which keeps the stored client registration and discovery.
+        const pending = await p.reusablePendingAuthorizationUrl();
         if (pending) {
           return {
             state: "auth_required",
             authorizationUrl: pending,
+            authorizationReused: true,
             message: "Authorization required — open the URL to connect.",
           };
         }
