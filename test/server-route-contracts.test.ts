@@ -172,6 +172,21 @@ describe("server route contracts", () => {
       baseline ??= shape;
       expect(shape).toEqual(baseline);
     }
+    // A browser that carries the credential sees the page every unserved path
+    // shows, still identical across declared, refusing, and missing pools.
+    const pages = new Set<string>();
+    for (const suffix of ["support", "broken", "missing"]) {
+      const response = await connecta.fetch(new Request(`${BASE}/mcp/${suffix}`, {
+        headers: { Authorization: `Bearer ${TOKEN}`, Accept: "text/html" },
+      }));
+      expect(response.status).toBe(404);
+      expectMcpCors(response);
+      pages.add(await response.text());
+    }
+    const unserved = await connecta.fetch(new Request(`${BASE}/nowhere`, { headers: { Accept: "text/html" } }));
+    pages.add(await unserved.text());
+    expect(pages.size).toBe(1);
+    expect([...pages][0]).toContain("<h1>Page not found</h1>");
     await connecta.close();
   });
 

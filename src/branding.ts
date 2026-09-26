@@ -27,6 +27,11 @@ interface ResolvedBranding {
   pageTitle: string;
   /** href for the page's icon link. */
   faviconHref: string;
+  /**
+   * The configured `theme-color`, or the documented `#ffffff` default.
+   * Informational: pages emit a configured value as-is, and without one they
+   * follow the scheme (`themeColorMeta`) rather than painting this default.
+   */
   themeColor: string;
   /** Only the tokens that survived their gate; the stylesheet owns the rest. */
   theme: ResolvedTheme;
@@ -70,7 +75,7 @@ export function resolveBranding(
       faviconHref && isSafeIconHref(faviconHref)
         ? faviconHref
         : DEFAULT_FAVICON_HREF,
-    themeColor: trimmedString(branding?.themeColor) ?? "#ffffff",
+    themeColor: configuredThemeColor(branding) ?? "#ffffff",
     theme: resolveTheme(branding?.theme),
   };
 }
@@ -216,8 +221,13 @@ export function escapeHtml(value: string): string {
  */
 const SURFACE = { light: "#ffffff", dark: "#151a21" } as const;
 
+/** The operator's own `themeColor`, read the one way both callers read it. */
+function configuredThemeColor(branding: ConnectaBranding | undefined): string | undefined {
+  return trimmedString(branding?.themeColor);
+}
+
 function themeColorMeta(branding: ConnectaBranding | undefined, theme: ResolvedTheme): string {
-  const configured = trimmedString(branding?.themeColor);
+  const configured = configuredThemeColor(branding);
   if (configured) return `<meta name="theme-color" content="${escapeHtml(configured)}">`;
   if (theme.colorScheme !== "system") {
     return `<meta name="theme-color" content="${SURFACE[theme.colorScheme]}">`;
@@ -231,6 +241,14 @@ export interface PageLayout {
   title: string;
   /** Whether the operator UI is mounted, and so serves `/favicon.*` and `/`. */
   uiMounted: boolean;
+  /**
+   * The origin that serves `/favicon.*`, for a page that may be rendered on
+   * another host: root-relative icon hrefs resolve against it. A browser 404
+   * on the artifact host passes `publicUrl`, since that host answers every
+   * non-artifact path, the favicons included, with 404. Omitted, they stay
+   * root-relative.
+   */
+  iconOrigin?: string | undefined;
   /** Markup after the masthead: the page's `<main>`. */
   body: string;
   /**
@@ -284,11 +302,19 @@ export function renderPage(
     ? label("product", brand.productName, brand.productUrl)
     : "";
   const customIcon = brand.faviconHref !== DEFAULT_FAVICON_HREF;
+  // `isSafeIconHref` already limited a relative href to one leading slash, so
+  // resolving it can only land on `iconOrigin` itself.
+  const iconHref = (href: string) =>
+    layout.iconOrigin && href.startsWith("/")
+      ? new URL(href, layout.iconOrigin).toString()
+      : href;
   const icons = [
     ...(customIcon || layout.uiMounted
-      ? [`<link rel="icon" href="${escapeHtml(brand.faviconHref)}" type="image/svg+xml">`]
+      ? [`<link rel="icon" href="${escapeHtml(iconHref(brand.faviconHref))}" type="image/svg+xml">`]
       : []),
-    ...(layout.uiMounted ? ['<link rel="shortcut icon" href="/favicon.ico">'] : []),
+    ...(layout.uiMounted
+      ? [`<link rel="shortcut icon" href="${escapeHtml(iconHref("/favicon.ico"))}">`]
+      : []),
   ];
   const skip = layout.skipTo
     ? `<a class="skip-link" href="#${escapeHtml(layout.skipTo.id)}">${escapeHtml(layout.skipTo.label)}</a>\n`
@@ -380,6 +406,9 @@ export function notFoundResponse(
     renderPage(opts.branding, {
       title: `Page not found — ${brand.pageTitle}`,
       uiMounted,
+      // Same bytes on either host: the icons, like the home link, come from
+      // the public origin.
+      iconOrigin: opts.publicUrl,
       body,
     }),
     {

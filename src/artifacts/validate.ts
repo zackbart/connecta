@@ -258,6 +258,7 @@ export function checkView(input: ViewCheckInput, context: CheckContext): Finding
   if (kind === "markdown") {
     let rendered: number;
     try {
+      // The served page also carries themeCss (≤~0.5 KB), which FRAME_OVERHEAD_BYTES absorbs.
       rendered = utf8Bytes(markdownPage(source, input.title ?? "")) + input.dataBytes + FRAME_OVERHEAD_BYTES;
     } catch (error) {
       if (!(error instanceof MarkdownNestingError)) throw error;

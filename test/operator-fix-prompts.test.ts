@@ -8,6 +8,8 @@ import {
 import { FIX_PROMPT_KINDS, fixPrompt } from "../src/operator-ui/fix-prompts.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
+import { artifacts, kvArtifactStore } from "../src/artifacts.js";
+import { bearerToken } from "../src/auth/bearer.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 
@@ -388,5 +390,29 @@ describe("OAuth callback page", () => {
       new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`),
     )).text();
     expect(withUi).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+
+    // The artifact host answers /favicon.* with 404, so its browser 404 links
+    // the icons the public origin serves, the same way it links home.
+    const pagesOrigin = "https://pages.connecta.test";
+    const split = createTestConnecta({
+      publicUrl: BASE,
+      artifactOrigin: pagesOrigin,
+      auth: bearerToken("favicon-test-token"),
+      storage: memoryStorage(),
+      logger: silentLogger,
+      artifacts: artifacts({ store: kvArtifactStore(memoryStorage()) }),
+      connectors: [titled("svc")],
+    });
+    const html = { headers: { Accept: "text/html" } };
+    expect((await split.fetch(new Request(`${pagesOrigin}/favicon.svg`))).status).toBe(404);
+    const onPages = await (await split.fetch(new Request(`${pagesOrigin}/nowhere`, html))).text();
+    expect(onPages).toContain(`<link rel="icon" href="${BASE}/favicon.svg" type="image/svg+xml">`);
+    expect(onPages).toContain(`<link rel="shortcut icon" href="${BASE}/favicon.ico">`);
+    expect(onPages).not.toMatch(/href="\/favicon/);
+    for (const icon of ["/favicon.svg", "/favicon.ico"]) {
+      expect((await split.fetch(new Request(`${BASE}${icon}`))).status, icon).toBe(200);
+    }
+    // One page on either host.
+    expect(await (await split.fetch(new Request(`${BASE}/nowhere`, html))).text()).toBe(onPages);
   });
 });

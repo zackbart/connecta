@@ -178,6 +178,21 @@ describe("the shared page layout", () => {
     const hosted = renderPage({ favicon: { href: "https://cdn.acme.example/i.svg" } }, { ...layout, uiMounted: false });
     expect(hosted).toContain('<link rel="icon" href="https://cdn.acme.example/i.svg" type="image/svg+xml">');
     expect(hosted).not.toContain("/favicon.ico");
+    // A page rendered on another host points its icons at the one that serves them.
+    const elsewhere = renderPage(undefined, { ...layout, iconOrigin: "https://main.example/base" });
+    expect(elsewhere).toContain('<link rel="icon" href="https://main.example/favicon.svg" type="image/svg+xml">');
+    expect(elsewhere).toContain('<link rel="shortcut icon" href="https://main.example/favicon.ico">');
+    const custom = renderPage({ favicon: { href: "/assets/acme.svg" } }, { ...layout, iconOrigin: "https://main.example" });
+    expect(custom).toContain('href="https://main.example/assets/acme.svg"');
+    const absolute = renderPage({ favicon: { href: "https://cdn.acme.example/i.svg" } }, { ...layout, iconOrigin: "https://main.example" });
+    expect(absolute).toContain('href="https://cdn.acme.example/i.svg"');
+  });
+
+  it("reads a configured theme color the one way resolveBranding does", () => {
+    const page = renderPage({ themeColor: "  #101010  " }, layout);
+    expect(page).toContain('<meta name="theme-color" content="#101010">');
+    expect(resolveBranding({ themeColor: "  #101010  " }).themeColor).toBe("#101010");
+    expect(renderPage({ themeColor: "   " }, layout)).toContain('media="(prefers-color-scheme: dark)"');
   });
 
   it("escapes every branding value it interpolates", () => {
