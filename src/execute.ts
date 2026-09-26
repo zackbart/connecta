@@ -1633,21 +1633,20 @@ const executeDescription = (
   resumable ? "work, writes included," : "read-only work"
 } uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${
   resumable
-    ? `Writes pause for resume_execution. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
+    ? `Writes pause for resume_execution. Keep an authorized batch in one program; approval "tool" covers later same-address calls, other tools pause separately. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
     : `Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls`
 }, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
-Read guides with top-level skills. Write JavaScript as async () => { ... }; connecta is global, not a parameter:
-- connecta.search({ connector, query, ${resumable ? "" : 'safety: "readOnly", '}includeSchemas: "json" }) returns { tools }. Search each operation separately; choose by connectorTitle and schemas. Use schema.required and .properties to build args, never guessed fields. Compact schemas are text.
-- connecta.describe({ address }) returns { tools } for unclear schemas.
+Read guides with top-level skills. Write async () => { ... } using the global connecta:
+- connecta.search({ connector, query, ${resumable ? "" : 'safety: "readOnly", '}includeSchemas: "json" }) returns { tools }. Search operations separately; choose by connectorTitle and schema.required/.properties, never guessed fields. Compact schemas are text.
+- connecta.describe({ address }) clarifies schemas.
 - connecta.call(address, args) returns the provider value directly.
-- Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status before reading value; rejected calls and missing fields are unknown, never false or zero.
-- connecta.emit(block): { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }; success-only, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes.
-- console.log(...) is captured. Return data for the client to render.
+- Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status; missing values are unknown, never false or zero.
+- connecta.emit(block): { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }; success-only, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. console.log(...) is captured.
 
-No portable ambient capabilities. Return reduced JSON. If a provider result has an unfamiliar shape, return a small sample and continue in another call; never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
+No portable ambient capabilities. Return reduced JSON. Sample unfamiliar reads. Reduce a one-time write's full result here, or use a direct call and get_result paging; never sample away or repeat a write to recover output. Never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
 
 // Module scope, like the other six meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

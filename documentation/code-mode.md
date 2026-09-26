@@ -536,8 +536,7 @@ returns less, which is why the envelope says so.
 carries no `get_result` handle, unlike `call_tool`. `get_result` exists so a
 model can page a *downstream payload* it could not shrink; a program can shrink
 anything, so paging its result would reward the behavior code mode exists to
-remove.
-
+remove. For non-repeatable writes, inspect and reduce the full result in this program, or use a direct `call_destructive_tool` call and page it with `get_result`; sampling a program's write result may discard the only copy.
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call
 order and returned as one `logs` string, capped at 4,000 characters with a
 truncation marker. Logs survive program failure through either a returned error
@@ -833,6 +832,7 @@ live. `emit` is not journaled; only the completing play delivers.
 **W7.** `approval: "call"`, the default, covers that one write; `"tool"` covers
 every later call to that canonical address for the run. Approvals live in the
 header, a retry's replacing one that sent nothing; nothing else grants one.
+Keep an authorized batch in one program; use tool scope for repeated calls to that address, while other addresses still need their own approval.
 
 **W8.** A replay fails `execution_diverged`, never replayed again, when (a) a
 call has no record before the approved write is repeated, (b) the program
