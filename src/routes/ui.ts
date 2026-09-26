@@ -127,10 +127,16 @@ export async function routeUi(
     // An artifact shell frames the sandboxed page from its own origin and
     // nothing else; Connections stays on the deployment's public origin.
     const homeUrl = opts.publicUrl ? new URL("/", opts.publicUrl).toString() : "/";
+    // The artifact host serves no favicon, so a shell there takes its icons
+    // from the public origin, as the 404 does; on the main host they stay
+    // root-relative.
+    const onArtifactHost = Boolean(opts.artifactOrigin) &&
+      url.origin === new URL(opts.artifactOrigin!).origin;
+    const iconOrigin = onArtifactHost ? opts.publicUrl : undefined;
     return new Response(
       request.method === "HEAD"
         ? null
-        : renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage, { homeUrl }),
+        : renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage, { homeUrl, iconOrigin }),
       {
         status: 200,
         headers: {

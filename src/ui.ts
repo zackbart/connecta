@@ -186,6 +186,11 @@ export function renderUiHtml(
   options: {
     /** Where the Connections page lives, when this shell is on another origin. */
     homeUrl?: string;
+    /**
+     * The origin that serves `/favicon.*`, when this shell is on another one:
+     * an artifact host answers those paths with 404. See `PageLayout.iconOrigin`.
+     */
+    iconOrigin?: string | undefined;
   } = {},
 ): string {
   const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
@@ -232,6 +237,7 @@ export function renderUiHtml(
   return renderPage(branding, {
     title: operatorPageTitle(page, brand.pageTitle),
     uiMounted: true,
+    iconOrigin: options.iconOrigin,
     styles: OPERATOR_UI_CSS,
     head: clerkScript,
     skipTo: { id: "operatorContent", label: "Skip to operator page" },

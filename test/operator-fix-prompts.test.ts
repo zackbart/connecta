@@ -414,5 +414,18 @@ describe("OAuth callback page", () => {
     }
     // One page on either host.
     expect(await (await split.fetch(new Request(`${BASE}/nowhere`, html))).text()).toBe(onPages);
+    // The artifact shells there take the same icons; the main host's own
+    // shell keeps them root-relative.
+    for (const path of ["/artifacts", "/artifacts/q3", "/artifacts/q3/v/1"]) {
+      const shell = await split.fetch(new Request(`${pagesOrigin}${path}`, html));
+      expect(shell.status, path).toBe(200);
+      const body = await shell.text();
+      expect(body, path).toContain(`<link rel="icon" href="${BASE}/favicon.svg" type="image/svg+xml">`);
+      expect(body, path).toContain(`<link rel="shortcut icon" href="${BASE}/favicon.ico">`);
+      expect(body, path).not.toMatch(/href="\/favicon/);
+    }
+    const mainShell = await (await split.fetch(new Request(`${BASE}/`, html))).text();
+    expect(mainShell).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+    expect(mainShell).toContain('<link rel="shortcut icon" href="/favicon.ico">');
   });
 });
