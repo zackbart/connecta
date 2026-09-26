@@ -250,6 +250,67 @@ means authorizing again. A vault without the optional `seal`/`open` members
 keeps these values plaintext and draws a startup warning. Without any vault,
 nothing changes: the state is plaintext, as it always was.
 
+## Starting, restarting, and retiring an OAuth epoch
+
+Every downstream OAuth value lives under an **epoch**, the value of
+`oauth:generation`. A restart or disconnect publishes a new one before it
+deletes anything, and a write from a flow that captured an older epoch lands
+in that epoch's own key namespace, where no reader looks. The fence is what
+keeps a retired grant out of use; deleting the old keys is hygiene on top.
+
+The operator's `POST /ui/oauth/<id>` takes a `mode` query parameter:
+
+| Request | What it does |
+| --- | --- |
+| `POST /ui/oauth/<id>` or `?mode=restart` | `startAuth(ctx, { force: true })`: a new epoch, with tokens, the registered client, discovery, and any pending flow wiped, so the next flow registers a client again. |
+| `?mode=continue` | `startAuth(ctx, { force: false })`: hand back the pending authorization URL if it was written in the last ten minutes; otherwise start a flow in the current epoch, reusing the stored client registration. A disconnected connector still gets its new epoch first. |
+| `DELETE /ui/oauth/<id>` | Disconnect: a disconnected epoch that passive reads never turn back into a consent flow. |
+
+Any other `mode`, or more than one, is a 400 before anything starts; the
+management permission, visibility, and principal checks are the same for
+both modes. A 200 answers `{ state, authorizationUrl?, reused? }`, with
+`reused` present beside every URL: `true` when an earlier start's URL came
+back unchanged. A reused start changed nothing, so it is also the one start
+that leaves the cached catalog alone. The ten minutes are
+`PENDING_AUTHORIZATION_MAX_AGE_MS`. Connecta never expires its own half of a
+URL, but authorization servers expire theirs, and a fresh start that keeps
+the registration costs one authorization request. A URL stored without a
+write time — by an earlier release, or by a connector never reset since
+epochs arrived — is stale by definition. `authorize_connector` without
+`force` follows the same rule.
+
+A restart deletes the keys of every epoch it retires, and it cannot know
+which ones a late write reached since, so it publishes a **cleanup lineage**
+under the new epoch before activating it: the retired epochs, as the same
+plain list of names every release reads, and beside it a record of when each
+retired. The next restart inherits that list and deletes those namespaces
+again. A published lineage is never rewritten. A stale writer whose own
+cleanup fails appends to the live lineage, and a restart that rewrote the
+list it had read could drop that append. An epoch leaves the lineage only by
+being left out of its successor's.
+
+It leaves after `CLEANUP_GRACE_MS`, 24 hours. **The assumption:** no request
+holds a retired epoch for a day. The writers that can land late are OAuth
+flows, refreshes, and readers whose Workers KV replica still serves the old
+generation for a minute or more; none of them run that long. A restart sweeps
+up to 16 epochs past the grace, oldest first, before it publishes. Only an
+epoch whose six values and own manifest were all deleted is left out.
+Anything that failed is carried and swept again later, and a sweep failure
+never fails the restart. Everything inside the grace is swept after the fence
+moves, as before. The lineage then tracks resets from the last day instead of
+all time, and the 1,000-entry cap only refuses more than 1,000 restarts of one
+connector within 24 hours. An entry with no recorded time, whether an earlier
+release wrote the lineage or a time write failed, reads as retired at the
+moment of the restart that reads it. That can only lengthen a grace. The
+first restart to stamp a lineage may publish one entry over the cap, so a
+connector that hit the old wall drains a day later. An older release reads
+the list and ignores the times, so a rollback still restarts. Deletes run
+eight at a time, and catalog invalidation deletes its chunks the same way
+under the registry's chunk I/O bound. If the assumption fails, a late writer
+still deletes its own write and records the epoch again if that delete fails.
+Only a writer that dies between its write and that check leaves residue no
+restart tracks, and that residue is never readable.
+
 ## Refresh failures
 
 A failed token refresh means one of two things, and connecta decides which

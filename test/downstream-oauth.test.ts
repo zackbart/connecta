@@ -862,6 +862,393 @@ describe("KvOAuthProvider over memoryStorage", () => {
 // Sealed OAuth state: tokens, client registration, and the PKCE verifier are
 // ciphertext at rest when the deployment has a vault that can seal.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// The cleanup lineage is bounded by a retirement grace, not by reset count.
+// ---------------------------------------------------------------------------
+describe("KvOAuthProvider cleanup lineage", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const T0 = Date.UTC(2026, 0, 1);
+  const manifestKey = (generation: string) =>
+    `oauth:cleanup:${encodeURIComponent(generation)}`;
+  const timesKey = (generation: string) =>
+    `oauth:cleanup-at:${encodeURIComponent(generation)}`;
+  /** A timed entry, or a bare name for one the times record does not cover. */
+  type Entry = { generation: string; retiredAt: number } | string;
+  const generationOf = (entry: Entry) =>
+    typeof entry === "string" ? entry : entry.generation;
+
+  let now = T0;
+  let restoreClock: (() => void) | undefined;
+  afterEach(() => {
+    restoreClock?.();
+    restoreClock = undefined;
+  });
+  function useClock(start = T0) {
+    now = start;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    restoreClock = () => clock.mockRestore();
+  }
+
+  /** The manifest, joined with its times the way a reset reads them. */
+  async function lineageOf(storage: KVStorage, generation: string) {
+    const names = JSON.parse(
+      required((await storage.get(manifestKey(generation))) ?? undefined),
+    ) as string[];
+    const times = JSON.parse(
+      (await storage.get(timesKey(generation))) ?? "{}",
+    ) as Record<string, number>;
+    return names.map((name): Entry =>
+      Object.hasOwn(times, name)
+        ? { generation: name, retiredAt: required(times[name]) }
+        : name,
+    );
+  }
+
+  /** Bare names seed an untimed manifest, as an earlier release wrote it. */
+  async function seedLineage(
+    storage: KVStorage,
+    current: string,
+    lineage: readonly Entry[],
+  ) {
+    await storage.set("oauth:generation", current);
+    await storage.set(
+      manifestKey(current),
+      JSON.stringify(lineage.map(generationOf)),
+    );
+    const timed = lineage.filter(
+      (entry): entry is Exclude<Entry, string> => typeof entry !== "string",
+    );
+    if (timed.length > 0) {
+      await storage.set(
+        timesKey(current),
+        JSON.stringify(
+          Object.fromEntries(timed.map((e) => [e.generation, e.retiredAt])),
+        ),
+      );
+    }
+  }
+
+  it("keeps each reset's storage work flat once earlier generations pass the grace", async () => {
+    useClock();
+    const backing = memoryStorage();
+    let ops = 0;
+    const storage: KVStorage = {
+      get: (key) => (ops++, backing.get(key)),
+      set: (key, value, opts) => (ops++, backing.set(key, value, opts)),
+      delete: (key) => (ops++, backing.delete(key)),
+    };
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    const perReset: number[] = [];
+    for (let reset = 0; reset < 40; reset++) {
+      now += DAY + 1;
+      ops = 0;
+      await p.resetAuthorization();
+      perReset.push(ops);
+    }
+
+    // The generation and lineage reads (3), one sweep of the past-grace
+    // generation (six values, its manifest and times: 8), the lineage
+    // re-read (2), the publication (2), the fence (1), and the sweep of the
+    // generation just retired (8): the same at reset 40 as at reset 3.
+    expect(perReset.slice(2)).toEqual(Array(38).fill(24));
+    expect(await lineageOf(backing, await p.generation())).toHaveLength(1);
+  });
+
+  it("resets past a thousand once the old lineage is past the grace", async () => {
+    useClock();
+    const storage = memoryStorage();
+    await seedLineage(
+      storage,
+      "v2:current",
+      Array.from({ length: 1_000 }, (_, i) => ({
+        generation: `v2:old-${i}`,
+        retiredAt: T0,
+      })),
+    );
+    for (const index of [0, 15, 16, 999]) {
+      await storage.set(
+        oauthValueStorageKey("oauth:tokens", `v2:old-${index}`),
+        "residue",
+      );
+    }
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+
+    now = T0 + 60 * 60 * 1000;
+    await expect(p.resetAuthorization()).rejects.toThrow(/backlog .* is full/);
+    expect(await p.generation()).toBe("v2:current");
+
+    now = T0 + DAY + 1;
+    await p.resetAuthorization();
+    const lineage = await lineageOf(storage, await p.generation());
+    // The sixteen oldest were swept and left; the rest wait their turn.
+    expect(lineage).toHaveLength(1_000 - 16 + 1);
+    expect(lineage).toContainEqual({ generation: "v2:current", retiredAt: now });
+    expect(lineage.map(generationOf)).not.toContain("v2:old-15");
+    expect(lineage.map(generationOf)).toContain("v2:old-16");
+    const tokens = (index: number) =>
+      storage.get(oauthValueStorageKey("oauth:tokens", `v2:old-${index}`));
+    expect(await tokens(0)).toBeNull();
+    expect(await tokens(15)).toBeNull();
+    expect(await tokens(16)).toBe("residue");
+
+    for (let reset = 0; reset < 5; reset++) await p.resetAuthorization();
+    expect(await lineageOf(storage, await p.generation())).toHaveLength(
+      1_000 - 6 * 16 + 6,
+    );
+  });
+
+  it("stamps an untimed lineage from an earlier release with the reset's own time", async () => {
+    useClock();
+    const storage = memoryStorage();
+    await seedLineage(storage, "v2:current", [
+      "legacy",
+      "v2:older",
+      { generation: "v2:timed", retiredAt: T0 - DAY / 2 },
+    ]);
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+
+    await p.resetAuthorization();
+    const first = await p.generation();
+    expect(await lineageOf(storage, first)).toEqual([
+      { generation: "legacy", retiredAt: T0 },
+      { generation: "v2:older", retiredAt: T0 },
+      { generation: "v2:timed", retiredAt: T0 - DAY / 2 },
+      { generation: "v2:current", retiredAt: T0 },
+    ]);
+
+    // The timed entry leaves once its own grace passes; the untimed ones got
+    // a full grace from the reset that first read them.
+    now = T0 + DAY / 2 + 1;
+    await p.resetAuthorization();
+    const second = await p.generation();
+    expect((await lineageOf(storage, second)).map(generationOf)).toEqual([
+      "legacy",
+      "v2:older",
+      "v2:current",
+      first,
+    ]);
+
+    now = T0 + DAY + 1;
+    await p.resetAuthorization();
+    expect(await lineageOf(storage, await p.generation())).toEqual([
+      { generation: first, retiredAt: T0 + DAY / 2 + 1 },
+      { generation: second, retiredAt: now },
+    ]);
+  });
+
+  it("unblocks a lineage an earlier release filled, once its grace has passed", async () => {
+    useClock();
+    const storage = memoryStorage();
+    await seedLineage(
+      storage,
+      "v2:current",
+      Array.from({ length: 1_000 }, (_, i) => `v2:untimed-${i}`),
+    );
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+
+    // The stamping reset may publish one over the cap…
+    await p.resetAuthorization();
+    expect(await lineageOf(storage, await p.generation())).toHaveLength(1_001);
+    // …the cap still refuses the next one inside the grace…
+    now = T0 + 60 * 60 * 1000;
+    await expect(p.resetAuthorization()).rejects.toThrow(/backlog .* is full/);
+    // …and the lineage drains once the grace has passed.
+    now = T0 + DAY + 1;
+    await p.resetAuthorization();
+    expect(await lineageOf(storage, await p.generation())).toHaveLength(
+      1_001 - 16 + 1,
+    );
+  });
+
+  it("carries a past-grace generation whose sweep failed, and drops it once one succeeds", async () => {
+    useClock();
+    const backing = memoryStorage();
+    let failing = true;
+    const failingKey = oauthValueStorageKey("oauth:tokens", "v2:a");
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        if (failing && key === failingKey) throw new Error("sweep unavailable");
+        await backing.delete(key);
+      },
+    };
+    await seedLineage(backing, "v2:current", [
+      { generation: "v2:a", retiredAt: T0 },
+      { generation: "v2:b", retiredAt: T0 },
+    ]);
+    for (const generation of ["v2:a", "v2:b"]) {
+      await backing.set(oauthValueStorageKey("oauth:tokens", generation), "residue");
+      await backing.set(manifestKey(generation), "[]");
+    }
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+
+    now = T0 + DAY + 1;
+    // Housekeeping for an old generation does not fail the reset.
+    await p.resetAuthorization();
+    const first = await p.generation();
+    expect(await lineageOf(backing, first)).toEqual([
+      { generation: "v2:a", retiredAt: T0 },
+      { generation: "v2:current", retiredAt: now },
+    ]);
+    expect(await backing.get(failingKey)).toBe("residue");
+    // A manifest waits for every one of its generation's values.
+    expect(await backing.get(manifestKey("v2:a"))).toBe("[]");
+    expect(await backing.get(manifestKey("v2:b"))).toBeNull();
+
+    failing = false;
+    now += 1;
+    await p.resetAuthorization();
+    expect(await backing.get(failingKey)).toBeNull();
+    expect(await backing.get(manifestKey("v2:a"))).toBeNull();
+    expect(
+      (await lineageOf(backing, await p.generation())).map(generationOf),
+    ).toEqual(["v2:current", first]);
+  });
+
+  it("keeps a bounded number of cleanup deletes in flight", async () => {
+    useClock();
+    const backing = memoryStorage();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const deleted: string[] = [];
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        deleted.push(key);
+        maxInFlight = Math.max(maxInFlight, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight--;
+        await backing.delete(key);
+      },
+    };
+    await seedLineage(
+      backing,
+      "v2:current",
+      Array.from({ length: 10 }, (_, i) => ({
+        generation: `v2:recent-${i}`,
+        retiredAt: T0,
+      })),
+    );
+
+    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+
+    // Eleven generations inside the grace: six values, a manifest, and times.
+    expect(deleted).toHaveLength(88);
+    expect(new Set(deleted).size).toBe(88);
+    expect(maxInFlight).toBe(8);
+  });
+
+  it("fails on a falsy rejection and keeps the manifest of the generation it left behind", async () => {
+    useClock();
+    const backing = memoryStorage();
+    let rejectKey: string | undefined;
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        if (key === rejectKey) {
+          rejectKey = undefined;
+          // A store that rejects without a reason still failed.
+          await Promise.reject(undefined);
+        }
+        await backing.delete(key);
+      },
+    };
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    await p.resetAuthorization();
+    const first = await p.generation();
+    const tokenKey = oauthValueStorageKey("oauth:tokens", first);
+    const clientKey = oauthValueStorageKey("oauth:client", first);
+    await backing.set(tokenKey, "residue");
+    await backing.set(clientKey, "residue");
+    rejectKey = tokenKey;
+
+    const outcome = await p.resetAuthorization().then(
+      () => ({ rejected: false }),
+      (reason: unknown) => ({ rejected: true, reason }),
+    );
+    expect(outcome).toEqual({ rejected: true, reason: undefined });
+    expect(await backing.get(tokenKey)).toBe("residue");
+    expect(await backing.get(clientKey)).toBeNull();
+    expect(await backing.get(manifestKey(first))).not.toBeNull();
+
+    await p.resetAuthorization();
+    expect(await backing.get(tokenKey)).toBeNull();
+    expect(await backing.get(manifestKey(first))).toBeNull();
+  });
+
+  it("carries a stale-write cleanup appended while a reset sweeps past-grace generations", async () => {
+    useClock();
+    const backing = memoryStorage();
+    const sibling = "v2:sibling";
+    const siblingTokens = oauthValueStorageKey("oauth:tokens", sibling);
+    const { promise: atSiblingSet, resolve: siblingSetReached } = deferred<void>();
+    const { promise: siblingSetGate, resolve: releaseSiblingSet } = deferred<void>();
+    const { promise: atSweep, resolve: sweepReached } = deferred<void>();
+    const { promise: sweepGate, resolve: releaseSweep } = deferred<void>();
+    let failSiblingDelete = true;
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      async set(key, value, opts) {
+        if (key === siblingTokens) {
+          siblingSetReached();
+          await siblingSetGate;
+        }
+        await backing.set(key, value, opts);
+      },
+      async delete(key) {
+        if (key === "oauth:client") {
+          // The reset is sweeping the past-grace legacy namespace.
+          sweepReached();
+          await sweepGate;
+        }
+        if (failSiblingDelete && key === siblingTokens) {
+          failSiblingDelete = false;
+          throw new Error("late cleanup unavailable");
+        }
+        await backing.delete(key);
+      },
+    };
+    const first = new KvOAuthProvider("svc", backing, REDIRECT);
+    await first.resetAuthorization();
+    const current = await first.generation();
+
+    // A sibling epoch that lost the last-writer race is still what a stale
+    // reader sees, and it starts a write under it.
+    await backing.set("oauth:generation", sibling);
+    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
+    stale.captureGeneration(sibling);
+    const lateWrite = stale.saveTokens({
+      access_token: "late-secret",
+      token_type: "Bearer",
+    });
+    await atSiblingSet;
+    await backing.set("oauth:generation", current);
+
+    now = T0 + DAY + 1;
+    const reset = new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    await atSweep;
+    // While the reset sweeps, the stale write lands, fails to remove itself,
+    // and appends its epoch to the live manifest the reset has already read.
+    releaseSiblingSet();
+    await lateWrite;
+    expect(await lineageOf(backing, current)).toContainEqual({
+      generation: sibling,
+      retiredAt: now,
+    });
+    releaseSweep();
+    await reset;
+
+    expect(await backing.get(siblingTokens)).toBeNull();
+    expect(await lineageOf(backing, await first.generation())).toEqual([
+      { generation: sibling, retiredAt: now },
+      { generation: current, retiredAt: now },
+    ]);
+  });
+});
+
 describe("KvOAuthProvider sealed state", () => {
   const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
   const OTHER_SEAL_KEY = Buffer.alloc(32, 9).toString("base64");
@@ -936,6 +1323,8 @@ describe("KvOAuthProvider sealed state", () => {
       expect(JSON.parse(required((await raw(key)) ?? undefined))).toEqual({
         connectaOAuthVersion: 2,
         generation,
+        // Only the pending URL carries its write time, and it is plaintext.
+        ...(key === "oauth:pending" ? { writtenAt: expect.any(Number) } : {}),
         value,
       });
     }
@@ -3615,7 +4004,15 @@ describe("remoteMcp() startAuth", () => {
       },
     });
     const url = "https://auth.example/authorize?code_challenge=abc";
-    await storage.set("oauth:pending", url);
+    await storage.set(
+      "oauth:pending",
+      JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        writtenAt: Date.now(),
+        value: url,
+      }),
+    );
     await storage.set("oauth:verifier", "verifier-123");
     const context = ctx(storage);
 
@@ -3624,6 +4021,7 @@ describe("remoteMcp() startAuth", () => {
 
     expect(first.state).toBe("auth_required");
     expect(first.authorizationUrl).toBe(url);
+    expect(first.authorizationReused).toBe(true);
     expect(second.authorizationUrl).toBe(first.authorizationUrl);
     // The verifier the operator's URL is bound to must survive both touches.
     expect(await storage.get("oauth:verifier")).toBe("verifier-123");
@@ -3700,6 +4098,194 @@ describe("remoteMcp() startAuth", () => {
     // Network failure on an oauth connector surfaces as error, not auth_required.
     expect(result.state).toBe("error");
     expect(result.message).toContain("ECONNREFUSED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startAuth's two starts, over the real SDK flow: continue reuses a recent
+// pending URL and a stored registration; restart re-registers from scratch.
+// ---------------------------------------------------------------------------
+describe("remoteMcp() continue and restart starts", () => {
+  const issuer = "https://auth.example";
+  const mcpUrl = "https://downstream.example/mcp";
+  const resourceMetadataUrl =
+    "https://downstream.example/.well-known/oauth-protected-resource";
+  const MINUTE = 60 * 1000;
+
+  function authorizationServer() {
+    const counts = { register: 0, fetches: 0 };
+    const fetchStub: FetchLike = async (input, init = {}) => {
+      counts.fetches++;
+      const url = new URL(input);
+      if (url.href === resourceMetadataUrl) {
+        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.href === `${issuer}/register`) {
+        counts.register++;
+        return Response.json({
+          ...(JSON.parse(String(init.body)) as object),
+          client_id: `client-${counts.register}`,
+        });
+      }
+      if (url.href === mcpUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+      throw new Error(`Unexpected OAuth test request: ${url.href}`);
+    };
+    return { fetchStub, counts };
+  }
+
+  async function withServer(
+    run: (
+      server: ReturnType<typeof authorizationServer>,
+      clock: { advance(ms: number): void },
+    ) => Promise<void>,
+  ) {
+    const server = authorizationServer();
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    vi.stubGlobal("fetch", server.fetchStub);
+    try {
+      await run(server, { advance: (ms) => (offset += ms) });
+    } finally {
+      vi.unstubAllGlobals();
+      clock.mockRestore();
+    }
+  }
+
+  const connector = () =>
+    remoteMcp("svc", {
+      url: mcpUrl,
+      auth: { type: "oauth" },
+      versionNegotiation: "legacy",
+    });
+  const scope = (storage: KVStorage): ConnectorContext => ({
+    ...ctx(storage),
+    requestScope: {},
+  });
+  const clientOf = (url: string | undefined) =>
+    new URL(required(url)).searchParams.get("client_id");
+
+  it("continue reuses a recent pending URL without touching the network", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      const restarted = await c.startAuth!(scope(storage), { force: true });
+      expect(restarted.state).toBe("auth_required");
+      expect(restarted.authorizationReused).toBeUndefined();
+      expect(server.counts.register).toBe(1);
+      const fetches = server.counts.fetches;
+      const generation = await storage.get("oauth:generation");
+
+      const continued = await c.startAuth!(scope(storage), { force: false });
+
+      expect(continued).toMatchObject({
+        state: "auth_required",
+        authorizationUrl: restarted.authorizationUrl,
+        authorizationReused: true,
+      });
+      expect(server.counts.fetches).toBe(fetches);
+      expect(await storage.get("oauth:generation")).toBe(generation);
+    });
+  });
+
+  it("continue starts a fresh flow for a stale pending URL, keeping the registration", async () => {
+    await withServer(async (server, clock) => {
+      const storage = memoryStorage();
+      const c = connector();
+      const restarted = await c.startAuth!(scope(storage), { force: true });
+      const generation = await storage.get("oauth:generation");
+
+      clock.advance(10 * MINUTE);
+      const continued = await c.startAuth!(scope(storage), { force: false });
+
+      expect(continued.state).toBe("auth_required");
+      expect(continued.authorizationReused).toBeUndefined();
+      expect(continued.authorizationUrl).not.toBe(restarted.authorizationUrl);
+      // Same epoch, same client: no registration, no reset.
+      expect(clientOf(continued.authorizationUrl)).toBe("client-1");
+      expect(server.counts.register).toBe(1);
+      expect(await storage.get("oauth:generation")).toBe(generation);
+
+      // The fresh URL is itself reusable.
+      const again = await c.startAuth!(scope(storage), { force: false });
+      expect(again).toMatchObject({
+        authorizationUrl: continued.authorizationUrl,
+        authorizationReused: true,
+      });
+    });
+  });
+
+  it("continue treats an untimed pending URL from an earlier release as stale", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await c.startAuth!(scope(storage), { force: true });
+      const generation = required((await storage.get("oauth:generation")) ?? undefined);
+      const untimed = "https://auth.example/authorize?from=an-earlier-release";
+      await storage.set(
+        oauthValueStorageKey("oauth:pending", generation),
+        JSON.stringify({ connectaOAuthVersion: 2, generation, value: untimed }),
+      );
+
+      const continued = await c.startAuth!(scope(storage), { force: false });
+
+      expect(continued.authorizationReused).toBeUndefined();
+      expect(continued.authorizationUrl).not.toBe(untimed);
+      expect(clientOf(continued.authorizationUrl)).toBe("client-1");
+      expect(server.counts.register).toBe(1);
+    });
+  });
+
+  it("restart still re-registers and replaces the epoch on every start", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      const first = await c.startAuth!(scope(storage), { force: true });
+      const firstGeneration = await storage.get("oauth:generation");
+
+      const second = await c.startAuth!(scope(storage), { force: true });
+
+      expect(second.authorizationReused).toBeUndefined();
+      expect(second.authorizationUrl).not.toBe(first.authorizationUrl);
+      expect(clientOf(second.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
+      expect(await storage.get("oauth:generation")).not.toBe(firstGeneration);
+    });
+  });
+
+  it("continue on a disconnected connector still resets before starting", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await c.startAuth!(scope(storage), { force: true });
+      await c.disconnectAuth!(scope(storage));
+      expect(await storage.get("oauth:generation")).toMatch(/^disconnected:/);
+
+      const continued = await c.startAuth!(scope(storage), { force: false });
+
+      expect(continued.state).toBe("auth_required");
+      expect(continued.authorizationReused).toBeUndefined();
+      expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
+      expect(server.counts.register).toBe(2);
+    });
   });
 });
 

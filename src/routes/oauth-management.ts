@@ -17,6 +17,23 @@ import {
   type RouteContext,
 } from "./shared.js";
 
+/**
+ * How a POST starts authorization, from its `mode` query parameter:
+ * `restart` (the default) resets the connector to a fresh epoch — wiping the
+ * grant, the client registration, and discovery — before starting over;
+ * `continue` hands back a recent pending authorization URL when one exists
+ * and otherwise starts a flow in the current epoch, keeping the stored
+ * registration. `null` is a malformed request.
+ */
+function startMode(url: URL): "continue" | "restart" | null {
+  const modes = url.searchParams.getAll("mode");
+  if (modes.length === 0) return "restart";
+  const [mode] = modes;
+  return modes.length === 1 && (mode === "continue" || mode === "restart")
+    ? mode
+    : null;
+}
+
 function oauthManagementRequest(
   context: RouteContext,
   connectorId: string,
@@ -45,6 +62,10 @@ function oauthManagementRequest(
     if (!disconnecting && request.method !== "POST") {
       return yield* refuse("method not allowed", 405);
     }
+    const mode = disconnecting ? undefined : startMode(context.url);
+    if (mode === null) {
+      return yield* refuse('mode must be "continue" or "restart"', 400);
+    }
 
     const ctx = registry.contextFor(connectorId, baseUrl, {});
     // The connector scope this request opened ends with it, however it ends.
@@ -57,7 +78,7 @@ function oauthManagementRequest(
             await disconnectAuth(ctx);
             return undefined;
           }
-          const started = await startAuth(ctx, { force: true });
+          const started = await startAuth(ctx, { force: mode === "restart" });
           if (started.authorizationUrl) {
             await registry.bindOAuthHandoff(connectorId, started.authorizationUrl);
           }
@@ -68,19 +89,27 @@ function oauthManagementRequest(
     );
     // The old grant and its cached catalog are invalid after either operation,
     // including a partially failed physical cleanup whose epoch fence succeeded.
-    const invalidated = yield* Effect.result(
-      Effect.tryPromise({
-        try: () => registry.invalidateStored(connectorId),
-        catch: (error) => error,
-      }),
-    );
+    // A reused pending URL is the one exception: that start changed nothing.
+    // Only a continued start can reuse one; a restart always reset.
+    const reused =
+      mode === "continue" &&
+      Result.isSuccess(operation) &&
+      operation.success?.authorizationReused === true;
+    const invalidated = reused
+      ? Result.succeed(undefined)
+      : yield* Effect.result(
+          Effect.tryPromise({
+            try: () => registry.invalidateStored(connectorId),
+            catch: (error) => error,
+          }),
+        );
     // Every failure below answers in the route's own fixed words. A hook's
     // rejection and a status message can quote a token endpoint's error body
     // or a provider's refusal, either of which can quote the secret it was
     // sent, so that text goes to the deployment's log and nowhere else.
     const failed = (detail: string, fixed: string, status: number) => {
       opts.logger.warn(
-        `[connecta] connector "${connectorId}" OAuth ${disconnecting ? "disconnect" : "restart"} failed: ${detail}`,
+        `[connecta] connector "${connectorId}" OAuth ${disconnecting ? "disconnect" : mode} failed: ${detail}`,
       );
       return refuse(fixed, status);
     };
@@ -131,7 +160,7 @@ function oauthManagementRequest(
     // stopped shipping, and the state and the link are the whole answer.
     return privateJson({
       state: result.state,
-      ...(authorizationUrl ? { authorizationUrl } : {}),
+      ...(authorizationUrl ? { authorizationUrl, reused } : {}),
     });
   }).pipe(Effect.scoped);
 }

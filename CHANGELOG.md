@@ -4,6 +4,48 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+### Added
+
+- **Continue or restart an operator OAuth start.** `POST /ui/oauth/<id>`
+  takes `?mode=continue` or `?mode=restart`. `restart`, still the default
+  when `mode` is absent, resets the connector as before: new epoch, wiped
+  grant, client registration, and discovery. `continue` hands back the pending
+  authorization URL when it was written in the last ten minutes. Otherwise it
+  starts a flow in the current epoch with the stored registration, so there
+  is no dynamic client registration. A disconnected connector still resets
+  first. A response with a URL now carries `reused`; a reused start leaves the
+  cached catalog alone. Any other `mode` is a 400. `ConnectorStatus` gains the
+  optional `authorizationReused`, set by `remoteMcp()`'s `startAuth`.
+
+### Changed
+
+- **Pending authorization URLs expire for reuse.** A non-forced `startAuth`,
+  including `authorize_connector` without `force`, reissues a pending URL only
+  when it is under ten minutes old. The pending URL's envelope now records its
+  write time, which older readers ignore. A URL written before this release,
+  or under a pre-epoch generation, starts a fresh flow instead.
+- **OAuth cleanup deletes run concurrently.** A restart's epoch cleanup,
+  `clearPending`, and `invalidateCredentials("all")` keep up to eight deletes
+  in flight. Every delete is still attempted, and a falsy rejection now counts
+  as a failure. A retired epoch's manifest is still removed only after all of
+  its values. Catalog invalidation deletes the root and its chunks together
+  under the registry's chunk I/O bound, so a failed root delete no longer
+  skips the chunks.
+
+### Fixed
+
+- **A restart's cleanup no longer grows with every earlier restart.** Each
+  OAuth restart re-deleted every epoch the connector had ever retired, one key
+  at a time, and restart 1,001 failed forever with a full cleanup backlog. The
+  lineage now records when each epoch retired, in a sibling record that older
+  releases ignore, so rolling back still works. An epoch retired more than
+  24 hours ago is swept before the next lineage is published, up to 16 per
+  restart, and dropped only when all of its keys are gone. The accepted
+  assumption is that no request holds a retired epoch for a day. The cap now
+  refuses only more than 1,000 restarts within 24 hours, and a lineage an
+  earlier release had already filled drains once its grace passes. See
+  [auth](./documentation/auth.md#starting-restarting-and-retiring-an-oauth-epoch).
+
 ## 0.26.0 — 2026-09-25
 
 Programs can now write with host approval. When a program reaches a tool that
