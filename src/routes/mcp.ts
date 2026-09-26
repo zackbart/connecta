@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { Duration, Effect, Exit, Option, Result, Scope } from "effect";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
+import { notFoundResponse } from "../branding.js";
 import { registerExecuteTool } from "../execute.js";
 import {
   ExecutorAdmissionError,
@@ -582,7 +583,10 @@ export function createMcpRoute(
             `[connecta] refused /mcp/${poolName} with 404: pool ${reason}` +
               (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
           );
-          return cors(new Response("Not Found", { status: 404 }));
+          // The server's own 404, so a browser sees the page every unserved
+          // path shows and an MCP client (which never asks for text/html)
+          // still reads a plain "Not Found".
+          return cors(notFoundResponse(request, opts));
         }
         access = intersectAccess(authz, pool.access);
       }

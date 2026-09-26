@@ -35,6 +35,35 @@ All notable changes to this package are documented here.
   invalidation deletes the root and its chunks together under the registry's
   chunk I/O bound, so a failed root delete no longer skips the chunks.
 
+- Every page connecta renders for a person now shares one token layer and one
+  layout: the operator shell, the OAuth callback, a browser's 404, and the
+  artifact frame follow `branding.theme` and light or dark. The OAuth callback
+  names the outcome in its heading with a status mark, names the connector by
+  title only after the state check, uses `branding.productName` in its copy,
+  and folds the agent fix prompt under "Details for the operator". Refusals
+  stay byte-identical across connectors and paths.
+- A request whose `Accept` names `text/html` gets a themed 404 page; every
+  other client keeps the plain `Not Found` body.
+- Markdown artifacts take the deployment's resolved scheme and tokens instead
+  of the OS palette, and drop an opening `# Heading` that only repeats the
+  title the viewer already shows. The frame waits on the viewer's surface with
+  a loading line, and says so if the page never arrives.
+- Without the operator UI, callback and 404 pages no longer link the default
+  `/favicon.svg`, which only the UI serves.
+- The operator UI starts OAuth in one click. Connect opens the provider's
+  page in a new tab straight away and asks the server to continue a pending
+  authorization rather than restart it; only Reconnect on a healthy
+  connection restarts, behind an in-page confirm. A tab returning to the page
+  quietly re-reads the status of connectors waiting on authorization.
+- Operator UI notices appear in the card that caused them, in fixed
+  sentences rather than the route's error text; problems fixed by authorizing
+  or adding a credential are warnings rather than errors, with one primary
+  action per row. Activity and artifact states, the confirm dialogs, the
+  mobile masthead, and the vocabulary shown to people (outcomes, actors,
+  timestamps) now read the same across pages and use `branding.productName`.
+
+### Fixed
+
 ### Fixed
 
 - **A restart's cleanup no longer grows with every earlier restart.** Each
@@ -55,6 +84,11 @@ All notable changes to this package are documented here.
   epochs. A connector stuck at the old 1,000 wall restarts the day it
   upgrades. Rolling back is clean unless a lineage has grown past 1,000. See
   [auth](./documentation/auth.md#starting-restarting-and-retiring-an-oauth-epoch).
+- A failed or unreachable `/ui/data` no longer signs the operator out. Only a
+  401 or 403 on that read returns to the token gate; anything else keeps the
+  page and offers Retry. A connector whose details fail to load says whether
+  the session, the browser's connection, or the downstream service is at
+  fault, and only the last offers the fix prompt.
 
 ## 0.26.0 — 2026-09-25
 

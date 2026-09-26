@@ -7,6 +7,9 @@ import {
 } from "../src/oauth-callback-outcome.js";
 import { FIX_PROMPT_KINDS, fixPrompt } from "../src/operator-ui/fix-prompts.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { operatorUi } from "../src/ui.js";
+import { artifacts, kvArtifactStore } from "../src/artifacts.js";
+import { bearerToken } from "../src/auth/bearer.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 
@@ -106,7 +109,7 @@ describe("OAuth callback reasons", () => {
 
   it("gives every failure reason a status, fixed copy, and a payload-free prompt", () => {
     for (const reason of CALLBACK_REASONS) {
-      const outcome = oauthCallbackOutcome(reason, "svc");
+      const outcome = oauthCallbackOutcome(reason, { id: "svc" });
       expect(outcome.reason).toBe(reason);
       expect(outcome.message.length).toBeGreaterThan(0);
       if (reason === "connected") {
@@ -118,7 +121,7 @@ describe("OAuth callback reasons", () => {
       expect(outcome.fixPrompt).toBeDefined();
       expect(outcome.fixPrompt).not.toMatch(URL_RE);
       for (const leak of LEAKS) {
-        const leaked = oauthCallbackOutcome(reason, leak);
+        const leaked = oauthCallbackOutcome(reason, { id: leak, title: leak });
         expect(leaked.message).not.toContain(leak);
         expect(leaked.fixPrompt).not.toContain(leak);
       }
@@ -129,16 +132,45 @@ describe("OAuth callback reasons", () => {
     // Refusals before or at the state check must be byte-identical across ids,
     // or the page becomes an enumeration oracle.
     for (const reason of ["denied", "provider_error", "invalid_callback"] as const) {
-      expect(oauthCallbackOutcome(reason, "svc")).toEqual(
-        oauthCallbackOutcome(reason, "other"),
+      expect(oauthCallbackOutcome(reason, { id: "svc" })).toEqual(
+        oauthCallbackOutcome(reason, { id: "other", title: "Other" }),
       );
     }
-    expect(oauthCallbackOutcome("exchange_failed", "svc").fixPrompt).toContain(
+    expect(oauthCallbackOutcome("exchange_failed", { id: "svc" }).fixPrompt).toContain(
       "Connector id: svc",
     );
-    expect(oauthCallbackOutcome("connected", "svc").message).toBe(
-      'Connected "svc". You can close this window.',
-    );
+    const connected = oauthCallbackOutcome("connected", { id: "svc", title: "Linear" });
+    expect(connected.heading).toBe("Linear is connected");
+    expect(connected.message).toBe("You can close this window.");
+    expect(oauthCallbackOutcome("connected", { id: "svc" }).heading).toBe("svc is connected");
+    expect(oauthCallbackOutcome("exchange_failed", { id: "svc", title: "Linear" }).heading)
+      .toBe("Linear could not be connected");
+    // A connector handed in before verification is still not named.
+    for (const reason of ["denied", "provider_error", "invalid_callback"] as const) {
+      const early = oauthCallbackOutcome(reason, { id: "svc", title: "Linear" });
+      expect(JSON.stringify(early)).not.toContain("Linear");
+      expect(JSON.stringify(early)).not.toContain("svc");
+    }
+  });
+
+  it("gives each outcome its own heading and a tone the page marks by shape", () => {
+    const headings = CALLBACK_REASONS.map((reason) =>
+      oauthCallbackOutcome(reason, { id: "svc", title: "Linear" }).heading);
+    // handoff_failed and exchange_failed share one heading on purpose: both
+    // are "this connector did not connect", told apart in the message.
+    expect(new Set(headings).size).toBe(CALLBACK_REASONS.length - 1);
+    expect(oauthCallbackOutcome("connected").tone).toBe("ok");
+    expect(oauthCallbackOutcome("denied").tone).toBe("declined");
+    for (const reason of ["provider_error", "invalid_callback", "handoff_failed", "exchange_failed"] as const) {
+      expect(oauthCallbackOutcome(reason).tone).toBe("problem");
+    }
+  });
+
+  it("names the deployment's product, not the package", () => {
+    const outcome = oauthCallbackOutcome("invalid_callback", undefined, "Acme Tools");
+    expect(outcome.message).toContain("Start authorization again from Acme Tools.");
+    expect(outcome.message).not.toMatch(/connecta/i);
+    expect(oauthCallbackOutcome("invalid_callback").message).toContain("from Connecta.");
   });
 });
 
@@ -177,7 +209,7 @@ describe("OAuth callback page", () => {
     expect(res.status).toBe(500);
     const body = await res.text();
     expect(body).toContain('data-oauth-callback="exchange_failed"');
-    expect(body).toContain("Fix prompt for a coding agent");
+    expect(body).toMatch(/<details class="status-details">\s*<summary>Details for the operator<\/summary>/);
     expect(body).toContain("Connector id: svc");
     expect(body).not.toContain("cs_live_leaked");
     expect(body).not.toContain("token endpoint said");
@@ -216,5 +248,184 @@ describe("OAuth callback page", () => {
     expect(missing.status).toBe(400);
     expect(stale.status).toBe(400);
     expect(await missing.text()).toBe(await stale.text());
+  });
+
+  const TITLE = "Quarterly Ledger";
+  function titled(id: string, finishAuth: NonNullable<Connector["finishAuth"]> = async () => {}): Connector {
+    return { ...oauthConnector(finishAuth), id, title: TITLE };
+  }
+
+  it("names the connector by title only after the state check", async () => {
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      connectors: [
+        titled("svc"),
+        titled("broken", async () => { throw new Error("exchange"); }),
+      ],
+    });
+    const connected = await connecta.fetch(
+      new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`),
+    );
+    expect(connected.status).toBe(200);
+    const connectedBody = await connected.text();
+    expect(connectedBody).toContain(`<h1>${TITLE} is connected</h1>`);
+    expect(connectedBody).toContain(`<title>${TITLE} is connected — Connecta</title>`);
+    expect(connectedBody).not.toContain("Details for the operator");
+
+    const failed = await (await connecta.fetch(
+      new Request(`${BASE}/oauth/callback/broken?code=abc&state=good-state`),
+    )).text();
+    expect(failed).toContain(`<h1>${TITLE} could not be connected</h1>`);
+
+    for (const path of [
+      "/oauth/callback/svc?code=abc&state=stale",
+      "/oauth/callback/svc?code=abc",
+      "/oauth/callback/svc",
+      "/oauth/callback/svc?error=access_denied",
+      "/oauth/callback/svc?error=server_error",
+    ]) {
+      const refusal = await (await connecta.fetch(new Request(`${BASE}${path}`))).text();
+      expect(refusal, path).not.toContain(TITLE);
+      expect(refusal, path).not.toContain("svc");
+    }
+  });
+
+  it("keeps every refusal byte-identical across connectors and paths", async () => {
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      connectors: [
+        titled("svc"),
+        { id: "plain", title: "Plain API", async listTools() { return []; }, async callTool() { return {}; } },
+      ],
+    });
+    const bodies = new Set<string>();
+    for (const path of [
+      "/oauth/callback/svc?code=abc&state=stale",
+      "/oauth/callback/svc?code=abc",
+      "/oauth/callback/plain?code=abc&state=good-state",
+      "/oauth/callback/missing?code=abc&state=good-state",
+      "/oauth/callback/%3Cscript%3E?code=abc",
+      "/oauth/callback/svc",
+    ]) {
+      const response = await connecta.fetch(new Request(`${BASE}${path}`));
+      expect(response.status, path).toBe(400);
+      bodies.add(await response.text());
+    }
+    expect(bodies.size).toBe(1);
+    const [body] = [...bodies];
+    expect(body).toContain('data-oauth-callback="invalid_callback"');
+    expect(body).toContain("<h1>Authorization could not be completed</h1>");
+    expect(body).not.toContain("Plain API");
+    expect(body).not.toContain(TITLE);
+  });
+
+  it("renders every outcome in the shared, themed layout", async () => {
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      ui: operatorUi({ branding: {
+        productName: "Acme Tools",
+        theme: { accent: "#0a7d55", colorScheme: "dark" },
+      } }),
+      connectors: [
+        titled("svc"),
+        titled("broken", async () => { throw new Error("exchange"); }),
+      ],
+    });
+    const outcomes: Array<[string, string, string]> = [
+      ["/oauth/callback/svc?code=abc&state=good-state", "connected", "status-mark ok"],
+      ["/oauth/callback/svc?error=access_denied", "denied", 'status-mark"'],
+      ["/oauth/callback/svc?error=server_error", "provider_error", "status-mark danger"],
+      ["/oauth/callback/svc?code=abc&state=stale", "invalid_callback", "status-mark danger"],
+      ["/oauth/callback/broken?code=abc&state=good-state", "exchange_failed", "status-mark danger"],
+    ];
+    for (const [path, reason, mark] of outcomes) {
+      const body = await (await connecta.fetch(new Request(`${BASE}${path}`))).text();
+      expect(body, reason).toContain(`data-oauth-callback="${reason}"`);
+      expect(body, reason).toContain('<html lang="en" data-scheme="dark">');
+      expect(body, reason).toContain(":root{--accent:#0a7d55}");
+      expect(body, reason).toContain("--surface-2:");
+      expect(body, reason).toContain('<header class="masthead shell">');
+      expect(body, reason).toContain('<span class="brand">Acme Tools</span>');
+      expect(body, reason).toContain(mark);
+      // The status reads in words beside its mark, never in color alone.
+      expect(body, reason).toMatch(/<p class="status-label[^"]*">(Connected|Not connected)<\/p>/);
+      expect(body, reason).toContain('href="/">Return to Acme Tools</a>');
+      expect(body, reason).not.toContain("border-radius: 0;");
+      // What a person reads names the deployment; only the folded agent
+      // prompt, written about the package, says "connecta".
+      const copy = /<h1>([^<]*)<\/h1>\s*<p class="status-copy">([^<]*)<\/p>/.exec(body);
+      expect(copy, reason).not.toBeNull();
+      expect(copy?.[0], reason).not.toMatch(/connecta/i);
+    }
+  });
+
+  it("links the default favicon only where the operator UI serves it", async () => {
+    const headless = createTestConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      ...({ ui: undefined } as { ui?: never }),
+      connectors: [titled("svc")],
+    });
+    const body = await (await headless.fetch(
+      new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`),
+    )).text();
+    expect(body).not.toContain("favicon");
+    expect(body).not.toContain("Return to");
+    expect((await headless.fetch(new Request(`${BASE}/favicon.svg`))).status).toBe(404);
+
+    const mounted = createTestConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      connectors: [titled("svc")],
+    });
+    const withUi = await (await mounted.fetch(
+      new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`),
+    )).text();
+    expect(withUi).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+
+    // The artifact host answers /favicon.* with 404, so its browser 404 links
+    // the icons the public origin serves, the same way it links home.
+    const pagesOrigin = "https://pages.connecta.test";
+    const split = createTestConnecta({
+      publicUrl: BASE,
+      artifactOrigin: pagesOrigin,
+      auth: bearerToken("favicon-test-token"),
+      storage: memoryStorage(),
+      logger: silentLogger,
+      artifacts: artifacts({ store: kvArtifactStore(memoryStorage()) }),
+      connectors: [titled("svc")],
+    });
+    const html = { headers: { Accept: "text/html" } };
+    expect((await split.fetch(new Request(`${pagesOrigin}/favicon.svg`))).status).toBe(404);
+    const onPages = await (await split.fetch(new Request(`${pagesOrigin}/nowhere`, html))).text();
+    expect(onPages).toContain(`<link rel="icon" href="${BASE}/favicon.svg" type="image/svg+xml">`);
+    expect(onPages).toContain(`<link rel="shortcut icon" href="${BASE}/favicon.ico">`);
+    expect(onPages).not.toMatch(/href="\/favicon/);
+    for (const icon of ["/favicon.svg", "/favicon.ico"]) {
+      expect((await split.fetch(new Request(`${BASE}${icon}`))).status, icon).toBe(200);
+    }
+    // One page on either host.
+    expect(await (await split.fetch(new Request(`${BASE}/nowhere`, html))).text()).toBe(onPages);
+    // The artifact shells there take the same icons; the main host's own
+    // shell keeps them root-relative.
+    for (const path of ["/artifacts", "/artifacts/q3", "/artifacts/q3/v/1"]) {
+      const shell = await split.fetch(new Request(`${pagesOrigin}${path}`, html));
+      expect(shell.status, path).toBe(200);
+      const body = await shell.text();
+      expect(body, path).toContain(`<link rel="icon" href="${BASE}/favicon.svg" type="image/svg+xml">`);
+      expect(body, path).toContain(`<link rel="shortcut icon" href="${BASE}/favicon.ico">`);
+      expect(body, path).not.toMatch(/href="\/favicon/);
+    }
+    const mainShell = await (await split.fetch(new Request(`${BASE}/`, html))).text();
+    expect(mainShell).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+    expect(mainShell).toContain('<link rel="shortcut icon" href="/favicon.ico">');
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { markdownPage, renderMarkdown } from "../src/artifacts/markdown.js";
 import { buildFrameDocument } from "../src/artifacts/document.js";
+import { resolveTheme } from "../src/branding.js";
 import { validateArtifact } from "../src/artifacts/validate.js";
 
 describe("renderMarkdown", () => {
@@ -74,6 +75,36 @@ describe("renderMarkdown", () => {
     });
     expect(frame).toContain("too many nested block quotes or lists to display");
     expect(frame).not.toContain(source);
+  });
+
+  it("drops an opening heading that only repeats the title the viewer already shows", () => {
+    expect(markdownPage("# Weekly metrics\n\nSignups rose.", "Weekly metrics"))
+      .toContain('<main id="artifact-root">\n<p>Signups rose.</p>\n</main>');
+    expect(markdownPage("\n  #   Weekly   Metrics  \n\nx", "weekly metrics")).not.toContain("<h1>");
+    // Anything else is the author's: a different heading, a lower level, or a
+    // repeated title that does not open the page.
+    expect(markdownPage("# Weekly metrics, week 39", "Weekly metrics")).toContain("<h1>Weekly metrics, week 39</h1>");
+    expect(markdownPage("## Weekly metrics", "Weekly metrics")).toContain("<h2>Weekly metrics</h2>");
+    expect(markdownPage("Intro\n\n# Weekly metrics", "Weekly metrics")).toContain("<h1>Weekly metrics</h1>");
+    expect(markdownPage("#", "")).toContain("<h1></h1>");
+  });
+
+  it("styles the page from the shared tokens, in the scheme it is given", () => {
+    const system = markdownPage("Hi", "Page");
+    expect(system).toContain('<html lang="en"><head>');
+    expect(system).toContain("--surface-2:");
+    expect(system).toContain("background:var(--surface)");
+    expect(system).not.toMatch(/#0d1117|#1f2328|#0969da/);
+    const dark = markdownPage("Hi", "Page", resolveTheme({ colorScheme: "dark", accent: "#0a7d55" }));
+    expect(dark).toContain('<html lang="en" data-scheme="dark">');
+    // The theme block follows the tokens it overrides.
+    expect(dark.indexOf(":root{--accent:#0a7d55}")).toBeGreaterThan(dark.indexOf("--accent: #2f5fe0"));
+    const frame = buildFrameDocument({
+      kind: "markdown", source: "Hi", theme: resolveTheme({ colorScheme: "light" }),
+      global: { id: "p", title: "Page", view: { version: 1 }, documents: {}, snapshot: false },
+      data: {},
+    });
+    expect(frame).toContain('<html lang="en" data-scheme="light">');
   });
 
   it("wraps the body in the page root with the title escaped", () => {

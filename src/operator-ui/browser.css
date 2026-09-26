@@ -1,221 +1,20 @@
 /*
- * One token layer, two palettes, a small set of primitives. Every color,
- * radius, and font resolves through a custom property here, so `branding.theme`
- * only has to append a `:root` block after this stylesheet to retheme the page.
- *
- * Tints, hovers, and focus rings are mixed from the tokens with `color-mix`
- * instead of being written out, so setting one accent keeps all of them
- * consistent with it.
+ * The operator UI's own components. The tokens and the primitives every
+ * server-rendered page shares come first, from tokens.css and page.css; this
+ * file adds only what the single-page app draws.
  */
+@import "./tokens.css";
+@import "./page.css";
 
-  :root {
-    color-scheme: light;
-    --accent: #2f5fe0;
-    --radius: 10px;
-    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas,
-      monospace;
+  /* Chrome. The nav mounts after the session is checked; reserving its
+     height keeps the masthead from growing under a gate that just opened. */
 
-    --bg: #f6f7f9;
-    --surface: #ffffff;
-    --surface-2: #f1f3f6;
-    --border: #e2e5ea;
-    --border-strong: #cdd2da;
-    --text: #131820;
-    --muted: #5b6472;
-    --ok: #12734a;
-    --warn: #9a5b06;
-    --danger: #bb3226;
-    --on-accent: #ffffff;
+  .masthead-inner { min-height: calc(.9375rem * 1.5 + .7rem); }
 
-    /* Accent as text reads differently from accent as a fill; both derive. */
-    --link: var(--accent);
-    --tint: color-mix(in srgb, var(--accent) 8%, var(--surface));
-    --shell: 68rem;
-    --pad: 1.25rem;
-    --gap: 1rem;
-  }
+  /* Controls. Text-like inputs only: a checkbox is not a text field, and a
+     full-width one pushes its own label off the row. */
 
-  /*
-   * Dark applies when the OS asks for it and the deployment has not pinned a
-   * scheme, or when the deployment pinned dark. Both selectors set the same
-   * tokens, so there is one dark palette and not two that can drift apart.
-   */
-  @media (prefers-color-scheme: dark) {
-    html:not([data-scheme="light"]) { color-scheme: dark; }
-  }
-  html[data-scheme="dark"] { color-scheme: dark; }
-
-  @media (prefers-color-scheme: dark) {
-    html:not([data-scheme="light"]) {
-      --bg: #0d1016;
-      --surface: #151a21;
-      --surface-2: #1c222c;
-      --border: #262d39;
-      --border-strong: #38414f;
-      --text: #e6eaf1;
-      --muted: #97a1b2;
-      --ok: #4cc48c;
-      --warn: #e2a33f;
-      --danger: #f4776c;
-      --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
-      --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
-    }
-  }
-  html[data-scheme="dark"] {
-    --bg: #0d1016;
-    --surface: #151a21;
-    --surface-2: #1c222c;
-    --border: #262d39;
-    --border-strong: #38414f;
-    --text: #e6eaf1;
-    --muted: #97a1b2;
-    --ok: #4cc48c;
-    --warn: #e2a33f;
-    --danger: #f4776c;
-    --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
-    --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
-  }
-
-  * { box-sizing: border-box; }
-  html {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 16px;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
-  body { margin: 0; min-height: 100vh; }
-  :is(h1, h2, h3, p, ul, ol) { margin: 0; padding: 0; }
-  :is(h1, h2, h3) { font-weight: 600; line-height: 1.3; }
-  h1 { font-size: 1.5rem; letter-spacing: -.01em; }
-  h2 { font-size: 1rem; }
-  :is(ul, ol) { list-style: none; }
-  a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-  button, input { font: inherit; }
-  :is(a, button, input, summary):focus-visible {
-    border-radius: calc(var(--radius) / 2);
-    outline: 2px solid var(--link);
-    outline-offset: 2px;
-  }
-  .skip-link {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    left: var(--pad);
-    padding: .5rem .75rem;
-    position: fixed;
-    top: -4rem;
-    z-index: 10;
-  }
-  .skip-link:focus { top: var(--pad); }
-
-  .shell {
-    margin: 0 auto;
-    max-width: var(--shell);
-    padding-left: var(--pad);
-    padding-right: var(--pad);
-  }
-  .cap, .meta { color: var(--muted); font-size: .875rem; }
-  .mono { font-family: var(--mono); font-size: .8125rem; }
-  .visually-hidden {
-    clip-path: inset(50%);
-    height: 1px;
-    overflow: hidden;
-    position: absolute;
-    white-space: nowrap;
-    width: 1px;
-  }
-
-  /* Chrome */
-
-  .masthead {
-    align-items: center;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: var(--gap);
-    justify-content: space-between;
-    max-width: none;
-    padding-bottom: .75rem;
-    padding-top: .75rem;
-    position: sticky;
-    top: 0;
-    z-index: 5;
-  }
-  .masthead-inner {
-    align-items: center;
-    display: flex;
-    gap: var(--gap);
-    justify-content: space-between;
-    margin: 0 auto;
-    max-width: var(--shell);
-    width: 100%;
-  }
-  .mast-nav, .mast-actions, .page-nav, .session-actions {
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    gap: .25rem;
-  }
-  .mast-nav { gap: var(--gap); }
-  .mast-actions { gap: var(--gap); }
-  .navlink {
-    background: none;
-    border: 0;
-    border-radius: calc(var(--radius) - 2px);
-    color: var(--muted);
-    cursor: pointer;
-    font-size: .9375rem;
-    padding: .35rem .6rem;
-    text-decoration: none;
-  }
-  .navlink:hover { background: var(--surface-2); color: var(--text); }
-  .navlink[aria-current="page"] {
-    background: var(--tint);
-    color: var(--link);
-    font-weight: 500;
-  }
-  .brand, .product { padding-left: 0; padding-right: 0; text-decoration: none; }
-  .brand { color: var(--text); font-weight: 600; }
-  .brand:hover, .product:hover { background: none; }
-  .product { color: var(--muted); }
-  .page { padding-bottom: 4rem; padding-top: 2rem; }
-  .lead { margin-bottom: 1.5rem; }
-  .lead-copy { color: var(--muted); display: grid; gap: .5rem; margin-top: .35rem; }
-  .lead-copy p { max-width: 60ch; }
-
-  /* Controls */
-
-  .btn {
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
-    border-radius: calc(var(--radius) - 2px);
-    color: var(--text);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    font-size: .875rem;
-    gap: .35rem;
-    padding: .35rem .7rem;
-    text-decoration: none;
-    white-space: nowrap;
-  }
-  .btn:hover { background: var(--surface-2); }
-  .btn:disabled { cursor: not-allowed; opacity: .55; }
-  .btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
-  }
-  .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
-  .btn.danger { color: var(--danger); }
-  .btn.danger:hover { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
-  .btn.quiet { background: none; border-color: var(--border); color: var(--muted); }
-  .btn.quiet:hover { background: var(--surface-2); color: var(--text); }
-  input {
+  input:not([type="checkbox"], [type="radio"], [type="hidden"]) {
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: calc(var(--radius) - 2px);
@@ -226,7 +25,10 @@
   }
   input::placeholder { color: var(--muted); }
   .row { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
-  .row input { flex: 1 1 14rem; width: auto; }
+  .row input:not([type="checkbox"], [type="radio"]) { flex: 1 1 14rem; width: auto; }
+  input:disabled { opacity: .6; }
+  .check { align-items: center; cursor: pointer; display: inline-flex; gap: .4rem; }
+  .check input { accent-color: var(--accent); margin: 0; }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 
   /* Status vocabulary */
@@ -239,26 +41,10 @@
     width: .5rem;
     background: var(--muted);
   }
-  .dot.ok, .dot.success { background: var(--ok); }
-  .dot.auth_required { background: var(--warn); }
+  .dot.ok, .dot.success, .dot.approved { background: var(--ok); }
+  .dot.auth_required, .dot.warn, .dot.paused { background: var(--warn); }
   .dot.error, .dot.timeout { background: var(--danger); }
   .dot.loading { background: var(--border-strong); }
-  .badge {
-    align-items: center;
-    background: var(--surface-2);
-    border-radius: 999px;
-    color: var(--muted);
-    display: inline-flex;
-    font-size: .75rem;
-    gap: .3rem;
-    line-height: 1.6;
-    padding: .1rem .5rem;
-    white-space: nowrap;
-  }
-  .badge.ok { background: color-mix(in srgb, var(--ok) 12%, var(--surface)); color: var(--ok); }
-  .badge.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--warn); }
-  .badge.danger { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
-  .badge.accent { background: var(--tint); color: var(--link); }
 
   /* Surfaces */
 
@@ -269,22 +55,41 @@
     gap: var(--gap);
     justify-content: space-between;
   }
-  .empty, .unavailable {
+  .unavailable {
     background: var(--surface);
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius);
     color: var(--muted);
     padding: 1.5rem var(--pad);
+  }
+
+  /* One shape for empty, loading, and failed collections, on every page. */
+  .state-block {
+    align-items: center;
+    background: var(--surface);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    padding: 1.75rem var(--pad);
     text-align: center;
   }
-  .unavailable { text-align: left; }
-  .msg {
-    background: color-mix(in srgb, var(--danger) 8%, var(--surface));
-    border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--surface));
-    border-radius: calc(var(--radius) - 2px);
-    color: var(--danger);
-    font-size: .875rem;
-    padding: .5rem .75rem;
+  .state-block.error {
+    border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+    border-style: solid;
+  }
+  .state-title { color: var(--text); font-weight: 600; }
+  .state-copy { max-width: 52ch; }
+  .state-block .btn { margin-top: .25rem; }
+  .collection { display: grid; gap: .75rem; }
+
+  /* A problem someone fixes by authorizing: amber, like its badge. */
+  .msg.warn {
+    background: color-mix(in srgb, var(--warn) 9%, var(--surface));
+    border-color: color-mix(in srgb, var(--warn) 32%, var(--surface));
+    color: var(--text);
   }
   .error-notice { color: var(--danger); }
   /* Notices stay mounted so focus and live regions have a stable target, which
@@ -348,9 +153,16 @@
 
   /* Fix prompts */
 
-  .fix-prompt { display: grid; gap: .35rem; }
-  .fix-prompt-head { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
-  .fix-prompt .fix-prompt-text {
+  .fix-prompt {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem .75rem;
+  }
+  .fix-prompt > details { flex: 1 1 12rem; }
+  .fix-prompt > details[open] { flex-basis: 100%; }
+  .fix-prompt-preview > .meta { margin-top: .4rem; }
+  .fix-prompt-preview .fix-prompt-text {
     border: 1px solid var(--border);
     margin-top: .4rem;
     max-height: 18rem;
@@ -366,23 +178,39 @@
     overflow: hidden;
   }
   .rows > * + * { border-top: 1px solid var(--border); }
-  .conn[open] { background: var(--surface-2); }
+  .conn.open > .conn-head { background: var(--surface-2); }
   .conn-head {
     align-items: center;
-    cursor: pointer;
     display: flex;
     gap: .75rem;
     justify-content: space-between;
-    list-style: none;
     padding: .7rem var(--pad);
+    position: relative;
   }
-  .conn-head::-webkit-details-marker { display: none; }
-  /* `.rows` clips to its radius, so the row's focus ring has to be inset or
-     the container crops it off. */
-  .conn-head:focus-visible { outline-offset: -2px; }
   .conn-head:hover { background: var(--surface-2); }
   .conn-main { align-items: center; display: flex; gap: .6rem; min-width: 0; }
   .conn-name { font-size: 1rem; font-weight: 500; overflow-wrap: anywhere; }
+  /* The heading's button toggles the row; its hit area stretches over the
+     whole head, so the badges and id are part of the target without being
+     part of the heading's name. */
+  .conn-toggle {
+    background: none;
+    border: 0;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-align: left;
+  }
+  .conn-toggle::after { content: ""; inset: 0; position: absolute; }
+  /* `.rows` clips to its radius, so the focus ring is drawn on the whole head,
+     inset, rather than around the name where it would be cropped. */
+  .conn-toggle:focus-visible { outline: none; }
+  .conn-toggle:focus-visible::after {
+    border-radius: calc(var(--radius) - 2px);
+    outline: 2px solid var(--link);
+    outline-offset: -2px;
+  }
   .conn-id { color: var(--muted); }
   .conn-badges {
     align-items: center;
@@ -401,7 +229,7 @@
     transform-origin: center;
     width: .4rem;
   }
-  .conn[open] .conn-caret { rotate: 45deg; }
+  .conn.open .conn-caret { rotate: 45deg; }
   .conn-body {
     background: var(--surface);
     border-top: 1px solid var(--border);
@@ -409,6 +237,8 @@
     gap: .75rem;
     padding: var(--pad);
   }
+  /* The `display: grid` above would otherwise outrank the UA's `[hidden]`. */
+  .conn-body[hidden] { display: none; }
   .conn-note { color: var(--muted); max-width: 70ch; }
   .subcard {
     background: var(--surface-2);
@@ -425,6 +255,18 @@
     gap: .5rem;
     justify-content: space-between;
   }
+  .subcard-head h3 { font-size: .9375rem; }
+
+  /* A second click, in place, for an action that takes something away. */
+  .confirm {
+    background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--surface));
+    border-radius: calc(var(--radius) - 2px);
+    display: grid;
+    gap: .5rem;
+    padding: .6rem .75rem;
+  }
+  .confirm p { max-width: 70ch; }
   details > .subcard, details > .tool-list { margin-top: .5rem; }
   /* A connector with a hundred tools scrolls inside its own panel instead of
      stretching the row list. */
@@ -509,12 +351,8 @@
   .activity-actor-id { color: var(--muted); }
   .activity-address { font-family: var(--mono); font-size: .8125rem; overflow-wrap: anywhere; }
   .activity-detail { color: var(--muted); font-size: .8125rem; }
-  .activity-outcome { text-align: right; }
-  .activity-item.error .activity-outcome,
-  .activity-item.timeout .activity-outcome { color: var(--danger); }
-  .activity-item.success .activity-outcome { color: var(--ok); }
-  .activity-empty { color: var(--muted); padding: 1.5rem var(--pad); text-align: center; }
-  .activity-more { margin-top: .75rem; }
+  .activity-result { display: grid; gap: .15rem; justify-items: end; }
+  .activity-more { justify-self: start; }
 
   /* Artifacts */
 
@@ -529,6 +367,7 @@
   .artifact-row .artifact-meta, .artifact-meta { color: var(--muted); font-size: .8125rem; }
   .artifact-badges { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; }
   .artifact-head { display: grid; gap: .35rem; margin-bottom: .75rem; }
+  .navlink.inline { font-size: inherit; padding: 0 .2rem; }
   .artifact-banner {
     background: color-mix(in srgb, var(--warn) 12%, var(--surface));
     border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
@@ -537,7 +376,7 @@
     padding: .5rem .75rem;
   }
   .artifact-frame {
-    background: #ffffff;
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     display: block;
@@ -546,22 +385,32 @@
     width: 100%;
   }
 
-  /* Gate */
+  /* Gate: the guarded page's own lead, with the sign-in form under it. */
 
-  .gate {
-    display: grid;
-    gap: .75rem;
-    margin: 3rem auto 0;
-    max-width: 30rem;
-  }
-  .gate h1 { font-size: 1.25rem; }
-  .gate .row { flex-wrap: nowrap; }
+  .gate-form { max-width: 36rem; }
 
   @media (max-width: 40rem) {
-    :root { --pad: 1rem; }
+    /* Masthead: brand and the session action on one line, the page nav on
+       the next, scrolling sideways rather than wrapping. It stops sticking,
+       so a phone does not give a fifth of its height to chrome. */
+    .masthead { position: static; }
+    .masthead-inner { flex-wrap: wrap; row-gap: .35rem; }
+    #operatorNav, #operatorNav .mast-actions { display: contents; }
+    .session-actions { margin-left: auto; }
+    .page-nav {
+      flex: 1 0 100%;
+      flex-wrap: nowrap;
+      margin-left: -.6rem;
+      order: 3;
+      overflow-x: auto;
+    }
     .conn-head { align-items: flex-start; flex-direction: column; gap: .4rem; }
     .conn-badges { justify-content: flex-start; }
     .endpoint { flex-wrap: wrap; }
+    .section-head { flex-wrap: wrap; }
+    .filter { flex: 1 1 100%; }
     .activity-item { grid-template-columns: minmax(0, 1fr); }
-    .activity-outcome { text-align: left; }
+    .activity-result { justify-items: start; }
+    .artifact-row { grid-template-columns: minmax(0, 1fr); }
+    .artifact-badges { justify-content: flex-start; }
   }

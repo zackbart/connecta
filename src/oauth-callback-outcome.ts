@@ -22,21 +22,47 @@ export type OAuthCallbackReason =
   | "handoff_failed"
   | "exchange_failed";
 
+/**
+ * How a page reads at a glance: `ok` for a stored grant, `declined` for a
+ * consent a person turned down on purpose, `problem` for everything that
+ * failed. The page pairs each with a shape and a label, never color alone.
+ */
+type OAuthCallbackTone = "ok" | "declined" | "problem";
+
 interface OAuthCallbackOutcome {
   status: number;
+  tone: OAuthCallbackTone;
+  /**
+   * The page heading. `{name}` is the connector's title (or id), and appears
+   * only in outcomes that set `namesConnector`.
+   */
+  heading: string;
+  /** `{product}` is the deployment's product name. */
   message: string;
   /** Absent only for success, which has nothing to fix. */
   fix?: FixPromptSpec;
-  /** Whether the prompt may name the connector: only after state verified it. */
+  /**
+   * Whether the page may name the connector: only after the state check proved
+   * the flow was one this deployment started for it. Every outcome reachable
+   * before that point renders the same bytes whatever id the URL carried.
+   */
   namesConnector?: boolean;
 }
 
 const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
-  connected: { status: 200, message: "Connected. You can close this window." },
+  connected: {
+    status: 200,
+    tone: "ok",
+    heading: "{name} is connected",
+    message: "You can close this window.",
+    namesConnector: true,
+  },
   denied: {
     status: 400,
+    tone: "declined",
+    heading: "Authorization was declined",
     message:
-      "Authorization was declined at the provider. Nothing was stored; start authorization again when you are ready.",
+      "Consent was declined at the provider, so nothing was stored. Start authorization again whenever you are ready.",
     fix: {
       problem:
         "Consent for a downstream OAuth connector was declined at the provider, so no grant was stored.",
@@ -49,8 +75,10 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
   },
   provider_error: {
     status: 400,
+    tone: "problem",
+    heading: "The provider returned an error",
     message:
-      "The provider returned an error instead of an authorization code. Nothing was stored.",
+      "It sent back an error instead of an authorization code, so nothing was stored.",
     fix: {
       problem:
         "A provider redirected back to the OAuth callback with an OAuth error instead of an authorization code.",
@@ -63,8 +91,10 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
   },
   invalid_callback: {
     status: 400,
+    tone: "problem",
+    heading: "Authorization could not be completed",
     message:
-      "Authorization could not be completed. The link may be expired, already used, or replaced by a newer attempt. Re-run authorization from connecta and try again.",
+      "The link may be expired, already used, or replaced by a newer attempt. Start authorization again from {product}.",
     fix: {
       problem:
         "An OAuth callback arrived that the deployment could not match to an authorization flow it started: stale, already used, replaced by a newer attempt, or finished in a different session.",
@@ -77,7 +107,9 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
   },
   handoff_failed: {
     status: 500,
-    message: "Authorization could not be completed. Nothing was exchanged; try again shortly.",
+    tone: "problem",
+    heading: "{name} could not be connected",
+    message: "Authorization could not be completed, and nothing was exchanged. Try again shortly.",
     namesConnector: true,
     fix: {
       problem:
@@ -90,8 +122,10 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
   },
   exchange_failed: {
     status: 500,
+    tone: "problem",
+    heading: "{name} could not be connected",
     message:
-      "Authorization failed: the provider did not accept the authorization code exchange. Nothing was stored.",
+      "The provider did not accept the authorization code exchange. Nothing was stored.",
     namesConnector: true,
     fix: {
       problem:
@@ -104,8 +138,6 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
     },
   },
 };
-
-const CONNECTOR_ID_RE = /^[a-z0-9_-]+$/;
 
 /**
  * RFC 6749 names `access_denied` for a declined consent (section 4.1.2.1). Every other
@@ -120,33 +152,44 @@ export function providerErrorReason(error: string): OAuthCallbackReason {
 export interface RenderedCallbackOutcome {
   reason: OAuthCallbackReason;
   status: number;
+  tone: OAuthCallbackTone;
+  /** Plain text; the page escapes it, since it can carry a connector title. */
+  heading: string;
   message: string;
   fixPrompt?: string;
 }
 
-/** Page copy and fix prompt for one reason. Nothing here reads the request. */
+/**
+ * Page copy and fix prompt for one reason. Nothing here reads the request.
+ *
+ * `connector` is read only for a reason that sets `namesConnector`. The route
+ * passes one only once the state check has proved the flow, and this gate
+ * keeps a caller that passed one earlier from naming it anyway. `productName`
+ * is deployment configuration, the same for every connector, so it cannot
+ * tell one refusal from another.
+ */
 export function oauthCallbackOutcome(
   reason: OAuthCallbackReason,
-  connectorId?: string,
+  connector?: { id: string; title?: string | undefined },
+  productName = "Connecta",
 ): RenderedCallbackOutcome {
   const outcome = OUTCOMES[reason];
-  // Success is reached only after the state check proved the id configured,
-  // so it is the one page that may name the connector in its copy.
-  const message =
-    reason === "connected" && connectorId && CONNECTOR_ID_RE.test(connectorId)
-      ? `Connected "${connectorId}". You can close this window.`
-      : outcome.message;
+  const named = outcome.namesConnector ? connector : undefined;
+  const name = named ? displayName(named) : "The connection";
   return {
     reason,
     status: outcome.status,
-    message,
+    tone: outcome.tone,
+    heading: outcome.heading.replace("{name}", () => name),
+    message: outcome.message.replace("{product}", () => productName),
     ...(outcome.fix
-      ? {
-          fixPrompt: renderFixPrompt(
-            outcome.fix,
-            outcome.namesConnector ? connectorId : undefined,
-          ),
-        }
+      ? { fixPrompt: renderFixPrompt(outcome.fix, named?.id) }
       : {}),
   };
+}
+
+/** A connector's title when it has a usable one, otherwise its id. */
+function displayName(connector: { id: string; title?: string | undefined }): string {
+  const title = typeof connector.title === "string" ? connector.title.trim() : "";
+  return title || connector.id;
 }

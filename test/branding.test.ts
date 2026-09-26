@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resolveBranding } from "../src/ui.js";
-import { droppedThemeTokens, resolveTheme, themeCss } from "../src/branding.js";
+import { droppedThemeTokens, renderPage, resolveTheme, themeCss } from "../src/branding.js";
+import { PAGE_CSS, TOKENS_CSS } from "../src/page-styles.js";
 import type { ConnectaBranding, ConnectaTheme, Logger } from "../src/types.js";
 import { calcApi, makeDeployment } from "./fixtures/http.js";
 
@@ -134,6 +135,73 @@ describe("branding defaults", () => {
     expect(
       resolveBranding({ favicon: { href: "/assets/acme.svg" } }).faviconHref,
     ).toBe("/assets/acme.svg");
+  });
+});
+
+describe("the shared page layout", () => {
+  const layout = { title: "T", uiMounted: true, body: "<main>body</main>" };
+
+  it("carries the doctype, the shared tokens, the theme after them, and the masthead", () => {
+    const page = renderPage({
+      productName: "Acme MCP",
+      ownerName: "Acme & Co.",
+      ownerUrl: "https://acme.example",
+      theme: { accent: "#0a7d55", radius: 4 },
+    }, layout);
+    expect(page.startsWith('<!doctype html>\n<html lang="en">\n')).toBe(true);
+    expect(page).toContain("<title>T</title>");
+    expect(page).toContain(TOKENS_CSS + PAGE_CSS + ":root{--accent:#0a7d55;--radius:4px}</style>");
+    expect(page).toContain('<a class="brand navlink" href="https://acme.example">Acme &amp; Co.</a>');
+    expect(page).toContain('<span class="product">Acme MCP</span>');
+    expect(page).toContain("<main>body</main>");
+  });
+
+  it("sets data-scheme only for a pinned scheme, with a matching theme color", () => {
+    const system = renderPage(undefined, layout);
+    expect(system).toContain('<html lang="en">');
+    expect(system).toContain('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">');
+    expect(system).toContain('<meta name="theme-color" content="#151a21" media="(prefers-color-scheme: dark)">');
+    const dark = renderPage({ theme: { colorScheme: "dark" } }, layout);
+    expect(dark).toContain('<html lang="en" data-scheme="dark">');
+    expect(dark).toContain('<meta name="theme-color" content="#151a21">');
+    expect(dark).not.toContain("prefers-color-scheme: light");
+    const configured = renderPage({ themeColor: "#101010", theme: { colorScheme: "dark" } }, layout);
+    expect(configured).toContain('<meta name="theme-color" content="#101010">');
+    expect(configured.match(/name="theme-color"/g)).toHaveLength(1);
+  });
+
+  it("links the default favicon only when the UI serves it, and a configured one always", () => {
+    expect(renderPage(undefined, layout)).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">\n<link rel="shortcut icon" href="/favicon.ico">');
+    const headless = renderPage(undefined, { ...layout, uiMounted: false });
+    expect(headless).not.toContain("favicon");
+    expect(headless).not.toContain('rel="icon"');
+    const hosted = renderPage({ favicon: { href: "https://cdn.acme.example/i.svg" } }, { ...layout, uiMounted: false });
+    expect(hosted).toContain('<link rel="icon" href="https://cdn.acme.example/i.svg" type="image/svg+xml">');
+    expect(hosted).not.toContain("/favicon.ico");
+    // A page rendered on another host points its icons at the one that serves them.
+    const elsewhere = renderPage(undefined, { ...layout, iconOrigin: "https://main.example/base" });
+    expect(elsewhere).toContain('<link rel="icon" href="https://main.example/favicon.svg" type="image/svg+xml">');
+    expect(elsewhere).toContain('<link rel="shortcut icon" href="https://main.example/favicon.ico">');
+    const custom = renderPage({ favicon: { href: "/assets/acme.svg" } }, { ...layout, iconOrigin: "https://main.example" });
+    expect(custom).toContain('href="https://main.example/assets/acme.svg"');
+    const absolute = renderPage({ favicon: { href: "https://cdn.acme.example/i.svg" } }, { ...layout, iconOrigin: "https://main.example" });
+    expect(absolute).toContain('href="https://cdn.acme.example/i.svg"');
+  });
+
+  it("reads a configured theme color the one way resolveBranding does", () => {
+    const page = renderPage({ themeColor: "  #101010  " }, layout);
+    expect(page).toContain('<meta name="theme-color" content="#101010">');
+    expect(resolveBranding({ themeColor: "  #101010  " }).themeColor).toBe("#101010");
+    expect(renderPage({ themeColor: "   " }, layout)).toContain('media="(prefers-color-scheme: dark)"');
+  });
+
+  it("escapes every branding value it interpolates", () => {
+    const page = renderPage({
+      productName: '"><script>x</script>',
+      description: "</title><script>y</script>",
+    }, { ...layout, title: "<b>t</b>" });
+    expect(page).not.toContain("<script>");
+    expect(page).toContain("<title>&lt;b&gt;t&lt;/b&gt;</title>");
   });
 });
 
@@ -314,7 +382,8 @@ describe("branding in served pages", () => {
         new Request(`${BASE}/oauth/callback/unknown-connector`),
       )
     ).text();
-    expect(body).toContain("<title>Acme MCP</title>");
+    expect(body).toContain("<title>Authorization could not be completed — Acme MCP</title>");
+    expect(body).toContain("Start authorization again from Acme MCP.");
     expect(body).not.toContain("Connecta");
   });
 });

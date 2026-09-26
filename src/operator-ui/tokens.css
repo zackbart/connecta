@@ -1,0 +1,83 @@
+/*
+ * The token layer every page connecta shows a person shares: the operator
+ * pages, the OAuth callback, browser-facing 404s, and the artifact frame and
+ * Markdown pages. Custom properties and the two palettes only — no selector
+ * here styles an element, so a document that must not inherit connecta's
+ * base rules (a rendered Markdown page) can take the palette alone.
+ *
+ * Every color, radius, and font resolves through a custom property here, so
+ * `branding.theme` only has to append a `:root` block after this stylesheet
+ * to retheme every page. Tints, hovers, and focus rings are mixed from the
+ * tokens with `color-mix` instead of being written out, so setting one
+ * accent keeps all of them consistent with it.
+ */
+
+  :root {
+    color-scheme: light;
+    --accent: #2f5fe0;
+    --radius: 10px;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas,
+      monospace;
+
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #f1f3f6;
+    --border: #e2e5ea;
+    --border-strong: #cdd2da;
+    --text: #131820;
+    --muted: #5b6472;
+    --ok: #12734a;
+    --warn: #9a5b06;
+    --danger: #bb3226;
+    --on-accent: #ffffff;
+
+    /* Accent as text reads differently from accent as a fill; both derive. */
+    --link: var(--accent);
+    --tint: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    --shell: 68rem;
+    --pad: 1.25rem;
+    --gap: 1rem;
+  }
+
+  /*
+   * Dark applies when the OS asks for it and the deployment has not pinned a
+   * scheme, or when the deployment pinned dark. Both selectors set the same
+   * tokens, so there is one dark palette and not two that can drift apart.
+   */
+  @media (prefers-color-scheme: dark) {
+    html:not([data-scheme="light"]) { color-scheme: dark; }
+  }
+  html[data-scheme="dark"] { color-scheme: dark; }
+
+  @media (prefers-color-scheme: dark) {
+    html:not([data-scheme="light"]) {
+      --bg: #0d1016;
+      --surface: #151a21;
+      --surface-2: #1c222c;
+      --border: #262d39;
+      --border-strong: #38414f;
+      --text: #e6eaf1;
+      --muted: #97a1b2;
+      --ok: #4cc48c;
+      --warn: #e2a33f;
+      --danger: #f4776c;
+      --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
+      --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
+    }
+  }
+  html[data-scheme="dark"] {
+    --bg: #0d1016;
+    --surface: #151a21;
+    --surface-2: #1c222c;
+    --border: #262d39;
+    --border-strong: #38414f;
+    --text: #e6eaf1;
+    --muted: #97a1b2;
+    --ok: #4cc48c;
+    --warn: #e2a33f;
+    --danger: #f4776c;
+    --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
+    --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  }

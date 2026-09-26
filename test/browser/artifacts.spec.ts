@@ -7,7 +7,7 @@ import { bearerToken } from "../../src/auth/bearer.js";
 import { createConnecta } from "../../src/index.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { operatorUi } from "../../src/ui.js";
-import type { Executor } from "../../src/types.js";
+import type { ConnectaBranding, Executor } from "../../src/types.js";
 
 const TOKEN = "artifact-browser-token";
 let server: Server;
@@ -15,7 +15,11 @@ let origin: string;
 let requests: string[];
 let pageSource: string;
 
-async function start(scriptOrigins: string[] = [], execute: Executor["execute"] = async () => ({ result: null })) {
+async function start(
+  scriptOrigins: string[] = [],
+  execute: Executor["execute"] = async () => ({ result: null }),
+  branding?: ConnectaBranding,
+) {
   requests = [];
   server = createServer(async (incoming, outgoing) => {
     const chunks: Buffer[] = [];
@@ -41,7 +45,7 @@ async function start(scriptOrigins: string[] = [], execute: Executor["execute"] 
   const app = createConnecta({
     connectors: [], executor: { execute },
     logger: "silent", publicUrl: origin, auth: bearerToken(TOKEN, { subjectId: "viewer" }),
-    ui: operatorUi(), artifacts: module,
+    ui: operatorUi(branding ? { branding } : {}), artifacts: module,
   });
   const context = { storage: memoryStorage(), logger: console, baseUrl: origin };
   const result = await module.connector.callTool("create_artifact", {
@@ -251,6 +255,43 @@ test("public CDN scripts, styles and fonts cannot load by default", async ({ pag
   await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("attempted");
   await page.waitForTimeout(200);
   expect(loaded).toEqual([]);
+});
+
+test("a Markdown page follows the deployment's pinned scheme, not the OS", async ({ page }) => {
+  pageSource = '<!doctype html><main id="artifact-root">unused</main>';
+  const { module } = await start([], undefined, { theme: { colorScheme: "dark" } });
+  await module.connector.callTool("create_artifact", {
+    id: "weekly", title: "Weekly metrics", kind: "markdown",
+    source: "# Weekly metrics\n\nSignups rose **12%**.",
+  }, { storage: memoryStorage(), logger: console, baseUrl: origin });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
+  await page.goto(`${origin}/artifacts/weekly`);
+  const frame = page.frameLocator("#artifactFrame");
+  await expect(frame.locator("#artifact-root")).toHaveText("Signups rose 12%.");
+  // The dark palette's --surface, inside the frame and on the frame itself.
+  const surface = "rgb(21, 26, 33)";
+  await expect(frame.locator("body")).toHaveCSS("background-color", surface);
+  await expect(page.locator("#artifactFrame")).toHaveCSS("background-color", surface);
+  // The viewer's heading already names the page; the frame does not repeat it.
+  await expect(page.locator("#artifactHeading")).toHaveText("Weekly metrics");
+  await expect(frame.locator("h1")).toHaveCount(0);
+});
+
+test("a frame whose page never arrives says so instead of staying blank", async ({ page }) => {
+  pageSource = '<!doctype html><main id="artifact-root">unused</main>';
+  await start();
+  // A same-origin host that frames the bootstrap and never answers its ready.
+  await page.route(`${origin}/host`, route => route.fulfill({
+    contentType: "text/html",
+    body: '<!doctype html><iframe id="f" sandbox="allow-scripts" src="/artifacts/_frame"></iframe>',
+  }));
+  await page.clock.install();
+  await page.goto(`${origin}/host`);
+  const status = page.frameLocator("#f").locator("#frame-status");
+  await expect(status).toHaveText("Loading page…");
+  await page.clock.fastForward(16_000);
+  await expect(status).toHaveText("This page did not load. Reload to try again.");
 });
 
 test("a dedicated origin boots the viewer but never serves operator or MCP routes", async ({ page }) => {

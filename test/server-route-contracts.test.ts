@@ -172,6 +172,21 @@ describe("server route contracts", () => {
       baseline ??= shape;
       expect(shape).toEqual(baseline);
     }
+    // A browser that carries the credential sees the page every unserved path
+    // shows, still identical across declared, refusing, and missing pools.
+    const pages = new Set<string>();
+    for (const suffix of ["support", "broken", "missing"]) {
+      const response = await connecta.fetch(new Request(`${BASE}/mcp/${suffix}`, {
+        headers: { Authorization: `Bearer ${TOKEN}`, Accept: "text/html" },
+      }));
+      expect(response.status).toBe(404);
+      expectMcpCors(response);
+      pages.add(await response.text());
+    }
+    const unserved = await connecta.fetch(new Request(`${BASE}/nowhere`, { headers: { Accept: "text/html" } }));
+    pages.add(await unserved.text());
+    expect(pages.size).toBe(1);
+    expect([...pages][0]).toContain("<h1>Page not found</h1>");
     await connecta.close();
   });
 
@@ -275,6 +290,55 @@ describe("server route contracts", () => {
     expect(owned.status).toBe(404);
     expectGlobalSecurityHeaders(owned);
     expect(await owned.text()).toBe("Not Found");
+  });
+
+  it("answers a browser's 404 with one themed page that names no path", async () => {
+    const connecta = createTestConnecta({
+      connectors: [surfaceConnector()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const html = { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" };
+    const bodies = new Set<string>();
+    for (const path of ["/owned", "/nested/deeper?q=1", "/.well-known/not-configured", "/credentials", "/%3Cscript%3E"]) {
+      const response = await connecta.fetch(new Request(`${BASE}${path}`, { headers: html }));
+      expect(response.status, path).toBe(404);
+      expect(response.headers.get("Content-Type"), path).toBe("text/html; charset=utf-8");
+      expect(response.headers.get("Vary"), path).toBe("Accept");
+      expectGlobalSecurityHeaders(response);
+      const body = await response.text();
+      expect(body, path).not.toContain(path.split("?")[0]!.slice(1));
+      bodies.add(body);
+    }
+    expect(bodies.size).toBe(1);
+    const [page] = [...bodies];
+    expect(page).toContain("<h1>Page not found</h1>");
+    expect(page).toContain('<header class="masthead shell">');
+    expect(page).toContain(`href="${BASE}/">Go to Connecta</a>`);
+
+    // Everyone else keeps the plain answer: fetch(), MCP clients, probes.
+    for (const accept of [undefined, "*/*", "application/json"]) {
+      const response = await connecta.fetch(new Request(`${BASE}/owned`, accept ? { headers: { Accept: accept } } : {}));
+      expect(await response.text(), String(accept)).toBe("Not Found");
+    }
+  });
+
+  it("serves the browser 404 without the UI, with no link to a missing home or favicon", async () => {
+    const connecta = createTestConnecta({
+      connectors: [],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: silentLogger,
+      ...({ ui: undefined } as { ui?: never }),
+    });
+    const response = await connecta.fetch(new Request(`${BASE}/`, { headers: { Accept: "text/html" } }));
+    expect(response.status).toBe(404);
+    const body = await response.text();
+    expect(body).toContain("<h1>Page not found</h1>");
+    expect(body).not.toContain("favicon");
+    expect(body).not.toContain("Go to Connecta");
   });
 
   it("keeps operator shells open, framed off, and data-free", async () => {

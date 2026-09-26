@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
 import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
@@ -138,7 +139,7 @@ export function createFetchHandler(
       if (path.startsWith("/.well-known/")) {
         const response = yield* metadata(request, baseUrl);
         if (response) return response;
-        return new Response("Not Found", { status: 404 });
+        return notFoundResponse(request, opts);
       }
 
       if (path === "/health") return yield* Effect.promise(health);
@@ -149,7 +150,7 @@ export function createFetchHandler(
       const mcp = yield* routeMcp.handle(context);
       if (mcp) return mcp;
 
-      return new Response("Not Found", { status: 404 });
+      return notFoundResponse(request, opts);
     });
 
   const serve = (
@@ -165,16 +166,17 @@ export function createFetchHandler(
         : undefined;
 
       // The artifact hostname has no MCP, health, OAuth, or operator routes.
-      // Dispatch before MCP origin checks so even a hostile /mcp is a plain 404.
+      // Dispatch before MCP origin checks so even a hostile /mcp gets the same
+      // 404 as any other unserved path.
       if (opts.artifactOrigin && url.origin === new URL(opts.artifactOrigin).origin) {
         if (!isArtifactPath(path) || !opts.ui || !opts.artifactsModule) {
-          return Effect.succeed(withSecurityHeaders(new Response("Not Found", { status: 404 }), url, path));
+          return Effect.succeed(withSecurityHeaders(notFoundResponse(request, opts), url, path));
         }
         const context: RouteContext = {
           request, url, path, baseUrl: opts.artifactOrigin, opts, defer, runtimeContext,
         };
         return Effect.map(Effect.promise(() => opts.ui!.handle(context)), response =>
-          withSecurityHeaders(response ?? new Response("Not Found", { status: 404 }), url, path),
+          withSecurityHeaders(response ?? notFoundResponse(request, opts), url, path),
         );
       }
 
