@@ -245,6 +245,11 @@ export interface ConnectorStatus {
   state: ConnectorStatusState;
   /** When state === "auth_required", the URL the operator should open. */
   authorizationUrl?: string;
+  /**
+   * Set by a non-forced `startAuth` that handed back a still-recent pending
+   * authorization URL instead of starting a new flow. Absent otherwise.
+   */
+  authorizationReused?: boolean;
   message?: string;
   /**
    * Drift observed the last time this connector served a catalog refresh *in
