@@ -1,4 +1,5 @@
 import { Effect, Result } from "effect";
+import { oauthStartReset } from "../auth/oauth-start-reset.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
 import type { ConnectorStatus } from "../types.js";
@@ -103,6 +104,12 @@ function oauthManagementRequest(
         timeoutError,
       }),
     );
+    if (Result.isFailure(operation) && ctx) {
+      const reset = oauthStartReset(ctx.requestScope ?? ctx);
+      // Storage has no abort contract. If a reset's generation write is still
+      // pending, answering now would let it publish over a newer flow.
+      if (reset) yield* Effect.promise(() => reset.then(() => {}, () => {}));
+    }
     // A disconnect or a restart invalidates the old grant and its cached
     // catalog, even when a partially failed physical cleanup left its epoch
     // fence standing. So does a continued start that had to begin a new flow:

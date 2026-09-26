@@ -5,7 +5,7 @@ import { activityHistory } from "../src/activity.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, InboundAuth } from "../src/types.js";
+import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
 import { calcApi, fakeClerkAuth } from "./fixtures/http.js";
 import {
@@ -299,6 +299,59 @@ describe("operator data routes", () => {
       expect(await storage.get("catalog:oauth")).toBeNull();
     } finally {
       vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drains an uncancellable generation write before returning a timeout", async () => {
+    vi.useFakeTimers();
+    const inner = memoryStorage();
+    let entered!: () => void;
+    const reachedWrite = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let stall = true;
+    const storage: KVStorage = {
+      get: (key) => inner.get(key),
+      delete: (key) => inner.delete(key),
+      compareAndSet: (key, expected, next, options) =>
+        inner.compareAndSet!(key, expected, next, options),
+      async set(key, value, options) {
+        if (key === "conn:oauth:oauth:generation" && stall) {
+          stall = false;
+          entered();
+          await blocked;
+        }
+        await inner.set(key, value, options);
+      },
+    };
+    let networkStarts = 0;
+    try {
+      const connecta = createTestConnecta({
+        connectors: [remoteMcp("oauth", {
+          url: "https://downstream.example/mcp",
+          auth: { type: "oauth" },
+          _transportFactory: () => {
+            networkStarts++;
+            throw new Error("network began after cancellation");
+          },
+        })],
+        auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
+      });
+      await storage.set("catalog:oauth", "stale");
+      const started = credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      let answered = false;
+      void started.then(() => { answered = true; }, () => { answered = true; });
+      await reachedWrite;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(answered).toBe(false);
+      release();
+      const response = await started;
+      expect(response.status).toBe(504);
+      expect(networkStarts).toBe(0);
+      expect(await storage.get("catalog:oauth")).toBeNull();
+    } finally {
+      release();
       vi.useRealTimers();
     }
   });

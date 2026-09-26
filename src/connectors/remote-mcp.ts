@@ -19,6 +19,7 @@ import {
   KvOAuthProvider,
   OAuthRefreshCoordinator,
 } from "../auth/downstream-oauth.js";
+import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import {
   boundedEchoText,
@@ -1295,8 +1296,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // Publish the replacement epoch before waiting on or closing any
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
+    const reset = provider.resetAuthorization(operatorDisconnected, preserveClient);
+    trackOAuthStartReset(ctx.requestScope ?? ctx, reset);
     try {
-      await provider.resetAuthorization(operatorDisconnected, preserveClient);
+      await reset;
     } finally {
       // Abandon any connect in flight and close whichever half of the
       // client/transport exists. Reset is unconditional because KV may already
@@ -1635,7 +1638,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       state.provider = null;
       const p = newProvider(ctx, state);
-      if (startOpts?.force || (await p.operatorDisconnected())) {
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      const disconnected = startOpts?.force ? false : await p.operatorDisconnected();
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
+      if (startOpts?.force || disconnected) {
         await disconnectAuthorization(ctx, state, false, startOpts?.force === true);
       } else {
         // A consent URL already outstanding? Re-issue it rather than re-running
@@ -1653,6 +1659,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           };
         }
       }
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
       try {
         await ensureConnected(ctx, state);
         return {
