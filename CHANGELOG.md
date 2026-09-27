@@ -105,8 +105,7 @@ another restart. The Node template now pins 0.26.1.
   and sweeps at most 16 epochs retired more than 24 hours ago, dropping each
   from the lineage only when all of its keys are gone. A Disconnect that
   reported a failed cleanup still deletes the old grant when retried. The
-  reset itself is at most 22 storage operations when nothing needs retrying,
-  plus 10 with one epoch to sweep, whatever came before. Residue a late
+  cleanup work stays bounded independently of earlier resets. Residue a late
   writer leaves in a younger epoch stays unreadable behind the fence until the
   sweep reaches it. A late writer whose cleanup fails in an epoch already
   listed now restarts that epoch's grace. The accepted assumption is that no
