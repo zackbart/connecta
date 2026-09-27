@@ -4,16 +4,30 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+## 0.26.1 — 2026-09-26
+
+This patch fixes slow OAuth restarts, unbounded downstream authorization waits,
+and operator pages that signed people out after a temporary load failure.
+Connect now opens consent in one click, and browser-facing pages share the
+configured theme. Agent guidance preserves one-time write results and keeps
+an authorized batch in one resumable program. Approval defaults and the eight
+MCP tools are unchanged. No configuration or storage migration is required;
+deployments without the operator UI can ignore the page changes. OAuth starts
+abort downstream work after 30 seconds, but uncancellable storage resets and
+cleanup must finish before the response. Restart reuses a matching client
+registration; a revoked client may still fail at consent or callback and need
+another restart. The Node template now pins 0.26.1.
+
 ### Added
 
 - **Continue or restart an operator OAuth start.** `POST /ui/oauth/<id>`
   takes `?mode=continue` or `?mode=restart`. `restart`, still the default
-  when `mode` is absent, resets the connector as before: new epoch, wiped
-  grant, client registration, and discovery. `continue` hands back the pending
+  when `mode` is absent, creates a new epoch and clears the grant and
+  discovery while retaining a matching issuer-bound client registration. `continue` hands back the pending
   authorization URL when it was written in the last ten minutes. Otherwise it
-  starts a flow in the current epoch with the stored registration, so there
-  is no dynamic client registration. A disconnected connector still resets
-  first. A response with a URL now carries `reused`. A continue that reused a
+  starts a flow in the current epoch, reusing a stored registration when one
+  exists. A first connection still registers dynamically. A disconnected
+  connector resets first. A response with a URL now carries `reused`. A continue that reused a
   URL or found the connection healthy leaves the cached catalog alone. Any
   other `mode` is a 400. After a `publicUrl` change, continue keeps a client
   registered for the old callback, which the authorization server refuses;
@@ -64,6 +78,25 @@ All notable changes to this package are documented here.
 
 ### Fixed
 
+- Operator OAuth starts now abort downstream discovery and registration after
+  30 seconds or browser cancellation, with a fixed timeout response. Every
+  reset already started by the request, including issuer-mismatch recovery,
+  drains before catalog invalidation and response so a delayed generation
+  write cannot replace a later flow. These uncancellable storage waits can
+  exceed the deadline. Disconnect still finishes after browser cancellation.
+- Forced OAuth restarts reuse registrations bound to the issuer, redirect URI,
+  client metadata, connector settings, and owner partition. Credentials are
+  re-sealed for the replacement epoch, and fresh discovery detects issuer
+  changes. Disconnect and issuer-mismatch recovery discard the registration.
+  The SDK cannot detect a revoked client while constructing a consent URL;
+  a callback refusal clears it so the next restart can register again.
+- Agent sampling advice now applies to reads. For a one-time write, agents
+  reduce the full result in the program or page a direct-call result through
+  `get_result`, without repeating the write to recover discarded output.
+- Authorized batches stay in one resumable program. Guidance explains how
+  tool-scoped approval covers repeated calls to one address while other
+  approval-required writes retain their own approvals. The call-scoped
+  default and host enforcement are unchanged.
 - **A restart's cleanup no longer grows with every earlier restart.** Each
   OAuth restart re-deleted every epoch the connector had ever retired, one key
   at a time, and restart 1,001 failed forever with a full cleanup backlog. A
@@ -72,8 +105,7 @@ All notable changes to this package are documented here.
   and sweeps at most 16 epochs retired more than 24 hours ago, dropping each
   from the lineage only when all of its keys are gone. A Disconnect that
   reported a failed cleanup still deletes the old grant when retried. The
-  reset itself is at most 22 storage operations when nothing needs retrying,
-  plus 10 with one epoch to sweep, whatever came before. Residue a late
+  cleanup work stays bounded independently of earlier resets. Residue a late
   writer leaves in a younger epoch stays unreadable behind the fence until the
   sweep reaches it. A late writer whose cleanup fails in an epoch already
   listed now restarts that epoch's grace. The accepted assumption is that no
