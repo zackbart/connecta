@@ -7,7 +7,7 @@ static bearers are checked first, then other providers in configuration order.
 An `InboundAuth` provider's `authorize(request, baseUrl, runtimeContext)`
 returns either `{ ok: true, userId?, subjectId?, principal? }` or a refusal
 carrying its own `Response`, so the provider owns its challenge. Connecta
-issues no tokens of its own and serves no token-management routes.
+issues managed client tokens only when the optional `accessTokens` module is configured.
 
 The bearer adapter challenges with `WWW-Authenticate: Bearer` and deliberately
 omits `resource_metadata`: its credential is configured out of band, so it has no
@@ -15,6 +15,67 @@ authorization server or registration endpoint to advertise. Interactive adapters
 or the edge own OAuth discovery. An open deployment with any connector warns at
 construction — including API connectors carrying static auth headers, and with
 sharper wording for credential and OAuth connectors.
+
+## Managed client tokens and upgrading from v0.23
+
+Import `accessTokens` from `@zackbart/connecta/auth/access-tokens` and pass its
+module to `createConnecta`. It installs its inbound adapter and, beside `ui`,
+the Access tokens page and `/ui/access-tokens` lifecycle routes. Omitting the
+module loads none of its implementation and serves none of those routes.
+
+```ts
+import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
+
+createConnecta({
+  storage,
+  accessTokens: accessTokens(storage),
+  auth: clerkAuth({ publishableKey, secretKey }),
+  ui: operatorUi(),
+  identity: {
+    connectorAccess, // Keep the existing principal and token-id grant rules.
+    accessTokenManagement: ({ principal }) =>
+      principal?.namespace === "clerk:your-existing-namespace" &&
+      principal.id === "your-operator-id",
+  },
+  connectors,
+  executor,
+});
+```
+
+For a v0.23 deployment, replace the old `accessTokens: true` or options object
+with `accessTokens: accessTokens(storage)`, using **the same storage and key
+namespace**. Keep the existing `access-token:v1:record:*` and
+`access-token:v1:lookup:*` records. Their unrevoked `cta_…` secrets keep working;
+no secret recovery, rewrite, or client rotation is needed. Preserve the existing
+identity namespaces and connector/pool grant callbacks too. Storage compatibility
+does not translate deployment configuration or invent replacement grants.
+
+The adapter preserves `access_token` actor ids, the
+`connecta:access-tokens:v1` activity namespace, friendly names, and any stored
+principal. A token without a principal stays unbound. Every request evaluates
+current identity/tool/pool grants; a token never becomes an interactive operator.
+Names are labels, never permissions. New UI-issued tokens belong to the issuing
+human's principal, and any explicitly permitted token manager can list, rename,
+or revoke deployment tokens. Static and managed bearers cannot manage tokens or
+connection credentials. Operators need an interactive auth provider.
+
+Storage must implement `list`. Existing-token verification, rename, and revoke
+also work on older adapters without `compareAndSet`; **new issuance requires
+atomic `compareAndSet`**, because counting records before writing admits too many
+concurrent creates. Active capacity defaults to 100, configurable with
+`accessTokens(storage, { maxActive: 200 })`, up to 1,000. A durable reservation
+counts before a secret is written. An interrupted create can consume capacity
+without returning a token; it is never automatically retried or released after
+an uncertain write. Avoid creating new tokens through old-version instances once
+new-version issuance has started, since those instances do not honor reservations.
+
+Secrets contain 256 random bits and only their SHA-256 digests persist. Creation
+returns the secret once; list and rename never return it. Revocation removes its
+lookup before updating metadata, and authorization has no token cache. A strongly
+consistent store makes revocation effective on the next authorization; an
+eventually consistent backend retains its own propagation delay. Requests already
+admitted are not recalled. Management writes require an exact same-origin Origin,
+and responses are private and non-cacheable.
 
 ## Origins
 
@@ -409,7 +470,7 @@ from caller input.
 interactive human, the one default here that is open, because a single-operator
 deployment would otherwise be locked out of its own event stream. Team
 deployments should set it. There is no general administrator role and no
-token-management authority.
+implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal.
 
 ```ts
 createConnecta({

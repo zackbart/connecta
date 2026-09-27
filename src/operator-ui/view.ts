@@ -20,6 +20,7 @@ import type { FixPromptKind } from "./fix-prompts.js";
  */
 
 export type OperatorPage =
+  | "tokens"
   | "connections"
   | "activity"
   | "artifacts"
@@ -28,6 +29,7 @@ export type OperatorPage =
 /** Pages the nav lists. A single artifact is reached from the library, not the nav. */
 export const OPERATOR_PAGES: readonly OperatorPage[] = [
   "connections",
+  "tokens",
   "activity",
   "artifacts",
 ];
@@ -35,6 +37,7 @@ export const OPERATOR_PAGES: readonly OperatorPage[] = [
 export const PAGE_META: Readonly<
   Record<OperatorPage, { path: string; label: string }>
 > = {
+  tokens: { path: "/tokens", label: "Access tokens" },
   connections: { path: "/", label: "Connections" },
   activity: { path: "/activity", label: "Activity" },
   artifacts: { path: "/artifacts", label: "Artifacts" },
@@ -371,7 +374,27 @@ export function confirmCopy(
  */
 type LoadPhase = "idle" | "loading" | "ready" | "error";
 
+export interface UiAccessToken {
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  createdAt: string;
+  revokedAt?: string;
+}
+
+export function accessTokenUnavailableCopy(capability?: string): string {
+  return capability === undefined
+    ? "Access tokens are not configured for this deployment."
+    : "Token management requires an interactive sign-in and explicit permission.";
+}
+
 export interface OperatorState {
+  tokenPhase: LoadPhase;
+  tokenNotice: Notice | null;
+  tokens: UiAccessToken[];
+  createdToken: string | null;
+  tokenRenaming: string | null;
+  tokenBusy: boolean;
   page: OperatorPage;
   /**
    * Bumped by every identity change. Async work captures it before awaiting and
@@ -472,6 +495,12 @@ function identityScopedState() {
     credentialNoticeFor: null,
     credentialEditing: null,
     credentialBusy: null,
+    tokenPhase: "idle" as LoadPhase,
+    tokenNotice: null,
+    tokens: [],
+    createdToken: null,
+    tokenRenaming: null,
+    tokenBusy: false,
     activityPhase: "idle" as LoadPhase,
     activityNotice: null,
     activityEvents: [],
@@ -520,6 +549,9 @@ export function withPage(
   return {
     ...state,
     page,
+    createdToken: null,
+    tokenRenaming: null,
+    tokenNotice: null,
     credentialEditing: null,
     credentialNotice: null,
     credentialNoticeFor: null,

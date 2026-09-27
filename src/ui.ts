@@ -50,6 +50,7 @@ function stringForInlineScript(value: string): string {
 }
 
 export type OperatorPage =
+  | "tokens"
   | "connections"
   | "activity"
   | "artifacts"
@@ -57,6 +58,7 @@ export type OperatorPage =
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
   connections: "Connections",
+  tokens: "Access tokens",
   activity: "Activity",
   artifacts: "Artifacts",
   artifact: "Artifact",
@@ -66,6 +68,7 @@ const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
 const ARTIFACT_PAGE = /^\/artifacts\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\/v\/\d{1,9})?$/;
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
+  if (path === "/tokens") return "tokens";
   if (path === "/") return "connections";
   if (path === "/activity") return "activity";
   if (path === "/artifacts") return "artifacts";
@@ -268,7 +271,7 @@ ${OPERATOR_UI_SCRIPT}</script>`,
 }
 
 function ownsOperatorPath(reserved: readonly string[], path: string): boolean {
-  if (path === "/activity") return true;
+  if (path === "/activity" || path === "/tokens") return true;
   return reserved.some((pattern) =>
     pattern.endsWith("/*")
       ? path.startsWith(pattern.slice(0, -1))
@@ -302,6 +305,8 @@ export function operatorUi(
         return (await artifacts?.handle(context)) ??
           notFoundResponse(context.request, context.opts);
       }
+      const tokenResponse = await context.opts.accessTokens?.handle(context);
+      if (tokenResponse) return tokenResponse;
       const routes = [
         ...(context.opts.credentialVault ? [routeCredentials] : []),
         routeOAuthManagement,

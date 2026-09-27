@@ -108,6 +108,7 @@ export function createFetchHandler(
           "/health",
           ...(opts.ui?.reservedPaths ?? []),
           ...(opts.ui && opts.activity?.list ? ["/activity"] : []),
+          ...(opts.ui && opts.accessTokens ? ["/tokens"] : []),
           ...(opts.ui && opts.artifactsModule ? ["/artifacts", "/artifacts/*"] : []),
         ],
       },

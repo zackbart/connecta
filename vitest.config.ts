@@ -7,6 +7,7 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 // test/suite-partition.test.ts guards the partition, including itself.
 export const WORKERS_SUITES = [
   "test/activity.test.ts",
+  "test/access-tokens.test.ts",
   "test/api-connector.test.ts",
   "test/artifact-store.test.ts",
   "test/artifact-refresh.test.ts",

@@ -3,7 +3,8 @@
     "Gzip-9 bytes of each Web-facing entry as scripts/bundle-size.mjs bundles it. baselineGzip is the P1-S19 measurement at 0.25.0, with the Effect core in place; main before the conversion (4f536a8) was 235,346 B at the root and 263,949 B for the Worker example.",
     "Caps: every entry gets baseline + 60,000 B. The conversion-era allowances are retired: the root's flat 386,000 B cap covered a rewrite that is finished, and the +160 KB held for HttpApi in ./ui, ./activity and the Worker example was never spent, because P1-S18 measured HttpApi and did not use it.",
     "A cap moves only in a change that says why. Raising one to make a check pass is the failure this file exists to catch.",
-    "./artifacts is measured where it was introduced (#562): the store, the hand-written HTML tokenizer, the Markdown renderer, and validation, with no Effect and no dependency. The connector, guide, and page routes that follow it spend from the same baseline + 60,000 B allowance."
+    "./artifacts is measured where it was introduced (#562): the store, the hand-written HTML tokenizer, the Markdown renderer, and validation, with no Effect and no dependency. The connector, guide, and page routes that follow it spend from the same baseline + 60,000 B allowance.",
+    "./auth/access-tokens starts at 4,222 B gzip in #619. Its legacy record verifier and operator lifecycle use no runtime dependency; the cap uses the existing baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -73,6 +74,10 @@
     "examples/worker": {
       "baselineGzip": 314336,
       "maxGzip": 374336
+    },
+    "./auth/access-tokens": {
+      "baselineGzip": 4222,
+      "maxGzip": 64222
     }
   }
 }

@@ -22,6 +22,7 @@ import {
   withExecutorAdmission,
 } from "./executor-admission.js";
 import type {
+  AccessTokensModule,
   ActivityModule,
   ArtifactsModule,
   OperatorSurface,
@@ -34,6 +35,7 @@ import { disposeEdgeRuntime } from "./runtime/run.js";
 import { NO_EXEMPTIONS, type ApprovalPolicy } from "./tool-safety.js";
 import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
 export type {
+  AccessTokensModule,
   ActivityModule,
   ArtifactsModule,
   OperatorSurface,
@@ -242,6 +244,10 @@ export interface ConnectaIdentityConfig {
   credentialAdministration?(
     identity: Readonly<AuthenticatedIdentity>,
   ): ConnectorPermission | Promise<ConnectorPermission>;
+  /** Client-token lifecycle management by interactive humans. Defaults to false. */
+  accessTokenManagement?(
+    identity: Readonly<AuthenticatedIdentity>,
+  ): boolean | Promise<boolean>;
   /** Connecting or changing the caller's personal account. Defaults to none. */
   personalConnection?(
     identity: Readonly<AuthenticatedIdentity>,
@@ -297,6 +303,8 @@ export interface ConnectaConfig {
    * because the links it hands out are shared.
    */
   artifacts?: ArtifactsModule;
+  /** Optional managed client tokens, created by accessTokens() from /auth/access-tokens. */
+  accessTokens?: AccessTokensModule;
   /** Optional dedicated HTTPS origin that serves only artifact pages and their library. */
   artifactOrigin?: string;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
@@ -407,6 +415,7 @@ const CONFIG_SCHEMA = {
     activityAccess: null,
     credentialAdministration: null,
     personalConnection: null,
+    accessTokenManagement: null,
   } satisfies ClosedOptionSchema<ConnectaIdentityConfig>,
   pools: null,
   storage: null,
@@ -416,6 +425,7 @@ const CONFIG_SCHEMA = {
   vault: null,
   ui: null,
   artifacts: null,
+  accessTokens: null,
   artifactOrigin: null,
   discovery: {
     concurrency: null,
@@ -504,7 +514,6 @@ function rejectUnknownOptions(paths: string[]): void {
     `Unknown Connecta configuration option${paths.length === 1 ? "" : "s"}:\n` +
       paths.map((path) => `- ${path}`).join("\n") +
       (paths.includes("ConnectaConfig.credentials") ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials." : "") +
-      (paths.includes("ConnectaConfig.accessTokens") ? "\nConnecta-issued tokens were removed. Configure an inbound auth adapter instead." : "") +
       (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : ""),
   );
 }
@@ -537,6 +546,12 @@ function assertKnownConfig(config: ConnectaConfig): void {
     throw new Error(
       "ConnectaConfig.activity must be created with activityHistory(...)",
     );
+  }
+  if (config.accessTokens !== undefined && (!config.accessTokens ||
+    typeof config.accessTokens.auth?.authorize !== "function" ||
+    config.accessTokens.auth.interactiveOperator ||
+    typeof config.accessTokens.handle !== "function")) {
+    throw new Error("ConnectaConfig.accessTokens must be created with accessTokens(storage) from @zackbart/connecta/auth/access-tokens; reuse your existing storage to preserve tokens");
   }
   const artifacts = config.artifacts as unknown;
   if (artifacts !== undefined) {
@@ -927,7 +942,10 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const storage = config.storage ?? memoryStorage();
   const logger = resolveLogger(config.logger);
   const credentialVault = config.vault;
-  const configuredAuth = normalizeAuth(config.auth);
+  const configuredAuth = normalizeAuth([
+    ...(config.accessTokens ? [config.accessTokens.auth] : []),
+    ...normalizeAuth(config.auth),
+  ]);
   const serverInfo = {
     ...config.serverInfo,
     name: config.serverInfo?.name ?? "connecta",
@@ -1075,6 +1093,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     activity: config.activity?.store,
     activityModule: config.activity,
     artifactsModule: config.artifacts,
+    accessTokens: config.accessTokens,
     activityReadGate: config.activity?.readGate,
     activityDeploymentId: config.activity?.deploymentId,
     executor,

@@ -42,3 +42,9 @@ export interface ArtifactsModule {
   /** Bind the optional refresh runner after core has built its registry and executor. */
   bindRefresh?(runtime: ArtifactRefreshRuntime): void;
 }
+
+/** Optional client-token authentication and operator lifecycle. */
+export interface AccessTokensModule {
+  readonly auth: import("./types.js").InboundAuth;
+  handle(context: RouteContext): Promise<Response | null>;
+}

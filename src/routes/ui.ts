@@ -100,6 +100,7 @@ export async function routeUi(
   if (
     operatorPage &&
     (operatorPage !== "activity" || opts.activity?.list) &&
+    (operatorPage !== "tokens" || opts.accessTokens) &&
     (!artifactPage || opts.artifactsModule)
   ) {
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -241,6 +242,7 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       serverInfo: opts.serverInfo,
       connectaVersion: CONNECTA_VERSION,
       activityEnabled,
+      ...(opts.accessTokens ? { accessTokenManagement: authz.accessTokenManagement && authz.identity.principal ? "available" : "requires_operator" } : {}),
       ...(opts.artifactsModule && mayViewArtifacts(authz, opts.registry) ? { artifactsEnabled: true } : {}),
       credentialManagement,
       oauthManagement: visible.some(c => mayManage(c.id)),

@@ -40,7 +40,7 @@ carries them.
 | Optional deployment modules | accepted | typed slots select UI, activity, vault, and inbound auth; core keeps discovery, execution, invocation, and enforcement |
 | Artifacts module | accepted | a built-in connector for team-only sandboxed pages over stored JSON; immutable versions let writes skip approval. Supersedes [#287](https://github.com/zackbart/connecta/issues/287) |
 | Plugin lifecycle, provider registry, or marketplace | refused | modules are deployment code, not runtime installs; prebuilt connections are imports, discovered in docs ([#297](https://github.com/zackbart/connecta/issues/297)) |
-| Connecta-issued access tokens | removed | inbound providers authenticate clients; bearer auth stays an optional adapter |
+| Connecta-issued access tokens | accepted | optional /auth/access-tokens preserves v0.23 secrets; config owns grants, interactive management needs explicit permission ([#619](https://github.com/zackbart/connecta/issues/619)) |
 | Expanded Notion page create/update options | refused | different workflows, not missing fields; use `api()` ([#408](https://github.com/zackbart/connecta/issues/408)) |
 | Resources, prompts, and downstream MCP Apps templates | refused | tools only; clients own presentation ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Protocol sessions, server push, elicitation passthrough | refused | stateless per request; elicitation has no route |

@@ -126,6 +126,7 @@ export type CredentialManagementCapability =
   | "no_slots";
 
 export interface UiData {
+  accessTokenManagement?: "available" | "requires_operator";
   serverInfo: { name: string; version: string };
   /** Version of the installed @zackbart/connecta package. */
   connectaVersion: string;

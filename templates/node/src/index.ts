@@ -27,6 +27,7 @@ import { operatorUi } from "@zackbart/connecta/ui";
 import { api, createConnecta } from "@zackbart/connecta";
 import { fileStorage, listen } from "@zackbart/connecta/node";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+// import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 // import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
 // Operator sign-in. Needs `npm install @clerk/backend` — it is an optional
 // peer, so it does not install with Connecta.
@@ -63,6 +64,8 @@ const storage = fileStorage(stateFile);
 
 const connecta = createConnecta({
   storage,
+  // Reuse this storage to keep v0.23 client tokens without rotating secrets.
+  // accessTokens: accessTokens(storage),
   auth: [
     bearerToken(token, { subjectId: "operator" }),
     // clerkAuth({
@@ -74,7 +77,7 @@ const connecta = createConnecta({
     //   // allowedDomains: ["acme.com"],
     // }),
   ],
-  // Code-owned identity resolvers. The two management permissions default to
+  // Code-owned identity resolvers. Connection management permissions default to
   // none, so the template grants them. The commented pair is the optional
   // member/operator split for Clerk-backed deployments: connector access is
   // derived from the authenticated identity and cannot be selected by an MCP
@@ -86,6 +89,7 @@ const connecta = createConnecta({
     // connectorAccess: ({ principal }) =>
     //   principal?.id === "user_admin" ? "all" : ["time"],
     // activityAccess: ({ id }) => id === "user_admin",
+    // accessTokenManagement: ({ principal }) => principal?.id === "user_admin",
   },
   publicUrl,
   // Required: model-written programs run in a bounded QuickJS child.
