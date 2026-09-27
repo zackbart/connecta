@@ -416,3 +416,24 @@ describe("operator store load failures", () => {
     expect(store.getState().gate?.message).toContain("Clerk session wasn't accepted");
   });
 });
+
+
+describe("managed token secret lifetime", () => {
+  it("drops an issued secret when the requesting identity changes", async () => {
+    const { store, fetchMock, changeSession } = await loadStore({ id: "a", getToken: async () => "a" });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("a")));
+    await store.boot();
+    const slow = deferred<Response>();
+    fetchMock.mockImplementationOnce(() => slow.promise);
+    const pending = store.createAccessToken("desktop");
+    // Let the POST capture its original session before switching identities.
+    await Promise.resolve();
+    await Promise.resolve();
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
+    changeSession({ id: "b", getToken: async () => "b" });
+    slow.resolve(Response.json({ token: "cta_disposable-secret", accessToken: { id: "issued", name: "desktop" } }));
+    expect(await pending).toBe(false);
+    expect(store.getState().createdToken).toBeNull();
+    expect(JSON.stringify(store.getState())).not.toContain("cta_disposable-secret");
+  });
+});

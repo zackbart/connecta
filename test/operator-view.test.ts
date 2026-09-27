@@ -125,7 +125,7 @@ describe("operator page routing and capabilities", () => {
   it("maps only canonical shell paths and builds page-specific titles", () => {
     expect(operatorPageForPath("/")).toBe("connections");
     expect(operatorPageForPath("/credentials")).toBeUndefined();
-    expect(operatorPageForPath("/tokens")).toBeUndefined();
+    expect(operatorPageForPath("/tokens")).toBe("tokens");
     expect(operatorPageForPath("/activity")).toBe("activity");
     expect(operatorPageForPath("/ui")).toBeUndefined();
     expect(operatorPageForPath("/ui/data")).toBeUndefined();

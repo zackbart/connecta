@@ -27,6 +27,7 @@ import {
   type RequestFailureKind,
   type RowAction,
   type UiActivityEvent,
+  type UiAccessToken,
 } from "../view.js";
 import { auth, initialPage, productName, TOKEN_KEY } from "./config.js";
 
@@ -139,6 +140,9 @@ function gate(notice: Notice | null = null): void {
 }
 
 interface OperatorResponse {
+  token?: string;
+  accessToken?: UiAccessToken;
+  accessTokens?: UiAccessToken[];
   ok?: boolean;
   state?: string;
   problem?: string;
@@ -1033,4 +1037,134 @@ export async function refreshConnector(id: string, quiet = false): Promise<void>
   // check is not a reason to repaint an auth-needed row as broken.
   if (quiet && outcome.kind !== "detail") return;
   applyDetail(id, outcome);
+}
+
+/* Access tokens ----------------------------------------------------------- */
+
+export async function loadAccessTokens(): Promise<void> {
+  const current = fence();
+  set({ tokenPhase: "loading", tokenNotice: null });
+  try {
+    const payload = await operatorRequest("/ui/access-tokens", "GET", current);
+    if (!current()) return;
+    set({ tokenPhase: "ready", tokens: payload?.accessTokens ?? [] });
+  } catch {
+    if (!current()) return;
+    set({
+      tokenPhase: "error",
+      tokenNotice: failure(
+        "Access tokens could not be loaded.",
+      ),
+    });
+  }
+}
+
+function tokenFailure(tokenNotice: Notice): Partial<OperatorState> {
+  return { tokenBusy: false, tokenNotice, pendingFocus: "tokenNotice" };
+}
+
+/**
+ * Resolves true only when the token exists. `mutate` lands a handled failure in
+ * state and resolves like any other outcome, so a caller that clears its form on
+ * resolution would throw away what the operator typed the moment the POST
+ * failed — the dead end every other flow here avoids. The form clears on this
+ * boolean instead.
+ */
+export function createAccessToken(name: string): Promise<boolean> {
+  if (state.tokenBusy) return Promise.resolve(false);
+  if (!name) {
+    set(tokenFailure(failure("Name the MCP client before creating a token.")));
+    return Promise.resolve(false);
+  }
+  let created = false;
+  return mutate({
+    request: (current) =>
+      operatorRequest("/ui/access-tokens", "POST", current, { name }),
+    busy: { tokenBusy: true, tokenNotice: null },
+    done: (payload) => {
+      const issued = payload?.accessToken;
+      if (!payload?.token || !issued) {
+        throw new Error("The created token was not returned.");
+      }
+      created = true;
+      return {
+        tokenBusy: false,
+        tokenPhase: "ready",
+        tokens: [
+          issued,
+          ...state.tokens.filter((token) => token.id !== issued.id),
+        ],
+        createdToken: state.page === "tokens" ? payload.token : null,
+        tokenNotice: info("Access token created."),
+        pendingFocus: state.page === "tokens" ? "tokenRevealHeading" : null,
+      };
+    },
+    failed: () => tokenFailure(failure("Access token could not be created. Check the name, capacity, and storage.")),
+  }).then(() => created);
+}
+
+export function dismissCreatedToken(): void {
+  set({ createdToken: null });
+}
+
+export function renameAccessToken(id: string | null): void {
+  set({ tokenRenaming: id });
+}
+
+function accessTokenMutation(
+  id: string,
+  method: "DELETE" | "PUT",
+  body: object | undefined,
+  success: string,
+  fallback: string,
+): Promise<void> {
+  return mutate({
+    request: (current) =>
+      operatorRequest(
+        `/ui/access-tokens/${encodeURIComponent(id)}`,
+        method,
+        current,
+        body,
+      ),
+    busy: { tokenBusy: true, tokenNotice: null },
+    done: (payload) => ({
+      tokenBusy: false,
+      tokenRenaming: null,
+      tokenNotice: info(success),
+      pendingFocus: "tokenNotice",
+      ...(payload?.accessToken
+        ? {
+            tokens: state.tokens.map((token) =>
+              token.id === id ? payload.accessToken! : token,
+            ),
+          }
+        : {}),
+    }),
+    failed: () => tokenFailure(failure(fallback)),
+  });
+}
+
+export function saveAccessTokenName(id: string, name: string): Promise<void> {
+  return accessTokenMutation(
+    id,
+    "PUT",
+    { name },
+    "Access token renamed.",
+    "Access token could not be renamed.",
+  );
+}
+
+export function revokeAccessToken(id: string): Promise<void> {
+  const named = state.tokens.find((token) => token.id === id);
+  const confirmed = window.confirm(
+    `Revoke ${named?.name || "this access token"}? Its MCP client will immediately lose access.`,
+  );
+  if (!confirmed) return Promise.resolve();
+  return accessTokenMutation(
+    id,
+    "DELETE",
+    undefined,
+    "Access token revoked.",
+    "Access token could not be revoked.",
+  );
 }

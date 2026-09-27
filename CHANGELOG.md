@@ -4,6 +4,31 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+## 0.26.2 — 2026-09-27
+
+This patch restores named client tokens as an optional auth module. Deployments
+upgrading from v0.23 can keep their existing stored records and client secrets,
+without rotation, by configuring `accessTokens(storage)` with the same storage
+namespace and preserving their identity grants. The old boolean configuration
+must be replaced. Deployments that omit the module are unchanged. The eight MCP
+tools remain unchanged, and the Node template now pins 0.26.2.
+
+### Added
+
+- `@zackbart/connecta/auth/access-tokens` verifies v0.23 `cta_…` tokens and
+  restores create, show-once, list, rename, and revoke in the operator UI.
+  `identity.accessTokenManagement` explicitly permits interactive operators;
+  client tokens cannot administer tokens or connection credentials. New issuance
+  requires atomic storage and reserves capacity across concurrent instances.
+
+### Fixed
+
+- Existing token ids, activity labels, and principal bindings survive the upgrade.
+  Malformed or corrupt records fail closed, including principal fields that
+  JavaScript regular expressions previously coerced into strings. Revocation
+  deletes the admission lookup before updating metadata.
+
+
 ## 0.26.1 — 2026-09-26
 
 This patch fixes slow OAuth restarts, unbounded downstream authorization waits,

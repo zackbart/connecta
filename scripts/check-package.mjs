@@ -369,6 +369,9 @@ if (typeof core.createConnecta !== "function") throw new Error("missing core");
 if (typeof core.validateToolInput !== "function") {
   throw new Error("missing validateToolInput");
 }
+const tokenModule = await import("@zackbart/connecta/auth/access-tokens");
+if (typeof tokenModule.accessTokens !== "function") throw new Error("missing managed-token module");
+if ("accessTokens" in core || "AccessTokenManager" in core) throw new Error("token implementation leaked into core");
 const jsonSchema = await import("@zackbart/connecta/json-schema");
 if (typeof jsonSchema.Validator !== "function") {
   throw new Error("missing Validator re-export");
@@ -724,6 +727,41 @@ try {
   } finally {
     await stopChild(deployment);
   }
+
+  // Exercise the installed package and real QuickJS with an original v0.23
+  // secret. The configured static bearer is different, so only the restored
+  // module can admit this doctor request.
+  const legacyTokens = JSON.parse(await readFile(
+    join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8",
+  ));
+  const legacyState = join(generatedRoot, "legacy-token-state.json");
+  await writeFile(legacyState, JSON.stringify(Object.fromEntries(
+    Object.entries(legacyTokens.records).map(([key, value]) => [key, { value }]),
+  )));
+  await writeFile(join(generatedRoot, "src", "managed-tokens.ts"),
+    'import { accessTokens } from "@zackbart/connecta/auth/access-tokens";\n' +
+    generatedSource.replace(createCall, createCall + '  accessTokens: accessTokens(storage),\n'),
+  );
+  const legacyPort = await freePort();
+  let legacyOutput = "";
+  const legacyDeployment = spawn(generatedTsx, ["src/managed-tokens.ts"], {
+    cwd: generatedRoot,
+    env: { ...process.env, CONNECTA_TOKEN: smokeToken, CONNECTA_STATE_FILE: legacyState, PORT: String(legacyPort) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const retainLegacyOutput = chunk => { legacyOutput = (legacyOutput + chunk.toString()).slice(-8_000); };
+  legacyDeployment.stdout.on("data", retainLegacyOutput);
+  legacyDeployment.stderr.on("data", retainLegacyOutput);
+  try {
+    await waitForHealth(`http://127.0.0.1:${legacyPort}/health`, legacyDeployment, () => legacyOutput);
+    const doctorOutput = run(
+      join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
+      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`], generatedRoot,
+      { CONNECTA_TOKEN: legacyTokens.bound.token },
+    );
+    if (!doctorOutput.includes("QuickJS executed")) throw new Error("Legacy token doctor did not prove execution");
+    console.log("v0.23 token compatibility: doctor passed with the original secret");
+  } finally { await stopChild(legacyDeployment); }
 
   // The generated deployment is also the container: `connecta init` ships the
   // Dockerfile and Compose file, so the source that just answered over tsx has

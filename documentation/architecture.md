@@ -614,6 +614,6 @@ compiling and configuring the real thing.
   connector limiters, then the executor, then the Connecta's runtime; Node's `listen()` calls it on
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
-  invalid admission rule, the removed `accessTokens` option, a missing executor:
+  invalid admission rule, the old boolean `accessTokens` option, a missing executor:
   all refuse to boot (`test/config.test.ts`, `test/registry.test.ts`). Starting
   in the wrong shape is worse than not starting.

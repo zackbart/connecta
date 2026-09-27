@@ -16,6 +16,7 @@ import {
   type OperatorState,
 } from "../view.js";
 import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
+import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
 import { ConnectionsPage } from "./connections.js";
@@ -26,6 +27,7 @@ import {
   forgetBearer,
   getState,
   loadActivity,
+  loadAccessTokens,
   signIn,
   signInWithBearer,
   signOut,
@@ -63,6 +65,7 @@ function visiblePages(state: OperatorState): OperatorPage[] {
   // artifact origin, a first visit — only what this page can vouch for shows.
   const hint = state.data ? null : navHint();
   return OPERATOR_PAGES.filter((page) => {
+    if (page === "tokens") return state.data?.accessTokenManagement === "available";
     if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
     if (page === "artifacts") {
       return isArtifactPage(state.page) || (hint ? hint.artifacts : Boolean(state.data?.artifactsEnabled));
@@ -198,6 +201,7 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
   if (state.page === "artifacts") return <ArtifactsPage state={state} />;
   if (state.page === "artifact") return <ArtifactPage state={state} />;
@@ -219,6 +223,9 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
+    if (state.page === "tokens" && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
+      void loadAccessTokens();
+    }
     if (
       state.page === "activity" &&
       state.data?.activityEnabled &&

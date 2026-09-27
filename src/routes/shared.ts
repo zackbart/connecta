@@ -1,5 +1,6 @@
 import type { Implementation } from "@modelcontextprotocol/server";
 import type {
+  AccessTokensModule,
   ActivityModule,
   ArtifactsModule,
   OperatorSurface,
@@ -77,6 +78,7 @@ export interface ServerOptions {
   activityModule?: ActivityModule | undefined;
   /** Optional team pages; their routes mount only beside `ui`. */
   artifactsModule?: ArtifactsModule | undefined;
+  accessTokens?: AccessTokensModule | undefined;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding | undefined;
 }
@@ -157,6 +159,7 @@ export async function authorize(
       /** Granted addresses that still require the catalog's read-only hint. */
       guardedToolAccess?: ToolAccess;
       operator: boolean;
+      accessTokenManagement: boolean;
       credentialAdministration: ConnectorPermission;
       personalConnection: ConnectorPermission;
       /** Backward-compatible name used by operator views. */
@@ -179,7 +182,7 @@ export async function authorize(
         response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
       };
     }
-    return { ok: true, actor, identity, ...access, operator: false, credentialAdministration: "none", personalConnection: "none" };
+    return { ok: true, actor, identity, ...access, operator: false, accessTokenManagement: false, credentialAdministration: "none", personalConnection: "none" };
   }
   let lastResponse: Response | null = null;
   for (const provider of auth) {
@@ -209,6 +212,7 @@ export async function authorize(
         interactive,
       };
       let operator = interactive;
+      let accessTokenManagement = false;
       let credentialAdministration: ConnectorPermission = "none";
       let personalConnection: ConnectorPermission = "none";
       let access: ConnectorAccess;
@@ -223,6 +227,8 @@ export async function authorize(
           { allowReadOnly: true },
         );
         if (interactive) {
+          accessTokenManagement = identityConfig?.accessTokenManagement ? await identityConfig.accessTokenManagement(identity) : false;
+          if (typeof accessTokenManagement !== "boolean") throw new Error("invalid token management permission");
           credentialAdministration = identityConfig?.credentialAdministration ? await identityConfig.credentialAdministration(identity) : "none";
           personalConnection = principal && identityConfig?.personalConnection ? await identityConfig.personalConnection(identity) : "none";
         }
@@ -250,6 +256,7 @@ export async function authorize(
           ? { principalKey: await identityStorageKey(principal) }
           : {}),
         ...access,
+        accessTokenManagement,
         credentialAdministration,
         personalConnection,
         operator,

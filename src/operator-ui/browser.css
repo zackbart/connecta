@@ -414,3 +414,13 @@
     .artifact-row { grid-template-columns: minmax(0, 1fr); }
     .artifact-badges { justify-content: flex-start; }
   }
+
+/* Client token lifecycle uses the same cards and controls as connection auth. */
+.token-create, .token-reveal { margin-bottom: 24px; }
+.token-create > label { display: block; margin-bottom: 8px; }
+.token-create input { flex: 1; min-width: 0; }
+.token-reveal { border: 1px solid var(--rule); padding: 20px; }
+.token-reveal-head, .token-card-head { display: flex; justify-content: space-between; gap: 16px; }
+.token-secret { overflow-wrap: anywhere; margin: 12px 0; }
+.token-card { border-top: 1px solid var(--rule); padding: 20px 0; }
+.token-card.revoked { color: var(--muted); }

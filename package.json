@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.26.1",
+  "version": "0.26.2",
   "type": "module",
   "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of eight meta-tools.",
@@ -114,6 +114,10 @@
     "./artifacts": {
       "types": "./dist/artifacts.d.ts",
       "import": "./dist/artifacts.js"
+    },
+    "./auth/access-tokens": {
+      "types": "./dist/access-tokens.d.ts",
+      "import": "./dist/access-tokens.js"
     }
   },
   "scripts": {

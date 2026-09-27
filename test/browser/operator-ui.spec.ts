@@ -6,6 +6,7 @@ import {
   renderUiHtml,
   type UiData,
 } from "../../src/ui.js";
+import { accessTokens, AccessTokenManager } from "../../src/access-tokens.js";
 import { api } from "../../src/connectors/api.js";
 import {
   CredentialVault,
@@ -41,6 +42,7 @@ let clerkLoaderFails = false;
 let clerkLoaderRequests: string[] = [];
 let activityEnabled = true;
 let authManagement = true;
+let tokenManagement = false;
 let detailBarriers = new Map<string, Promise<void>>();
 let releaseDetails: Array<() => void> = [];
 let pools: string[] = [];
@@ -78,6 +80,7 @@ function data(): UiData {
     credentialManagement: "available",
     oauthManagement: true,
     activityEnabled,
+    ...(tokenManagement ? { accessTokenManagement: "available" as const } : {}),
     ...(pools.length ? { pools } : {}),
     connectors: emptyDeployment ? [] : [
       {
@@ -264,7 +267,8 @@ test.beforeAll(async () => {
       const real = await realRoutes.connecta.fetch(
         new Request(`${REAL_BASE}${url.pathname}`, {
           method,
-          headers: { Authorization: "Bearer clerk-operator", Origin: REAL_BASE },
+          headers: { Authorization: "Bearer clerk-operator", Origin: REAL_BASE, "Content-Type": "application/json" },
+          ...(body ? { body: JSON.stringify(body) } : {}),
         }),
       );
       const text = await real.text();
@@ -409,6 +413,7 @@ test.beforeEach(() => {
   oauthStartUrl = undefined;
   leakyStatus = false;
   realRoutes = undefined;
+  tokenManagement = false;
 });
 
 async function openAuthenticated(
@@ -1312,4 +1317,44 @@ test("keeps loaded artifacts when loading more fails", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Artifact two" })).toBeVisible();
   await expect(page.locator("#artifactError")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Load more" })).toBeEnabled();
+});
+
+
+test("creates, shows once, renames and revokes client tokens through real routes", async ({ page }) => {
+  const storage = memoryStorage();
+  const connecta = createTestConnecta({
+    connectors: [],
+    auth: { ...fakeClerkAuth(), activityActorNamespace: "clerk:test" },
+    accessTokens: accessTokens(storage),
+    identity: { accessTokenManagement: () => true },
+  });
+  const paths = new Set(["/ui/access-tokens"]);
+  realRoutes = { connecta, paths, answered: [] };
+  tokenManagement = true;
+  try {
+    await openAuthenticated(page);
+    await page.getByRole("link", { name: "Access tokens", exact: true }).click();
+    await page.getByLabel("Client name").fill("Desktop client");
+    await page.getByRole("button", { name: "Create token", exact: true }).click();
+    await expect(page.locator("#createdToken")).toContainText("cta_");
+    const secret = (await page.locator("#createdToken").textContent())!;
+    const manager = new AccessTokenManager(storage);
+    const [record] = await manager.list();
+    paths.add(`/ui/access-tokens/${record!.id}`);
+    const authenticate = () => manager.auth.authorize(new Request(REAL_BASE + "/mcp", { headers: { Authorization: `Bearer ${secret}` } }), REAL_BASE);
+    expect((await authenticate()).ok).toBe(true);
+    await page.getByRole("button", { name: "I stored it" }).click();
+    await expect(page.locator("#createdToken")).toHaveCount(0);
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.getByLabel("Token name", { exact: true }).fill("Renamed desktop");
+    await page.getByRole("button", { name: "Save name", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
+    expect(await page.content()).not.toContain(secret);
+    page.once("dialog", dialog => dialog.accept());
+    await page.getByRole("button", { name: "Revoke", exact: true }).click();
+    await expect(page.locator(".token-card")).toHaveClass(/revoked/);
+    expect((await authenticate()).ok).toBe(false);
+  } finally { await connecta.close(); }
 });

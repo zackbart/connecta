@@ -8,6 +8,8 @@ export function validIdentityReference(
 ): value is IdentityReference {
   return Boolean(
     value &&
+      typeof value.namespace === "string" &&
+      typeof value.id === "string" &&
       IDENTITY_PART_RE.test(value.namespace) &&
       IDENTITY_PART_RE.test(value.id),
   );

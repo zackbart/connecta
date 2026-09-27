@@ -132,3 +132,14 @@ breaks and what a deployment can ignore.
 Built for its author's deployments first and published openly. Breaking
 changes are expected before 1.0. See the [changelog](./CHANGELOG.md) and
 [security policy](./SECURITY.md).
+
+### Existing client tokens
+
+Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
+`accessTokens` from `@zackbart/connecta/auth/access-tokens`, replace the old
+`accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
+same persistent storage namespace and identity/tool/pool grant rules. Enable
+`identity.accessTokenManagement` only for the interactive operators who should
+manage tokens. New issuance needs storage with atomic `compareAndSet`; older
+storage adapters can still verify existing tokens. See the package's
+`documentation/auth.md` for the migration and storage requirements.
