@@ -25,9 +25,9 @@ another restart. The Node template now pins 0.26.1.
   when `mode` is absent, creates a new epoch and clears the grant and
   discovery while retaining a matching issuer-bound client registration. `continue` hands back the pending
   authorization URL when it was written in the last ten minutes. Otherwise it
-  starts a flow in the current epoch with the stored registration, so there
-  is no dynamic client registration. A disconnected connector still resets
-  first. A response with a URL now carries `reused`. A continue that reused a
+  starts a flow in the current epoch, reusing a stored registration when one
+  exists. A first connection still registers dynamically. A disconnected
+  connector resets first. A response with a URL now carries `reused`. A continue that reused a
   URL or found the connection healthy leaves the cached catalog alone. Any
   other `mode` is a 400. After a `publicUrl` change, continue keeps a client
   registered for the old callback, which the authorization server refuses;
