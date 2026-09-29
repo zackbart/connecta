@@ -888,6 +888,14 @@ describe("downstream session termination", () => {
 });
 
 describe("remoteMcp() destination guard", () => {
+  it.each(["", " full", "full ", "read\nwrite", 'read"write', "read\\write"])("rejects invalid OAuth scope %s", (scope) => {
+    expect(() => remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", scope } })).toThrow(/OAuth scope/);
+  });
+
+  it.each(["", "not-a-url", "http://example.com/client.json", "https://example.com/", "https://user:secret@example.com/client.json", "https://example.com/client.json#fragment"])("rejects invalid client metadata URL %s", (clientMetadataUrl) => {
+    expect(() => remoteMcp("svc", { url: "https://example.com/mcp", auth: { type: "oauth", clientMetadataUrl } })).toThrow(/clientMetadataUrl/);
+  });
+
   it.each([
     ["warns when static headers auth would travel over http://", "cleartext", "http://example.com/mcp", true, true],
     ["does not warn for headers auth over https://", "secure", "https://example.com/mcp", true, false],

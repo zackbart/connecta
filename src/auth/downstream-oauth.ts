@@ -1093,6 +1093,7 @@ function retirementTimes(raw: string | null): Map<string, number> {
  * drives transport.finishAuth(code).
  */
 export class KvOAuthProvider implements OAuthClientProvider {
+  readonly clientMetadataUrl?: string;
   /**
    * The reset generation this provider's flow started under. Every OAuth value
    * it writes carries this epoch, so a late write can land after a reset without
@@ -1128,7 +1129,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly clientBinding?: string,
     /** Request-local observer so the operator route drains every reset it began. */
     private readonly onReset?: (reset: Promise<void>) => void,
-  ) {}
+    /** SDK uses this only when the authorization server advertises support. */
+    clientMetadataUrl?: string,
+    private readonly scope?: string,
+  ) {
+    if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
+  }
 
   /**
    * Stamp the force-reauth generation the current connect flow started under.
@@ -1730,6 +1736,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
+      ...(this.scope !== undefined ? { scope: this.scope } : {}),
     };
   }
 

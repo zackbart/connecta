@@ -4,6 +4,20 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+## 0.26.3 — 2026-09-28
+
+This patch lets downstream OAuth connections use a public client metadata
+URL when a server supports URL-based client IDs but restricts dynamic
+registration. Existing OAuth configurations keep their current behavior.
+The Node template now pins 0.26.3.
+
+### Added
+
+- `remoteMcp` OAuth auth accepts `clientMetadataUrl` and default `scope`.
+  The SDK negotiates URL-based client IDs, falling back to dynamic registration
+  when unsupported. Existing PKCE, issuer binding, encrypted storage, refresh,
+  and disconnect remain in use. Invalid settings fail at construction.
+
 ## 0.26.2 — 2026-09-27
 
 This patch restores named client tokens as an optional auth module. Deployments
