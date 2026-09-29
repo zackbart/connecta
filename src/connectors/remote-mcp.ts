@@ -79,7 +79,13 @@ interface RemoteMcpCredentialAuth {
 export type RemoteMcpAuth =
   | { type: "headers"; headers: Record<string, string> }
   | RemoteMcpCredentialAuth
-  | { type: "oauth" };
+  | {
+      type: "oauth";
+      /** Public HTTPS client metadata document, for servers supporting URL-based client IDs. */
+      clientMetadataUrl?: string;
+      /** Space-separated default scopes when the resource server does not advertise them. */
+      scope?: string;
+    };
 
 /**
  * Apply a maintained provider's slot copy and header framing to credential
@@ -674,6 +680,20 @@ interface ConnectionState {
  * server or hide other connectors).
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
+  const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
+  const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
+  if (oauthScope !== undefined && !/^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/.test(oauthScope)) {
+    throw new Error(`[connecta] connector "${id}" OAuth scope must contain space-separated scope tokens.`);
+  }
+  if (clientMetadataUrl !== undefined) {
+    let valid = false;
+    try {
+      const url = new URL(clientMetadataUrl);
+      valid = url.protocol === "https:" && url.pathname !== "/" &&
+        !url.username && !url.password && !url.hash;
+    } catch { /* Invalid configuration is rejected below without echoing its value. */ }
+    if (!valid) throw new Error(`[connecta] connector "${id}" clientMetadataUrl must be an HTTPS URL with a non-root path, without credentials or a fragment.`);
+  }
   if (opts.authScope === "personal" && opts.auth?.type === "headers") {
     throw new Error(
       `[connecta] connector "${id}" cannot combine authScope "personal" ` +
@@ -943,12 +963,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           grant_types: ["authorization_code", "refresh_token"],
           response_types: ["code"],
           token_endpoint_auth_method: "none",
+          ...(oauthScope !== undefined ? { scope: oauthScope } : {}),
         },
         authScope: opts.authScope ?? "shared",
         versionNegotiation: opts.versionNegotiation ?? "auto",
         redirects: opts.redirects ?? "none",
+        clientMetadataUrl,
       }),
       (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
+      clientMetadataUrl,
+      oauthScope,
     );
     if (state) state.provider = provider;
     return provider;

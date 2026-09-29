@@ -149,12 +149,18 @@ describe("KvOAuthProvider over memoryStorage", () => {
     await expect(callback.discoveryState()).resolves.toEqual(discovery);
   });
 
-  it("finishes OAuth from a non-default protected-resource metadata URL", async () => {
+  it.each([false, true])("finishes OAuth from non-default metadata, URL client ID: %s", async (urlClient) => {
     const storage = memoryStorage();
     const issuer = "https://auth.example";
     const mcpUrl = "https://downstream.example/mcp";
     const metadataUrl =
       "https://downstream.example/.well-known/custom-protected-resource/mcp";
+    const clientMetadataUrl = "https://connecta.test/oauth-client.json";
+    const makeProvider = () => new KvOAuthProvider(
+      "svc", storage, REDIRECT, undefined, true, undefined, undefined, undefined, undefined,
+      urlClient ? clientMetadataUrl : undefined,
+      "full mcp",
+    );
     const fetchStub: FetchLike = async (input, init = {}) => {
       const url = new URL(input);
       if (url.href === metadataUrl) {
@@ -166,6 +172,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
       if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
         return Response.json({
           issuer,
+          client_id_metadata_document_supported: urlClient,
+          scopes_supported: ["full", "mcp", "offline_access"],
           authorization_endpoint: `${issuer}/authorize`,
           token_endpoint: `${issuer}/token`,
           registration_endpoint: `${issuer}/register`,
@@ -176,6 +184,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
         });
       }
       if (url.href === `${issuer}/register`) {
+        expect(urlClient).toBe(false);
         expect(init.method).toBe("POST");
         return Response.json({
           client_id: "registered-client",
@@ -189,6 +198,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
         expect(init.method).toBe("POST");
         expect(init.body).toBeInstanceOf(URLSearchParams);
         expect((init.body as URLSearchParams).get("code")).toBe("auth-code");
+        expect((init.body as URLSearchParams).get("client_id")).toBe(urlClient ? clientMetadataUrl : "registered-client");
         return Response.json({
           access_token: "access-token",
           token_type: "Bearer",
@@ -197,7 +207,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
       throw new Error(`Unexpected OAuth test request: ${url.href}`);
     };
 
-    const start = new KvOAuthProvider("svc", storage, REDIRECT);
+    const start = makeProvider();
     await expect(
       auth(start, {
         serverUrl: mcpUrl,
@@ -207,7 +217,9 @@ describe("KvOAuthProvider over memoryStorage", () => {
     ).resolves.toBe("REDIRECT");
     const pending = new URL((await start.pendingAuthorizationUrl())!);
 
-    const callback = new KvOAuthProvider("svc", storage, REDIRECT);
+    expect(pending.searchParams.get("client_id")).toBe(urlClient ? clientMetadataUrl : "registered-client");
+    expect(pending.searchParams.get("scope")).toBe("full mcp offline_access");
+    const callback = makeProvider();
     expect(await callback.verifyState(pending.searchParams.get("state"))).toBe(
       true,
     );

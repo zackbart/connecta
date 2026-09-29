@@ -615,3 +615,26 @@ present, must match that owner and may then manage the connector, while an
 interactive provider's explicit 403 still refuses the flow. See
 [meta-tools](./meta-tools.md#authorization-recovery) for the recovery shapes a
 caller actually receives.
+
+## URL-based downstream OAuth clients
+
+`remoteMcp` accepts `auth: { type: "oauth", clientMetadataUrl, scope }`.
+`clientMetadataUrl` names a public HTTPS OAuth client metadata document with a
+non-root path. It must not contain credentials or a fragment. The document
+must include its own URL as `client_id`, the deployment's exact
+`/oauth/callback/<connector-id>` in `redirect_uris`, authorization-code and
+refresh-token grants, and `token_endpoint_auth_method: "none"`. Hosting that
+public document belongs to the deployment; Connecta does not expose a public
+route through inbound authentication.
+
+The SDK uses the URL as the client ID only when the authorization server
+advertises `client_id_metadata_document_supported`. Otherwise it keeps the
+existing dynamic registration flow. State validation, PKCE, issuer binding,
+encrypted token storage, refresh, and disconnect follow the same code paths.
+The metadata URL and scopes participate in the saved-client configuration
+binding, so restarting after either changes cannot reuse an old registration.
+
+`scope` supplies space-separated default OAuth scopes through client metadata.
+A downstream challenge or protected-resource scope declaration takes precedence,
+and the SDK adds `offline_access` when advertised for refresh-token grants.
+Omitting both settings preserves the existing discovery and registration flow.
