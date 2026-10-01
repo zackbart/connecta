@@ -535,3 +535,75 @@ describe("operator collection ordering", () => {
     expect(store.getState().artifactView).toBeNull();
   });
 });
+
+
+describe("operator recovery races", () => {
+  it.each(["disconnect", "remove"])("reloads connector state after a partially applied %s fails", async action => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    const connected = { id: "svc", status: "ok", tools: [{ name: "read" }], toolCount: 1 };
+    fetchMock.mockImplementation(async (path: string) => path === "/ui/data"
+      ? Response.json({ ...uiData("operator"), connectors: [connected] })
+      : Response.json(connected));
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("ok"));
+    fetchMock.mockClear();
+    // The server retired the grant, then its cleanup failed. Re-reading is
+    // how the operator learns that a failed click still disconnected it.
+    fetchMock.mockImplementation(async (path: string) => path.startsWith("/ui/connectors/")
+      ? Response.json({ ...connected, status: "auth_required", tools: [], toolCount: 0 })
+      : Response.json({ problem: "storage_failed" }, { status: 500 }));
+    if (action === "disconnect") await store.disconnectOAuth("svc");
+    else await store.removeCredential("svc");
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("auth_required"));
+    expect(store.getState().data?.connectors[0]?.tools).toEqual([]);
+    expect(store.getState()[action === "disconnect" ? "oauthNotice" : "credentialNotice"]?.tone).toBe("error");
+  });
+
+  it("keeps the latest operator reload when two retries overlap", async () => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 500 }));
+    await store.boot();
+    const old = deferred<Response>();
+    fetchMock.mockReturnValueOnce(old.promise);
+    const first = store.retryLoad();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("newer deployment state")));
+    await store.retryLoad();
+    old.resolve(Response.json(uiData("older deployment state")));
+    await first;
+    expect(store.getState().data?.serverInfo.name).toBe("newer deployment state");
+  });
+
+  it("offers retry when the artifact library returns an unreadable successful response", async () => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(new Response("truncated JSON", { status: 200 }));
+    await store.loadArtifacts(true);
+    expect(store.getState()).toMatchObject({ session: "ready", artifactPhase: "error" });
+    expect(store.getState().artifactNotice?.message).toContain("Retry");
+    fetchMock.mockResolvedValueOnce(Response.json({ artifacts: [{ id: "recovered" }] }));
+    await store.retryCollection();
+    expect(store.getState().artifactRows).toEqual([{ id: "recovered" }]);
+  });
+});
+
+
+describe("operator unreadable collections", () => {
+  it("keeps the operator retry available when /ui/data returns JSON null", async () => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(Response.json(null));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "server" });
+  });
+
+  it.each(["truncated JSON", "null", "{}"])("reports an unreadable token collection instead of no tokens: %s", async body => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    await store.loadAccessTokens();
+    expect(store.getState().tokenPhase).toBe("error");
+    expect(store.getState().tokenNotice?.tone).toBe("error");
+    fetchMock.mockResolvedValueOnce(Response.json({ accessTokens: [{ id: "recovered", name: "Client" }] }));
+    await store.loadAccessTokens();
+    expect(store.getState().tokenPhase).toBe("ready");
+    expect(store.getState().tokens[0]?.id).toBe("recovered");
+  });
+});

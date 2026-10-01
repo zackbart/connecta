@@ -286,7 +286,9 @@ remoteMcp("linear", { url: "https://mcp.linear.app/mcp", authScope: "personal",
 A personal connector is absent — not refused — from any request without a
 stable namespaced principal. For a principal that can see one, connecta
 partitions connector storage, vault records, catalog caches, OAuth generations,
-and observed result shapes under an opaque SHA-256 identity key. Keep namespaces
+and observed result shapes under an opaque SHA-256 identity key. Refreshes
+coalesce within one owner; another owner's authorization epoch cannot retire
+that refresh. Keep namespaces
 and principal ids stable across upgrades; changing either selects different
 partitions. Literal `auth: { type: "headers" }` cannot be personal, because its
 secret lives in deployment code; `remoteMcp()` refuses that combination at

@@ -53,6 +53,7 @@ import {
   normalizeGuideSummary,
 } from "./skills.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
+import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
 import { closeScopeOnExit } from "./runtime/connector-scope.js";
 import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -441,6 +442,7 @@ export class Registry implements RegistryView {
   private resultStashBytes = 0;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
+  private readonly oauthPartition = {};
   private callAdmissionClosed = false;
   /** Bounded FIFO of absent grants already warned about. */
   private readonly warnedAbsentGrants = new Set<string>();
@@ -526,10 +528,13 @@ export class Registry implements RegistryView {
       // principal starts with no generations and no mutation queue, so a
       // refresh the evicted registry finishes later would persist a listing
       // that a credential change on the replacement had just deleted.
+      // OAuth status/start work bypasses both gates, and accepted rotations
+      // may still be saving after their caller leaves. Preserve its partition.
       const idle = [...this.personalRegistries].find(([, candidate]) =>
         [...candidate.callAdmission.values()].every(admission => admission.isIdle()) &&
         candidate.catalogRefreshes.size === 0 &&
-        candidate.catalogMutations.size === 0,
+        candidate.catalogMutations.size === 0 &&
+        oauthPartitionIdle(candidate.oauthPartition),
       );
       if (!idle) {
         throw new Error("Personal connector capacity is exhausted; retry after calls, rolling budgets, and catalog refreshes drain.");
@@ -750,8 +755,10 @@ export class Registry implements RegistryView {
         return values;
       };
       credentialAccess = {
-        get: async (field = "value") =>
-          (await readValues())?.[field] ?? null,
+        get: async (field = "value") => {
+          const values = await readValues();
+          return values && Object.hasOwn(values, field) ? values[field]! : null;
+        },
         getAll: readValues,
       };
     }
@@ -763,6 +770,7 @@ export class Registry implements RegistryView {
       requestScope,
       ...callOptions,
     };
+    attachOAuthPartition(context, this.oauthPartition);
     // Downstream OAuth state is sealed under the vault key, bound to this
     // connector and owner. The sealer rides beside the context, not on it.
     return this.opts.credentialVault
@@ -1303,12 +1311,8 @@ export class Registry implements RegistryView {
     // observation, but must not overwrite a newer same-generation refresh.
     // Blocking callers do not set this flag and retain their prior publication
     // behavior when an inbound abort races a completed listing.
-    if (skipPublicationWhenAborted && ctx.signal?.aborted) return tools;
-    // The caller that began this refresh may still use its result, but a
-    // credential/OAuth change that landed while listTools was in flight, or a
-    // flight abandoned while it listed, means the listing must not enter
-    // either shared cache layer.
-    if (!this.mayPublish(id, generation, flight)) return tools;
+    // Every returned listing must pass the ceilings, even when invalidation
+    // or abandonment means it can no longer enter either shared cache layer.
     if (tools.length > MAX_CATALOG_TOOLS) {
       const message =
         `Connector "${id}" returned ${tools.length} tools, over the ` +
@@ -1318,12 +1322,6 @@ export class Registry implements RegistryView {
     }
     const previous = this.cache.get(id);
     const snapshot = await snapshotCatalog(tools);
-    if (
-      !this.mayPublish(id, generation, flight) ||
-      (skipPublicationWhenAborted && ctx.signal?.aborted)
-    ) {
-      return tools;
-    }
     if (snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
       const message =
         `Connector "${id}" returned a ${snapshot.serializedBytes.byteLength}-byte ` +
@@ -1331,6 +1329,15 @@ export class Registry implements RegistryView {
         "refusing the complete catalog.";
       this.opts.logger.warn(`[connecta] ${message}`);
       throw new Error(message);
+    }
+    // The caller that began this refresh may still use its bounded result,
+    // but credential changes, abandoned flights, and deferred cancellation
+    // prevent publication. Recheck after snapshotting, which is asynchronous.
+    if (
+      !this.mayPublish(id, generation, flight) ||
+      (skipPublicationWhenAborted && ctx.signal?.aborted)
+    ) {
+      return tools;
     }
     const now = Date.now();
     const catalogChanged =
@@ -1929,7 +1936,14 @@ export class Registry implements RegistryView {
 
 class ScopedRegistryView implements RegistryView {
   readonly maxResultBytes: number;
-  private readonly personal: Registry | undefined;
+  /** An evicted view's admission controller must remain closed. */
+  private readonly admissionPersonal: Registry | undefined;
+
+  private get personal(): Registry | undefined {
+    return this.scope.principalKey
+      ? this.root.personalRegistry(this.scope.principalKey)
+      : undefined;
+  }
 
   constructor(
     private readonly root: Registry,
@@ -1937,16 +1951,19 @@ class ScopedRegistryView implements RegistryView {
     private readonly scope: RegistryScope,
   ) {
     this.maxResultBytes = root.maxResultBytes;
-    this.personal = scope.principalKey
+    // Check capacity at construction, then resolve the current registry on
+    // use. A retained view must not revive one evicted while it was idle.
+    this.admissionPersonal = scope.principalKey
       ? root.personalRegistry(scope.principalKey)
       : undefined;
   }
 
-  private registryFor(id: string): Registry | undefined {
+  private registryFor(id: string, admission = false): Registry | undefined {
     if (!this.allowed.has(id)) return undefined;
     const connector = this.root.getConnector(id);
     if (!connector) return undefined;
-    return connector.authScope === "personal" ? this.personal : this.root;
+    if (connector.authScope !== "personal") return this.root;
+    return admission ? this.admissionPersonal : this.personal;
   }
 
   listConnectors(): Connector[] {
@@ -2003,7 +2020,7 @@ class ScopedRegistryView implements RegistryView {
   admitCall(
     ...args: Parameters<RegistryView["admitCall"]>
   ): Promise<CallAdmissionPermit> {
-    const registry = this.registryFor(args[0]);
+    const registry = this.registryFor(args[0], true);
     if (!registry) {
       return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
     }

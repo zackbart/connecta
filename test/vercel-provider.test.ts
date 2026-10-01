@@ -63,16 +63,17 @@ beforeEach(() => {
     const text =
       responses[0]?.text ?? JSON.stringify(responses[0]?.body ?? {});
     const next = responses.shift() ?? {};
+    const headers = new Headers(init.headers);
     calls.push({
       url: String(input),
       method: init.method ?? "GET",
-      headers: Object.fromEntries(new Headers(init.headers).entries()),
+      headers: Object.fromEntries(headers.entries()),
       body:
         typeof init.body === "string" && init.body
-          ? JSON.parse(init.body)
+          ? headers.get("content-type")?.includes("application/json") ? JSON.parse(init.body) : init.body
           : undefined,
     });
-    return new Response(text, {
+    return new Response([204, 205, 304].includes(next.status ?? 200) ? null : text, {
       status: next.status ?? 200,
       ...(next.headers ? { headers: next.headers } : {}),
     });
@@ -715,6 +716,15 @@ describe("Vercel domains and environment variables", () => {
 });
 
 describe("Vercel raw API hatches and lifecycle calls", () => {
+  it.each([
+    ["vercel_api_get", { path: "/v13/deployments/dpl_1/files/file_1" }],
+    ["vercel_api_mutate", { method: "POST", path: "/v1/example" }],
+    ["vercel_api_upload", { method: "POST", path: "/v2/files", contentType: "text/plain", textBody: "uploaded" }],
+  ])("preserves a text response through %s", async (name, args) => {
+    queue({ text: "endpoint response", headers: { "content-type": "text/plain" } });
+    await expect(call(connection(), name as string, args)).resolves.toEqual({ result: "endpoint response" });
+  });
+
   it("adds the default team to arbitrary GET requests", async () => {
     queue({ body: { items: [1, 2] } });
     const result = await call(connection(), "vercel_api_get", {
@@ -835,6 +845,28 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
 });
 
 describe("Vercel typed failures and credential test", () => {
+  it.each(["list_projects", "delete_deployment"])("refuses a successful HTML response for %s", async (name) => {
+    queue({ text: "<html>synthetic gateway page</html>", headers: { "content-type": "text/html" } });
+    await expect(call(connection(), name, name === "delete_deployment" ? { deploymentId: "dpl_1" } : {})).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses a malformed successful build-log stream instead of inventing rows", async () => {
+    queue({ text: '{"type":"stdout","payload":{"text":"valid"}}\nmalformed', headers: { "content-type": "application/stream+json" } });
+    await expect(call(connection(), "get_build_logs", { deploymentId: "dpl_1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+  });
+
+  it("preserves a valid no-content mutation response", async () => {
+    queue({ status: 204 });
+    await expect(call(connection(), "delete_deployment", { deploymentId: "dpl_1" })).resolves.toEqual({ deleted: true, deploymentId: "dpl_1" });
+  });
+
   it("fails locally without a token", async () => {
     await expect(
       call(connection(), "list_projects", {}, context(null)),

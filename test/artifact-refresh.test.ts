@@ -316,3 +316,34 @@ describe("artifact refresh", () => {
     expect(await module.runDue()).toMatchObject({ scanned: 101, started: 1, succeeded: 1 });
   });
 });
+
+
+describe("artifact refresh scan progress", () => {
+  it.each([false, true])("refuses a nonadvancing continuation with heads=%s", async includeHead => {
+    const { module, store, create } = setup(async () => ({ result: { value: 2 } }));
+    await create();
+    await store.setRefreshScanCursor("weekly");
+    const head = (await store.head("weekly"))!.head;
+    let pages = 0;
+    store.heads = async () => {
+      pages++;
+      return { heads: includeHead ? [{ id: "weekly", head }] : [], next: "weekly" };
+    };
+    await expect(module.runDue()).rejects.toThrow("did not advance");
+    expect(pages).toBe(1);
+    expect(await store.refreshScanCursor()).toBe("weekly");
+  });
+
+  it("refuses an empty continuation that moves the durable cursor backwards", async () => {
+    const { module, store } = setup(async () => ({ result: { value: 2 } }));
+    await store.setRefreshScanCursor("weekly");
+    let pages = 0;
+    store.heads = async ({ after }) => {
+      pages++;
+      return { heads: [], next: after === "weekly" ? "older" : "weekly" };
+    };
+    await expect(module.runDue()).rejects.toThrow("did not advance");
+    expect(pages).toBe(1);
+    expect(await store.refreshScanCursor()).toBe("weekly");
+  });
+});

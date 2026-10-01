@@ -838,6 +838,39 @@ describe("tool cache TTL", () => {
     ).toHaveLength(1);
   });
 
+  it.each(["tools", "bytes"])("refuses an over-ceiling %s catalog even when invalidation prevents publication", async (limit) => {
+    const storage = memoryStorage();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const started = new Promise<void>((resolve) => { reached = resolve; });
+    let calls = 0;
+    const connector = connectorWith({
+      id: "invalidated_limit",
+      kind: "mcp",
+      tools: async () => {
+        if (++calls > 1) return [{ name: "fresh" }];
+        reached();
+        await gate;
+        return limit === "tools"
+          ? Array(MAX_CATALOG_TOOLS + 1).fill({ name: "same" }) as ToolDef[]
+          : [{ name: "x".repeat(MAX_SERIALIZED_CATALOG_BYTES) }];
+      },
+      call: async () => null,
+    });
+    const registry = makeRegistry([connector], { storage });
+    const pending = registry.getTools(connector.id, BASE);
+    const refused = expect(pending).rejects.toThrow(
+      limit === "tools" ? "catalog ceiling" : "serialized catalog",
+    );
+    await started;
+    await registry.invalidateStored(connector.id);
+    release();
+    await refused;
+    expect(await storage.get(`catalog:${connector.id}`)).toBeNull();
+    await expect(registry.getTools(connector.id, BASE)).resolves.toEqual([{ name: "fresh" }]);
+  });
+
   it("persists only when the complete catalog fingerprint changes", async () => {
     const backing = memoryStorage();
     let manifestWrites = 0;

@@ -21,7 +21,7 @@ import {
 } from "../routes/shared.js";
 import { resolveBranding, schemeAttribute, themeCss, type ResolvedTheme } from "../branding.js";
 import { TOKENS_CSS } from "../page-styles.js";
-import { buildFrameDocument, frameCsp } from "./document.js";
+import { frameCsp } from "./document.js";
 import { scriptSafeJson } from "./json.js";
 import { freshnessOf } from "./refresh.js";
 import type { ArtifactOperations } from "./operations.js";
@@ -160,7 +160,8 @@ export function artifactRoutes(options: {
       }
       pin = { view: Number(pinned), documents };
     }
-    const page = await ops.page(id, pin ?? {});
+    const theme = resolveBranding(context.opts.branding).theme;
+    const page = await ops.page(id, pin ?? {}, theme);
     if (!page.ok) return notFound();
     const origin = new URL(context.baseUrl).origin;
     const url = `${origin}/artifacts/${id}`;
@@ -187,23 +188,7 @@ export function artifactRoutes(options: {
       freshness: freshnessOf(page.head),
       url,
       snapshotUrl: `${url}/v/${page.view.version}${pins.length ? `?${pins.join("&")}` : ""}`,
-      document: buildFrameDocument({
-        kind: page.head.kind,
-        source: page.source,
-        theme: resolveBranding(context.opts.branding).theme,
-        global: {
-          id,
-          title: page.head.title,
-          view: { version: page.view.version },
-          documents: Object.fromEntries(
-            documents.map(({ name, version, updatedAt }) => [name, { version, updatedAt }]),
-          ),
-          snapshot: pin !== undefined,
-        },
-        data: Object.fromEntries(
-          Object.entries(page.documents).map(([name, { value }]) => [name, scriptSafeJson(value)]),
-        ),
-      }),
+      document: page.document,
     });
   };
 

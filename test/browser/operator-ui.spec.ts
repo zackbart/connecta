@@ -604,6 +604,22 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
   ]);
 });
 
+test("reloads retired OAuth state when disconnect reports an error", async ({ page }) => {
+  await page.route("**/ui/oauth/oauth", route => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    oauthConnected = false;
+    return route.fulfill({ status: 500, json: { error: "cleanup failed after retirement" } });
+  });
+  await openAuthenticated(page);
+  const row = await openRow(page, "CRM");
+  await row.getByRole("button", { name: "Disconnect CRM" }).click();
+  await row.getByRole("group", { name: /Disconnect CRM\?/ }).getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnect didn't finish.");
+  await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  await expect(row.locator(".conn-head")).toContainText("Authorization needed");
+  await expect(row.getByText("oauth.contacts", { exact: true })).toHaveCount(0);
+});
+
 test("navigates to the activity list and back without a shell reload", async ({
   page,
 }) => {
@@ -1024,6 +1040,20 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
   await page.reload();
   await expect(page.locator("#gate")).toBeVisible();
   await expect(page.locator("#err")).toHaveText("That token wasn't accepted. Paste a valid operator token.");
+});
+
+test("recovers from a successful null operator-data response", async ({ page }) => {
+  let malformed = true;
+  await page.route("**/ui/data", route => malformed
+    ? route.fulfill({ status: 200, contentType: "application/json", body: "null" })
+    : route.fallback());
+  await openAuthenticated(page);
+  await expect(page.locator("#loadFailure")).toBeVisible();
+  await expect(page.locator("#gate")).toHaveCount(0);
+  malformed = false;
+  await page.locator("#loadFailure").getByRole("button", { name: "Retry" }).click();
+  await expect(connectorRow(page, "CRM")).toBeVisible();
+  await expect(page.locator("#loadFailure")).toHaveCount(0);
 });
 
 test("keeps a 403 on a mutation beside its control, signed in", async ({ page }) => {

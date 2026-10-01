@@ -11,6 +11,11 @@ Duplicate API tool names now fail at construction, and doctor refuses redirects
 instead of forwarding deployment credentials. Artifact render checks use the
 deployment's viewer theme.
 
+A second reliability pass isolates personal OAuth refreshes, preserves token
+rotations during legacy migration, and hardens file snapshots and operator
+recovery. Artifact quotas now reserve 8 KiB for frame metadata, reducing the
+available content allowance by 4 KiB, and apply to historical snapshots too.
+
 ### Changed
 
 - Pin Effect to `4.0.0`, replacing `4.0.0-rc.117`, and align the optional
@@ -20,6 +25,24 @@ deployment's viewer theme.
 
 ### Fixed
 
+- Enforce catalog count and byte ceilings even when discovery is invalidated
+  while the listing is in flight (#644).
+- Retain OAuth cleanup lineage after uncertain storage commits, preserve
+  concurrent token rotation and revocation during issuer migration, and isolate
+  refresh coordination by credential owner (#645) (#646) (#648).
+- Return `null` for absent prototype-named credential fields (#647).
+- Reserve enough artifact frame metadata for valid document names and titles,
+  enforce current quotas on historical snapshots, and reject refresh scan
+  cursors that fail to advance (#649) (#658) (#650).
+- Reconcile connector state after failed operator mutations, ignore older data
+  reloads, and keep malformed collection responses recoverable (#651) (#652)
+  (#653).
+- Keep committed file snapshots consistent after rename, quarantine malformed
+  entries, and reject TTLs that cannot produce finite expirations (#654) (#655)
+  (#656).
+- Reject unreadable successful responses and malformed build-log streams from
+  named Vercel tools, preserving raw API response bodies and no-content
+  mutations (#657).
 - Keep queued catalog mutations alive across Worker requests while preserving
   cancellation and storage ordering (#623).
 - Release failed access-token reservations before lookup publication, close

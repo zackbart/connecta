@@ -5,6 +5,7 @@ import {
   type ArtifactStore,
 } from "../src/artifacts.js";
 import { ArtifactOperations, applyPatch } from "../src/artifacts/operations.js";
+import { buildFrameDocument, FRAME_OVERHEAD_BYTES } from "../src/artifacts/document.js";
 import { markdownPage } from "../src/artifacts/markdown.js";
 import { resolveAllowlist, resolveLimits, validateArtifact } from "../src/artifacts/validate.js";
 import type { ArtifactLimits } from "../src/artifacts/types.js";
@@ -385,7 +386,7 @@ describe("limits", () => {
   it("counts injected documents against a Markdown page's rendered size", async () => {
     const source = "# Short";
     const title = "Markdown";
-    const base = new TextEncoder().encode(markdownPage(source, title)).length + 4096;
+    const base = new TextEncoder().encode(markdownPage(source, title)).length + FRAME_OVERHEAD_BYTES;
     const limit = base + 100;
     expect(validateArtifact({ kind: "markdown", source, title, documents: { data: "x".repeat(200) } },
       { limits: { renderedBytes: limit } }).errors[0]?.code).toBe("E_TOO_LARGE");
@@ -401,7 +402,7 @@ describe("limits", () => {
     for (const kind of ["html", "markdown"] as const) {
       const source = kind === "html" ? page("Short") : "# Short";
       const title = "Page";
-      const base = new TextEncoder().encode(kind === "html" ? source : markdownPage(source, title)).length + 4096;
+      const base = new TextEncoder().encode(kind === "html" ? source : markdownPage(source, title)).length + FRAME_OVERHEAD_BYTES;
       const { ops } = setup({ renderedBytes: base + 250 });
       const made = await ops.create({ id: kind, title, kind, source,
         documents: { data: "x".repeat(200) }, by: alice });
@@ -553,5 +554,105 @@ describe("reading", () => {
       code: "not_found",
       message: "No artifact 'nope'. Find ids with artifacts.list_artifacts.",
     });
+  });
+});
+
+
+describe("artifact frame metadata limits", () => {
+  it("reserves enough bytes for escaped titles and every document's metadata", async () => {
+    const id = "a".repeat(64);
+    const title = "<".repeat(160);
+    const source = page("<h1>Metadata</h1>");
+    const names = Array.from({ length: 16 }, (_, n) => `d${n}`.padEnd(64, "x"));
+    const documents = Object.fromEntries(names.map(name => [name, 0]));
+    const at = "2026-03-01T00:00:01.000Z";
+    const document = buildFrameDocument({
+      kind: "html", source,
+      global: {
+        id, title, view: { version: 1 }, snapshot: false,
+        documents: Object.fromEntries(names.map(name => [name, { version: 1, updatedAt: at }])),
+      },
+      data: Object.fromEntries(names.map(name => [name, "0"])),
+    });
+    const renderedBytes = new TextEncoder().encode(source).length + names.length + 4096;
+    expect(new TextEncoder().encode(document).length).toBeGreaterThan(renderedBytes);
+    const { ops, store } = setup({ renderedBytes });
+    expect(await ops.create({ id, title, kind: "html", source, documents, by: alice }))
+      .toMatchObject({ ok: false, code: "invalid_args" });
+    expect(await store.head(id)).toBeNull();
+  });
+});
+
+
+describe("historical snapshot quotas", () => {
+  it("bounds documents assembled from separate valid histories under the default quotas", async () => {
+    const { ops, store } = setup();
+    const smallSource = page("Current");
+    const largeSource = page("x".repeat(1024 * 1024 - page("").length));
+    expect(await ops.create({ id: "history", title: "History", kind: "html", source: largeSource, by: alice }))
+      .toMatchObject({ ok: true });
+    expect(await ops.update({ id: "history", baseVersion: 1, source: smallSource, by: alice }))
+      .toMatchObject({ ok: true });
+    const pins: Record<string, number> = {};
+    const value = "x".repeat(512 * 1024 - 3);
+    for (let n = 0; n < 32; n++) {
+      const name = `data${n}`;
+      expect(await ops.setDocuments({ id: "history", documents: { [name]: { baseVersion: 0, value } }, by: alice }))
+        .toMatchObject({ ok: true });
+      expect(await ops.setDocuments({ id: "history", documents: { [name]: { baseVersion: 1, value: null } }, by: alice }))
+        .toMatchObject({ ok: true });
+      pins[name] = 1;
+    }
+    // All writes had one live document. This selection resurrects almost
+    // 16 MiB across 32 different streams in one viewer response.
+    const body = store.body.bind(store);
+    let bodyReads = 0;
+    store.body = async key => { bodyReads++; return body(key); };
+    expect(await ops.page("history", { view: 1, documents: pins }))
+      .toMatchObject({ ok: false, code: "invalid_args" });
+    expect(bodyReads).toBe(0);
+    const select = (count: number) => Object.fromEntries(Object.entries(pins).slice(0, count));
+    // Count is allowed here, but the selected bodies exceed 4 MiB together.
+    expect(await ops.page("history", { view: 2, documents: select(9) }))
+      .toMatchObject({ ok: false, code: "invalid_args" });
+    // Both document quotas fit, but the old 1 MiB view pushes the frame over 5 MiB.
+    expect(await ops.page("history", { view: 1, documents: select(8) }))
+      .toMatchObject({ ok: false, code: "invalid_args" });
+    expect(await ops.page("history", { view: 1, documents: select(7) })).toMatchObject({ ok: true });
+    expect(await ops.page("history")).toMatchObject({ ok: true, source: smallSource, documents: {} });
+  });
+
+  it.each(["html", "markdown"] as const)("applies reconfigured quotas to old %s bodies without losing valid snapshots", async kind => {
+    const { ops, store } = setup();
+    const source = kind === "html" ? page("Old ".repeat(100)) : "# Old\n" + "<old> ".repeat(100);
+    const currentSource = kind === "html" ? page("Current") : "# Current";
+    expect(await ops.create({ id: kind, title: "History", kind, source,
+      documents: { a: "x".repeat(100), b: "y".repeat(100) }, by: alice })).toMatchObject({ ok: true });
+    expect(await ops.update({ id: kind, baseVersion: 1, source: currentSource, by: alice })).toMatchObject({ ok: true });
+    expect(await ops.setDocuments({ id: kind, documents: {
+      a: { baseVersion: 1, value: "small" }, b: { baseVersion: 1, value: null },
+    }, by: alice })).toMatchObject({ ok: true });
+    for (const [limits, pin] of [
+      [{ documents: 1 }, { view: 1, documents: { a: 1, b: 1 } }],
+      [{ documentBytes: 50 }, { view: 1, documents: { a: 1 } }],
+      [{ totalDocumentBytes: 150 }, { view: 1, documents: { a: 1, b: 1 } }],
+      [{ sourceBytes: 100 }, { view: 1, documents: {} }],
+    ] as const) {
+      const { ops: reader } = setup(limits, store);
+      expect(await reader.page(kind, pin)).toMatchObject({ ok: false, code: "invalid_args" });
+      expect(await reader.page(kind)).toMatchObject({ ok: true, source: currentSource });
+    }
+    const global = { id: kind, title: "History", view: { version: 1 }, snapshot: true,
+      documents: { a: { version: 1, updatedAt: (await store.versions(kind, "doc:a", { below: 2, limit: 1 }))[0]!.at } } };
+    const renderedBytes = new TextEncoder().encode(buildFrameDocument({
+      kind, source, global, data: { a: JSON.stringify("x".repeat(100)) },
+    })).length;
+    // These quotas are below the write-time reserve. A read must measure its
+    // actual frame, including Markdown expansion, rather than reject by estimate.
+    expect(await setup({ renderedBytes }, store).ops.page(kind, { view: 1, documents: { a: 1 } }))
+      .toMatchObject({ ok: true, source });
+    expect(await setup({ renderedBytes: renderedBytes - 1 }, store).ops.page(kind, { view: 1, documents: { a: 1 } }))
+      .toMatchObject({ ok: false, code: "invalid_args" });
+    expect(await ops.getDocument(kind, "a", 1)).toMatchObject({ ok: true, value: "x".repeat(100) });
   });
 });

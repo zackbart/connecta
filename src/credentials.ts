@@ -203,7 +203,8 @@ export class CredentialVault implements Vault {
     field = "value",
     owner?: string,
   ): Promise<string | null> {
-    return (await this.read(connectorId, owner))?.values[field] ?? null;
+    const values = (await this.read(connectorId, owner))?.values;
+    return values && Object.hasOwn(values, field) ? values[field]! : null;
   }
 
   async getAll(
