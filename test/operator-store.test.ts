@@ -607,3 +607,38 @@ describe("operator unreadable collections", () => {
     expect(store.getState().tokens[0]?.id).toBe("recovered");
   });
 });
+
+
+describe("activity collection recovery", () => {
+  it.each(["truncated JSON", "null", "{}"])("offers retry for an unreadable activity page: %s", async body => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("operator")));
+    await store.boot();
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    await store.loadActivity(true);
+    expect(store.getState().activityPhase).toBe("error");
+    expect(store.getState().activityNotice?.tone).toBe("error");
+    fetchMock.mockResolvedValueOnce(Response.json({ events: [{ connectorId: "recovered" }] }));
+    await store.loadActivity(true);
+    expect(store.getState().activityPhase).toBe("ready");
+    expect(store.getState().activityEvents).toEqual([{ connectorId: "recovered" }]);
+  });
+
+  it("drops an older pagination response after a collection reset", async () => {
+    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("operator")));
+    await store.boot();
+    fetchMock.mockResolvedValueOnce(Response.json({ events: [{ connectorId: "initial" }], nextCursor: "page-two" }));
+    await store.loadActivity(true);
+    const old = deferred<Response>();
+    fetchMock.mockReturnValueOnce(old.promise);
+    const pagination = store.loadActivity(false);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    fetchMock.mockResolvedValueOnce(Response.json({ events: [{ connectorId: "fresh" }], nextCursor: "fresh-cursor" }));
+    await store.loadActivity(true);
+    old.resolve(Response.json({ events: [{ connectorId: "old-page-two" }], nextCursor: "old-cursor" }));
+    await pagination;
+    expect(store.getState().activityEvents).toEqual([{ connectorId: "fresh" }]);
+    expect(store.getState().activityCursor).toBe("fresh-cursor");
+  });
+});

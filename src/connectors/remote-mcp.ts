@@ -21,6 +21,7 @@ import {
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
+import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
   boundedEchoText,
   ConnectorCallError,
@@ -1402,9 +1403,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             } catch (err) {
               return { ok: false, message: msg(err) };
             } finally {
-              // A test owns the scope it just opened; leaving the session for
-              // the downstream to age out is not this button's to spend.
-              await connector.closeScope?.(ctx);
+              // Standalone tests own their scope; an operator route owns
+              // bounded teardown for the context it supplied to this hook.
+              if (!connectorScopeCleanupClaimed(ctx, id)) await connector.closeScope?.(ctx);
             }
           },
         }

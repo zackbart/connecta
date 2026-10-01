@@ -76,6 +76,14 @@ describe("runEdge", () => {
     ).rejects.toBe(reason);
   });
 
+  it("preserves an explicit null abort reason on interruption", async () => {
+    const controller = new AbortController();
+    const running = runEdge(Effect.never, { signal: controller.signal });
+    await drainMicrotasks();
+    controller.abort(null);
+    await expect(running).rejects.toBeNull();
+  });
+
   it("prefers the abort reason over a failure raised while interrupted", async () => {
     const controller = new AbortController();
     const reason = new LabelledError("caller left");
@@ -157,6 +165,10 @@ describe("fromSignal", () => {
     await expect(runEdge(fromSignal(AbortSignal.abort(reason)))).rejects.toBe(
       reason,
     );
+  });
+
+  it("preserves an explicit null abort reason", async () => {
+    await expect(runEdge(fromSignal(AbortSignal.abort(null)))).rejects.toBeNull();
   });
 
   it("lets the work win a race against a signal that never aborts", async () => {
@@ -245,6 +257,18 @@ describe("withDeadlineEffect", () => {
         }),
       ),
     ).rejects.toBe(reason);
+  });
+
+  it("does not start an operation after its caller has already aborted", async () => {
+    const reason = new LabelledError("caller left before dispatch");
+    const operation = vi.fn(() => Effect.succeed("dispatched"));
+    await expect(
+      runEdge(withDeadlineEffect(operation, {
+        signal: AbortSignal.abort(reason),
+        timeoutError: new Error("unused"),
+      })),
+    ).rejects.toBe(reason);
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it("passes the operation's own failure through untouched", async () => {

@@ -18,8 +18,17 @@ import type { KVStorage } from "@zackbart/connecta";
 export function d1Storage(db: D1Database): KVStorage {
   // Every statement that tests liveness binds the current time as ?2.
   const live = "(expires_at_ms IS NULL OR expires_at_ms > ?2)";
-  const expiresAt = (now: number, ttlSeconds?: number) =>
-    ttlSeconds ? now + ttlSeconds * 1000 : null;
+  const expiresAt = (now: number, ttlSeconds?: number): number | null => {
+    if (ttlSeconds !== undefined && !Number.isFinite(ttlSeconds)) {
+      throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
+    }
+    if (!ttlSeconds) return null;
+    const expiry = now + ttlSeconds * 1000;
+    if (!Number.isFinite(expiry)) {
+      throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
+    }
+    return expiry;
+  };
   const changed = (result: D1Result) => result.meta.changes > 0;
   return {
     async get(key) {
@@ -31,6 +40,7 @@ export function d1Storage(db: D1Database): KVStorage {
     },
     async set(key, value, opts) {
       const now = Date.now();
+      const expiry = expiresAt(now, opts?.ttlSeconds);
       await db.batch([
         db
           .prepare(
@@ -46,7 +56,7 @@ export function d1Storage(db: D1Database): KVStorage {
              ON CONFLICT (key) DO UPDATE SET
                value = excluded.value, expires_at_ms = excluded.expires_at_ms`,
           )
-          .bind(key, value, expiresAt(now, opts?.ttlSeconds)),
+          .bind(key, value, expiry),
       ]);
     },
     async delete(key) {
@@ -56,7 +66,7 @@ export function d1Storage(db: D1Database): KVStorage {
       const { results } = await db
         .prepare(
           `SELECT key FROM connecta_kv
-           WHERE key >= ?1 AND substr(key, 1, length(?1)) = ?1 AND ${live}`,
+           WHERE key >= ?1 AND substr(CAST(key AS BLOB), 1, length(CAST(?1 AS BLOB))) = CAST(?1 AS BLOB) AND ${live}`,
         )
         .bind(prefix, Date.now())
         .all<{ key: string }>();
@@ -84,7 +94,19 @@ export function d1Storage(db: D1Database): KVStorage {
             .run(),
         );
       }
-      const expiry = expiresAt(now, opts?.ttlSeconds);
+      let expiry: number | null;
+      try {
+        expiry = expiresAt(now, opts?.ttlSeconds);
+      } catch (error) {
+        // Invalid write options do not change a failed comparison's result.
+        // Ordinary claims still use one atomic statement without this read.
+        const current = await db
+          .prepare(`SELECT value FROM connecta_kv WHERE key = ?1 AND ${live}`)
+          .bind(key, now)
+          .first<{ value: string }>();
+        if ((current?.value ?? null) !== expected) return false;
+        throw error;
+      }
       if (expected === null) {
         // Insert, or take over a row that has expired. A live row makes the
         // upsert's WHERE false, so nothing changes and the claim is refused.

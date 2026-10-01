@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
 import {
   credentialTestRule,
   describeCredentialTestMismatch,
@@ -210,17 +211,23 @@ function credentialRequest(
           }
           const storedValues = values!;
           const ctx = registry.contextFor(connectorId, baseUrl);
-          const result =
-            mode === "multiple"
-              ? await connector.testCredentials!(storedValues, ctx)
-              : await connector.testCredential!(
-                  // The single-value shape check above guarantees this key.
-                  storedValues.value!,
-                  ctx,
-                );
-          const ok = result?.ok === true;
-          logged(ok, result?.message);
-          return privateJson({ ok });
+          const releaseCleanup = claimConnectorScopeCleanup(ctx, connectorId);
+          try {
+            const result =
+              mode === "multiple"
+                ? await connector.testCredentials!(storedValues, ctx)
+                : await connector.testCredential!(
+                    // The single-value shape check above guarantees this key.
+                    storedValues.value!,
+                    ctx,
+                  );
+            const ok = result?.ok === true;
+            logged(ok, result?.message);
+            return privateJson({ ok });
+          } finally {
+            releaseCleanup();
+            await closeConnectorScope(connector, ctx, context.defer);
+          }
         },
         catch: (error) => error,
       }).pipe(

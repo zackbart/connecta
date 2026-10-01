@@ -612,17 +612,24 @@ export class Registry implements RegistryView {
     principalKey: string,
   ): Promise<void> {
     const key = this.oauthHandoffKey(connectorId, await sha256Hex(state));
-    const existing = await this.opts.storage.get(key);
-    if (existing && existing !== principalKey) {
-      throw new Error(
-        `Connector "${connectorId}" reused one OAuth state across principals`,
-      );
+    for (let attempt = 0; attempt < 32; attempt++) {
+      const existing = await this.opts.storage.get(key);
+      if (existing && existing !== principalKey) {
+        throw new Error(
+          `Connector "${connectorId}" reused one OAuth state across principals`,
+        );
+      }
+      const expiry = { ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS };
+      if (this.opts.storage.compareAndSet) {
+        // Bind ownership atomically, including renewal of the same owner's
+        // handoff. Two owners reading a miss must not overwrite each other.
+        if (!await this.opts.storage.compareAndSet(key, existing, principalKey, expiry)) continue;
+      } else {
+        await this.opts.storage.set(key, principalKey, expiry);
+      }
+      return;
     }
-    await this.opts.storage.set(
-      key,
-      principalKey,
-      { ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS },
-    );
+    throw new Error(`OAuth handoff for "${connectorId}" is busy; retry authorization`);
   }
 
   async oauthCallbackView(

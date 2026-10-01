@@ -68,6 +68,40 @@ describe("Registry construction", () => {
   });
 });
 
+describe("personal OAuth handoffs", () => {
+  it("refuses concurrent reuse of one state by different owners", async () => {
+    const backing = memoryStorage();
+    let reads = 0;
+    let release!: () => void;
+    const bothRead = new Promise<void>(resolve => { release = resolve; });
+    const storage: KVStorage = {
+      ...backing,
+      async get(key) {
+        const value = await backing.get(key);
+        if (key.startsWith("oauth-handoff:") && reads < 2) {
+          if (++reads === 2) release();
+          await bothRead;
+        }
+        return value;
+      },
+    };
+    const registry = new Registry([{ ...calcConnector, authScope: "personal" }], {
+      storage, logger: silentLogger,
+    });
+    const results = await Promise.allSettled([
+      registry.storeOAuthHandoff("calc", "reused-state", "alice"),
+      registry.storeOAuthHandoff("calc", "reused-state", "bob"),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const failure = results.find(result => result.status === "rejected") as PromiseRejectedResult;
+    expect(failure.reason.message).toContain("reused one OAuth state across principals");
+    const winner = results[0]?.status === "fulfilled" ? "alice" : "bob";
+    expect((await registry.oauthCallbackView("calc", "reused-state"))?.principalKey).toBe(winner);
+    await registry.storeOAuthHandoff("calc", "reused-state", winner);
+    expect((await registry.oauthCallbackView("calc", "reused-state"))?.principalKey).toBe(winner);
+  });
+});
+
 describe("startup convention warnings", () => {
   function spyLogger(): { logger: Logger; warnings: string[] } {
     const warnings: string[] = [];

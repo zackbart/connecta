@@ -16,6 +16,12 @@ rotations during legacy migration, and hardens file snapshots and operator
 recovery. Artifact quotas now reserve 8 KiB for frame metadata, reducing the
 available content allowance by 4 KiB, and apply to historical snapshots too.
 
+A third pass prevents dispatch after cancellation, rejects malformed executor
+replies, and closes connector scopes after human auth operations. OAuth handoffs
+claim ownership atomically when storage supports it. Activity reads now recover
+from malformed pages and ignore superseded pagination, and memory and D1 storage
+reject invalid expiry values.
+
 ### Changed
 
 - Pin Effect to `4.0.0`, replacing `4.0.0-rc.117`, and align the optional
@@ -24,6 +30,18 @@ available content allowance by 4 KiB, and apply to historical snapshots too.
   development, matching Effect v4's TypeScript 5.9 minimum.
 
 ### Fixed
+
+- Refuse already-aborted deadline operations and preserve explicit `null`
+  cancellation reasons (#660) (#661).
+- Return structured failures for malformed executor replies (#662).
+- Close callback and credential-test connector scopes after their final use,
+  keeping cleanup bounded and best-effort (#663) (#664).
+- Prevent concurrent OAuth state handoffs from replacing another owner on
+  storage that supports atomic claims (#665).
+- Show retryable Activity errors for unreadable pages and discard superseded
+  pagination responses (#666) (#667).
+- Reject invalid TTLs in memory and D1 storage before mutation, and match NUL
+  bytes literally in D1 list prefixes (#668) (#669).
 
 - Enforce catalog count and byte ceilings even when discovery is invalidated
   while the listing is in flight (#644).

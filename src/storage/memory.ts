@@ -19,6 +19,13 @@ export function memoryStorage(): KVStorage {
     return e;
   };
   const write = (key: string, value: string, ttlSeconds?: number) => {
+    if (ttlSeconds !== undefined && !Number.isFinite(ttlSeconds)) {
+      throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
+    }
+    const exp = ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined;
+    if (exp !== undefined && !Number.isFinite(exp)) {
+      throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
+    }
     // Rotate through at most 16 existing keys. Live entries cannot keep an
     // expired tail resident forever, and no request starts a background job.
     for (let i = 0; i < 16; i++) {
@@ -28,7 +35,7 @@ export function memoryStorage(): KVStorage {
     }
     map.set(key, {
       value,
-      ...(ttlSeconds ? { exp: Date.now() + ttlSeconds * 1000 } : {}),
+      ...(exp !== undefined ? { exp } : {}),
     });
   };
   return {
