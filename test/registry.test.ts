@@ -9,6 +9,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { withDeadline } from "../src/timeout.js";
 import type {
   Connector,
   KVStorage,
@@ -942,6 +943,56 @@ describe("tool cache TTL", () => {
       expect(required((await registry.getTools("stale", BASE))[0]).name).toBe(
         "still_here",
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a queued catalog invalidation alive and ordered until its predecessor finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      const backing = memoryStorage();
+      let release!: () => void;
+      let reached!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { reached = resolve; });
+      let blocked = false;
+      const storage: KVStorage = {
+        get: (key) => backing.get(key),
+        delete: (key) => backing.delete(key),
+        async set(key, value, options) {
+          if (!blocked && key.startsWith("catalog:queued:chunk:")) {
+            blocked = true;
+            reached();
+            await gate;
+          }
+          await backing.set(key, value, options);
+        },
+      };
+      const registry = new Registry([connectorWith({
+        id: "queued", kind: "mcp", tools: [{ name: "read" }],
+      })], { storage, logger: silentLogger });
+      const owner = registry.getTools("queued", BASE);
+      await started;
+      const invalidation = registry.invalidateStored("queued");
+      await vi.advanceTimersByTimeAsync(0);
+      // On workerd a waiter with neither I/O nor a timer is cancelled as hung.
+      expect(vi.getTimerCount()).toBe(1);
+      const reason = new Error("request stopped waiting");
+      const caller = withDeadline(() => invalidation, {
+        timeoutMs: 10, timeoutError: reason,
+      });
+      const refused = expect(caller).rejects.toBe(reason);
+      await vi.advanceTimersByTimeAsync(10);
+      await refused;
+      // Cancellation of the requester cannot release a mutation's turn early.
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await backing.get("catalog:queued")).toBeNull();
+      release();
+      await Promise.all([owner, invalidation]);
+      expect(await backing.get("catalog:queued")).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

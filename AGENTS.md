@@ -141,14 +141,14 @@ an unclassified, double-classified, stale, or reasonless entry.
   Promise-based and name no Effect type: a deployment author should never need
   a second async paradigm to write a connector, so convert at the boundary,
   not in the caller. Effect is a hard dependency pinned to one exact version,
-  never a range, and it is the version Alchemy pins, so a deployment that uses
-  both resolves one Effect rather than two. `effect/unstable/*` modules are
-  allowed, which is exactly why the pin is exact: they break in minor releases,
+  never a range, and compatible with Alchemy's peer requirement, so a deployment
+  that uses both resolves one Effect rather than two. Modules tagged
+  `@stability unstable` are allowed behind subpaths: they can break in minor releases,
   so an upgrade is its own deliberate pull request, never a drive-by in another
   change. `effect/testing` stays out of `src/` (see import-graph purity). The
   MCP edges do not move with the core — `@modelcontextprotocol/server` upward,
-  the SDK client downstream; Effect's `McpServer` is parked until the Effect
-  core is stable and those edges are re-proven.
+  the SDK client downstream. Replacing either requires separate proof of the
+  wire contracts and request lifetimes; the stable core release is not that proof.
 - **Style.** There is no formatter. Match the surrounding code. The docs voice
   is precise, occasionally wry, and always explains *why* — don't flatten it
   into boilerplate.

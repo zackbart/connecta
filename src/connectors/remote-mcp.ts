@@ -1631,15 +1631,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const leased = state.transport;
       const t = (leased ??
         buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
-      if (callbackParams !== undefined) {
-        await t.finishAuth(callbackParams);
-      } else {
-        await t.finishAuth(code);
+      try {
+        if (callbackParams !== undefined) {
+          await t.finishAuth(callbackParams);
+        } else {
+          await t.finishAuth(code);
+        }
+        await provider.clearPending();
+        // Reset so the next use reconnects with the freshly stored tokens.
+        closeHalf(state);
+      } finally {
+        // This exchange-only transport has no lease in the request scope.
+        // It must close even when redemption or pending-state cleanup fails.
+        if (!leased) detach(closeConnection(null, t, ctx.logger));
       }
-      await provider.clearPending();
-      // Reset so the next use reconnects with the freshly stored tokens.
-      closeHalf(state);
-      if (!leased) detach(closeConnection(null, t, ctx.logger));
     },
   };
 

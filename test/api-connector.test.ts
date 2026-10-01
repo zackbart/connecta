@@ -56,6 +56,15 @@ function makeApi() {
 }
 
 describe("api() connector", () => {
+  it("refuses duplicate names before discovery and dispatch can disagree about safety", () => {
+    expect(() => api("ambiguous", {
+      tools: [
+        { name: "same", description: "Read a value", annotations: { readOnlyHint: true }, handler: () => null },
+        { name: "same", description: "Write a value", annotations: { readOnlyHint: false }, handler: () => null },
+      ],
+    })).toThrow('api() tool "ambiguous.same" is declared more than once');
+  });
+
   it("kind is 'api' and description is preserved", () => {
     const c = makeApi();
     expect(c.id).toBe("resend");

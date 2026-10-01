@@ -399,13 +399,13 @@ describe("Effect behind the published surface", () => {
     }, 60_000);
   });
 
-  it("depends on effect at one exact version", () => {
-    // Exact, never a range: `effect/unstable/*` breaks in minor releases, and
+  it("depends on stable Effect v4 at one exact version", () => {
+    // Exact, never a range: unstable Effect APIs can break in minor releases, and
     // a deployment that also uses Alchemy must resolve one Effect, not two.
     // An upgrade is its own pull request.
     const pinned = packageJson.dependencies?.effect;
     expect(pinned, "effect is not a runtime dependency").toBeTruthy();
-    expect(pinned).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+    expect(pinned).toMatch(/^4\.\d+\.\d+$/);
     expect(packageJson.peerDependencies).not.toHaveProperty("effect");
     expect(packageJson.devDependencies).not.toHaveProperty("effect");
     const lock = JSON.parse(
@@ -419,8 +419,8 @@ describe("Effect behind the published surface", () => {
   });
 
   it("declares exactly the core runtime dependencies", () => {
-    // zod leaves for devDependencies once the meta-tool input schemas move
-    // to Effect Schema (P1-S16b).
+    // Meta-tool inputs stay Zod: the measured Effect Schema conversion cost
+    // more bytes without clarifying validation. See architecture.md.
     expect(Object.keys(packageJson.dependencies ?? {}).sort()).toEqual([
       "@cfworker/json-schema",
       "@modelcontextprotocol/client",

@@ -185,6 +185,42 @@ describe("token lifecycle races", () => {
     expect((await manager.auth.authorize(request(fixture.bound.token), BASE)).ok).toBe(false);
   });
 
+  it.each([false, true])("releases capacity after a failed metadata write, committed=%s", async committed => {
+    const base = memoryStorage();
+    let failing = true;
+    const storage: KVStorage = { ...base, set: async (key, value) => {
+      if (failing && key.startsWith("access-token:v1:record:")) {
+        failing = false;
+        if (committed) await base.set(key, value);
+        throw new Error("metadata write failed");
+      }
+      await base.set(key, value);
+    } };
+    const manager = new AccessTokenManager(storage, { maxActive: 1 });
+    await expect(manager.create("Interrupted", owner)).rejects.toThrow("metadata write failed");
+    expect((await manager.list()).filter(token => !token.revokedAt)).toEqual([]);
+    expect(await base.list!("access-token:v1:lookup:")).toEqual([]);
+    const created = await new AccessTokenManager(base, { maxActive: 1 }).create("Replacement", owner);
+    expect((await manager.auth.authorize(request(created.token), BASE)).ok).toBe(true);
+  });
+
+  it("releases a reservation whose compareAndSet committed before rejecting", async () => {
+    const base = memoryStorage();
+    let failing = true;
+    const storage: KVStorage = { ...base, compareAndSet: async (key, expected, value) => {
+      const committed = await base.compareAndSet!(key, expected, value);
+      if (failing && key === "access-token:v1:active" && committed) {
+        failing = false;
+        throw new Error("reservation answer lost");
+      }
+      return committed;
+    } };
+    const manager = new AccessTokenManager(storage, { maxActive: 1 });
+    await expect(manager.create("Interrupted", owner)).rejects.toThrow("reservation answer lost");
+    expect(await manager.list()).toEqual([]);
+    await expect(manager.create("Replacement", owner)).resolves.toHaveProperty("token");
+  });
+
   it("keeps capacity and revocable metadata after an uncertain lookup write", async () => {
     const base = memoryStorage();
     const storage: KVStorage = { ...base, set: async (key, value) => {

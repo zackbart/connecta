@@ -64,9 +64,10 @@ also work on older adapters without `compareAndSet`; **new issuance requires
 atomic `compareAndSet`**, because counting records before writing admits too many
 concurrent creates. Active capacity defaults to 100, configurable with
 `accessTokens(storage, { maxActive: 200 })`, up to 1,000. A durable reservation
-counts before a secret is written. An interrupted create can consume capacity
-without returning a token; it is never automatically retried or released after
-an uncertain write. Avoid creating new tokens through old-version instances once
+counts before a secret is written. Failures before lookup publication release
+their reservation; an uncertain lookup write retains its metadata and capacity
+so an operator can revoke it, even when creation returned no secret. Creation is
+never automatically retried. Avoid creating new tokens through old-version instances once
 new-version issuance has started, since those instances do not honor reservations.
 
 Secrets contain 256 random bits and only their SHA-256 digests persist. Creation

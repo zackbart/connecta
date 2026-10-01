@@ -173,6 +173,50 @@ test("a foreign page cannot embed the frame", async ({ page }) => {
   }
 });
 
+test("an older artifact filter response cannot replace the current library", async ({ page }) => {
+  pageSource = '<!doctype html><main id="artifact-root">page</main>';
+  await start();
+  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
+  await page.goto(`${origin}/artifacts`);
+  await expect(page.getByRole("link", { name: "Probe", exact: true })).toBeVisible();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let started!: () => void;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  await page.route("**/artifacts/_api/list?archived=1", async route => {
+    started();
+    await gate;
+    await route.fulfill({ json: { artifacts: [{
+      id: "obsolete", title: "Obsolete filter", kind: "html", viewVersion: 1,
+      updatedAt: "2026-10-01T00:00:00Z", updatedBy: { label: "viewer" }, archived: true,
+    }], nextCursor: "obsolete" } });
+  });
+  await page.getByRole("checkbox", { name: "Show archived" }).check();
+  await entered;
+  await page.getByRole("checkbox", { name: "Show archived" }).uncheck();
+  await expect(page.getByRole("link", { name: "Probe", exact: true })).toBeVisible();
+  const completed = page.waitForResponse(response => response.url().endsWith("?archived=1"));
+  release();
+  await completed;
+  await expect(page.getByRole("link", { name: "Probe", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Obsolete filter" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+});
+
+test("signing in again opens an artifact in a fresh confined shell", async ({ page }) => {
+  pageSource = '<!doctype html><main id="artifact-root">private page</main>';
+  await start();
+  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
+  await page.goto(`${origin}/artifacts/probe`);
+  await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("private page");
+  await page.getByRole("button", { name: "Change token" }).click();
+  await page.getByRole("textbox", { name: "Bearer token" }).fill(TOKEN);
+  await page.getByRole("button", { name: "Open operator pages" }).click();
+  await expect(page.frameLocator("#artifactFrame").locator("#artifact-root")).toHaveText("private page");
+  expect(requests.filter(path => path === "/artifacts/probe")).toHaveLength(2);
+  expect(requests.filter(path => path === "/artifacts/_frame")).toHaveLength(2);
+});
+
 test("library and browser history open a fresh frame for each page", async ({ page }) => {
   pageSource = '<!doctype html><main id="artifact-root">first page</main>';
   await start();

@@ -4,6 +4,44 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+The runtime now uses stable Effect v4, with fixes for cancellation, resumed-write
+limits, storage failures, and operator pages. Deployment APIs and the eight MCP
+tools keep their existing contracts; no configuration migration is required.
+Duplicate API tool names now fail at construction, and doctor refuses redirects
+instead of forwarding deployment credentials. Artifact render checks use the
+deployment's viewer theme.
+
+### Changed
+
+- Pin Effect to `4.0.0`, replacing `4.0.0-rc.117`, and align the optional
+  Alchemy setup instructions with the stable pin.
+- Require TypeScript 5.9.3 or newer within 5.x for repository and Node-template
+  development, matching Effect v4's TypeScript 5.9 minimum.
+
+### Fixed
+
+- Keep queued catalog mutations alive across Worker requests while preserving
+  cancellation and storage ordering (#623).
+- Release failed access-token reservations before lookup publication, close
+  failed OAuth callback transports, and persist accepted rotating refresh tokens
+  after owner cancellation without reviving disconnected generations (#624)
+  (#625) (#626).
+- Count historical writes across divergent resumptions and bound resumed write
+  answers by the journal limit, retaining truthful outcomes for writes already
+  sent (#627) (#628).
+- Roll back rejected file-storage mutations, preserve prototype-named keys,
+  expire entries at their TTL boundary, and quarantine invalid snapshot roots
+  without losing their original bytes (#629) (#630) (#631) (#632).
+- Ignore superseded artifact-list responses, preserve newly created tokens when
+  an older list finishes, and reload a confined artifact shell when signing in
+  again (#633) (#634) (#635).
+- Advance artifact listings through empty continuation pages, refuse already
+  cancelled render checks, and validate Markdown with the viewer's theme across
+  writes and refreshes (#636) (#637) (#638).
+- Prevent doctor redirects from forwarding Cloudflare Access credentials,
+  reject unreadable successful Notion responses, and reject duplicate API tool
+  names before classification and dispatch can disagree (#639) (#640) (#641).
+
 ## 0.26.3 — 2026-09-28
 
 This patch lets downstream OAuth connections use a public client metadata

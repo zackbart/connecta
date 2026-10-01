@@ -132,10 +132,18 @@ const DOCTOR_TIMEOUT_MS = 10_000;
 
 async function doctorFetch(url, init = {}) {
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...init,
+      redirect: "manual",
       signal: AbortSignal.timeout(DOCTOR_TIMEOUT_MS),
     });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(
+        `HTTP ${response.status} redirect refused: doctor sends authentication only to the configured deployment URL.`,
+      );
+    }
+    return response;
   } catch (error) {
     if (
       error instanceof Error &&

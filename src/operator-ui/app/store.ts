@@ -705,8 +705,11 @@ async function artifactRead(
   return res;
 }
 
+let artifactRevision = 0;
 export async function loadArtifacts(reset: boolean): Promise<void> {
-  const current = fence();
+  const identityCurrent = fence();
+  const revision = ++artifactRevision;
+  const current = () => identityCurrent() && revision === artifactRevision;
   set({
     artifactPhase: "loading",
     artifactNotice: null,
@@ -745,7 +748,19 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
   });
 }
 
+let artifactFrameConfined = false;
+
+/** The frame navigation policy cannot be relaxed within this document. */
+export function markArtifactFrameConfined(): void {
+  artifactFrameConfined = true;
+}
+
 async function loadArtifactView(): Promise<void> {
+  if (artifactFrameConfined) {
+    // A replacement identity needs a fresh bootstrap and a fresh CSP policy.
+    window.location.reload();
+    return;
+  }
   const current = fence();
   const request = artifactViewRequest(window.location.pathname, window.location.search);
   set({ artifactPhase: "loading", artifactNotice: null });
@@ -1041,13 +1056,25 @@ export async function refreshConnector(id: string, quiet = false): Promise<void>
 
 /* Access tokens ----------------------------------------------------------- */
 
+let tokenRevision = 0;
 export async function loadAccessTokens(): Promise<void> {
-  const current = fence();
+  const identityCurrent = fence();
+  const revision = ++tokenRevision;
+  const current = () => identityCurrent() && revision === tokenRevision;
+  const existing = new Map(state.tokens.map(token => [token.id, token]));
   set({ tokenPhase: "loading", tokenNotice: null });
   try {
     const payload = await operatorRequest("/ui/access-tokens", "GET", current);
     if (!current()) return;
-    set({ tokenPhase: "ready", tokens: payload?.accessTokens ?? [] });
+    const tokens = payload?.accessTokens ?? [];
+    // Creation, rename and revoke replace record objects. Prefer records
+    // changed locally since this read began over its possibly older snapshot.
+    const changed = state.tokens.filter(token => existing.get(token.id) !== token);
+    const changedIds = new Set(changed.map(token => token.id));
+    set({ tokenPhase: "ready", tokens: [
+      ...changed,
+      ...tokens.filter(token => !changedIds.has(token.id)),
+    ] });
   } catch {
     if (!current()) return;
     set({

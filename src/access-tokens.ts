@@ -256,8 +256,17 @@ export class AccessTokenManager {
         ? {}
         : { principal: { ...createdBy } }),
     };
-    await this.updateActive(record.id, true);
-    await this.storage.set(recordKey(record.id), JSON.stringify(record));
+    try {
+      await this.updateActive(record.id, true);
+      await this.storage.set(recordKey(record.id), JSON.stringify(record));
+    } catch (error) {
+      // No lookup write has started, so this secret can never authenticate.
+      // A failed record or reservation write may still have committed: revoke
+      // whatever metadata exists and release the reservation even on a miss.
+      const revoked = await this.revoke(record.id, record.createdBy);
+      if (!revoked) await this.updateActive(record.id, false);
+      throw error;
+    }
     // A failed lookup write may have committed. Keep its reservation and
     // metadata, so a manager can revoke it without ever returning the secret.
     await this.storage.set(

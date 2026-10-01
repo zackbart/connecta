@@ -173,8 +173,8 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
 const ROOT = resolve(SRC, "..");
 const RUNNER = join(SRC, "runtime", "run.ts");
 // The root entry may import Effect's stable core and nothing else: the
-// `effect/unstable/*` modules are allowed behind subpaths, where their minor-
-// release churn and their bytes are opt-in.
+// area modules such as `effect/http-api` are allowed behind subpaths, where
+// their bytes and any unstable API changes are opt-in.
 const ROOT_EFFECT_ALLOWED = new Set(["effect"]);
 // Test clocks, test layers, and platform runtimes belong to a test run or a
 // specific host, never to a runtime graph that ships to both Node and Workers.

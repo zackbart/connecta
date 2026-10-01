@@ -1123,9 +1123,11 @@ export class ArtifactOperations {
     let after = options.cursor;
     let scanned = 0;
     for (;;) {
+      const limit = Math.min(100, LIST_SCAN_LIMIT - scanned);
+      const previous = after;
       const page = await this.#store.heads({
         ...(after === undefined ? {} : { after }),
-        limit: Math.min(100, LIST_SCAN_LIMIT - scanned),
+        limit,
       });
       for (const item of page.heads) {
         scanned++;
@@ -1143,8 +1145,15 @@ export class ArtifactOperations {
         }
       }
       if (page.next === undefined) return { ok: true, items };
+      if (previous !== undefined && page.next <= previous) {
+        return fail("unavailable", "Artifact head scan did not advance; retry the listing.");
+      }
+      // Listed keys can disappear before the store reads them. Its cursor
+      // still consumed the whole page, including those missing head records.
+      after = page.next;
+      scanned += Math.max(0, limit - page.heads.length);
       if (scanned >= LIST_SCAN_LIMIT) {
-        return after === undefined ? { ok: true, items } : { ok: true, items, nextCursor: after };
+        return { ok: true, items, nextCursor: after };
       }
     }
   }

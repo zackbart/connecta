@@ -306,8 +306,52 @@ describe("fileStorage", () => {
     await store.set("k", "v");
     vi.spyOn(fs, "renameSync").mockImplementation(() => { throw new Error("rename failed"); });
     await expect(store.set("k", "next")).rejects.toThrow("rename failed");
+    expect(await store.get("k")).toBe("v");
     expect(readdirSync(join(path, ".."))).toEqual(["state.json", "state.json.lock"]);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ k: { value: "v" } });
+  });
+
+  it("rolls back failed sets and deletes before a later write persists", async () => {
+    const path = tempStatePath();
+    const store = openStore(path);
+    await store.set("k", "v");
+    vi.spyOn(fs, "renameSync").mockImplementation(() => { throw new Error("rename failed"); });
+    await expect(store.set("fresh", "uncommitted")).rejects.toThrow("rename failed");
+    await expect(store.delete("k")).rejects.toThrow("rename failed");
+    expect(await store.get("k")).toBe("v");
+    expect(await store.get("fresh")).toBeNull();
+    vi.restoreAllMocks();
+    await store.set("later", "committed");
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      k: { value: "v" }, later: { value: "committed" },
+    });
+  });
+
+  it("persists prototype-named keys across reopen", async () => {
+    const path = tempStatePath();
+    const store = openStore(path);
+    for (const key of ["__proto__", "constructor", "toString"]) {
+      await store.set(key, `value:${key}`);
+    }
+    store.close();
+    const reopened = requireCas(openStore(path));
+    for (const key of ["__proto__", "constructor", "toString"]) {
+      expect(await reopened.get(key)).toBe(`value:${key}`);
+      expect(await reopened.compareAndSet(key, `value:${key}`, `updated:${key}`)).toBe(true);
+    }
+    expect(await reopened.list!("")).toEqual(["__proto__", "constructor", "toString"]);
+    reopened.close();
+    const third = openStore(path);
+    expect(await third.get("__proto__")).toBe("updated:__proto__");
+  });
+
+  it("expires entries exactly at their TTL boundary", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const store = requireCas(openStore(tempStatePath()));
+    await store.set("lease", "old", { ttlSeconds: 1 });
+    vi.spyOn(Date, "now").mockReturnValue(2_000);
+    expect(await store.get("lease")).toBeNull();
+    expect(await store.compareAndSet("lease", null, "new")).toBe(true);
   });
 
   it("refuses a separate process and releases locks on process exit", () => {
@@ -393,6 +437,23 @@ describe("fileStorage", () => {
   it("starts from empty state when no file exists yet", async () => {
     expect(await openStore(tempStatePath()).get("k")).toBeNull();
   });
+
+  it.each(["null", "[]", '"snapshot"', "42"])(
+    "quarantines a JSON snapshot with an invalid root: %s",
+    async (raw) => {
+      const path = tempStatePath();
+      writeFileSync(path, raw);
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const store = openStore(path);
+      expect(error).toHaveBeenCalledOnce();
+      expect(await store.get("k")).toBeNull();
+      await store.set("k", "v");
+      const dir = join(path, "..");
+      const quarantine = required(readdirSync(dir).find((file) => file.includes(".corrupt-")));
+      expect(readFileSync(join(dir, quarantine), "utf8")).toBe(raw);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ k: { value: "v" } });
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "writes the state file owner-only (0600)",

@@ -273,12 +273,16 @@ export function fileStorage(
       // Non-POSIX filesystem or a race on the file — leave the mode as-is.
     }
   };
-  let data: Record<string, Entry> = {};
+  let data: Record<string, Entry> = Object.create(null) as Record<string, Entry>;
   try {
     if (existsSync(path)) {
       tighten();
       try {
-        data = JSON.parse(readFileSync(path, "utf8")) as Record<string, Entry>;
+        const loaded = JSON.parse(readFileSync(path, "utf8")) as unknown;
+        if (loaded === null || typeof loaded !== "object" || Array.isArray(loaded)) {
+          throw new TypeError("Expected a state object");
+        }
+        data = Object.assign(Object.create(null), loaded) as Record<string, Entry>;
       } catch (error) {
         // Never let a damaged state file be silently replaced by an empty one:
         // the next set() would persist {} over irreplaceable downstream OAuth
@@ -302,7 +306,7 @@ export function fileStorage(
             `OAuth connectors must be re-authorized and stored credentials ` +
             `re-entered.`,
         );
-        data = {};
+        data = Object.create(null) as Record<string, Entry>;
       }
     }
   } catch (error) {
@@ -316,7 +320,7 @@ export function fileStorage(
     // Reads only prune memory; they do not rewrite the state file.
     const now = Date.now();
     for (const [key, entry] of Object.entries(data)) {
-      if (entry.exp && now > entry.exp) delete data[key];
+      if (entry.exp !== undefined && now >= entry.exp) delete data[key];
     }
     const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
     // 0o600 on the tmp file; the atomic rename below preserves it, so the live
@@ -338,7 +342,7 @@ export function fileStorage(
   const fresh = (key: string): Entry | null => {
     const e = data[key];
     if (!e) return null;
-    if (e.exp && Date.now() > e.exp) {
+    if (e.exp !== undefined && Date.now() >= e.exp) {
       delete data[key];
       return null;
     }
@@ -355,19 +359,32 @@ export function fileStorage(
     async set(key, value, opts) {
       assertOpen();
       lock.assertHeld();
+      const previous = fresh(key);
       data[key] = {
         value,
         ...(opts?.ttlSeconds
           ? { exp: Date.now() + opts.ttlSeconds * 1000 }
           : {}),
       };
-      persist();
+      try {
+        persist();
+      } catch (error) {
+        if (previous) data[key] = previous;
+        else delete data[key];
+        throw error;
+      }
     },
     async delete(key) {
       assertOpen();
       lock.assertHeld();
+      const previous = fresh(key);
       delete data[key];
-      persist();
+      try {
+        persist();
+      } catch (error) {
+        if (previous) data[key] = previous;
+        throw error;
+      }
     },
     async list(prefix) {
       assertOpen();

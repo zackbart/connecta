@@ -1,12 +1,10 @@
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
 //
-// This is the wire contract a client's model reads, and the Effect conversion
-// (P1-S16b) re-renders all eight from Effect Schema. A difference there is not
-// automatically wrong — but it has to be a decision, justified where it lands,
-// rather than a rendering accident. So this file changes only alongside an
-// intended change to a tool's input, never to make a refactor pass. Key order
-// is not compared; a JSON Schema's meaning does not depend on it.
+// This is the wire contract a client's model reads. Any schema-library change
+// must preserve it unless the tool's input intentionally changes. This file
+// changes only alongside that intended change, never to make a refactor pass.
+// Key order is not compared; a JSON Schema's meaning does not depend on it.
 
 import { describe, expect, it } from "vitest";
 import type { Executor } from "../src/types.js";
