@@ -10,6 +10,7 @@ import { productDescription } from "./config.js";
 import { Badge, CopyButton, NoticeLine, StateBlock } from "./parts.js";
 import {
   loadArtifacts,
+  markArtifactFrameConfined,
   retryCollection,
   setArtifactArchived,
   setArtifactQuery,
@@ -156,6 +157,7 @@ function ArtifactFrame({ view }: { view: UiArtifactView }) {
       policy.httpEquiv = "Content-Security-Policy";
       policy.content = "frame-src 'none'";
       document.head.append(policy);
+      markArtifactFrameConfined();
       element.contentWindow?.postMessage({ type: "document", html: view.document }, "*");
     };
     window.addEventListener("message", onMessage);

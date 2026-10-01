@@ -506,6 +506,46 @@ describe("reading", () => {
     expect(unlisted.ok && unlisted.documents).toEqual({});
   });
 
+  it("advances past an empty lagging-list page to later artifacts", async () => {
+    const base = memoryStorage();
+    let listings = 0;
+    const store = kvArtifactStore({ ...base, list: async prefix => {
+      if (prefix !== "artifact:head:") return base.list!(prefix);
+      listings++;
+      if (listings > 3) throw new Error("listing did not advance");
+      return [...Array.from({ length: 100 }, (_, index) => `artifact:head:a-${String(index).padStart(3, "0")}`),
+        ...await base.list!(prefix)].sort();
+    } });
+    const { ops } = setup({}, store);
+    await ops.create({ id: "z-live", title: "Live", kind: "markdown", source: "Hello", by: alice });
+    const listed = await ops.list({ limit: 50 });
+    expect(listed.ok && listed.items.map(item => item.id)).toEqual(["z-live"]);
+    expect(listings).toBe(2);
+  });
+
+  it("bounds scans of missing heads and returns their continuation", async () => {
+    const base = kvArtifactStore(memoryStorage());
+    let pages = 0;
+    const store: ArtifactStore = { ...base, heads: async () => {
+      if (++pages > 12) throw new Error("missing heads escaped the scan bound");
+      return { heads: [], next: `page-${String(pages).padStart(4, "0")}` };
+    } };
+    const { ops } = setup({}, store);
+    expect(await ops.list({ limit: 50 })).toEqual({ ok: true, items: [], nextCursor: "page-0010" });
+    expect(pages).toBe(10);
+  });
+
+  it("refuses a nonadvancing store cursor instead of looping", async () => {
+    const base = kvArtifactStore(memoryStorage());
+    let reads = 0;
+    const { ops } = setup({}, { ...base, heads: async () => {
+      if (++reads > 3) throw new Error("repeated a nonadvancing cursor");
+      return { heads: [], next: "same" };
+    } });
+    expect(await ops.list({ limit: 50, cursor: "same" })).toMatchObject({ ok: false, code: "unavailable" });
+    expect(reads).toBe(1);
+  });
+
   it("answers a missing artifact as not_found naming the way to list", async () => {
     const { ops } = setup();
     expect(await ops.get("nope")).toMatchObject({

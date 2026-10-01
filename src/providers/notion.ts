@@ -263,7 +263,14 @@ async function notionRequest(
         response.headers,
       );
     }
-    return payload ?? {};
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "Notion returned an unreadable or non-object JSON response for a successful status. The request was sent, but its result could not be read; do not repeat a write to recover its result.",
+        { retryable: false },
+      );
+    }
+    return payload;
   });
 }
 

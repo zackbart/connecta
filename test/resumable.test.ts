@@ -27,6 +27,7 @@ import {
 } from "../src/resumable.js";
 import {
   canonicalJson,
+  MAX_JOURNAL_BYTES,
   classifyWriteOutcome,
   parseToken,
   RunJournal,
@@ -863,6 +864,34 @@ describe("resumable writes: expiry, divergence, and budgets", () => {
     expect(w.writes()).toHaveLength(1);
   });
 
+  it("counts historical sends when a replay skips a recorded write", async () => {
+    const w = world({ settings: { maxWrites: 2 } });
+    let plays = 0;
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      plays++;
+      for (let id = plays >= 3 ? 1 : 0; id < 3; id++) {
+        await connecta.call!("tracker.close_issue", { id });
+      }
+      return "done";
+    })));
+    const second = paused(await w.resume(approve(first)));
+    const result = await w.resume(approve(second, "tool"));
+    expect(w.writes()).toHaveLength(2);
+    expect(value(result).error.writes).toEqual({ succeeded: 2, failed: 0, unknown: 0 });
+  });
+
+  it("does not count replayed writes twice across deterministic chained pauses", async () => {
+    const w = world({ settings: { maxWrites: 2 } });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 0 });
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      return "done";
+    })));
+    const second = paused(await w.resume(approve(first)));
+    expect(value(await w.resume(approve(second))).result).toBe("done");
+    expect(w.writes()).toHaveLength(2);
+  });
+
   it("reports resumable writes unavailable when they are off", async () => {
     const w = world();
     const result = await runEdge(resumeExecution(
@@ -1239,6 +1268,64 @@ describe("resumable writes: review regressions", () => {
 });
 
 describe("resumable writes: messages that match what happened", () => {
+  it.each([false, true])("bounds journaled write answers after a near-cap pause, concurrent=%s", async (concurrent) => {
+    const w = world({
+      read: () => "x".repeat(250_000),
+      write: () => "x".repeat(250_000),
+    });
+    const first = paused(await w.execute(w.program(async (connecta) => {
+      for (let id = 0; id < 16; id++) await connecta.call!("reader.get", { id });
+      await connecta.call!("tracker.close_issue", { id: 0 });
+      if (concurrent) {
+        await Promise.all([1, 2].map((id) => connecta.call!("tracker.close_issue", { id })));
+      } else {
+        await connecta.call!("tracker.close_issue", { id: 1 });
+      }
+      return "done";
+    })));
+    const result = await w.resume(approve(first, "tool"));
+    expect(value(result).error).toMatchObject({
+      code: "journal_too_large",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(w.writes()).toHaveLength(1);
+    const { header: stored } = await header(w.storage, first.token);
+    expect(stored.bytes).toBeLessThanOrEqual(MAX_JOURNAL_BYTES);
+    expect(stored.state).toBe("failed");
+    expect(stored.writes[0]?.state).toBe("ok");
+    expect(value(await w.resume(approve(first, "tool"))).error).toEqual(value(result).error);
+    expect(w.writes()).toHaveLength(1);
+  });
+
+  it.each([false, true])("counts concurrent writes already dispatched when journal capacity runs out, unknown=%s", async (unknown) => {
+    let release: (() => void) | undefined;
+    let started = 0;
+    const bothStarted = new Promise<void>((resolve) => { release = resolve; });
+    const concurrent = world({
+      read: () => "x".repeat(250_000),
+      write: async () => {
+        const index = ++started;
+        if (index === 2) release?.();
+        await bothStarted;
+        if (unknown && index === 2) throw new ConnectorCallError("timeout", "write timed out");
+        return "x".repeat(250_000);
+      },
+    });
+    const first = paused(await concurrent.execute(concurrent.program(async (connecta) => {
+      for (let id = 0; id < 16; id++) await connecta.call!("reader.get", { id });
+      await Promise.all([0, 1].map((id) => connecta.call!("tracker.close_issue", { id })));
+      return "done";
+    })));
+    const result = await concurrent.resume(approve(first, "tool"));
+    expect(value(result).error).toMatchObject({
+      code: unknown ? "write_outcome_unknown" : "journal_too_large",
+      writes: { succeeded: unknown ? 1 : 2, failed: 0, unknown: unknown ? 1 : 0 },
+    });
+    const { header: stored } = await header(concurrent.storage, first.token);
+    expect(stored.bytes).toBeLessThanOrEqual(MAX_JOURNAL_BYTES);
+    expect(stored.writes.map((write) => write.state)).toEqual(["ok", unknown ? "unknown" : "ok"]);
+  });
+
   it("does not say nothing was sent when a chained pause is too large to hold", async () => {
     const w = world();
     const first = paused(await w.execute(w.program(async (connecta) => {

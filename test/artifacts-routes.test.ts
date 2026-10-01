@@ -4,6 +4,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
+import { ArtifactOperations } from "../src/artifacts/operations.js";
+import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { createConnecta, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -55,6 +57,53 @@ async function deploy(config: Omit<Partial<ConnectaConfig>, "ui" | "artifacts"> 
     );
   return { app, get, call };
 }
+
+describe("artifact render-check theme", () => {
+  it("checks Markdown writes, validation and refresh in the viewer's deployment theme", async () => {
+    const documents: string[] = [];
+    const store = kvArtifactStore(memoryStorage());
+    const module = artifacts({ store, renderCheck: async input => {
+      documents.push(input.document);
+      return { ok: true };
+    } });
+    const app = createConnecta({
+      connectors: [], publicUrl: BASE, logger: "silent", auth: bearerToken(TOKEN), artifacts: module,
+      executor: { execute: async () => ({ result: { value: 2 } }) },
+      ui: operatorUi({ branding: { theme: { colorScheme: "dark", accent: "#0a7d55" } } }),
+    });
+    try {
+      const ctx = { storage: memoryStorage(), logger: console, baseUrl: BASE };
+      await module.connector.callTool("create_artifact", {
+        id: "themed", title: "Themed", kind: "markdown", source: "Hello",
+        documents: { data: { value: 1 } },
+      }, ctx);
+      const view = await app.fetch(new Request(`${BASE}/artifacts/_api/view/themed`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }));
+      const served = await view.json() as { document: string };
+      expect(documents[0]).toBe(served.document);
+      await module.connector.callTool("validate_artifact", { kind: "markdown", source: "Hello" }, ctx);
+      const operations = new ArtifactOperations({ store, limits: resolveLimits(), allowlist: resolveAllowlist() });
+      const configured = await operations.setRefresh({
+        id: "themed", document: "data", program: "async () => ({ value: 2 })", schedule: "manual", baseVersion: 0,
+        by: { kind: "test" }, owner: { identity: { actor: { kind: "test" }, interactive: false } },
+      });
+      expect(configured.ok).toBe(true);
+      expect(await module.refresh("themed", { kind: "test" })).toMatchObject({ status: "succeeded" });
+      const refreshed = await app.fetch(new Request(`${BASE}/artifacts/_api/view/themed`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }));
+      expect(documents[2]).toBe((await refreshed.json() as { document: string }).document);
+      expect(documents).toHaveLength(3);
+      for (const document of documents) {
+        expect(document).toContain('data-scheme="dark"');
+        expect(document).toContain("#0a7d55");
+      }
+    } finally {
+      await app.close();
+    }
+  });
+});
 
 describe("artifact page shells", () => {
   it("serves the library, viewer, and snapshot shells open, data-free, and framed off", async () => {

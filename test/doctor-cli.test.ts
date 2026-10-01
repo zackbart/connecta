@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { dirname, resolve } from "node:path";
@@ -182,5 +183,44 @@ describe("connecta doctor's executor line", () => {
         "Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET",
       ),
     });
+  });
+});
+
+describe("connecta doctor's credential destinations", () => {
+  it.each(["/health", "/mcp"])("refuses redirects from %s without forwarding credentials", async (route) => {
+    const received: Array<Record<string, string | string[] | undefined>> = [];
+    const target = createServer((request, response) => {
+      received.push(request.headers);
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ status: "ok" }));
+    });
+    target.listen(0, "127.0.0.1");
+    await once(target, "listening");
+    teardown.push(() => new Promise<void>((done) => target.close(() => done())));
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress === "string") throw new Error("Expected TCP address");
+    const source = createServer((request, response) => {
+      if (request.url !== route) {
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+      response.writeHead(302, { Location: `http://127.0.0.1:${targetAddress.port}/capture` });
+      response.end();
+    });
+    source.listen(0, "127.0.0.1");
+    await once(source, "listening");
+    teardown.push(() => new Promise<void>((done) => source.close(() => done())));
+    const sourceAddress = source.address();
+    if (!sourceAddress || typeof sourceAddress === "string") throw new Error("Expected TCP address");
+    await expect(run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${sourceAddress.port}`], {
+      env: {
+        ...process.env,
+        CONNECTA_TOKEN: "synthetic-bearer",
+        CF_ACCESS_CLIENT_ID: "synthetic-id",
+        CF_ACCESS_CLIENT_SECRET: "synthetic-secret",
+      },
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("redirect") });
+    expect(received).toEqual([]);
   });
 });

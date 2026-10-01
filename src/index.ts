@@ -1032,6 +1032,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       registry.scoped({ connectorIds: [] }), config.publicUrl!, executor, logger, undefined, refreshConfig,
     );
     config.artifacts.bindRefresh({
+      ...(config.ui?.branding ? { branding: config.ui.branding } : {}),
       claimMs: refreshRunner.claimMs,
       execute: async (program, owner, signal) => {
         if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");

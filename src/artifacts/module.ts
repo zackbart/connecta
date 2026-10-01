@@ -1,5 +1,6 @@
 // artifacts(): the typed module a deployment passes as `ConnectaConfig.artifacts`.
 
+import { resolveBranding, type ResolvedTheme } from "../branding.js";
 import type { ArtifactsModule } from "../module-contracts.js";
 import { artifactsConnector, type ArtifactRenderCheck } from "./connector.js";
 import { ArtifactOperations } from "./operations.js";
@@ -86,17 +87,22 @@ export function artifacts(options: ArtifactsOptions): RefreshableArtifacts {
     limits,
   });
   const refresh = new ArtifactRefreshService(operations);
+  let theme: ResolvedTheme | undefined;
   const connector = artifactsConnector({
     operations,
     refresh,
     allowlist,
     limits,
+    theme: () => theme,
     ...(options.renderCheck ? { renderCheck: options.renderCheck } : {}),
   });
   return Object.freeze({
     connector,
     handle: artifactRoutes({ operations, allowlist }),
-    bindRefresh: (runtime: ArtifactRefreshRuntime) => refresh.bind(runtime),
+    bindRefresh: (runtime: ArtifactRefreshRuntime) => {
+      refresh.bind(runtime);
+      theme = resolveBranding(runtime.branding).theme;
+    },
     refresh: (id: string, by: import("./types.js").ArtifactActor) => refresh.run(id, { manual: by }),
     runDue: () => refresh.runDue(),
   });

@@ -2384,11 +2384,15 @@ describe("OAuthRefreshCoordinator", () => {
   it("persists an aborted owner's accepted rotation and hands it to a contender", async () => {
     const storage = memoryStorage();
     const coordinator = new OAuthRefreshCoordinator();
+    const trackedOwner = trackedAbortSignal();
     const owner = new KvOAuthProvider(
       "svc",
       storage,
       REDIRECT,
       coordinator,
+      false,
+      undefined,
+      trackedOwner.signal,
     );
     const contender = new KvOAuthProvider(
       "svc",
@@ -2415,7 +2419,6 @@ describe("OAuthRefreshCoordinator", () => {
         refresh_token: "refresh-new",
       });
     };
-    const trackedOwner = trackedAbortSignal();
     // The owner has its valid response; the SDK has not saved it yet.
     await coordinator.coordinatedFetch(
       owner,
@@ -2473,6 +2476,116 @@ describe("OAuthRefreshCoordinator", () => {
     expect(next.status).toBe(200);
     expect(upstreamRequests).toBe(2);
     expect(redeemed).toEqual(["refresh-old", "refresh-new"]);
+  });
+
+  it.each([false, true])("commits an accepted response arriving after cancellation only in its active epoch, disconnected=%s", async disconnected => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const controller = new AbortController();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
+    const answering = deferred<Response>();
+    const requested = deferred<void>();
+    const baseFetch: FetchLike = async () => { requested.resolve(); return answering.promise; };
+    const refreshed = coordinator.coordinatedFetch(owner, baseFetch, controller.signal)(
+      "https://auth.example/token", refreshInit("refresh-old"),
+    );
+    const failed = expect(refreshed).rejects.toThrow("owner cancelled");
+    await requested.promise;
+    controller.abort(new Error("owner cancelled"));
+    await failed;
+    const observer = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    expect(await observer.tokens()).toMatchObject({ refresh_token: "refresh-old" });
+    if (disconnected) await observer.resetAuthorization(true);
+    answering.resolve(Response.json({ access_token: "new", token_type: "Bearer", refresh_token: "refresh-new" }));
+    if (disconnected) {
+      // Await the late commit attempt, then check both the live epoch and residue.
+      const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
+      await vi.waitFor(() => expect(committing).toHaveBeenCalledTimes(1));
+      await committing.mock.results[0]!.value;
+      expect(await observer.tokens()).toBeUndefined();
+      expect(await storage.get("oauth:tokens")).toBeNull();
+      expect(await observer.operatorDisconnected()).toBe(true);
+    } else {
+      await vi.waitFor(async () => expect(await observer.tokens()).toMatchObject({ refresh_token: "refresh-new" }));
+    }
+  });
+
+  it("removes a cancelled owner's accepted rotation when disconnect fences its pending storage write", async () => {
+    const backing = memoryStorage();
+    const writing = deferred<void>();
+    const releaseWrite = deferred<void>();
+    let hold = false;
+    const storage: KVStorage = { ...backing, set: async (key, value) => {
+      if (hold && key === "oauth:tokens") {
+        writing.resolve();
+        await releaseWrite.promise;
+      }
+      await backing.set(key, value);
+    } };
+    const coordinator = new OAuthRefreshCoordinator();
+    const controller = new AbortController();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
+    await coordinator.coordinatedFetch(owner, async () => Response.json({
+      access_token: "new", token_type: "Bearer", refresh_token: "refresh-new",
+    }), controller.signal)("https://auth.example/token", refreshInit("refresh-old"));
+    hold = true;
+    const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
+    controller.abort(new Error("owner cancelled"));
+    await writing.promise;
+    const disconnected = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    await disconnected.resetAuthorization(true);
+    releaseWrite.resolve();
+    await committing.mock.results[0]!.value;
+    expect(await disconnected.tokens()).toBeUndefined();
+    expect(await disconnected.operatorDisconnected()).toBe(true);
+    expect(await backing.get("oauth:tokens")).toBeNull();
+  });
+
+  it("joins overlapping SDK and cancellation saves before permitting the next rotation", async () => {
+    const backing = memoryStorage();
+    const firstWrite = deferred<void>();
+    const releaseFirst = deferred<void>();
+    const releaseDuplicate = deferred<void>();
+    let held = false;
+    let writes = 0;
+    const storage: KVStorage = { ...backing, set: async (key, value) => {
+      if (held && key === "oauth:tokens" && JSON.parse(value).refresh_token === "refresh-b") {
+        writes++;
+        if (writes === 1) { firstWrite.resolve(); await releaseFirst.promise; }
+        else await releaseDuplicate.promise;
+      }
+      await backing.set(key, value);
+    } };
+    const coordinator = new OAuthRefreshCoordinator();
+    const controller = new AbortController();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({ access_token: "access-a", token_type: "Bearer", refresh_token: "refresh-a" });
+    const rotated = { access_token: "access-b", token_type: "Bearer", refresh_token: "refresh-b" };
+    await coordinator.coordinatedFetch(owner, async () => Response.json(rotated), controller.signal)(
+      "https://auth.example/token", refreshInit("refresh-a"),
+    );
+    held = true;
+    const recovery = vi.spyOn(owner, "saveAcceptedRefreshTokens");
+    controller.abort(new Error("owner cancelled after redemption"));
+    await firstWrite.promise;
+    const sdkSave = owner.saveTokens(rotated);
+    releaseFirst.resolve();
+    await recovery.mock.results[0]!.value;
+    const next = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    next.captureGeneration("legacy");
+    const answer = await coordinator.coordinatedFetch(next, async () => Response.json({
+      access_token: "access-c", token_type: "Bearer", refresh_token: "refresh-c",
+    }))("https://auth.example/token", refreshInit("refresh-b"));
+    await next.saveTokens(await answer.json() as OAuthTokens);
+    releaseDuplicate.resolve();
+    await sdkSave;
+    expect(await next.tokens()).toMatchObject({ access_token: "access-c", refresh_token: "refresh-c" });
+    expect(writes).toBe(1);
   });
 
   it("keeps a refused grant's flight standing when its owner aborts during the discard", async () => {

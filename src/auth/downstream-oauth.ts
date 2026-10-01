@@ -476,6 +476,8 @@ interface OAuthRefreshFlight {
    * letting a contender redeem the retired token.
    */
   acceptedTokens?: OAuthTokens;
+  /** SDK and cancellation recovery join one commit of this accepted answer. */
+  persistence?: Promise<void>;
   persist: (tokens: OAuthTokens) => Promise<void>;
 }
 
@@ -738,7 +740,7 @@ export class OAuthRefreshCoordinator {
           stopObservingOwnerAbort: () => {},
           mutationId: {},
           writing: false,
-          persist: (tokens) => provider.saveTokens(tokens),
+          persist: (tokens) => provider.saveAcceptedRefreshTokens(tokens, generation, flight),
         };
         this.flights.set(generation, flight);
         this.advanceStateRevision();
@@ -1284,6 +1286,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     issuer?: string,
     writtenAt?: number,
     binding?: string,
+    commitAcceptedRefresh = false,
   ): Promise<void> {
     const generation = await this.writeGeneration();
     await this.storeInGeneration(key, generation, () => {
@@ -1298,7 +1301,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       return isModernGeneration(generation) || issuer !== undefined
         ? JSON.stringify(stored)
         : serializeLegacy(value);
-    });
+    }, undefined, commitAcceptedRefresh);
   }
 
   /**
@@ -1314,9 +1317,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
     generation: string,
     serialize: () => string,
     expected?: string,
+    commitAcceptedRefresh = false,
   ): Promise<void> {
     if (
-      this.signal?.aborted ||
+      (!commitAcceptedRefresh && this.signal?.aborted) ||
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
       generation.startsWith(DISCONNECTED_GENERATION_PREFIX) ||
       (await this.generation()) !== generation
@@ -1332,7 +1336,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
             sealed: await this.sealer.seal(physicalKey, plaintext),
           } satisfies SealedOAuthValue)
         : plaintext;
-    if (this.signal?.aborted) return;
+    if (!commitAcceptedRefresh && this.signal?.aborted) return;
     if (expected === undefined) {
       await this.storage.set(physicalKey, serialized);
     } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
@@ -1342,7 +1346,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // before this set, remove the now-unreachable residue ourselves. The epoch
     // key already provides correctness; this second check is physical hygiene.
     const current = await this.generation();
-    if (current !== generation || this.signal?.aborted) {
+    if (current !== generation || (!commitAcceptedRefresh && this.signal?.aborted)) {
       try {
         // On cancellation the generation may still be active. A newer flow
         // could have written this key while the old storage set was pending.
@@ -1813,12 +1817,45 @@ export class KvOAuthProvider implements OAuthClientProvider {
     tokens: OAuthTokens,
     ctx?: OAuthClientInformationContext,
   ): Promise<void> {
+    const owned = this.refreshFlight;
+    if (owned?.flight.acceptedTokens !== undefined) {
+      await this.persistAcceptedTokens(tokens, ctx, owned);
+    } else {
+      await this.persistTokens(tokens, ctx, false, owned);
+    }
+  }
+
+  /** @internal Commit an already redeemed rotation even after its request leaves. */
+  async saveAcceptedRefreshTokens(
+    tokens: OAuthTokens,
+    generation: string,
+    flight: OAuthRefreshFlight,
+  ): Promise<void> {
+    await this.persistAcceptedTokens(tokens, undefined, { generation, flight });
+  }
+
+  private persistAcceptedTokens(
+    tokens: OAuthTokens,
+    ctx: OAuthClientInformationContext | undefined,
+    owned: { generation: string; flight: OAuthRefreshFlight },
+  ): Promise<void> {
+    // The SDK can save the same response while cancellation recovery is
+    // writing it. A second write could land after the next rotation, so both
+    // paths await this exact flight's one commit, including its failure.
+    return owned.flight.persistence ??= this.persistTokens(tokens, ctx, true, owned);
+  }
+
+  private async persistTokens(
+    tokens: OAuthTokens,
+    ctx: OAuthClientInformationContext | undefined,
+    commitAcceptedRefresh: boolean,
+    owned: { generation: string; flight: OAuthRefreshFlight } | undefined,
+  ): Promise<void> {
     // A retired flight (the owner was cancelled or superseded after the
     // token response) still writes: the authorization server has already
     // consumed the old refresh token, so dropping the rotated one would leave a
     // dead credential. writeValue itself refuses when the generation moved.
     // Only the coordinator bookkeeping belongs to the exact live flight.
-    const owned = this.refreshFlight;
     const coordinated =
       owned !== undefined &&
       this.refreshCoordinator?.beginMutation(owned.generation, owned.flight) === true;
@@ -1828,6 +1865,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
         tokens,
         (value) => JSON.stringify(value),
         ctx?.issuer,
+        undefined,
+        undefined,
+        commitAcceptedRefresh,
       );
       if (coordinated) this.refreshCoordinator?.succeedMutation(owned.generation, owned.flight);
       this.refreshFailure = undefined;

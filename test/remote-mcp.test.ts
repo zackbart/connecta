@@ -1410,3 +1410,48 @@ describe("remoteMcp() connection lifecycle", () => {
     }
   });
 });
+
+
+describe("OAuth callback transport ownership", () => {
+  it.each(["exchange", "clearPending"] as const)("closes an exchange-only transport after %s fails", async failure => {
+    const backing = memoryStorage();
+    const context = { ...ctx(), storage: {
+      ...backing,
+      delete: async (key: string) => {
+        if (failure === "clearPending") throw new Error("pending cleanup failed");
+        await backing.delete(key);
+      },
+    } };
+    const close = vi.fn(async () => {});
+    const transport = {
+      start: async () => {}, send: async () => {}, close,
+      finishAuth: async () => {
+        if (failure === "exchange") throw new Error("exchange failed");
+      },
+    };
+    const connector = remoteMcp("down", {
+      url: "https://downstream.test/mcp", auth: { type: "oauth" },
+      _transportFactory: () => transport,
+    });
+    await expect(connector.finishAuth!("code", context)).rejects.toThrow(
+      failure === "exchange" ? "exchange failed" : "pending cleanup failed",
+    );
+    await connector.closeScope!(context);
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not hold a failed callback on a hanging transport close", async () => {
+    const closing = deferred<void>();
+    const close = vi.fn(() => closing.promise);
+    const connector = remoteMcp("down", {
+      url: "https://downstream.test/mcp", auth: { type: "oauth" },
+      _transportFactory: () => ({
+        start: async () => {}, send: async () => {}, close,
+        finishAuth: async () => { throw new Error("exchange failed"); },
+      }),
+    });
+    await expect(connector.finishAuth!("code", ctx())).rejects.toThrow("exchange failed");
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    closing.resolve();
+  });
+});

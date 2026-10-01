@@ -154,7 +154,7 @@
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
-    "effect": "4.0.0-rc.117",
+    "effect": "4.0.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
@@ -186,7 +186,7 @@
     "preact": "^10.29.8",
     "quickjs-emscripten": "^0.32.0",
     "tsx": "^4.23.1",
-    "typescript": "^5.6.0",
+    "typescript": "^5.9.3",
     "vitest": "^4.1.6",
     "wrangler": "^4.114.0"
   }

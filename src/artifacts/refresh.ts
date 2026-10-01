@@ -34,6 +34,8 @@ export interface ArtifactRefreshRuntime {
   /** The core's bounded read-only program runner; no sandbox code enters this subpath. */
   execute(program: string, owner: NonNullable<ArtifactHeadRecord["refresh"]>["owner"], signal: AbortSignal): Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>;
   claimMs: number;
+  /** UI branding shared by the viewer and every render check. */
+  branding?: import("../types.js").ConnectaBranding;
 }
 
 export type RefreshOutcome =

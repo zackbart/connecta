@@ -1267,7 +1267,15 @@ export class Registry implements RegistryView {
     const turn = Deferred.makeUnsafe<void>();
     this.catalogMutations.set(id, turn);
     try {
-      if (previous) await runEdge(Deferred.await(previous));
+      if (previous) {
+        // A cross-request Deferred alone looks hung to workerd. Keep a timer
+        // owned by this request until the preceding mutation hands over its
+        // turn; the race interrupts the timer as soon as the wait settles.
+        await runEdge(Effect.raceFirst(
+          Deferred.await(previous),
+          Effect.forever(Effect.sleep(Duration.seconds(1))),
+        ));
+      }
       await runOnPartition(operation, this.opts);
     } finally {
       if (this.catalogMutations.get(id) === turn) {

@@ -1322,6 +1322,8 @@ test("keeps loaded artifacts when loading more fails", async ({ page }) => {
 
 test("creates, shows once, renames and revokes client tokens through real routes", async ({ page }) => {
   const storage = memoryStorage();
+  const manager = new AccessTokenManager(storage);
+  await manager.create("Existing client", "older-owner");
   const connecta = createTestConnecta({
     connectors: [],
     auth: { ...fakeClerkAuth(), activityActorNamespace: "clerk:test" },
@@ -1331,21 +1333,40 @@ test("creates, shows once, renames and revokes client tokens through real routes
   const paths = new Set(["/ui/access-tokens"]);
   realRoutes = { connecta, paths, answered: [] };
   tokenManagement = true;
+  let releaseList!: () => void;
+  const listGate = new Promise<void>(resolve => { releaseList = resolve; });
+  let listStarted!: () => void;
+  const listEntered = new Promise<void>(resolve => { listStarted = resolve; });
+  let held = false;
+  await page.route("**/ui/access-tokens", async route => {
+    if (route.request().method() !== "GET" || held) return route.continue();
+    held = true;
+    const response = await route.fetch();
+    listStarted();
+    await listGate;
+    await route.fulfill({ response });
+  });
   try {
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Access tokens", exact: true }).click();
+    await listEntered;
     await page.getByLabel("Client name").fill("Desktop client");
     await page.getByRole("button", { name: "Create token", exact: true }).click();
     await expect(page.locator("#createdToken")).toContainText("cta_");
+    const listed = page.waitForResponse(response => response.url().endsWith("/ui/access-tokens") && response.request().method() === "GET");
+    releaseList();
+    await listed;
+    await expect(page.getByRole("heading", { name: "Desktop client", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Existing client", exact: true })).toBeVisible();
     const secret = (await page.locator("#createdToken").textContent())!;
-    const manager = new AccessTokenManager(storage);
-    const [record] = await manager.list();
+    const record = (await manager.list()).find(token => token.name === "Desktop client");
+    const card = page.locator(`.token-card[aria-labelledby="access-token-${record!.id}"]`);
     paths.add(`/ui/access-tokens/${record!.id}`);
     const authenticate = () => manager.auth.authorize(new Request(REAL_BASE + "/mcp", { headers: { Authorization: `Bearer ${secret}` } }), REAL_BASE);
     expect((await authenticate()).ok).toBe(true);
     await page.getByRole("button", { name: "I stored it" }).click();
     await expect(page.locator("#createdToken")).toHaveCount(0);
-    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await card.getByRole("button", { name: "Rename", exact: true }).click();
     await page.getByLabel("Token name", { exact: true }).fill("Renamed desktop");
     await page.getByRole("button", { name: "Save name", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
@@ -1353,8 +1374,8 @@ test("creates, shows once, renames and revokes client tokens through real routes
     await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
     expect(await page.content()).not.toContain(secret);
     page.once("dialog", dialog => dialog.accept());
-    await page.getByRole("button", { name: "Revoke", exact: true }).click();
-    await expect(page.locator(".token-card")).toHaveClass(/revoked/);
+    await card.getByRole("button", { name: "Revoke", exact: true }).click();
+    await expect(card).toHaveClass(/revoked/);
     expect((await authenticate()).ok).toBe(false);
   } finally { await connecta.close(); }
 });

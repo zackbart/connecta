@@ -23,8 +23,12 @@ import {
   NOTION_MCP_VETTED_CATALOG,
   notion,
 } from "../src/providers/notion.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
+import { runEdge } from "../src/runtime/run.js";
+import { writeStateOf } from "../src/resumable.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
-import { silentLogger } from "./helpers.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
 // The whole surface is hand-written, so there is no downstream catalog to
@@ -1208,6 +1212,40 @@ describe("notion() error mapping", () => {
   });
 
   test.each(cases)("%s", async (_name, run) => run());
+});
+
+describe("notion() successful response integrity", () => {
+  it.each(["<html>synthetic gateway</html>", "", "null", "[]", '"text"'])("rejects unusable successful JSON without reporting an empty page: %s", async (body) => {
+    globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
+    await expect(call(build(), "get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
+      code: "connector_call_failed", retryable: false,
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a sent write's unreadable response unknown and does not expose body details", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) { controller.error(new Error("synthetic body detail")); },
+    }))) as unknown as typeof fetch;
+    const provider = build();
+    const { credential: _credential, ...local } = provider;
+    const registry = makeRegistry([{
+      ...local,
+      callTool: (name, args) => provider.callTool(name, args, context()),
+    }]);
+    const invocation = new InvocationService(registry, new CatalogService(registry, "https://connecta.example"));
+    const outcome = await runEdge(invocation.pipeline(
+      "workspace.append_blocks", { block_id: "synthetic", text: ["hello"] },
+      { source: "call_destructive_tool", allowDestructive: true },
+    ));
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("Expected failed write response");
+    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(outcome.error.message).not.toContain("synthetic body detail");
+    expect(outcome.dispatched).toBe(true);
+    expect(writeStateOf(outcome)).toBe("unknown");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("notion() writes", () => {

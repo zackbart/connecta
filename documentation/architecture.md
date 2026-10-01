@@ -407,7 +407,8 @@ shape from building, in someone else's repository rather than this one.
 
 ## Effect inside
 
-The core runs on Effect v4; no API a deployment touches does. `createConnecta`,
+The core runs on stable Effect v4, exact-pinned to `4.0.0`; no API a deployment
+touches does. `createConnecta`,
 `remoteMcp()`, `api()`, the `Connector` contract, and every shipped `.d.ts`
 are Promise-shaped and name no Effect type, so a connector author never meets a
 second async paradigm. The reason for the rewrite is the first section of this
@@ -569,8 +570,48 @@ the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
 on `./activity`, and matching the wire format meant opting out of most of what
 it does: unowned paths fall through rather than 404, a wrong method is a JSON
 405, and the content-type and size checks run before a body is read. The root
-entry may import only `effect` itself (`test/purity.test.ts`); nothing in
-`src/` uses `effect/unstable/*`, which would have to stay behind a subpath.
+entry may import only `effect` itself (`test/purity.test.ts`). Effect v4's
+area imports, such as `effect/http-api` and `effect/ai`, would have to stay
+behind a subpath. APIs tagged `@stability unstable` can still change in minor
+releases, so stable v4 keeps the exact pin.
+
+The stable `4.0.0` release was re-evaluated on 2026-10-01 with
+[`scripts/probes/effect-v4-evaluation.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation.mjs).
+Run `npm run build`, then `node scripts/probes/effect-v4-evaluation.mjs output.json`.
+The [raw observations](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation-2026-10-01.json)
+are synthetic Node requests and neutral esbuild bundles, not live-client or
+workerd lifetime verification. Bundle figures add representative prototypes
+alongside the current code; they do not claim savings from removing old code.
+
+Two native input schemas with validation and JSON Schema rendering add 62,148
+bytes gzip to the root, taking it from 303,083 to 365,231 against a 339,526
+cap. Effect can reject excess properties when both decoding and rendering use
+`onExcessProperty: "error"`; its default strips them. The generated schemas
+still differ from the exact meta-tool goldens, including record rendering and
+composed numeric bounds. A Schema replacement would need to preserve that
+contract, memoized rendering, and the raw-argument checks used by resumable
+writes. Both MCP SDK packages still depend on Zod, so changing our inputs alone
+does not remove Zod from an installation.
+
+A one-endpoint `HttpApi` prototype adds 106,634 bytes gzip to `./ui` and 106,453
+to `./activity`. Even plain `HttpRouter` adds 45,324 to `./ui`, taking it to
+130,023 against a 128,983 cap. Both default handlers return an empty 404 for a
+wrong method and an unowned path; our routes need a JSON 405 for the former
+and module fallthrough for the latter. Their `toWebHandler` also builds its
+layer immediately and owns a runner, so adopting it would require proving
+global-scope safety and preserving our scheduler and response-lifetime rules.
+The existing Effect route programs keep those rules without this routing layer.
+
+Effect's MCP server has a separate compatibility gate. Its `2026-07-28`
+adapter accepted a stateless `tools/list`, but its `2025-06-18` adapter refused
+a fresh request with 400. Initialization issued a session, and that session's
+next request returned 404 on a fresh handler; Connecta served the same fresh
+legacy list with 200 JSON and no session. The stable package exports no MCP
+client, so it also cannot replace our downstream SDK and OAuth implementation.
+[Issue #622](https://github.com/zackbart/connecta/issues/622) records the server
+parity requirements. These measurements support keeping the current MCP,
+validation, and routing implementations; stable v4 alone does not establish a
+replacement's benefit or compatibility.
 
 The core's cost is recorded rather than guessed. Against 0.24.4 the root entry
 grew from 235,346 to 279,526 bytes gzip, the Worker example from 263,949 to

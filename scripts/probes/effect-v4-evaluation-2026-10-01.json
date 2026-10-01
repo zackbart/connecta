@@ -1,0 +1,446 @@
+{
+  "measuredAt": "2026-10-01T13:49:09.810Z",
+  "sourceCommit": "6f6ddba33d0a0d0870bab70becbb2fcd14d51278",
+  "node": "v26.10.0",
+  "effect": "4.0.0",
+  "limitations": [
+    "Node request probes, not workerd lifetime verification or live client interoperability.",
+    "Synthetic MCP tool, two representative native input schemas, and one HTTP route.",
+    "Incremental bundle costs alongside current code; full replacement savings are not measured.",
+    "HttpRouter.toWebHandler uses its own runner; integration with Connecta's single runner is not proven."
+  ],
+  "observations": {
+    "mcp": [
+      {
+        "label": "connecta legacy fresh tools/list",
+        "status": 200,
+        "contentType": "application/json",
+        "session": null,
+        "body": "{\"result\":{\"tools\":[{\"name\":\"skills\",\"description\":\"List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"name\":{\"type\":\"string\"}}},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false}},{\"name\":\"search_tools\",\"description\":\"Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas=\\\"compact\\\"; the default limit is 8. Set connector when known. safety=\\\"readOnly\\\" finds tools that run unasked; \\\"approvalRequired\\\" finds the fail-closed complement. These filters grant no authority. Empty query browses.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\"},\"connector\":{\"type\":\"string\"},\"safety\":{\"type\":\"string\",\"enum\":[\"readOnly\",\"approvalRequired\",\"all\"]},\"limit\":{\"type\":\"integer\",\"exclusiveMinimum\":0,\"maximum\":100},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":9007199254740991},\"fullDescriptions\":{\"type\":\"boolean\"},\"includeSchemas\":{\"type\":\"string\",\"enum\":[\"compact\",\"json\",\"typescript\"]}}},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"openWorldHint\":true}},{\"name\":\"call_tool\",\"description\":\"Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a get_result action.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"address\":{\"type\":\"string\"},\"args\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"resultMode\":{\"type\":\"string\",\"enum\":[\"mcp\",\"value\"]},\"timeoutMs\":{\"type\":\"integer\",\"exclusiveMinimum\":0,\"maximum\":9007199254740991},\"diagnostics\":{\"type\":\"boolean\"}},\"required\":[\"address\"],\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"openWorldHint\":true}},{\"name\":\"call_destructive_tool\",\"description\":\"Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"address\":{\"type\":\"string\"},\"args\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"resultMode\":{\"type\":\"string\",\"enum\":[\"mcp\",\"value\"]},\"timeoutMs\":{\"type\":\"integer\",\"exclusiveMinimum\":0,\"maximum\":9007199254740991},\"diagnostics\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\",\"maxLength\":500}},\"required\":[\"address\"],\"additionalProperties\":false},\"annotations\":{\"destructiveHint\":true,\"readOnlyHint\":false,\"openWorldHint\":true}},{\"name\":\"authorize_connector\",\"description\":\"Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"connector\":{\"type\":\"string\"},\"force\":{\"type\":\"boolean\"}},\"required\":[\"connector\"]},\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"openWorldHint\":true}},{\"name\":\"get_result\",\"description\":\"Page a truncated direct-call result by id and byte offset. A program result is never paged; reduce it inside execute_code. Returns a one-line JSON header (offset, bytes, totalBytes, hasMore, nextAction) and then the page as raw text. maxBytes is an upper bound, clamped to the result's inline cap.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":9007199254740991},\"maxBytes\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":9007199254740991}},\"required\":[\"id\"]},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false}},{\"name\":\"execute_code\",\"description\":\"Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider work, writes included, uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Writes pause for resume_execution. Keep an authorized batch in one program; approval \\\"tool\\\" covers later same-address calls, other approval-required writes pause separately. Limits: 20 host calls, 10 writes, 15s/host call.\\n\\nConnectors: none.\\n\\nRead guides with top-level skills. Write async () => { ... } using the global connecta:\\n- connecta.search({ connector, query, includeSchemas: \\\"json\\\" }) returns { tools }. Search operations separately; choose by connectorTitle and schema.required/.properties, never guessed fields. Compact schemas are text.\\n- connecta.describe({ address }) clarifies schemas.\\n- connecta.call(address, args) returns the provider value directly.\\n- Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status; missing values are unknown, never false or zero.\\n- connecta.emit(block): { type: \\\"text\\\", text } or { type: \\\"image\\\" | \\\"audio\\\", data (base64), mimeType }; success-only, 32 blocks/4000000 bytes. console.log(...) is captured.\\n\\nNo portable ambient capabilities. Return reduced JSON. Sample unfamiliar reads. Reduce a one-time write's full result here, or use a direct call and get_result paging; never repeat it to recover output. Never guess fields or use the whole text as an id. Top-level skills({ name: \\\"usage\\\" }): repair; skills({ name: \\\"investigate\\\" }): task planning.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.\"},\"diagnostics\":{\"description\":\"Add request-local, payload-free timing and result-size summaries.\",\"type\":\"boolean\"}},\"required\":[\"code\"]},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"openWorldHint\":true}},{\"name\":\"resume_execution\",\"description\":\"Approve and run the write a paused execute_code program stopped at. Repeat the paused result's token, address, and args exactly. The program replays from its journal — earlier reads are answered from it, not repeated — sends the write once, and continues to its result or its next pause. approval \\\"tool\\\" also approves later calls to that tool in this run. A mismatch approves and sends nothing. reason is for the human reviewer and is not sent downstream.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"token\":{\"type\":\"string\",\"maxLength\":512},\"address\":{\"type\":\"string\"},\"args\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"approval\":{\"type\":\"string\",\"enum\":[\"call\",\"tool\"]},\"reason\":{\"type\":\"string\",\"maxLength\":500}},\"required\":[\"token\",\"address\",\"args\"],\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}"
+      },
+      {
+        "label": "effect legacy fresh tools/list",
+        "status": 400,
+        "contentType": null,
+        "session": null,
+        "body": ""
+      },
+      {
+        "label": "effect legacy initialize",
+        "status": 200,
+        "contentType": "application/json",
+        "session": "synthetic-session-issued",
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true},\"completions\":{}},\"serverInfo\":{\"name\":\"probe\",\"version\":\"1\"}}}\n"
+      },
+      {
+        "label": "effect legacy same handler tools/list",
+        "status": 200,
+        "contentType": "application/json",
+        "session": null,
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"tools\":[{\"name\":\"probe\",\"description\":\"Synthetic read\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":true,\"idempotentHint\":false,\"openWorldHint\":true}}]}}\n"
+      },
+      {
+        "label": "effect legacy fresh handler tools/list",
+        "status": 404,
+        "contentType": null,
+        "session": null,
+        "body": ""
+      },
+      {
+        "label": "effect modern tools/list",
+        "status": 200,
+        "contentType": "application/json",
+        "session": null,
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"probe\",\"version\":\"1\"}},\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\"tools\":[{\"name\":\"probe\",\"description\":\"Synthetic read\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":true,\"idempotentHint\":false,\"openWorldHint\":true}}]}}\n"
+      }
+    ],
+    "http": [
+      {
+        "label": "router",
+        "method": "GET",
+        "path": "/ui/data",
+        "status": 200,
+        "contentType": "application/json",
+        "body": "{\"ok\":true}"
+      },
+      {
+        "label": "router",
+        "method": "POST",
+        "path": "/ui/data",
+        "status": 404,
+        "contentType": null,
+        "body": ""
+      },
+      {
+        "label": "router",
+        "method": "GET",
+        "path": "/unowned",
+        "status": 404,
+        "contentType": null,
+        "body": ""
+      },
+      {
+        "label": "httpapi",
+        "method": "GET",
+        "path": "/ui/data",
+        "status": 200,
+        "contentType": "application/json",
+        "body": "{\"ok\":true}"
+      },
+      {
+        "label": "httpapi",
+        "method": "POST",
+        "path": "/ui/data",
+        "status": 404,
+        "contentType": null,
+        "body": ""
+      },
+      {
+        "label": "httpapi",
+        "method": "GET",
+        "path": "/unowned",
+        "status": 404,
+        "contentType": null,
+        "body": ""
+      }
+    ],
+    "schema": {
+      "originalCall": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "args": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "resultMode": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "value"
+            ]
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "diagnostics": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "additionalProperties": false
+      },
+      "originalSearch": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "connector": {
+            "type": "string"
+          },
+          "safety": {
+            "type": "string",
+            "enum": [
+              "readOnly",
+              "approvalRequired",
+              "all"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "fullDescriptions": {
+            "type": "boolean"
+          },
+          "includeSchemas": {
+            "type": "string",
+            "enum": [
+              "compact",
+              "json",
+              "typescript"
+            ]
+          }
+        }
+      },
+      "effectCall": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "args": {
+              "type": "object"
+            },
+            "resultMode": {
+              "type": "string",
+              "enum": [
+                "mcp",
+                "value"
+              ]
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "diagnostics": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "additionalProperties": false
+        },
+        "definitions": {}
+      },
+      "effectSearch": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "connector": {
+              "type": "string"
+            },
+            "safety": {
+              "type": "string",
+              "enum": [
+                "readOnly",
+                "approvalRequired",
+                "all"
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "allOf": [
+                {
+                  "maximum": 100
+                }
+              ]
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "allOf": [
+                {
+                  "minimum": 0
+                }
+              ]
+            },
+            "fullDescriptions": {
+              "type": "boolean"
+            },
+            "includeSchemas": {
+              "type": "string",
+              "enum": [
+                "compact",
+                "json",
+                "typescript"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "definitions": {}
+      },
+      "validation": [
+        {
+          "input": {
+            "address": "probe",
+            "extra": true
+          },
+          "accepted": false,
+          "error": "Expected no excess property\n  at [\"extra\"]"
+        },
+        {
+          "input": {
+            "address": "probe",
+            "timeoutMs": 9007199254740992
+          },
+          "accepted": false,
+          "error": "Expected an integer\n  at [\"timeoutMs\"]"
+        },
+        {
+          "input": {
+            "address": "probe",
+            "timeoutMs": 0
+          },
+          "accepted": false,
+          "error": "Expected a value greater than 0\n  at [\"timeoutMs\"]"
+        },
+        {
+          "input": {
+            "address": "probe",
+            "args": {
+              "nested": true
+            }
+          },
+          "value": {
+            "address": "probe",
+            "args": {
+              "nested": true
+            }
+          },
+          "accepted": true
+        }
+      ],
+      "defaultExcess": {
+        "address": "probe"
+      }
+    }
+  },
+  "sizes": [
+    {
+      "entry": "root",
+      "probe": "baseline",
+      "gzip": 303083,
+      "delta": 0,
+      "nodeImports": []
+    },
+    {
+      "entry": "root",
+      "probe": "schema",
+      "gzip": 365231,
+      "delta": 62148,
+      "nodeImports": []
+    },
+    {
+      "entry": "root",
+      "probe": "router",
+      "gzip": 348407,
+      "delta": 45324,
+      "nodeImports": []
+    },
+    {
+      "entry": "root",
+      "probe": "httpapi",
+      "gzip": 408672,
+      "delta": 105589,
+      "nodeImports": []
+    },
+    {
+      "entry": "root",
+      "probe": "mcp",
+      "gzip": 405991,
+      "delta": 102908,
+      "nodeImports": []
+    },
+    {
+      "entry": "ui",
+      "probe": "baseline",
+      "gzip": 84699,
+      "delta": 0,
+      "nodeImports": []
+    },
+    {
+      "entry": "ui",
+      "probe": "schema",
+      "gzip": 146618,
+      "delta": 61919,
+      "nodeImports": []
+    },
+    {
+      "entry": "ui",
+      "probe": "router",
+      "gzip": 130023,
+      "delta": 45324,
+      "nodeImports": []
+    },
+    {
+      "entry": "ui",
+      "probe": "httpapi",
+      "gzip": 191333,
+      "delta": 106634,
+      "nodeImports": []
+    },
+    {
+      "entry": "ui",
+      "probe": "mcp",
+      "gzip": 188975,
+      "delta": 104276,
+      "nodeImports": []
+    },
+    {
+      "entry": "activity",
+      "probe": "baseline",
+      "gzip": 36202,
+      "delta": 0,
+      "nodeImports": []
+    },
+    {
+      "entry": "activity",
+      "probe": "schema",
+      "gzip": 98181,
+      "delta": 61979,
+      "nodeImports": []
+    },
+    {
+      "entry": "activity",
+      "probe": "router",
+      "gzip": 81371,
+      "delta": 45169,
+      "nodeImports": []
+    },
+    {
+      "entry": "activity",
+      "probe": "httpapi",
+      "gzip": 142655,
+      "delta": 106453,
+      "nodeImports": []
+    },
+    {
+      "entry": "activity",
+      "probe": "mcp",
+      "gzip": 140204,
+      "delta": 104002,
+      "nodeImports": []
+    },
+    {
+      "entry": "standalone",
+      "probe": "schema",
+      "gzip": 75469
+    },
+    {
+      "entry": "standalone",
+      "probe": "router",
+      "gzip": 74896
+    },
+    {
+      "entry": "standalone",
+      "probe": "httpapi",
+      "gzip": 136209
+    },
+    {
+      "entry": "standalone",
+      "probe": "mcp",
+      "gzip": 134315
+    }
+  ]
+}

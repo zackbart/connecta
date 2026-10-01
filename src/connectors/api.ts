@@ -128,7 +128,16 @@ function checkToolContract(id: string, tool: ApiTool): void {
 
 /** A static connector; every tool passes {@link checkToolContract} first. */
 export function api(id: string, opts: ApiOptions): Connector {
-  for (const t of opts.tools) checkToolContract(id, t);
+  const names = new Set<string>();
+  for (const tool of opts.tools) {
+    if (names.has(tool.name)) {
+      throw new Error(
+        `api() tool "${id}.${tool.name}" is declared more than once; discovery and dispatch must use one definition.`,
+      );
+    }
+    names.add(tool.name);
+    checkToolContract(id, tool);
+  }
   const defs: ToolDef[] = opts.tools.map((t) => ({
     name: t.name,
     description: t.description,

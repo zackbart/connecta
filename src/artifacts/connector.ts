@@ -10,6 +10,7 @@
 import { api } from "../connectors/api.js";
 import { callerOf } from "../connector-caller.js";
 import { ConnectorCallError } from "../errors.js";
+import { resolveTheme, type ResolvedTheme } from "../branding.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import { buildFrameDocument, frameCsp, type ArtifactGlobal } from "./document.js";
 import { buildGuide, GUIDE_SUMMARY } from "./guide.js";
@@ -114,6 +115,9 @@ export async function runRenderCheck(
   input: { document: string; csp: string; kind: ArtifactKind },
   callSignal: AbortSignal | undefined,
 ): Promise<RenderVerdict> {
+  if (callSignal?.aborted) {
+    return { ok: false, unavailable: "The render check's call was cancelled; nothing was saved." };
+  }
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const onAbort = () => controller.abort(callSignal?.reason);
@@ -223,6 +227,8 @@ export interface ArtifactsConnectorOptions {
   renderCheck?: ArtifactRenderCheck;
   /** Where pages are served, when not the deployment's own origin. */
   origin?: string;
+  /** Resolved deployment theme, available after the module binds to core. */
+  theme?: () => ResolvedTheme | undefined;
 }
 
 export function artifactsConnector(options: ArtifactsConnectorOptions): Connector {
@@ -258,6 +264,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
               document: buildFrameDocument({
                 kind: head.kind,
                 source,
+                theme: options.theme?.() ?? resolveTheme(),
                 global: globalFor(artifactId, head, head.view, liveOf(head), false),
                 data,
               }),
@@ -556,6 +563,7 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
               document: buildFrameDocument({
                 kind: args.kind,
                 source: args.source,
+                theme: options.theme?.() ?? resolveTheme(),
                 global: {
                   id: "preview",
                   title: "Preview",

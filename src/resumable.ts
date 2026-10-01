@@ -353,7 +353,7 @@ export class RunState {
     settings: ResumableSettings;
   }): RunState {
     const { header } = options.claim;
-    return new RunState(
+    const run = new RunState(
       options.journal,
       options.program,
       { clockMs: header.clock, seed: header.seed },
@@ -362,6 +362,8 @@ export class RunState {
       options.claim,
       new ReplayState(options.entries, header.pending?.key),
     );
+    run.writesSpent = header.writes.length;
+    return run;
   }
 
   // --- numbering and the gate sequencer ---------------------------------
@@ -478,11 +480,9 @@ export class RunState {
   /** Answer a call from the journal, or say it goes live. */
   lookup(key: string): Lookup {
     if (!this.replay) return { kind: "live" };
-    const found = this.replay.lookup(key);
-    // Replayed writes spend the write budget again, as replayed calls spend
-    // the host-call budget: per-play totals equal per-run totals.
-    if (found.kind === "hit" && found.entry.write) this.writesSpent++;
-    return found;
+    // Already-sent writes spend the run budget whether this play repeats them
+    // or diverges before doing so. Only new dispatches spend it again.
+    return this.replay.lookup(key);
   }
 
   /** Journal a completed live call that was not a write. */
@@ -763,13 +763,53 @@ export class RunState {
         : undefined;
       if (this.claim && slot !== undefined) {
         const claim = this.claim;
+        const entryBytes = utf8Bytes(RunJournal.entryText(entry));
+        let tooLarge = false;
+        // Reserve capacity through the same serialized CAS as the write-ahead
+        // marks. Concurrent answers cannot both spend the last free bytes.
+        const capacity = yield* this.mutateHeader((header) => {
+          const pendingBytes = this.unpersisted.reduce(
+            (sum, pending) => sum + utf8Bytes(RunJournal.entryText(pending)), 0,
+          );
+          tooLarge = header.bytes + pendingBytes + entryBytes > MAX_JOURNAL_BYTES;
+          if (tooLarge) {
+            this.stopWith({
+              kind: "failed",
+              failure: unknownFailure ?? failure(
+                "journal_too_large",
+                `This run recorded more than ${MAX_JOURNAL_BYTES} bytes of source and host calls, too much to keep in its journal. Writes it already sent are counted in writes and are not undone; check them before running the task again.`,
+              ),
+            });
+          }
+          return {
+            ...header,
+            bytes: tooLarge ? header.bytes : header.bytes + entryBytes,
+            writes: tooLarge
+              ? header.writes.map((write) =>
+                  write.entry === slot ? { ...write, state } : write)
+              : header.writes,
+          };
+        });
+        if (capacity !== "ok") {
+          this.noteLocally(slot, state);
+          const lost = capacity === "lost"
+            ? failure(
+                "execution_claim_lost",
+                `The write to ${target.address} was sent (${describeState(state)}), but another resume_execution took the run over before its result could be journaled.`,
+              )
+            : interrupted(
+                `The write to ${target.address} was sent (${describeState(state)}), but paused-run storage failed before its result could be journaled.`,
+              );
+          this.stopWith({ kind: "failed", failure: lost });
+          return guestFailure(lost.code, lost.message);
+        }
+        if (tooLarge) return this.halted();
         const written = yield* Effect.tryPromise(() =>
           this.journal.writeEntry(slot, entry, claim.header.expiresAt),
         ).pipe(Effect.as(true), Effect.catch(() => Effect.succeed(false)));
         const recorded: WriteState = written ? state : "unknown";
         const settled = yield* this.mutateHeader((header) => ({
           ...header,
-          bytes: header.bytes + utf8Bytes(RunJournal.entryText(entry)),
           writes: header.writes.map((write) =>
             write.entry === slot ? { ...write, state: recorded } : write,
           ),
@@ -904,7 +944,13 @@ export class RunState {
   finishStopped(): Effect.Effect<ToolResult> {
     const stop = this.stop;
     if (!stop) return Effect.die(new Error("finishStopped without a stop"));
-    if (stop.kind === "failed") return this.finishFailed(stop.failure);
+    if (stop.kind === "failed") {
+      return this.finishFailed(
+        stop.failure.code === "journal_too_large" && this.writeCounts().unknown > 0
+          ? unknownOutcome()
+          : stop.failure,
+      );
+    }
     if (this.writeCounts().unknown > 0) return this.finishFailed(unknownOutcome());
     return this.persistPause(stop.pending);
   }

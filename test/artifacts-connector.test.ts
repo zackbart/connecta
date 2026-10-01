@@ -384,6 +384,15 @@ describe("the render-check hook", () => {
     expect(await store.head("q3-bugs")).toBeNull();
   });
 
+  it("does not invoke a render hook after its caller has already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("call deadline expired"));
+    const hook = vi.fn<ArtifactRenderCheck>(async () => ({ ok: true }));
+    expect(await runRenderCheck(hook, { document: "<!doctype html>", csp: "sandbox", kind: "html" }, controller.signal))
+      .toMatchObject({ ok: false, unavailable: expect.any(String) });
+    expect(hook).not.toHaveBeenCalled();
+  });
+
   it("gives up on a hook that never answers after 20 seconds", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
