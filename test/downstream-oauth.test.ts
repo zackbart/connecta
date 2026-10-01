@@ -4004,7 +4004,7 @@ describe("OAuthRefreshCoordinator", () => {
     });
   });
 
-  it.each(["status", "authorization", "before-flight", "aborted-persistence", "late-answer", "retained-view"])("retains a personal registry during %s and recovers idle eviction capacity", async phase => {
+  it.each(["status", "authorization", "before-flight", "aborted-persistence", "late-answer", "retained-view", "retired-rejection"])("retains a personal registry during %s and recovers idle eviction capacity", async phase => {
     const issuer = "https://auth.example";
     const mcpUrl = "https://downstream.example/mcp";
     const owner = await identityStorageKey({ namespace: "synthetic", id: "alice" });
@@ -4060,6 +4060,7 @@ describe("OAuthRefreshCoordinator", () => {
         expect((init.body as URLSearchParams).get("refresh_token")).toBe("old-refresh");
         entered.resolve();
         await release.promise;
+        if (phase === "retired-rejection") throw new Error("synthetic retired request failed");
         return Response.json({ access_token: "new", token_type: "Bearer", refresh_token: "rotated-refresh" });
       }
       if (new Headers(init.headers).get("authorization") !== "Bearer new") {
@@ -4081,6 +4082,14 @@ describe("OAuthRefreshCoordinator", () => {
       pending.push(first);
       if (phase === "before-flight") await readEntered.promise;
       else await entered.promise;
+      if (phase === "retired-rejection") {
+        await connector.disconnectAuth!(authContext);
+        release.resolve();
+        await first;
+        for (let i = 0; i < 1_024; i++) root.personalRegistry(`retired:${i}`);
+        expect(root.personalRegistry(owner)).not.toBe(active);
+        return;
+      }
       if (phase === "late-answer") {
         controller.abort(new Error("synthetic owner left before answer"));
         await first;

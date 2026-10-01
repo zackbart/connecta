@@ -1936,6 +1936,8 @@ export class Registry implements RegistryView {
 
 class ScopedRegistryView implements RegistryView {
   readonly maxResultBytes: number;
+  /** An evicted view's admission controller must remain closed. */
+  private readonly admissionPersonal: Registry | undefined;
 
   private get personal(): Registry | undefined {
     return this.scope.principalKey
@@ -1951,14 +1953,17 @@ class ScopedRegistryView implements RegistryView {
     this.maxResultBytes = root.maxResultBytes;
     // Check capacity at construction, then resolve the current registry on
     // use. A retained view must not revive one evicted while it was idle.
-    if (scope.principalKey) root.personalRegistry(scope.principalKey);
+    this.admissionPersonal = scope.principalKey
+      ? root.personalRegistry(scope.principalKey)
+      : undefined;
   }
 
-  private registryFor(id: string): Registry | undefined {
+  private registryFor(id: string, admission = false): Registry | undefined {
     if (!this.allowed.has(id)) return undefined;
     const connector = this.root.getConnector(id);
     if (!connector) return undefined;
-    return connector.authScope === "personal" ? this.personal : this.root;
+    if (connector.authScope !== "personal") return this.root;
+    return admission ? this.admissionPersonal : this.personal;
   }
 
   listConnectors(): Connector[] {
@@ -2015,7 +2020,7 @@ class ScopedRegistryView implements RegistryView {
   admitCall(
     ...args: Parameters<RegistryView["admitCall"]>
   ): Promise<CallAdmissionPermit> {
-    const registry = this.registryFor(args[0]);
+    const registry = this.registryFor(args[0], true);
     if (!registry) {
       return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
     }

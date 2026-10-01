@@ -889,6 +889,9 @@ export class OAuthRefreshCoordinator {
               if (verdict) provider.recordRefreshFailure(verdict);
               flight.answerPending = false;
               this.fail(generation, flight, error, verdict);
+              // Retirement may already have removed the flight from the map.
+              // Its rejected answer still finishes the retained partition work.
+              this.releaseFlightPartition(flight);
               return Effect.fail(error);
             }),
             Effect.flatMap(commitAnswer),
