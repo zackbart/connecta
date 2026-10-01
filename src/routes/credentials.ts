@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { closeConnectorScope } from "../connector-scope.js";
+import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
 import {
   credentialTestRule,
   describeCredentialTestMismatch,
@@ -211,6 +211,7 @@ function credentialRequest(
           }
           const storedValues = values!;
           const ctx = registry.contextFor(connectorId, baseUrl);
+          const releaseCleanup = claimConnectorScopeCleanup(ctx, connectorId);
           try {
             const result =
               mode === "multiple"
@@ -224,6 +225,7 @@ function credentialRequest(
             logged(ok, result?.message);
             return privateJson({ ok });
           } finally {
+            releaseCleanup();
             await closeConnectorScope(connector, ctx, context.defer);
           }
         },

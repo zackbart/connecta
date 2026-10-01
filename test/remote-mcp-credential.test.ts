@@ -535,6 +535,63 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
 });
 
 describe("remoteMcp() credential auth — the Test action", () => {
+  it.each([
+    [true, "resolved", false], [true, "rejected", false], [true, "pending", false],
+    [false, "resolved", false], [false, "rejected", false], [false, "pending", false],
+    [true, "resolved", true], [true, "rejected", true], [true, "pending", true],
+    [false, "resolved", true], [false, "rejected", true], [false, "pending", true],
+  ] as const)("operator Test preserves ok=%s with one bounded %s cleanup, cloned context=%s", async (ok, cleanup, cloneContext) => {
+    const captured = serveDownstream();
+    if (!ok) vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+    });
+    const close = connector.closeScope!.bind(connector);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const closeScope = vi.fn(async (ctx: ConnectorContext) => {
+      await close(ctx);
+      if (cleanup === "rejected") throw new Error("cleanup failed");
+      if (cleanup === "pending") await pending;
+    });
+    connector.closeScope = closeScope;
+    if (cloneContext) {
+      const testCredential = connector.testCredential!;
+      connector.testCredential = (value, ctx) => testCredential(value, { ...ctx });
+    }
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.set("down", "stored-secret", "operator");
+    const connecta = createTestConnecta({
+      connectors: [connector], storage, vault, publicUrl: BASE, logger: silentLogger,
+      auth: {
+        kind: "operator", interactiveOperator: true, activityActorNamespace: "test",
+        authorize: () => ({ ok: true, userId: "operator" }),
+      },
+    });
+    const response = connecta.fetch(new Request(`${BASE}/ui/credentials/down/test`, {
+      method: "POST", headers: { Origin: BASE },
+    }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        response,
+        new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 1_000); }),
+      ]);
+      expect(result, "cleanup must finish within the route's bounded window").toBeDefined();
+      expect(result!.status).toBe(200);
+      expect(await result!.json()).toEqual({ ok });
+      expect(closeScope).toHaveBeenCalledTimes(1);
+      if (ok) expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer stored-secret"]);
+      await expect(connector.listTools(closeScope.mock.calls[0]![0])).rejects.toThrow("scope ended");
+    } finally {
+      clearTimeout(timer);
+      release();
+      await response;
+    }
+  });
+
   it("reports the catalog the stored credential reaches, and closes its scope", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
