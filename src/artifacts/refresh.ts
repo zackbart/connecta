@@ -187,9 +187,11 @@ export class ArtifactRefreshService {
         ...(after ? { after } : {}),
         limit,
       });
+      if (page.next !== undefined && after !== undefined && page.next <= after) {
+        throw new Error("Artifact head scan did not advance.");
+      }
       if (!page.heads.length) {
         if (page.next) {
-          if (page.next === after) throw new Error("Artifact head scan did not advance.");
           after = page.next;
           scanned += limit;
           continue;

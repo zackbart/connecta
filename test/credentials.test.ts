@@ -174,6 +174,31 @@ describe("storedCredentialShape", () => {
 });
 
 describe("CredentialVault", () => {
+  it("keeps connector credential access limited to stored own fields", async () => {
+    const vault = new CredentialVault(memoryStorage(), KEY);
+    await vault.set("service", "synthetic-secret", "operator");
+    const registry = makeRegistry([
+      connectorWith({ id: "service", credential: { label: "API token" } }),
+    ], { credentialVault: vault });
+    const credential = required(registry.contextFor("service", OAUTH_BASE).credential);
+    expect(await credential.get()).toBe("synthetic-secret");
+    for (const field of ["constructor", "toString", "hasOwnProperty"]) {
+      expect(await credential.get(field)).toBeNull();
+    }
+    await vault.setAll("service", { value: "synthetic-secret", constructor: "explicit-secret" }, "operator");
+    expect(await credential.get("constructor")).toBe("explicit-secret");
+  });
+
+  it("returns null for absent fields that also name Object prototype members", async () => {
+    const vault = new CredentialVault(memoryStorage(), KEY);
+    await vault.set("service", "synthetic-secret", "operator");
+    for (const field of ["constructor", "toString", "hasOwnProperty"]) {
+      expect(await vault.get("service", field)).toBeNull();
+    }
+    await vault.setAll("service", { constructor: "declared-secret" }, "operator");
+    expect(await vault.get("service", "constructor")).toBe("declared-secret");
+  });
+
   it("encrypts credentials in the existing KV storage and decrypts on demand", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);

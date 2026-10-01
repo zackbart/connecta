@@ -468,6 +468,12 @@ interface OAuthRefreshFlight {
   stopObservingOwnerAbort: () => void;
   mutationId: object;
   writing: boolean;
+  // A cancelled or retired flight can still receive a consumed grant's answer.
+  // Keep its registry pinned until that answer and any recovery save drain.
+  answerPending: boolean;
+  recoveryPending: boolean;
+  settled: boolean;
+  releasePartition: () => void;
   /**
    * Set once the token endpoint answered with valid tokens: the authorization
    * server has consumed the rotating refresh token, so if the SDK's own
@@ -551,6 +557,18 @@ function waitForRefreshFlight(
  * operation, so a second isolate can still race the same refresh token.
  */
 export class OAuthRefreshCoordinator {
+  constructor(private readonly retainPartition: () => () => void = () => () => {}) {}
+
+  /** Keep an accepted credential write alive independently of its caller. */
+  retainWork(): () => void {
+    return this.retainPartition();
+  }
+
+  private releaseFlightPartition(flight: OAuthRefreshFlight): void {
+    if (flight.settled && !flight.answerPending && !flight.recoveryPending) {
+      flight.releasePartition();
+    }
+  }
   private readonly flights = new Map<string, OAuthRefreshFlight>();
   /** Opaque identities only: no request promise, signal, callback, or response. */
   private readonly pendingMutations = new Map<string, object>();
@@ -589,8 +607,10 @@ export class OAuthRefreshCoordinator {
   ): void {
     if (this.flights.get(generation) !== flight) return;
     this.flights.delete(generation);
+    flight.settled = true;
     this.advanceStateRevision();
     flight.stopObservingOwnerAbort();
+    this.releaseFlightPartition(flight);
     // Last, because joined fibers resume inside this call.
     Deferred.doneUnsafe(flight.outcome, Effect.succeed(outcome));
   }
@@ -740,6 +760,10 @@ export class OAuthRefreshCoordinator {
           stopObservingOwnerAbort: () => {},
           mutationId: {},
           writing: false,
+          answerPending: true,
+          recoveryPending: false,
+          settled: false,
+          releasePartition: this.retainWork(),
           persist: (tokens) => provider.saveAcceptedRefreshTokens(tokens, generation, flight),
         };
         this.flights.set(generation, flight);
@@ -799,7 +823,13 @@ export class OAuthRefreshCoordinator {
           if (!this.markMutationPending(generation, flight)) {
             // Already settled (the owner was cancelled first). Still write the
             // rotation: losing it would leave a dead credential.
-            detach(Effect.promise(() => flight.persist(accepted)));
+            flight.recoveryPending = true;
+            detach(Effect.promise(() => flight.persist(accepted)).pipe(
+              Effect.ensuring(Effect.sync(() => {
+                flight.recoveryPending = false;
+                this.releaseFlightPartition(flight);
+              })),
+            ));
             return Effect.fail(
               new Error("OAuth refresh ended before tokens could be saved."),
             );
@@ -814,6 +844,12 @@ export class OAuthRefreshCoordinator {
           }
           return Effect.succeed(response);
         };
+        const finishAnswer = Effect.sync(() => {
+          flight.answerPending = false;
+          this.releaseFlightPartition(flight);
+        });
+        const commitAnswer = (value: Awaited<typeof answer>) =>
+          commit(value).pipe(Effect.ensuring(finishAnswer));
 
         // The owner's redemption. Its abort interrupts the wait for the token
         // endpoint and nothing after it: an answer, once it exists, is
@@ -828,7 +864,10 @@ export class OAuthRefreshCoordinator {
             Effect.onInterrupt(() =>
               Effect.sync(() => {
                 this.fail(generation, flight, aborted(requestSignal));
-                detach(Effect.promise(() => answer).pipe(Effect.flatMap(commit)));
+                detach(Effect.promise(() => answer).pipe(
+                  Effect.flatMap(commitAnswer),
+                  Effect.ensuring(finishAnswer),
+                ));
               }),
             ),
             Effect.catch((error) => {
@@ -848,10 +887,11 @@ export class OAuthRefreshCoordinator {
                     )
                   : undefined;
               if (verdict) provider.recordRefreshFailure(verdict);
+              flight.answerPending = false;
               this.fail(generation, flight, error, verdict);
               return Effect.fail(error);
             }),
-            Effect.flatMap(commit),
+            Effect.flatMap(commitAnswer),
           ),
         );
         return await runEdge(
@@ -913,6 +953,7 @@ export class OAuthRefreshCoordinator {
       this.pendingMutations.get(generation) === flight.mutationId
     ) {
       flight.writing = true;
+      flight.recoveryPending = true;
       const written = (outcome: OAuthRefreshFlightOutcome) => {
         if (this.finishMutation(generation, flight)) {
           this.settle(generation, flight, outcome);
@@ -927,6 +968,10 @@ export class OAuthRefreshCoordinator {
             onSuccess: () => written({ status: "refreshed" }),
             onFailure: (error) => written({ status: "failed", error }),
           }),
+          Effect.ensuring(Effect.sync(() => {
+            flight.recoveryPending = false;
+            this.releaseFlightPartition(flight);
+          })),
         ),
       );
       return;
@@ -1555,13 +1600,25 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private async readIssuerBoundValue<T>(
     key: "oauth:client" | "oauth:tokens",
     parseLegacy: (raw: string) => T,
-    serializeLegacy: (value: T) => string,
     ctx?: OAuthClientInformationContext,
   ): Promise<T | undefined> {
-    const stored = await this.readValue(key, parseLegacy);
-    if (!stored || !ctx) return stored?.value;
+    const read = await this.readStoredValue(key, parseLegacy);
+    if (!read) return undefined;
+    const stored = read.stored;
+    if (!ctx || stored.issuer !== undefined) {
+      if (read.plaintextCredential) {
+        await this.sealInPlace(key, stored.generation, read.raw);
+      }
+      if (!ctx) return stored.value;
+    }
     if (stored.issuer === undefined) {
-      await this.writeValue(key, stored.value, serializeLegacy, ctx.issuer);
+      // Binding is a migration of the value just read, never a new grant.
+      // A rotation or revocation that replaced it must win this race.
+      await this.storeInGeneration(key, stored.generation, () => JSON.stringify({
+        connectaOAuthVersion: STORED_VALUE_VERSION,
+        ...stored,
+        issuer: ctx.issuer,
+      } satisfies StoredOAuthValue<T>), read.raw);
       return stored.value;
     }
     if (stored.issuer === ctx.issuer) return stored.value;
@@ -1750,7 +1807,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return this.readIssuerBoundValue(
       "oauth:client",
       (raw) => JSON.parse(raw) as OAuthClientInformationMixed,
-      (value) => JSON.stringify(value),
       ctx,
     );
   }
@@ -1797,7 +1853,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const tokens = await this.readIssuerBoundValue(
       "oauth:tokens",
       (raw) => JSON.parse(raw) as OAuthTokens,
-      (value) => JSON.stringify(value),
       ctx,
     );
     if (ctx && tokens && refreshGeneration !== undefined) {
@@ -1851,6 +1906,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     commitAcceptedRefresh: boolean,
     owned: { generation: string; flight: OAuthRefreshFlight } | undefined,
   ): Promise<void> {
+    const releasePartition = this.refreshCoordinator?.retainWork();
     // A retired flight (the owner was cancelled or superseded after the
     // token response) still writes: the authorization server has already
     // consumed the old refresh token, so dropping the rotated one would leave a
@@ -1878,6 +1934,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       // The write owns this identity even if an SDK failure callback has
       // already detached the provider's flight while storage was pending.
       if (this.refreshFlight === owned) this.refreshFlight = undefined;
+      releasePartition?.();
     }
   }
 
@@ -2114,20 +2171,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // old physical namespace is unreadable. There is deliberately no second
     // "finalize" write: concurrent resets therefore cannot overwrite a newer
     // reset's epoch after their cleanup finishes out of order.
-    try {
-      await this.storage.set("oauth:generation", active);
-      this.refreshCoordinator?.retire(previous);
-    } catch (error) {
-      try {
-        await this.deleteAll([
-          cleanupBacklogKey(active),
-          cleanupTimesKey(active),
-        ]);
-      } catch {
-        // Best-effort removal of a manifest for an epoch never activated.
-      }
-      throw error;
-    }
+    // A rejection may follow a committed fence. Keep its lineage even when
+    // the answer is lost: the next reset must still find the retired grants.
+    // A manifest for an epoch that never activated is harmless residue.
+    await this.storage.set("oauth:generation", active);
+    this.refreshCoordinator?.retire(previous);
 
     if (reusableClient && !this.signal?.aborted) {
       // readValue opened the old physical key; writeValue seals the plaintext

@@ -26,6 +26,24 @@ interface Entry {
   exp?: number; // epoch ms
 }
 
+function validEntry(value: unknown): value is Entry {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    "value" in value && typeof value.value === "string" &&
+    (!("exp" in value) || (typeof value.exp === "number" && Number.isFinite(value.exp)));
+}
+
+function makeEntry(value: string, ttlSeconds?: number): Entry {
+  if (ttlSeconds !== undefined && !Number.isFinite(ttlSeconds)) {
+    throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
+  }
+  if (!ttlSeconds) return { value };
+  const exp = Date.now() + ttlSeconds * 1000;
+  if (!Number.isFinite(exp)) {
+    throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
+  }
+  return { value, exp };
+}
+
 const HEARTBEAT_MS = 15_000;
 const STALE_LOCK_MS = 60_000;
 const localLocks = new Map<string, string>();
@@ -282,6 +300,9 @@ export function fileStorage(
         if (loaded === null || typeof loaded !== "object" || Array.isArray(loaded)) {
           throw new TypeError("Expected a state object");
         }
+        if (!Object.values(loaded).every(validEntry)) {
+          throw new TypeError("Expected string values and finite expiry timestamps");
+        }
         data = Object.assign(Object.create(null), loaded) as Record<string, Entry>;
       } catch (error) {
         // Never let a damaged state file be silently replaced by an empty one:
@@ -326,6 +347,7 @@ export function fileStorage(
     // 0o600 on the tmp file; the atomic rename below preserves it, so the live
     // state file is never briefly world-readable.
     const fd = openSync(tmp, "wx", 0o600);
+    let committed = false;
     try {
       try {
         writeFileSync(fd, JSON.stringify(data));
@@ -334,8 +356,11 @@ export function fileStorage(
       }
       lock.assertHeld();
       renameSync(tmp, path);
+      committed = true;
     } finally {
-      rmSync(tmp, { force: true });
+      // A successful rename already removed the temp path. Cleanup must not
+      // turn a committed snapshot into a failure that callers roll back.
+      if (!committed) rmSync(tmp, { force: true });
     }
     tighten();
   };
@@ -360,12 +385,7 @@ export function fileStorage(
       assertOpen();
       lock.assertHeld();
       const previous = fresh(key);
-      data[key] = {
-        value,
-        ...(opts?.ttlSeconds
-          ? { exp: Date.now() + opts.ttlSeconds * 1000 }
-          : {}),
-      };
+      data[key] = makeEntry(value, opts?.ttlSeconds);
       try {
         persist();
       } catch (error) {
@@ -406,12 +426,7 @@ export function fileStorage(
         if (!previous) return true;
         delete data[key];
       } else {
-        data[key] = {
-          value: next,
-          ...(opts?.ttlSeconds
-            ? { exp: Date.now() + opts.ttlSeconds * 1000 }
-            : {}),
-        };
+        data[key] = makeEntry(next, opts?.ttlSeconds);
       }
       try {
         persist();

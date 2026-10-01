@@ -12,6 +12,13 @@ import { scriptSafeJson } from "./json.js";
 import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import type { ArtifactAllowlist, ArtifactKind } from "./types.js";
 
+/**
+ * Reserve for the injected global and Markdown theme beyond source and data.
+ * Sixteen 64-character document names appear twice, alongside timestamps and
+ * versions, and a 160-character title can expand sixfold when script-escaped.
+ */
+export const FRAME_OVERHEAD_BYTES = 8192;
+
 /** What a page reads as `window.artifact`, besides `data`. */
 export interface ArtifactGlobal {
   id: string;

@@ -327,6 +327,26 @@ describe("fileStorage", () => {
     });
   });
 
+  it.each(["set", "delete", "cas"])("retains a committed %s when temporary-file cleanup would fail", async (operation) => {
+    const path = tempStatePath();
+    const store = requireCas(openStore(path));
+    await store.set("k", "old");
+    const remove = fs.rmSync;
+    vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (String(target).endsWith(".tmp") && !existsSync(target)) {
+        throw new Error("postcommit cleanup failed");
+      }
+      return remove(target, options);
+    });
+    if (operation === "set") await expect(store.set("k", "new")).resolves.toBeUndefined();
+    else if (operation === "delete") await expect(store.delete("k")).resolves.toBeUndefined();
+    else await expect(store.compareAndSet("k", "old", "new")).resolves.toBe(true);
+    expect(await store.get("k")).toBe(operation === "delete" ? null : "new");
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(
+      operation === "delete" ? {} : { k: { value: "new" } },
+    );
+  });
+
   it("persists prototype-named keys across reopen", async () => {
     const path = tempStatePath();
     const store = openStore(path);
@@ -352,6 +372,17 @@ describe("fileStorage", () => {
     vi.spyOn(Date, "now").mockReturnValue(2_000);
     expect(await store.get("lease")).toBeNull();
     expect(await store.compareAndSet("lease", null, "new")).toBe(true);
+  });
+
+  it.each([Infinity, -Infinity, NaN, Number.MAX_VALUE])("refuses a non-finite expiration without altering committed state: %s", async (ttlSeconds) => {
+    const path = tempStatePath();
+    const store = requireCas(openStore(path));
+    await store.set("k", "old");
+    await expect(store.set("k", "new", { ttlSeconds })).rejects.toThrow("finite");
+    await expect(store.compareAndSet("k", "old", "new", { ttlSeconds })).rejects.toThrow("finite");
+    expect(await store.get("k")).toBe("old");
+    store.close();
+    expect(await openStore(path).get("k")).toBe("old");
   });
 
   it("refuses a separate process and releases locks on process exit", () => {
@@ -452,6 +483,24 @@ describe("fileStorage", () => {
       const quarantine = required(readdirSync(dir).find((file) => file.includes(".corrupt-")));
       expect(readFileSync(join(dir, quarantine), "utf8")).toBe(raw);
       expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ k: { value: "v" } });
+    },
+  );
+
+  it.each(["null", '"bad"', "[]", "{}", '{"value":17}', '{"value":"valid","exp":null}', '{"value":"valid","exp":"99999"}', '{"value":"valid","exp":1e400}'])(
+    "quarantines a state snapshot containing a malformed entry: %s",
+    async (entry) => {
+      const path = tempStatePath();
+      const raw = `{"healthy":{"value":"preserve"},"broken":${entry}}`;
+      writeFileSync(path, raw);
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const store = openStore(path);
+      expect(error).toHaveBeenCalledOnce();
+      expect(await store.get("healthy")).toBeNull();
+      await store.set("fresh", "committed");
+      const dir = join(path, "..");
+      const quarantine = required(readdirSync(dir).find((file) => file.includes(".corrupt-")));
+      expect(readFileSync(join(dir, quarantine), "utf8")).toBe(raw);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ fresh: { value: "committed" } });
     },
   );
 

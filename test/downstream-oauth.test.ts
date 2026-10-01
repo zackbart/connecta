@@ -29,8 +29,9 @@ import type {
   KVStorage,
   Logger,
 } from "../src/types.js";
-import { createTestConnecta, required, silentLogger } from "./helpers.js";
-import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
+import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
+import { identityStorageKey } from "../src/identity.js";
+import { httpDownstream, inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
@@ -58,6 +59,66 @@ async function storeCurrentOAuthValue(
 // KvOAuthProvider unit behavior (no authorization server involved).
 // ---------------------------------------------------------------------------
 describe("KvOAuthProvider over memoryStorage", () => {
+  it.each(["rotation", "revocation"])("issuer binding cannot overwrite a concurrent token %s", async mutation => {
+    const backing = memoryStorage();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const pauseBinding = async (key: string, value: string | null) => {
+      if (key === "oauth:tokens" && value?.includes('"issuer"') && value.includes('"old-refresh"')) {
+        entered.resolve();
+        await release.promise;
+      }
+    };
+    const storage: KVStorage = { ...backing,
+      async set(key, value, options) {
+        await pauseBinding(key, value);
+        await backing.set(key, value, options);
+      },
+      async compareAndSet(key, expected, next, options) {
+        await pauseBinding(key, next);
+        return backing.compareAndSet!(key, expected, next, options);
+      },
+    };
+    const old = { access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" };
+    const rotated = { ...old, access_token: "new", refresh_token: "new-refresh" };
+    const issuer = { issuer: "https://synthetic.test" };
+    await new KvOAuthProvider("svc", backing, REDIRECT).saveTokens(old);
+    const binding = new KvOAuthProvider("svc", storage, REDIRECT).tokens(issuer);
+    await entered.promise;
+    const writer = new KvOAuthProvider("svc", backing, REDIRECT);
+    if (mutation === "rotation") await writer.saveTokens(rotated, issuer);
+    else await writer.invalidateCredentials("tokens");
+    release.resolve();
+    await binding;
+    expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens(issuer)).toEqual(
+      mutation === "rotation" ? rotated : undefined,
+    );
+  });
+
+  it("retains cleanup lineage when the generation write commits before rejecting", async () => {
+    const backing = memoryStorage();
+    let loseAnswer = false;
+    const storage: KVStorage = { ...backing, async set(key, value, options) {
+      await backing.set(key, value, options);
+      if (key === "oauth:generation" && loseAnswer) {
+        loseAnswer = false;
+        throw new Error("generation answer lost");
+      }
+    } };
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    await p.resetAuthorization();
+    const previous = await p.generation();
+    await p.saveTokens({ access_token: "synthetic", token_type: "Bearer", refresh_token: "retired" });
+    const oldKey = oauthValueStorageKey("oauth:tokens", previous);
+    loseAnswer = true;
+    await expect(p.resetAuthorization()).rejects.toThrow("generation answer lost");
+    expect(await p.generation()).not.toBe(previous);
+    expect(await p.tokens()).toBeUndefined();
+    expect(await backing.get(oldKey)).not.toBeNull();
+    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    expect(await backing.get(oldKey)).toBeNull();
+  });
+
   function provider() {
     return new KvOAuthProvider("svc", memoryStorage(), REDIRECT);
   }
@@ -3941,6 +4002,223 @@ describe("OAuthRefreshCoordinator", () => {
       access_token: "access-current-new",
       refresh_token: "refresh-current-new",
     });
+  });
+
+  it.each(["status", "authorization", "before-flight", "aborted-persistence", "late-answer", "retained-view"])("retains a personal registry during %s and recovers idle eviction capacity", async phase => {
+    const issuer = "https://auth.example";
+    const mcpUrl = "https://downstream.example/mcp";
+    const owner = await identityStorageKey({ namespace: "synthetic", id: "alice" });
+    const backing = memoryStorage();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const readEntered = deferred<void>();
+    const readRelease = deferred<void>();
+    const writeEntered = deferred<void>();
+    const writeRelease = deferred<void>();
+    let pauseRead = false;
+    const storage: KVStorage = { ...backing,
+      async get(key) {
+        if (pauseRead && key === `principal:${owner}:conn:svc:oauth:generation`) {
+          pauseRead = false;
+          readEntered.resolve();
+          await readRelease.promise;
+        }
+        return backing.get(key);
+      },
+      async set(key, value, options) {
+        if ((phase === "aborted-persistence" || phase === "late-answer") && key.includes("oauth:tokens") && value.includes("rotated-refresh")) {
+          writeEntered.resolve();
+          await writeRelease.promise;
+        }
+        await backing.set(key, value, options);
+      },
+    };
+    const connector = remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, authScope: "personal", versionNegotiation: "legacy" });
+    const root = makeRegistry([connector], { storage });
+    let active = root.personalRegistry(owner);
+    const view = () => root.scoped({ connectorIds: "all", principalKey: owner });
+    const seeder = new KvOAuthProvider("svc", view().contextFor("svc", BASE).storage, REDIRECT);
+    await seeder.saveClientInformation({ client_id: "synthetic", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" }, { issuer });
+    await seeder.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" }, { issuer });
+    const retainedView = view();
+    if (phase === "retained-view") {
+      for (let i = 0; i < 1_024; i++) root.personalRegistry(`early:${i}`);
+      active = root.personalRegistry(owner);
+    }
+    const downstream = httpDownstream(() => {}, { url: mcpUrl });
+    let redemptions = 0;
+    let refusals = 0;
+    const bothRefused = deferred<void>();
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/.well-known/oauth-protected-resource") return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) return Response.json({ issuer,
+        authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+      if (url.href === `${issuer}/token`) {
+        redemptions++;
+        expect((init.body as URLSearchParams).get("refresh_token")).toBe("old-refresh");
+        entered.resolve();
+        await release.promise;
+        return Response.json({ access_token: "new", token_type: "Bearer", refresh_token: "rotated-refresh" });
+      }
+      if (new Headers(init.headers).get("authorization") !== "Bearer new") {
+        if (++refusals === 2) bothRefused.resolve();
+        return new Response(null, { status: 401,
+          headers: { "www-authenticate": 'Bearer resource_metadata="https://downstream.example/.well-known/oauth-protected-resource"' } });
+      }
+      return downstream.fetch(input, init);
+    });
+    const controller = new AbortController();
+    const authContext = view().contextFor("svc", BASE, {}, { signal: controller.signal });
+    const statusScopes = [{}, {}, {}];
+    const pending: Promise<unknown>[] = [];
+    try {
+      pauseRead = phase === "before-flight";
+      const first = phase === "authorization"
+        ? connector.startAuth!(authContext)
+        : (phase === "retained-view" ? retainedView : view()).statusFor("svc", BASE, statusScopes[0], { signal: controller.signal });
+      pending.push(first);
+      if (phase === "before-flight") await readEntered.promise;
+      else await entered.promise;
+      if (phase === "late-answer") {
+        controller.abort(new Error("synthetic owner left before answer"));
+        await first;
+      }
+      if (phase === "aborted-persistence") {
+        release.resolve();
+        await writeEntered.promise;
+        controller.abort(new Error("synthetic owner left"));
+      }
+      // Make Alice the oldest of 1,024 entries, then force an eviction.
+      for (let i = 0; i < 1_024; i++) root.personalRegistry(`filler:${i}`);
+      expect(root.personalRegistry(owner)).toBe(active);
+      if (phase === "late-answer") {
+        release.resolve();
+        await writeEntered.promise;
+        for (let i = 0; i < 1_024; i++) root.personalRegistry(`late:${i}`);
+        expect(root.personalRegistry(owner)).toBe(active);
+        writeRelease.resolve();
+        await vi.waitFor(async () => expect(await seeder.tokens()).toMatchObject({ refresh_token: "rotated-refresh" }));
+      }
+      const second = view().statusFor("svc", BASE, statusScopes[1]);
+      pending.push(second);
+      readRelease.resolve();
+      if (phase === "before-flight") await entered.promise;
+      if (phase !== "late-answer") await bothRefused.promise;
+      if (phase === "aborted-persistence") await second;
+      release.resolve();
+      writeRelease.resolve();
+      await Promise.all(pending);
+      expect((await view().statusFor("svc", BASE, statusScopes[2])).state).toBe("ok");
+      expect(redemptions).toBe(1);
+      // Once work drains, Alice can be evicted again. New owners still fit.
+      for (let i = 0; i < 1_024; i++) root.personalRegistry(`idle:${i}`);
+      expect(root.personalRegistry(owner)).not.toBe(active);
+    } finally {
+      readRelease.resolve(); release.resolve(); writeRelease.resolve();
+      await Promise.allSettled(pending);
+      await connector.closeScope?.(authContext);
+      await Promise.all(statusScopes.map(scope => connector.closeScope?.(active.contextFor("svc", BASE, scope))));
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["legacy", "modern", "disconnect"])("isolates personal registry refreshes with %s epochs while coalescing each owner's scopes", async epoch => {
+    const issuer = "https://auth.example";
+    const mcpUrl = "https://downstream.example/mcp";
+    const connector = remoteMcp("svc", {
+      url: mcpUrl, auth: { type: "oauth" }, authScope: "personal", versionNegotiation: "legacy",
+    });
+    const registry = makeRegistry([connector]);
+    const principalKeys = await Promise.all(["alice", "bob"].map(id =>
+      identityStorageKey({ namespace: "synthetic", id }),
+    ));
+    const ownerViews = principalKeys.map(principalKey => registry.scoped({ connectorIds: "all", principalKey }));
+    const scopes = ownerViews.map((view, owner) => [
+      view.contextFor("svc", BASE),
+      registry.scoped({ connectorIds: "all", principalKey: principalKeys[owner]! }).contextFor("svc", BASE),
+    ]);
+    const gates = [deferred<void>(), deferred<void>()];
+    const entered = [deferred<void>(), deferred<void>()];
+    const rejected = [deferred<void>(), deferred<void>()];
+    const counts = [0, 0];
+    const oldRequests = [0, 0];
+    const outcomes: Promise<unknown>[] = [];
+    for (let owner = 0; owner < 2; owner++) {
+      const storage = scopes[owner]![0]!.storage;
+      const p = new KvOAuthProvider("svc", storage, REDIRECT);
+      if (epoch !== "legacy") await p.resetAuthorization();
+      await p.saveClientInformation({ client_id: `client-${owner}`, redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" }, { issuer });
+      await p.saveTokens({ access_token: `old-${owner}`, token_type: "Bearer", refresh_token: `refresh-${owner}` }, { issuer });
+    }
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/.well-known/oauth-protected-resource") {
+        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+      }
+      if (url.href === `${issuer}/token`) {
+        const owner = Number((init.body as URLSearchParams).get("refresh_token")!.slice(-1));
+        counts[owner] = counts[owner]! + 1;
+        entered[owner]!.resolve();
+        await gates[owner]!.promise;
+        return Response.json({ access_token: `new-${owner}`, token_type: "Bearer", refresh_token: `rotated-${owner}` });
+      }
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+      const authorization = new Headers(init.headers).get("authorization")!;
+      const owner = Number(authorization.slice(-1));
+      if (authorization === `Bearer old-${owner}`) {
+        if (++oldRequests[owner]! === 2) rejected[owner]!.resolve();
+        return new Response(null, { status: 401, headers: { "www-authenticate":
+          'Bearer resource_metadata="https://downstream.example/.well-known/oauth-protected-resource"' } });
+      }
+      expect(authorization).toBe(`Bearer new-${owner}`);
+      const message = JSON.parse(String(init.body));
+      if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return Response.json({ jsonrpc: "2.0", id: message.id, result: message.method === "initialize"
+        ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "personal", version: "1" } }
+        : { tools: [] } });
+    });
+    try {
+      const a = Promise.all(scopes[0]!.map(scope => connector.listTools(scope)));
+      const aOutcome = a.then(value => ({ value }), error => ({ error }));
+      outcomes.push(aOutcome);
+      await Promise.all([entered[0]!.promise, rejected[0]!.promise]);
+      const b = Promise.all(scopes[1]!.map(scope => connector.listTools(scope)));
+      const bOutcome = b.then(value => ({ value }), error => ({ error }));
+      outcomes.push(bOutcome);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all([entered[1]!.promise, rejected[1]!.promise]),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Bob's refresh waited on Alice's partition")), 1_000); }),
+        ]);
+      } finally { clearTimeout(timer); }
+      expect(counts).toEqual([1, 1]);
+      if (epoch === "disconnect") {
+        await connector.disconnectAuth!(ownerViews[0]!.contextFor("svc", BASE));
+      }
+      gates[1]!.resolve();
+      expect(await bOutcome).toEqual({ value: [[], []] });
+      gates[0]!.resolve();
+      if (epoch === "disconnect") expect(await aOutcome).toHaveProperty("error");
+      else expect(await aOutcome).toEqual({ value: [[], []] });
+      expect(counts).toEqual([1, 1]);
+      for (let owner = 0; owner < 2; owner++) {
+        const saved = await new KvOAuthProvider("svc", scopes[owner]![0]!.storage, REDIRECT).tokens();
+        if (epoch === "disconnect" && owner === 0) expect(saved).toBeUndefined();
+        else expect(saved).toMatchObject({ access_token: `new-${owner}`, refresh_token: `rotated-${owner}` });
+      }
+    } finally {
+      gates.forEach(gate => gate.resolve());
+      await Promise.all(outcomes);
+      await Promise.all(scopes.flat().map(scope => connector.closeScope?.(scope)));
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shares exactly one rotating-token grant in each of two waves of eight scopes", async () => {

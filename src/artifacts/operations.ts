@@ -16,6 +16,8 @@
 // error; a throw means storage failed.
 
 import { sha256Hex, utf8Bytes } from "../run-journal.js";
+import type { ResolvedTheme } from "../branding.js";
+import { buildFrameDocument, FRAME_OVERHEAD_BYTES } from "./document.js";
 import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {
   ARTIFACT_ID,
@@ -46,8 +48,6 @@ const MAX_SWAP_ATTEMPTS = 8;
 const HISTORY_LIMIT = 20;
 /** Heads one listing call may examine while searching. */
 const LIST_SCAN_LIMIT = 1000;
-/** What the viewer adds around a page beyond its source and documents. */
-const FRAME_OVERHEAD_BYTES = 4096;
 /** Tombstones keep version numbers, so distinct names need their own bound. */
 const DOCUMENT_NAMES_LIMIT = 64;
 
@@ -1079,11 +1079,13 @@ export class ArtifactOperations {
   async page(
     id: string,
     pin: { view?: number; documents?: Record<string, number> } = {},
+    theme?: ResolvedTheme,
   ): Promise<
     Result<{
       head: ArtifactHeadRecord;
       view: ArtifactVersionRecord;
       source: string;
+      document: string;
       documents: Record<string, { record: ArtifactVersionRecord; value: unknown }>;
     }>
   > {
@@ -1097,16 +1099,61 @@ export class ArtifactOperations {
     const wanted: [string, number][] = pin.documents
       ? Object.entries(pin.documents)
       : liveDocuments(head).map(([name, record]) => [name, record.version]);
-    const documents: Record<string, { record: ArtifactVersionRecord; value: unknown }> = {};
+    // Historical streams were each valid when written, but their selected
+    // versions may never have coexisted. Bound the selection before loading
+    // its bodies, then check the actual bodies against today's configuration.
+    const selected: [string, ArtifactVersionRecord][] = [];
     for (const [name, version] of wanted) {
       const badName = this.#checkDocumentName(name);
       if (badName) return badName;
       const record = await this.#version(id, `doc:${name}`, head.documents[name], version);
       if (!record) return this.#notFound(id);
-      if (record.removed) continue;
-      documents[name] = { record, value: JSON.parse(await this.#body(record.body)) as unknown };
+      if (!record.removed) selected.push([name, record]);
     }
-    return { ok: true, head, view, source: await this.#body(view.body), documents };
+    const { limits } = this.#context;
+    const tooMany = checkDocumentTotals(selected.length, 0, limits);
+    if (tooMany) return invalidContent("The snapshot", finish({ errors: [tooMany], warnings: [] }));
+    const source = await this.#body(view.body);
+    const sourceBytes = utf8Bytes(source);
+    if (sourceBytes > limits.sourceBytes) {
+      return invalidContent("The snapshot", finish({ errors: [{
+        code: "E_TOO_LARGE", severity: "error",
+        message: `The view is ${sourceBytes} bytes; the limit is ${limits.sourceBytes}.`,
+      }], warnings: [] }));
+    }
+    const documents: Record<string, { record: ArtifactVersionRecord; value: unknown }> = {};
+    const data: Record<string, string> = {};
+    let dataBytes = 0;
+    for (const [name, record] of selected) {
+      const value = JSON.parse(await this.#body(record.body)) as unknown;
+      const checked = checkDocument(name, value, limits);
+      if (checked.error) return invalidContent("The snapshot", finish({ errors: [checked.error], warnings: [] }));
+      dataBytes += checked.bytes;
+      const totals = checkDocumentTotals(selected.length, dataBytes, limits);
+      if (totals) return invalidContent("The snapshot", finish({ errors: [totals], warnings: [] }));
+      documents[name] = { record, value };
+      data[name] = checked.text!;
+    }
+    const tooLarge = () => invalidContent("The snapshot", finish({ errors: [{
+      code: "E_TOO_LARGE", severity: "error",
+      message: `The rendered page exceeds the current limit of ${limits.renderedBytes} bytes.`,
+    }], warnings: [] }));
+    // For HTML, source plus data is a lower bound before frame construction.
+    // Markdown can shrink or expand, so its final document decides the bound.
+    if (dataBytes + (head.kind === "html" ? sourceBytes : 0) > limits.renderedBytes) return tooLarge();
+    const rendered = buildFrameDocument({
+      kind: head.kind, source, ...(theme ? { theme } : {}),
+      global: {
+        id, title: head.title, view: { version: view.version },
+        documents: Object.fromEntries(selected.map(([name, record]) => [name, {
+          version: record.version, updatedAt: record.at,
+        }])),
+        snapshot: pin.view !== undefined || pin.documents !== undefined,
+      },
+      data,
+    });
+    if (utf8Bytes(rendered) > limits.renderedBytes) return tooLarge();
+    return { ok: true, head, view, source, document: rendered, documents };
   }
 
   async list(options: {

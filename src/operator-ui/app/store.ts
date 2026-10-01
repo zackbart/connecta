@@ -224,9 +224,13 @@ function unreachable(loadFailure: "server" | "network"): void {
   set({ session: "ready", gate: null, refreshing: false, loadFailure });
 }
 
+let dataRevision = 0;
+
 /** Fetch `/ui/data`. The only route that decides gated versus signed in. */
 async function loadData(): Promise<void> {
-  const current = fence();
+  const identityCurrent = fence();
+  const revision = ++dataRevision;
+  const current = () => identityCurrent() && revision === dataRevision;
   set(state.session === "ready" ? { refreshing: true, loadFailure: null } : { loadFailure: null });
   let token;
   try {
@@ -275,7 +279,7 @@ async function loadData(): Promise<void> {
     return unreachable("server");
   }
   if (!current()) return;
-  if (!Array.isArray(data.connectors)) return unreachable("server");
+  if (!data || !Array.isArray(data.connectors)) return unreachable("server");
   set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
   rememberNav(data);
   void loadConnectorDetails(data, current, token);
@@ -307,6 +311,7 @@ async function mutate(options: {
   } catch (error) {
     if (!current()) return options.abandoned?.();
     set(options.failed(factsOf(error)));
+    if (options.reload) void refreshConnector(options.reload);
   }
 }
 
@@ -732,13 +737,21 @@ export async function loadArtifacts(reset: boolean): Promise<void> {
       ),
     });
   }
-  let payload: { artifacts?: UiArtifactRow[]; nextCursor?: string };
+  let payload: { artifacts?: UiArtifactRow[]; nextCursor?: string } | null;
   try {
     payload = (await res.json()) as typeof payload;
   } catch {
-    payload = {};
+    payload = null;
   }
   if (!current()) return;
+  if (!payload || !Array.isArray(payload.artifacts)) {
+    return set({
+      session: "ready",
+      gate: null,
+      artifactPhase: "error",
+      artifactNotice: failure(collectionFailureCopy("artifacts", { kind: "refused" }, productName)),
+    });
+  }
   set({
     session: "ready",
     gate: null,
@@ -1066,7 +1079,8 @@ export async function loadAccessTokens(): Promise<void> {
   try {
     const payload = await operatorRequest("/ui/access-tokens", "GET", current);
     if (!current()) return;
-    const tokens = payload?.accessTokens ?? [];
+    if (!Array.isArray(payload?.accessTokens)) throw new Error("The access token collection was not returned.");
+    const tokens = payload.accessTokens;
     // Creation, rename and revoke replace record objects. Prefer records
     // changed locally since this read began over its possibly older snapshot.
     const changed = state.tokens.filter(token => existing.get(token.id) !== token);

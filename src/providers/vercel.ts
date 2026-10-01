@@ -161,12 +161,13 @@ function vercelFailure(
   });
 }
 
-function parseBody(text: string, contentType: string | null): unknown {
+function parseBody(text: string, contentType: string | null, strict = false): unknown {
   if (!text) return undefined;
   try {
     return JSON.parse(text);
   } catch {
     if (contentType?.includes("stream+json") || contentType?.includes("ndjson")) {
+      if (strict) return parseStreamRows(text);
       const rows: unknown[] = [];
       for (const line of text.split("\n")) {
         if (!line.trim()) continue;
@@ -177,6 +178,13 @@ function parseBody(text: string, contentType: string | null): unknown {
         }
       }
       return rows;
+    }
+    if (strict) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "Vercel returned a malformed successful response.",
+        { retryable: false },
+      );
     }
     return text;
   }
@@ -228,15 +236,14 @@ async function callVercel(
   send: GuardedTransport,
   request: GuardedRequest,
   ctx: ConnectorContext,
-  parseSuccess?: (text: string) => unknown,
+  success: { parse?: (text: string) => unknown; raw?: boolean } = {},
 ): Promise<any> {
   return await send(request, ctx, async (response) => {
     const text = await response.text();
-    const payload = parseBody(text, response.headers.get("content-type"));
     if (!response.ok) {
-      throw vercelFailure(response.status, response.headers, payload);
+      throw vercelFailure(response.status, response.headers, parseBody(text, response.headers.get("content-type")));
     }
-    return parseSuccess ? parseSuccess(text) : payload;
+    return success.parse ? success.parse(text) : parseBody(text, response.headers.get("content-type"), !success.raw);
   });
 }
 
@@ -715,6 +722,7 @@ function tools(
             send,
             { method: "GET", ...rawRequest(args, defaultTeamId) },
             ctx,
+            { raw: true },
           )) ?? null,
       }),
     },
@@ -759,6 +767,7 @@ function tools(
               ...(args["body"] !== undefined ? { body: args["body"] } : {}),
             },
             ctx,
+            { raw: true },
           )) ?? null,
       }),
     },
@@ -821,6 +830,7 @@ function tools(
               rawBody: uploadBody(args),
             },
             ctx,
+            { raw: true },
           )) ?? null,
       }),
     },
@@ -1075,7 +1085,7 @@ function tools(
               query: team(args), headers: { Accept: "application/stream+json" },
             },
             { ...ctx, signal },
-            parseStreamRows,
+            { parse: parseStreamRows },
           ),
           {
             timeoutMs: RUNTIME_LOG_TIMEOUT_MS,

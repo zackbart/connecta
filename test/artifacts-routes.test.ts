@@ -4,6 +4,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
+import { buildFrameDocument } from "../src/artifacts/document.js";
+import { resolveTheme } from "../src/branding.js";
 import { ArtifactOperations } from "../src/artifacts/operations.js";
 import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
 import { bearerToken } from "../src/auth/bearer.js";
@@ -399,5 +401,86 @@ describe("mounting", () => {
     const logger = { debug() {}, info() {}, warn: vi.fn(), error() {} };
     await deploy({ auth: [], logger });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(/pages refuse every request/));
+  });
+});
+
+
+describe("historical snapshot route quotas", () => {
+  it("refuses a historical combination that exceeds current quotas before returning a viewer document", async () => {
+    const store = kvArtifactStore(memoryStorage());
+    const operations = new ArtifactOperations({ store, limits: resolveLimits(), allowlist: resolveAllowlist() });
+    const by = { kind: "test" };
+    expect(await operations.create({ id: "history", title: "History", kind: "html", source: page("History"), by }))
+      .toMatchObject({ ok: true });
+    const pins: string[] = [];
+    const value = "x".repeat(512 * 1024 - 3);
+    for (let n = 0; n < 32; n++) {
+      const name = `data${n}`;
+      expect(await operations.setDocuments({ id: "history", documents: { [name]: { baseVersion: 0, value } }, by }))
+        .toMatchObject({ ok: true });
+      expect(await operations.setDocuments({ id: "history", documents: { [name]: { baseVersion: 1, value: null } }, by }))
+        .toMatchObject({ ok: true });
+      pins.push(`d=${name}:1`);
+    }
+    const app = createConnecta({ connectors: [], executor, logger: "silent", publicUrl: BASE,
+      auth: bearerToken(TOKEN), ui: operatorUi(), artifacts: artifacts({ store }) });
+    const get = (query: string) => app.fetch(new Request(`${BASE}/artifacts/_api/view/history${query}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    }));
+    try {
+      const refused = await get(`?v=1&${pins.join("&")}`);
+      expect(refused.status).toBe(404);
+      expect(await refused.json()).toEqual({ error: "not found" });
+      expect((await get(`?v=1&${pins.slice(0, 9).join("&")}`)).status).toBe(404);
+      const valid = await get(`?v=1&${pins.slice(0, 2).join("&")}`);
+      expect(valid.status).toBe(200);
+      expect(await valid.json()).toMatchObject({ snapshot: true, documents: [
+        { name: "data0", version: 1 }, { name: "data1", version: 1 },
+      ] });
+      expect((await get("")).status).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+
+describe("reconfigured snapshot route rendering", () => {
+  it("uses the current theme when measuring an old Markdown snapshot's exact rendered quota", async () => {
+    const store = kvArtifactStore(memoryStorage());
+    const operations = new ArtifactOperations({ store, limits: resolveLimits(), allowlist: resolveAllowlist() });
+    const source = "# Historical\n" + "<old> ".repeat(100);
+    const by = { kind: "test" };
+    expect(await operations.create({ id: "themed-history", title: "History", kind: "markdown", source,
+      documents: { data: "old data" }, by })).toMatchObject({ ok: true });
+    expect(await operations.update({ id: "themed-history", baseVersion: 1, source: "# Current", by }))
+      .toMatchObject({ ok: true });
+    expect(await operations.setDocuments({ id: "themed-history", documents: { data: { baseVersion: 1, value: "new data" } }, by }))
+      .toMatchObject({ ok: true });
+    const record = (await store.versions("themed-history", "doc:data", { below: 2, limit: 1 }))[0]!;
+    const theme = { colorScheme: "dark" as const, accent: "#0a7d55" };
+    const document = buildFrameDocument({ kind: "markdown", source, theme: resolveTheme(theme),
+      global: { id: "themed-history", title: "History", view: { version: 1 },
+        documents: { data: { version: 1, updatedAt: record.at } }, snapshot: true },
+      data: { data: JSON.stringify("old data") },
+    });
+    const bytes = new TextEncoder().encode(document).length;
+    for (const renderedBytes of [bytes, bytes - 1]) {
+      const app = createConnecta({ connectors: [], executor, logger: "silent", publicUrl: BASE,
+        auth: bearerToken(TOKEN), ui: operatorUi({ branding: { theme } }),
+        artifacts: artifacts({ store, limits: { renderedBytes } }),
+      });
+      const get = (query: string) => app.fetch(new Request(`${BASE}/artifacts/_api/view/themed-history${query}`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }));
+      try {
+        const response = await get("?v=1&d=data:1");
+        expect(response.status).toBe(renderedBytes === bytes ? 200 : 404);
+        if (response.ok) expect(await response.json()).toMatchObject({ document });
+        expect((await get("")).status).toBe(200);
+      } finally {
+        await app.close();
+      }
+    }
   });
 });

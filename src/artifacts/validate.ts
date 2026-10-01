@@ -11,6 +11,7 @@ import { boundedEchoText } from "../errors.js";
 import { utf8Bytes } from "../run-journal.js";
 import { lineLocator, scanHtml, type HtmlAttribute } from "./html-scan.js";
 import { jsonProblem, scriptSafeJson } from "./json.js";
+import { FRAME_OVERHEAD_BYTES } from "./document.js";
 import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {
   DEFAULT_ARTIFACT_ALLOWLIST,
@@ -35,8 +36,6 @@ export function validDocumentName(name: unknown): name is string {
 
 const MAX_REPORTED = 20;
 const QUOTE_BYTES = 120;
-/** What the viewer adds around a page beyond its source and documents. */
-const FRAME_OVERHEAD_BYTES = 4096;
 
 const quote = (text: string) => boundedEchoText(text, QUOTE_BYTES);
 const count = (n: number) => n.toLocaleString("en-US");
