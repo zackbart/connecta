@@ -93,6 +93,15 @@ describe("Worker example D1 storage", () => {
     expect(await storage.list?.("a_")).toEqual(["a_b"]);
   });
 
+  it("matches embedded NUL bytes in list prefixes literally", async () => {
+    const storage = await open();
+    await storage.set("a\0b:one", "1");
+    await storage.set("a\0c:two", "2");
+    await storage.set("a:other", "3");
+    expect(await storage.list?.("a\0b:")).toEqual(["a\0b:one"]);
+    expect(await storage.list?.("a\0")).toEqual(["a\0b:one", "a\0c:two"]);
+  });
+
   it("removes expired rows physically on a later write", async () => {
     const storage = await open();
     await storage.set("old", "v", { ttlSeconds: -1 });

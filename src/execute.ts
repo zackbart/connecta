@@ -1447,7 +1447,22 @@ function finishedRun(
   outcome: ExecuteResult,
   { emitted, diagnostics, invocationFailures }: RunReport,
 ): ToolResult {
+  if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
+    return failureResponse("Executor failed: expected an ExecuteResult object.", {
+      emitted,
+      diagnostics,
+      code: "executor_failed",
+    });
+  }
   const logs = executeLogs(outcome.logs);
+  if (outcome.error !== undefined && typeof outcome.error !== "string") {
+    return failureResponse("Executor failed: ExecuteResult.error must be a string.", {
+      logs,
+      emitted,
+      diagnostics,
+      code: "executor_failed",
+    });
+  }
   if (outcome.error !== undefined) {
     // Executor bridges necessarily reduce thrown host errors to strings.
     // Match that terminal string back to the request-local typed failure so

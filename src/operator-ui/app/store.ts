@@ -617,9 +617,12 @@ export function testCredential(connector: string): Promise<void> {
 
 /* Activity ---------------------------------------------------------------- */
 
+let activityRevision = 0;
 export async function loadActivity(reset: boolean): Promise<void> {
   if (!state.data?.activityEnabled) return;
-  const current = fence();
+  const identityCurrent = fence();
+  const revision = ++activityRevision;
+  const current = () => identityCurrent() && revision === activityRevision;
   set({
     activityPhase: "loading",
     activityNotice: null,
@@ -636,6 +639,7 @@ export async function loadActivity(reset: boolean): Promise<void> {
       current,
     );
     if (!current()) return;
+    if (!payload || !Array.isArray(payload.events)) throw new RequestFailure("refused");
     set({
       activityPhase: "ready",
       activityEvents: [

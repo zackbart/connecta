@@ -26,6 +26,7 @@ import type {
   AdmittingExecutor,
   Connector,
   Executor,
+  ExecuteResult,
   ExecutorLease,
   ExecutorProvider,
 } from "../src/types.js";
@@ -1942,6 +1943,25 @@ describe("execute_code handler", () => {
     expect(required(out.content[0]).text).toContain("kaboom");
     expect(required(out.content[0]).text).toContain("step 1");
   });
+
+  it.each([null, undefined, 42, [], { result: undefined, error: 42 }])(
+    "reports a malformed executor reply as a structured failure: %j",
+    async (reply) => {
+      const handler = createExecuteTool(
+        makeRegistry([calcConnector]),
+        BASE,
+        { execute: async () => reply as unknown as ExecuteResult },
+        silentLogger,
+      );
+      const out = await handler({ code: "async () => 1", diagnostics: true });
+      expect(out.isError).toBe(true);
+      expect(out.structuredContent).toMatchObject({
+        error: { code: "executor_failed", retryable: false },
+        diagnostics: { operations: [] },
+      });
+      expect(required(out.content[0]).text).toContain("ExecuteResult");
+    },
+  );
 
   it("turns an unserializable result into a structured error, keeping logs", async () => {
     const registry = makeRegistry([calcConnector]);

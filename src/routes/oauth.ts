@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { closeConnectorScope } from "../connector-scope.js";
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
@@ -157,79 +158,83 @@ async function finishOAuthCallback(
     await equalizeRefusalCost(connectorContext);
     return refused();
   }
-  const expectedPrincipalKey = callbackTarget?.principalKey;
-  // A browser returning from consent normally has no MCP Authorization
-  // header. An interactive bearer provider therefore answers 401 here; state
-  // and the saved state-to-principal handoff still prove ownership below.
-  // Rejecting 401 would break that callback. A 403 is an explicit denial.
-  const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
-  if (browserIdentity.ok) {
-    try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
-    if (!mayManageConnector(browserIdentity, connector) || (expectedPrincipalKey && browserIdentity.principalKey !== expectedPrincipalKey)) return refused();
-  } else if (browserIdentity.response.status === 403 && opts.auth.some(provider => provider.interactiveOperator)) {
-    return refused();
-  }
-  // CSRF / login-fixation guard: this route is intentionally public, so verify
-  // the `state` matches the flow connecta started BEFORE exchanging the code.
-  if (!connector.verifyState) {
-    await equalizeRefusalCost(connectorContext);
-    opts.logger.warn(
-      `[connecta] refused an OAuth callback for connector ` +
-        `${loggableValue(id)} with 400: it implements finishAuth but no ` +
-        "verifyState, so connecta cannot establish that it started this flow. " +
-        "No authorization code was exchanged. Implement verifyState before " +
-        "trying again.",
-    );
-    return refused();
-  }
-  let stateMatches: boolean;
   try {
-    stateMatches = await connector.verifyState(state, connectorContext);
-  } catch (err) {
-    opts.logger.warn(
-      `[connecta] refused an OAuth callback for connector ` +
-        `${loggableValue(id)} with 400: verifyState threw ` +
-        `${loggableValue(msg(err))}. No authorization code was exchanged. ` +
-        "Re-run authorization from connecta and check the verifier if it " +
-        "fails again.",
-    );
-    return refused();
-  }
-  if (!stateMatches) {
-    opts.logger.warn(
-      `[connecta] refused an OAuth callback for connector ` +
-        `${loggableValue(id)} with 400: ` +
-        (state === null
-          ? "the state parameter was missing"
-          : "the state did not match the pending authorization flow") +
-        ". No authorization code was exchanged. Re-run authorization from " +
-        "connecta and try again.",
-    );
-    return refused();
-  }
-  if (connector.authScope === "personal") {
+    const expectedPrincipalKey = callbackTarget?.principalKey;
+    // A browser returning from consent normally has no MCP Authorization
+    // header. An interactive bearer provider therefore answers 401 here; state
+    // and the saved state-to-principal handoff still prove ownership below.
+    // Rejecting 401 would break that callback. A 403 is an explicit denial.
+    const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
+    if (browserIdentity.ok) {
+      try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
+      if (!mayManageConnector(browserIdentity, connector) || (expectedPrincipalKey && browserIdentity.principalKey !== expectedPrincipalKey)) return refused();
+    } else if (browserIdentity.response.status === 403 && opts.auth.some(provider => provider.interactiveOperator)) {
+      return refused();
+    }
+    // CSRF / login-fixation guard: this route is intentionally public, so verify
+    // the `state` matches the flow connecta started BEFORE exchanging the code.
+    if (!connector.verifyState) {
+      await equalizeRefusalCost(connectorContext);
+      opts.logger.warn(
+        `[connecta] refused an OAuth callback for connector ` +
+          `${loggableValue(id)} with 400: it implements finishAuth but no ` +
+          "verifyState, so connecta cannot establish that it started this flow. " +
+          "No authorization code was exchanged. Implement verifyState before " +
+          "trying again.",
+      );
+      return refused();
+    }
+    let stateMatches: boolean;
     try {
-      await opts.registry.clearOAuthHandoff(id, state);
+      stateMatches = await connector.verifyState(state, connectorContext);
     } catch (err) {
       opts.logger.warn(
         `[connecta] refused an OAuth callback for connector ` +
-          `${loggableValue(id)} with 500: its principal handoff could not be ` +
-          `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
+          `${loggableValue(id)} with 400: verifyState threw ` +
+          `${loggableValue(msg(err))}. No authorization code was exchanged. ` +
+          "Re-run authorization from connecta and check the verifier if it " +
+          "fails again.",
       );
-      return html("handoff_failed", opts, connector);
+      return refused();
     }
-  }
-  try {
-    await connector.finishAuth(code, connectorContext, url.searchParams);
-    await callbackRegistry!.invalidateStored(id);
-    return html("connected", opts, connector);
-  } catch (err) {
-    // The page names the reason and nothing else; what the exchange threw can
-    // quote a token endpoint's body, so it goes only to the operator log.
-    opts.logger.warn(
-      `[connecta] OAuth callback for connector ${loggableValue(id)} failed ` +
-        `with 500: the authorization code exchange threw ${loggableValue(msg(err))}.`,
-    );
-    return html("exchange_failed", opts, connector);
+    if (!stateMatches) {
+      opts.logger.warn(
+        `[connecta] refused an OAuth callback for connector ` +
+          `${loggableValue(id)} with 400: ` +
+          (state === null
+            ? "the state parameter was missing"
+            : "the state did not match the pending authorization flow") +
+          ". No authorization code was exchanged. Re-run authorization from " +
+          "connecta and try again.",
+      );
+      return refused();
+    }
+    if (connector.authScope === "personal") {
+      try {
+        await opts.registry.clearOAuthHandoff(id, state);
+      } catch (err) {
+        opts.logger.warn(
+          `[connecta] refused an OAuth callback for connector ` +
+            `${loggableValue(id)} with 500: its principal handoff could not be ` +
+            `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
+        );
+        return html("handoff_failed", opts, connector);
+      }
+    }
+    try {
+      await connector.finishAuth(code, connectorContext, url.searchParams);
+      await callbackRegistry!.invalidateStored(id);
+      return html("connected", opts, connector);
+    } catch (err) {
+      // The page names the reason and nothing else; what the exchange threw can
+      // quote a token endpoint's body, so it goes only to the operator log.
+      opts.logger.warn(
+        `[connecta] OAuth callback for connector ${loggableValue(id)} failed ` +
+          `with 500: the authorization code exchange threw ${loggableValue(msg(err))}.`,
+      );
+      return html("exchange_failed", opts, connector);
+    }
+  } finally {
+    await closeConnectorScope(connector, connectorContext, context.defer);
   }
 }

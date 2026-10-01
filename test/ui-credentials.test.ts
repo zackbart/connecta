@@ -3,6 +3,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
+import type { ConnectorContext } from "../src/types.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import {
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -26,6 +27,35 @@ import {
 } from "./fixtures/ui.js";
 
 describe("status UI credential management", () => {
+  it.each([false, true])("closes the credential test scope when the hook throws=%s", async throws => {
+    const storage = memoryStorage();
+    await new CredentialVault(storage, CREDENTIAL_KEY).set("key", "test-secret", "operator");
+    let active = 0;
+    const testCredential = vi.fn(async (_value: string, _ctx: ConnectorContext) => {
+      active++;
+      if (throws) throw new Error("test failed");
+      return { ok: true };
+    });
+    const closeScope = vi.fn(async () => {
+      active--;
+      throw new Error("cleanup failed");
+    });
+    const connector = { ...credentialConnector(), id: "key", testCredential, closeScope };
+    const connecta = createTestConnecta({
+      connectors: [connector],
+      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      storage,
+      publicUrl: BASE,
+      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+    });
+    const response = await credentialRequest(connecta, "/ui/credentials/key/test", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: !throws });
+    expect(closeScope).toHaveBeenCalledTimes(1);
+    expect(closeScope).toHaveBeenCalledWith(testCredential.mock.calls[0]?.[1]);
+    expect(active).toBe(0);
+  });
+
   it("keeps a stored superset usable, testable, and flagged as leftover", async () => {
     // The redeploy issue #79's review probed: the connector used to declare
     // { email, apiKey } and now declares only { apiKey }. The stored secret

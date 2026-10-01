@@ -51,7 +51,9 @@ const runExit = Effect.runPromiseExitWith(
 );
 
 function abortReason(signal: AbortSignal | undefined): unknown {
-  return signal?.reason ?? new DOMException("aborted", "AbortError");
+  return signal && signal.reason !== undefined
+    ? signal.reason
+    : new DOMException("aborted", "AbortError");
 }
 
 /**
@@ -211,6 +213,9 @@ export function withDeadlineEffect<A, E, R>(
   options: DeadlineOptions,
 ): Effect.Effect<A, unknown, R> {
   return Effect.suspend(() => {
+    // Do not dispatch work that already lost its caller. The operation is the
+    // first race contender and can finish before the abort contender starts.
+    if (options.signal?.aborted) return Effect.fail(abortReason(options.signal));
     const controller = new AbortController();
     const forwardAbort = () => controller.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", forwardAbort, { once: true });

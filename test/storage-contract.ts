@@ -113,6 +113,19 @@ export function compareAndSetContract(
     expect(await storage.compareAndSet("lease", null, "next")).toBe(true);
   });
 
+  it("refuses non-finite or overflowing TTLs without changing a live value", async () => {
+    const storage = await open();
+    for (const ttlSeconds of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_VALUE]) {
+      await storage.set("ttl", "original");
+      await expect(storage.set("ttl", "replacement", { ttlSeconds })).rejects.toThrow();
+      expect(await storage.get("ttl")).toBe("original");
+      await expect(storage.compareAndSet("ttl", "original", "replacement", { ttlSeconds })).rejects.toThrow();
+      expect(await storage.get("ttl")).toBe("original");
+    }
+    expect(await storage.compareAndSet("ttl", "different", "replacement", { ttlSeconds: Number.NaN })).toBe(false);
+    expect(await storage.compareAndSet("ttl", "original", null, { ttlSeconds: Number.NaN })).toBe(true);
+  });
+
   it("replaces the previous expiry exactly as set would", async () => {
     const advance = fakeClock();
     const storage = await open();

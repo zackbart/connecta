@@ -5360,6 +5360,35 @@ describe("/oauth/callback/<id> route", () => {
     return { connecta, storage };
   }
 
+  it.each(["connected", "mismatch", "verify failure", "exchange failure"])(
+    "closes the callback's connector scope after %s",
+    async outcome => {
+      let active = 0;
+      let opened: ConnectorContext | undefined;
+      const closeScope = vi.fn(async (ctx: ConnectorContext) => {
+        expect(ctx).toBe(opened);
+        active--;
+        throw new Error("cleanup failed");
+      });
+      const connector = callbackConnector("svc", async () => {
+        if (outcome === "exchange failure") throw new Error("exchange failed");
+      }, async (_state, ctx) => {
+        opened = ctx;
+        active++;
+        if (outcome === "verify failure") throw new Error("verification failed");
+        return outcome !== "mismatch";
+      });
+      connector.closeScope = closeScope;
+      const connecta = createTestConnecta({ publicUrl: BASE, logger: silentLogger, connectors: [connector] });
+      const response = await connecta.fetch(new Request(
+        `${BASE}/oauth/callback/svc?code=abc&state=verified-state`,
+      ));
+      expect(response.status).toBe(outcome === "connected" ? 200 : outcome === "exchange failure" ? 500 : 400);
+      expect(closeScope).toHaveBeenCalledTimes(1);
+      expect(active).toBe(0);
+    },
+  );
+
   it("matching state + code → 200 'Connected' and calls finishAuth", async () => {
     const spy = vi.fn();
     const { connecta, storage } = makeConnecta(spy);
