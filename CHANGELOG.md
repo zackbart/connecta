@@ -2,25 +2,18 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.27.0 — 2026-10-01
 
-The runtime now uses stable Effect v4, with fixes for cancellation, resumed-write
-limits, storage failures, and operator pages. Deployment APIs and the eight MCP
-tools keep their existing contracts; no configuration migration is required.
-Duplicate API tool names now fail at construction, and doctor refuses redirects
-instead of forwarding deployment credentials. Artifact render checks use the
-deployment's viewer theme.
+This minor release moves the runtime to stable Effect v4 and fixes execution,
+OAuth, storage, and operator recovery. Deployment APIs and the eight MCP tools
+keep their existing contracts, and the Node template now pins 0.27.0.
+Development requires TypeScript 5.9.3 or newer within 5.x.
 
-A second reliability pass isolates personal OAuth refreshes, preserves token
-rotations during legacy migration, and hardens file snapshots and operator
-recovery. Artifact quotas now reserve 8 KiB for frame metadata, reducing the
-available content allowance by 4 KiB, and apply to historical snapshots too.
-
-A third pass prevents dispatch after cancellation, rejects malformed executor
-replies, and closes connector scopes after human auth operations. OAuth handoffs
-claim ownership atomically when storage supports it. Activity reads now recover
-from malformed pages and ignore superseded pagination, and memory and D1 storage
-reject invalid expiry values.
+Duplicate API tool names now fail at construction. Memory, file, and D1 storage
+refuse TTLs that cannot produce finite expirations. Artifact quotas reserve 8 KiB
+for frame metadata, reducing the available content allowance by 4 KiB, and apply
+to historical snapshots too. Artifact render checks use the deployment's viewer
+theme.
 
 ### Changed
 
@@ -42,7 +35,6 @@ reject invalid expiry values.
   pagination responses (#666) (#667).
 - Reject invalid TTLs in memory and D1 storage before mutation, and match NUL
   bytes literally in D1 list prefixes (#668) (#669).
-
 - Enforce catalog count and byte ceilings even when discovery is invalidated
   while the listing is in flight (#644).
 - Retain OAuth cleanup lineage after uncertain storage commits, preserve
