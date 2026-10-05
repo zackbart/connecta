@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## 0.28.0 — Unreleased
+## 0.28.0 — 2026-10-04
 
 This minor release removes program pauses ([#672](https://github.com/zackbart/connecta/issues/672)).
 `execute_code` programs run explicitly read-only tools and the writes
@@ -24,7 +24,7 @@ writes, and a run never returns `{ paused: … }`. `Date.now()` and
 per run. A deployment that sets neither option and whose programs only read
 can ignore all of this: approval exemptions, `execute.maxWrites`, storage
 contracts, and the D1 activity schema are unchanged, and any paused runs left
-in storage expire on their own TTL.
+in storage expire on their own TTL. The Node template now pins 0.28.0.
 
 ### Removed
 
