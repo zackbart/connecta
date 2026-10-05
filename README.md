@@ -18,10 +18,10 @@ internal API, anything you have connected. Here is what happens:
 3. Only the answer comes back into the agent's context — not raw pages of
    API output.
 4. If the agent wants to change something — create, update, delete — it
-   cannot do that from a program. The program refuses the write before
-   anything is sent and hands back the exact call; the agent makes it through
-   `call_destructive_tool`, one visible call your MCP client can put in front
-   of you first.
+   cannot do that from a program, unless your config exempts that tool. The
+   program refuses the write before anything is sent and hands back the exact
+   call; the agent makes it through `call_destructive_tool`, one visible call
+   your MCP client can put in front of you first.
 
 Credentials never leave the server. The program never sees them, and neither
 does the agent.
@@ -31,7 +31,7 @@ flowchart TB
     Client["Your MCP client<br/>Claude, Cursor, …"]
 
     subgraph Connecta["Connecta — one endpoint, seven tools, your credentials"]
-        Sandbox["execute_code<br/>the agent's program runs here<br/>read-only tools only"]
+        Sandbox["execute_code<br/>the agent's program runs here<br/>read-only tools, plus writes<br/>your config exempts"]
         Explicit["call_destructive_tool<br/>one visible call per write<br/>your client can ask you first"]
     end
 
