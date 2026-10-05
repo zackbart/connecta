@@ -146,15 +146,14 @@ const crossConnectorJoin: ActiveTask = {
   },
 };
 
-export const STALE = ["WEB-103", "WEB-105", "WEB-107", "WEB-110"];
+const STALE = ["WEB-103", "WEB-105", "WEB-107", "WEB-110"];
 
 /**
  * The stale-close outcome, whatever route produced it: exactly the stale set
  * closed, each close landing once, no other tracker writes, and one #eng
- * summary after the last close naming exactly what was closed. The P3 tasks
- * grade the same outcome reached through paused programs.
+ * summary after the last close naming exactly what was closed.
  */
-export function staleCloseChecks(world: World): Check[] {
+function staleCloseChecks(world: World): Check[] {
   const closed = world.tracker.issues
     .filter((issue) => issue.closedBy === "agent")
     .map((issue) => issue.id)

@@ -2,30 +2,22 @@ import { boundedEchoText } from "./errors.js";
 import type { Connector } from "./types.js";
 
 const ROUTE =
-  "Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Inspect unfamiliar read results with a small sample before proceeding.";
+  "Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
 const RECOVERY =
   'After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
 /**
- * The MCP instructions of a deployment whose programs pause at writes. The
- * route sentence is its own, not ROUTE's: with writes in programs, "one known
- * write" is the only work left for call_destructive_tool, and an agent told
- * only that programs *may* write reads each write after a lookup as a known
- * one and sends them one prompt at a time.
+ * The always-loaded MCP `instructions` string. A program runs reads and the
+ * writes config exempts from approval; every other write is its own top-level
+ * call_destructive_tool, where the host's permission prompt is the approval.
  */
-export const CONNECTA_INSTRUCTIONS = `Choose a route before discovery. One known read: call_tool; one known write: call_destructive_tool. Everything else starts with execute_code to discover, call, and return the answer: unknown addresses, reduction, multiple or dependent calls, and writes that follow reads. Keep authorized batches in one program. Sample unfamiliar reads. Reduce a one-time write's full result there or page a direct call with get_result; never repeat it to recover output. Non-exempt program writes pause unsent; resume_execution with the returned token, address, and args approves the call and continues the program. Approval "tool" covers later same-address calls in this run; other approval-required writes need their own approval. ${RECOVERY}`;
-
-/**
- * The instructions of a deployment without resumable writes, whose programs
- * refuse every write: the routing it always had.
- */
-export const READ_ONLY_PROGRAM_INSTRUCTIONS = `${ROUTE} Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. ${RECOVERY}`;
+export const CONNECTA_INSTRUCTIONS = `${ROUTE} Only readOnlyHint: true tools and config-exempt writes run there. Keep catalog inspection and other unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. Never repeat a write to recover its output. ${RECOVERY}`;
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
 ## The surface
 
-Eight tools: \`execute_code\`, \`resume_execution\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
+Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
 
 Follow the MCP instructions for routing. Read at most once for syntax or repair.
 
@@ -55,16 +47,14 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
-Only explicitly \`readOnlyHint: true\` or config-exempt calls run unasked. With resumable writes, non-exempt approval-required calls pause unsent; \`resume_execution\` repeats the pending address, args, and token. Without them, use \`call_destructive_tool\` for writes. Keep each authorized batch in one resumable program, final post included. \`approval: "call"\` covers one write; \`approval: "tool"\` covers later same-address calls in this run. Other approval-required writes need approval. Replay requires the same call order. Sandbox code cannot widen host gates.
+Only explicitly \`readOnlyHint: true\` calls and writes the deployment's config exempts from approval run in a program. Any other write is refused before it is sent: send it through top-level \`call_destructive_tool\`, where the host asks. Sandbox code cannot widen host gates.
 
 ## Errors and repair
 
 Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
 
 - \`destructive_tool_requires_approval\`: stop and send the returned address through top-level \`call_destructive_tool\`.
-- \`execution_paused\`: the run already stopped at a write; let it end.
-- \`write_outcome_unknown\`: sent but unanswered, never re-sent; check the target.
-- \`execution_expired\`, \`_diverged\`, \`_interrupted\`: check \`writes\`, then rerun.
+- \`write_outcome_unknown\`: an exempt write was sent but unanswered and is never re-sent; check the target.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
 - Truncated direct call: page with \`get_result\`, never repeat a write. A program result has no page handle; reduce a read in a new program. After a write, check the target or report the gap.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
@@ -78,8 +68,6 @@ The \`execute_code\` description states this deployment's host-call and write bu
 ## Runtime portability
 
 Portable code uses standard JavaScript builtins, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
-
-\`Date.now()\` is the run's start and does not advance; \`Math.random()\` is seeded per run.
 
 ## Examples
 
@@ -122,11 +110,6 @@ Connector guides appear in \`skills({})\` and discovery with an exact \`guide\` 
 
 /** Shared Connecta routing guidance, byte-identical across deployments. */
 export const USAGE_SKILL = USAGE_SKILL_BASE + CONNECTOR_GUIDES_SECTION;
-
-/** The always-loaded MCP `instructions` string. */
-export function instructionsFor(resumableWrites: boolean): string {
-  return resumableWrites ? CONNECTA_INSTRUCTIONS : READ_ONLY_PROGRAM_INSTRUCTIONS;
-}
 
 /** True when at least one of `connectors` carries a usage guide. */
 export function hasConnectorGuides(connectors: readonly Connector[]): boolean {

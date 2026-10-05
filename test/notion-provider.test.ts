@@ -26,7 +26,7 @@ import {
 import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import { runEdge } from "../src/runtime/run.js";
-import { writeStateOf } from "../src/resumable.js";
+import { writeStateOf } from "../src/exempt-writes.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 import type { Connector, ConnectorContext } from "../src/types.js";

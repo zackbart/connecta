@@ -5,13 +5,12 @@ Connecta’s scope, refusals, and invariants. Contradictions require a design de
 ## What this is
 
 - **One MCP endpoint.** Agents reach configured connectors through JavaScript,
-  a required executor, and eight meta-tools.
+  a required executor, and seven meta-tools.
 - **Config-as-code.** One tenant and connector set; identities get
   config-derived views. Maintained providers, `remoteMcp()`, and `api()` share
   one connector contract.
-- **Safe by default.** Programs run only read-only or config-exempt tools
-  unasked; others pause for `resume_execution` or cross
-  `call_destructive_tool`. The host owns approval.
+- **Safe by default.** Programs run only read-only or config-exempt tools;
+  every other write crosses `call_destructive_tool`. The host owns approval.
 - **One fetch-native core.** Web APIs on Node and Workers; platform code and
   optional features behind explicit subpaths; Effect inside, Promises outside.
 - **Human auth management.** Optional pages show status and payload-free history.
@@ -34,7 +33,7 @@ carries them.
 | --- | --- | --- |
 | OpenAPI / GraphQL ingestion | refused | the disease is a document-authored tool nobody chose; hand-written literals, even through a shared factory, are still authorship |
 | Multi-tenancy / account model | refused | one deployment per tenant; inbound auth owns identity |
-| Approvals and pauses | accepted | a program pauses host-side at its first unapproved write until the destructive-annotated `resume_execution` repeats it; an expiring journal replays it, never re-sending unknown outcomes ([#565](https://github.com/zackbart/connecta/issues/565)) |
+| Approvals and pauses | removed | hosts approve per call, so under always-allow the resume prompt was a rubber stamp that cost a round trip and a replay; programs stay read-only and each write is its own `call_destructive_tool` ([#672](https://github.com/zackbart/connecta/issues/672), superseding [#565](https://github.com/zackbart/connecta/issues/565)) |
 | Approval exemptions | accepted | config-only, program-only, never read-only elsewhere ([#566](https://github.com/zackbart/connecta/issues/566)) |
 | Runtime connector registration | refused | config-as-code is the security model |
 | Optional deployment modules | accepted | typed slots select UI, activity, vault, and inbound auth; core keeps discovery, execution, invocation, and enforcement |
@@ -78,8 +77,8 @@ design decision.
 
 - **Fail-closed read-only.** A missing, false, or contradictory annotation never gets the benefit of the doubt.
 - **Generated code cannot mint capabilities.** Admission, credentials, and classification are enforced below the sandbox.
-- **Only explicitly read-only or config-exempt work runs unasked in the sandbox.** Others pause or cross `call_destructive_tool`.
-- **Nothing request-bound survives a request.** No transport, stream, signal, or awaited promise outlives it; a paused journal is data, not a request.
+- **Only explicitly read-only or config-exempt work runs in the sandbox.** Every other write crosses `call_destructive_tool`.
+- **Nothing request-bound survives a request.** No transport, stream, signal, or awaited promise outlives it.
 - **A downstream catalog is complete or it is a failure.** A partial one is never cached, persisted, or served.
 - **Activity is payload-free by construction.** The event type has nowhere to put arguments, results, code, or raw errors.
 - **An observed shape is never a declaration.** Names and broad types only, labeled, and gone behind any declared schema.

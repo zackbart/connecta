@@ -7,7 +7,7 @@ import { Registry } from "./registry.js";
 import { intersectAccess, parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess, ConnectorGrant, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
-import { createProgramRunner } from "./execute.js";
+import { createExecuteTool, runClaimMs } from "./execute.js";
 import {
   droppedBrandingUrls,
   droppedThemeTokens,
@@ -27,10 +27,7 @@ import type {
   ArtifactsModule,
   OperatorSurface,
 } from "./module-contracts.js";
-import {
-  DEFAULT_MAX_WRITES,
-  DEFAULT_PAUSED_RUN_TTL_SECONDS,
-} from "./resumable.js";
+import { DEFAULT_MAX_WRITES } from "./exempt-writes.js";
 import { disposeEdgeRuntime } from "./runtime/run.js";
 import { NO_EXEMPTIONS, type ApprovalPolicy } from "./tool-safety.js";
 import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
@@ -145,43 +142,24 @@ export interface ConnectaExecuteConfig {
    */
   watchdogMs?: number;
   /**
-   * Let programs write. A call to a tool that is not explicitly read-only
-   * pauses the run before anything is sent and returns the exact write with
-   * a token; `resume_execution` repeating it is the approval, and the
-   * program replays from a journal to send it and continue. Needs `storage`
-   * with `compareAndSet`, because two resumes of one pause must send its
-   * writes at most once. Omitted, it is on exactly when the storage has one
-   * (a single startup warning says when it is not); `true` over storage
-   * without one refuses to construct; `false` keeps E4's refusal.
-   * `resume_execution` is listed either way.
-   */
-  resumableWrites?: boolean;
-  /**
-   * Consequential calls one run may send, on top of the host-call budget
-   * every call already spends. Default 10. A replayed write spends it again,
-   * so it bounds the run, not each play. Invalid values fall back to the
-   * default.
+   * Config-exempt writes one program may send, on top of the host-call
+   * budget every call already spends. Default 10. Invalid values fall back
+   * to the default.
    */
   maxWrites?: number;
   /**
-   * How long a paused run can be resumed, in seconds from its first pause.
-   * Default 1_800. A later pause in the same run keeps the first deadline, so
-   * a run never replays reads older than this. Invalid values fall back to
-   * the default.
-   */
-  pausedRunTtlSeconds?: number;
-  /**
-   * Which writes a program may make without pausing for approval. Keys are
+   * Which writes a program may make without asking. A program runs only
+   * explicitly read-only tools and these; every other write is refused and
+   * goes through `call_destructive_tool`, where the host asks. Keys are
    * connector ids (all of that connector's tools) or `connector.tool`
    * addresses (that tool); values are `"never"` (never ask) or `"ask"`. The
    * most specific key wins, and `"ask"` switches off a connector's own
-   * default. An exempt write still spends the write budget, is recorded in
-   * activity, and is journaled like any other; it is never read-only
-   * anywhere else — discovery still lists it as approval-required and
-   * `call_tool` still refuses it. Works with resumable writes off too. An
-   * unknown connector id, or an `api()` address its tools do not include,
-   * refuses to construct; a remote connector's tool names load later, so an
-   * address naming one it never serves simply never matches.
+   * default. An exempt write still spends the write budget and is recorded
+   * in activity; it is never read-only anywhere else — discovery still lists
+   * it as approval-required and `call_tool` still refuses it. An unknown
+   * connector id, or an `api()` address its tools do not include, refuses to
+   * construct; a remote connector's tool names load later, so an address
+   * naming one it never serves simply never matches.
    */
   approval?: Readonly<Record<string, "never" | "ask">>;
 }
@@ -448,9 +426,7 @@ const CONFIG_SCHEMA = {
     maxHostCalls: null,
     hostCallTimeoutMs: null,
     watchdogMs: null,
-    resumableWrites: null,
     maxWrites: null,
-    pausedRunTtlSeconds: null,
     approval: null,
   } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
@@ -508,13 +484,22 @@ function unknownOptionPaths(
   return unknown;
 }
 
+/** Pause-only options #672 removed with `resume_execution`. */
+const RETIRED_PAUSE_OPTIONS = [
+  "ConnectaConfig.execute.resumableWrites",
+  "ConnectaConfig.execute.pausedRunTtlSeconds",
+];
+
 function rejectUnknownOptions(paths: string[]): void {
   if (paths.length === 0) return;
   throw new Error(
     `Unknown Connecta configuration option${paths.length === 1 ? "" : "s"}:\n` +
       paths.map((path) => `- ${path}`).join("\n") +
       (paths.includes("ConnectaConfig.credentials") ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials." : "") +
-      (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : ""),
+      (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : "") +
+      (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
+        ? "\nPrograms no longer pause at writes, so there is nothing to configure: execute_code runs read-only and config-exempt tools, and every other write goes through call_destructive_tool (issue #672). Delete the option."
+        : ""),
   );
 }
 
@@ -728,52 +713,6 @@ function positiveWhole(value: unknown, fallback: number): number {
 }
 
 /**
- * Resumable writes' deployment settings, or undefined when they are off.
- * Omitted, they are on exactly when the storage can claim atomically, and a
- * deployment left without them hears so once. Asked for over storage that
- * cannot claim, they throw: at-most-once delivery of an approved write rests
- * on exactly one resume winning the claim, and a read-then-write stand-in
- * would let two win.
- */
-function resolveResumableWrites(
-  execute: ConnectaExecuteConfig | undefined,
-  storage: KVStorage,
-  logger: Logger,
-): { maxWrites: number; ttlSeconds: number } | undefined {
-  const enabled = execute?.resumableWrites;
-  if (enabled !== undefined && typeof enabled !== "boolean") {
-    throw new Error("ConnectaConfig.execute.resumableWrites must be a boolean");
-  }
-  if (enabled === false) return undefined;
-  if (enabled === undefined && typeof storage.compareAndSet !== "function") {
-    logger.warn(
-      "[connecta] resumable writes are off: the configured storage has no " +
-        "compareAndSet, so programs refuse writes (E4) and resume_execution " +
-        "answers resumable_writes_unavailable. Use storage with an atomic " +
-        "compareAndSet (the Worker example's D1 store, fileStorage, " +
-        "memoryStorage) to let programs pause for approval, or set " +
-        "execute.resumableWrites: false to keep this and silence the warning.",
-    );
-    return undefined;
-  }
-  if (typeof storage.compareAndSet !== "function") {
-    throw new Error(
-      "ConnectaConfig.execute.resumableWrites needs storage with compareAndSet: " +
-        "two resumes of one paused run must send its writes at most once, which " +
-        "takes an atomic claim. memoryStorage() and fileStorage() provide it, as " +
-        "does the Worker example's D1 store; Cloudflare KV cannot.",
-    );
-  }
-  return {
-    maxWrites: positiveWhole(execute?.maxWrites, DEFAULT_MAX_WRITES),
-    ttlSeconds: positiveWhole(
-      execute?.pausedRunTtlSeconds,
-      DEFAULT_PAUSED_RUN_TTL_SECONDS,
-    ),
-  };
-}
-
-/**
  * One-time construction warnings for deployment shapes that run fine but are
  * usually unintended. Warning-only — never throws and never changes behavior;
  * each deployment-wide condition emits at most one `logger.warn`, and each
@@ -979,9 +918,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   });
   const inboundAuth = configuredAuth;
   const pools = resolvePools(config.pools, registry);
-  const resumable = resolveResumableWrites(config.execute, storage, logger);
   const approval = resolveApprovalPolicy(config.execute?.approval, registry);
-  // Exempt writes need a budget whether or not programs can pause.
   const maxWrites = positiveWhole(config.execute?.maxWrites, DEFAULT_MAX_WRITES);
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
@@ -1028,12 +965,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           tools: new Map(),
         },
     };
-    const refreshRunner = createProgramRunner(
-      registry.scoped({ connectorIds: [] }), config.publicUrl!, executor, logger, undefined, refreshConfig,
-    );
     config.artifacts.bindRefresh({
       ...(config.ui?.branding ? { branding: config.ui.branding } : {}),
-      claimMs: refreshRunner.claimMs,
+      claimMs: runClaimMs(refreshConfig),
       execute: async (program, owner, signal) => {
         if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");
         let access = parseConnectorAccess(config.identity?.connectorAccess
@@ -1060,8 +994,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         const view = registry.scoped({ connectorIds: access.connectorIds,
           ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
           ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}) });
-        const runner = createProgramRunner(view, config.publicUrl!, executor, logger, undefined, refreshConfig);
-        return runner.execute({ code: program }, { signal });
+        const execute = createExecuteTool(view, config.publicUrl!, executor, logger, undefined, refreshConfig);
+        return execute({ code: program }, { signal });
       },
     });
   }
@@ -1108,7 +1042,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxHostCalls: config.execute?.maxHostCalls,
     hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
     watchdogMs: config.execute?.watchdogMs,
-    resumable,
     approval,
     maxWrites,
     credentialVault,

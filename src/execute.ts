@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
+import { Cause, Duration, Effect, Exit, type Scope } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import { advertisedSchema } from "./advertised-schema.js";
@@ -24,6 +24,11 @@ import {
 } from "./executor-admission.js";
 import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import {
+  DEFAULT_MAX_WRITES,
+  ExemptWrites,
+  writeStateOf,
+} from "./exempt-writes.js";
+import {
   InvocationFailure,
   InvocationService,
   timed,
@@ -31,16 +36,6 @@ import {
 } from "./invocation.js";
 import { normalizeProgramSource } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
-import {
-  DEFAULT_MAX_WRITES,
-  ExemptWrites,
-  MIN_STORAGE_TIMEOUT_MS,
-  RunState,
-  writeStateOf,
-  type ResumableSettings,
-  type RunStop,
-} from "./resumable.js";
-import { journalKey, type JournalOp, type WriteState } from "./run-journal.js";
 import { underAnySignal } from "./timeout.js";
 import {
   isApprovalExempt,
@@ -418,147 +413,6 @@ function guestErrorPrelude(failureSecret: string): string {
 }
 
 /**
- * The clock and randomness a program sees, fixed for one run (P6).
- *
- * Resumable writes replay a paused program from the top against its recorded
- * host calls, and a program that branched on `Date.now()` or `Math.random()`
- * would take a different branch the second time — which replay can only
- * report as divergence. So every run, paused or not, sees one instant and one
- * seeded stream, and nothing about a run changes when it is replayed.
- */
-export interface PinnedEnvironment {
-  /** Epoch milliseconds every clock read in the run returns. */
-  clockMs: number;
-  /** Four 32-bit words seeding the run's sfc32 stream. */
-  seed: readonly [number, number, number, number];
-}
-
-/** A clock read now and a seed drawn from the host's CSPRNG. */
-function freshEnvironment(): PinnedEnvironment {
-  const words = new Uint32Array(4);
-  crypto.getRandomValues(words);
-  return {
-    clockMs: Date.now(),
-    seed: [words[0] ?? 0, words[1] ?? 0, words[2] ?? 0, words[3] ?? 0],
-  };
-}
-
-/**
- * Trusted guest code installing the pinned clock and stream, evaluated after
- * the error prelude and before the program. Every replacement is locked the
- * way `Error` is — non-writable and non-configurable — so a program can read
- * the pinned values and nothing else.
- *
- * `Date` becomes a wrapper whose argument-free forms (`new Date()`, `Date()`,
- * `Date.now()`) read the pinned instant; with arguments it is the native
- * constructor, and instances are ordinary dates. The native constructor's own
- * `now` and the prototype's `constructor` are pinned too, so the usual ways
- * back to it read the same instant. `Math.random` is sfc32 over the seed:
- * small, fast, and specified in a few lines anyone can check. Where the
- * runtime has them (a Dynamic Worker; QuickJS has neither), `crypto`'s
- * `getRandomValues` and `randomUUID` draw from the same stream and
- * `performance.now()` stays at 0, the run's start. None of that makes
- * `crypto` contract (`P2`): it only keeps a Workers-only program from being
- * the one that cannot replay.
- */
-function pinnedEnvironmentPrelude(environment: PinnedEnvironment): string {
-  return `((clock, seed) => {
-  const NativeDate = globalThis.Date;
-  const construct = Reflect.construct;
-  const defineProperty = Object.defineProperty;
-  const lock = (target, key, value) => defineProperty(target, key, {
-    value, writable: false, enumerable: false, configurable: false
-  });
-  let a = seed[0] | 0, b = seed[1] | 0, c = seed[2] | 0, d = seed[3] | 0;
-  const next = () => {
-    const t = (((a + b) | 0) + d) | 0;
-    d = (d + 1) | 0;
-    a = b ^ (b >>> 9);
-    b = (c + (c << 3)) | 0;
-    c = (c << 21) | (c >>> 11);
-    c = (c + t) | 0;
-    return t >>> 0;
-  };
-  const now = function now() { return clock; };
-  function Date(...args) {
-    if (new.target === undefined) return new NativeDate(clock).toString();
-    return construct(NativeDate, args.length === 0 ? [clock] : args, new.target);
-  }
-  Date.prototype = NativeDate.prototype;
-  lock(Date, "now", now);
-  lock(Date, "parse", NativeDate.parse);
-  lock(Date, "UTC", NativeDate.UTC);
-  lock(NativeDate, "now", now);
-  lock(NativeDate.prototype, "constructor", Date);
-  lock(globalThis, "Date", Date);
-  lock(Math, "random", function random() { return next() / 4294967296; });
-  // Lock the replacement on the object and on its prototype, where the
-  // native method lives: \`Object.getPrototypeOf(crypto).getRandomValues\`
-  // would otherwise still reach the real stream. A prototype the runtime
-  // will not let us redefine keeps its native method (\`tryLock\`), and a
-  // program that uses it diverges on replay rather than sending anything.
-  const tryLock = (target, key, value) => {
-    try { lock(target, key, value); } catch {}
-  };
-  if (typeof crypto === "object" && crypto !== null) {
-    const getRandomValues = function getRandomValues(array) {
-      const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
-      for (let i = 0; i < bytes.length; i++) bytes[i] = next() >>> 24;
-      return array;
-    };
-    const randomUUID = function randomUUID() {
-      const bytes = getRandomValues(new Uint8Array(16));
-      bytes[6] = (bytes[6] & 0x0f) | 0x40;
-      bytes[8] = (bytes[8] & 0x3f) | 0x80;
-      let hex = "";
-      for (let i = 0; i < 16; i++) {
-        hex += (bytes[i] + 0x100).toString(16).slice(1);
-        if (i === 3 || i === 5 || i === 7 || i === 9) hex += "-";
-      }
-      return hex;
-    };
-    lock(crypto, "getRandomValues", getRandomValues);
-    lock(crypto, "randomUUID", randomUUID);
-    const cryptoProto = Object.getPrototypeOf(crypto);
-    if (cryptoProto) {
-      tryLock(cryptoProto, "getRandomValues", getRandomValues);
-      tryLock(cryptoProto, "randomUUID", randomUUID);
-    }
-  }
-  if (typeof performance === "object" && performance !== null) {
-    const perfNow = function now() { return 0; };
-    lock(performance, "now", perfNow);
-    const performanceProto = Object.getPrototypeOf(performance);
-    if (performanceProto) tryLock(performanceProto, "now", perfNow);
-  }
-  // An Intl formatter asked for "now" (no date) reads the native clock.
-  if (typeof Intl === "object" && Intl !== null && typeof Intl.DateTimeFormat === "function") {
-    const proto = Intl.DateTimeFormat.prototype;
-    const formatGetter = Object.getOwnPropertyDescriptor(proto, "format");
-    if (formatGetter && typeof formatGetter.get === "function") {
-      const nativeFormat = formatGetter.get;
-      try {
-        defineProperty(proto, "format", {
-          get() {
-            const bound = nativeFormat.call(this);
-            return function format(date) { return bound(date === undefined ? clock : date); };
-          },
-          enumerable: false,
-          configurable: false,
-        });
-      } catch {}
-    }
-    const nativeFormatToParts = proto.formatToParts;
-    if (typeof nativeFormatToParts === "function") {
-      tryLock(proto, "formatToParts", function formatToParts(date) {
-        return nativeFormatToParts.call(this, date === undefined ? clock : date);
-      });
-    }
-  }
-})(${JSON.stringify(environment.clockMs)}, ${JSON.stringify([...environment.seed])});`;
-}
-
-/**
  * Expose one host provider and typed guest errors. Catalogs load only when
  * the program calls a tool or asks search/describe.
  */
@@ -589,17 +443,15 @@ interface SandboxLimits {
   emitCollector?: EmitCollector | undefined;
   /** Runtime-owned tail for stale catalog refreshes. */
   defer?: DeferredWork | undefined;
-  /** The run's clock and seed (P6). A fresh pair when omitted. */
-  environment?: PinnedEnvironment | undefined;
-  /** One play of a resumable run; absent when resumable writes are off. */
-  runState?: RunState | undefined;
   /** Config approval exemptions (#566). */
   approval?: ApprovalPolicy | undefined;
-  /** Writes one program may send; the run state keeps its own count. */
+  /** Exempt writes one program may send. Default 10. */
   maxWrites?: number | undefined;
-  /** Exempt writes when resumable writes are off, for close and drain. */
+  /** The program's exempt writes, for close and drain. */
   exemptWrites?: ExemptWrites | undefined;
 }
+
+type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
 
 /**
  * The `connecta` provider for one execution.
@@ -608,7 +460,7 @@ interface SandboxLimits {
  * edge the executor awaits, and behind it one host call is one fiber: spend
  * the budget, do the operation, and turn a typed failure into the frame the
  * prelude rebuilds inside the guest. Nothing is shared between those fibers
- * but the budget counter and this request's catalog, so a call the program
+ * but the budget counters and this request's catalog, so a call the program
  * never awaits cannot disturb the others.
  */
 function sandboxProvider(
@@ -639,7 +491,7 @@ function sandboxProvider(
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
   const failureSecret = guestFailureSecret();
-  const { signal, diagnostics } = limits;
+  const { signal, diagnostics, exemptWrites } = limits;
   let hostCalls = 0;
   // L4/M7: discovery and invocation spend the same budget, on entry; emit
   // does not.
@@ -653,19 +505,21 @@ function sandboxProvider(
         )
       : Effect.void,
   );
-  const { runState, exemptWrites } = limits;
   const approval = limits.approval ?? NO_EXEMPTIONS;
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
-  let exemptWriteCount = 0;
+  let writes = 0;
   /**
-   * Without resumable writes nothing can pause, but a config exemption
-   * (#566) still lets its writes run: the gate covers exactly the exempt
-   * calls, spends the write budget on each, and every other write keeps
-   * E4's refusal, ahead of validation as it always was. A dispatched write
-   * is tracked until it settles (`ExemptWrites`), so the play can wait for
-   * it rather than abort it.
+   * The write gate covers exactly the config-exempt calls (#566): each spends
+   * the write budget and is tracked until it settles (`ExemptWrites`), so the
+   * play can wait for it rather than abort it. Every other write keeps E4's
+   * refusal, ahead of validation, so the host's prompt on
+   * call_destructive_tool stays the only approval there is.
    */
-  const exemptOnly = (sending: { settle?: (state: WriteState) => void }) => ({
+  const invocationContext = (sending: { settle?: SettleWrite }) => ({
+    source: "execute_code" as const,
+    timeoutMs: hostCallTimeoutMs,
+    ...(signal !== undefined ? { requestSignal: signal } : {}),
+    unwrapResult: true,
     gates: (target: ResolvedCatalogTool) =>
       isApprovalExempt(approval, target.connector, target.toolName, target.definition),
     writeGate: (target: ResolvedCatalogTool): Effect.Effect<WriteGateDecision> =>
@@ -678,10 +532,10 @@ function sandboxProvider(
               message: "The program had already returned, so this write was not sent.",
               retryable: false,
             },
-            activity: "none",
+            unrecorded: true,
           };
         }
-        if (exemptWriteCount >= maxWrites) {
+        if (writes >= maxWrites) {
           return {
             kind: "refuse",
             error: {
@@ -691,85 +545,25 @@ function sandboxProvider(
             },
           };
         }
-        exemptWriteCount++;
+        writes++;
         if (exemptWrites) sending.settle = exemptWrites.begin();
         return { kind: "dispatch" };
       }),
   });
-  const invocationContext = (
-    seq: number | undefined,
-    key: string | undefined,
-    sending: { settle?: (state: WriteState) => void },
-  ) => ({
-    source: runState?.source ?? ("execute_code" as const),
-    timeoutMs: hostCallTimeoutMs,
-    ...(signal !== undefined ? { requestSignal: signal } : {}),
-    unwrapResult: true,
-    // With resumable writes, a consequential call reaches the run's gate
-    // instead of the flat E4 refusal, and a read's decision is marked the
-    // moment it passes the same point.
-    ...(runState && seq !== undefined && key !== undefined
-      ? {
-          beforeDispatch: () => runState.decide(seq),
-          writeGate: (target: ResolvedCatalogTool, args: unknown) =>
-            runState.gate(seq, key, target, args),
-        }
-      : runState
-        ? {}
-        : exemptOnly(sending)),
-  });
-
-  /**
-   * The front of every numbered host call once resumable writes are on: a
-   * stopped run makes no call at all (not journaled, no activity), a
-   * recorded one is answered from the journal before the budget-free part
-   * of the path, and one the journal cannot account for is divergence.
-   * Replayed calls spend the host-call budget again, so a play's total is
-   * the run's total and nothing is counted twice.
-   */
-  const fromJournal = (
-    seq: number | undefined,
-    op: JournalOp,
-    address: string,
-    args: unknown,
-  ): Effect.Effect<
-    { kind: "live"; key: string | undefined } | { kind: "replayed"; value: unknown },
-    unknown
-  > =>
-    Effect.gen(function* () {
-      const halted = runState?.halted();
-      if (halted) return yield* Effect.fail(halted);
-      yield* spendHostCall;
-      if (!runState || seq === undefined) return { kind: "live", key: undefined };
-      const key = journalKey(op, address, args);
-      const found = runState.lookup(key);
-      if (found.kind === "diverged") {
-        return yield* Effect.fail(runState.diverge(found.reason));
-      }
-      if (found.kind === "live") return { kind: "live", key };
-      runState.decide(seq);
-      const { outcome } = found.entry;
-      return outcome.ok
-        ? { kind: "replayed", value: outcome.value }
-        : yield* Effect.fail(new InvocationFailure(outcome.error));
-    });
 
   // A call brings its own cancellation: the invocation pipeline reads the
   // run's signal, refuses a call that starts after it, and records the
   // cancelled attempt in activity like any other outcome.
-  const call = (seq: number | undefined, address: unknown, args: unknown) =>
+  const call = (address: unknown, args: unknown) =>
     Effect.gen(function* () {
-      const addressText = String(address);
-      const callArgs = args ?? {};
-      const front = yield* fromJournal(seq, "call", addressText, callArgs);
-      if (front.kind === "replayed") return front.value;
-      // An exempt write dispatched without a run state settles here —
-      // unknown if the call never returned an outcome.
-      const sending: { settle?: (state: WriteState) => void } = {};
+      yield* spendHostCall;
+      // An exempt write settles here — unknown if the call never returned an
+      // outcome.
+      const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation.pipeline(
-        addressText,
-        callArgs,
-        invocationContext(seq, front.key, sending),
+        String(address),
+        args ?? {},
+        invocationContext(sending),
       ).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() =>
@@ -778,27 +572,6 @@ function sandboxProvider(
         ),
       );
       diagnostics?.recordCall(outcome);
-      if (runState && seq !== undefined && front.key !== undefined) {
-        if (runState.isLiveWrite(seq)) {
-          const resolved = outcome.resolved;
-          const replaced = yield* runState.settleWrite(seq, front.key, {
-            address: resolved
-              ? `${resolved.connector.id}.${resolved.toolName}`
-              : addressText,
-            args: callArgs,
-          }, outcome);
-          if (replaced) return yield* Effect.fail(replaced);
-        } else {
-          runState.record(
-            seq,
-            "call",
-            front.key,
-            outcome.ok
-              ? { ok: true, value: outcome.value }
-              : { ok: false, error: outcome.error },
-          );
-        }
-      }
       return outcome.ok
         ? outcome.value
         : yield* Effect.fail(new InvocationFailure(outcome.error));
@@ -811,8 +584,6 @@ function sandboxProvider(
   // the transport below reconstructs their code inside the guest.
   const discovery = <T>(
     operation: "search" | "describe",
-    seq: number | undefined,
-    raw: unknown,
     read: () => Promise<T>,
   ): Effect.Effect<unknown, unknown> =>
     Effect.suspend(() => {
@@ -829,45 +600,17 @@ function sandboxProvider(
             ? guestFailure(err.code, err.message)
             : err,
       });
-      return fromJournal(seq, operation, "", raw ?? {}).pipe(
-        Effect.flatMap((front) => {
-          if (front.kind === "replayed") return Effect.succeed(front.value);
-          const live = (
-            !signal
-              ? reading
-              : signal.aborted
-                ? Effect.fail(cancelled())
-                : Effect.raceAllFirst([
-                    reading,
-                    fromSignal(signal).pipe(Effect.mapError(cancelled)),
-                  ])
-          ).pipe(
-            Effect.onExit((exit) =>
-              Effect.sync(() => {
-                if (!runState || seq === undefined || front.key === undefined) return;
-                // Typed outcomes replay; an untyped throw is a bug, not an
-                // answer, and is not journaled — so a replay that re-issues
-                // the call before repeating the approved write finds no record
-                // and fails `execution_diverged`.
-                if (Exit.isSuccess(exit)) {
-                  runState.record(seq, operation, front.key, {
-                    ok: true,
-                    value: exit.value,
-                  });
-                  return;
-                }
-                const error = Cause.squash(exit.cause);
-                if (error instanceof InvocationFailure) {
-                  runState.record(seq, operation, front.key, {
-                    ok: false,
-                    error: error.details,
-                  });
-                }
-              }),
-            ),
-          );
-          return live;
-        }),
+      return spendHostCall.pipe(
+        Effect.andThen(
+          !signal
+            ? reading
+            : signal.aborted
+              ? Effect.fail(cancelled())
+              : Effect.raceAllFirst([
+                  reading,
+                  fromSignal(signal).pipe(Effect.mapError(cancelled)),
+                ]),
+        ),
         Effect.onExit((exit) =>
           Effect.sync(() =>
             diagnostics?.recordCatalog(
@@ -883,15 +626,14 @@ function sandboxProvider(
 
   const operations: Record<
     string,
-    (seq: number | undefined, ...args: unknown[]) => Effect.Effect<unknown, unknown>
+    (...args: unknown[]) => Effect.Effect<unknown, unknown>
   > = {
     call,
     // Emission is a provider function, never an ExecuteResult field —
     // that is what keeps the Executor contract untouched and parity
     // structural (M8). It spends no host-call budget (M7); its own
-    // budgets live in the collector. It is never journaled: a replay emits
-    // again, and only the play that completes delivers.
-    emit: (_seq, block) =>
+    // budgets live in the collector.
+    emit: (block) =>
       Effect.try({
         try: () => {
           if (!limits.emitCollector) {
@@ -905,8 +647,8 @@ function sandboxProvider(
         },
         catch: (err) => err,
       }),
-    search: (seq, raw) =>
-      discovery("search", seq, raw, async () => {
+    search: (raw) =>
+      discovery("search", async () => {
         const args = (raw ?? {}) as {
           query?: string;
           connector?: string;
@@ -929,8 +671,8 @@ function sandboxProvider(
         );
         return result;
       }),
-    describe: (seq, raw) =>
-      discovery("describe", seq, raw, async () => {
+    describe: (raw) =>
+      discovery("describe", async () => {
         const args = (raw ?? {}) as {
           address?: unknown;
           addresses?: unknown;
@@ -958,30 +700,15 @@ function sandboxProvider(
     });
   return {
     name: "connecta",
-    // Typed errors first, then the pinned clock and randomness: both are
-    // trusted host code the program runs after and cannot undo.
-    prelude: `${guestErrorPrelude(failureSecret)}\n${pinnedEnvironmentPrelude(
-      runState?.environment ?? limits.environment ?? freshEnvironment(),
-    )}`,
+    // Trusted host code the program runs after and cannot undo.
+    prelude: guestErrorPrelude(failureSecret),
     fns: Object.fromEntries(
       Object.entries(operations).map(([name, operation]) => [
         name,
         (...args: unknown[]) => {
-          // Numbered here, synchronously, as the program makes the call: the
-          // numbering is the program's own issue order, which is what makes
-          // a pause point and a replay reproducible.
-          const seq = runState && name !== "emit" ? runState.begin() : undefined;
           const settled = runEdge(
-            Effect.suspend(() => operation(seq, ...args)).pipe(
-              Effect.catch(framed),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  if (seq !== undefined) runState?.decide(seq);
-                }),
-              ),
-            ),
+            Effect.suspend(() => operation(...args)).pipe(Effect.catch(framed)),
           );
-          if (seq !== undefined) runState?.track(seq, settled);
           // The executor owns this promise, and a program may abandon a call
           // that the run's end then cancels before anyone has awaited it.
           // The rejection is still there for whoever does; it is just not an
@@ -1137,63 +864,44 @@ interface RunnerConfig {
   maxHostCalls?: number | undefined;
   hostCallTimeoutMs?: number | undefined;
   watchdogMs?: number | undefined;
-  /**
-   * The deadline on each paused-run storage call. Defaults to the host-call
-   * deadline, never under `MIN_STORAGE_TIMEOUT_MS`; tests shorten it.
-   */
-  storageTimeoutMs?: number | undefined;
   defer?: DeferredWork | undefined;
-  /**
-   * One clock and seed for every fresh run of this handler instead of a
-   * fresh pair per run. Tests pin a known stream with it; a replay always
-   * uses its journal's.
-   */
-  environment?: PinnedEnvironment | undefined;
-  /**
-   * Resumable writes. When set and the view's result storage has
-   * `compareAndSet`, a consequential call pauses the run instead of being
-   * refused; absent, E4's refusal stands.
-   */
-  resumable?: ResumableSettings | undefined;
   /** Config approval exemptions (#566): writes a program sends unasked. */
   approval?: ApprovalPolicy | undefined;
-  /** Writes one program may send (`execute.maxWrites`). Default 10. */
+  /** Exempt writes one program may send (`execute.maxWrites`). Default 10. */
   maxWrites?: number | undefined;
 }
 
-/** Plays programs: `execute_code` fresh, `resume_execution` from a journal. */
-export interface ProgramRunner {
-  execute(
-    args: { code: string; diagnostics?: boolean },
-    options?: { signal?: AbortSignal },
-  ): Promise<ToolResult>;
-  /** One play of a claimed run, for `resume_execution`. */
-  replay(runState: RunState, signal?: AbortSignal): Effect.Effect<ToolResult>;
-  /** How long a claimed play may take before another may take it over. */
-  readonly claimMs: number;
-  /** The deadline on each paused-run storage call. */
-  readonly storageTimeoutMs: number;
-}
+/** Room for the executor queue a run waits in before its watchdog starts. */
+const RUN_CLAIM_SLACK_MS = 10_000;
 
 /**
- * Room a claim leaves beyond the watchdog and one host-call deadline, for the
- * executor queue a resumed play waits in first. Only liveness rides on it: a
- * claim that lapses early lets a takeover start, and the write-ahead mark
- * still keeps any write from being sent twice.
+ * How long one run may take before whoever claimed it may give up on it: the
+ * watchdog, one more host-call deadline for an exempt write the play drains,
+ * and queue slack. Artifact refresh leases its claim for this long.
  */
-const CLAIM_SLACK_MS = 10_000;
+export function runClaimMs(
+  config: Pick<RunnerConfig, "watchdogMs" | "hostCallTimeoutMs">,
+): number {
+  return resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS) +
+    resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS) +
+    RUN_CLAIM_SLACK_MS;
+}
 
-type PlayEnd = { settled: ExecuteResult } | { stop: RunStop };
+/** Runs one `execute_code` program and answers as the tool does. */
+type ExecuteHandler = (
+  args: { code: string; diagnostics?: boolean },
+  options?: { signal?: AbortSignal },
+) => Promise<ToolResult>;
 
-/** The runner behind both program tools. */
-export function createProgramRunner(
+/** The execute_code handler. Exported for direct testing and artifact refresh. */
+export function createExecuteTool(
   registry: RegistryView,
   baseUrl: string,
   executor: Executor,
   logger: Logger,
   activity?: ActivityRequestContext,
   config: RunnerConfig = {},
-): ProgramRunner {
+): ExecuteHandler {
   const watchdog = {
     ms: resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS),
     logger,
@@ -1202,20 +910,9 @@ export function createProgramRunner(
     config.hostCallTimeoutMs,
     EXECUTE_HOST_CALL_TIMEOUT_MS,
   );
-  const storageTimeoutMs = resolveBudget(
-    config.storageTimeoutMs,
-    Math.max(hostCallTimeoutMs, MIN_STORAGE_TIMEOUT_MS),
-  );
 
-  /**
-   * One play of a program. Without a run state it is the execute_code run it
-   * always was. With one, the play also ends when the run stops — a pause or
-   * a typed failure — and then waits for what is still on the wire, persists
-   * what it must, and discards the program's own result.
-   */
   const play = (
     program: string,
-    runState: RunState | undefined,
     diagnosticsRequested: boolean | undefined,
     callerSignal: AbortSignal | undefined,
   ): Effect.Effect<ToolResult> =>
@@ -1229,7 +926,7 @@ export function createProgramRunner(
         diagnostics,
       );
       const invocationFailures: InvocationFailure[] = [];
-      const exemptWrites = runState ? undefined : new ExemptWrites();
+      const exemptWrites = new ExemptWrites();
       // The run's scope holds its signal and its lease. However the run
       // ends — a result, a thrown executor, the watchdog, cancellation —
       // closing it releases the lease and then aborts the signal, so
@@ -1265,8 +962,6 @@ export function createProgramRunner(
             maxHostCalls: config.maxHostCalls,
             hostCallTimeoutMs,
             defer: config.defer,
-            environment: config.environment,
-            runState,
             approval: config.approval,
             maxWrites: config.maxWrites,
             exemptWrites,
@@ -1281,121 +976,55 @@ export function createProgramRunner(
           );
         }
         const admitted = lease;
-        const executing = awaitExecutor(
+        // An exempt write may still be on the wire when the program settles:
+        // close, so a write gated after this is not sent, then let the ones
+        // already dispatched finish before the scope aborts them — an
+        // abandoned write would be one whose outcome nobody knows.
+        return yield* timed((elapsed) => {
+          if (diagnostics) diagnostics.executorWallMs = elapsed;
+        }, awaitExecutor(
           () =>
             admitted
               ? admitted.execute(program, [provider])
               : executor.execute(program, [provider]),
           signal,
           { watchdog },
-        ).pipe(Effect.map((settled): PlayEnd => ({ settled })));
-        if (!runState) {
-          // Nothing pauses, but an exempt write may be on the wire: close,
-          // then let it finish before the scope aborts it.
-          return yield* timed((elapsed) => {
-            if (diagnostics) diagnostics.executorWallMs = elapsed;
-          }, executing.pipe(Effect.ensuring(Effect.suspend(() => {
-            exemptWrites?.close();
-            return exemptWrites?.drain() ?? Effect.void;
-          }))));
-        }
-        // The run stopping wins the race as soon as its gate decides, before
-        // the program even sees the rejection. Either way the play closes —
-        // a write gated after this is not sent — and what is still on the
-        // wire finishes before the scope aborts it: every call after a stop,
-        // since each is journaled, and every write otherwise, since an
-        // abandoned write would be an unknown one.
-        const ended = yield* timed((elapsed) => {
-          if (diagnostics) diagnostics.executorWallMs = elapsed;
-        }, Effect.raceFirst(
-          executing,
-          Deferred.await(runState.stopped).pipe(
-            Effect.map((stop): PlayEnd => ({ stop })),
-          ),
         ).pipe(Effect.ensuring(Effect.suspend(() => {
-          runState.close();
-          return runState.drain("writes");
+          exemptWrites.close();
+          return exemptWrites.drain();
         }))));
-        if ("stop" in ended) yield* runState.drain("all");
-        return ended;
       });
       const reported = { emitted, diagnostics, invocationFailures };
-      return Effect.flatMap(Effect.exit(Effect.scoped(run)), (exit) => {
+      return Effect.map(Effect.exit(Effect.scoped(run)), (exit) => {
         if (Exit.isFailure(exit)) {
-          const failed = failedRun(Cause.squash(exit.cause), logger, reported);
-          return runState
-            ? runState.finishExecutorFailure(failed)
-            : Effect.succeed(exemptWrites?.finish(failed) ?? failed);
+          return exemptWrites.finish(
+            failedRun(Cause.squash(exit.cause), logger, reported),
+          );
         }
-        const ended = exit.value;
-        if ("stop" in ended) {
-          return runState
-            ? runState.finishStopped()
-            : Effect.die(new Error("a run without state cannot stop"));
-        }
-        const finished = finishedRun(ended.settled, reported);
+        const finished = finishedRun(exit.value, reported);
         if (config.failOnInvocationFailure && invocationFailures.length > 0) {
           const refusal = invocationFailures[0]!;
-          return Effect.succeed(failureResponse(refusal.details.message, {
+          return failureResponse(refusal.details.message, {
             code: refusal.details,
-          }));
+          });
         }
-        return runState
-          ? runState.finishSettled(finished)
-          : Effect.succeed(exemptWrites?.finish(finished) ?? finished);
+        return exemptWrites.finish(finished);
       });
     });
 
-  return {
-    claimMs: watchdog.ms + hostCallTimeoutMs + CLAIM_SLACK_MS,
-    storageTimeoutMs,
-    execute: ({ code, diagnostics }, options = {}) => {
-      // A code-unit count above the cap is already too large in UTF-8. Check
-      // that first so a huge direct-call string is never encoded in full.
-      if (code.length > EXECUTE_MAX_CODE_BYTES ||
-        new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
-        const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-        return Promise.resolve(failureResponse(message, {
-          code: { code: "invalid_args", message, retryable: false },
-        }));
-      }
-      return runEdge(Effect.suspend(() => {
-        const program = normalizeProgramSource(code);
-        const storage = config.resumable ? registry.resultsStorage() : undefined;
-        const runState = config.resumable && storage?.compareAndSet
-          ? RunState.fresh(
-              storage,
-              program,
-              config.environment ?? freshEnvironment(),
-              config.resumable,
-              storageTimeoutMs,
-            )
-          : undefined;
-        return play(program, runState, diagnostics, options.signal);
+  return ({ code, diagnostics }, options = {}) => {
+    // A code-unit count above the cap is already too large in UTF-8. Check
+    // that first so a huge direct-call string is never encoded in full.
+    if (code.length > EXECUTE_MAX_CODE_BYTES ||
+      new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
+      const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+      return Promise.resolve(failureResponse(message, {
+        code: { code: "invalid_args", message, retryable: false },
       }));
-    },
-    replay: (runState, signal) =>
-      play(runState.program, runState, false, signal),
+    }
+    return runEdge(Effect.suspend(() =>
+      play(normalizeProgramSource(code), diagnostics, options.signal)));
   };
-}
-
-/** The execute_code handler. Exported for direct testing. */
-export function createExecuteTool(
-  registry: RegistryView,
-  baseUrl: string,
-  executor: Executor,
-  logger: Logger,
-  activity?: ActivityRequestContext,
-  config: RunnerConfig = {},
-): ProgramRunner["execute"] {
-  return createProgramRunner(
-    registry,
-    baseUrl,
-    executor,
-    logger,
-    activity,
-    config,
-  ).execute;
 }
 
 interface RunReport {
@@ -1643,19 +1272,13 @@ const executeDescription = (
   hostLimits: { maxHostCalls: number; hostCallTimeoutMs: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-  resumable: ResumableSettings | undefined,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider ${
-  resumable ? "work, writes included," : "read-only work"
-} uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${
-  resumable
-    ? `Writes pause for resume_execution. Keep an authorized batch in one program; approval "tool" covers later same-address calls, other approval-required writes pause separately. Limits: ${hostLimits.maxHostCalls} host calls, ${resumable.maxWrites} writes`
-    : `Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls`
-}, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+  maxWrites: number,
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools and config-exempt writes are available; any other write goes through call_destructive_tool. Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} exempt writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
 Read guides with top-level skills. Write async () => { ... } using the global connecta:
-- connecta.search({ connector, query, ${resumable ? "" : 'safety: "readOnly", '}includeSchemas: "json" }) returns { tools }. Search operations separately; choose by connectorTitle and schema.required/.properties, never guessed fields. Compact schemas are text.
+- connecta.search({ connector, query, safety: "readOnly", includeSchemas: "json" }) returns { tools }. Search operations separately; choose by connectorTitle and schema.required/.properties, never guessed fields. Compact schemas are text.
 - connecta.describe({ address }) clarifies schemas.
 - connecta.call(address, args) returns the provider value directly.
 - Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status; missing values are unknown, never false or zero.
@@ -1711,14 +1334,12 @@ export function registerExecuteTool(
     /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
-    /** Resumable writes, when this deployment turned them on. */
-    resumable?: ResumableSettings | undefined;
     /** Config approval exemptions (#566). */
     approval?: ApprovalPolicy | undefined;
-    /** Writes one program may send. Default 10. */
+    /** Exempt writes one program may send. Default 10. */
     maxWrites?: number | undefined;
   },
-): ProgramRunner {
+): void {
   // Resolved once so the description and the collector cannot disagree about
   // the budgets this deployment actually enforces.
   const emitBudgets = {
@@ -1738,7 +1359,8 @@ export function registerExecuteTool(
     ),
   };
   const connectors = registry.listConnectors();
-  const runner = createProgramRunner(
+  const maxWrites = resolveBudget(ctx.maxWrites, DEFAULT_MAX_WRITES);
+  const execute = createExecuteTool(
     registry,
     ctx.baseUrl,
     ctx.executor,
@@ -1753,9 +1375,8 @@ export function registerExecuteTool(
       hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
       watchdogMs: ctx.watchdogMs,
       defer: ctx.defer,
-      resumable: ctx.resumable,
       approval: ctx.approval,
-      maxWrites: ctx.maxWrites,
+      maxWrites,
     },
   );
   server.registerTool(
@@ -1766,15 +1387,16 @@ export function registerExecuteTool(
         hostLimits,
         hasConnectorGuides(connectors),
         connectors,
-        ctx.resumable,
+        maxWrites,
       ),
       inputSchema: EXECUTE_INPUT,
       // This hint describes connector calls: only explicitly read-only ones
-      // run here, and any other call pauses the run unsent (W1) — the write
-      // itself runs inside resume_execution, which is annotated destructive.
-      // The supported executor constructions deny outbound access,
-      // filesystem, and deployment config; X5 documents Dynamic runtime
-      // modules separately.
+      // run here, plus the writes config exempts from asking (W12) — the
+      // deployment's decision, which no annotation can make for it. Any
+      // other write is refused (E4) and crosses call_destructive_tool, which
+      // is annotated destructive. The supported executor constructions deny
+      // outbound access, filesystem, and deployment config; X5 documents
+      // Dynamic runtime modules separately.
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1783,9 +1405,8 @@ export function registerExecuteTool(
     },
     (args, extra) =>
       underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
-        runner.execute(args as { code: string; diagnostics?: boolean }, {
+        execute(args as { code: string; diagnostics?: boolean }, {
           signal,
         })),
   );
-  return runner;
 }

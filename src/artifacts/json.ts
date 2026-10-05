@@ -67,3 +67,17 @@ export function jsonProblem(value: unknown, maxDepth: number): string | undefine
   }
   return undefined;
 }
+
+const encoder = new TextEncoder();
+
+/** A string's size in UTF-8 bytes: what every artifact limit counts. */
+export function utf8Bytes(text: string): number {
+  return encoder.encode(text).byteLength;
+}
+
+/** SHA-256 as lowercase hex: the content address of a stored body. */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(text));
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0")).join("");
+}

@@ -19,12 +19,14 @@ export interface ActivityEvent {
     | "call_destructive_tool"
     | "batch_call"
     | "execute_code"
+    // History only: rows written before 0.28.0 removed program pauses.
     | "resume_execution";
   outcome:
     | "success"
     | "error"
     | "timeout"
     | "cancelled"
+    // History only, like `resume_execution` above.
     | "paused"
     | "approved";
   durationMs: number;
@@ -36,6 +38,7 @@ export interface ActivityEvent {
     | "destructive_reroute"
     | "auth_required"
     | "result_too_large";
+  /** History only: the scope an `approved` row covered, before 0.28.0. */
   approval?: "call" | "tool";
   serverName: string;
   serverVersion: string;
@@ -84,7 +87,7 @@ export interface ActivityRow {
   attempts: number;
   error_code: string | null;
   friction: ActivityEvent["friction"] | null;
-  /** Absent from tables created before resumable writes; read as null. */
+  /** Absent from tables created before 0.26.0; null on every row since 0.28.0. */
   approval?: ActivityEvent["approval"] | null;
   server_name: string;
   server_version: string;

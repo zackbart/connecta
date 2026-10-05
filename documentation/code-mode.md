@@ -16,16 +16,12 @@ identifiers (`A1`, `E3`, …) are stable and cited by [Verification](#verificati
 ## Deploy-time capability
 
 The `executor` passed to `createConnecta()` is required. `tools/list` is exactly
-eight — `execute_code`, `resume_execution`, `search_tools`, `call_tool`,
-`call_destructive_tool`, `authorize_connector`, `get_result`, and `skills`.
-Construction fails when the executor is missing, and the removed `surface`
-option is rejected rather than ignored
-([#273](https://github.com/zackbart/connecta/issues/273)).
-
-[Resumable writes](#pausing-and-resuming) need storage with `compareAndSet`:
-omitted, `execute.resumableWrites` is on exactly when the storage has it (not
-Cloudflare KV, which warns once at startup), `true` without it refuses to
-construct, and `/health` reports which.
+seven — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
+`authorize_connector`, `get_result`, and `skills`. Construction fails when the
+executor is missing, and the removed `surface` option is rejected rather than
+ignored ([#273](https://github.com/zackbart/connecta/issues/273)), as are the
+pause-only `execute.resumableWrites` and `execute.pausedRunTtlSeconds`
+([#672](https://github.com/zackbart/connecta/issues/672)).
 
 On Node, install the optional `quickjs-emscripten` peer and use the package's
 QuickJS subpath:
@@ -141,33 +137,17 @@ storage carried to the next program, and no request-bound object outliving its
 request. Within one execution, host calls share one downstream request scope.
 `S9`'s output observation is host-owned catalog metadata, not guest memory — a
 later program receives a labeled field/type schema through discovery, never a
-prior value or object. A run paused at a write leaves a bounded, expiring
-journal (`W3`) for `resume_execution` to replay — host-owned data, not guest
-state: the replay gets back exactly the answers the first play got.
+prior value or object.
 
 **P5.** Plain JavaScript only; TypeScript syntax is a syntax error. Portable
 code does not import: QuickJS blocks imports, Dynamic Workers expose the `X5`
 runtime modules, and neither exposes `require`.
 
-**P6.** A run's clock and randomness are pinned. `Date.now()`, `new Date()`,
-and `Date()` read one instant the host takes at run start, and it does not
-advance; `Date` with arguments, `Date.parse`, and `Date.UTC` are the native
-ones. `Math.random()` is sfc32 seeded from the host's CSPRNG per run. On a
-Dynamic Worker (QuickJS has neither, `X5`), `crypto.getRandomValues` and
-`randomUUID` draw from the same stream and `performance.now()` stays at 0, on
-the objects and their prototypes — so a Workers-only program replays too,
-which makes none of them contract (`P2`). An `Intl` formatter asked for "now"
-formats the pinned instant, and local time is UTC on both executors (the
-QuickJS child runs with `TZ=UTC`). The replacements are trusted prelude,
-locked like `Error` (`X11`), and the native constructor's `now` and prototype
-`constructor` read the same instant; QuickJS lets `defineProperty` replace a
-locked *global* binding, but the replacement is the program's own code. The
-reason is replay (`W6`): a program that branched on a moving clock would take
-another branch the second time and diverge (`W8`), and pinning every run means
-none can tell whether it is replayed. A program cannot time itself; `R7`
-measures from the host. The pin is best-effort beyond these: a program that
-depends on a source it misses, such as the order Workers timers fire in, is
-not portable (`P2`) and fails a replay as divergence.
+**P6** pinned a run's clock and randomness so a paused program could replay;
+it left with replay ([#672](https://github.com/zackbart/connecta/issues/672)).
+`Date.now()` and `Math.random()` are the runtime's own again, and the id stays
+retired. QuickJS still runs with `TZ=UTC`, so local time matches a Dynamic
+Worker's (`X5`).
 
 ## Addressing
 
@@ -263,10 +243,10 @@ integration is ambiguous, because an unscoped search fans out across every
 configured connector. `safety: "readOnly"` returns exactly the tools
 `connecta.call` runs unasked; `"approvalRequired"` returns the complementary
 fail-closed class, false, missing, and contradictory annotations included,
-whose calls pause (`W1`) unless config exempts them (`W12`), which a row marks
-with `approval: "exempt"` without moving it out of that class; omitted or
-`"all"` preserves the complete catalog, as a program that means to write needs.
-These filters grant no authority and change no admission decision.
+whose calls a program has refused (`E4`) unless config exempts them (`W12`),
+which a row marks with `approval: "exempt"` without moving it out of that
+class; omitted or `"all"` preserves the complete catalog. These filters grant
+no authority and change no admission decision.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -335,10 +315,10 @@ is treated as `{}`.
 **S6.** Every call goes through the same catalog, fail-closed read-only
 predicate, admission, credential containment, timeout classification, health
 accounting, and activity recording as an ordinary meta-tool call. The predicate
-decides whether a call runs or pauses (`W1`); nothing a program does decides
-it. The sandbox is
-an additional containment layer, not a second implementation of the boundary,
-and nothing a program does widens what it can reach.
+and config decide whether a call runs or is refused (`E4`, `W12`); nothing a
+program does decides it. The sandbox is an additional containment layer, not a
+second implementation of the boundary, and nothing a program does widens what
+it can reach.
 
 ### Parallel calls
 
@@ -413,7 +393,7 @@ caller what to do next, and never invents a cause it was not told.
 | --- | --- | --- |
 | `unknown_address` | no connector owns the address | false |
 | `unknown_tool` | the connector has no such tool | false |
-| `destructive_tool_requires_approval` | the tool is not explicitly read-only and the deployment has no resumable writes (`E4`) | false |
+| `destructive_tool_requires_approval` | the tool is neither explicitly read-only nor config-exempt (`E4`) | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
 | `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap | false |
@@ -428,19 +408,7 @@ caller what to do next, and never invents a cause it was not told.
 | `result_processing_failed` | the result could not be prepared | per message |
 | `result_too_large` | a discovery response exceeded its byte bound | false |
 | `budget_exceeded` | the run exhausted a host-call, write, or emitted-output budget | false |
-| `execution_paused` | the run already stopped at a write that needs approval; no further call is made (`W1`) | false |
-| `pending_write_too_large` | a write's arguments are over 16 KiB serialized, too large to hold for approval (`W2`) | false |
-| `journal_too_large` | the run's source and recorded calls are over 4 MiB, too much to pause (`W3`) | false |
-| `write_outcome_unknown` | a write was sent and no answer came back; it is never sent again (`W9`) | false |
-| `execution_interrupted` | a resumed play sent writes and then ended without pausing, or storage failed under it; the run cannot be resumed (`W5`) | false |
-| `execution_diverged` | a replay stopped matching its journal (`W8`) | false |
-| `execution_claim_lost` | another `resume_execution` took the run over mid-play (`W5`) | false |
-| `approval_mismatch` | `resume_execution` did not repeat the paused write exactly (`W4`) | false |
-| `execution_token_stale` | the token names an earlier pause of a run that has moved on (`W4`) | false |
-| `execution_in_progress` | another `resume_execution` is playing the run (`W5`) | true |
-| `execution_expired` | the paused run outlived `execute.pausedRunTtlSeconds`, or reached another write after it (`W3`) | false |
-| `execution_not_found` | no paused run matches the token in this caller's partition and pool (`W3`) | false |
-| `resumable_writes_unavailable` | the deployment has no resumable writes, so nothing can be resumed (`W11`) | false |
+| `write_outcome_unknown` | an exempt write was sent and no answer came back; it is never sent again (`W9`) | false |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
@@ -448,14 +416,15 @@ caller what to do next, and never invents a cause it was not told.
 sentence. A program cannot recover credentials — only an operator can — so stop
 and let the failure reach the model.
 
-**E4.** An unannotated, write-capable, or destructive tool never runs unasked:
-it pauses the run (`W1`), or, without resumable writes, is refused with
-`destructive_tool_requires_approval`, `nextAction` carrying its canonical
-address to `call_destructive_tool` plus the original arguments when they fit
-the 512-byte echo budget — whole or not at all, since a clipped copy is a
-different call. The model's short `reason` grants no authority and never goes
-downstream, and generated code can neither mint the capability nor approve its
-own write.
+**E4.** An unannotated, write-capable, or destructive tool never runs in a
+program unless config exempts it (`W12`). It is refused with
+`destructive_tool_requires_approval` before validation and before anything is
+sent, `nextAction` carrying its canonical address to `call_destructive_tool`
+plus the original arguments when they fit the 512-byte echo budget — whole or
+not at all, since a clipped copy is a different call. The host's prompt on that
+call is the approval, and the only one: generated code can neither mint the
+capability nor approve its own write, and the model's short `reason` grants no
+authority and never goes downstream.
 
 **E5.** Failures of the *execution*, not of a call, never appear inside the
 guest: admission rejection (`executor_overloaded`, retryable, with
@@ -678,7 +647,7 @@ because connecta enforces them above the sandbox:
 | Bound | Value |
 | --- | --- |
 | Host calls per execution, shared by `search`, `describe`, and `call` | 20 by default, `execute.maxHostCalls` |
-| Writes per run, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites` |
+| Exempt writes per run, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites` |
 | Deadline per host call | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
 | Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
 | `describe` addresses | ≤ 100 |
@@ -693,10 +662,7 @@ unknown tools, catalog failures, and other pre-dispatch refusals cost what a
 successful call costs; catching a refusal does not refund it. `search` and
 `describe` likewise spend on entry. Exhausting the budget fails that call with
 non-retryable `budget_exceeded` (`E2`) and a message naming the budget. No
-connector is reached, and the budget does not refill inside one execution. A
-replay (`W6`) spends both budgets again for every call it answers from the
-journal, so one play's totals are the run's totals and nothing is counted
-twice.
+connector is reached, and the budget does not refill inside one execution.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
@@ -738,12 +704,12 @@ refuses that attempt above the invocation path, so it is charged but records no
 event.
 
 **V2.** Each event carries `connectorId`, `toolName`, `address`, `source`,
-`outcome` (`success`, `error`, `timeout`, `cancelled`, `paused`, `approved`),
-`durationMs`, `attempts`, and `errorCode` when the call *failed* — plus
-request, actor, and server identity. `paused` and `approved` name the write a
-run stopped at and the one `resume_execution` approved, with zero attempts;
-an approval adds `approval: "call" | "tool"`, never the arguments. A resumed
-play's live calls carry `source: "resume_execution"`. Typed codes derive an optional `friction`: `tool_not_found`,
+`outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
+`attempts`, and `errorCode` when the call *failed* — plus request, actor, and
+server identity. Rows written before
+[#672](https://github.com/zackbart/connecta/issues/672) may also carry the
+`paused` and `approved` outcomes, `source: "resume_execution"`, and an
+`approval` scope; readers still render them, and nothing emits them. Typed codes derive an optional `friction`: `tool_not_found`,
 `schema_retry`, `destructive_reroute`, or `auth_required`. The fifth class,
 `result_too_large`, cannot reach an `execute_code` event: it belongs to a
 `call_tool` result too large to return inline, and a program's own return is
@@ -764,114 +730,54 @@ payload-free *by construction* means the event has nowhere to put a payload.
 distinctive artifact is the program source — exactly what a payload-free history
 must never keep.
 
-**V5.** A replayed call records nothing: it was recorded when it happened, and
-a second event would count one call twice. Nor does a call refused because its
-run had already stopped, which was never an attempt.
+**V5.** An exempt write a program issues after it has already returned is not
+sent and records nothing: it was never an attempt (`W9`).
 
-## Pausing and resuming
+## Writes
 
-A program pauses host-side at its first write needing approval;
-`resume_execution` repeats that write to approve it, and the run replays from a
-journal to send it and carry on. A paused run is data, not a held program, so a
-restart loses nothing
-([#565](https://github.com/zackbart/connecta/issues/565)); `ExecuteResult` and
-the executor duties are unchanged.
+A program does not ask anyone anything. It runs explicitly read-only tools and
+the writes config exempts from asking, and refuses every other write (`E4`), so
+each consequential call is its own `call_destructive_tool` and the host's
+permission prompt is the one approval there is. Programs once paused at a write
+and resumed by replay
+([#565](https://github.com/zackbart/connecta/issues/565)); hosts approve one
+call at a time, so under always-allow that prompt approved nothing and cost a
+round trip and a replay, and it went
+([#672](https://github.com/zackbart/connecta/issues/672)). `W1`–`W8` and `W11`
+belonged to pausing and stay retired; nothing reuses those ids.
 
-**W1.** A call to a tool not explicitly read-only reaches the run's write gate
-after validation and before admission, so nobody approves arguments the schema
-rejects and a pause costs no permit. Unless an approval covers it, it is not
-sent: it rejects `execution_paused`, as does every later host call —
-unjournaled, unrecorded — while calls in flight finish and are journaled; one
-of those turning unknown fails the run instead (`W9`). The program's result is
-discarded, and a write that reaches the gate after it settles is not sent.
-Calls are numbered in issue order and a write decides only after every
-lower-numbered call has, so the pause point is reproducible.
-
-**W2.** The pause is a success: `{ paused: { address, args, token, expiresAt,
-nextAction, hint } }`, `address` canonical and `args` whole, because the host
-shows the human exactly those; `nextAction` is the resume call. Arguments over
-16 KiB stop the run `pending_write_too_large`, nothing journaled; non-object
-arguments keep `E4`; a `__proto__` key is refused `invalid_args`, since a layer
-between program, host, and human could drop it and approve a different write.
-
-**W3.** The journal lives in the caller's result storage — the `get_result`
-stash's partition and trust level — and records the `/mcp/<pool>`: source,
-every host call and its answer, the `P6` clock and seed, and one header, the
-only key compared-and-set. Over 4 MiB fails `journal_too_large`. It expires
-`execute.pausedRunTtlSeconds` (default 1,800) after the first pause, and later
-pauses keep that deadline, so no replay mixes old reads with new. Another
-subject or pool finds no run.
-
-**W4.** `resume_execution` takes `token`, `address`, `args`, optional
-`approval`, and a dropped `reason`. Address and args must match the pending
-write as JSON, key order aside, with no `__proto__` key; otherwise it returns
-`approval_mismatch`. That, `execution_token_stale` (current pause),
-`execution_in_progress` (live claim), `execution_expired` (counts if writes
-were sent), and `execution_not_found` refuse before the claim, spending nothing.
-A repeat returns the ended run's answer past expiry; oversized text or emitted blocks get a completion receipt instead.
-
-**W5.** An approved write is sent at most once. Resuming claims the run by
-compare-and-set; a racing resume gets `execution_in_progress`. Each live write
-is first marked `sending` on the header, and a claim found moved sends nothing
-further and stops `execution_claim_lost`. The header outlives `expiresAt` while
-a claim is live, and by 30 minutes once a write was sent. A storage call over
-its deadline (the host call's, at least 5 s) fails: before dispatch nothing is
-sent, after it the run stops with the write counted. Replay picks up only at a
-pause: a play ended otherwise — executor failure (admission, cancellation, the
-`L3` watchdog) or a lapsed claim — returns to its pause only if it sent no
-write; a write left `sending` fails `write_outcome_unknown`, and sent writes
-fail `execution_interrupted`, the reads after them never journaled.
-
-**W6.** A replay runs from the top on the journal's clock and seed. A recorded
-call — matched by operation, address as written, and canonical arguments, in
-first issue order per key — is answered before the rest of the call path: no
-catalog, permit, connector, or activity (`V5`). A hit is never the pending
-call, which is not journaled. The approved write and everything after it go
-live. `emit` is not journaled; only the completing play delivers.
-
-**W7.** `approval: "call"`, the default, covers that one write; `"tool"` covers
-every later call to that canonical address for the run. Approvals live in the
-header, a retry's replacing one that sent nothing; nothing else grants one.
-Keep an authorized batch in one program; use tool scope for repeated calls to that address, while other addresses still need their own approval.
-
-**W8.** A replay fails `execution_diverged`, never replayed again, when (a) a
-call has no record before the approved write is repeated, (b) the program
-finishes without repeating it, or (c) without repeating a write already sent.
-
-**W9.** A write sent and never answered fails the run `write_outcome_unknown`
-wherever it is found — beside a pause, after the program returned, at a
-takeover — with its address, its args within the 512-byte echo budget, and
-`writes: { succeeded, failed, unknown }`; a failed run is never replayed. Only
-a refusal (`auth_required`, `invalid_args`, `not_found`, `rate_limited`,
-`conflict`) or the
+**W9.** An exempt write the program does not await outlives it: the play stops
+gating once the program settles — a write that reaches the gate after is not
+sent (`V5`) — and waits for writes already dispatched, each within its host-call
+deadline, before the run's scope aborts them. A write sent and never answered
+makes the result `write_outcome_unknown` with
+`writes: { succeeded, failed, unknown }`, whatever the program returned, and it
+is never sent again. Only a refusal (`auth_required`, `invalid_args`,
+`not_found`, `rate_limited`, `conflict`, `input_required_unsupported`) or the
 tool's own `isError` answers; an `isError` reading as a timeout does not, and
-`connector_call_failed` — an oversized body, a refused redirect — may come
-after the write landed. Every error from a resumed play carries `writes`, and
-once one landed or may have, `nextAction` says to check first; a program that
-throws after writing ends the run `failed` with them.
+`connector_call_failed` — an oversized body, a refused redirect — may come after
+the write landed. A program that fails after writing carries the same `writes`
+on its error, because it is not a program that is safe to run again.
 
-**W10.** `execute.maxWrites` (default 10) bounds a run's writes beyond the host
-calls they spend, checked at the gate — so an over-budget write fails
-`budget_exceeded` instead of asking — and spent at dispatch.
-
-**W11.** Without resumable writes — storage without `compareAndSet`, or
-`execute.resumableWrites: false` — `E4` stands and `resume_execution` answers
-`resumable_writes_unavailable`.
+**W10.** `execute.maxWrites` (default 10) bounds a run's exempt writes beyond
+the host calls they spend, checked at the gate after validation and before
+admission, so an over-budget write fails `budget_exceeded` without a permit.
+The host-call budget bounds fan-out; this one bounds how much a program may
+change unasked, which is a different question even for writes a deployment
+called cheap.
 
 **W12.** Config may exempt a write from asking, and nothing else may
 ([#566](https://github.com/zackbart/connecta/issues/566)). `execute.approval`
 maps connector ids and `connector.tool` addresses to `"never"` or `"ask"`; the
 address wins over the connector entry, which wins over a connector's own
-built-in default (reserved for connectors connecta ships), which wins over
-`"ask"`. An exempt call is decided at the same gate as `W1` and dispatches
-instead of pausing, with everything else an approved write gets: the write
-budget (`W10`), the write-ahead mark (`W5`), the journal, a `V1` event. Without
-resumable writes, other writes keep `E4`; an exempt one still finishes after
-the program returns, never hiding an unknown outcome (`W9`). Exempt is never
-read-only: no read-only tool is reported exempt, discovery keeps an exempt tool
-approval-required, `call_tool` refuses it, and no annotation grants it, or a
-downstream could exempt itself. Unknown connectors and `api()` addresses its
-tools lack refuse to construct; an unserved remote address never matches.
+built-in default (reserved for connectors connecta ships, such as artifacts),
+which wins over `"ask"`. An exempt call is decided at the write gate, after
+validation and before admission, and dispatches with the write budget (`W10`),
+`W9`'s tracking, and a `V1` event. Exempt is never read-only: no read-only tool
+is reported exempt, discovery keeps an exempt tool approval-required,
+`call_tool` refuses it, and no annotation grants it, or a downstream could
+exempt itself. Unknown connectors and `api()` addresses its tools lack refuse
+to construct; an unserved remote address never matches.
 
 ## Executor exceptions
 
@@ -912,7 +818,8 @@ starts has no guest logs to recover.
 
 **X5. Leftover authority.** QuickJS blocks imports and has no `fetch`,
 `process`, timers, `crypto`, or `WebSocket`, and its Node child starts with an
-explicit environment holding only `TZ=UTC` (`P6`) rather than inheriting
+explicit environment holding only `TZ=UTC`, so local time matches a Dynamic
+Worker's, rather than inheriting
 deployment variables or `NODE_OPTIONS`. A Dynamic Worker has those globals plus a non-contract set of
 runtime builtins through `import()` and `process.getBuiltinModule()`, including
 `node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`,
@@ -957,11 +864,8 @@ none, because that boundary is an isolate-to-isolate call rather than a
 one tool call therefore fails on Node and may succeed on Workers — reduce inside
 the program either way (`R1`).
 
-**X12. A paused sandbox.** QuickJS stops: releasing the lease with the child
-still running recycles it (`X3`). A Dynamic Worker cannot be interrupted, so a
-paused program runs on until it settles or its deadline expires, every host
-call failing `execution_paused`. Connecta stops awaiting it at the pause and
-discards whatever it returns.
+**X12** described a paused sandbox and left with pausing
+([#672](https://github.com/zackbart/connecta/issues/672)); the id stays retired.
 
 **X11. Typed host rejection.** Both executors rebuild Connecta's authenticated
 host-failure frame as a thrown guest `Error` (`E1`). The per-run secret stays in
@@ -990,7 +894,6 @@ passing one table is also the check on the executor duties above, with
 | `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (a child-process environment holding only `TZ=UTC`), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
-| `P6` | `test/guest-api-contract.test.ts` (a frozen clock across host calls, the seeded sfc32 stream against a reference, locked replacements, Workers `crypto` and `performance` pinned directly and through their prototypes, `Intl` "now" and UTC local time on both executors, a fresh pair per run, and a replay drawing the same values), `test/resumable-restart.test.ts` (the same draws after a restart) |
 | `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory) |
 | `S1`, `S1a`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling), `test/typescript-signatures-parse.test.ts` (every rendering parses) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
@@ -1000,7 +903,7 @@ passing one table is also the check on the executor duties above, with
 | `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, budget, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.test.ts` (oversized messages, private transport, forged frames) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
-| `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/resumable.test.ts` (the refusal without resumable writes) |
+| `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/program-writes.test.ts` (the refusal's `nextAction`, nothing sent, a caught refusal) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.test.ts` (mid-run shutdown) |
 | `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, wrapped-message precedence), `test/quickjs-executor.test.ts` |
 | `E7` | `test/guest-api-contract.test.ts` (refusals about a `503`-named connector), `test/errors.test.ts` |
@@ -1015,16 +918,9 @@ passing one table is also the check on the executor duties above, with
 | `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets) |
 | `L5`, `L7`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue) |
 | `L6`, `X10` | `test/quickjs-executor.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.test.ts` (outer reply serialization failure settles the call) |
-| `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself, `paused` and `approved` events), `test/activity.test.ts` (the shared code → friction table, the identity clamp, zero-attempt pauses and approvals) |
-| `V5` | `test/resumable.test.ts` (replay adds only the approval and the live write), `test/guest-api-contract.test.ts` |
-| `W1`, `W2` | `test/guest-api-contract.test.ts` (nothing after a pause gets through, a `__proto__` write refused, on both executors), `test/resumable.test.ts` (the pause shape, reproducible pause points, oversized pending writes, a write gated after the program returned), `test/invocation-pipeline.test.ts` (the gate after validation) |
-| `W3`, `W4` | `test/resumable.test.ts` (header layout, byte bound, expiry, not-found, pool isolation, exact-match refusals that consume nothing, a `__proto__` repetition through the MCP schema, a repeated resume and emitted-content receipt, an expired run's counts) |
-| `W5` | `test/resumable.test.ts` (two resumes racing for a pause, a crashed claimant's `sending` write never sent, a lapsed claim taken over, a claim lost mid-play and the write it sent reported, executor failure returning to the pause, a cut-short or lapsed play that sent writes failing `execution_interrupted`, a claim outliving `expiresAt`, a live or lapsed claim checked before expiry, a failed takeover's answer stored with it, storage that never answers before and after dispatch, a deadline between mark and dispatch) |
-| `W6`, `W7` | `test/guest-api-contract.test.ts` (replay on both executors), `test/resumable.test.ts` (no catalog, connector, or activity traffic for replayed calls; call and tool scope, a retry's scope replacing an unused approval, a hit never taken for the pending call), `test/resumable-restart.test.ts` (across a restart) |
-| `W8`–`W10` | `test/resumable.test.ts` (divergence (a)–(c), each unknown-outcome path never re-sent — beside a concurrent pause, after the program returned, a post-response connector error — a known failure the program handles, the classification table, check-first advice once a write landed, the write budget) |
-| `W11` | `test/code-first-surface.test.ts`, `test/resumable.test.ts` (construction, the default, `/health`, the unavailable answer) |
-| `W12` | `test/resumable.test.ts` (an exempt write runs where the same program otherwise pauses, precedence and a connector default switched off, the write budget, resumable writes off, an unawaited exempt write finished and its unknown outcome reported, journaled and never re-sent, an exempt write's count past expiry, `call_tool` still refusing, search and describe markers, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
-| `X12` | `test/guest-api-contract.test.ts` (a program that keeps calling after the pause, on both executors) |
+| `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/d1-activity-example.test.ts` (historical pause and approval rows still render and round-trip) |
+| `V5`, `W9` | `test/program-writes.test.ts` (an unawaited exempt write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal) |
+| `W10`, `W12` | `test/program-writes.test.ts` (an exempt write runs and every other write keeps `E4`, the write budget, precedence and a connector default switched off, `call_tool` still refusing, search and describe markers, construction refusals), `test/artifacts-connector.test.ts` (the shipped default and switching it off), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
 | `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.test.ts` (mid-run shutdown) |
@@ -1035,5 +931,6 @@ passing one table is also the check on the executor duties above, with
 | `X3`, `X6` | `test/quickjs-executor.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface itself is checked by `test/server.test.ts` (the exact eight-tool list) and
-`test/code-first-surface.test.ts` (construction, executor, removed tools, copy, and size).
+The surface itself is checked by `test/server.test.ts` (the exact seven-tool list),
+`test/code-first-surface.test.ts` (construction, executor, removed tools, copy, and size),
+and `test/program-writes.test.ts` (the retired pause options refused at construction).

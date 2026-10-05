@@ -2,6 +2,62 @@
 
 All notable changes to this package are documented here.
 
+## 0.28.0 — Unreleased
+
+This minor release removes program pauses ([#672](https://github.com/zackbart/connecta/issues/672)).
+`execute_code` programs run explicitly read-only tools and the writes
+`execute.approval` exempts, and every other write is its own
+`call_destructive_tool` call, so the host's permission prompt on that call is
+the only approval there is. Hosts approve one tool call at a time, and under
+always-allow or bypass modes the agent called `resume_execution` itself: each
+pause cost a round trip and a full replay and protected nothing. What breaks:
+`resume_execution` is gone, so the surface is seven tools again, and a host
+allow-list or cached tool list naming it should drop it.
+`execute.resumableWrites` and `execute.pausedRunTtlSeconds` now refuse to
+construct with an error naming
+the removal — delete them, including the Worker example's
+`execute: { resumableWrites: false }` line. A program's non-exempt write now
+fails `destructive_tool_requires_approval` with a `nextAction` for
+`call_destructive_tool`, exactly as it did on deployments without resumable
+writes, and a run never returns `{ paused: … }`. `Date.now()` and
+`Math.random()` inside a program are the runtime's own again rather than pinned
+per run. A deployment that sets neither option and whose programs only read
+can ignore all of this: approval exemptions, `execute.maxWrites`, storage
+contracts, and the D1 activity schema are unchanged, and any paused runs left
+in storage expire on their own TTL.
+
+### Removed
+
+- `resume_execution`, the run journal, deterministic replay, compare-and-set
+  run claims, and the pinned clock and randomness (code-mode `P6`) that
+  existed only so a replay could match. `W1`–`W8`, `W11`, `P6`, and `X12` are
+  retired clause ids.
+- The pause-only error codes: `execution_paused`, `pending_write_too_large`,
+  `journal_too_large`, `execution_interrupted`, `execution_diverged`,
+  `execution_claim_lost`, `approval_mismatch`, `execution_token_stale`,
+  `execution_in_progress`, `execution_expired`, `execution_not_found`, and
+  `resumable_writes_unavailable`. `write_outcome_unknown` stays, for an exempt
+  write that was sent and never answered.
+- `resumableWrites` from `/health`, and the "resumable writes off" note from
+  `connecta doctor`, which now verifies the exact seven-tool surface.
+- The pause and resume agent eval tasks.
+
+### Changed
+
+- The MCP instructions, the `execute_code` description, and the `usage` skill
+  describe the read-only program route: reads and config-exempt writes in a
+  program, every other write through `call_destructive_tool`. The description
+  states the exempt-write budget.
+- `execute.maxWrites` now bounds only config-exempt writes, the one kind a
+  program can still send. Its default stays 10.
+- Activity no longer emits `paused` or `approved` outcomes, the
+  `resume_execution` source, or an `approval` scope. The types keep them as
+  read-only history, the operator UI still renders older rows (a historical
+  pause now reads "Paused for approval"), and the D1 example still stores and
+  reads the `approval` column.
+- QuickJS still runs its child with `TZ=UTC`, now for parity with a Dynamic
+  Worker's local time rather than for replay.
+
 ## 0.27.0 — 2026-10-01
 
 This minor release moves the runtime to stable Effect v4 and fixes execution,

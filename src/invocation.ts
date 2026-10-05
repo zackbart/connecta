@@ -190,17 +190,16 @@ export type InvocationOutcome<T> =
 
 /**
  * What a write gate decided about one consequential call. A dispatch goes on
- * to admission and the connector; a refusal ends the call with `error`.
- * `activity` says how the refusal is recorded: as an ordinary failed attempt
- * (the default), as the payload-free `paused` event a pause leaves, or not at
- * all — a call refused only because its run already stopped is not an attempt.
+ * to admission and the connector; a refusal ends the call with `error`,
+ * recorded as an ordinary failed attempt unless `unrecorded` — a write
+ * refused only because its program already returned was never an attempt.
  */
 export type WriteGateDecision =
   | { kind: "dispatch" }
   | {
       kind: "refuse";
       error: CallErrorDetails;
-      activity?: "paused" | "none";
+      unrecorded?: true;
     };
 
 export interface InvocationContext<T> {
@@ -225,16 +224,10 @@ export interface InvocationContext<T> {
    */
   activityFriction?: (value: T) => AgentFriction | undefined;
   /**
-   * Called after address/catalog/safety admission and before the first provider
-   * attempt. Code mode uses it to mark a read's gate decision as made.
-   */
-  beforeDispatch?: () => void;
-  /**
    * Decides a call that is not explicitly read-only, in place of the flat
-   * `destructive_tool_requires_approval` refusal. Only code mode with
-   * resumable writes supplies one. It runs after argument validation — a
-   * human is never asked to approve arguments the schema already rejects —
-   * and before admission, so a pause costs no permit.
+   * `destructive_tool_requires_approval` refusal. Only code mode supplies
+   * one, for config-exempt writes (#566). It runs after argument validation
+   * and before admission, so a write over budget costs no permit.
    */
   writeGate?: (
     target: ResolvedCatalogTool,
@@ -243,8 +236,8 @@ export interface InvocationContext<T> {
   /**
    * Which consequential calls `writeGate` decides; all of them when omitted.
    * One it does not cover keeps the flat refusal, ahead of validation as
-   * always — so a program without resumable writes gates only its
-   * config-exempt calls and refuses the rest exactly as before.
+   * always — so a program gates only its config-exempt calls and refuses
+   * every other write.
    */
   gates?: (target: ResolvedCatalogTool) => boolean;
 }
@@ -317,8 +310,8 @@ export class InvocationService {
       let attempts = 0;
       let dispatchedToConnector = false;
       let answered = false;
-      // How a write gate's refusal is recorded; see WriteGateDecision.
-      let gateActivity: "paused" | "none" | undefined;
+      // A write gate's refusal that is no attempt; see WriteGateDecision.
+      let unrecorded = false;
       let resolved: ResolvedCatalogTool | undefined;
       let activityTarget:
         | Pick<ResolvedCatalogTool, "connector" | "toolName">
@@ -335,7 +328,7 @@ export class InvocationService {
         totalMs: Date.now() - started,
       });
       const record = (
-        outcome: "success" | "error" | "timeout" | "cancelled" | "paused",
+        outcome: "success" | "error" | "timeout" | "cancelled",
         classification: { errorCode?: string; friction?: AgentFriction } = {},
       ) => {
         const identity = activityTarget
@@ -438,14 +431,9 @@ export class InvocationService {
           ...(dispatchedToConnector ? { answered } : {}),
           error: details,
         });
-        // A pause is not a failure: it leaves one payload-free `paused` event
-        // naming the call that waits, and nothing in the operator's log. A call
-        // refused only because its run had already stopped leaves neither.
-        if (gateActivity === "none") return outcome();
-        if (gateActivity === "paused") {
-          record("paused");
-          return outcome();
-        }
+        // A write refused only because its program had already returned
+        // leaves no event and nothing in the operator's log.
+        if (unrecorded) return outcome();
         // Activity rows stay payload-free by construction; the operator's log is
         // where the downstream reason goes, bounded and without arguments.
         if (target && details.code !== "destructive_tool_requires_approval") {
@@ -555,17 +543,9 @@ export class InvocationService {
           if (gate) {
             const decision = yield* gate(target, args ?? {});
             if (decision.kind === "refuse") {
-              gateActivity = decision.activity;
+              unrecorded = decision.unrecorded === true;
               return decision.error;
             }
-          }
-
-          try {
-            context.beforeDispatch?.();
-          } catch (error) {
-            return error instanceof InvocationFailure
-              ? error.details
-              : classifyCallError(error);
           }
 
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);

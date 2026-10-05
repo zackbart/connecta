@@ -7,14 +7,8 @@ import { recordToolActivity } from "../src/activity.js";
 import { expect } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
-import {
-  createExecuteTool,
-  createProgramRunner,
-  type PinnedEnvironment,
-} from "../src/execute.js";
+import { createExecuteTool } from "../src/execute.js";
 import type { ToolResult } from "../src/meta-tools.js";
-import { resumeExecution, type ResumableSettings } from "../src/resumable.js";
-import { runEdge } from "../src/runtime/run.js";
 import type { Connector, Executor, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
@@ -48,15 +42,6 @@ export interface ContractCase {
   deadline?: true;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
-  /** A known clock and seed for this case and its follow-up (P6). */
-  environment?: PinnedEnvironment;
-  /** Run with resumable writes on. */
-  resumable?: true;
-  /**
-   * Approve the paused write with this scope and hand the resumed outcome to
-   * `check` as its follow-up. Implies `resumable`.
-   */
-  resumeWith?: "call" | "tool";
   check(
     outcome: ContractOutcome,
     state: ContractState,
@@ -164,47 +149,6 @@ export const CAPABILITY_PROBE_CODE = `async () => {
   };
 }`;
 
-/** A known clock (whole seconds, so `Date()` round-trips) and seed. */
-const PINNED_ENVIRONMENT: PinnedEnvironment = {
-  clockMs: 1_700_000_000_000,
-  seed: [0x9e3779b9, 0x243f6a88, 0xb7e15162, 0x12345678],
-};
-
-/** The reference sfc32 the P6 prelude implements: `count` draws in [0, 1). */
-function sfc32(
-  seed: PinnedEnvironment["seed"],
-  count: number,
-): number[] {
-  let [a, b, c, d] = seed.map((word) => word | 0) as [number, number, number, number];
-  const out: number[] = [];
-  for (let i = 0; i < count; i++) {
-    const t = (((a + b) | 0) + d) | 0;
-    d = (d + 1) | 0;
-    a = b ^ (b >>> 9);
-    b = (c + (c << 3)) | 0;
-    c = (c << 21) | (c >>> 11);
-    c = (c + t) | 0;
-    out.push((t >>> 0) / 4294967296);
-  }
-  return out;
-}
-
-/** Workers-only sources P6 pins where the runtime has them. */
-const PINNED_RUNTIME_PROBE = `async () => {
-  if (typeof crypto !== "object" || crypto === null) {
-    return { crypto: "absent", performance: typeof performance === "object" ? "present" : "absent" };
-  }
-  return {
-    uuid: crypto.randomUUID(),
-    bytes: Array.from(crypto.getRandomValues(new Uint8Array(4))),
-    random: Math.random(),
-    performance: performance.now(),
-    locked: {
-      getRandomValues: Reflect.set(crypto, "getRandomValues", () => null),
-      randomUUID: Reflect.set(crypto, "randomUUID", () => "forged")
-    }
-  };
-}`;
 
 function readOnly(name: string, extra: Partial<ToolDef> = {}): ToolDef {
   return { name, annotations: { readOnlyHint: true }, ...extra };
@@ -445,21 +389,13 @@ function contractConnectors(state: ContractState): Connector[] {
 
 interface CaseConfig {
   maxEmittedBytes?: number;
-  environment?: PinnedEnvironment;
-  resumable?: ResumableSettings;
 }
 
 /** The execute_code configuration a case asks for, the same on every arm. */
 export function caseConfig(contractCase: ContractCase): CaseConfig {
-  return {
-    ...(contractCase.maxEmittedBytes !== undefined
-      ? { maxEmittedBytes: contractCase.maxEmittedBytes }
-      : {}),
-    ...(contractCase.environment ? { environment: contractCase.environment } : {}),
-    ...(contractCase.resumable || contractCase.resumeWith
-      ? { resumable: { maxWrites: 10, ttlSeconds: 1_800, pool: null } }
-      : {}),
-  };
+  return contractCase.maxEmittedBytes !== undefined
+    ? { maxEmittedBytes: contractCase.maxEmittedBytes }
+    : {};
 }
 
 /** One fresh registry, activity sink, and call counter per case. */
@@ -469,13 +405,6 @@ export function contractHarness(): {
     executor: Executor,
     code: string,
     config?: CaseConfig,
-  ) => Promise<ContractOutcome>;
-  /** Approve a paused outcome's write through resume_execution. */
-  resume: (
-    executor: Executor,
-    paused: ContractOutcome,
-    approval: "call" | "tool",
-    config: CaseConfig,
   ) => Promise<ContractOutcome>;
 } {
   const state: ContractState = { calls: {}, events: [] };
@@ -525,32 +454,6 @@ export function contractHarness(): {
         activity,
         config,
       )({ code })),
-    resume: async (executor, paused, approval, config) => {
-      const pause = paused.value.paused as {
-        token: string;
-        address: string;
-        args: Record<string, unknown>;
-      };
-      const runner = createProgramRunner(
-        registry,
-        CONTRACT_BASE,
-        executor,
-        silentLogger,
-        activity,
-        config,
-      );
-      return outcomeOf(await runEdge(resumeExecution(
-        { token: pause.token, address: pause.address, args: pause.args, approval },
-        {
-          storage: registry.resultsStorage(),
-          settings: config.resumable,
-          run: (runState) => runner.replay(runState),
-          claimMs: runner.claimMs,
-          storageTimeoutMs: runner.storageTimeoutMs,
-          activity,
-        },
-      )));
-    },
   };
 }
 
@@ -689,199 +592,6 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "P6",
-    name: "the clock is frozen at the run's start, host calls included",
-    environment: PINNED_ENVIRONMENT,
-    code: `async () => {
-      const first = Date.now();
-      await connecta.call("reader.read", { value: "x" });
-      return {
-        first,
-        afterCall: Date.now(),
-        constructed: new Date().getTime(),
-        called: Date(),
-        explicit: new Date(0).toISOString(),
-        parsed: Date.parse("1970-01-01T00:00:01.000Z"),
-        utc: Date.UTC(2000, 0, 1),
-        isDate: new Date() instanceof Date,
-        viaPrototype: new (Object.getPrototypeOf(new Date()).constructor)().getTime(),
-        nativeNow: Object.getPrototypeOf(new Date()).constructor.now()
-      };
-    }`,
-    check(outcome) {
-      const result = record(outcome);
-      const clock = PINNED_ENVIRONMENT.clockMs;
-      expect(result).toMatchObject({
-        first: clock,
-        afterCall: clock,
-        constructed: clock,
-        explicit: "1970-01-01T00:00:00.000Z",
-        parsed: 1_000,
-        utc: Date.UTC(2000, 0, 1),
-        isDate: true,
-        viaPrototype: clock,
-        nativeNow: clock,
-      });
-      // `Date()` is a string at second precision in the executor's zone.
-      expect(new Date(String(result.called)).getTime()).toBe(clock);
-    },
-  },
-  {
-    clauses: "P6",
-    name: "Math.random is the seeded sfc32 stream",
-    environment: PINNED_ENVIRONMENT,
-    code: `async () => [Math.random(), Math.random(), Math.random(), Math.random()]`,
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toEqual(sfc32(PINNED_ENVIRONMENT.seed, 4));
-    },
-  },
-  {
-    clauses: "P6",
-    name: "the pinned clock and stream cannot be replaced or bypassed",
-    environment: PINNED_ENVIRONMENT,
-    // Redefining the global `Date` binding itself is left out: QuickJS lets
-    // defineProperty replace a non-configurable global (it does the same to
-    // the locked `Error`), and what replaces it is the program's own code.
-    // What must hold on both executors is that no route reaches an unpinned
-    // clock or stream.
-    code: `async () => {
-      const PinnedDate = Date;
-      const NativeDate = Object.getPrototypeOf(new PinnedDate()).constructor;
-      const redefine = (target, key) => {
-        try {
-          Object.defineProperty(target, key, { value: () => 0.5 });
-          return "allowed";
-        } catch { return "refused"; }
-      };
-      const out = {
-        dateSet: Reflect.set(globalThis, "Date", function () { return 1; }),
-        nowSet: Reflect.set(PinnedDate, "now", () => 1),
-        nativeNowSet: Reflect.set(NativeDate, "now", () => 1),
-        randomSet: Reflect.set(Math, "random", () => 0.5),
-        constructorSet: Reflect.set(PinnedDate.prototype, "constructor", Object),
-        nowRedefine: redefine(PinnedDate, "now"),
-        randomRedefine: redefine(Math, "random"),
-        constructorRedefine: redefine(PinnedDate.prototype, "constructor"),
-        nowDeleted: Reflect.deleteProperty(PinnedDate, "now"),
-        randomDeleted: Reflect.deleteProperty(Math, "random")
-      };
-      out.now = Date.now();
-      out.constructed = new NativeDate().getTime();
-      out.random = Math.random();
-      return out;
-    }`,
-    check(outcome) {
-      expect(record(outcome)).toEqual({
-        dateSet: false,
-        nowSet: false,
-        nativeNowSet: false,
-        randomSet: false,
-        constructorSet: false,
-        nowRedefine: "refused",
-        randomRedefine: "refused",
-        constructorRedefine: "refused",
-        nowDeleted: false,
-        randomDeleted: false,
-        now: PINNED_ENVIRONMENT.clockMs,
-        constructed: PINNED_ENVIRONMENT.clockMs,
-        random: sfc32(PINNED_ENVIRONMENT.seed, 1)[0],
-      });
-    },
-  },
-  {
-    clauses: "P6",
-    name: "a runtime's crypto and performance clock follow the pin where present",
-    environment: PINNED_ENVIRONMENT,
-    code: PINNED_RUNTIME_PROBE,
-    follows: PINNED_RUNTIME_PROBE,
-    check(outcome, _state, follow) {
-      const result = record(outcome);
-      const second = required(follow, "follow-up outcome");
-      // Same clock and seed, same values: the probe replays exactly.
-      expect(second.result).toEqual(result);
-      if (result.crypto === "absent") {
-        // QuickJS has neither global (X5); nothing to pin.
-        expect(result).toEqual({ crypto: "absent", performance: "absent" });
-        return;
-      }
-      expect(String(result.uuid)).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      );
-      expect(result.bytes).toHaveLength(4);
-      expect(result.performance).toBe(0);
-      expect(result.locked).toEqual({ getRandomValues: false, randomUUID: false });
-    },
-  },
-  {
-    clauses: "P6",
-    name: "prototype routes, Intl, and local time read the pin too",
-    environment: PINNED_ENVIRONMENT,
-    code: `async () => {
-      const out = {
-        offset: new Date(0).getTimezoneOffset(),
-        hours: new Date(0).getHours()
-      };
-      if (typeof Intl === "object" && Intl && typeof Intl.DateTimeFormat === "function") {
-        const f = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", dateStyle: "short", timeStyle: "short" });
-        out.intl = f.format() === f.format(new Date(Date.now()));
-        out.parts = JSON.stringify(f.formatToParts()) === JSON.stringify(f.formatToParts(new Date(Date.now())));
-      }
-      if (typeof crypto === "object" && crypto) {
-        const proto = Object.getPrototypeOf(crypto);
-        const viaProto = Array.from(proto.getRandomValues.call(crypto, new Uint8Array(4)));
-        out.uuidViaProto = proto.randomUUID.call(crypto);
-        out.bytesViaProto = viaProto;
-      }
-      if (typeof performance === "object" && performance) {
-        out.perfViaProto = Object.getPrototypeOf(performance).now.call(performance);
-      }
-      return out;
-    }`,
-    follows: `async () => {
-      const out = {};
-      if (typeof crypto === "object" && crypto) {
-        const proto = Object.getPrototypeOf(crypto);
-        out.bytesViaProto = Array.from(proto.getRandomValues.call(crypto, new Uint8Array(4)));
-        out.uuidViaProto = proto.randomUUID.call(crypto);
-      }
-      return out;
-    }`,
-    check(outcome, _state, follow) {
-      const result = record(outcome);
-      // Local time is UTC on both executors, whatever the host's zone.
-      expect(result).toMatchObject({ offset: 0, hours: 0 });
-      if ("intl" in result) expect(result).toMatchObject({ intl: true, parts: true });
-      if ("perfViaProto" in result) expect(result.perfViaProto).toBe(0);
-      if ("bytesViaProto" in result) {
-        // Same seed on the follow-up: the prototype route replays too.
-        const second = required(follow, "follow-up outcome");
-        expect(second.result).toEqual({
-          bytesViaProto: result.bytesViaProto,
-          uuidViaProto: result.uuidViaProto,
-        });
-      }
-    },
-  },
-  {
-    clauses: "P6",
-    name: "each run pins its own clock and seed from the host",
-    code: `async () => ({ now: Date.now(), random: Math.random() })`,
-    follows: `async () => ({ now: Date.now(), random: Math.random() })`,
-    check(outcome, _state, follow) {
-      const first = record(outcome);
-      const second = required(follow, "follow-up outcome");
-      expect(second.isError, second.text).toBe(false);
-      const next = second.result as Record<string, unknown>;
-      // A fresh seed per run: two runs drawing the same first value would
-      // mean a fixed or reused seed.
-      expect(next.random).not.toBe(first.random);
-      for (const now of [first.now, next.now]) {
-        expect(Math.abs(Number(now) - Date.now())).toBeLessThan(60_000);
-      }
-    },
-  },
-  {
     clauses: "A1, A2, S5",
     name: "canonical calls return unwrapped tool values",
     code: `async () => ({
@@ -946,83 +656,6 @@ export const CONTRACT_CASES: ContractCase[] = [
       }
       expect(state.calls["reader.wipe"]).toBeUndefined();
       expect(state.calls["reader.unannotated"]).toBeUndefined();
-    },
-  },
-  {
-    clauses: "E4",
-    name: "with resumable writes, a write pauses the run and nothing after it gets through",
-    resumable: true,
-    code: `async () => {
-      const out = {};
-      try { await connecta.call("reader.wipe", {}); } catch (err) { out.first = err.code; }
-      try { await connecta.call("reader.read", { value: "after" }); } catch (err) { out.second = err.code; }
-      try { await connecta.call("reader.unannotated", {}); } catch (err) { out.third = err.code; }
-      return out;
-    }`,
-    check(outcome, state) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      // The pause is the answer; whatever the program went on to return is
-      // discarded, and none of its later calls reached a connector.
-      expect(outcome.value.paused).toMatchObject({
-        address: "reader.wipe",
-        args: {},
-        nextAction: { tool: "resume_execution" },
-      });
-      expect(outcome.value.result).toBeUndefined();
-      expect(state.calls).toEqual({});
-      expect(state.events.map((event) => [event.address, event.outcome, event.attempts]))
-        .toEqual([["reader.wipe", "paused", 0]]);
-    },
-  },
-  {
-    clauses: "E4",
-    name: "a write whose arguments carry a __proto__ key is refused, never held for approval",
-    resumable: true,
-    code: `async () => {
-      try {
-        await connecta.call("reader.wipe", JSON.parse('{"text":"hello","__proto__":{"text":"HIDDEN"}}'));
-        return "sent";
-      } catch (err) { return err.code; }
-    }`,
-    check(outcome, state) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.value.paused).toBeUndefined();
-      expect(outcome.result).toBe("invalid_args");
-      expect(state.calls).toEqual({});
-    },
-  },
-  {
-    clauses: "E4, P6",
-    name: "an approved write resumes by replay: same draws, reads not repeated",
-    resumeWith: "call",
-    code: `async () => {
-      const first = await connecta.call("reader.read", { value: "before" });
-      const marker = Math.random();
-      const at = Date.now();
-      const wiped = await connecta.call("reader.wipe", { marker, at });
-      return { first, marker, at, wiped };
-    }`,
-    check(outcome, state, follow) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      const pause = outcome.value.paused as { args: { marker: number; at: number } };
-      const resumed = required(follow, "resumed outcome");
-      expect(resumed.isError, resumed.text).toBe(false);
-      // The replay drew the same number and read the same clock, so it
-      // repeated exactly the approved write.
-      expect(resumed.result).toEqual({
-        first: { echo: "before" },
-        marker: pause.args.marker,
-        at: pause.args.at,
-        wiped: { done: true },
-      });
-      expect(state.calls).toEqual({ "reader.read": 1, "reader.wipe": 1 });
-      expect(state.events.map((event) => [event.address, event.outcome, event.source]))
-        .toEqual([
-          ["reader.read", "success", "execute_code"],
-          ["reader.wipe", "paused", "execute_code"],
-          ["reader.wipe", "approved", "resume_execution"],
-          ["reader.wipe", "success", "resume_execution"],
-        ]);
     },
   },
   {

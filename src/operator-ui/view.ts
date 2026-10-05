@@ -708,12 +708,12 @@ export const TOOL_SAFETY_BADGE: Readonly<
   exempt: {
     label: "exempt from approval",
     tone: "neutral",
-    title: "Not read-only, but this deployment's config lets programs call it without pausing. Each call still counts against the write budget and appears in activity; call_tool still refuses it.",
+    title: "Not read-only, but this deployment's config lets programs call it without asking. Each call still counts against the write budget and appears in activity; call_tool still refuses it.",
   },
   needs_approval: {
     label: "asks for approval",
     tone: "warn",
-    title: "Not explicitly read-only: a program pauses for resume_execution, and a direct call crosses call_destructive_tool — either way the host asks first.",
+    title: "Not explicitly read-only: programs refuse it, and it runs through call_destructive_tool, where the host asks first.",
   },
 };
 
@@ -939,7 +939,8 @@ export function activitySummary(events: UiActivityEvent[]): string {
 }
 
 // A pause and an approval are neither success nor failure: each gets its own
-// class, and the stylesheet paints neither as an error.
+// class, and the stylesheet paints neither as an error. Nothing has emitted
+// either since issue #672 removed program pauses, but older rows carry them.
 const ACTIVITY_OUTCOMES = [
   "success",
   "error",
@@ -959,7 +960,7 @@ const OUTCOME_BADGE: Readonly<Record<string, { label: string; tone: Tone }>> = {
   error: { label: "Failed", tone: "danger" },
   timeout: { label: "Timed out", tone: "danger" },
   cancelled: { label: "Cancelled", tone: "neutral" },
-  paused: { label: "Waiting for approval", tone: "warn" },
+  paused: { label: "Paused for approval", tone: "warn" },
   approved: { label: "Approved", tone: "ok" },
 };
 
@@ -971,6 +972,7 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   execute_code: "In a program",
   call_tool: "Direct call",
   call_destructive_tool: "Direct call, approved by the host",
+  // History only: resume_execution left with program pauses (#672).
   resume_execution: "Resumed program",
   batch_call: "Batch call",
 };

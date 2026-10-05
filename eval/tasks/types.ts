@@ -8,12 +8,12 @@
  *
  * - P2 (artifacts) needs only new graders over state the deployment adapter
  *   exposes, and `deployment` options to switch the artifacts slot on.
- * - P3 (resumable writes) needs `approvals.deny` (a host that refuses
- *   `resume_execution`), `faults` (an unknown-outcome write), follow-ups that
- *   wait or act between turns (an expired token), and `deployment` options for
- *   any new config key. All four exist today.
+ * - `approvals.deny` (a host that refuses a tool), `faults` (an
+ *   unknown-outcome write), follow-ups that wait or act between turns, and
+ *   `deployment` options for any config key all exist today. The P3 tasks
+ *   that used them graded program pauses, which issue #672 removed.
  *
- * See `planned.ts` for those tasks written down ahead of time.
+ * See `planned.ts` for tasks written down ahead of time.
  */
 import type { Deployment } from "../deploy/node.js";
 import type { Fault } from "../fakes/service.js";

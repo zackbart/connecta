@@ -10,19 +10,18 @@ writing code instead of loading a thousand tool definitions.
 You ask your agent a question that touches a service — Linear, Stripe, an
 internal API, anything you have connected. Here is what happens:
 
-1. The agent talks to one endpoint, yours, and sees eight tools. Always eight,
+1. The agent talks to one endpoint, yours, and sees seven tools. Always seven,
    no matter how many services sit behind it.
 2. It writes a short JavaScript program. Connecta runs it in a sandbox next to
    your integrations. The program can search for tools, call them, chain the
    calls, and shape the result.
 3. Only the answer comes back into the agent's context — not raw pages of
    API output.
-4. If the program wants to change something — create, update, delete — it
-   stops right there, before anything is sent, and hands the agent the exact
-   write. The agent repeats it through `resume_execution`, which your MCP
-   client can put in front of you first. Approve it and the program picks up
-   where it stopped, without re-reading what it already read. A single write
-   can also go straight through `call_destructive_tool`.
+4. If the agent wants to change something — create, update, delete — it
+   cannot do that from a program, unless your config exempts that tool. The
+   program refuses the write before anything is sent and hands back the exact
+   call; the agent makes it through `call_destructive_tool`, one visible call
+   your MCP client can put in front of you first.
 
 Credentials never leave the server. The program never sees them, and neither
 does the agent.
@@ -31,9 +30,9 @@ does the agent.
 flowchart TB
     Client["Your MCP client<br/>Claude, Cursor, …"]
 
-    subgraph Connecta["Connecta — one endpoint, eight tools, your credentials"]
-        Sandbox["execute_code<br/>the agent's program runs here<br/>reads run, writes pause"]
-        Explicit["resume_execution · call_destructive_tool<br/>the exact write, visible<br/>your client can ask you first"]
+    subgraph Connecta["Connecta — one endpoint, seven tools, your credentials"]
+        Sandbox["execute_code<br/>the agent's program runs here<br/>read-only tools, plus writes<br/>your config exempts"]
+        Explicit["call_destructive_tool<br/>one visible call per write<br/>your client can ask you first"]
     end
 
     Integrations["The integrations you chose<br/>Linear · Stripe · Notion · Vercel · your HTTP API · any MCP server"]
@@ -41,7 +40,6 @@ flowchart TB
     Client -->|"one connection"| Sandbox
     Client --> Explicit
     Sandbox -->|"reads"| Integrations
-    Sandbox -.->|"paused write"| Explicit
     Explicit -->|"writes"| Integrations
 ```
 
@@ -82,13 +80,11 @@ Fifty issues in, one small object out. Your context window notices.
   notice also points the agent to reduce or search the result inside a
   program. Discovery can show compact schemas, exact JSON Schema, or a
   TypeScript signature to read while writing JavaScript.
-- **Keep writes deliberate.** Only tools marked read-only run in a program
-  unasked. Any other call pauses the program with the exact write, and it
-  runs only once `resume_execution` repeats it — a visible call your client
-  can gate. A paused run is a journal in storage, not a held program, so it
-  survives a restart; it expires, and a write whose outcome is unknown is
-  never sent twice. Config — and only config — can exempt a cheap,
-  reversible write from asking, per tool or per connector.
+- **Keep writes deliberate.** Only tools marked read-only run in a program.
+  Every other write is a separate, visible `call_destructive_tool` call your
+  client can gate, so the host's permission prompt is the one approval there
+  is. Config — and only config — can exempt a cheap, reversible write from
+  asking, per tool or per connector, and then a program may make it.
 - **Run it on Node or Cloudflare Workers.** The core is shared; each deployment
   supplies its platform's executor and storage. The Node template also runs
   unchanged in Docker.
@@ -122,7 +118,7 @@ and why.
 
 Setup is written for an agent. Point yours at [`AGENTS.md`](./AGENTS.md) and
 ask it to set up a Connecta deployment; the
-[documentation](./documentation/) covers the architecture, the eight tools,
+[documentation](./documentation/) covers the architecture, the seven tools,
 code mode, and inbound auth if you want to go deeper. When upgrading an
 existing deployment, each [changelog](./CHANGELOG.md) release opens with what
 breaks and what a deployment can ignore.

@@ -11,10 +11,10 @@ import type {
  *
  * - `runs_in_programs` — explicitly read-only, so `execute_code` may call it.
  * - `exempt` — not read-only, but the deployment's `execute.approval` lets a
- *   program call it without pausing (#566). Still approval-required
+ *   program call it without asking (#566). Still approval-required
  *   everywhere else.
- * - `needs_approval` — everything else: a program pauses for
- *   `resume_execution`, and a direct call crosses `call_destructive_tool`.
+ * - `needs_approval` — everything else: a program refuses it, and it crosses
+ *   `call_destructive_tool`, where the host asks.
  *
  * The badge renders from a table keyed by this union, so each value is one
  * entry, not a branch.

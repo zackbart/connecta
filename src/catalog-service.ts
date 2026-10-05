@@ -961,7 +961,7 @@ export class CatalogService {
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
             : {}),
-          // Config lets a program call this write without pausing (#566).
+          // Config lets a program call this write without asking (#566).
           // A marker, not a class: the tool stays approval-required.
           ...(isApprovalExempt(
             this.approval,

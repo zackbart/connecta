@@ -3,9 +3,10 @@
 This repository is deployment configuration, not a copy of Connecta itself.
 
 - Edit `src/index.ts` for connectors, authentication, storage, and public URL.
-- Keep `executor: quickJsExecutor()` for the prescribed eight-tool code-first
-  surface. File storage supports resumable writes, so a program pauses at a
-  write until `resume_execution` approves it.
+- Keep `executor: quickJsExecutor()` for the prescribed seven-tool code-first
+  surface. Programs run read-only tools and any writes `execute.approval`
+  exempts; every other write is its own `call_destructive_tool` call, which
+  the MCP host asks about.
 - Keep credentials in environment variables or an external secret store.
   Never commit `.env`, `.connecta-state.json`, `.connecta-activity.jsonl`,
   tokens, or credential values.

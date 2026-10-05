@@ -89,23 +89,6 @@ const GOLDEN: Record<string, unknown> = {
     },
     required: ["id"],
   },
-  resume_execution: {
-    type: "object",
-    $schema: DRAFT,
-    properties: {
-      token: { type: "string", maxLength: 512 },
-      address: { type: "string" },
-      args: {
-        type: "object",
-        propertyNames: { type: "string" },
-        additionalProperties: {},
-      },
-      approval: { type: "string", enum: ["call", "tool"] },
-      reason: { type: "string", maxLength: 500 },
-    },
-    required: ["token", "address", "args"],
-    additionalProperties: false,
-  },
   execute_code: {
     type: "object",
     $schema: DRAFT,
@@ -126,7 +109,7 @@ const GOLDEN: Record<string, unknown> = {
 };
 
 describe("meta-tool input schemas", () => {
-  it("renders all eight exactly as the golden records", async () => {
+  it("renders all seven exactly as the golden records", async () => {
     const body = await readJsonRpc(
       await mcpRpc(
         makeDeployment({ executor: stubExecutor }),
