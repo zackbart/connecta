@@ -49,13 +49,14 @@ describe("activity rows for resumed programs", () => {
     ...overrides,
   });
 
-  it("paints a pause and an approval as neither success nor failure", () => {
+  // Nothing emits a pause or an approval since #672, but older rows carry them.
+  it("paints a historical pause and approval as neither success nor failure", () => {
     expect(activityOutcomeClass("paused")).toBe("paused");
     expect(activityOutcomeClass("approved")).toBe("approved");
     expect(activityOutcomeClass("something new")).toBe("error");
   });
 
-  it("says what an approval covered", () => {
+  it("says what a historical approval covered", () => {
     expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "tool" })))
       .toBe("Resumed program · approved for the rest of the run");
     expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "call" })))
@@ -71,7 +72,7 @@ describe("activity rows for resumed programs", () => {
     expect(activityDetail(row({ outcome: "error", errorCode: "rate_limited" }))).toBe(
       "In a program · rate limited",
     );
-    expect(activityOutcomeBadge("paused")).toEqual({ label: "Waiting for approval", tone: "warn" });
+    expect(activityOutcomeBadge("paused")).toEqual({ label: "Paused for approval", tone: "warn" });
     expect(activityOutcomeBadge("success")).toEqual({ label: "Succeeded", tone: "ok" });
     expect(activityOutcomeBadge("something new")).toEqual({ label: "Failed", tone: "danger" });
   });

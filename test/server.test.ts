@@ -137,10 +137,13 @@ describe("server /mcp end-to-end", () => {
     const body = await readJsonRpc(res);
     expect(body.result.serverInfo.name).toBe("connecta");
     expect(body.result.instructions).toContain(
-      "Everything else starts with execute_code",
+      "Unknown-address read-only work starts with execute_code",
     );
-    expect(body.result.instructions).toContain("writes that follow reads");
-    expect(body.result.instructions).toContain("resume_execution");
+    expect(body.result.instructions).toContain(
+      "Only readOnlyHint: true tools and config-exempt writes run there",
+    );
+    expect(body.result.instructions).toContain("call_destructive_tool");
+    expect(body.result.instructions).not.toContain("resume_execution");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
     expect(body.result.instructions).toContain(
       "Guidance is on demand",
@@ -222,7 +225,7 @@ describe("server /mcp end-to-end", () => {
       await client.connect(transport);
       const result = await client.listTools();
 
-      expect(result.tools).toHaveLength(8);
+      expect(result.tools).toHaveLength(7);
       expect(client.getProtocolEra()).toBe("modern");
       expect(methods).toContain("server/discover");
       expect(methods).not.toContain("initialize");
@@ -236,19 +239,19 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("keeps the eight tools in registration order across requests", async () => {
+  it("keeps the seven tools in registration order across requests", async () => {
     const c = makeDeployment();
     for (let i = 0; i < 2; i++) {
       const body = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
       expect(body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
         "skills", "search_tools", "call_tool", "call_destructive_tool",
-        "authorize_connector", "get_result", "execute_code", "resume_execution",
+        "authorize_connector", "get_result", "execute_code",
       ]);
     }
     await c.close();
   });
 
-  it("tools/list shows exactly the eight meta-tools", async () => {
+  it("tools/list shows exactly the seven meta-tools", async () => {
     const c = makeDeployment();
     const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readJsonRpc(res);
@@ -259,7 +262,6 @@ describe("server /mcp end-to-end", () => {
       "call_tool",
       "execute_code",
       "get_result",
-      "resume_execution",
       "search_tools",
       "skills",
     ]);
@@ -347,7 +349,7 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("serves a modern-era (2026-07-28) client the same eight-tool surface", async () => {
+  it("serves a modern-era (2026-07-28) client the same seven-tool surface", async () => {
     // Every other test in this suite sends bare JSON-RPC, which the entry
     // classifies as legacy traffic — so this is the one automated proof that
     // the modern createMcpHandler leg of serveMcp works at all. PR B owns the
@@ -381,7 +383,6 @@ describe("server /mcp end-to-end", () => {
         "call_tool",
         "execute_code",
         "get_result",
-        "resume_execution",
         "search_tools",
         "skills",
       ]);
@@ -424,7 +425,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("## Discover and select");
     expect(skill).toContain("## Errors and repair");
     expect(skill).toContain(
-      "Only explicitly `readOnlyHint: true` or config-exempt calls run unasked",
+      "Only explicitly `readOnlyHint: true` calls and writes the deployment's config exempts from approval run in a program",
     );
     expect(skill).toContain("Dynamic Workers must use only `{ loader }`");
     expect(skill).toContain("node:fs/http/https are absent");
@@ -1668,7 +1669,7 @@ describe("clerk metadata routes (no network)", () => {
     const c = makeClerkConnecta();
     const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readJsonRpc(res);
-    expect(body.result.tools).toHaveLength(8);
+    expect(body.result.tools).toHaveLength(7);
   });
 });
 
@@ -1679,7 +1680,6 @@ describe("execute_code registration (code mode)", () => {
         maxHostCalls?: number;
         hostCallTimeoutMs?: number;
         maxWrites?: number;
-        resumableWrites?: boolean;
       },
     ): Promise<string> {
       const connecta = createTestConnecta({
@@ -1697,7 +1697,7 @@ describe("execute_code registration (code mode)", () => {
       ).description as string;
     }
     expect(await executeDescription()).toContain(
-      "Limits: 20 host calls, 10 writes, 15s/host call.",
+      "Limits: 20 host calls, 10 exempt writes, 15s/host call.",
     );
     expect(
       await executeDescription({
@@ -1705,7 +1705,7 @@ describe("execute_code registration (code mode)", () => {
         hostCallTimeoutMs: 45_000,
         maxWrites: 3,
       }),
-    ).toContain("Limits: 7 host calls, 3 writes, 45s/host call.");
+    ).toContain("Limits: 7 host calls, 3 exempt writes, 45s/host call.");
     // Unusable values fall back rather than advertise a limit nobody enforces.
     expect(
       await executeDescription({
@@ -1713,20 +1713,15 @@ describe("execute_code registration (code mode)", () => {
         hostCallTimeoutMs: Number.NaN,
         maxWrites: -1,
       }),
-    ).toContain("Limits: 20 host calls, 10 writes, 15s/host call.");
-    // Without resumable writes there is no write budget to advertise, and the
-    // description says programs cannot write at all.
-    const readOnly = await executeDescription({ resumableWrites: false });
-    expect(readOnly).toContain(
-      "Only readOnlyHint: true tools are available. Limits: 20 host calls, 15s/host call.",
+    ).toContain("Limits: 20 host calls, 10 exempt writes, 15s/host call.");
+    const description = await executeDescription();
+    expect(description).toContain(
+      "Only readOnlyHint: true tools and config-exempt writes are available; any other write goes through call_destructive_tool.",
     );
-    expect(readOnly).toContain(
-      "Unknown-address and wider read-only work uses one execute_code program",
-    );
-    expect(readOnly).not.toContain("resume_execution");
+    expect(description).not.toContain("resume_execution");
   });
 
-  it("advertises and runs execute_code on the eight-tool surface", async () => {
+  it("advertises and runs execute_code on the seven-tool surface", async () => {
     let executions = 0;
     const withExec = createTestConnecta({
       connectors: [calcApi()],
@@ -1751,7 +1746,6 @@ describe("execute_code registration (code mode)", () => {
       "call_tool",
       "execute_code",
       "get_result",
-      "resume_execution",
       "search_tools",
       "skills",
     ]);
@@ -1763,9 +1757,8 @@ describe("execute_code registration (code mode)", () => {
       "Use the configured services below to answer the task",
     );
     expect(executeTool.description).toContain(
-      "Unknown-address and wider work, writes included,",
+      "Unknown-address and wider read-only work uses one execute_code program",
     );
-    expect(executeTool.description).toContain("uses one execute_code program");
     // Advice, not a validity claim: nothing rejects a program that returns
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
@@ -1773,12 +1766,8 @@ describe("execute_code registration (code mode)", () => {
       "Sample unfamiliar reads",
     );
     expect(executeTool.description).toContain("never repeat it to recover output");
-    expect(executeTool.description).toContain("Keep an authorized batch in one program");
     expect(executeTool.description).not.toContain("Never make a discovery-only");
-    expect(executeTool.description).toContain(
-      "Unknown-address and wider work, writes included, uses one execute_code program",
-    );
-    expect(executeTool.description).toContain("Writes pause for resume_execution.");
+    expect(executeTool.description).not.toContain("resume_execution");
     expect(executeTool.description).toContain("No portable ambient capabilities");
     expect(executeTool.description).toContain('skills({ name: "usage" })');
     expect(executeTool.inputSchema.properties.code.description).toContain(

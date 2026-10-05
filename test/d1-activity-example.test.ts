@@ -150,7 +150,7 @@ describe("Worker D1 activity example", () => {
     expect(activityRowToEvent(row)).toEqual(event);
   });
 
-  it("round-trips a resumed program's approval, and reads older rows without one", () => {
+  it("round-trips a historical resumed program's approval, and reads older rows without one", () => {
     const event: ToolCallActivityEvent = {
       schemaVersion: 1,
       id: "11111111-1111-4111-8111-111111111111",

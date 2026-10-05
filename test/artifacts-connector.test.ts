@@ -3,7 +3,7 @@
 // the render-check hook.
 //
 // Programs are closures run by a scripted executor keyed by program text, as
-// in the resumable-writes suite; workerd forbids eval and this suite runs in
+// in the program-writes suite; workerd forbids eval and this suite runs in
 // both projects.
 
 import { describe, expect, it, vi } from "vitest";
@@ -245,15 +245,18 @@ describe("writing through the connector", () => {
     }
   });
 
-  it("pauses writes when the deployment asks for approval", async () => {
+  it("refuses writes in programs when the deployment asks for approval", async () => {
     const { run, json } = deploy({ config: { execute: { approval: { artifacts: "ask" } } } });
-    const paused = json(await run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)));
-    expect(paused.paused).toMatchObject({ address: "artifacts.create_artifact" });
+    const refused = json(await run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)));
+    expect(refused.error).toMatchObject({
+      code: "destructive_tool_requires_approval",
+      nextAction: { tool: "call_destructive_tool", arguments: { address: "artifacts.create_artifact" } },
+    });
     const perTool = deploy({ config: { execute: { approval: { "artifacts.create_artifact": "ask" } } } });
-    const alsoPaused = perTool.json(
+    const alsoRefused = perTool.json(
       await perTool.run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)),
     );
-    expect(alsoPaused.paused).toBeDefined();
+    expect(alsoRefused.error?.code).toBe("destructive_tool_requires_approval");
   });
 
   it("refuses writes on call_tool and runs them on call_destructive_tool", async () => {

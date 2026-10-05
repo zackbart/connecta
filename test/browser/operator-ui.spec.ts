@@ -828,7 +828,7 @@ test("labels each tool with the call path the server classified", async ({ page 
   await expect(exempt).toHaveText("exempt from approval");
   await expect(exempt).toHaveAttribute("title", /write budget/);
   await expect(crm.locator(".tool-legend")).toContainText("call_destructive_tool");
-  await expect(crm.locator(".tool-legend")).toContainText("resume_execution");
+  await expect(crm.locator(".tool-legend")).not.toContainText("resume_execution");
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {

@@ -32,9 +32,7 @@ describe("guest API contract (QuickJS executor)", () => {
       const outcome = await harness.run(chosen, contractCase.code, config);
       const follow = contractCase.follows
         ? await harness.run(chosen, contractCase.follows, config)
-        : contractCase.resumeWith
-          ? await harness.resume(chosen, outcome, contractCase.resumeWith, config)
-          : undefined;
+        : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }

@@ -32,7 +32,9 @@ export type ActivityCallSource =
   // where a call came from. Never widen this member back into a live source.
   | "batch_call"
   | "execute_code"
-  // A resumed program's approval and every call its replay makes live.
+  // Read-only history, like `batch_call`: a resumed program's approval and
+  // the calls its replay made live, until issue #672 removed
+  // `resume_execution`. Older rows still carry it. Never emit it again.
   | "resume_execution";
 
 export type ActivityOutcome =
@@ -40,13 +42,14 @@ export type ActivityOutcome =
   | "error"
   | "timeout"
   | "cancelled"
-  // A program stopped at this write to wait for approval; nothing was sent.
+  // Read-only history since issue #672 removed program pauses: a program
+  // that stopped at a write to wait (`paused`), and the `resume_execution`
+  // that approved it (`approved`). Older rows still carry them; a reader
+  // renders them and nothing emits them.
   | "paused"
-  // `resume_execution` approved this paused write; the call itself follows as
-  // its own event.
   | "approved";
 
-/** How much one `resume_execution` approved: this call, or this tool for the run. */
+/** Read-only history: how much one `resume_execution` approved (#672). */
 export type ActivityApproval = "call" | "tool";
 
 export type AgentFriction =
@@ -103,8 +106,9 @@ export interface ToolCallActivityEvent {
    */
   friction?: AgentFriction;
   /**
-   * Set only on an `approved` event: the scope the approval covered. An enum,
-   * like everything else here — the approved arguments are never recorded.
+   * Read-only history: set only on an `approved` event written before issue
+   * #672, the scope the approval covered. An enum, like everything else
+   * here — the approved arguments were never recorded.
    */
   approval?: ActivityApproval;
   serverName: string;
@@ -222,7 +226,6 @@ export type ActivityEventInput = Pick<
   | "attempts"
   | "errorCode"
   | "friction"
-  | "approval"
 >;
 
 /**
@@ -250,19 +253,9 @@ export function recordToolActivity(
     source: input.source,
     outcome: input.outcome,
     durationMs: Math.max(0, Math.trunc(input.durationMs)),
-    // A pause and an approval reach nothing downstream, so they are the two
-    // events that honestly carry zero attempts. Every other outcome keeps its
-    // floor of one, as it always has.
-    attempts:
-      input.outcome === "paused" || input.outcome === "approved"
-        ? 0
-        : Math.max(1, Math.trunc(input.attempts)),
+    attempts: Math.max(1, Math.trunc(input.attempts)),
     ...(input.errorCode ? { errorCode: input.errorCode } : {}),
     ...(friction ? { friction } : {}),
-    ...(input.outcome === "approved" &&
-    (input.approval === "call" || input.approval === "tool")
-      ? { approval: input.approval }
-      : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
     ...(context.deploymentId

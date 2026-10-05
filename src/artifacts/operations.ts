@@ -15,9 +15,9 @@
 // `{ ok: false, code, message }`, and the connector turns that into its typed
 // error; a throw means storage failed.
 
-import { sha256Hex, utf8Bytes } from "../run-journal.js";
 import type { ResolvedTheme } from "../branding.js";
 import { buildFrameDocument, FRAME_OVERHEAD_BYTES } from "./document.js";
+import { sha256Hex, utf8Bytes } from "./json.js";
 import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {
   ARTIFACT_ID,

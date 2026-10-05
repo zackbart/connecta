@@ -218,9 +218,7 @@ describe.skipIf(!workerExecutor)(
         const outcome = await harness.run(executor, contractCase.code, config);
         const follow = contractCase.follows
           ? await harness.run(executor, contractCase.follows, config)
-          : contractCase.resumeWith
-            ? await harness.resume(executor, outcome, contractCase.resumeWith, config)
-            : undefined;
+          : undefined;
         contractCase.check(outcome, harness.state, follow);
       });
     }

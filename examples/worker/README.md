@@ -2,7 +2,7 @@
 
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
 API connector, guarded by Cloudflare Access, with state in a KV namespace. Its
-required Worker Loader binding backs the eight-tool surface and requires the
+required Worker Loader binding backs the seven-tool surface and requires the
 Workers Paid plan.
 
 This is also the **starting template for a deployment**: a real deployment
@@ -296,7 +296,7 @@ below. Omit the module and store wiring to record no history and show no
 Activity tab. Diagnostics remain independent; `logger: "silent"` suppresses
 them explicitly.
 
-Verify MCP health and the exact eight tools with:
+Verify MCP health and the exact seven tools with:
 
 ```sh
 CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
@@ -321,7 +321,7 @@ The required Worker Loader binding is checked into `wrangler.jsonc`:
 ```
 
 `src/index.ts` constructs `DynamicWorkerExecutor` with only `env.LOADER` and
-serves the eight-tool surface. Do not add `bindings`, `modules`, or
+serves the seven-tool surface. Do not add `bindings`, `modules`, or
 `globalOutbound`; they grant guest code ambient authority. A copied deployment
 owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).
@@ -329,11 +329,9 @@ owns the package install — see
 ## Strongly consistent storage (optional)
 
 `KVStorage` has an optional atomic `compareAndSet`, for a subsystem that must
-claim a key exactly once — resumable writes, where two `resume_execution` calls
-racing for one paused program must send its writes once. **Workers KV cannot
-provide it**, so on KV this example turns resumable writes off
-(`execute: { resumableWrites: false }` in `src/index.ts`) and its programs
-refuse writes. It is eventually
+claim a key exactly once: artifacts commit every write by it, issuing access
+tokens requires it, and an OAuth handoff binds its owner with it when it is
+there. **Workers KV cannot provide it.** It is eventually
 consistent: two locations can each read a key as absent and both write, so
 `cloudflare-kv.ts` declares no `compareAndSet` rather than fake one with a read
 followed by a write. `src/d1-storage.ts` is a complete `KVStorage` over D1
@@ -369,10 +367,6 @@ of connecta state lives in one store.
 
    const storage = d1Storage(env.STORAGE_DB);
    ```
-
-   Then delete the `execute: { resumableWrites: false }` line: on D1,
-   resumable writes default on, and programs pause at a write until
-   `resume_execution` approves it.
 
    Switching an existing deployment starts from empty state: downstream OAuth
    connections must be re-authorized and vault credentials re-entered, because
@@ -478,8 +472,10 @@ To enable it:
    ALTER TABLE tool_call_activity ADD COLUMN approval TEXT;
    ```
 
-   `approval` is set only on an `approved` row — the scope a resumed
-   program's approval covered, `call` or `tool` — and is otherwise null.
+   `approval` is history: it is set only on an `approved` row written before
+   0.28.0 removed program pauses — the scope a resumed program's approval
+   covered, `call` or `tool` — and is null on every row since. Keep the
+   column; the Activity tab still renders those older rows.
 
    `friction` is stored rather than derived because one of its classes belongs
    to a call that *succeeded*: a result too large to return inline is friction

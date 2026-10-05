@@ -8,9 +8,8 @@
 // shared echo bound, and says what to do instead.
 
 import { boundedEchoText } from "../errors.js";
-import { utf8Bytes } from "../run-journal.js";
 import { lineLocator, scanHtml, type HtmlAttribute } from "./html-scan.js";
-import { jsonProblem, scriptSafeJson } from "./json.js";
+import { jsonProblem, scriptSafeJson, utf8Bytes } from "./json.js";
 import { FRAME_OVERHEAD_BYTES } from "./document.js";
 import { markdownPage, MarkdownNestingError } from "./markdown.js";
 import {

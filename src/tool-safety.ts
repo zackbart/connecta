@@ -32,7 +32,7 @@ export const NO_EXEMPTIONS: ApprovalPolicy = {
 };
 
 /**
- * Whether a program may call this tool without pausing for approval.
+ * Whether a program may call this tool without asking for approval.
  *
  * Only a tool that is *not* explicitly read-only can be exempt — a read-only
  * tool needs no exemption, and reporting one would blur the two classes an

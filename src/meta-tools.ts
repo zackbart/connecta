@@ -1222,8 +1222,7 @@ const GET_RESULT_INPUT = advertisedSchema(
 
 /**
  * Register the six explicit meta-tools onto an McpServer instance.
- * `registerExecuteTool` adds the seventh, `execute_code`, and
- * `registerResumeTool` the eighth, `resume_execution`. Broad discovery and
+ * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
  * multi-call work uses discovery and ordinary JavaScript promises inside a
  * program, which `execute_code` builds over the same
  * `CatalogService` and `InvocationService` these handlers use — one shared

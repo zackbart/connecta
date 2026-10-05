@@ -178,11 +178,11 @@ describe("what a write's outcome can know", () => {
     expect(silent).toMatchObject({ ok: false, dispatched: true, answered: false });
   });
 
-  it("asks a write gate only after validation, and records a pause as a pause", async () => {
+  it("asks a write gate only after validation, and records an unrecorded refusal as nothing", async () => {
     const gate = vi.fn(() => Effect.succeed({
       kind: "refuse" as const,
-      error: { code: "execution_paused", message: "paused", retryable: false },
-      activity: "paused" as const,
+      error: { code: "cancelled", message: "The program had already returned.", retryable: false },
+      unrecorded: true as const,
     }));
     const events: Array<{ outcome: string; attempts: number }> = [];
     const registry = writer(async () => ({ ok: true }), "mcp");
@@ -197,20 +197,20 @@ describe("what a write's outcome can know", () => {
     const invalid = await service.invoke("w.send", {}, { source: "execute_code", writeGate: gate });
     expect(invalid).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     expect(gate).not.toHaveBeenCalled();
-    const pausedCall = await service.invoke(
+    const refusedCall = await service.invoke(
       "w.send",
       { to: "a" },
       { source: "execute_code", writeGate: gate },
     );
-    expect(pausedCall).toMatchObject({
+    expect(refusedCall).toMatchObject({
       ok: false,
       dispatched: false,
-      error: { code: "execution_paused" },
+      error: { code: "cancelled" },
     });
     expect(gate).toHaveBeenCalledTimes(1);
+    // The validation failure is an attempt; the unrecorded refusal is not.
     expect(events.map((event) => [event.outcome, event.attempts])).toEqual([
       ["error", 1],
-      ["paused", 0],
     ]);
   });
 });

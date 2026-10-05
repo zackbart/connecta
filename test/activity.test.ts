@@ -48,7 +48,7 @@ describe("activity delivery", () => {
     expect(agentFrictionForCode("not_found")).toBeUndefined();
   });
 
-  it("records pauses and approvals with zero attempts and an enum-only scope", () => {
+  it("keeps every event's floor of one attempt and carries no approval scope", () => {
     const events: ToolCallActivityEvent[] = [];
     const context: ActivityRequestContext = {
       recordTool: recordToolActivity,
@@ -58,38 +58,24 @@ describe("activity delivery", () => {
       serverInfo: { name: "connecta", version: "0" },
       logger: silentLogger,
     };
-    const base = {
+    // A refusal reaches nothing downstream and still counts its one attempt;
+    // the zero-attempt pause and approval events left with #672.
+    recordToolActivity(context, {
       connectorId: "tracker",
       toolName: "close_issue",
       address: "tracker.close_issue",
       durationMs: 3,
-    } as const;
-    recordToolActivity(context, { ...base, source: "execute_code", outcome: "paused", attempts: 0 });
-    recordToolActivity(context, {
-      ...base,
-      source: "resume_execution",
-      outcome: "approved",
-      attempts: 0,
-      approval: "tool",
-    });
-    // A refusal keeps its floor of one, and a scope on anything but an
-    // approval is dropped.
-    recordToolActivity(context, {
-      ...base,
       source: "execute_code",
       outcome: "error",
       attempts: 0,
-      errorCode: "unknown_tool",
-      approval: "call",
+      errorCode: "destructive_tool_requires_approval",
     });
-    expect(events.map((event) => [event.outcome, event.attempts, event.approval])).toEqual([
-      ["paused", 0, undefined],
-      ["approved", 0, "tool"],
-      ["error", 1, undefined],
+    expect(events.map((event) => [event.outcome, event.attempts, event.friction])).toEqual([
+      ["error", 1, "destructive_reroute"],
     ]);
-    expect(Object.keys(required(events[1])).sort()).toEqual([
-      "actor", "address", "approval", "attempts", "connectorId", "durationMs",
-      "id", "occurredAt", "outcome", "requestId", "schemaVersion",
+    expect(Object.keys(required(events[0])).sort()).toEqual([
+      "actor", "address", "attempts", "connectorId", "durationMs", "errorCode",
+      "friction", "id", "occurredAt", "outcome", "requestId", "schemaVersion",
       "serverName", "serverVersion", "source", "toolName",
     ]);
   });
