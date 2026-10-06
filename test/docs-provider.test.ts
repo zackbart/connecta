@@ -3,6 +3,7 @@
 // failures it maps — H1, H9, H10, H11, and H14 for this provider. Delegation,
 // subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Validator } from "@cfworker/json-schema";
 import { attachCaller } from "../src/connector-caller.js";
 import { DOCS_API_BASE_URL, DOCS_SCOPES, docs } from "../src/providers/docs.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -613,5 +614,131 @@ describe("whose documents", () => {
     expect(result.documentId).toBe("doc-1");
     expect(tokenCalls).toBe(1);
     expect(calls[0]!.url.pathname).toBe("/v1/documents/doc-1");
+  });
+});
+
+describe("every output is declared (H8, H9)", () => {
+  /** Keys a value emits that its schema does not declare, at every depth. */
+  function undeclared(schema: any, value: unknown, at: string, found: string[]): void {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => undeclared(schema?.items, item, `${at}[${index}]`, found));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, entry] of Object.entries(value)) {
+      const declared = schema?.properties?.[key];
+      if (!declared) {
+        // An opaque object (a raw batchUpdate reply) declares no properties on purpose.
+        if (schema?.properties) found.push(`${at}.${key}`);
+        continue;
+      }
+      undeclared(declared, entry, `${at}.${key}`, found);
+    }
+  }
+
+  async function check(connector: Connector, name: string, result: unknown): Promise<void> {
+    const tool = (await connector.listTools(context())).find((candidate) => candidate.name === name)!;
+    const found: string[] = [];
+    undeclared(tool.outputSchema, result, name, found);
+    expect(found).toEqual([]);
+    const verdict = new Validator(tool.outputSchema as any, "2020-12", false).validate(result);
+    expect(verdict.errors, name).toEqual([]);
+  }
+
+  it("declares every key each tool emits, on realistic and on empty resources", async () => {
+    const connector = connection();
+    route = () => ({ body: DOCUMENT });
+    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", withIndexes: true }));
+    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", maxChars: 3 }));
+
+    // ProtoJSON drops empty fields: an empty document is very nearly `{}`.
+    route = () => ({ body: {} });
+    const empty = await call(connector, "get_document", { documentId: "doc-0", withIndexes: true });
+    expect(empty).toEqual({
+      documentId: "doc-0",
+      url: "https://docs.google.com/document/d/doc-0/edit",
+      tabs: [{ text: "", textTruncated: false, elements: [] }],
+      elementsTruncated: false,
+    });
+    await check(connector, "get_document", empty);
+    route = () => ({ body: { documentId: "doc-0", tabs: [{ tabProperties: { tabId: "t.0" } }] } });
+    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-0" }));
+
+    route = (request) =>
+      request.url.pathname.endsWith(":batchUpdate")
+        ? {
+            body: {
+              documentId: "d",
+              replies: [{ replaceAllText: { occurrencesChanged: 2 } }],
+              writeControl: { requiredRevisionId: "r2" },
+            },
+          }
+        : { body: { documentId: "d", title: "T", revisionId: "r1" } };
+    await check(connector, "create_document", await call(connector, "create_document", { title: "T", text: "x" }));
+    await check(connector, "append_text", await call(connector, "append_text", { documentId: "d", text: "x" }));
+    await check(connector, "insert_text", await call(connector, "insert_text", { documentId: "d", index: 1, text: "x" }));
+    await check(
+      connector,
+      "replace_all_text",
+      await call(connector, "replace_all_text", { documentId: "d", find: "a", replaceWith: "b" }),
+    );
+    await check(
+      connector,
+      "batch_update_document",
+      await call(connector, "batch_update_document", {
+        documentId: "d",
+        requests: [{ insertText: {} }],
+        requiredRevisionId: "r1",
+      }),
+    );
+
+    // An empty batchUpdate answer still satisfies every required key.
+    route = () => ({ body: {} });
+    await check(connector, "append_text", await call(connector, "append_text", { documentId: "d", text: "x" }));
+    await check(
+      connector,
+      "replace_all_text",
+      await call(connector, "replace_all_text", { documentId: "d", find: "a", replaceWith: "b" }),
+    );
+    await check(
+      connector,
+      "batch_update_document",
+      await call(connector, "batch_update_document", {
+        documentId: "d",
+        requests: [{ insertText: {} }],
+        requiredRevisionId: "r1",
+      }),
+    );
+  });
+
+  it("names what a tab holds that its text leaves out, rather than dropping it silently", async () => {
+    route = () => ({
+      body: {
+        documentId: "d",
+        tabs: [
+          {
+            tabProperties: { tabId: "t.0" },
+            documentTab: {
+              body: {
+                content: [
+                  paragraph(1, [
+                    { startIndex: 1, endIndex: 5, textRun: { content: "Old ", suggestedDeletionIds: ["suggest.1"] } },
+                    run("text\n", 5),
+                  ]),
+                ],
+              },
+              headers: { "kix.h": { headerId: "kix.h", content: [] } },
+              footers: { "kix.f": { footerId: "kix.f", content: [] } },
+              positionedObjects: { "kix.p": {} },
+            },
+          },
+          { tabProperties: { tabId: "t.1" }, documentTab: { body: { content: [paragraph(1, [run("Plain\n", 1)])] } } },
+        ],
+      },
+    });
+    const result = await call(connection(), "get_document", { documentId: "d" });
+    expect(result.tabs[0].notRendered).toEqual(["headers", "footers", "positioned_objects", "suggestion_marks"]);
+    expect(result.tabs[0].text).toBe("Old text");
+    expect(result.tabs[1].notRendered).toBeUndefined();
   });
 });

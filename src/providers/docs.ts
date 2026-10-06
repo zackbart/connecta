@@ -187,6 +187,19 @@ interface RenderState {
   footnotes: { id: string; number: string }[];
   /** Index rows, collected only when asked for. */
   rows: IndexRow[] | undefined;
+  /** Set when rendered text includes a suggested insertion or deletion. */
+  marks: { suggested: boolean };
+}
+
+/**
+ * What a tab holds that its text does not show, named so a reader never
+ * mistakes the rendering for the whole document: headers, footers, floating
+ * (positioned) images, and — in the inline view — which text is a suggestion.
+ */
+const NOT_RENDERED = ["headers", "footers", "positioned_objects", "suggestion_marks"] as const;
+
+function suggested(part: JsonRecord): boolean {
+  return asArray(part["suggestedInsertionIds"]).length > 0 || asArray(part["suggestedDeletionIds"]).length > 0;
 }
 
 const HEADINGS: Readonly<Record<string, string>> = {
@@ -215,6 +228,9 @@ function ordered(sources: TabSources, bullet: JsonRecord): boolean {
  * no text of its own.
  */
 function elementText(element: JsonRecord, state: RenderState): { text: string; url?: string } {
+  for (const part of Object.values(element)) {
+    if (part && typeof part === "object" && suggested(asRecord(part))) state.marks.suggested = true;
+  }
   const run = asRecord(element["textRun"]);
   if (typeof run["content"] === "string") {
     const url = text(asRecord(asRecord(run["textStyle"])["link"])["url"]);
@@ -342,19 +358,33 @@ function renderContent(
 }
 
 /** One tab's body as text, with its footnotes after it. */
-function renderTab(body: unknown, sources: TabSources, rows: IndexRow[] | undefined): string {
-  const state: RenderState = { sources, footnotes: [], rows };
-  const lines = renderContent(asRecord(body)["content"], state);
+function renderTab(
+  tab: JsonRecord,
+  sources: TabSources,
+  rows: IndexRow[] | undefined,
+): { text: string; notRendered: (typeof NOT_RENDERED)[number][] } {
+  const marks = { suggested: false };
+  const state: RenderState = { sources, footnotes: [], rows, marks };
+  const lines = renderContent(asRecord(tab["body"])["content"], state);
   const notes = state.footnotes.map(({ id, number }) => {
     const footnote = asRecord(sources.footnotes[id]);
     // Footnote content is its own segment: rendered, never indexed.
-    const inner: RenderState = { sources, footnotes: [], rows: undefined };
+    const inner: RenderState = { sources, footnotes: [], rows: undefined, marks };
     return `[^${number}]: ${renderContent(footnote["content"], inner).join(" ").trim()}`;
   });
-  return [...lines, ...(notes.length > 0 ? ["", ...notes] : [])]
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const present = (key: string) => Object.keys(asRecord(tab[key])).length > 0;
+  const notRendered = NOT_RENDERED.filter((part) =>
+    part === "suggestion_marks"
+      ? marks.suggested
+      : present(part === "positioned_objects" ? "positionedObjects" : part),
+  );
+  return {
+    text: [...lines, ...(notes.length > 0 ? ["", ...notes] : [])]
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+    notRendered,
+  };
 }
 
 interface FlatTab {
@@ -555,6 +585,7 @@ const TAB_OUTPUT: JsonSchema = {
     endIndex: { type: "integer" },
     text: { type: "string" },
     textTruncated: { type: "boolean" },
+    notRendered: { type: "array", items: { type: "string", enum: [...NOT_RENDERED] } },
     elements: {
       type: "array",
       items: {
@@ -658,7 +689,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             footnotes: asRecord(tab.documentTab["footnotes"]),
             inlineObjects: asRecord(tab.documentTab["inlineObjects"]),
           };
-          const full = renderTab(tab.documentTab["body"], sources, rows);
+          const { text: full, notRendered } = renderTab(tab.documentTab, sources, rows);
           const cut = capped(full, budget);
           budget = Math.max(0, budget - full.length);
           let elements: IndexRow[] | undefined;
@@ -674,6 +705,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             nestingLevel: tab.nestingLevel,
             endIndex: endIndexOf(tab.documentTab["body"]),
             ...cut,
+            notRendered: notRendered.length > 0 ? notRendered : undefined,
             elements,
           });
         });
@@ -966,8 +998,10 @@ not exist or is not shared with this person; Google does not say which.
 
 - \`get_document\` renders every tab as markdown-ish text: headings, lists,
   links, tables as pipe rows, footnotes after the body, images and other
-  embeds as bracketed markers. Headers, footers, and comments are not
-  included. Text past \`maxChars\` (shared across tabs) ends with a marker;
+  embeds as bracketed markers. Headers, footers, floating images, and
+  comments are not rendered; a tab's \`notRendered\` names any it holds, and
+  \`suggestion_marks\` there means the text mixes unmarked suggested
+  insertions and deletions in (read with \`suggestions\` to preview). Text past \`maxChars\` (shared across tabs) ends with a marker;
   pass \`tabId\` to read one tab.
 - Before an index-based edit, read with \`withIndexes: true\` and target an
   element's \`startIndex\`/\`endIndex\`. Indexes are UTF-16 code units and

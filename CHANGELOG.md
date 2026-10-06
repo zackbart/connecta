@@ -71,7 +71,8 @@ caller.
   headings, lists, links, tables as pipe rows, footnotes — capped by `maxChars`
   with an explicit marker, with `title`, `revisionId`, and on `withIndexes`
   the UTF-16 start and end index of every paragraph, table, and table of
-  contents), `create_document` (title and an optional body; a body that fails
+  contents, and a per-tab `notRendered` naming headers, footers, floating
+  images, or unmarked suggestions the text leaves out), `create_document` (title and an optional body; a body that fails
   after the document exists names its id instead of inviting a duplicate),
   `append_text` and `insert_text` (additive), `replace_all_text` (string or
   RE2, by tab, reporting the count), and `batch_update_document`, a raw
