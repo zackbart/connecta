@@ -1338,6 +1338,133 @@ describe("every default result crosses into execute_code", () => {
   });
 });
 
+describe("a cursor resumes only the listing, and the page, it was issued for", () => {
+  // Thirty rows of 1,500-character names: a 16 KiB result holds about nine,
+  // so the first call stops mid-page and its cursor resumes by position.
+  const ids = Array.from({ length: 30 }, (_, index) => `r${String(index).padStart(2, "0")}`);
+  const rowsOf = (order: readonly string[]) => order.map((id) => ({ id, name: `${id}-${"n".repeat(1_500)}` }));
+  const SMALL = { maxBytes: 16_384 };
+
+  /** The first page, and its mid-page cursor, read with Drive's original order. */
+  async function firstPage(connector: Connector, args: Record<string, unknown> = {}) {
+    route = () => ({ body: { files: rowsOf(ids), nextPageToken: "second" } });
+    const first = await call(connector, "search_files", { ...SMALL, ...args });
+    expect(first.files.length).toBeGreaterThan(0);
+    expect(first.files.length).toBeLessThan(ids.length);
+    return first;
+  }
+
+  it("resumes the unchanged page at the first row left out", async () => {
+    const connector = connection();
+    const first = await firstPage(connector);
+    const second = await call(connector, "search_files", { ...SMALL, cursor: first.page.nextCursor });
+    expect(second.files[0].id).toBe(ids[first.files.length]);
+    // Resuming re-reads the same Drive page: no token on the first.
+    expect(calls[1]!.url.searchParams.get("pageToken")).toBeNull();
+  });
+
+  it.each([
+    ["reordered", (order: string[]) => [...order].reverse()],
+    ["given an id before the resume point", (order: string[]) => ["new", ...order]],
+    ["missing an id before the resume point", (order: string[]) => order.slice(1)],
+    ["given an id after the resume point", (order: string[]) => [...order, "late"]],
+  ])("fails conflict, returning nothing, when the page comes back %s", async (_how, change) => {
+    const connector = connection();
+    const first = await firstPage(connector);
+    route = () => ({ body: { files: rowsOf(change([...ids])), nextPageToken: "second" } });
+    const failure = await call(connector, "search_files", { ...SMALL, cursor: first.page.nextCursor }).catch(
+      (error) => error,
+    );
+    expect(failure).toMatchObject({ code: "conflict", retryable: false });
+    expect(failure.message).toContain("start the listing again without cursor");
+  });
+
+  it("ends a page whose order keeps changing with conflict, never a loop", async () => {
+    let reads = 0;
+    route = () => {
+      reads += 1;
+      // Drive flips between two orders on every read.
+      return { body: { files: rowsOf(reads % 2 === 1 ? ids : [...ids].reverse()), nextPageToken: "second" } };
+    };
+    const connector = connection();
+    let cursor: string | undefined;
+    let failure: any;
+    for (let guard = 0; guard < 10 && failure === undefined; guard += 1) {
+      const result = await call(connector, "search_files", { ...SMALL, ...(cursor ? { cursor } : {}) }).catch(
+        (error) => error,
+      );
+      if (result instanceof Error) failure = result;
+      else cursor = result.page.nextCursor;
+    }
+    expect(failure).toMatchObject({ code: "conflict" });
+    expect(reads).toBe(2);
+  });
+
+  it("keeps Drive's own token at a whole-page boundary, with nothing to prove", async () => {
+    route = () => ({ body: { files: rowsOf(ids.slice(0, 3)), nextPageToken: "second" } });
+    const connector = connection();
+    const first = await call(connector, "search_files", { limit: 3 });
+    // The next page may differ in any way; a boundary resumes Drive's token.
+    route = () => ({ body: { files: rowsOf(["x", "y"]) } });
+    const second = await call(connector, "search_files", { limit: 3, cursor: first.page.nextCursor });
+    expect(calls[1]!.url.searchParams.get("pageToken")).toBe("second");
+    expect(second.files.map((file: any) => file.id)).toEqual(["x", "y"]);
+  });
+
+  it("lets maxBytes change between pages, since it only decides where a page stops", async () => {
+    const connector = connection();
+    const first = await firstPage(connector);
+    const rest = await call(connector, "search_files", { maxBytes: 4 * 1024 * 1024, cursor: first.page.nextCursor });
+    expect(rest.files[0].id).toBe(ids[first.files.length]);
+    expect(first.files.length + rest.files.length).toBe(ids.length);
+  });
+
+  it("refuses a cursor from another tool or other arguments, before any request", async () => {
+    const connector = connection();
+    const mid = (await firstPage(connector, { query: "name contains 'r'" })).page.nextCursor;
+    route = () => ({ body: { files: rowsOf(ids.slice(0, 3)), nextPageToken: "second" } });
+    const boundary = (await call(connector, "search_files", { limit: 3 })).page.nextCursor;
+    calls.length = 0;
+    for (const [name, args] of [
+      ["search_files", { ...SMALL, query: "name contains 'q'", cursor: mid }],
+      ["search_files", { ...SMALL, cursor: mid }],
+      ["search_files", { ...SMALL, query: "name contains 'r'", orderBy: "name", cursor: mid }],
+      ["search_files", { ...SMALL, query: "name contains 'r'", includeTrashed: true, cursor: mid }],
+      ["search_files", { ...SMALL, query: "name contains 'r'", corpora: "allDrives", cursor: mid }],
+      ["search_files", { limit: 4, cursor: boundary }],
+      ["list_folder_items", { folderId: "root", limit: 3, cursor: boundary }],
+      ["list_shared_drives", { limit: 3, cursor: boundary }],
+      ["list_permissions", { fileId: "f1", limit: 3, cursor: boundary }],
+    ] as const) {
+      const failure = await call(connector, name, args).catch((error) => error);
+      expect(failure, `${name} ${JSON.stringify(args).slice(0, 60)}`).toMatchObject({ code: "invalid_args" });
+      expect(failure.message).toContain("different listing");
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a permissions cursor for another file, and a folder cursor for another folder", async () => {
+    const connector = connection();
+    route = () => ({ body: { permissions: [{ id: "p1" }, { id: "p2" }], nextPageToken: "more" } });
+    const permissions = await call(connector, "list_permissions", { fileId: "f1", limit: 2 });
+    await expect(
+      call(connector, "list_permissions", { fileId: "f2", limit: 2, cursor: permissions.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+
+    route = (request) =>
+      request.url.pathname.endsWith("/files")
+        ? { body: { files: [{ id: "a" }], nextPageToken: "more" } }
+        : { body: { id: "x", mimeType: "application/vnd.google-apps.folder" } };
+    const folder = await call(connector, "list_folder_items", { folderId: "folder-a", limit: 1 });
+    calls.length = 0;
+    await expect(
+      call(connector, "list_folder_items", { folderId: "folder-b", limit: 1, cursor: folder.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    // Only the folder lookup that tells its drive; never the listing.
+    expect(calls.map((_, index) => line(index))).toEqual(["GET /files/folder-b"]);
+  });
+});
+
 function indexOf(haystack: Uint8Array, needle: Uint8Array): number {
   outer: for (let index = 0; index <= haystack.length - needle.length; index += 1) {
     for (let offset = 0; offset < needle.length; offset += 1) {

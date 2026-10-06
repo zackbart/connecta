@@ -275,37 +275,71 @@ function projectPermission(value: unknown, fallbackId?: string): JsonRecord {
 // --- Pages ------------------------------------------------------------------------
 
 /**
- * Where a listing resumes: Drive's page token for the page being read, the
- * rows of it already returned, and the page size it was asked with. A result
- * that would outgrow `maxBytes` stops mid-page, and Drive's own token can only
- * resume after a whole page, so the cursor names both.
+ * Where a listing resumes. A result that would outgrow `maxBytes` stops
+ * mid-page, and Drive's own token resumes only after a whole page, so the
+ * cursor names Drive's token for the page being read, the rows of it already
+ * returned, and the page size it was asked with.
+ *
+ * Resuming by position is only honest on the same page. A mid-page cursor
+ * therefore also carries a fingerprint of the page's ids in Drive's order and
+ * the last id it returned; if the page reads back any different — a row added,
+ * removed, or reordered — the call fails `conflict` rather than skip or repeat
+ * a row. A whole-page boundary is Drive's own token and needs neither. Every
+ * cursor is bound to its tool and the arguments that decide its rows, so it
+ * cannot resume a different listing.
  */
 interface Resume {
   token: string | null;
   skip: number;
   size: number;
+  /** Fingerprint of the tool and the Drive query it lists. */
+  scope: string;
+  /** Mid-page only: fingerprint of the page's ordered ids, and the last returned. */
+  page: string | null;
+  last: string | null;
 }
 
 const encoder = new TextEncoder();
 
-function encodeCursor(resume: Resume): string {
-  return base64(encoder.encode(JSON.stringify([resume.token, resume.skip, resume.size])))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+function base64url(bytes: Uint8Array): string {
+  return base64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+
+/** A short SHA-256 fingerprint: 96 bits, as 16 base64url characters. */
+async function fingerprint(value: unknown): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(JSON.stringify(value))));
+  return base64url(digest.subarray(0, 12));
+}
+
+function encodeCursor(resume: Resume): string {
+  const { token, skip, size, scope, page, last } = resume;
+  return base64url(encoder.encode(JSON.stringify([token, skip, size, scope, page, last])));
+}
+
+const FINGERPRINT = /^[A-Za-z0-9_-]{16}$/;
 
 function decodeCursor(cursor: string): Resume {
   try {
     const base = cursor.replace(/-/g, "+").replace(/_/g, "/");
     const json = new TextDecoder().decode(fromBase64(base + "=".repeat((4 - (base.length % 4)) % 4)));
-    const [token, skip, size] = JSON.parse(json) as unknown[];
+    const [token, skip, size, scope, page, last] = JSON.parse(json) as unknown[];
+    const midPage = typeof page === "string" && FINGERPRINT.test(page) && typeof last === "string";
     if (
       (token === null || (typeof token === "string" && token !== "")) &&
       Number.isSafeInteger(skip) && (skip as number) >= 0 &&
-      Number.isSafeInteger(size) && (size as number) >= 1 && (size as number) <= MAX_PAGE_SIZE
+      Number.isSafeInteger(size) && (size as number) >= 1 && (size as number) <= MAX_PAGE_SIZE &&
+      typeof scope === "string" && FINGERPRINT.test(scope) &&
+      // A cursor inside a page proves which page; one at a boundary has nothing to prove.
+      ((skip as number) > 0 ? midPage : page === null && last === null)
     ) {
-      return { token: token as string | null, skip: skip as number, size: size as number };
+      return {
+        token: token as string | null,
+        skip: skip as number,
+        size: size as number,
+        scope,
+        page: midPage ? (page as string) : null,
+        last: midPage ? (last as string) : null,
+      };
     }
   } catch {
     // Reported below, as any other cursor this connection did not issue.
@@ -336,19 +370,38 @@ interface Fetched {
 async function pageOf(
   key: string,
   args: JsonRecord,
+  /** The tool and every argument that decides which rows, in which order. */
+  binding: JsonRecord,
   fetch: (token: string | undefined, size: number) => Promise<Fetched>,
 ): Promise<JsonRecord> {
   const maxBytes: number = args["maxBytes"] ?? DEFAULT_RESULT_BYTES;
+  const size: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
+  const scope = await fingerprint({ ...binding, size });
   const resume: Resume = typeof args["cursor"] === "string"
     ? decodeCursor(args["cursor"])
-    : { token: null, skip: 0, size: args["limit"] ?? DEFAULT_PAGE_SIZE };
+    : { token: null, skip: 0, size, scope, page: null, last: null };
+  if (resume.scope !== scope) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      "This cursor belongs to a different listing — another tool, or other arguments. Pass the same arguments it was issued with, or omit cursor to start over.",
+    );
+  }
   const fetched = await fetch(resume.token ?? undefined, resume.size);
+  const ids = fetched.rows.map((row) => String(row["id"] ?? ""));
+  const page = await fingerprint(ids);
+  if (resume.skip > 0 && (page !== resume.page || ids[resume.skip - 1] !== resume.last)) {
+    throw new ConnectorCallError(
+      "conflict",
+      `The Drive page this cursor resumes inside has changed since it was read — ${key} were added, removed, or reordered — so resuming by position could skip or repeat some. Nothing was returned; start the listing again without cursor.`,
+      { retryable: false },
+    );
+  }
   const rows = fetched.rows.slice(resume.skip);
   const build = (count: number): JsonRecord => {
     const nextCursor = count < rows.length
-      ? encodeCursor({ ...resume, skip: resume.skip + count })
+      ? encodeCursor({ ...resume, skip: resume.skip + count, page, last: ids[resume.skip + count - 1] ?? "" })
       : fetched.next
-        ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size })
+        ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
         : null;
     return { [key]: rows.slice(0, count), ...fetched.extra, page: { hasMore: nextCursor !== null, nextCursor } };
   };
@@ -924,10 +977,12 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
 
   const list = (
     ctx: ConnectorContext,
+    tool: string,
     args: JsonRecord,
     query: Record<string, string | number | boolean | undefined>,
   ) =>
-    pageOf("files", args, async (pageToken, pageSize) => {
+    // The Drive query decides the rows: folder, search, corpus, drive, order.
+    pageOf("files", args, { tool, ...query }, async (pageToken, pageSize) => {
       const listing = asRecord(
         await client.json(
           {
@@ -1014,7 +1069,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         const q = args["includeTrashed"] === true
           ? query
           : query ? `(${query}) and trashed = false` : "trashed = false";
-        return await list(ctx, args, { q, corpora, driveId: args["driveId"], orderBy: args["orderBy"] });
+        return await list(ctx, "search_files", args, { q, corpora, driveId: args["driveId"], orderBy: args["orderBy"] });
       },
     },
     {
@@ -1059,7 +1114,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           driveId = text(folder["driveId"]);
         }
         const q = `'${folderId}' in parents${args["includeTrashed"] === true ? "" : " and trashed = false"}`;
-        return await list(ctx, args, {
+        return await list(ctx, "list_folder_items", args, {
           q,
           corpora: driveId ? "drive" : "user",
           driveId,
@@ -1146,7 +1201,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         required: ["permissions", "page"],
       },
       handler: async (args, ctx) =>
-        await pageOf("permissions", args, async (pageToken, pageSize) => {
+        await pageOf("permissions", args, { tool: "list_permissions", fileId: args["fileId"] }, async (pageToken, pageSize) => {
           const listing = asRecord(
             await client.json(
               {
@@ -1201,7 +1256,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         required: ["drives", "page"],
       },
       handler: async (args, ctx) =>
-        await pageOf("drives", args, async (pageToken, pageSize) => {
+        await pageOf("drives", args, { tool: "list_shared_drives", q: args["query"] }, async (pageToken, pageSize) => {
           const listing = asRecord(
             await client.json(
               {
@@ -1637,9 +1692,10 @@ and one this person cannot see fail alike — Google does not distinguish them.
   true\` means Drive gave up before searching everything; narrow the query or
   the corpus. Shared drives: \`list_shared_drives\`, then \`corpora: "drive"\`
   with its \`driveId\`.
-- Page with \`page.nextCursor\` and the same arguments. A page can stop
-  short of \`limit\` to stay under \`maxBytes\`; the cursor resumes at the
-  first row left out.
+- Page with \`page.nextCursor\` and the same arguments; a cursor from another
+  tool or other arguments is refused. A page can stop short of \`limit\` to
+  stay under \`maxBytes\`; the cursor resumes at the first row left out, and
+  fails \`conflict\` if that page changed meanwhile — start over then.
 - Ids come from these reads or a Drive URL (\`/d/<id>/\`, \`/folders/<id>\`);
   never guess one.
 

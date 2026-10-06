@@ -129,8 +129,12 @@ a deployment's own connectors still never learn their caller.
   under `maxBytes` of JSON, envelope and cursor included: 192 KiB by default,
   which a program inside `execute_code` always receives, and up to 4 MiB for a
   direct `call_tool` only. A listing that would outgrow it stops early with a
-  cursor that resumes at the first row left out; content is cut with a marker
-  naming the bound that cut it. Names are cut at 2 KiB in listings and content
+  cursor that resumes at the first row left out, and fails `conflict` rather
+  than skip or repeat a row if that Drive page has changed since — the cursor
+  carries a fingerprint of the page's ordered ids and the last one returned.
+  Every cursor is bound to its tool and the arguments that decide its rows,
+  and refused elsewhere. Content is cut with a marker naming the bound that
+  cut it. Names are cut at 2 KiB in listings and content
   results and 32 KiB in `get_file`, descriptions at 64 KiB, each flagged.
   Additive writes:
   `create_folder` and `restore_file`. Destructive writes: `create_file` (text
