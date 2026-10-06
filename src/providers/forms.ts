@@ -522,12 +522,39 @@ function projectReplies(value: unknown): JsonRecord[] {
   });
 }
 
+/**
+ * A batch's reply, inside one result. The write has already applied by the
+ * time this runs, so nothing here may read as failure or as nothing changed:
+ * a reply too large to return whole — a grid created with thousands of rows
+ * names every row's question id — drops the question ids first and keeps each
+ * created item's id, and if even that cannot fit, keeps only the counts.
+ * Either way `truncated` and `note` say the batch applied and where to read
+ * what was left out.
+ */
 function projectBatch(formId: string, value: unknown): JsonRecord {
   const result = asRecord(value);
+  const revisionId = text(asRecord(result["writeControl"])["requiredRevisionId"]);
+  const replies = projectReplies(result["replies"]);
+  const whole = compact({ formId, revisionId, replies });
+  if (jsonBytes(whole) <= RESULT_BUDGET_BYTES) return whole;
+  const note =
+    "The batch applied. Its reply was too large to return whole; read the form with get_form for the created items' question ids.";
+  const idsOnly = compact({
+    formId,
+    revisionId,
+    replies: replies.map((reply) => compact({ createdItemId: reply["createdItemId"] })),
+    truncated: true,
+    note,
+  });
+  if (jsonBytes(idsOnly) <= RESULT_BUDGET_BYTES) return idsOnly;
   return compact({
     formId,
-    revisionId: text(asRecord(result["writeControl"])["requiredRevisionId"]),
-    replies: projectReplies(result["replies"]),
+    revisionId: revisionId && jsonBytes(revisionId) <= 1024 ? revisionId : undefined,
+    replies: [],
+    replyCount: replies.length,
+    createdItemCount: replies.filter((reply) => reply["createdItemId"] !== undefined).length,
+    truncated: true,
+    note: revisionId && jsonBytes(revisionId) <= 1024 ? note : `${note} Read its revisionId there too.`,
   });
 }
 
@@ -904,11 +931,17 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           );
         } catch (error) {
-          // Sent and not refused: the form may exist, and there is no form
-          // id to re-read. Another create would make a second one, so say
-          // where to look first. The shared verdict (not retryable) stands.
+          // Sent and not refused — no answer, a 5xx after Google received
+          // it, or a reply that broke: the form may exist, and there is no
+          // form id to re-read. Another create would make a second one, so
+          // say where to look first. The shared verdict (not retryable)
+          // stands. No Forms write is sent as idempotent: a create, a batch,
+          // and an info update are each not safe to send twice blind.
           const phase = googleOutcomeOf(error)?.phase;
-          if (error instanceof ConnectorCallError && (phase === "reading-body" || phase === "awaiting-response")) {
+          if (
+            error instanceof ConnectorCallError &&
+            (phase === "reading-body" || phase === "awaiting-response" || phase === "server-error")
+          ) {
             throw new ConnectorCallError(
               error.code,
               `${error.message} create_form makes a new form on every call: look for "${args["documentTitle"] ?? args["title"]}" in the user's Drive, or ask them, before creating it again.`,
@@ -1229,6 +1262,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
           },
+          truncated: { type: "boolean" },
+          note: { type: "string" },
+          replyCount: { type: "integer" },
+          createdItemCount: { type: "integer" },
         },
         required: ["formId", "replies"],
       },
@@ -1295,7 +1332,8 @@ Drive, or take its id from an edit URL (\`/forms/d/<formId>/edit\`). The
   with the form's current \`revisionId\` as \`requiredRevisionId\`: a form
   someone changed since you read it is refused as \`conflict\`, so re-read it
   and rebuild the edit. Its reply carries the new \`revisionId\` and each created item's id.
-  An \`updateItem\` needs an \`updateMask\`; read \`raw: true\` first so the
+  A reply too large to return whole comes back with \`truncated: true\`: the
+  batch still applied; read the rest with \`get_form\`. An \`updateItem\` needs an \`updateMask\`; read \`raw: true\` first so the
   item it replaces keeps its grading, images, and navigation.
 - Publishing, sharing, deleting, and watches are not in this connection; the
   owner does those in Forms or Drive. Responses are read-only.

@@ -264,10 +264,13 @@ caller.
   projected text is bounded in bytes as well as characters and cut without
   splitting a surrogate pair, a large form pages its items under a cursor
   bound to its revision, a response too large to read whole names the answers
-  it left out in `omittedQuestionIds`, and `raw: true` refuses a form too
-  large for one result. `create_form` is additive; the other two writes are
-  destructive. A write Google may have applied without a readable reply is
-  reported as not retryable, and a create says to look in Drive before
+  it left out in `omittedQuestionIds`, `raw: true` refuses a form too large
+  for one result, and a batch reply too large to return whole drops question
+  ids, then everything but counts, marked `truncated` and still reported as
+  applied. `create_form` is additive; the other two writes are
+  destructive. A write Google may have applied — no answer, a 5xx after it
+  arrived, or a reply that broke — is reported as not retryable (no Forms
+  write is sent as idempotent), and a create says to look in Drive before
   creating again. There is no list, delete, share, publish, or watch tool: Drive
   lists forms, and this connection requests no Drive scope. A form is a Drive
   file, so a 404 is reported as unknown-or-not-visible, never as absence.

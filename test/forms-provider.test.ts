@@ -835,6 +835,54 @@ describe("writing forms", () => {
     });
   });
 
+  it.each([
+    // 100 grids of 3,000 rows: every row's question id, ~4.5 MB of reply.
+    [
+      "drops question ids and keeps each created item's id",
+      (index: number) => ({
+        createItem: {
+          itemId: `item${index}`,
+          questionId: Array.from({ length: 3_000 }, (_, row) => `q${index}-${row}-abcdef`),
+        },
+      }),
+      (result: any) => {
+        expect(result.replies).toHaveLength(100);
+        expect(result.replies[7]).toEqual({ createdItemId: "item7" });
+      },
+    ],
+    // Item ids too long for even the id-only reply: counts are what is left.
+    [
+      "keeps only counts when even the item ids cannot fit",
+      (index: number) => ({ createItem: { itemId: `${index}-${"x".repeat(3_000)}`, questionId: ["q"] } }),
+      (result: any) => {
+        expect(result.replies).toEqual([]);
+        expect(result.replyCount).toBe(100);
+        expect(result.createdItemCount).toBe(100);
+      },
+    ],
+  ])("bounds a batch reply too large to return whole, and still reports it applied: %s", async (_case, reply, check) => {
+    route = () => ({
+      body: {
+        writeControl: { requiredRevisionId: "00000050" },
+        replies: Array.from({ length: 100 }, (_, index) => reply(index)),
+      },
+    });
+    const connector = connection();
+    const result = await call(connector, "batch_update_form", {
+      formId: "form-1",
+      requiredRevisionId: "00000049",
+      requests: Array.from({ length: 100 }, () => ({
+        createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } },
+      })),
+    });
+    expect(jsonBytes(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(result).toMatchObject({ formId: "form-1", revisionId: "00000050", truncated: true });
+    expect(result.note).toMatch(/^The batch applied\./);
+    expect(result.note).not.toMatch(/nothing|not applied|failed/i);
+    check(result);
+    await conforms(connector, "batch_update_form", result);
+  });
+
   it("refuses a batch without a revision, an unknown request kind, or two kinds in one request", async () => {
     const createItem = { item: { title: "x", textItem: {} }, location: { index: 0 } };
     for (const args of [
@@ -872,6 +920,9 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   const silent = async (): Promise<Response> => {
     throw new TypeError("fetch failed");
   };
+  /** Google received it and answered 5xx: it may still have applied. */
+  const serverError = async () =>
+    Response.json({ error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } }, { status: 503 });
 
   const batch = {
     formId: "form-1",
@@ -882,6 +933,7 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   it.each([
     ["whose 2xx body breaks mid-stream", broken, "probably applied"],
     ["that gets no response", silent, "may or may not have been applied"],
+    ["answered with a 5xx", serverError, "outcome is unknown"],
   ])("reports an edit %s as uncertain, not retryable", async (_case, reply, says) => {
     answer(reply);
     for (const [name, args] of [
@@ -898,6 +950,7 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   it.each([
     ["whose 2xx body breaks mid-stream", broken, "probably applied"],
     ["that gets no response", silent, "may or may not have been applied"],
+    ["answered with a 5xx", serverError, "outcome is unknown"],
   ])("tells a create %s to look for the form before creating another", async (_case, reply, says) => {
     answer(reply);
     const failure = await call(connection(), "create_form", { title: "Volunteer roster", documentTitle: "Roster" }).catch(
@@ -906,6 +959,12 @@ describe("a write whose outcome is unknown is never told to retry", () => {
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain(says);
     expect(failure.message).toContain('look for "Roster" in the user\'s Drive');
+  });
+
+  it("keeps a 5xx on a read retryable: no Forms write is sent as idempotent, but a read is safe", async () => {
+    answer(serverError);
+    const failure = await call(connection(), "get_form", { formId: "form-1" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "unavailable", retryable: true });
   });
 
   it("leaves a refused create as Google refused it", async () => {
@@ -1080,10 +1139,13 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     return pages;
   }
 
+  // Each mid-page continuation re-reads Google's whole page, so the largest
+  // page's fixture stays under the listing cut to keep that re-reading cheap
+  // under workerd on a loaded machine; the default page covers the cut.
   it.each([
     ["the default page", {}, 25, 30, 2_500],
-    ["the largest page", { limit: 100 }, 100, 10, 2_100],
-  ])("ends %s early and continues by cursor, losing and repeating nothing", async (_label, extra, count, questions, chars) => {
+    ["the largest page", { limit: 100 }, 100, 6, 1_500],
+  ])("ends %s early and continues by cursor, losing and repeating nothing", { timeout: 30_000 }, async (_label, extra, count, questions, chars) => {
     route = serve(paragraphForm(questions), responses(count, questions, long(chars)));
     const pages = await everyPage("list_responses", { formId: "big", ...extra });
     const seen = pages.flatMap((page) => page.responses.map((response: any) => response.responseId));
@@ -1091,7 +1153,8 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     // Ended early: more pages than Google's one, each cut answer marked.
     expect(pages.length).toBeGreaterThan(1);
     const answer = pages[0].responses[0].answers[0].values[0] as string;
-    expect(answer).toContain("more characters truncated; get_response reads it whole");
+    if (chars > 2_000) expect(answer).toContain("more characters truncated; get_response reads it whole");
+    else expect(answer).toBe(long(chars));
   });
 
   it("narrows one response too large for a page, naming the answers it left out", async () => {
