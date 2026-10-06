@@ -40,7 +40,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
-import { jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
+import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
 
 export type {
   GoogleServiceAccount,
@@ -368,23 +368,103 @@ function checkRequestKinds(requests: readonly unknown[]): void {
   });
 }
 
+/** The phases after which a write may have applied without saying so. */
+const UNCERTAIN_PHASES: ReadonlySet<string> = new Set(["reading-body", "awaiting-response", "server-error"]);
+
 /**
  * A write whose outcome is unknown — Google took it and the reply broke off,
- * or no reply came — told what to read before trying again, for the writes
- * where the shared "re-read before repeating it" has nothing to re-read or
- * where repeating does harm. Every other failure, and a refusal above all,
- * passes through as the client mapped it.
+ * no reply came, or Google answered 5xx after receiving it — told what to
+ * read before trying again, for the writes where the shared "re-read before
+ * repeating it" has nothing to re-read or where repeating does harm. Every
+ * other failure, and a refusal above all, passes through as the client
+ * mapped it.
  */
 async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promise<T> {
   try {
     return await write();
   } catch (error) {
     const phase = googleOutcomeOf(error)?.phase;
-    if (!(error instanceof ConnectorCallError) || (phase !== "reading-body" && phase !== "awaiting-response")) {
+    if (!(error instanceof ConnectorCallError) || phase === undefined || !UNCERTAIN_PHASES.has(phase)) {
       throw error;
     }
     throw new ConnectorCallError(error.code, `${error.message} ${advice}`, { retryable: false, cause: error });
   }
+}
+
+// --- Raw batchUpdate replies -----------------------------------------------------
+
+/** A string kept in a reply summary, cut so a long one cannot crowd out ids. */
+const SUMMARY_TEXT_BYTES = 256;
+
+/** The scalar fields of an object — ids, titles, counts — and nothing nested. */
+function scalarsOf(value: unknown): JsonRecord | undefined {
+  const scalars: JsonRecord = {};
+  for (const [key, field] of Object.entries(asRecord(value))) {
+    if (typeof field === "string") {
+      scalars[key] = clampText(field, SUMMARY_TEXT_BYTES, (dropped) => `[… ${dropped} more characters]`);
+    } else if (typeof field === "number" || typeof field === "boolean") {
+      scalars[key] = field;
+    }
+  }
+  return Object.keys(scalars).length > 0 ? scalars : undefined;
+}
+
+/**
+ * One reply reduced to its kind and the scalars an agent acts on next: a new
+ * sheet's id and title, a chart's id, findReplace's counts. Google's replies
+ * put those at the top of the kind's body or one object down (`properties`,
+ * `chart`, `namedRange`); arrays and anything deeper are dropped.
+ */
+function summarizeReply(reply: JsonRecord): JsonRecord {
+  const kind = Object.keys(reply)[0];
+  if (kind === undefined) return {};
+  const body = asRecord(reply[kind]);
+  const nested: JsonRecord = {};
+  for (const [key, field] of Object.entries(body)) {
+    if (field && typeof field === "object" && !Array.isArray(field)) nested[key] = scalarsOf(field);
+  }
+  return compact({ kind, ...scalarsOf(body), ...compact(nested) });
+}
+
+/**
+ * A batchUpdate result that can be delivered. The write has already applied,
+ * so whatever does not fit is summarized, never dropped silently and never
+ * reported as a failure: replies are kept whole, in order, while the ones
+ * after them still fit as summaries; the rest become summaries; and a reply
+ * set too large even for that leaves the counts and where to re-read.
+ */
+function deliverableReplies(spreadsheetId: string, replies: JsonRecord[], requestCount: number): JsonRecord {
+  const whole = { spreadsheetId, replies };
+  if (jsonBytes(whole) <= RESULT_BUDGET_BYTES) return whole;
+  const note = `All ${requestCount} requests applied. Replies too large to return here are cut to their kind, ids, and counts; read the spreadsheet with get_spreadsheet or get_values for the rest. Do not send the requests again.`;
+  const summaries = replies.map(summarizeReply);
+  // What every reply from index i on costs as a summary, comma included.
+  const rest = Array.from({ length: replies.length + 1 }, () => 0);
+  for (let index = replies.length - 1; index >= 0; index -= 1) {
+    rest[index] = rest[index + 1]! + jsonBytes(summaries[index]) + 1;
+  }
+  let bytes = jsonBytes({ spreadsheetId, replies: [], repliesSummarized: replies.length, note });
+  if (bytes + rest[0]! <= RESULT_BUDGET_BYTES) {
+    const kept: JsonRecord[] = [];
+    let summarized = 0;
+    replies.forEach((reply, index) => {
+      const size = jsonBytes(reply) + 1;
+      if (summarized === 0 && bytes + size + rest[index + 1]! <= RESULT_BUDGET_BYTES) {
+        bytes += size;
+        kept.push(reply);
+      } else {
+        summarized += 1;
+        kept.push(summaries[index]!);
+      }
+    });
+    return { spreadsheetId, replies: kept, repliesSummarized: summarized, note };
+  }
+  return {
+    spreadsheetId,
+    replies: [],
+    repliesOmitted: replies.length,
+    note: `All ${requestCount} requests applied, but their ${replies.length} replies are too large to return even summarized. Read the spreadsheet with get_spreadsheet or get_values to see the result. Do not send the requests again.`,
+  };
 }
 
 // --- Schemas ----------------------------------------------------------------------
@@ -824,6 +904,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
             ctx,
+            // The same cells set to the same values twice is one write: a 5xx
+            // stays retryable.
+            { idempotent: true },
           ),
         );
         return {
@@ -886,6 +969,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
             ctx,
+            { idempotent: true },
           ),
         );
         return {
@@ -977,6 +1061,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               body: { ranges: args["ranges"] },
             },
             ctx,
+            // Clearing fixed ranges twice clears them once.
+            { idempotent: true },
           ),
         );
         return {
@@ -1126,6 +1212,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         properties: {
           spreadsheetId: { type: "string" },
           replies: { type: "array", items: { type: "object" } },
+          repliesSummarized: { type: "integer" },
+          repliesOmitted: { type: "integer" },
+          note: { type: "string" },
         },
         required: ["spreadsheetId", "replies"],
       },
@@ -1141,10 +1230,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        return {
-          spreadsheetId: text(response["spreadsheetId"]) ?? args["spreadsheetId"],
-          replies: asArray(response["replies"]).map(asRecord),
-        };
+        return deliverableReplies(
+          text(response["spreadsheetId"]) ?? args["spreadsheetId"],
+          asArray(response["replies"]).map(asRecord),
+          asArray(args["requests"]).length,
+        );
       },
     },
   ];
@@ -1205,7 +1295,9 @@ say which.
   cover; \`clear_values\` empties values but keeps formatting.
 - \`batch_update_spreadsheet\` takes Google's own Request objects for
   everything else (formatting, sorting, deleting rows or sheets); it is
-  atomic, always needs approval, and can destroy data.
+  atomic, always needs approval, and can destroy data. Replies too large
+  to return come back cut to their kind, ids, and counts with a \`note\`;
+  the requests still applied, so never send them again to see the rest.
 - Sheets has no revision check on writes: edits are last-writer-wins, so a
   person editing the same cells meanwhile is overwritten without warning.
   Read just before writing over anything a person may be editing.

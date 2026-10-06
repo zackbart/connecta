@@ -6,6 +6,7 @@
 // repeated here, because it is this connector's own front door.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUICKJS_HOST_RPC_BYTES } from "../src/executors/quickjs-protocol.js";
+import { RESULT_BUDGET_BYTES } from "../src/providers/google/result-size.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { SHEETS_API_BASE_URL, SHEETS_SCOPES, sheets } from "../src/providers/sheets.js";
 import { Registry } from "../src/registry.js";
@@ -820,6 +821,62 @@ describe("the raw batchUpdate hatch", () => {
     expect(result).toEqual({ spreadsheetId: ID, replies: [{}, {}] });
   });
 
+  const bytesOf = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const hundred = Array.from({ length: 100 }, (_, index) => ({ duplicateSheet: { sourceSheetId: 0, newSheetName: `Copy ${index}` } }));
+
+  it("keeps a large reply deliverable after the write applied: whole replies first, then kind, ids, and counts", async () => {
+    // Each duplicateSheet reply carries the new sheet's full properties and
+    // conditional formats: about 6 KB apiece, 600 KB in all — well past what
+    // execute_code can receive, for a write that has already happened.
+    const replies = Array.from({ length: 100 }, (_, index) => ({
+      duplicateSheet: {
+        properties: { sheetId: 1_000 + index, title: `Copy ${index}`, index, sheetType: "GRID", gridProperties: { rowCount: 1000, columnCount: 26 } },
+        conditionalFormats: Array.from({ length: 40 }, () => ({ ranges: [{ sheetId: 1_000 + index }], booleanRule: { condition: { type: "NUMBER_GREATER", values: [{ userEnteredValue: "100" }] } } })),
+      },
+    }));
+    route = () => ({ body: { spreadsheetId: ID, replies } });
+    const result = await call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests: hundred });
+    expect(bytesOf(replies)).toBeGreaterThan(400_000);
+    expect(bytesOf(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(bytesOf({ ok: true, value: result })).toBeLessThanOrEqual(MAX_QUICKJS_HOST_RPC_BYTES);
+    expect(result.replies).toHaveLength(100);
+    expect(result.replies[0]).toEqual(replies[0]);
+    expect(result.repliesSummarized).toBeGreaterThan(0);
+    expect(result.replies[99]).toEqual({
+      kind: "duplicateSheet",
+      properties: { sheetId: 1_099, title: "Copy 99", index: 99, sheetType: "GRID" },
+    });
+    expect(result.note).toContain("All 100 requests applied");
+    expect(result.note).toContain("Do not send the requests again");
+    expect(result.note).not.toMatch(/nothing was/i);
+  });
+
+  it("keeps findReplace's counts and a summarized chart's id", async () => {
+    const replies = [
+      { findReplace: { occurrencesChanged: 12, valuesChanged: 9, rowsChanged: 7, sheetsChanged: 2, formulasChanged: 1 } },
+      ...Array.from({ length: 99 }, () => ({ addChart: { chart: { chartId: 5, spec: { title: "x".repeat(4_000) } } } })),
+    ];
+    route = () => ({ body: { spreadsheetId: ID, replies } });
+    const result = await call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests: hundred });
+    expect(bytesOf(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(result.replies[0]).toEqual(replies[0]);
+    expect(result.replies[99]).toEqual({ kind: "addChart", chart: { chartId: 5 } });
+  });
+
+  it("returns counts and where to re-read when even the summaries cannot fit", async () => {
+    const wide = Object.fromEntries(Array.from({ length: 400 }, (_, index) => [`field${index}`, index]));
+    route = () => ({ body: { spreadsheetId: ID, replies: Array.from({ length: 100 }, () => ({ updateEmbeddedObjectPosition: wide })) } });
+    const result = await call(connection(), "batch_update_spreadsheet", { spreadsheetId: ID, requests: hundred });
+    expect(bytesOf(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(result).toEqual({
+      spreadsheetId: ID,
+      replies: [],
+      repliesOmitted: 100,
+      note: expect.stringContaining("All 100 requests applied"),
+    });
+    expect(result.note).toContain("get_spreadsheet");
+  });
+
   it("refuses a request object that sets no kind, two, or one Sheets does not have, unsent", async () => {
     for (const requests of [
       [{}],
@@ -879,6 +936,41 @@ describe("errors (H11)", () => {
     expect(failure.message).toContain("may or may not have been applied");
     expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
     expect(calls).toHaveLength(1);
+  });
+
+  const serverError = () => ({
+    status: 503,
+    body: { error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } },
+  });
+  const idempotent = new Set(["update_values", "batch_update_values", "clear_values"]);
+
+  it.each(writes.filter(([name]) => !idempotent.has(name)))(
+    "treats a 5xx answering %s as an unknown outcome, never retryable",
+    async (name, args) => {
+      route = serverError;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("outcome is unknown");
+      expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  it.each(writes.filter(([name]) => idempotent.has(name)))(
+    "keeps a 5xx answering %s retryable: the same cells written twice are written once",
+    async (name, args) => {
+      route = serverError;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "unavailable", retryable: true });
+    },
+  );
+
+  it("gives a 5xx append or create the same advice as one that got no answer", async () => {
+    route = serverError;
+    const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    expect(append.message).toContain("Appending again would add the rows a second time");
+    const create = await call(connection(), "create_spreadsheet", writes[4]![1]).catch((error) => error);
+    expect(create.message).toContain("Search Drive for this title before creating it again");
   });
 
   it("tells an uncertain append to read the table, and an uncertain create to search Drive", async () => {

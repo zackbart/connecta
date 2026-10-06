@@ -227,8 +227,12 @@ still never learn their caller.
   `INSERT_ROWS`, so nothing below the table is overwritten) are additive
   writes; `update_values`, `batch_update_values`, `clear_values`, and
   `batch_update_spreadsheet` — Google's own `batchUpdate` requests, passed
-  through untouched and always behind approval — are destructive. Writes take a
-  required `RAW` or `USER_ENTERED` and at most 50,000 cells per call. A 404
+  through untouched and always behind approval, its replies cut to their kind,
+  ids, and counts when too large to deliver — are destructive. Writes take a
+  required `RAW` or `USER_ENTERED` and at most 50,000 cells per call. Value
+  updates and clears of fixed ranges are idempotent, so a 5xx stays
+  retryable; an append or create whose outcome is unknown says what to read
+  before repeating it — the table, or a Drive search for the title. A 404
   never claims absence, since a spreadsheet is a Drive file that may simply not
   be shared with the caller. Listing and finding spreadsheets is Drive's job.
   The one scope, `https://www.googleapis.com/auth/spreadsheets`, and its setup
