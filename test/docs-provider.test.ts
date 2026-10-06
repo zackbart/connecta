@@ -29,7 +29,7 @@ interface ApiCall {
 
 type Route = (
   call: ApiCall,
-) => { status?: number; body?: unknown; raw?: string; unreachable?: boolean } | undefined;
+) => { status?: number; body?: unknown; raw?: string; unreachable?: boolean; brokenBody?: boolean } | undefined;
 
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
@@ -54,6 +54,15 @@ beforeEach(() => {
     calls.push(call);
     const reply = route(call) ?? {};
     if (reply.unreachable) throw new TypeError("fetch failed: connection reset");
+    if (reply.brokenBody) {
+      // The status arrives; the body stream then dies, as a reset socket does.
+      const body = new ReadableStream({
+        pull(controller) {
+          controller.error(Object.assign(new TypeError("terminated"), { code: "UND_ERR_SOCKET" }));
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    }
     if (reply.raw !== undefined) {
       return new Response(reply.raw, { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
     }
@@ -665,14 +674,67 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   });
 
   it("says a created document's initial text may or may not exist when its write is uncertain", async () => {
+    for (const reply of [{ unreachable: true }, { brokenBody: true }, { status: 503, body: {} }, { status: 403, body: {} }]) {
+      route = (request) =>
+        request.url.pathname.endsWith(":batchUpdate") ? reply : { body: { documentId: "new-1", title: "Minutes" } };
+      const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
+      expect(failure, JSON.stringify(reply)).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("Created document new-1, but whether its initial text was written is unknown");
+      expect(failure.message).toContain("only if it is missing");
+    }
+  });
+
+  it("advises appending a created document's text only after Google explicitly refused it", async () => {
     route = (request) =>
       request.url.pathname.endsWith(":batchUpdate")
-        ? { unreachable: true }
+        ? { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } }
         : { body: { documentId: "new-1", title: "Minutes" } };
     const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("Created document new-1, but whether its initial text was written is unknown");
+    expect(failure.message).toContain("Google refused its initial text");
+    expect(failure.message).toContain("add the text with append_text on new-1");
   });
+
+  it.each([
+    ["a Google 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
+    ["a dropped connection", { unreachable: true }],
+    ["a body that breaks after the status", { brokenBody: true }],
+  ])("never invites a repeat create after %s, since the document may exist", async (_kind, reply) => {
+    route = () => reply;
+    const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("Whether the document was created is unknown");
+    expect(failure.message).toContain("Do not create it again");
+    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+  });
+
+  it.each([
+    ["an unreadable reply", { raw: "{oops" }],
+    ["a reply without an id", { body: { title: "Minutes" } }],
+  ])("acknowledges a create Google answered 2xx with %s", async (_kind, reply) => {
+    route = () => reply;
+    const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("created the document (HTTP 2xx)");
+    expect(failure.message).toContain('find "Minutes" in Drive');
+  });
+
+  it.each(["append_text", "insert_text", "replace_all_text", "batch_update_document"])(
+    "calls %s's outcome unknown, not retryable, when the reply body breaks after a 200",
+    async (name) => {
+      route = () => ({ brokenBody: true });
+      const args: Record<string, Record<string, unknown>> = {
+        append_text: { documentId: "d", text: "x" },
+        insert_text: { documentId: "d", index: 1, text: "x" },
+        replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
+        batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
+      };
+      const failure = await call(connection(), name, args[name]).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("outcome of this edit is unknown");
+      expect(failure.message).not.toMatch(/nothing was applied/i);
+    },
+  );
 
   it("states the 404 ambiguity: a document id that is unknown or not shared look alike", async () => {
     route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } } });
@@ -861,6 +923,76 @@ describe("every output is declared (H8, H9)", () => {
 });
 
 describe("raw reads (H9)", () => {
+  /** Every field Docs v1's Discovery document (revision 20261005) puts on Document. */
+  const DOCUMENT_FIELDS = [
+    "body",
+    "comments",
+    "commentsViewMode",
+    "documentId",
+    "documentStyle",
+    "footers",
+    "footnotes",
+    "headers",
+    "inlineObjects",
+    "lists",
+    "namedRanges",
+    "namedStyles",
+    "positionedObjects",
+    "revisionId",
+    "suggestedDocumentStyleChanges",
+    "suggestedNamedStylesChanges",
+    "suggestions",
+    "suggestionsViewMode",
+    "tabs",
+    "title",
+  ];
+
+  it("declares every field a Document can carry, none required, and a full one validates", async () => {
+    const tool = (await connection().listTools(context())).find((candidate) => candidate.name === "get_document")!;
+    const raw = (tool.outputSchema as any).properties.raw;
+    expect(Object.keys(raw.properties).sort()).toEqual(DOCUMENT_FIELDS);
+    expect(raw.required).toBeUndefined();
+    const full = Object.fromEntries(
+      DOCUMENT_FIELDS.map((field) => [
+        field,
+        field === "tabs"
+          ? DOCUMENT.tabs
+          : ["comments", "suggestions"].includes(field)
+            ? [{}]
+            : ["documentId", "title", "revisionId", "suggestionsViewMode", "commentsViewMode"].includes(field)
+              ? "x"
+              : {},
+      ]),
+    );
+    route = () => ({ body: full });
+    const result = await call(connection(), "get_document", { documentId: "x", raw: true });
+    expect(result.raw).toEqual(full);
+    expect(new Validator(tool.outputSchema as any, "2020-12", false).validate(result).errors).toEqual([]);
+  });
+
+  it("measures the raw ceiling on the whole result, to the byte", async () => {
+    const LIMIT = 4 * 1024 * 1024;
+    const documentWith = (padding: number) => ({
+      documentId: "edge",
+      title: "Edge",
+      revisionId: "r",
+      tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [{ note: "x".repeat(padding) }] } } }],
+    });
+    route = () => ({ body: documentWith(0) });
+    const base = new TextEncoder().encode(
+      JSON.stringify(await call(connection(), "get_document", { documentId: "edge", raw: true })),
+    ).length;
+
+    route = () => ({ body: documentWith(LIMIT - base) });
+    const exact = await call(connection(), "get_document", { documentId: "edge", raw: true });
+    expect(new TextEncoder().encode(JSON.stringify(exact)).length).toBe(LIMIT);
+
+    route = () => ({ body: documentWith(LIMIT - base + 1) });
+    const over = await call(connection(), "get_document", { documentId: "edge", raw: true }).catch((error) => error);
+    expect(over).toMatchObject({ code: "invalid_args" });
+    expect(over.message).toContain(`${LIMIT + 1} bytes`);
+  });
+
   it("returns Google's resource untouched, all tabs or one, with nothing the rendering adds", async () => {
     route = () => ({ body: DOCUMENT });
     const all = await call(connection(), "get_document", { documentId: "doc-1", raw: true });

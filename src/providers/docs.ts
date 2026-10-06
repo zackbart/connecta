@@ -24,6 +24,7 @@
  * contract that moved or a method that stopped accepting the scope below.
  */
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
+import type { GuardedRequest } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import {
@@ -32,6 +33,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
+import { jsonBytes } from "./google/result-size.js";
 
 export type {
   GoogleServiceAccount,
@@ -173,10 +175,6 @@ function text(value: unknown): string | undefined {
 
 function integer(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
-}
-
-function utf8Bytes(value: string): number {
-  return new TextEncoder().encode(value).length;
 }
 
 function documentUrl(documentId: string): string {
@@ -524,26 +522,28 @@ function findRawTab(tabs: unknown, tabId: string, depth = 0): JsonRecord | undef
 }
 
 /**
- * The untouched resource, narrowed to one tab when asked, under a byte
- * ceiling that names its way out rather than handing back a partial tree.
+ * The untouched resource, narrowed to one tab when asked, under a ceiling on
+ * the whole result as delivered — envelope included — that names its way out
+ * rather than handing back a partial tree.
  */
 function rawDocument(document: JsonRecord, documentId: string, tabId: string | undefined): JsonRecord {
   const resource = tabId === undefined ? document : { ...document, tabs: [findRawTab(document["tabs"], tabId)] };
-  const bytes = utf8Bytes(JSON.stringify(resource));
-  if (bytes > MAX_RAW_BYTES) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      `The raw document${tabId === undefined ? "" : ` tab ${tabId}`} is ${bytes} bytes, past connecta's ${MAX_RAW_BYTES}-byte raw ceiling. ${tabId === undefined ? "Pass tabId for one tab, or" : "Read"} the rendering instead.`,
-    );
-  }
   const id = text(document["documentId"]) ?? documentId;
-  return compact({
+  const result = compact({
     documentId: id,
     title: text(document["title"]),
     revisionId: text(document["revisionId"]),
     url: documentUrl(id),
     raw: resource,
   });
+  const bytes = jsonBytes(result);
+  if (bytes > MAX_RAW_BYTES) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `The raw document${tabId === undefined ? "" : ` tab ${tabId}`} is ${bytes} bytes as a result, past connecta's ${MAX_RAW_BYTES}-byte raw ceiling. ${tabId === undefined ? "Pass tabId for one tab, or" : "Read"} the rendering instead.`,
+    );
+  }
+  return result;
 }
 
 const SUGGESTION_MODES: Readonly<Record<string, string>> = {
@@ -576,26 +576,72 @@ function uncertain(message: string, cause: unknown): ConnectorCallError {
 }
 
 /**
+ * Codes the shared client gives only to an explicit HTTP refusal: the request
+ * reached Google and was turned down, so nothing it asked for happened.
+ */
+const REFUSALS: ReadonlySet<string> = new Set(["invalid_args", "auth_required", "rate_limited", "not_found", "conflict"]);
+
+/**
+ * What a failed write did to the document. The one place a write's failure is
+ * classified, so the shared client's outcome facts slot in here when it
+ * reports them.
+ *
+ * - `refused`: an explicit HTTP refusal. Nothing was applied.
+ * - `opaque`: `connector_call_failed`, which the shared client uses both for a
+ *   4xx refusal it has no better code for and for a reply it could not take
+ *   after a 2xx (a redirect, a body past the response ceiling). It is already
+ *   non-retryable and claims nothing, so it passes through; anything built on
+ *   it (create's starting text) treats it as unknown.
+ * - `unknown`: everything else — a 5xx, a dropped connection, a timeout, or a
+ *   body stream that broke after the status arrived. Google may or may not
+ *   have applied it.
+ */
+function writeOutcome(error: unknown): "refused" | "opaque" | "unknown" {
+  if (!(error instanceof ConnectorCallError)) return "unknown";
+  if (REFUSALS.has(error.code)) return "refused";
+  return error.code === "connector_call_failed" ? "opaque" : "unknown";
+}
+
+function detailOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Send one write and read its reply as text, parsing it here, so a 2xx is
+ * never mistaken for a refusal by a JSON decode failing inside the transport.
+ * `unknown` and `applied` name the outcome for the caller's own words.
+ */
+async function sendWrite(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  request: GuardedRequest,
+  revisionGuarded: boolean,
+  words: { unknown: (detail: string) => string; applied: string },
+): Promise<JsonRecord> {
+  let reply: { text: string };
+  try {
+    reply = await client.text(request, ctx, "application/json", revisionGuarded ? { revisionGuarded: true } : undefined);
+  } catch (error) {
+    // A cancelled call is the caller's own decision; its reason stays whole.
+    if (ctx.signal?.aborted || writeOutcome(error) !== "unknown") throw error;
+    throw uncertain(words.unknown(detailOf(error)), error);
+  }
+  if (reply.text.trim() === "") return {};
+  try {
+    return asRecord(JSON.parse(reply.text));
+  } catch (cause) {
+    throw uncertain(words.applied, cause);
+  }
+}
+
+/**
  * One `documents.batchUpdate`, atomic on Google's side: every request applies
- * or none does. With `requiredRevisionId`, Google refuses the batch if the
- * document has moved on.
- *
- * What a failure means for the document:
- *
- * - An HTTP refusal — `invalid_args`, `auth_required`, `rate_limited`,
- *   `not_found`, `conflict`, or a `connector_call_failed` the shared client
- *   mapped from a 4xx — applied nothing, and passes through exactly as
- *   mapped. A write naming `requiredRevisionId` is sent revision-guarded, so
- *   the shared client reads Google's own reason (FAILED_PRECONDITION or
- *   ABORTED on a 400 or 409) and answers a stale revision with `conflict`.
- *   Nothing here infers one: a revision read afterwards would prove nothing,
- *   since a collaborator may have edited in between.
- * - `unavailable` or `timeout` arrive after the request may have been sent and
- *   processed (a 5xx, a dropped connection), so the outcome is unknown.
- * - A 2xx whose body is unreadable means Google applied the batch.
- *
- * The reply is read as text and parsed here, so a 2xx can never be mistaken
- * for a refusal by a JSON decode failing inside the transport.
+ * or none does. A write naming `requiredRevisionId` is sent revision-guarded,
+ * so the shared client reads Google's own reason (FAILED_PRECONDITION or
+ * ABORTED on a 400 or 409) and answers a stale revision with `conflict`.
+ * Nothing here infers one: a revision read afterwards would prove nothing,
+ * since a collaborator may have edited in between. See {@link writeOutcome}
+ * for what every other failure means.
  */
 async function batchUpdate(
   client: GoogleWorkspaceClient,
@@ -604,47 +650,29 @@ async function batchUpdate(
   requests: unknown[],
   requiredRevisionId: string | undefined,
 ): Promise<JsonRecord> {
-  let reply: { text: string };
-  try {
-    reply = await client.text(
-      {
-        method: "POST",
-        path: batchPath(documentId),
-        body: compact({
-          requests,
-          writeControl: requiredRevisionId ? { requiredRevisionId } : undefined,
-        }),
-      },
-      ctx,
-      "application/json",
-      requiredRevisionId ? { revisionGuarded: true } : undefined,
-    );
-  } catch (error) {
-    if (
-      ctx.signal?.aborted ||
-      !(error instanceof ConnectorCallError) ||
-      (error.code !== "unavailable" && error.code !== "timeout")
-    ) {
-      throw error;
-    }
-    throw uncertain(
-      `The outcome of this edit is unknown: ${error.message} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.${
-        requiredRevisionId
-          ? " Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat."
-          : ""
-      }`,
-      error,
-    );
-  }
-  if (reply.text.trim() === "") return {};
-  try {
-    return asRecord(JSON.parse(reply.text));
-  } catch (cause) {
-    throw uncertain(
-      "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
-      cause,
-    );
-  }
+  return sendWrite(
+    client,
+    ctx,
+    {
+      method: "POST",
+      path: batchPath(documentId),
+      body: compact({
+        requests,
+        writeControl: requiredRevisionId ? { requiredRevisionId } : undefined,
+      }),
+    },
+    requiredRevisionId !== undefined,
+    {
+      unknown: (detail) =>
+        `The outcome of this edit is unknown: ${detail} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.${
+          requiredRevisionId
+            ? " Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat."
+            : ""
+        }`,
+      applied:
+        "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
+    },
+  );
 }
 
 function savedEdit(documentId: string, reply: JsonRecord): JsonRecord {
@@ -687,9 +715,11 @@ const TEXT_PROPERTY: JsonSchema = {
 };
 
 /**
- * Google's Document resource as returned with `includeTabsContent`: the tabs
- * carry everything, and the legacy top-level content fields stay empty.
- * Nothing is required, because ProtoJSON omits every empty field.
+ * Google's Document resource: every field Docs v1's Discovery document
+ * declares on it. With `includeTabsContent` the tabs carry the content and
+ * the legacy top-level content fields stay empty, but each is declared so
+ * nothing a raw read can emit goes undeclared. Nothing is required, because
+ * ProtoJSON omits every empty field.
  */
 const RAW_OUTPUT: JsonSchema = {
   type: "object",
@@ -698,6 +728,21 @@ const RAW_OUTPUT: JsonSchema = {
     title: { type: "string" },
     revisionId: { type: "string" },
     suggestionsViewMode: { type: "string" },
+    commentsViewMode: { type: "string" },
+    body: { type: "object" },
+    headers: { type: "object" },
+    footers: { type: "object" },
+    footnotes: { type: "object" },
+    documentStyle: { type: "object" },
+    namedStyles: { type: "object" },
+    lists: { type: "object" },
+    namedRanges: { type: "object" },
+    inlineObjects: { type: "object" },
+    positionedObjects: { type: "object" },
+    suggestedDocumentStyleChanges: { type: "object" },
+    suggestedNamedStylesChanges: { type: "object" },
+    comments: { type: "array", items: { type: "object" } },
+    suggestions: { type: "array", items: { type: "object" } },
     tabs: {
       type: "array",
       items: {
@@ -881,7 +926,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               const at = ordinal;
               ordinal += 1;
               if (at < from || next !== undefined) continue;
-              const size = utf8Bytes(JSON.stringify(row)) + 1;
+              const size = jsonBytes(row) + 1;
               if (pageBytes + size > ELEMENT_PAGE_BYTES) {
                 next = at;
                 continue;
@@ -946,18 +991,23 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       },
       handler: async (args, ctx) => {
         // Google's create takes a title and ignores any content, so a body is
-        // a second, separate edit.
-        const created = asRecord(
-          await client.json({ method: "POST", path: "/documents", body: { title: args["title"] } }, ctx),
+        // a second, separate edit. Creating is not idempotent: every failure
+        // that may have left a document behind says so and is not retryable.
+        const title = String(args["title"]);
+        const createdButUnknown = `Google Docs created the document (HTTP 2xx), but its reply could not be read, so its id is unknown. Do not create it again; find "${title}" in Drive (a Google Drive connection's search) and use that id.`;
+        const created = await sendWrite(
+          client,
+          ctx,
+          { method: "POST", path: "/documents", body: { title } },
+          false,
+          {
+            unknown: (detail) =>
+              `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
+            applied: createdButUnknown,
+          },
         );
         const documentId = text(created["documentId"]);
-        if (!documentId) {
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            "Google Docs answered the create without a document id.",
-            { retryable: false },
-          );
-        }
+        if (!documentId) throw uncertain(createdButUnknown, undefined);
         let revisionId = text(created["revisionId"]);
         if (typeof args["text"] === "string") {
           try {
@@ -971,13 +1021,15 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             revisionId = revisionAfter(reply) ?? revisionId;
           } catch (cause) {
             // The document exists now. A retry of this call would make a
-            // second one, so the failure names it and is not retryable.
-            const detail = cause instanceof Error ? cause.message : String(cause);
+            // second one, so the failure names it and is not retryable. Only
+            // an explicit refusal proves the text is absent; anything else
+            // sends the caller to look before appending.
+            const detail = detailOf(cause);
             throw new ConnectorCallError(
               "connector_call_failed",
-              cause instanceof ConnectorCallError && UNCERTAIN.has(cause)
-                ? `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`
-                : `Created document ${documentId}, but writing its initial text failed: ${detail} Do not create it again; add the text with append_text on ${documentId}.`,
+              writeOutcome(cause) === "refused"
+                ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
+                : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
               { retryable: false, cause },
             );
           }
