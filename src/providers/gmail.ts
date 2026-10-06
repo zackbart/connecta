@@ -291,7 +291,7 @@ async function readBody(
 }
 
 /** Attachment rows listed per message; the rest are counted, not listed. */
-const MAX_LISTED_ATTACHMENTS = 50;
+const MAX_LISTED_ATTACHMENTS = 20;
 
 function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: number } {
   const all = walk(payload).attachments;
@@ -301,11 +301,25 @@ function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: nu
         filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
         mimeType: clipped(text(part["mimeType"]), FIELD_BYTES),
         size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
-        attachmentId: text(asRecord(part["body"])["attachmentId"]),
+        attachmentId: idOf(asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES),
       }),
     ),
     omitted: Math.max(0, all.length - MAX_LISTED_ATTACHMENTS),
   };
+}
+
+/**
+ * Gmail's ids are short opaque tokens — message and thread ids are sixteen
+ * hex digits, attachment ids a few hundred characters. One far past that is
+ * not an id this connection can use, and is dropped rather than cut: a cut id
+ * names nothing, and an uncut one could fill the whole result.
+ */
+const ID_BYTES = 256;
+const ATTACHMENT_ID_BYTES = 1024;
+
+function idOf(value: unknown, maxBytes = ID_BYTES): string | undefined {
+  const id = text(value);
+  return id !== undefined && jsonBytes(id) <= maxBytes ? id : undefined;
 }
 
 /**
@@ -350,15 +364,16 @@ async function projectMessage(
   ctx: ConnectorContext,
   value: unknown,
   maxBodyChars: number,
+  budget: number = RESULT_BUDGET_BYTES,
 ): Promise<JsonRecord> {
   const message = asRecord(value);
   const payload = asRecord(message["payload"]);
-  const read = await readBody(client, ctx, text(message["id"]), payload, maxBodyChars);
+  const read = await readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars);
   const attachments = attachmentsOf(payload);
   const headerOf = (name: string) => clipped(header(payload, name), HEADER_BYTES);
   const projected = compact({
-    id: text(message["id"]),
-    threadId: text(message["threadId"]),
+    id: idOf(message["id"]),
+    threadId: idOf(message["threadId"]),
     labelIds: labelIdsOf(message).slice(0, MAX_LISTED_LABELS).map((id) => clipped(id, LABEL_ID_BYTES)),
     date: isoFromMillis(message["internalDate"]),
     from: headerOf("From"),
@@ -377,18 +392,139 @@ async function projectMessage(
     attachmentsOmitted: attachments.omitted > 0 ? attachments.omitted : undefined,
   });
   if (!("text" in read)) return { ...projected, body: read.body, bodyTruncated: read.bodyTruncated };
-  // Cap by the caller's characters, then by what the whole result may weigh:
-  // a body never takes the message past `RESULT_BUDGET_BYTES`, so a single
-  // message is deliverable inside execute_code at any maxBodyChars.
+  // Cap by the caller's characters, then by what the message may weigh in
+  // its result: `budget` is what is left once the result's own wrapper is
+  // counted, so a message is deliverable inside execute_code at any
+  // maxBodyChars.
   const byCharacters = capped(read.text, maxBodyChars);
-  const room = RESULT_BUDGET_BYTES - jsonBytes(projected) + jsonBytes("");
-  const body = clampText(
-    byCharacters.body,
-    room,
-    (dropped) =>
-      `\n[… ${dropped} more characters truncated at connecta's ${RESULT_BUDGET_BYTES / 1024} KiB per-result limit; read the rest in Gmail]`,
-  );
+  const body = clampText(byCharacters.body, Math.max(2, budget - jsonBytes(projected) + jsonBytes("")), resultLimitMarker);
   return { ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body };
+}
+
+// --- Cursors -------------------------------------------------------------------------
+
+/**
+ * A page cursor is bound to the call that issued it: its tool and the
+ * arguments that shape the result, as a digest. Handed to another tool,
+ * thread, query, or page size it is refused, never reinterpreted.
+ *
+ * Gmail pages its own lists (threads, drafts) with page tokens, which ride
+ * inside. Connecta pages a thread's messages and the label list itself, and
+ * resumes those by identity rather than position: the cursor carries how many
+ * items came before and a fingerprint of their ids, in order. A message or
+ * label added or removed before that point changes the fingerprint, and the
+ * call answers `conflict` rather than repeating or skipping one; items added
+ * after it page on normally. Every page returns at least one item, so paging
+ * always ends.
+ */
+interface CursorClaims {
+  v: 1;
+  /** The tool that issued it. */
+  t: string;
+  /** Digest of the arguments that shaped the result. */
+  c: string;
+  /** Items already returned, and the fingerprint of their ids in order. */
+  n?: number;
+  f?: string;
+  /** Gmail's own page token. */
+  p?: string;
+}
+
+/** Longest cursor this connection issues; the schemas accept no longer. */
+const MAX_CURSOR_LENGTH = 2048;
+
+async function digest(value: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(bytes.subarray(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** The digest naming one call: its tool and the arguments that shape its pages. */
+function callKey(tool: string, shape: Record<string, unknown>): Promise<string> {
+  return digest(JSON.stringify([tool, shape]));
+}
+
+function encodeCursor(claims: CursorClaims): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(claims));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The claims of a cursor this call may resume, or a refusal saying why not. */
+function openCursor(cursor: unknown, tool: string, call: string): CursorClaims | undefined {
+  if (cursor === undefined) return undefined;
+  let claims: CursorClaims | undefined;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(base64UrlBytes(String(cursor)))) as unknown;
+    if (parsed && typeof parsed === "object" && (parsed as CursorClaims).v === 1) claims = parsed as CursorClaims;
+  } catch {
+    claims = undefined;
+  }
+  if (!claims || typeof claims.t !== "string" || typeof claims.c !== "string") {
+    throw new ConnectorCallError(
+      "invalid_args",
+      "That is not a cursor this connection issued. Start again without one.",
+    );
+  }
+  if (claims.t !== tool || claims.c !== call) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      "That cursor came from a different call — another tool, thread, query, or page size. Pass the cursor this same call returned, or start again without one.",
+    );
+  }
+  return claims;
+}
+
+/** Where to resume in `ids`, checked against what the earlier pages saw. */
+async function resumeAt(ids: readonly string[], claims: CursorClaims | undefined, what: string): Promise<number> {
+  if (!claims) return 0;
+  const seen = claims.n;
+  if (
+    typeof seen !== "number" ||
+    !Number.isInteger(seen) ||
+    seen < 1 ||
+    seen > ids.length ||
+    claims.f !== (await digest(JSON.stringify(ids.slice(0, seen))))
+  ) {
+    throw new ConnectorCallError(
+      "conflict",
+      `The ${what} changed since the previous page: an item was added or removed before where that page ended. Read it again from the start, without a cursor.`,
+    );
+  }
+  return seen;
+}
+
+async function cursorAfter(
+  ids: readonly string[],
+  seen: number,
+  tool: string,
+  call: string,
+): Promise<string> {
+  return encodeCursor({ v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
+}
+
+/** A page object whose cursor is as long as any this connection issues. */
+const RESERVED_PAGE = { hasMore: true, nextCursor: "x".repeat(MAX_CURSOR_LENGTH) };
+
+function resultLimitMarker(dropped: number): string {
+  return `\n[… ${dropped} more characters truncated at connecta's ${RESULT_BUDGET_BYTES / 1024} KiB per-result limit; read the rest in Gmail]`;
+}
+
+/**
+ * Every Gmail result's last check: its whole serialized size, wrapper and
+ * all, against the budget. The bounds above make a refusal here a
+ * should-not-happen; it exists so nothing oversized is ever handed on.
+ */
+function deliverable(tool: string, result: unknown): unknown {
+  const size = jsonBytes(result);
+  if (size > RESULT_BUDGET_BYTES) {
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      `Gmail's answer to ${tool} is ${size} bytes even after cutting, past connecta's ${RESULT_BUDGET_BYTES / 1024} KiB result limit. Open it in Gmail.`,
+      { retryable: false },
+    );
+  }
+  return result;
 }
 
 function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecord {
@@ -405,7 +541,7 @@ function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecor
   }
   const snippet = text(listedSnippet) ?? text(messages[messages.length - 1]?.["snippet"]);
   return compact({
-    id: text(thread["id"]),
+    id: idOf(thread["id"]),
     subject: clipped(header(first, "Subject"), FIELD_BYTES),
     from: clipped(header(first, "From"), FIELD_BYTES),
     lastFrom: messages.length > 1 ? clipped(header(last, "From"), FIELD_BYTES) : undefined,
@@ -422,9 +558,9 @@ function projectDraftSummary(value: unknown): JsonRecord {
   const message = asRecord(draft["message"]);
   const payload = asRecord(message["payload"]);
   return compact({
-    draftId: text(draft["id"]),
-    messageId: text(message["id"]),
-    threadId: text(message["threadId"]),
+    draftId: idOf(draft["id"]),
+    messageId: idOf(message["id"]),
+    threadId: idOf(message["threadId"]),
     subject: clipped(header(payload, "Subject"), FIELD_BYTES),
     to: clipped(header(payload, "To"), FIELD_BYTES),
     updatedAt: isoFromMillis(message["internalDate"]),
@@ -752,9 +888,9 @@ function projectSavedDraft(value: unknown): JsonRecord {
   const draft = asRecord(value);
   const message = asRecord(draft["message"]);
   return compact({
-    draftId: text(draft["id"]),
-    messageId: text(message["id"]),
-    threadId: text(message["threadId"]),
+    draftId: idOf(draft["id"]),
+    messageId: idOf(message["id"]),
+    threadId: idOf(message["threadId"]),
     sent: false,
   });
 }
@@ -809,8 +945,9 @@ function idProperty(description: string): JsonSchema {
 const CURSOR_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
-  maxLength: 512,
-  description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same query.",
+  maxLength: MAX_CURSOR_LENGTH,
+  pattern: "^[A-Za-z0-9_-]+$",
+  description: "Opaque page.nextCursor from the previous page of this same call; another call's cursor is refused. Pass it back unchanged.",
 };
 
 const LIMIT_PROPERTY: JsonSchema = {
@@ -933,9 +1070,19 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const bodyChars = (args: JsonRecord, fallback: number): number =>
     typeof args["maxBodyChars"] === "number" ? args["maxBodyChars"] : fallback;
-  const page = (listing: JsonRecord) => {
-    const next = text(listing["nextPageToken"]) ?? null;
-    return { hasMore: next !== null, nextCursor: next };
+  // Gmail's own page token, carried inside a cursor bound to this call.
+  const gmailPage = (listing: JsonRecord, tool: string, call: string) => {
+    const token = text(listing["nextPageToken"]);
+    if (token === undefined) return { hasMore: false, nextCursor: null };
+    const cursor = encodeCursor({ v: 1, t: tool, c: call, p: token });
+    if (cursor.length > MAX_CURSOR_LENGTH) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "Gmail answered with a page token too long to carry in a cursor; narrow the query to fit one page.",
+        { retryable: false },
+      );
+    }
+    return { hasMore: true, nextCursor: cursor };
   };
 
   const compose = async (
@@ -1007,6 +1154,13 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         required: ["threads", "page"],
       },
       handler: async (args, ctx) => {
+        const limit = args["limit"] ?? DEFAULT_PAGE_SIZE;
+        const call = await callKey("search_threads", {
+          query: args["query"] ?? null,
+          includeSpamTrash: args["includeSpamTrash"] === true,
+          limit,
+        });
+        const claims = openCursor(args["cursor"], "search_threads", call);
         const listing = asRecord(
           await client.json(
             {
@@ -1015,8 +1169,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               query: {
                 q: args["query"],
                 includeSpamTrash: args["includeSpamTrash"],
-                maxResults: args["limit"] ?? DEFAULT_PAGE_SIZE,
-                pageToken: args["cursor"],
+                maxResults: limit,
+                pageToken: claims?.p,
               },
             },
             ctx,
@@ -1042,7 +1196,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           threads: threads.filter((thread) => thread !== undefined),
           resultSizeEstimate:
             typeof listing["resultSizeEstimate"] === "number" ? listing["resultSizeEstimate"] : undefined,
-          page: page(listing),
+          page: gmailPage(listing, "search_threads", call),
         });
       },
     },
@@ -1056,9 +1210,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           threadId: idProperty("Thread id from search_threads or a message's threadId."),
           maxBodyChars: bodyCharsProperty(DEFAULT_THREAD_BODY_CHARS),
           cursor: {
-            type: "string",
-            pattern: "^[0-9]{1,6}$",
-            description: `Opaque page.nextCursor from the previous page of this thread. A page ends before ${RESULT_BUDGET_BYTES / 1024} KiB, connecta's result limit.`,
+            ...CURSOR_PROPERTY,
+            description: `Opaque page.nextCursor from this thread's previous page, same maxBodyChars. A page ends before ${RESULT_BUDGET_BYTES / 1024} KiB; a thread changed before that point answers conflict.`,
           },
         },
         ["threadId"],
@@ -1085,23 +1238,23 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ),
         );
         const max = bodyChars(args, DEFAULT_THREAD_BODY_CHARS);
+        const call = await callKey("get_thread", { threadId: args["threadId"], maxBodyChars: max });
+        const claims = openCursor(args["cursor"], "get_thread", call);
         const all = asArray(thread["messages"]);
-        const start = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
-        if (start > all.length) {
-          throw new ConnectorCallError(
-            "invalid_args",
-            "That cursor is past the end of this thread; it may have lost messages. Read it again without a cursor.",
-          );
-        }
-        // Messages until the next would take the page past the result
-        // budget. A message alone always fits (its body is capped to), so a
-        // page holds at least one and the cursor always moves.
+        const ids = all.map((message) => String(asRecord(message)["id"] ?? ""));
+        const start = await resumeAt(ids, claims, "thread");
+        // The whole result is budgeted: the wrapper (with the longest cursor
+        // this connection issues) first, then messages and their separators
+        // until the next would not fit. A message alone is projected to fit
+        // beside the wrapper, so a page holds at least one and paging ends.
+        const threadId = idOf(thread["id"]) ?? args["threadId"];
+        let bytes = jsonBytes({ id: threadId, messageCount: all.length, messages: [], page: RESERVED_PAGE });
+        const room = RESULT_BUDGET_BYTES - bytes;
         const messages: JsonRecord[] = [];
-        let bytes = 0;
         let next = start;
         while (next < all.length) {
-          const projected = await projectMessage(client, ctx, all[next], max);
-          const size = jsonBytes(projected) + 1;
+          const projected = await projectMessage(client, ctx, all[next], max, room);
+          const size = jsonBytes(projected) + (messages.length > 0 ? 1 : 0);
           if (messages.length > 0 && bytes + size > RESULT_BUDGET_BYTES) break;
           messages.push(projected);
           bytes += size;
@@ -1109,10 +1262,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         const hasMore = next < all.length;
         return {
-          id: text(thread["id"]) ?? args["threadId"],
+          id: threadId,
           messageCount: all.length,
           messages,
-          page: { hasMore, nextCursor: hasMore ? String(next) : null },
+          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "get_thread", call) : null },
         };
       },
     },
@@ -1165,9 +1318,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       inputSchema: input(
         {
           cursor: {
-            type: "string",
-            pattern: "^[0-9]{1,6}$",
-            description: "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so a mailbox with thousands still fits one result.",
+            ...CURSOR_PROPERTY,
+            description: "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so thousands still fit, and answers conflict if the list changed.",
           },
         },
         [],
@@ -1192,28 +1344,35 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       },
       handler: async (args, ctx) => {
         const listing = asRecord(await client.json({ method: "GET", path: "/labels" }, ctx));
+        const call = await callKey("list_labels", {});
+        const claims = openCursor(args["cursor"], "list_labels", call);
         const all = asArray(listing["labels"]);
-        const start = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
+        const ids = all.map((label) => String(asRecord(label)["id"] ?? ""));
+        const start = await resumeAt(ids, claims, "label list");
         // A mailbox may hold 10,000 labels; Gmail sends them in one answer
-        // with no paging of its own, so connecta pages them by result size.
+        // with no paging of its own, so connecta pages them, budgeting the
+        // whole result: wrapper and longest cursor first, then rows.
         const labels: JsonRecord[] = [];
-        let bytes = 0;
+        let bytes = jsonBytes({ labels: [], page: RESERVED_PAGE });
         let next = start;
         while (next < all.length) {
           const label = asRecord(all[next]);
           const row = compact({
-            id: text(label["id"]),
+            id: idOf(label["id"], LABEL_ID_BYTES),
             name: clipped(text(label["name"]), FIELD_BYTES),
             type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
           });
-          const size = jsonBytes(row) + 1;
+          const size = jsonBytes(row) + (labels.length > 0 ? 1 : 0);
           if (labels.length > 0 && bytes + size > RESULT_BUDGET_BYTES) break;
           labels.push(row);
           bytes += size;
           next += 1;
         }
         const hasMore = next < all.length;
-        return { labels, page: { hasMore, nextCursor: hasMore ? String(next) : null } };
+        return {
+          labels,
+          page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "list_labels", call) : null },
+        };
       },
     },
     {
@@ -1248,6 +1407,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         required: ["drafts", "page"],
       },
       handler: async (args, ctx) => {
+        const limit = args["limit"] ?? DEFAULT_PAGE_SIZE;
+        const call = await callKey("list_drafts", { query: args["query"] ?? null, limit });
+        const claims = openCursor(args["cursor"], "list_drafts", call);
         const listing = asRecord(
           await client.json(
             {
@@ -1255,8 +1417,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               path: "/drafts",
               query: {
                 q: args["query"],
-                maxResults: args["limit"] ?? DEFAULT_PAGE_SIZE,
-                pageToken: args["cursor"],
+                maxResults: limit,
+                pageToken: claims?.p,
               },
             },
             ctx,
@@ -1276,7 +1438,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ),
           ),
         );
-        return { drafts: drafts.filter((draft) => draft !== undefined), page: page(listing) };
+        return { drafts: drafts.filter((draft) => draft !== undefined), page: gmailPage(listing, "list_drafts", call) };
       },
     },
     {
@@ -1306,14 +1468,19 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
+        const draftId = idOf(draft["id"]) ?? args["draftId"];
+        // The wrapper adds the draft id and renames id to messageId; the
+        // message is projected into what is left.
+        const wrapper = jsonBytes({ draftId, messageId: "" }) - jsonBytes({ id: "" });
         const { id, ...message } = await projectMessage(
           client,
           ctx,
           draft["message"],
           bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS),
+          RESULT_BUDGET_BYTES - wrapper,
         );
         // A draft's message id changes on every update; the draft id does not.
-        return compact({ draftId: text(draft["id"]) ?? args["draftId"], messageId: id, ...message });
+        return compact({ draftId, messageId: id, ...message });
       },
     },
     {
@@ -1435,7 +1602,9 @@ to. No argument names a mailbox. A call with none mapped fails
   \`label:\`). Page with \`page.nextCursor\` and the same query.
 - \`get_thread\` returns messages oldest first with bodies capped by
   \`maxBodyChars\`; a cut body ends with a truncation marker. A long thread
-  pages: follow \`page.nextCursor\` until \`hasMore\` is false. Reduce inside
+  pages: follow \`page.nextCursor\` until \`hasMore\` is false, with the same
+  arguments. \`conflict\` means the thread changed under the cursor; read it
+  again from the start. Reduce inside
   \`execute_code\` before returning a long thread.
 - Every result stays under 192 KiB; \`list_labels\` pages the same way.
 - Attachments are listed by name, type, and size only; none is downloaded.
@@ -1523,6 +1692,10 @@ export function gmail(id: string, options: GmailOptions): Connector {
       // body, are conventions no schema can carry.
       required: true,
     },
-    tools: tools(client),
+    // Every tool's result passes the whole-size postcondition on its way out.
+    tools: tools(client).map((tool) => ({
+      ...tool,
+      handler: async (args: unknown, ctx: ConnectorContext) => deliverable(tool.name, await tool.handler(args, ctx)),
+    })),
   });
 }

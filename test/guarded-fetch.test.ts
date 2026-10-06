@@ -283,6 +283,45 @@ describe("guardedFetch() response handling", () => {
     expect(error.message).toContain("Could not reach the Example API");
   });
 
+  it.each([
+    [0, 300],
+    [10, 300],
+    [299, 300],
+    [300, 300],
+    [301, 300],
+    [1000, 300],
+  ])(
+    "retains at most %i bytes and consumes at most one %i-byte chunk past them",
+    async (maxBytes, chunkSize) => {
+      // The reader is handed chunks as it asks for them, one at a time, so
+      // "consumed" counts exactly what left the source.
+      let consumed = 0;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (consumed >= 20 * chunkSize) {
+              controller.close();
+              return;
+            }
+            consumed += chunkSize;
+            controller.enqueue(new Uint8Array(chunkSize).fill(7));
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      stubFetch(() => new Response(body));
+      const result = await transport({ maxResponseBytes: 1_000_000 })(
+        { method: "GET", path: "/big", prefixOnly: true },
+        context(),
+        (response) => response.prefix(maxBytes),
+      );
+      expect(result.bytes.byteLength).toBe(maxBytes);
+      expect(result.truncated).toBe(true);
+      // The chunk that crosses the bound is the whole overrun.
+      expect(consumed).toBeLessThanOrEqual(maxBytes + chunkSize);
+    },
+  );
+
   it("reads a bounded prefix, past a declared ceiling only when asked, and cancels the rest", async () => {
     let cancelled = false;
     let pulled = 0;
@@ -312,6 +351,9 @@ describe("guardedFetch() response handling", () => {
     );
     expect(prefix).toEqual({ bytes: new Uint8Array(10).fill(120), truncated: true });
     await vi.waitFor(() => expect(cancelled).toBe(true));
+    // Retained: exactly the bound. Consumed: the bound plus at most the one
+    // 512-byte chunk that crossed it (a pull or two of read-ahead aside).
+    expect(prefix.bytes.byteLength).toBe(10);
     expect(pulled).toBeLessThan(4);
     // Without the flag, the declared length past the ceiling is still refused.
     await expect(

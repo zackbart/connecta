@@ -82,11 +82,16 @@ deployment's own connectors still never learn their caller.
   with attachments, inline images, or anything else Gmail's whole-message
   update would delete, and one nested deeper than it inspects). Every result
   is built to stay under 192 KiB of JSON, so it reaches a program through
-  `execute_code`'s 256 KiB bridge as well as `call_tool`: `get_thread` and
-  `list_labels` page by cursor when a thread or label set is larger, every
-  string field is bounded, a body past the limit ends with a marker at any
-  `maxBodyChars`, and an untouched `raw: true` message past it is refused
-  with the way forward. There is no send, delete, or label tool and no raw
+  `execute_code`'s 256 KiB bridge as well as `call_tool` — the whole result,
+  wrapper and cursor included: `get_thread` and `list_labels` page by cursor
+  when a thread or label set is larger, every string field is bounded, an
+  identifier far past any Gmail id is dropped rather than cut, a body past
+  the limit ends with a marker at any `maxBodyChars`, and an untouched
+  `raw: true` message past it is refused with the way forward. Every cursor is
+  bound to the tool and arguments that issued it, and a thread or label page
+  resumes by the identity of what came before: a message or label added or
+  removed before that point answers `conflict` rather than repeating or
+  skipping one. There is no send, delete, or label tool and no raw
   hatch; `gmail.compose` technically permits sending, and the tool surface is
   what forbids it. `create_draft` is an additive write and `update_draft` a
   destructive one; neither is exempt from approval unless the deployment says
@@ -132,10 +137,13 @@ deployment's own connectors still never learn their caller.
   `Content-Range`, so an empty file's 416 arrives as an empty result. A write
   is never told to retry when it may have landed: one Google accepted whose
   reply broke off, overflowed, or redirected, and one sent with no answer at
-  all, fail as non-retryable with words saying to re-read its target first —
-  the verdict core's `write_outcome_unknown` gives an exempt program write —
-  while a read stays retryable. A product can ask how far any failed request
-  got: before sending, awaiting a response, reading a reply, or refused. Google's
+  all, or one Google answered with a 5xx after receiving it, fail as
+  non-retryable with words saying to re-read its target first — the verdict
+  core's `write_outcome_unknown` gives an exempt program write — while a read
+  stays retryable, as does a write the provider marks `{ idempotent: true }`.
+  An error status is a refusal even when its body cannot be read. A product
+  can ask how far any failed request got: before sending, awaiting a
+  response, reading a reply, a server error on a write, or refused. Google's
   refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or

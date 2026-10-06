@@ -283,22 +283,30 @@ export function googleReasonsOf(error: unknown): readonly string[] {
  * - `reading-body`: Google answered with a status that is not an error — a
  *   2xx, or a redirect — and the reply could not be used. A write probably
  *   applied.
- * - `refused`: Google answered with an error status. Nothing applied.
+ * - `server-error`: Google answered a non-idempotent write with a 5xx. It
+ *   may have committed before failing, so the outcome is unknown.
+ * - `refused`: Google answered with a 4xx, or a read or idempotent write
+ *   with a 5xx. Nothing to repeat blindly: a 4xx applied nothing, and a
+ *   repeated read or idempotent write is harmless.
  */
 interface GoogleOutcome {
   /** Whether the request left connecta for Google's API. */
   readonly dispatched: boolean;
   /** The HTTP status Google answered with, when one arrived. */
   readonly status?: number;
-  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "refused";
+  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "server-error" | "refused";
 }
 
 /** What one attempt saw, as it happened. */
 interface SendFacts {
   dispatched: boolean;
   status?: number;
+  /** The answer's headers, kept for an error status no mapper got to read. */
+  headers?: Headers;
   /** Google answered with an error status, which the mapper classified. */
   refused?: boolean;
+  /** Google answered a non-idempotent write with a 5xx. */
+  serverError?: boolean;
 }
 
 const googleOutcomes = new WeakMap<object, GoogleOutcome>();
@@ -566,6 +574,13 @@ interface GoogleRequestOptions {
    * like a product switched off for the user.
    */
   revisionGuarded?: boolean;
+  /**
+   * Sending this write twice leaves the same state as sending it once — a
+   * PUT of a whole resource, a Sheets `values.update` of fixed cells. Only
+   * then does a 5xx on a write stay a retryable `unavailable`; otherwise its
+   * outcome is unknown and it is not retried. Reads are always idempotent.
+   */
+  idempotent?: boolean;
 }
 
 /** The token the API refused, carried out of the mapper for one replay. */
@@ -581,6 +596,7 @@ interface ReadableResponse {
   readonly ok: boolean;
   readonly headers: Headers;
   bytes(): Promise<Uint8Array>;
+  text(): Promise<string>;
   jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
   prefix(maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }>;
 }
@@ -629,7 +645,10 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       fetch: async (url, init) => {
         facts.dispatched = true;
         const response = await fetch(url, init);
+        // Recorded before the transport validates anything: a ceiling or a
+        // redirect check can fail an answer, but not change what it said.
         facts.status = response.status;
+        facts.headers = response.headers;
         return response;
       },
     });
@@ -643,11 +662,56 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
    * for an exempt program write (`write_outcome_unknown`). A read is safe to
    * repeat and keeps its retryable classification.
    */
-  function settled(error: unknown, facts: SendFacts, method: string, ctx: ConnectorContext): unknown {
+  /**
+   * A 5xx answering a write that is not idempotent. Google can fail after a
+   * change commits, so "unavailable, retry" would invite a duplicate insert
+   * or a second draft: the outcome is unknown and the write is not retried.
+   * A specific verdict the mapper reached from Google's reasons (a quota, a
+   * disabled API) stands; only the generic upstream failure is reconsidered.
+   */
+  function serverErrorOnWrite(
+    mapped: ConnectorCallError,
+    status: number,
+    method: string,
+    requestOptions: GoogleRequestOptions,
+  ): ConnectorCallError | undefined {
+    if (status < 500 || method === "GET" || requestOptions.idempotent === true || mapped.code !== "unavailable") {
+      return undefined;
+    }
+    const unknown = new ConnectorCallError(
+      "connector_call_failed",
+      `${provider} answered HTTP ${status} after receiving the request, so its outcome is unknown — it may have been applied. Re-read its target before repeating it.`,
+      { retryable: false, cause: mapped },
+    );
+    const reasons = googleReasons.get(mapped);
+    if (reasons) googleReasons.set(unknown, reasons);
+    return unknown;
+  }
+
+  function settled(
+    error: unknown,
+    facts: SendFacts,
+    method: string,
+    ctx: ConnectorContext,
+    requestOptions: GoogleRequestOptions,
+  ): unknown {
     const write = method !== "GET";
     const status = facts.status;
+    if (facts.serverError) {
+      return outcome(error, { dispatched: true, phase: "server-error", ...(status === undefined ? {} : { status }) });
+    }
     if (facts.refused) {
       return outcome(error, { dispatched: true, phase: "refused", ...(status === undefined ? {} : { status }) });
+    }
+    // An error status keeps its meaning whatever went wrong reading its body
+    // — a body past the ceiling, a stream that broke off: the status alone
+    // still says what to do next.
+    if (status !== undefined && status >= 400 && !ctx.signal?.aborted) {
+      const mapped = apiFailure(failure, status, facts.headers ?? new Headers(), undefined, requestOptions);
+      const unknown = serverErrorOnWrite(mapped, status, method, requestOptions);
+      return unknown
+        ? outcome(unknown, { dispatched: true, status, phase: "server-error" })
+        : outcome(mapped, { dispatched: true, status, phase: "refused" });
     }
     if (!facts.dispatched) return outcome(error, { dispatched: false, phase: "before-send" });
     // The caller's own cancellation is core's to classify, not this layer's.
@@ -722,19 +786,24 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         return await transport(token, facts)(headed, ctx, async (response) => {
           // A bounded read answers an empty file's 416 as an empty result.
           if (!response.ok && !(headed.prefixOnly === true && isEmptyRange(response))) {
-            facts.refused = true;
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
             const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
+            const unknown = serverErrorOnWrite(mapped, response.status, headed.method, requestOptions);
+            if (unknown) {
+              facts.serverError = true;
+              throw unknown;
+            }
+            facts.refused = true;
             throw response.status === 401 ? new TokenRejected(mapped) : mapped;
           }
           return await read(response);
         });
       } catch (error) {
-        if (!(error instanceof TokenRejected)) throw settled(error, facts, headed.method, ctx);
+        if (!(error instanceof TokenRejected)) throw settled(error, facts, headed.method, ctx, requestOptions);
         // Only the token this request carried; a newer one stays.
         await forgetDelegatedToken(delegated, token);
-        if (attempt > 0) throw settled(error.failure, facts, headed.method, ctx);
+        if (attempt > 0) throw settled(error.failure, facts, headed.method, ctx, requestOptions);
       }
     }
   }
@@ -743,15 +812,20 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   return {
     json: (request, ctx, requestOptions) =>
       call(request, ctx, "application/json", async (response) => {
-        const parsed = await response.jsonResult();
-        if (!("value" in parsed)) {
+        // Read first, parse second: a body that breaks off while it is being
+        // read is a transport failure (a GET may read again), and only text
+        // that arrived whole and still is not JSON is malformed.
+        const body = await response.text();
+        if (body.trim() === "") return undefined;
+        try {
+          return JSON.parse(body) as unknown;
+        } catch {
           throw new ConnectorCallError(
             "connector_call_failed",
             `${provider} returned a successful response that is not JSON.`,
             { retryable: false },
           );
         }
-        return parsed.value;
       }, requestOptions),
     bytes: (request, ctx, accept = "*/*", requestOptions) =>
       read(request, ctx, accept, requestOptions),
@@ -778,7 +852,10 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   ): Promise<GoogleBytes> {
     const { maxBytes } = requestOptions;
     if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {
-      throw new TypeError(`${provider}: maxBytes must be a whole number of bytes, zero or more.`);
+      throw outcome(new TypeError(`${provider}: maxBytes must be a whole number of bytes, zero or more.`), {
+        dispatched: false,
+        phase: "before-send",
+      });
     }
     const bounded = maxBytes !== undefined;
     return call(

@@ -4,6 +4,7 @@
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail.js";
+import { RESULT_BUDGET_BYTES } from "../src/providers/google/result-size.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import { silentLogger } from "./helpers.js";
@@ -254,19 +255,14 @@ describe("reading mail (H9, H10)", () => {
         },
       };
     };
-    const result = await call(connection(), "search_threads", {
-      query: "from:ann newer_than:7d",
-      limit: 5,
-      cursor: "prev",
-      includeSpamTrash: true,
-    });
+    const searchArgs = { query: "from:ann newer_than:7d", limit: 5, includeSpamTrash: true };
+    const result = await call(connection(), "search_threads", searchArgs);
 
     const list = calls[0]!.url;
     expect(`${list.origin}${list.pathname}`).toBe(`${GMAIL_API_BASE_URL}/threads`);
     expect(Object.fromEntries(list.searchParams)).toEqual({
       q: "from:ann newer_than:7d",
       maxResults: "5",
-      pageToken: "prev",
       includeSpamTrash: "true",
     });
     const metadata = calls.find((entry) => entry.url.pathname.endsWith("/threads/t1"))!.url;
@@ -288,8 +284,24 @@ describe("reading mail (H9, H10)", () => {
         },
       ],
       resultSizeEstimate: 42,
-      page: { hasMore: true, nextCursor: "next-1" },
+      page: { hasMore: true, nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+$/) },
     });
+
+    // The cursor carries Gmail's page token back to Gmail, for this call only.
+    calls.length = 0;
+    await call(connection(), "search_threads", { ...searchArgs, cursor: result.page.nextCursor });
+    expect(calls[0]!.url.searchParams.get("pageToken")).toBe("next-1");
+    for (const other of [
+      { ...searchArgs, query: "from:bo" },
+      { ...searchArgs, limit: 6 },
+    ]) {
+      await expect(
+        call(connection(), "search_threads", { ...other, cursor: result.page.nextCursor }),
+      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("different call") });
+    }
+    await expect(
+      call(connection(), "list_drafts", { limit: 5, cursor: result.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
   });
 
   it("ends paging with one branchable signal", async () => {
@@ -800,7 +812,11 @@ describe("every result is deliverable both ways it can be called", () => {
   // the most expensive strings JSON can carry: control characters (six bytes
   // escaped), lone surrogates (six), emoji (four per two units), CJK (three),
   // quotes and backslashes (two).
+  // Asserted against connecta's own budget, which leaves the bridge room.
   const BRIDGE_LIMIT = 256 * 1024;
+  it("budgets results under the bridge", () => {
+    expect(RESULT_BUDGET_BYTES).toBeLessThan(BRIDGE_LIMIT);
+  });
   const NASTY = '\u0001界😀\ud800"\\';
   const nasty = (length: number) => NASTY.repeat(Math.ceil(length / NASTY.length)).slice(0, length);
   const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -859,7 +875,7 @@ describe("every result is deliverable both ways it can be called", () => {
           };
     const result = await call(connection(), "search_threads", { limit: 25 });
     expect(result.threads).toHaveLength(25);
-    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 
   it("keeps a full drafts page of the worst summaries under the bridge", async () => {
@@ -869,7 +885,7 @@ describe("every result is deliverable both ways it can be called", () => {
         : { body: { id: "d", message: { id: "m", snippet: nasty(5000), payload: { headers: headers(20_000) } } } };
     const result = await call(connection(), "list_drafts", { limit: 25 });
     expect(result.drafts).toHaveLength(25);
-    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
   });
 
   it.each([
@@ -891,7 +907,7 @@ describe("every result is deliverable both ways it can be called", () => {
         ...(maxBodyChars === undefined ? {} : { maxBodyChars }),
         ...(cursor === undefined ? {} : { cursor }),
       });
-      expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+      expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
       expect(result.messages.length).toBeGreaterThan(0);
       expect(result.messageCount).toBe(40);
       seen.push(...result.messages.map((message: { id: string }) => message.id));
@@ -907,11 +923,11 @@ describe("every result is deliverable both ways it can be called", () => {
   it("caps one worst-case message, at the largest body cap, under the bridge and says where it cut", async () => {
     route = () => ({ body: hugeMessage("m1", 200_000) });
     const result = await call(connection(), "get_message", { messageId: "m1", maxBodyChars: 100_000 });
-    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     expect(result.bodyTruncated).toBe(true);
     expect(result.body).toMatch(/more characters truncated at connecta's 192 KiB per-result limit/);
-    expect(result.attachments).toHaveLength(50);
-    expect(result.attachmentsOmitted).toBe(250);
+    expect(result.attachments).toHaveLength(20);
+    expect(result.attachmentsOmitted).toBe(280);
     expect(result.labelIds).toHaveLength(20);
   });
 
@@ -927,7 +943,7 @@ describe("every result is deliverable both ways it can be called", () => {
           };
     const result = await call(connection(), "get_message", { messageId: "m2", maxBodyChars: 100_000 });
     expect(path(1)).toBe("/messages/m2/attachments/big");
-    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     expect(result.bodyTruncated).toBe(true);
   });
 
@@ -943,7 +959,7 @@ describe("every result is deliverable both ways it can be called", () => {
     let pages = 0;
     do {
       const result = await call(connection(), "list_labels", cursor === undefined ? {} : { cursor });
-      expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+      expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
       seen.push(...result.labels.map((label: { id: string }) => label.id));
       cursor = result.page.nextCursor ?? undefined;
       pages += 1;
@@ -958,5 +974,136 @@ describe("every result is deliverable both ways it can be called", () => {
     expect(failure).toMatchObject({ code: "invalid_args", message: expect.stringContaining("Read it without raw") });
     route = () => ({ body: MESSAGE });
     await expect(call(connection(), "get_message", { messageId: "m2", raw: true })).resolves.toEqual(MESSAGE);
+  });
+});
+
+describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
+  const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+
+  it("drops identifiers far past any Gmail id instead of letting them fill the result", async () => {
+    route = () => ({
+      body: {
+        id: "m".repeat(300_000),
+        threadId: "t".repeat(300_000),
+        payload: {
+          mimeType: "multipart/mixed",
+          parts: [
+            { mimeType: "text/plain", body: { data: b64url("Hello") } },
+            { mimeType: "application/pdf", filename: "a.pdf", body: { attachmentId: "A".repeat(300_000), size: 9 } },
+          ],
+        },
+      },
+    });
+    const result = await call(connection(), "get_message", { messageId: "m1" });
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(result.id).toBeUndefined();
+    expect(result.threadId).toBeUndefined();
+    expect(result.attachments).toEqual([{ filename: "a.pdf", mimeType: "application/pdf", size: 9 }]);
+    expect(result.body).toBe("Hello");
+  });
+
+  it("budgets get_draft's whole result, wrapper included", async () => {
+    const nasty = (length: number) => '\u0001界😀\ud800"\\'.repeat(Math.ceil(length / 6)).slice(0, length);
+    route = () => ({
+      body: {
+        id: "d".repeat(200),
+        message: {
+          id: "m1",
+          payload: {
+            mimeType: "text/plain",
+            headers: ["From", "To", "Cc", "Subject"].map((name) => ({ name, value: nasty(5000) })),
+            body: { data: b64url(nasty(200_000)) },
+          },
+        },
+      },
+    });
+    const result = await call(connection(), "get_draft", { draftId: "d1", maxBodyChars: 100_000 });
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    expect(result.bodyTruncated).toBe(true);
+  });
+
+  describe("thread cursors", () => {
+    /** Messages whose 60 KB bodies put three on a page at most. */
+    const message = (id: string) => ({
+      id,
+      threadId: "t1",
+      payload: { mimeType: "text/plain", body: { data: b64url("a".repeat(60_000)) } },
+    });
+    let messages: ReturnType<typeof message>[];
+    beforeEach(() => {
+      messages = ["m1", "m2", "m3", "m4", "m5", "m6", "m7"].map(message);
+      route = () => ({ body: { id: "t1", messages } });
+    });
+    const page = (args: Record<string, unknown>) =>
+      call(connection(), "get_thread", { threadId: "t1", maxBodyChars: 100_000, ...args });
+
+    it("pages every message once, each page within budget, and ends", async () => {
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const result = await page(cursor === undefined ? {} : { cursor });
+        expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+        seen.push(...result.messages.map((entry: { id: string }) => entry.id));
+        cursor = result.page.nextCursor ?? undefined;
+        pages += 1;
+      } while (cursor !== undefined && pages < 20);
+      expect(seen).toEqual(messages.map((entry) => entry.id));
+      expect(pages).toBeGreaterThan(1);
+    });
+
+    it("refuses a cursor from another thread, body cap, or tool", async () => {
+      const first = await page({});
+      const cursor = first.page.nextCursor;
+      await expect(page({ threadId: "t2", cursor })).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(page({ maxBodyChars: 99_999, cursor })).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(call(connection(), "list_labels", { cursor })).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(page({ cursor: "bm90LWEtY3Vyc29y" })).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("not a cursor this connection issued"),
+      });
+    });
+
+    it("answers conflict when a message is added or removed before where the page ended", async () => {
+      const first = await page({});
+      const cursor = first.page.nextCursor;
+      const returned = first.messages.map((entry: { id: string }) => entry.id);
+      expect(returned[0]).toBe("m1");
+
+      // Insert before the anchor: resuming by position would repeat a message.
+      messages = [message("m0"), ...messages];
+      await expect(page({ cursor })).rejects.toMatchObject({
+        code: "conflict",
+        message: expect.stringContaining("Read it again from the start"),
+      });
+
+      // Remove one before it: resuming by position would skip one.
+      messages = messages.filter((entry) => entry.id !== "m0" && entry.id !== "m1");
+      await expect(page({ cursor })).rejects.toMatchObject({ code: "conflict" });
+    });
+
+    it("continues normally when messages arrive after where the page ended", async () => {
+      const first = await page({});
+      messages = [...messages, message("m8")];
+      const second = await page({ cursor: first.page.nextCursor });
+      expect(second.messages[0].id).toBe(messages[first.messages.length]!.id);
+    });
+  });
+
+  it("answers conflict when the label list changed before a page's end", async () => {
+    const labels = Array.from({ length: 3000 }, (_, index) => ({
+      id: `Label_${index}`,
+      name: "x".repeat(200),
+      type: "user",
+    }));
+    let current = labels;
+    route = () => ({ body: { labels: current } });
+    const first = await call(connection(), "list_labels");
+    expect(first.page.hasMore).toBe(true);
+    expect(size(first)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    current = [{ id: "Label_new", name: "new", type: "user" }, ...labels];
+    await expect(
+      call(connection(), "list_labels", { cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "conflict" });
   });
 });

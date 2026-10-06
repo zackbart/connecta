@@ -1221,6 +1221,92 @@ describe("the shared client reads bytes and text for the products that need them
       expect(googleOutcomeOf(unauthorized)).toEqual({ dispatched: true, status: 401, phase: "refused" });
     });
 
+    it("refused: an error status stays a refusal when its body is past the ceiling", async () => {
+      apiReplies.push(() =>
+        new Response(new Uint8Array(4096), { status: 403, headers: { "Content-Length": "4096" } }),
+      );
+      const failure = await failing(client(1024).json(write, context()));
+      expect(failure.code).toBe("connector_call_failed");
+      expect(failure.message).not.toContain("probably applied");
+      expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
+    });
+
+    it("reading-body: a GET whose JSON body breaks off is retryable; malformed JSON is not", async () => {
+      apiReplies.push(brokenReply, () => new Response("{not json", { headers: { "Content-Type": "application/json" } }));
+      const drive = client();
+      const broken = await failing(drive.json(read, context()));
+      expect(broken).toMatchObject({ code: "unavailable", retryable: true });
+      expect(googleOutcomeOf(broken)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+      const malformed = await failing(drive.json(read, context()));
+      expect(malformed).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(malformed.message).toContain("not JSON");
+      expect(googleOutcomeOf(malformed)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+    });
+
+    it("before-send: an invalid maxBytes is annotated like every other local refusal", async () => {
+      const failure = await failing(client().bytes(read, context(), undefined, { maxBytes: -1 }));
+      expect(failure).toBeInstanceOf(TypeError);
+      expect(googleOutcomeOf(failure)).toEqual({ dispatched: false, phase: "before-send" });
+    });
+
+    describe("a 5xx answering a write", () => {
+      const upstream = (status: number) => () =>
+        Response.json({ error: { code: status, message: "Backend Error", status: "INTERNAL" } }, { status });
+
+      it.each(
+        (["POST", "PATCH", "PUT", "DELETE"] as const).flatMap((method) =>
+          [500, 502, 503, 504].map((status) => [method, status] as const),
+        ),
+      )("%s → %i: outcome unknown, not retried", async (method, status) => {
+        apiReplies.push(upstream(status));
+        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(failure.message).toContain(`answered HTTP ${status} after receiving the request, so its outcome is unknown`);
+        expect(failure.message).toContain("Re-read its target before repeating it");
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
+      });
+
+      it.each([500, 502, 503, 504])("GET → %i stays a retryable refusal", async (status) => {
+        apiReplies.push(upstream(status));
+        const failure = await failing(client().json(read, context()));
+        expect(failure).toMatchObject({ code: "unavailable", retryable: true });
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
+      });
+
+      it("stays retryable for a write the provider marks idempotent", async () => {
+        apiReplies.push(upstream(503));
+        const failure = await failing(
+          client().json({ method: "PUT", path: "/files/f1", body: {} }, context(), { idempotent: true }),
+        );
+        expect(failure).toMatchObject({ code: "unavailable", retryable: true });
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+      });
+
+      it("keeps a rate limit a rate limit: Google rejected it before applying", async () => {
+        apiReplies.push(
+          () => Response.json({ error: { code: 429, message: "Quota", status: "RESOURCE_EXHAUSTED" } }, { status: 429 }),
+          () =>
+            Response.json(
+              { error: { code: 503, message: "Slow down", errors: [{ reason: "rateLimitExceeded" }] } },
+              { status: 503 },
+            ),
+        );
+        const drive = client();
+        for (const status of [429, 503]) {
+          const failure = await failing(drive.json(write, context()));
+          expect(failure.code).toBe("rate_limited");
+          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
+        }
+      });
+
+      it("is unknown even when the 5xx body itself is past the ceiling", async () => {
+        apiReplies.push(() => new Response(new Uint8Array(4096), { status: 502, headers: { "Content-Length": "4096" } }));
+        const failure = await failing(client(1024).json(write, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 502, phase: "server-error" });
+      });
+    });
+
     it("knows nothing of errors the client did not throw", () => {
       expect(googleOutcomeOf(new Error("plain"))).toBeUndefined();
       expect(googleOutcomeOf(undefined)).toBeUndefined();

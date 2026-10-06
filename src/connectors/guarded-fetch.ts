@@ -85,9 +85,13 @@ interface GuardedResponse {
   /** Parse JSON while distinguishing malformed content from transport failure. */
   jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
   /**
-   * At most `maxBytes` of the body (never past the ceiling), reading one byte
-   * beyond to learn whether there was more, then cancelling the rest of the
-   * stream unread. Exclusive with the other readers: a body is read once.
+   * At most `maxBytes` of the body (never past the ceiling), then the rest of
+   * the stream cancelled unread. Exactly: it retains at most `maxBytes` bytes,
+   * and consumes from the transport at most `maxBytes` plus one chunk — the
+   * chunk that crosses the bound, whose overflow is how it learns there was
+   * more (`truncated`). Chunks are whatever size the runtime delivers (64 KiB
+   * is common), so that one chunk is the whole of the overrun. Exclusive with
+   * the other readers: a body is read once.
    */
   prefix(maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }>;
 }
@@ -437,9 +441,11 @@ function boundedResponse(
 }
 
 /**
- * Read `keep` bytes and one more, to know whether the body went on, then
- * cancel the stream: the source stops producing instead of being drained to
- * the ceiling for bytes nobody will look at.
+ * Read until a chunk crosses `keep` — at most one chunk past it — keep the
+ * first `keep` bytes, and cancel the stream: the source stops producing
+ * instead of being drained to the ceiling for bytes nobody will look at.
+ * A BYOB reader could stop at `keep + 1` exactly, but not every runtime's
+ * fetch body offers one, and one chunk is a bounded overrun.
  */
 async function readPrefix(
   stream: ReadableStream<Uint8Array>,
