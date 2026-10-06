@@ -17,6 +17,18 @@ import type {
   ConnectorUsageGuide,
 } from "../src/types.js";
 
+// The final-size guard is the last word on every result, and every source is
+// budgeted before it, so nothing ordinary reaches it. The sizing module passes
+// through untouched unless a test says which result to report as oversized.
+const sizing = vi.hoisted(() => ({ oversized: undefined as ((value: unknown) => boolean) | undefined }));
+vi.mock("../src/providers/google/result-size.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/providers/google/result-size.js")>();
+  return {
+    ...actual,
+    jsonBytes: (value: unknown) => (sizing.oversized?.(value) ? 1_000_000_000 : actual.jsonBytes(value)),
+  };
+});
+
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const UPLOAD_BASE_URL = "https://www.googleapis.com/upload/drive/v3";
 
@@ -61,6 +73,7 @@ let route: Route = () => undefined;
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
+  sizing.oversized = undefined;
   calls.length = 0;
   tokenCalls = 0;
   route = () => undefined;
@@ -1156,9 +1169,29 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     expect(CASES.map(([name]) => name).sort()).toEqual(names);
   });
 
+  /**
+   * Every string a JSON body carries made far longer than any bound, and every
+   * list three times past the cap: ids turn malformed, labels and names are
+   * cut, lists are capped — and each loss must be named in a declared field.
+   */
+  const pathological: Route = (request) => {
+    const reply = rich(request);
+    if (!reply || reply.body === undefined) return reply;
+    const swell = (value: unknown): unknown =>
+      typeof value === "string"
+        ? `${value}${"\u0001".repeat(1_500)}`
+        : Array.isArray(value)
+          ? Array.from({ length: 12 }, (_, index) => swell(value[index % value.length]))
+          : value && typeof value === "object"
+            ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, key === "nextPageToken" ? entry : swell(entry)]))
+            : value;
+    return { ...reply, body: swell(reply.body) };
+  };
+
   it.each([
     ["realistic", rich],
     ["empty", empty],
+    ["pathological", pathological],
   ] as const)("declares every key of a %s response, and omits nothing required", async (_kind, responses) => {
     const connector = connection();
     const schemas = Object.fromEntries((await connector.listTools(context())).map((tool) => [tool.name, tool.outputSchema]));
@@ -1218,7 +1251,7 @@ describe("every default result crosses into execute_code", () => {
     for (const [name, args] of [["search_files", {}], ["list_folder_items", { folderId: "root" }]] as const) {
       const result = await call(connection(), name, args);
       expect(result.files).toHaveLength(25);
-      expect(result.files[0].nameTruncated).toBe(true);
+      expect(result.files[0].truncatedFields).toEqual(["name"]);
       expect(serialized(result), name).toBeLessThanOrEqual(BUDGET);
     }
   });
@@ -1227,7 +1260,7 @@ describe("every default result crosses into execute_code", () => {
     const name = "n".repeat(3_000);
     route = (request) => (request.url.pathname.endsWith("/files") ? { body: { files: [{ id: "f1", name }] } } : { body: { id: "f1", name } });
     const listedFile = (await call(connection(), "search_files")).files[0];
-    expect(listedFile.nameTruncated).toBe(true);
+    expect(listedFile.truncatedFields).toEqual(["name"]);
     expect(listedFile.name.endsWith("…")).toBe(true);
     expect(serialized(listedFile.name)).toBeLessThanOrEqual(2 * 1024);
     expect(await call(connection(), "get_file", { fileId: "f1" })).toEqual({ id: "f1", name });
@@ -1235,7 +1268,7 @@ describe("every default result crosses into execute_code", () => {
     const huge = { id: "f1", name: worst(32_767), description: worst(40_000) };
     route = () => ({ body: huge });
     const detail = await call(connection(), "get_file", { fileId: "f1" });
-    expect(detail).toMatchObject({ nameTruncated: true, descriptionTruncated: true });
+    expect(detail.truncatedFields).toEqual(["name", "description"]);
     expect(serialized(detail)).toBeLessThanOrEqual(BUDGET);
     expect(detail.name).toBe(detail.name.toWellFormed());
   });
@@ -1269,7 +1302,7 @@ describe("every default result crosses into execute_code", () => {
       request.url.searchParams.get("pageToken") === "second"
         ? { body: { files: [{ id: "last" }] } }
         : { body: { files: rows, nextPageToken: "second" } };
-    for (const maxBytes of [undefined, 16_384, 50_000]) {
+    for (const maxBytes of [undefined, 65_536, 100_000]) {
       calls.length = 0;
       const seen: string[] = [];
       let cursor: string | undefined;
@@ -1319,14 +1352,14 @@ describe("every default result crosses into execute_code", () => {
     for (const mimeType of ["text/plain", "application/vnd.google-apps.document"]) {
       const metaRoute = meta(mimeType);
       route = (request) => metaRoute(request) ?? { payload: worst(250_000), contentType: "text/plain" };
-      for (const maxBytes of [undefined, 16_384, 100_000]) {
+      for (const maxBytes of [undefined, 65_536, 100_000]) {
         const result = await call(connection(), "get_file_content", {
           fileId: "f1",
           maxChars: 100_000,
           ...(maxBytes ? { maxBytes } : {}),
         });
         expect(serialized(result), `${mimeType} ${maxBytes}`).toBeLessThanOrEqual(maxBytes ?? BUDGET);
-        expect(result).toMatchObject({ nameTruncated: true, contentTruncated: true });
+        expect(result).toMatchObject({ truncatedFields: ["name"], contentTruncated: true });
         expect(result.content).toContain("raise maxBytes");
         expect(result.content).toBe(result.content.toWellFormed());
       }
@@ -1339,11 +1372,11 @@ describe("every default result crosses into execute_code", () => {
 });
 
 describe("a cursor resumes only the listing, and the page, it was issued for", () => {
-  // Thirty rows of 1,500-character names: a 16 KiB result holds about nine,
-  // so the first call stops mid-page and its cursor resumes by position.
-  const ids = Array.from({ length: 30 }, (_, index) => `r${String(index).padStart(2, "0")}`);
-  const rowsOf = (order: readonly string[]) => order.map((id) => ({ id, name: `${id}-${"n".repeat(1_500)}` }));
-  const SMALL = { maxBytes: 16_384 };
+  // A hundred rows of 1,900-character names: a 64 KiB result holds about
+  // thirty, so the first call stops mid-page and its cursor resumes by position.
+  const ids = Array.from({ length: 100 }, (_, index) => `r${String(index).padStart(2, "0")}`);
+  const rowsOf = (order: readonly string[]) => order.map((id) => ({ id, name: `${id}-${"n".repeat(1_900)}` }));
+  const SMALL = { maxBytes: 65_536, limit: 100 };
 
   /** The first page, and its mid-page cursor, read with Drive's original order. */
   async function firstPage(connector: Connector, args: Record<string, unknown> = {}) {
@@ -1414,7 +1447,7 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
   it("lets maxBytes change between pages, since it only decides where a page stops", async () => {
     const connector = connection();
     const first = await firstPage(connector);
-    const rest = await call(connector, "search_files", { maxBytes: 4 * 1024 * 1024, cursor: first.page.nextCursor });
+    const rest = await call(connector, "search_files", { limit: 100, maxBytes: 4 * 1024 * 1024, cursor: first.page.nextCursor });
     expect(rest.files[0].id).toBe(ids[first.files.length]);
     expect(first.files.length + rest.files.length).toBe(ids.length);
   });
@@ -1462,6 +1495,214 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
     ).rejects.toMatchObject({ code: "invalid_args" });
     // Only the folder lookup that tells its drive; never the listing.
     expect(calls.map((_, index) => line(index))).toEqual(["GET /files/folder-b"]);
+  });
+});
+
+describe("nothing is lost silently, and nothing outgrows its result", () => {
+  const serializedOf = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+
+  it("names every cut, capped, or dropped field, and keeps identifiers whole or out", async () => {
+    route = () => ({
+      body: {
+        id: "f1",
+        name: "Wait…",
+        parents: ["ok-parent", "bad parent!", ...Array.from({ length: 11 }, (_, index) => `p${index}`)],
+        owners: Array.from({ length: 12 }, (_, index) => ({ emailAddress: `owner${index}@church.example` })),
+        webViewLink: `https://drive.google.com/${"x".repeat(5_000)}`,
+        shortcutDetails: { targetId: "t".repeat(300) },
+      },
+    });
+    const file = await call(connection(), "get_file", { fileId: "f1" });
+    // A real ellipsis in a name is not a cut.
+    expect(file.name).toBe("Wait…");
+    expect(file.parents).toEqual(["ok-parent", ...Array.from({ length: 9 }, (_, index) => `p${index}`)]);
+    expect(file.owners).toHaveLength(10);
+    expect(file.webViewLink.endsWith("…")).toBe(true);
+    expect(file.shortcutTargetId).toBeUndefined();
+    expect([...file.truncatedFields].sort()).toEqual(["owners", "parents", "shortcutTargetId", "webViewLink"]);
+
+    route = () => ({ body: { id: "f1", name: "Budget" } });
+    expect((await call(connection(), "get_file", { fileId: "f1" })).truncatedFields).toBeUndefined();
+  });
+
+  it("flags a cut permission label and a malformed inherited-from id", async () => {
+    route = () => ({
+      body: {
+        permissions: [
+          { id: "p1", type: "user", role: "reader", displayName: "D".repeat(5_000), permissionDetails: [{ inherited: true, inheritedFrom: "../x" }] },
+        ],
+      },
+    });
+    const { permissions } = await call(connection(), "list_permissions", { fileId: "f1" });
+    expect(permissions[0].displayName.endsWith("…")).toBe(true);
+    expect(permissions[0].inheritedFrom).toBeUndefined();
+    expect([...permissions[0].truncatedFields].sort()).toEqual(["displayName", "inheritedFrom"]);
+  });
+
+  it.each([
+    ["a shortcut whose target id is 300,000 characters", { mimeType: "application/vnd.google-apps.shortcut", shortcutDetails: { targetId: "t".repeat(300_000) } }],
+    ["an unsupported Google type 300,000 characters long", { mimeType: `application/vnd.google-apps.${"x".repeat(300_000)}` }],
+  ])("keeps a note a sentence for %s", async (_kind, file) => {
+    route = () => ({ body: { id: "f1", name: "F", ...file } });
+    const result = await call(connection(), "get_file_content", { fileId: "f1", maxBytes: 65_536 });
+    expect(result.format).toBe("unavailable");
+    expect(result.note.length).toBeLessThan(200);
+    expect(serializedOf(result)).toBeLessThanOrEqual(65_536);
+  });
+
+  describe("the final-size guard", () => {
+    it("refuses an oversized read rather than return it", async () => {
+      sizing.oversized = (value) => (value as any)?.id === "huge";
+      route = () => ({ body: { id: "huge" } });
+      const failure = await call(connection(), "get_file", { fileId: "huge" }).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("nothing is returned");
+      expect(failure.message).toContain("196608");
+    });
+
+    it("names maxBytes for a tool that has one", async () => {
+      sizing.oversized = (value) => (value as any)?.format === "unavailable";
+      route = () => ({ body: { id: "f1", mimeType: "application/vnd.google-apps.folder" } });
+      const failure = await call(connection(), "get_file_content", { fileId: "f1", maxBytes: 70_000 }).catch((error) => error);
+      expect(failure.message).toContain("this call's maxBytes of 70000");
+      expect(failure.message).toContain("Raise maxBytes");
+    });
+
+    it("tells a write that applied to re-read, never to repeat", async () => {
+      sizing.oversized = (value) => (value as any)?.trashed === true;
+      route = () => ({ body: { id: "f1", trashed: true } });
+      const failure = await call(connection(), "trash_file", { fileId: "f1" }).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("trash_file applied");
+      expect(failure.message).toContain("do not repeat the write");
+      expect(calls.filter((entry) => entry.method === "PATCH")).toHaveLength(1);
+    });
+
+    it("wraps every tool", async () => {
+      sizing.oversized = () => true;
+      const connector = connection();
+      route = (request) =>
+        request.method === "DELETE"
+          ? { status: 204 }
+          : request.url.searchParams.get("alt") === "media"
+            ? { payload: "x", contentType: "text/plain" }
+            : { body: { id: "f1", mimeType: "text/plain", size: "1", parents: ["p"] } };
+      const names = (await connector.listTools(context())).map((tool) => tool.name);
+      const ARGS: Record<string, Record<string, unknown>> = {
+        search_files: {},
+        list_folder_items: { folderId: "root" },
+        get_file: { fileId: "f1" },
+        get_file_content: { fileId: "f1" },
+        list_permissions: { fileId: "f1" },
+        list_shared_drives: {},
+        create_folder: { name: "a" },
+        create_file: { name: "a", content: "x" },
+        update_file_content: { fileId: "f1", content: "x", mimeType: "text/plain" },
+        update_file: { fileId: "f1", name: "b" },
+        move_file: { fileId: "f1", folderId: "p2" },
+        copy_file: { fileId: "f1" },
+        trash_file: { fileId: "f1" },
+        restore_file: { fileId: "f1" },
+        share_file: { fileId: "f1", type: "anyone", role: "reader" },
+        update_permission: { fileId: "f1", permissionId: "p1", role: "reader" },
+        delete_permission: { fileId: "f1", permissionId: "p1" },
+      };
+      expect(Object.keys(ARGS).sort()).toEqual([...names].sort());
+      for (const name of names) {
+        const failure = await call(connector, name, ARGS[name]).catch((error) => error);
+        expect(failure, name).toBeInstanceOf(Error);
+        expect(failure.code, name).toBe("connector_call_failed");
+      }
+    });
+  });
+
+  describe("cursors", () => {
+    // The widest cursor this connection issues: a page token plus a mid-page
+    // position and three fingerprints, base64url within 16,384 characters.
+    const overhead = JSON.stringify(["", 100, 100, "A".repeat(16), "A".repeat(16), "A".repeat(16)]).length;
+    const LONGEST_TOKEN = (16_384 * 3) / 4 - overhead;
+
+    it("replays a cursor carrying the longest page token it accepts, at a boundary and mid-page", async () => {
+      const token = "t".repeat(LONGEST_TOKEN);
+      const rows = Array.from({ length: 100 }, (_, index) => ({ id: `r${index}`, name: "n".repeat(1_900) }));
+      route = (request) =>
+        request.url.searchParams.get("pageToken") === token
+          ? { body: { files: rows } }
+          : { body: { files: [{ id: "a" }], nextPageToken: token } };
+      const connector = connection();
+      const first = await call(connector, "search_files", { limit: 100 });
+      expect(first.page.nextCursor.length).toBeLessThanOrEqual(16_384);
+      const second = await call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: first.page.nextCursor });
+      expect(calls[1]!.url.searchParams.get("pageToken")).toBe(token);
+      // Mid-page, beside a full page of rows: the widest cursor there is.
+      expect(second.page.nextCursor.length).toBeLessThanOrEqual(16_384);
+      expect(serializedOf(second)).toBeLessThanOrEqual(65_536);
+      const third = await call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: second.page.nextCursor });
+      expect(third.files[0].id).toBe(rows[second.files.length]!.id);
+    });
+
+    it("refuses to issue a cursor it could not accept back, and says why", async () => {
+      route = () => ({ body: { files: [{ id: "a" }], nextPageToken: "t".repeat(LONGEST_TOKEN + 1) } });
+      const failure = await call(connection(), "search_files", { limit: 100 }).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("too long for a cursor");
+    });
+
+    it("fingerprints Drive's raw ids, so ids alike for 1,100 characters still differ", async () => {
+      const prefix = "a".repeat(1_100);
+      const page = (suffix: string) =>
+        Array.from({ length: 100 }, (_, index) => ({ id: `${prefix}${suffix}${index}`, name: "n".repeat(1_900) }));
+      route = () => ({ body: { files: page("x"), nextPageToken: "more" } });
+      const connector = connection();
+      const first = await call(connector, "search_files", { limit: 100, maxBytes: 65_536 });
+      // Malformed ids are left out of the rows and named, never cut to match.
+      expect(first.files[0].id).toBeUndefined();
+      expect(first.files[0].truncatedFields).toContain("id");
+      route = () => ({ body: { files: page("y"), nextPageToken: "more" } });
+      await expect(
+        call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: first.page.nextCursor }),
+      ).rejects.toMatchObject({ code: "conflict" });
+    });
+  });
+});
+
+describe("Google's outcome for a write decides what it may say (shared update #3)", () => {
+  const SERVER_ERROR = GOOGLE_ERROR(503, "backendError", "Backend Error");
+
+  it.each([
+    ["create_file", { name: "a.txt", content: "x" }, "search_files"],
+    ["create_folder", { name: "Elders" }, "search_files"],
+    ["copy_file", { fileId: "f1" }, "second copy"],
+    ["share_file", { fileId: "f1", type: "anyone", role: "reader" }, "list_permissions"],
+  ])("a 5xx to %s leaves the outcome unknown and names the read to make first", async (name, args, check) => {
+    route = () => SERVER_ERROR;
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("may have been applied");
+    expect(failure.message).toContain(check);
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["move_file", { fileId: "f1", folderId: "p2" }],
+    ["delete_permission", { fileId: "f1", permissionId: "p1" }],
+  ])("a 5xx to %s, which is not safe to send twice, stays unknown", async (name, args) => {
+    route = (request) => (request.method === "GET" ? { body: { parents: ["p1"] } } : SERVER_ERROR);
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("may have been applied");
+  });
+
+  it.each([
+    ["update_file", { fileId: "f1", name: "b" }],
+    ["update_file_content", { fileId: "f1", content: "x", mimeType: "text/plain" }],
+    ["trash_file", { fileId: "f1" }],
+    ["restore_file", { fileId: "f1" }],
+    ["update_permission", { fileId: "f1", permissionId: "p1", role: "reader" }],
+  ])("a 5xx to %s, which sets fixed values, stays a retryable outage", async (name, args) => {
+    route = () => SERVER_ERROR;
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "unavailable", retryable: true });
   });
 });
 

@@ -127,15 +127,22 @@ a deployment's own connectors still never learn their caller.
   10 MB export limit is named from Google's own reason code),
   `list_permissions`, and `list_shared_drives`. Every read is built to stay
   under `maxBytes` of JSON, envelope and cursor included: 192 KiB by default,
-  which a program inside `execute_code` always receives, and up to 4 MiB for a
-  direct `call_tool` only. A listing that would outgrow it stops early with a
+  which a program inside `execute_code` always receives, from 64 KiB to 4 MiB
+  on request, above the default for a direct `call_tool` only. A final guard
+  around every tool refuses any result past that bound rather than returning
+  it; a write it stops has applied, and says to re-read rather than repeat. A listing that would outgrow it stops early with a
   cursor that resumes at the first row left out, and fails `conflict` rather
   than skip or repeat a row if that Drive page has changed since — the cursor
-  carries a fingerprint of the page's ordered ids and the last one returned.
+  carries fingerprints of Drive's raw ids for that page, in order, and of the
+  last one returned. A cursor is never issued that could not be accepted back:
+  a Drive page token too long to carry fails, saying so.
   Every cursor is bound to its tool and the arguments that decide its rows,
   and refused elsewhere. Content is cut with a marker naming the bound that
-  cut it. Names are cut at 2 KiB in listings and content
-  results and 32 KiB in `get_file`, descriptions at 64 KiB, each flagged.
+  cut it. Names are cut at 2 KiB in listings and content results and 32 KiB in
+  `get_file`, descriptions at 64 KiB, other strings Drive does not bound at
+  1 KiB, and owners and parents at ten; identifiers are never cut, and one that
+  is malformed is left out. Every such field is named in the result's
+  `truncatedFields`.
   Additive writes:
   `create_folder` and `restore_file`. Destructive writes: `create_file` (text
   or base64 content as one multipart upload, or an empty file; `convertTo`
@@ -147,9 +154,12 @@ a deployment's own connectors still never learn their caller.
   sharing), `trash_file`, `share_file` (user, group, domain, or anyone with
   the link, up to writer or organizer, emailing no one unless
   `sendNotificationEmail`), `update_permission`, and `delete_permission`.
-  A create, copy, or share that may have landed — sent with no answer, or
-  accepted with a reply that broke — is never retryable and names the read to
-  check before repeating it, since a repeat makes a second one.
+  A create, copy, or share that may have landed — sent with no answer,
+  answered 5xx, or accepted with a reply that broke — is never retryable and
+  names the read to check before repeating it, since a repeat makes a second
+  one. Writes that set fixed values (`update_file_content`, `update_file`,
+  `trash_file`, `restore_file`, `update_permission`) are sent as idempotent, so
+  a 5xx to them stays a retryable outage.
   There is no permanent delete,
   no empty-trash, no ownership transfer, and no raw hatch. A 404 says the file
   may be missing or hidden from this account, because Drive does not say
