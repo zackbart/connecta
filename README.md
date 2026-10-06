@@ -64,11 +64,14 @@ Fifty issues in, one small object out. Your context window notices.
   services in a config file; your client never changes.
 - **Wrap any HTTP API by hand.** A few lines per tool. No OpenAPI conversion —
   generated tool sprawl is the problem, not the fix.
-- **Use maintained connections** for Cloudflare, Linear, Mixpanel, Notion,
-  RevenueCat, Stripe, and Vercel: known endpoints, auth defaults, and vetted
-  read/write classifications, imported one at a time. Cloudflare, Notion, and
-  Vercel each let the deployment choose their hand-written API interface or
-  official hosted MCP.
+- **Use maintained connections** for Basecamp, Breeze ChMS, Church Community
+  Builder, Cloudflare, Linear, Mixpanel, Notion, Overflow, Planning Center,
+  RevenueCat, Stripe, Tithe.ly, and Vercel: known endpoints, auth defaults, and
+  vetted read/write classifications, imported one at a time. Cloudflare,
+  Notion, and Vercel each let the deployment choose their hand-written API
+  interface or official hosted MCP. Planning Center, Overflow, Tithe.ly,
+  Breeze, and Church Community Builder are hand-written over their whole APIs,
+  with every money-moving write behind approval.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.
 - **Teach undeclared result shapes by using them.** Successful read-only calls

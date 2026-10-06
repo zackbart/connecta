@@ -19,6 +19,28 @@ export function retainOAuthPartition(partition: object | undefined): () => void 
   };
 }
 
+/**
+ * Wrap one connector operation so its owner partition stays pinned from the
+ * first asynchronous storage read to the end, not only once a refresh flight
+ * exists: an idle personal registry can otherwise be evicted mid-flow. Status
+ * and auth operations take no call admission, so nothing else holds it.
+ */
+export function retainingOAuthPartition<Args extends unknown[], Result>(
+  operation: (...args: Args) => Promise<Result>,
+  contextIndex: number,
+): (...args: Args) => Promise<Result> {
+  return async (...args: Args): Promise<Result> => {
+    const release = retainOAuthPartition(
+      oauthPartitionFor(args[contextIndex] as ConnectorContext),
+    );
+    try {
+      return await operation(...args);
+    } finally {
+      release();
+    }
+  };
+}
+
 export function oauthPartitionIdle(partition: object): boolean {
   return !activeWork.has(partition);
 }

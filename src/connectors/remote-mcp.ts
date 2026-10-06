@@ -16,8 +16,10 @@ import type {
 } from "@modelcontextprotocol/client";
 import { Deferred, Duration, Effect, Exit, Scope } from "effect";
 import {
+  assertOAuthScope,
+  authorizingContext,
   KvOAuthProvider,
-  OAuthRefreshCoordinator,
+  refreshCoordinatorsByPartition,
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
@@ -30,8 +32,8 @@ import {
 } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
-import { inheritOAuthSealer, oauthSealerFor } from "../oauth-sealing.js";
-import { attachOAuthPartition, oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
+import { oauthSealerFor } from "../oauth-sealing.js";
+import { retainingOAuthPartition } from "../oauth-partition.js";
 import { detach, runEdge } from "../runtime/run.js";
 import type {
   Connector,
@@ -684,9 +686,7 @@ interface ConnectionState {
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
-  if (oauthScope !== undefined && !/^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/.test(oauthScope)) {
-    throw new Error(`[connecta] connector "${id}" OAuth scope must contain space-separated scope tokens.`);
-  }
+  assertOAuthScope(id, oauthScope);
   if (clientMetadataUrl !== undefined) {
     let valid = false;
     try {
@@ -712,18 +712,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const isOauth = opts.auth?.type === "oauth";
   // Long-lived enough for distinct request scopes in this connector runtime to
   // join one token redemption. It owns no client, transport, or request state.
-  const refreshCoordinators = new WeakMap<object, OAuthRefreshCoordinator>();
-  const refreshCoordinatorFor = (ctx: ConnectorContext): OAuthRefreshCoordinator => {
-    // Production contexts carry a stable registry partition. Hand-written
-    // contexts can coordinate by their shared storage object instead.
-    const partition = oauthPartitionFor(ctx) ?? ctx.storage;
-    let coordinator = refreshCoordinators.get(partition);
-    if (!coordinator) {
-      coordinator = new OAuthRefreshCoordinator(() => retainOAuthPartition(partition));
-      refreshCoordinators.set(partition, coordinator);
-    }
-    return coordinator;
-  };
+  const refreshCoordinatorFor = refreshCoordinatorsByPartition();
   const logger = opts.logger ?? console;
 
   const credentialAuth =
@@ -1672,11 +1661,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
 
     connector.startAuth = async (ctx, startOpts) => {
-      ctx = attachOAuthPartition(inheritOAuthSealer(ctx, {
-        ...ctx,
-        requestScope: ctx.requestScope ?? ctx,
-        allowAuthorization: true,
-      }), oauthPartitionFor(ctx));
+      ctx = authorizingContext(ctx);
       const state = stateFor(ctx);
       state.provider = null;
       const p = newProvider(ctx, state);
@@ -1725,14 +1710,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (isOauth) {
     // Pin before the first asynchronous storage/discovery read, not only once
     // a refresh flight exists. These operations do not take call admission.
-    const retain = <Args extends unknown[], Result>(
-      operation: (...args: Args) => Promise<Result>,
-      contextIndex: number,
-    ) => async (...args: Args): Promise<Result> => {
-      const release = retainOAuthPartition(oauthPartitionFor(args[contextIndex] as ConnectorContext));
-      try { return await operation(...args); }
-      finally { release(); }
-    };
+    const retain = retainingOAuthPartition;
     connector.listTools = retain(connector.listTools, 0);
     connector.callTool = retain(connector.callTool, 2);
     connector.status = retain(connector.status!, 0);

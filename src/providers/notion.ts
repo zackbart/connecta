@@ -1,4 +1,4 @@
-import { api, defined, type ApiTool } from "../connectors/api.js";
+import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import { remoteMcp } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
 import {

@@ -305,7 +305,9 @@ or epoch does not open. Anything that fails to open — a tampered value, a
 rotated key — reads as absent: the connector reports `auth_required` and logs a
 warning. The flow bookkeeping stays plaintext: `state`, the pending URL,
 discovery metadata, and the generation. The callback route reads `state`
-directly, and none of it authenticates anything by itself.
+directly, and none of it authenticates anything by itself. An
+[`api()` OAuth connector](#downstream-oauth-on-api) seals its tokens and
+verifier the same way and stores no client at all.
 
 Plaintext left by an older release is read, then sealed where it lies through
 the same generation fence as any write, so an upgrade keeps the grant. Sealing
@@ -326,8 +328,8 @@ The operator's `POST /ui/oauth/<id>` takes a `mode` query parameter:
 
 | Request | What it does |
 | --- | --- |
-| `POST /ui/oauth/<id>` or `?mode=restart` | `startAuth(ctx, { force: true })`: a new epoch, with tokens, the registered client, discovery, and any pending flow wiped, so the next flow registers a client again. |
-| `?mode=continue` | `startAuth(ctx, { force: false })`: hand back the pending authorization URL if it was written in the last ten minutes; otherwise start a flow in the current epoch, reusing the stored client registration. A disconnected connector still gets its new epoch first. |
+| `POST /ui/oauth/<id>` or `?mode=restart` | `startAuth(ctx, { force: true })`: a new epoch, with tokens, discovery, and any pending flow wiped. A dynamically registered client may be carried into it ([below](#human-authentication-management)); one that is not carried is registered again. |
+| `?mode=continue` | `startAuth(ctx, { force: false })`: hand back the pending authorization URL if it was written in the last ten minutes and still names the stored client; otherwise start a flow in the current epoch, reusing the stored client registration. A disconnected connector still gets its new epoch first. |
 | `DELETE /ui/oauth/<id>` | Disconnect: a disconnected epoch that passive reads never turn back into a consent flow. |
 
 Any other `mode`, or more than one, is a 400 before anything starts; the
@@ -592,9 +594,22 @@ the connector's URL, redirect URI, client metadata, auth scope, transport settin
 and owner partition still match. It drops the grant and one-shot flow state,
 selects the authorization server again, and re-seals the retained client under
 the replacement epoch key. A different issuer registers a new client. Disconnect
-and issuer-mismatch recovery discard it. The SDK has no client-validation
-exchange while constructing a fresh consent URL; a provider that revokes a
-retained client may refuse it only at consent or callback, after this request.
+and issuer-mismatch recovery discard it. A URL-based client is never carried:
+nothing was registered, and leaving it behind lets fresh metadata decide
+whether the server still accepts one. Neither is a client whose secret has
+expired.
+
+A carried client has to earn its next carry. Building a consent URL sends the
+provider nothing, so a restart cannot learn there that a provider has purged
+the client, and RFC 6749 forbids the provider from redirecting an unknown
+client back to the callback, so nothing arrives later either. Tokens in the
+epoch are the only proof the provider still knows it. A restart that follows
+a restart with no grant in between therefore registers again: a purged
+registration costs one refused consent, not a Restart that can never recover.
+A refusal connecta does hear is handled where it lands. A start whose refresh
+draws `invalid_client` drops the client and registers in that same start; a
+callback whose code exchange draws it drops the client, and Continue will not
+hand back the URL that named it.
 
 Credential and OAuth mutation require an admitted interactive human, connector
 visibility, the appropriate shared or personal permission, and an exact
@@ -636,8 +651,107 @@ existing dynamic registration flow. State validation, PKCE, issuer binding,
 encrypted token storage, refresh, and disconnect follow the same code paths.
 The metadata URL and scopes participate in the saved-client configuration
 binding, so restarting after either changes cannot reuse an old registration.
+A restart never carries the URL-based client itself, so a server that stops
+advertising support gets a registered client on the next restart.
 
 `scope` supplies space-separated default OAuth scopes through client metadata.
 A downstream challenge or protected-resource scope declaration takes precedence,
 and the SDK adds `offline_access` when advertised for refresh-token grants.
 Omitting both settings preserves the existing discovery and registration flow.
+
+## Downstream OAuth on `api()`
+
+Some APIs a deployment needs have no MCP server and take nothing but OAuth.
+Church Community Builder's REST API accepts only a three-legged grant, issues
+its clients by hand, and publishes no metadata to discover. `api()` takes a
+static authorization-code configuration for that shape:
+
+```ts
+api("church", {
+  authScope: "personal",
+  oauth: {
+    authorizationEndpoint: "https://login.example.com/oauth/authorize",
+    tokenEndpoint: "https://api.example.com/oauth/token",
+    clientId: env.CHURCH_CLIENT_ID,
+    clientSecret: env.CHURCH_CLIENT_SECRET,
+    scope: "people:read",
+    apiOrigins: ["https://api.example.com"],
+  },
+  tools: [{
+    name: "get_person",
+    description: "Read one person",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    handler: async ({ id }, ctx) => {
+      const response = await ctx.oauth!.fetch(
+        `https://api.example.com/people/${encodeURIComponent(id)}`,
+      );
+      return response.json();
+    },
+  }],
+});
+```
+
+Nothing is discovered, registered, or learned. Every URL is configuration, so
+the rule for [URLs a downstream advertises](#urls-a-downstream-advertises)
+has nothing to check, and the endpoints are checked once, at construction:
+HTTPS (HTTP only on loopback), no credentials, no fragment. PKCE with S256 is
+on unless `pkce: false`, which drops the challenge from the consent URL and
+the verifier from the exchange, for a server that refuses them.
+`authorizationParams` adds provider parameters but cannot restate the grant's
+own, and `tokenRequestHeaders` adds headers to the code exchange and every
+refresh — CCB's token endpoint wants its own `Accept` media type — but cannot
+set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`. `tokenEndpointAuthMethod` defaults to `client_secret_basic` with a secret
+and `none` without; the mismatched pairings refuse to boot. A static server has
+no advertised issuer, so no RFC 9207 `iss` is demanded and no RFC 8707
+`resource` is sent. The grant is bound to the token endpoint instead:
+repointing it fences the old tokens behind a new epoch rather than sending
+them to the new server.
+
+**The client lives in deployment configuration, not a vault slot.** It is the
+deployment's identity at the provider — one per deployment, like Clerk's
+`secretKey` — while a vault slot belongs to an owner: on a personal connector
+every human would paste the deployment's secret into their own partition.
+Configuration also keeps it out of storage altogether. It is never written,
+sealed or otherwise, so a leaked store holds no client secret, Disconnect has
+nothing of it to delete, and Restart has no registration to carry forward.
+Read it from the environment or a Worker secret; an empty string, the usual
+unset variable, refuses to boot without quoting it.
+
+Handlers never see the grant. `ctx.oauth.fetch(url, init)` sends the calling
+owner's access token as `Authorization: Bearer` and does four things a
+hand-rolled header would not:
+
+- **It sends the token to `apiOrigins` and nowhere else.** A request to any
+  other origin is refused before it leaves, so an untrusted URL in a response
+  — a pagination link, a webhook target — cannot carry the token off.
+  Redirects come back unfollowed, and a handler cannot set `Authorization`
+  itself.
+- **A 401 earns exactly one recovery.** If another request has already
+  rotated a token in, that token is used; otherwise one refresh runs through
+  the same coordinator as `remoteMcp()`, coalesced across requests, with the
+  rotating refresh token persisted even if its owner is cancelled after the
+  answer arrives. The request is then replayed once, which is why a stream
+  body is refused.
+- **Failures land in the existing classes.** No grant, a second 401, or a
+  [dead refresh](#refresh-failures), whose refused tokens are deleted on the
+  spot, is `auth_required` and routes the agent to `authorize_connector`. An
+  authorization-server outage is a retryable `unavailable` that keeps the
+  grant. A second 401 is latched for the rest of the request scope, so a
+  program's next fifty calls do not spend fifty refreshes on it.
+- **It reads and writes nothing a handler can name.** Storage, sealing, and the
+  owner partition are the registry's, exactly as for `remoteMcp()`.
+
+Everything else is the `remoteMcp()` grant, unchanged: the epoch fence and its
+cleanup lineage, sealing under the vault key, shared and personal ownership,
+the callback route and its state and principal checks, `authorize_connector`,
+and the operator's Connect, Restart, and Disconnect. Status reports a stored
+grant as healthy without asking the downstream — failing at use is enough —
+and never starts authorization. One difference is deliberate: the first start
+publishes a modern epoch at once. The legacy generation exists so a grant from
+before epochs survives an upgrade, and an `api()` grant has no such past.
+
+`oauth` and `credential` are exclusive on one connector, so `auth_required`
+names one recovery. A provider that offers both a personal access token and
+OAuth, as Planning Center does, lets the deployment choose which to pass;
+handlers branch on whether `ctx.oauth` is present.

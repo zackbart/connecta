@@ -4,7 +4,8 @@
 // the confinement that only fails on a hostile path, the ceiling that only
 // fires on an absurd response, and the redirect nobody's provider sends.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { guardedFetch, retryAfterMs } from "../src/connectors/guarded-fetch.js";
+import { guardedFetch, oauthBearer, retryAfterMs } from "../src/connectors/guarded-fetch.js";
+import type { ApiHandlerContext } from "../src/connectors/api-connector.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
@@ -130,6 +131,23 @@ describe("guardedFetch() request construction", () => {
     expect(url.searchParams.get("only")).toBe("true");
     expect(url.searchParams.get("name")).toBe("a&b");
     expect(url.searchParams.has("skipped")).toBe(false);
+  });
+
+  it("repeats an array-valued query key once per element, in order", async () => {
+    stubFetch(() => json({ ok: true }));
+    await transport()(
+      {
+        method: "GET",
+        path: "/gifts",
+        query: { "status[]": ["PENDING", "CONFIRMED"], ids: ["a&b"], none: [] },
+      },
+      context(),
+      asJson,
+    );
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.getAll("status[]")).toEqual(["PENDING", "CONFIRMED"]);
+    expect(url.searchParams.getAll("ids")).toEqual(["a&b"]);
+    expect(url.searchParams.has("none")).toBe(false);
   });
 
   it("serializes a JSON body with its content type, and frames a raw body with none", async () => {
@@ -355,6 +373,69 @@ describe("guardedFetch() response handling", () => {
       })({ method: "GET", path: "/self" }, context(), asJson),
     ).rejects.toMatchObject({ code: "auth_required" });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("guardedFetch() sending through a connector's own fetch", () => {
+  it("hands the confined, framed request and the call's context to the fetcher", async () => {
+    stubFetch(() => json({ global: true }));
+    const fetcher = vi.fn(async () => json({ via: "fetcher" }));
+    const ctx = context();
+    const send = transport({ fetch: fetcher });
+    await expect(
+      send({ method: "POST", path: "/items", query: { a: 1 }, body: { b: 2 } }, ctx, asJson),
+    ).resolves.toEqual({ via: "fetcher" });
+    expect(calls).toHaveLength(0);
+    const [url, init, seen] = fetcher.mock.calls[0] as unknown as [string, RequestInit, ConnectorContext];
+    expect(url).toBe(`${BASE}/items?a=1`);
+    expect(init).toMatchObject({ method: "POST", body: '{"b":2}', redirect: "manual" });
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer secret");
+    expect(seen).toBe(ctx);
+    // Confinement still runs before the fetcher sees anything.
+    await expect(
+      send({ method: "GET", path: "/../../elsewhere" }, ctx, asJson),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes oauthBearer requests through the call's grant and adds no header of its own", async () => {
+    stubFetch(() => json({ global: true }));
+    const grant = vi.fn(async (_input: string | URL, _init?: RequestInit) => json({ via: "grant" }));
+    const ctx: ApiHandlerContext = { ...context(), oauth: { fetch: grant } };
+    const send = guardedFetch({
+      provider: "Example",
+      baseUrl: BASE,
+      maxResponseBytes: 1024,
+      headers: { Accept: "application/json" },
+      ...oauthBearer("Example"),
+    });
+    await expect(send({ method: "GET", path: "/me" }, ctx, asJson)).resolves.toEqual({ via: "grant" });
+    const [url, init] = grant.mock.calls[0]!;
+    expect(url).toBe(`${BASE}/me`);
+    expect(new Headers(init!.headers).has("authorization")).toBe(false);
+    expect(new Headers(init!.headers).get("accept")).toBe("application/json");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("passes the grant's typed failures through and refuses a context with no grant", async () => {
+    const send = guardedFetch({
+      provider: "Example",
+      baseUrl: BASE,
+      maxResponseBytes: 1024,
+      ...oauthBearer("Example"),
+    });
+    const refused: ApiHandlerContext = {
+      ...context(),
+      oauth: {
+        fetch: async () => {
+          throw new ConnectorCallError("auth_required", "Connect first.");
+        },
+      },
+    };
+    await expect(send({ method: "GET", path: "/me" }, refused, asJson)).rejects.toMatchObject({ code: "auth_required" });
+    const unwired = await failure(send({ method: "GET", path: "/me" }, context(), asJson));
+    expect(unwired).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(unwired.message).toContain("OAuth grant");
   });
 });
 

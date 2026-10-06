@@ -147,7 +147,7 @@
 //       loud unclassified tool on the approval path, never a quiet re-guess.
 //
 // This suite decides H2, H3, H5, H7, H8, H10, H12, H13, and H14's split for the
-// three `api()` providers. H1, H9, and H11 are mechanical too but are decided in
+// hand-written `api()` providers. H1, H9, and H11 are mechanical too but are decided in
 // each provider's own suite, where the mapped statuses and projections live, and
 // P1–P13 likewise in the proxies' suites: their bar is about the wrapper's
 // identity and classification, not about tool shapes it does not own. H4, H6,
@@ -161,9 +161,14 @@ import {
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
   compactDiscoverySchema,
 } from "../src/catalog.js";
+import { ccb } from "../src/providers/ccb.js";
+import { breeze } from "../src/providers/breeze.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
+import { planningCenter } from "../src/providers/planning-center.js";
+import { overflow } from "../src/providers/overflow.js";
 import { vercel } from "../src/providers/vercel.js";
+import { tithely } from "../src/providers/tithely.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
@@ -235,6 +240,38 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
     "cancel",
     "vercel",
   ],
+  ccb: ["list", "get", "ccb"],
+  "planning-center": [
+    "list",
+    "get",
+    "search",
+    "create",
+    "update",
+    "add",
+    // Refreshing a People list is Planning Center's own verb for it.
+    "run",
+    "apply",
+    "schedule",
+    // The escape hatches sort together under Planning Center's own
+    // abbreviation, the one its API headers use (`X-PCO-API-Version`).
+    "pco",
+  ],
+  // Reads only: every Overflow write moves money or edits a donor and crosses
+  // the destructive mutate hatch rather than a named verb.
+  overflow: ["list", "get", "overflow"],
+  // Reads only: every Tithe.ly write moves money or donor payment state and
+  // stays behind the approval-gated mutate hatch.
+  tithely: ["list", "get", "tithely"],
+  breeze: [
+    "list",
+    "get",
+    "add",
+    "update",
+    "assign",
+    "unassign",
+    "record",
+    "breeze",
+  ],
 };
 
 /**
@@ -284,7 +321,21 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   ],
   notion: [],
   vercel: [],
+  ccb: [],
+  "planning-center": [],
+  overflow: [],
+  tithely: [],
+  breeze: [],
 };
+
+/**
+ * Providers whose auth is `api()`'s downstream OAuth grant rather than an
+ * operator credential slot. H12's "one credential, one cheap test" has no slot
+ * to test there: the grant is exercised by the consent flow itself, and a dead
+ * one fails at use as `auth_required`. What H12 still asks is that the
+ * connection declare exactly one way to authenticate.
+ */
+const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
 
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
@@ -357,6 +408,36 @@ const providers = await Promise.all([
   surface(
     "vercel",
     vercel("vc", { purpose: "Production web applications" }),
+  ),
+  surface(
+    "ccb",
+    ccb("church", {
+      purpose: "Pastoral care and group shepherding",
+      environment: "production",
+      mode: "system",
+      access: "read-write",
+      clientId: "client",
+      clientSecret: "secret",
+    }),
+  ),
+  surface(
+    "planning-center",
+    planningCenter("pco", { purpose: "Church staff operations" }),
+  ),
+  surface(
+    "overflow",
+    overflow("ov", {
+      environment: "production",
+      purpose: "Church giving, deposits, and recurring gifts",
+    }),
+  ),
+  surface(
+    "tithely",
+    tithely("tl", { purpose: "Church giving reports", environment: "live" }),
+  ),
+  surface(
+    "breeze",
+    breeze("chms", { subdomain: "gracechurch", purpose: "Pastoral care and giving reports" }),
   ),
 ]);
 
@@ -459,6 +540,11 @@ describe.each(providers)(
     });
 
     it("declares an operator credential and a test for it (H12)", () => {
+      if (OAUTH_PROVIDERS.has(name)) {
+        expect(connector.credential).toBeUndefined();
+        expect(connector.startAuth).toBeInstanceOf(Function);
+        return;
+      }
       expect(connector.credential).toBeDefined();
       expect(
         connector.testCredential ?? connector.testCredentials,

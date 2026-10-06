@@ -9,6 +9,7 @@ export const WORKERS_SUITES = [
   "test/activity.test.ts",
   "test/access-tokens.test.ts",
   "test/api-connector.test.ts",
+  "test/api-oauth.test.ts",
   "test/artifact-store.test.ts",
   "test/artifact-refresh.test.ts",
   "test/artifacts-connector.test.ts",
@@ -16,8 +17,10 @@ export const WORKERS_SUITES = [
   "test/artifacts-markdown.test.ts",
   "test/artifacts-operations.test.ts",
   "test/artifacts-validate.test.ts",
+  "test/basecamp-provider.test.ts",
   "test/bearer.test.ts",
   "test/branding.test.ts",
+  "test/breeze-provider.test.ts",
   "test/call-admission.test.ts",
   "test/call-admission-handoff.test.ts",
   "test/catalog-drift.test.ts",
@@ -84,6 +87,10 @@ export const WORKERS_SUITES = [
   "test/url-safety.test.ts",
   "test/validate.test.ts",
   "test/vercel-provider.test.ts",
+  "test/ccb-provider.test.ts",
+  "test/planning-center-provider.test.ts",
+  "test/overflow-provider.test.ts",
+  "test/tithely-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

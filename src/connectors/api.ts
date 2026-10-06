@@ -1,201 +1,33 @@
-import {
-  ConnectorCallError,
-  networkErrorCode,
-  unavailableCallError,
-} from "../errors.js";
-import { compileValidator, validateToolInput } from "../validate.js";
-import type {
-  Connector,
-  ConnectorCallAdmissionPolicy,
-  ConnectorCredentialConfig,
-  ConnectorCredentialValues,
-  ConnectorContext,
-  ConnectorUsageGuide,
-  CredentialTestResult,
-  JsonSchema,
-  ToolAnnotations,
-  ToolDef,
-} from "../types.js";
+import { staticOAuth } from "../auth/static-oauth.js";
+import type { Connector } from "../types.js";
+import { apiConnector } from "./api-connector.js";
+import type { ApiOptions } from "./api-connector.js";
 
-export function defined<T extends object>(
-  value: T,
-): { [K in keyof T]?: Exclude<T[K], undefined> } {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, item]) => item !== undefined),
-  ) as { [K in keyof T]?: Exclude<T[K], undefined> };
-}
-
-export interface ApiTool {
-  name: string;
-  /**
-   * Required, non-empty. Discovery has nothing else to go on: a nameless
-   * capability costs the agent a guess, and a guess costs a wrong call.
-   */
-  description: string;
-  /**
-   * A plain JSON Schema object describing the tool input. Optional, but what
-   * you supply must be a schema the validator can compile — `api()` refuses to
-   * construct otherwise.
-   */
-  inputSchema?: JsonSchema;
-  /** A plain JSON Schema object describing the tool's structured output. */
-  outputSchema?: JsonSchema;
-  /**
-   * Standard MCP-style behavior hints, with an explicit `readOnlyHint`
-   * required: `true` declares a read and admits the tool to call_tool and
-   * execute_code, `false` declares work that must cross
-   * `call_destructive_tool` where a host can ask a human. Connecta never
-   * infers the classification from a name, a description, a schema, or the
-   * other annotations.
-   */
-  annotations: ToolAnnotations & { readOnlyHint: boolean };
-  handler: (args: any, ctx: ConnectorContext) => Promise<unknown> | unknown;
-}
-
-export interface ApiOptions {
-  /** Human-readable display name; the connector id remains the address prefix. */
-  title?: string;
-  description?: string;
-  /** Downstream auth ownership. Defaults to one shared deployment grant. */
-  authScope?: "shared" | "personal";
-  /**
-   * Max inline result size (bytes) for this connector's tools before
-   * call_tool truncates and stashes the full text for get_result
-   * paging. Overrides the deployment's `calls.maxResultBytes`; omit to inherit
-   * it. Must be a whole number of bytes >= 1; anything else warns at startup
-   * and is ignored.
-   */
-  maxResultBytes?: number;
-  /** Optional per-runtime downstream call-admission policy. */
-  callAdmission?: ConnectorCallAdmissionPolicy;
-  /**
-   * Optional agent-facing usage guide served by `skills` as
-   * `connector:<id>`. A string is markdown; the structured form adds bounded
-   * discovery metadata. See `Connector.usageGuide`.
-   */
-  usageGuide?: string | ConnectorUsageGuide;
-  /** Optional operator-managed credential exposed through ctx.credential and the connection in the operator UI. */
-  credential?: ConnectorCredentialConfig;
-  /** Optional validation behind the connection's Test action in the operator UI. */
-  testCredential?: (
-    value: string,
-    ctx: ConnectorContext,
-  ) => Promise<CredentialTestResult>;
-  /** Optional validation for named multi-field credentials. */
-  testCredentials?: (
-    values: ConnectorCredentialValues,
-    ctx: ConnectorContext,
-  ) => Promise<CredentialTestResult>;
-  /**
-   * Validate call arguments against each tool's `inputSchema` before invoking
-   * the handler (default true). Mismatches fail with a non-retryable
-   * `invalid_args` ConnectorCallError instead of reaching the handler. Set
-   * false to restore the pre-validation pass-through for deployments relying
-   * on loose coercion.
-   */
-  validateArgs?: boolean;
-  tools: ApiTool[];
-}
+export type {
+  ApiHandlerContext,
+  ApiOAuthAccess,
+  ApiOAuthClientAuthentication,
+  ApiOAuthConfig,
+  ApiOptions,
+  ApiTool,
+} from "./api-connector.js";
 
 /**
- * Three things a hand-written surface is refused for at construction rather
- * than in production (#340): no description (discovery has nothing to route on
- * and a guess costs a call), no explicit `readOnlyHint` (connecta never infers
- * the safety class, so an unclassified tool is a deployment bug), and an
- * `inputSchema` the validator cannot compile (declaring one is optional;
- * declaring an unenforceable one is not). None of this reaches a proxied
- * catalog — the contract binds the surfaces we write, not the ones we relay.
+ * A hand-written connector: static tools, each with a handler. With `oauth`,
+ * its handlers reach the API through the calling owner's downstream grant
+ * (`ctx.oauth`), managed exactly like a `remoteMcp()` grant.
  */
-function checkToolContract(id: string, tool: ApiTool): void {
-  const address = `${id}.${tool.name}`;
-  if (typeof tool.description !== "string" || tool.description.trim() === "") {
-    throw new Error(
-      `api() tool "${address}" needs a non-empty description — it is what an ` +
-        "agent reads to choose the tool (convention: imperative one-liner, " +
-        'e.g. "Send an email via Resend").',
-    );
-  }
-  if (typeof tool.annotations?.readOnlyHint !== "boolean") {
-    throw new Error(
-      `api() tool "${address}" needs an explicit annotations.readOnlyHint: ` +
-        "true for a read, false for work that must cross " +
-        "call_destructive_tool. Connecta never infers the classification " +
-        "from a tool name, description, schema, or other annotations.",
-    );
-  }
-  if (tool.inputSchema) compileValidator(tool.inputSchema, { address });
-}
-
-/** A static connector; every tool passes {@link checkToolContract} first. */
 export function api(id: string, opts: ApiOptions): Connector {
-  const names = new Set<string>();
-  for (const tool of opts.tools) {
-    if (names.has(tool.name)) {
-      throw new Error(
-        `api() tool "${id}.${tool.name}" is declared more than once; discovery and dispatch must use one definition.`,
-      );
-    }
-    names.add(tool.name);
-    checkToolContract(id, tool);
+  if (opts.oauth !== undefined && opts.credential !== undefined) {
+    throw new Error(
+      `api() connector "${id}" declares both oauth and credential. Declare ` +
+        "one: auth_required must name a single recovery. A provider offering " +
+        "both lets the deployment choose which one to pass.",
+    );
   }
-  const defs: ToolDef[] = opts.tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    ...defined({
-      inputSchema: t.inputSchema,
-      outputSchema: t.outputSchema,
-    }),
-    annotations: t.annotations,
-  }));
-  const byName = new Map(opts.tools.map((t) => [t.name, t]));
-  const validateArgs = opts.validateArgs ?? true;
-  return {
+  return apiConnector(
     id,
-    ...defined({ title: opts.title }),
-    kind: "api",
-    ...defined({
-      description: opts.description,
-      authScope: opts.authScope,
-      maxResultBytes: opts.maxResultBytes,
-      callAdmission: opts.callAdmission,
-      usageGuide: opts.usageGuide,
-      credential: opts.credential,
-      testCredential: opts.testCredential,
-      testCredentials: opts.testCredentials,
-    }),
-    staticTools: defs,
-    async listTools() {
-      return defs;
-    },
-    async callTool(name, args, ctx) {
-      const tool = byName.get(name);
-      if (!tool) {
-        throw new Error(`Unknown tool "${name}" on connector "${id}"`);
-      }
-      const input = args ?? {};
-      if (validateArgs && tool.inputSchema) {
-        const invalid = validateToolInput(tool.inputSchema, input, {
-          address: `${id}.${name}`,
-          logger: ctx.logger,
-          // Always: the schema compiled at construction, so anything that
-          // fails here is a schema that cannot be enforced, and a surface we
-          // wrote ourselves does not get to admit unvalidated input quietly.
-          failClosed: true,
-        });
-        if (invalid) throw invalid;
-      }
-      // `await` (not a bare promise return) so a handler that throws before
-      // its first await never sits handler-less for the thenable-adoption
-      // microtask — workerd and vitest both report that gap as an unhandled
-      // rejection even though the caller catches the failure.
-      try {
-        return await tool.handler(input, ctx);
-      } catch (error) {
-        // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
-        // URL, so it must never masquerade as the failed downstream host.
-        if (error instanceof ConnectorCallError || !networkErrorCode(error)) throw error;
-        throw unavailableCallError(error);
-      }
-    },
-  };
+    opts,
+    opts.oauth !== undefined ? staticOAuth(id, opts.oauth) : undefined,
+  );
 }

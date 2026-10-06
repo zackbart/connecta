@@ -263,6 +263,18 @@ try {
     "dist/providers/cloudflare.d.ts",
     "dist/providers/vercel.js",
     "dist/providers/vercel.d.ts",
+    "dist/providers/ccb.js",
+    "dist/providers/ccb.d.ts",
+    "dist/providers/planning-center.js",
+    "dist/providers/planning-center.d.ts",
+    "dist/providers/overflow.js",
+    "dist/providers/overflow.d.ts",
+    "dist/providers/tithely.js",
+    "dist/providers/tithely.d.ts",
+    "dist/providers/breeze.js",
+    "dist/providers/breeze.d.ts",
+    "dist/providers/basecamp.js",
+    "dist/providers/basecamp.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -432,6 +444,24 @@ if (
 ) {
   throw new Error("RevenueCat endpoint drifted");
 }
+const basecampProvider = await import(
+  "@zackbart/connecta/providers/basecamp"
+);
+if (typeof basecampProvider.basecamp !== "function") {
+  throw new Error("missing Basecamp provider constructor");
+}
+// clientMetadataUrl is required -- Basecamp restricts dynamic registration for
+// HTTPS callbacks -- so the smoke declares one the way a deployment must.
+const basecampConnection = basecampProvider.basecamp("projects", {
+  purpose: "package smoke",
+  clientMetadataUrl: "https://connecta.example/oauth/basecamp-client",
+});
+if (basecampConnection.id !== "projects") {
+  throw new Error("Basecamp provider did not return a connector");
+}
+if (basecampProvider.BASECAMP_MCP_ENDPOINT !== "https://mcp.basecamp.com/mcp") {
+  throw new Error("Basecamp endpoint drifted");
+}
 const notionProvider = await import("@zackbart/connecta/providers/notion");
 if (typeof notionProvider.notion !== "function") {
   throw new Error("missing Notion provider constructor");
@@ -473,6 +503,80 @@ if (vercelConnection.id !== "hosting" || vercelConnection.kind !== "api") {
 if (!vercelConnection.staticTools?.length) {
   throw new Error("Vercel provider published no tools");
 }
+const ccbProvider = await import("@zackbart/connecta/providers/ccb");
+if (typeof ccbProvider.ccb !== "function") {
+  throw new Error("missing CCB provider constructor");
+}
+const ccbConnection = ccbProvider.ccb("church", {
+  purpose: "package smoke",
+  environment: "sandbox",
+  mode: "system",
+  clientId: "smoke-client",
+  clientSecret: "smoke-secret",
+});
+if (ccbConnection.id !== "church" || ccbConnection.kind !== "api") {
+  throw new Error("CCB provider did not return an api() connector");
+}
+if (!ccbConnection.staticTools?.length || typeof ccbConnection.startAuth !== "function") {
+  throw new Error("CCB provider published no tools or no OAuth grant");
+}
+const planningCenterProvider = await import(
+  "@zackbart/connecta/providers/planning-center"
+);
+if (typeof planningCenterProvider.planningCenter !== "function") {
+  throw new Error("missing Planning Center provider constructor");
+}
+const planningCenterConnection = planningCenterProvider.planningCenter("church", {
+  purpose: "package smoke",
+});
+if (planningCenterConnection.id !== "church" || planningCenterConnection.kind !== "api") {
+  throw new Error("Planning Center provider did not return an api() connector");
+}
+if (!planningCenterConnection.staticTools?.length) {
+  throw new Error("Planning Center provider published no tools");
+}
+const overflowProvider = await import("@zackbart/connecta/providers/overflow");
+if (typeof overflowProvider.overflow !== "function") {
+  throw new Error("missing Overflow provider constructor");
+}
+const overflowConnection = overflowProvider.overflow("giving", {
+  environment: "staging",
+  purpose: "package smoke",
+});
+if (overflowConnection.id !== "giving" || overflowConnection.kind !== "api") {
+  throw new Error("Overflow provider did not return an api() connector");
+}
+if (!overflowConnection.staticTools?.length) {
+  throw new Error("Overflow provider published no tools");
+}
+const tithelyProvider = await import("@zackbart/connecta/providers/tithely");
+if (typeof tithelyProvider.tithely !== "function") {
+  throw new Error("missing Tithe.ly provider constructor");
+}
+const tithelyConnection = tithelyProvider.tithely("giving", {
+  purpose: "package smoke",
+  environment: "test",
+});
+if (tithelyConnection.id !== "giving" || tithelyConnection.kind !== "api") {
+  throw new Error("Tithe.ly provider did not return an api() connector");
+}
+if (!tithelyConnection.staticTools?.length) {
+  throw new Error("Tithe.ly provider published no tools");
+}
+const breezeProvider = await import("@zackbart/connecta/providers/breeze");
+if (typeof breezeProvider.breeze !== "function") {
+  throw new Error("missing Breeze provider constructor");
+}
+const breezeConnection = breezeProvider.breeze("church", {
+  subdomain: "smoke",
+  purpose: "package smoke",
+});
+if (breezeConnection.id !== "church" || breezeConnection.kind !== "api") {
+  throw new Error("Breeze provider did not return an api() connector");
+}
+if (!breezeConnection.staticTools?.length) {
+  throw new Error("Breeze provider published no tools");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -511,6 +615,20 @@ for (const name of [
   "CLOUDFLARE_DNS_RECORD_TYPES",
   "vercel",
   "VERCEL_API_BASE_URL",
+  "ccb",
+  "CCB_ENVIRONMENTS",
+  "CCB_READ_SCOPES",
+  "planningCenter",
+  "PLANNING_CENTER_API_BASE_URL",
+  "PLANNING_CENTER_API_VERSIONS",
+  "overflow",
+  "OVERFLOW_API_BASE_URLS",
+  "tithely",
+  "TITHELY_API_BASE_URLS",
+  "breeze",
+  "BREEZE_HOST_SUFFIX",
+  "basecamp",
+  "BASECAMP_MCP_ENDPOINT",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

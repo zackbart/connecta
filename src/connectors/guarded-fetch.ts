@@ -14,6 +14,7 @@
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
 import type { ConnectorContext } from "../types.js";
+import type { ApiHandlerContext } from "./api-connector.js";
 
 // Three of the types below carry no `export`: they are reached through the
 // exported `GuardedRequest` and `GuardedTransport` rather than named directly,
@@ -32,8 +33,15 @@ export interface GuardedRequest {
    * query parameters go in `query`, where they are encoded rather than parsed.
    */
   path: string;
-  /** Search parameters; `undefined` values are dropped, others stringified. */
-  query?: Record<string, string | number | boolean | undefined>;
+  /**
+   * Search parameters; `undefined` values are dropped, others stringified. An
+   * array repeats its key once per element, in order — the spelling of the key
+   * itself (`ids` or `ids[]`) is the provider's convention, not the helper's.
+   */
+  query?: Record<
+    string,
+    string | number | boolean | readonly (string | number | boolean)[] | undefined
+  >;
   /**
    * Per-request headers. `undefined` values are dropped, and a header that
    * collides with an authentication header is refused rather than allowed to
@@ -116,6 +124,15 @@ export interface GuardedFetchOptions {
   authenticate: (
     ctx: ConnectorContext,
   ) => Record<string, string> | Promise<Record<string, string>>;
+  /**
+   * What actually sends a request, after confinement, framing, and
+   * authentication. Defaults to the global `fetch`. A connector that declares
+   * `oauth` supplies {@link oauthBearer}'s, so the calling owner's grant — not
+   * a header this helper assembled — authenticates the request. A rejection
+   * that is already a `ConnectorCallError` passes through unchanged; any other
+   * is normalized to `unavailable`, exactly as a global `fetch` failure is.
+   */
+  fetch?: GuardedFetcher;
   /** Constant headers sent with every request — `Accept`, an API version. */
   headers?: Record<string, string>;
   /**
@@ -124,6 +141,47 @@ export interface GuardedFetchOptions {
    * absurd response is a fact about the API, not about HTTP.
    */
   maxResponseBytes: number;
+}
+
+/** Sends one already-guarded request on behalf of one call's context. */
+type GuardedFetcher = (
+  url: string,
+  init: RequestInit,
+  ctx: ConnectorContext,
+) => Promise<Response>;
+
+/**
+ * The transport half of a guarded connector that authenticates through its
+ * own `api()` OAuth grant: no header of the helper's making, and every request
+ * sent through `ctx.oauth.fetch`, which adds the calling owner's bearer token,
+ * refuses any origin outside the grant's `apiOrigins`, and spends one
+ * coordinated refresh and one replay on a 401 before answering
+ * `auth_required`. Spread it into the options:
+ * `guardedFetch({ provider, baseUrl, maxResponseBytes, ...oauthBearer(provider) })`.
+ *
+ * Confinement still happens here first, so a request reaches the grant only
+ * once it is provably beneath `baseUrl`; the grant's origin check is the second
+ * fence, not the only one.
+ */
+export function oauthBearer(
+  provider: string,
+): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
+  return {
+    authenticate: () => ({}),
+    fetch: (url, init, ctx) => {
+      const grant = (ctx as ApiHandlerContext).oauth;
+      if (!grant) {
+        // A wiring bug, not an outage: the transport was built for a grant the
+        // connector does not have, so no request can be authenticated.
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          `The ${provider} transport authenticates through the connector's OAuth grant, and this call's context carries none.`,
+          { retryable: false },
+        );
+      }
+      return grant.fetch(url, init);
+    },
+  };
 }
 
 /** Send one guarded request and map its response with provider knowledge. */
@@ -222,6 +280,11 @@ function confinedUrl(
   }
   for (const [key, value] of Object.entries(request.query ?? {})) {
     if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      url.searchParams.delete(key);
+      for (const item of value) url.searchParams.append(key, String(item));
+      continue;
+    }
     url.searchParams.set(key, String(value));
   }
   return url;
@@ -375,8 +438,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   // "" for a root base, so joining never doubles the separator.
   const basePath = base.pathname.replace(/\/+$/, "");
   const constantHeaders = { ...options.headers };
+  const send = options.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
 
-  return async function send(request, ctx, map) {
+  return async function guarded(request, ctx, map) {
     if (request.body !== undefined && request.rawBody !== undefined) {
       throw new Error(
         `A ${provider} request cannot carry both a JSON body and a raw body.`,
@@ -407,7 +471,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
 
     let response: Response;
     try {
-      response = await fetch(url.toString(), {
+      response = await send(url.toString(), {
         method: request.method,
         headers,
         ...(request.body !== undefined
@@ -420,7 +484,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         // never one. Refused below rather than followed.
         redirect: "manual",
         ...(ctx.signal ? { signal: ctx.signal } : {}),
-      });
+      }, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;
       throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`);

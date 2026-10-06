@@ -2,6 +2,179 @@
 
 All notable changes to this package are documented here.
 
+## 0.28.1 — 2026-10-05
+
+This patch adds six maintained connections for church operations and the
+downstream OAuth they needed. Planning Center, Overflow, Tithe.ly, Breeze ChMS,
+and Church Community Builder (Pushpay ChMS) are hand-written `api()` surfaces
+over their whole APIs, with every money-moving write behind approval; Basecamp
+proxies 37signals' hosted MCP server. Church Community Builder accepts only
+OAuth, so `api()` connectors can now declare a static OAuth 2.0
+authorization-code grant that reuses the `remoteMcp()` machinery. Each
+connection is a new opt-in provider subpath and the OAuth grant is opt-in per
+connector: existing imports, connector declarations, credentials, and
+deployment behavior do not change. Two fixes a deployment may notice: a forced
+OAuth restart no longer reuses a client registration the provider has deleted
+([#611](https://github.com/zackbart/connecta/issues/611)), and a failed OAuth
+code exchange is now logged as fixed text rather than the provider's message.
+Internally, the guarded transport can repeat a query key for an array value,
+and `api()`'s builder moved into its own module so OAuth stays out of bundles
+that never use it.
+
+### Added
+
+- **Downstream OAuth on `api()` connectors.** A hand-written connector can
+  declare `oauth: { authorizationEndpoint, tokenEndpoint, clientId,
+  clientSecret?, tokenEndpointAuthMethod?, scope?, pkce?, authorizationParams?,
+  tokenRequestHeaders?, apiOrigins }` for a REST API that accepts only the authorization code grant,
+  such as Church Community Builder. Nothing is discovered or registered: the
+  endpoints and the provider-issued client are configuration, and the client
+  secret comes from the deployment's environment and is never stored. Handlers
+  call `ctx.oauth.fetch(url, init)`, which sends the calling owner's token as a
+  bearer to a declared origin only, answers a 401 with one coordinated refresh
+  and one replay, and otherwise fails `auth_required`. The grant is the
+  `remoteMcp()` grant underneath — the same sealed epochs, shared and personal
+  ownership, rotating-refresh coordination, dead-versus-outage verdicts,
+  `/oauth/callback/<id>`, `authorize_connector`, and operator Connect,
+  Restart, and Disconnect. `oauth` and `credential` are exclusive on one
+  connector. See [downstream OAuth on `api()`](./documentation/auth.md#downstream-oauth-on-api).
+- **Church Community Builder (Pushpay ChMS) connection.**
+  `@zackbart/connecta/providers/ccb` exports `ccb(id, { purpose, environment,
+  mode, clientId, clientSecret, access?, scopes?, subdomain? })`, a
+  hand-written v2 REST connection over `api()`'s OAuth grant. `environment`
+  (`production` or `sandbox`) and `mode` (`system`, one church-wide grant an
+  administrator approves; `identity`, each person signing in as themselves
+  with a personal grant) are required, because CCB credentials do not cross
+  environments and the two modes reach different data. Twenty-four named reads
+  cover people and families, groups and participants, events and attendance,
+  forms and responses, processes and queues, scheduling, notes, and giving
+  metrics and pledges, with projections that drop allergies, giving
+  identifiers, and prayer requests unless `raw: true`. `ccb_api_get` and
+  `ccb_api_search` reach every GET and advanced search read-only, and
+  `ccb_api_mutate` ships only when a write scope is requested. A default
+  60-per-minute admission window per endpoint transcribes CCB's documented
+  limit, and `npm run providers:check -- --provider ccb` compares the 41
+  touched endpoints with Pushpay's published OpenAPI document. Clients are
+  issued by hand through Pushpay's API access request form.
+- **Maintained Planning Center connection.**
+  `@zackbart/connecta/providers/planning-center` exports `planningCenter(id,
+  options)`, a hand-written `api()` surface over Planning Center Online's REST
+  API with no SDK and no new dependency. Named tools cover the jobs church
+  staff run — People search, profiles, contact records, lists, workflows and
+  card actions, notes, custom fields, and form submissions; Services plans,
+  teams, schedules, songs, and scheduling; Groups memberships and events;
+  Check-Ins attendance; Calendar occurrences; Registrations signups; and Giving
+  donations, funds, batches, pledges, and recurring gifts as reads only — with
+  JSON:API flattened into lean records and `raw: true` beside them.
+  `pco_api_get` (read-only) and `pco_api_mutate` (always approval-gated) reach
+  every other endpoint, including every write that moves money. The credential
+  is a personal access token as two labeled fields, and the Test action names
+  the person and organization it acts as. Every request sends a reviewed
+  `X-PCO-API-Version` per product and a configurable `User-Agent`, and the
+  default call budget transcribes Planning Center's 100 requests per 20
+  seconds. `npm run providers:check -- --provider planning-center` compares
+  the touched endpoints with Planning Center's per-product OpenAPI documents
+  and reports a newly published version of any pinned product. Planning
+  Center's own hosted MCP server was considered and is not wrapped: its writes
+  stop at People.
+- **Maintained Overflow connection.** `@zackbart/connecta/providers/overflow`
+  ships 16 projected reads over contributions, deposits and their line items
+  and totals, refunds, chargebacks, donors, recurring gifts, payment methods,
+  campaigns, locations, Tap events, and webhook delivery logs, plus a
+  read-only GET hatch and a destructive JSON-mutation hatch that carries every
+  Overflow write — charges, payment authorization, refunds, recurring-gift
+  changes, and donor edits — to the host's approval prompt. `environment`
+  (`"production"` or `"staging"`) is required with no default, the credential
+  is one operator slot with `clientId` and `apiKey` fields, list rows keep
+  donor contact details and webhook payloads out unless `raw: true`, and the
+  default admission budget transcribes Overflow's 120 requests per minute per
+  client. `npm run providers:check -- --provider overflow` compares all 38
+  operations with the OpenAPI document Overflow publishes on staging.
+- A maintained Tithe.ly giving connection, `tithely(id, { purpose, environment })`
+  from `@zackbart/connecta/providers/tithely`: a hand-written `api()` surface
+  over Tithe.ly's v1 REST API. `environment` (`"live"` for tithe.ly, `"test"`
+  for tithelydev.com) is required with no default, because Tithe.ly's key pairs
+  are environment-specific and carry nothing that says which. The credential
+  slot takes the public and private keys as two fields, refuses an obviously
+  swapped pair without a request, and its Test action reports the organization
+  the keys reach; API access is by request through support@tithe.ly. Named
+  read-only tools cover organizations and their funds, donor accounts, charges
+  by organization or donor and created-date range, recurring gifts, and
+  payment-method metadata, with amounts as integer cents, dates as ISO 8601,
+  `hasMore` paging, and organization projections that omit payout bank and
+  legal-contact details. Every write moves money or donor payment state and is
+  reached only through the always-destructive, form-encoded
+  `tithely_api_mutate`; `tithely_api_get` reaches every v1 read. No call budget
+  is declared, since Tithe.ly publishes no rate limit.
+  `npm run providers:check -- --provider tithely` digests the OpenAPI snippet
+  each reference page embeds, for every documented v1 operation.
+- A maintained Breeze ChMS connection (Tithely Church Management since
+  2025-11-11) at `@zackbart/connecta/providers/breeze`:
+  `breeze(id, { subdomain, purpose })` binds one church's
+  `<subdomain>.breezechms.com` — validated as a single hostname label at
+  construction, so no argument can steer the API key elsewhere — with an
+  operator `Api-Key` slot tested against the account summary. Named reads cover
+  people, profile fields, tags, events, calendars, attendance, forms,
+  volunteers, the account log, and giving (`list_contributions`, `list_funds`,
+  which call endpoints Breeze stopped documenting in 2023 and still serves);
+  named writes add and update people, assign and unassign tags, and record a
+  check-in. Because Breeze sends writes as GET too, the escape hatches split by
+  endpoint rather than method: `breeze_api_get` admits only a reviewed
+  allowlist of read endpoints and their documented parameters, and the
+  destructive `breeze_api_mutate` reaches everything else. No admission budget
+  is declared, since Breeze documents no rate limit; drift is review-only,
+  since it publishes no machine-readable specification.
+- **`basecamp()` — a maintained Basecamp hosted-MCP connection** at
+  `@zackbart/connecta/providers/basecamp`, proxying
+  `https://mcp.basecamp.com/mcp` — a server 37signals runs but has not
+  documented or announced. OAuth only, and `clientMetadataUrl` is required:
+  Basecamp restricts dynamic client registration for HTTPS callbacks, so a
+  deployment hosts a Client ID Metadata Document listing
+  `<publicUrl>/oauth/callback/<id>`, and construction throws without one. A
+  grant reaches exactly one Basecamp account, chosen at consent, so the guide
+  leads with that, names `get_me` to confirm it, and a second account is a
+  second connector. All 227 tools in the live catalog are classified (105
+  read-only, 34 additive, 88 destructive); the four verdicts that part from the
+  server's own annotations, and `create_stream_ticket`'s agreement with its
+  read-only claim, are argued beside their rows. No access mode ships: the MCP
+  client requests the scope Basecamp's challenge names, so a `read` option
+  would be a label rather than a limit. Personal access tokens are not offered,
+  because nothing shows this endpoint accepts one. No default `callAdmission`:
+  Basecamp's limits are dynamic, multi-tier, and metered at its own server's
+  IP. With no public setup page or inventory, `npm run providers:check` reads
+  the server's OAuth discovery instead — the resource names the endpoint and
+  the authorization server still accepts metadata-document clients — and
+  catalog drift is runtime-only.
+
+### Fixed
+
+- **A forced OAuth restart can no longer wedge on a purged client
+  registration** ([#611](https://github.com/zackbart/connecta/issues/611)).
+  Restart already carried an issuer-bound dynamic registration into the new
+  epoch; it carried it unconditionally, and a provider that had forgotten the
+  client refuses it at consent without ever redirecting back, so every later
+  Restart reused the same dead client and only Disconnect escaped. A carried
+  client is now carried again only once a grant in its epoch proves the
+  provider still knows it, so two restarts in a row with no consent between
+  them register at most once more. A URL-based client (`clientMetadataUrl`)
+  and a client whose secret has expired are never carried. Continue no longer
+  hands back a pending consent URL whose client a callback's `invalid_client`
+  has dropped; it starts a flow that registers instead. Static `api()` OAuth
+  clients are configuration and unaffected.
+- **A refresh rotation saved after its request was cancelled keeps its
+  issuer.** When the token endpoint answered after the owning request left,
+  connecta persisted the rotated tokens itself but unbound, and the next
+  issuer-aware read adopted them for whichever authorization server the
+  connector named by then — so a connector repointed at another server would
+  send the rotated refresh token there. The recovery save now stamps the issuer
+  the refresh answered to, as the SDK's own save does, and a repointed connector
+  fences the grant instead.
+- **A failed OAuth code exchange no longer writes the provider's message to the
+  operator log.** The SDK quotes a token endpoint's `error_description` or raw
+  body, and a provider that echoes a `client_secret_post` request put the client
+  secret, code, and verifier in the log. The callback now logs fixed text and,
+  when the error carries one, a standard OAuth error code from an allowlist.
+
 ## 0.28.0 — 2026-10-04
 
 This minor release removes program pauses ([#672](https://github.com/zackbart/connecta/issues/672)).

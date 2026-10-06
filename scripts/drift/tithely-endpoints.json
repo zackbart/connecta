@@ -1,0 +1,158 @@
+{
+  "provider": "tithely",
+  "specification": {
+    "url": "https://docs.tithe.ly/reference/",
+    "format": "readme-operation-pages",
+    "pages": [
+      "list-all-organizations",
+      "retrieve-an-organization",
+      "list-all-accounts",
+      "list-all-accounts-1",
+      "get-an-account",
+      "create-an-account",
+      "update-an-account",
+      "list-all-charges",
+      "retrieve-a-charge",
+      "create-a-charge",
+      "quick-charge",
+      "refund-a-charge",
+      "list-all-recurring-charges",
+      "retrieve-a-recurring-charge",
+      "create-a-recurring-charge-1",
+      "cancel-a-recurring-charge",
+      "list-all-payment-methods",
+      "retrieve-a-payment-method",
+      "create-a-payment-method",
+      "update-a-payment-method",
+      "delete-a-payment-method"
+    ]
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/organizations-list",
+      "specRevision": "1",
+      "contract": "sha256:e9715c6b053da2220c3093779e0bf7d39a8aa2bd9d5e2e66fc23a1b52fcd5c45"
+    },
+    {
+      "method": "GET",
+      "path": "/organizations/{organization_id}",
+      "specRevision": "1",
+      "contract": "sha256:230d6c6d5eca293f23cc01cbee1bb6219e0265a22778c419aed714b83c7a2338"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts-list",
+      "specRevision": "1",
+      "contract": "sha256:04ff6964fa62ff58d8c3e2d73a0546b6800fe2574f06649d916634c0cf826a0d"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts-list-all",
+      "specRevision": "1",
+      "contract": "sha256:04ff6964fa62ff58d8c3e2d73a0546b6800fe2574f06649d916634c0cf826a0d"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}",
+      "specRevision": "1",
+      "contract": "sha256:b0d91337205a6e3993da23dc670529cdc84d65105f58cd6554c043da070b79a0"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts",
+      "specRevision": "1",
+      "contract": "sha256:2553cb683ea604cf6e10fe515c915f04b138fe61c55675296b30735aab76ccc6"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}",
+      "specRevision": "1",
+      "contract": "sha256:9770b13dff24fba17a3333d9ce22c65b7cfd50e9a3abdc8e4b23674cbdd866ae"
+    },
+    {
+      "method": "GET",
+      "path": "/charges-list",
+      "specRevision": "1",
+      "contract": "sha256:f02ff1da5145262473c9583aba2cc3033dbfe6d6bf58d2b2ec42e4311ec026f5"
+    },
+    {
+      "method": "GET",
+      "path": "/charges/{charge_id}",
+      "specRevision": "1",
+      "contract": "sha256:e65e6fa65960fbd7b3c55687566db2e501d62a617be9bbf7ae340eac2711201f"
+    },
+    {
+      "method": "POST",
+      "path": "/charges",
+      "specRevision": "1",
+      "contract": "sha256:2a8e34093ee9015bdeb56c16a5f1cf53adfd4d427d7258e837c4efda67b0cc45"
+    },
+    {
+      "method": "POST",
+      "path": "/charge-once",
+      "specRevision": "1",
+      "contract": "sha256:3ae0fde7f136b548b55181ad78b34cf0364496b3d360b06fc579ab434dc4ecf2"
+    },
+    {
+      "method": "POST",
+      "path": "/refunds/{charge_id}",
+      "specRevision": "1",
+      "contract": "sha256:e65e6fa65960fbd7b3c55687566db2e501d62a617be9bbf7ae340eac2711201f"
+    },
+    {
+      "method": "GET",
+      "path": "/recurring-list",
+      "specRevision": "1",
+      "contract": "sha256:a38e4863841ce5e43063454fb06bb8654f35e124121ccadaf480d21dd2c82d26"
+    },
+    {
+      "method": "GET",
+      "path": "/recurring/{recurring_id}",
+      "specRevision": "1",
+      "contract": "sha256:0c1504f9e36cd8e04cb60d343d2c587c408180df5d12811b534039fac3af085f"
+    },
+    {
+      "method": "POST",
+      "path": "/recurring",
+      "specRevision": "1",
+      "contract": "sha256:ddfbe7d980ec1cdebf8ecfdad1bae0f537d60cf8988b3cf5c029b78b4fbeceaa"
+    },
+    {
+      "method": "DELETE",
+      "path": "/recurring/{recurring_id}",
+      "specRevision": "1",
+      "contract": "sha256:3c0097d1eb340729e306cdf163d2289b5cdfc6a651c3f84eb044ac21c5dafa27"
+    },
+    {
+      "method": "GET",
+      "path": "/payment-methods-list",
+      "specRevision": "1",
+      "contract": "sha256:d8a0f7c6ae66a0f12ccf1b1a62ad5b1007deff3e4bb4dca4ecb65a2d1c3f0486"
+    },
+    {
+      "method": "GET",
+      "path": "/payment-methods/{pm_id}",
+      "specRevision": "1",
+      "contract": "sha256:55f1e442c465070eebd4d884bafbb340b0d89205acb1366a98f3aa626e5a0851"
+    },
+    {
+      "method": "POST",
+      "path": "/payment-methods",
+      "specRevision": "1",
+      "contract": "sha256:dbbe7b462629b3a16556e187a37f52318f8ace07c13eb981011f5e916e825f0d"
+    },
+    {
+      "method": "POST",
+      "path": "/payment-methods/{pm_id}",
+      "specRevision": "1",
+      "contract": "sha256:542b88343dcca49a151bff9918f31aad468a7f5c991bdfe325e0c4d66d10efa2"
+    },
+    {
+      "method": "DELETE",
+      "path": "/payment-methods/{pm_id}",
+      "specRevision": "1",
+      "contract": "sha256:2a1068e29028835531dc6e2913c53b3f53380ddd5eaa578663a399542e251ca9"
+    }
+  ]
+}

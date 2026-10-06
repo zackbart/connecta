@@ -4,7 +4,7 @@ import {
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
-import { defined } from "../connectors/api.js";
+import { defined } from "../connectors/api-connector.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,

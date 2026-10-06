@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.28.0",
+  "version": "0.28.1",
   "type": "module",
   "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
@@ -67,6 +67,14 @@
       "types": "./dist/auth/cloudflare-access.d.ts",
       "import": "./dist/auth/cloudflare-access.js"
     },
+    "./providers/breeze": {
+      "types": "./dist/providers/breeze.d.ts",
+      "import": "./dist/providers/breeze.js"
+    },
+    "./providers/basecamp": {
+      "types": "./dist/providers/basecamp.d.ts",
+      "import": "./dist/providers/basecamp.js"
+    },
     "./providers/cloudflare": {
       "types": "./dist/providers/cloudflare.d.ts",
       "import": "./dist/providers/cloudflare.js"
@@ -94,6 +102,22 @@
     "./providers/vercel": {
       "types": "./dist/providers/vercel.d.ts",
       "import": "./dist/providers/vercel.js"
+    },
+    "./providers/ccb": {
+      "types": "./dist/providers/ccb.d.ts",
+      "import": "./dist/providers/ccb.js"
+    },
+    "./providers/planning-center": {
+      "types": "./dist/providers/planning-center.d.ts",
+      "import": "./dist/providers/planning-center.js"
+    },
+    "./providers/overflow": {
+      "types": "./dist/providers/overflow.d.ts",
+      "import": "./dist/providers/overflow.js"
+    },
+    "./providers/tithely": {
+      "types": "./dist/providers/tithely.d.ts",
+      "import": "./dist/providers/tithely.js"
     },
     "./ui": {
       "types": "./dist/ui.d.ts",
