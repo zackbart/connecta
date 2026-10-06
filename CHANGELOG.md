@@ -111,7 +111,15 @@ deployment's own connectors still never learn their caller.
   one mint through plain outcomes and a deadline, never another request's
   signal, so a cancelled owner sends a waiting caller in another Worker request
   to mint for itself. A 401 forgets only the token it rejected and replays the
-  request once, so a streamed request body is refused up front. Google's
+  request once, so a streamed request body is refused up front. A write that
+  names the revision it was made against passes `{ revisionGuarded: true }`,
+  and a stale revision — FAILED_PRECONDITION or ABORTED on HTTP 400 or 409 —
+  then arrives as `conflict` with fixed words to re-read and retry; otherwise
+  a refused precondition is reported neutrally in Google's own words. A
+  product can read Google's reason codes for any mapped failure — sanitized
+  tokens only, never its prose — and `exportSizeLimitExceeded`,
+  `domainPolicy`, and `insufficientFilePermissions`/`forbidden` refusals
+  name themselves precisely. Google's
   refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or

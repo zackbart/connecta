@@ -12,7 +12,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { attachCaller } from "../src/connector-caller.js";
-import { googleWorkspaceClient, workspaceConnection } from "../src/providers/google/workspace.js";
+import {
+  googleReasonsOf,
+  googleWorkspaceClient,
+  workspaceConnection,
+} from "../src/providers/google/workspace.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -850,12 +854,88 @@ describe("API refusals map by Google's reason codes", () => {
     expect(failure.code).toBe("rate_limited");
   });
 
-  it("maps a user without Gmail to a failed precondition", async () => {
+  it("reports a refused precondition neutrally, with Google's own words for which", async () => {
+    // The same reason means a user without Gmail and a stale write elsewhere,
+    // so the classification asserts neither; Google's message says which.
     const failure = await apiFailure(400, {
       message: "Mail service not enabled",
+      status: "FAILED_PRECONDITION",
       errors: [{ reason: "failedPrecondition" }],
     });
     expect(failure.code).toBe("connector_call_failed");
+    expect(failure.message).toContain("Mail service not enabled");
+    expect(failure.message).toContain("Google refused the request's precondition");
+    expect(failure.message).not.toMatch(/disabled/);
+  });
+
+  it("names a disabled API by Google's reason, whatever status carries it", async () => {
+    const failure = await apiFailure(400, {
+      message: "Gmail API has not been used in project 1 before or it is disabled.",
+      status: "FAILED_PRECONDITION",
+      details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED" }],
+    });
+    expect(failure.code).toBe("connector_call_failed");
+    expect(failure.message).toContain("Gmail API is not enabled");
+  });
+
+  it.each([
+    ["exportSizeLimitExceeded", "larger than Google will export"],
+    ["domainPolicy", "domain policy forbids"],
+    ["insufficientFilePermissions", "does not have the permission on this item"],
+    ["forbidden", "does not have the permission on this item"],
+  ])("names a 403 %s precisely", async (reason, words) => {
+    const failure = await apiFailure(403, {
+      message: "The caller does not have permission",
+      status: "PERMISSION_DENIED",
+      errors: [{ reason, domain: "global" }],
+    });
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain(words);
+    expect(googleReasonsOf(failure)).toEqual([reason, "PERMISSION_DENIED"]);
+  });
+
+  it("maps either rate-limit reason to rate_limited, whatever the status", async () => {
+    for (const reason of ["rateLimitExceeded", "userRateLimitExceeded"]) {
+      const failure = await apiFailure(403, { message: "Rate Limit Exceeded", errors: [{ reason }] });
+      expect(failure.code).toBe("rate_limited");
+      expect(googleReasonsOf(failure)).toEqual([reason]);
+    }
+  });
+
+  it("exposes Google's reasons sanitized and bounded, never its words", async () => {
+    const failure = await apiFailure(403, {
+      message: "secret-bearing prose about file Q3-payroll.xlsx",
+      status: "PERMISSION_DENIED",
+      errors: [
+        { reason: "cannotDownloadAbusiveFile", message: "prose" },
+        { reason: "has spaces; and punctuation" },
+        { reason: "x".repeat(65) },
+        { reason: 42 },
+        ...Array.from({ length: 10 }, (_, index) => ({ reason: `extra${index}` })),
+      ],
+      details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "cannotDownloadAbusiveFile" }],
+    });
+    const reasons = googleReasonsOf(failure);
+    expect(reasons).toEqual([
+      "cannotDownloadAbusiveFile",
+      "extra0",
+      "extra1",
+      "extra2",
+      "extra3",
+      "extra4",
+      "extra5",
+      "extra6",
+    ]);
+    expect(Object.isFrozen(reasons)).toBe(true);
+    expect(JSON.stringify(reasons)).not.toContain("payroll");
+  });
+
+  it("has no reasons for a failure that never reached Google, or for anything else", async () => {
+    const unadmitted = await labels(mailbox(), context()).catch((error) => error);
+    expect(unadmitted.code).toBe("auth_required");
+    expect(googleReasonsOf(unadmitted)).toEqual([]);
+    expect(googleReasonsOf(new Error("plain"))).toEqual([]);
+    expect(googleReasonsOf(undefined)).toEqual([]);
   });
 
   it("maps a bad argument to invalid_args and an outage to unavailable", async () => {
@@ -914,6 +994,61 @@ describe("the shared client reads bytes and text for the products that need them
     await expect(client(1024).bytes({ method: "GET", path: "/files/f1" }, context())).rejects.toMatchObject({
       code: "connector_call_failed",
       message: expect.stringContaining("1024-byte"),
+    });
+  });
+
+  describe("a revision-guarded write", () => {
+    const stale = (status: number, reason: string) => () =>
+      Response.json(
+        { error: { code: status, message: "The required revision ID 'r1' does not match the latest revision.", status: reason } },
+        { status },
+      );
+    const write = { method: "POST" as const, path: "/documents/d1:batchUpdate", body: { requests: [] } };
+
+    it.each([
+      [400, "FAILED_PRECONDITION"],
+      [409, "ABORTED"],
+      [400, "ABORTED"],
+      [409, "FAILED_PRECONDITION"],
+    ])("maps HTTP %i %s to conflict with fixed words", async (status, reason) => {
+      apiReplies.push(stale(status, reason));
+      const failure = await client()
+        .json(write, context(), { revisionGuarded: true })
+        .catch((error) => error);
+      expect(failure).toBeInstanceOf(ConnectorCallError);
+      expect(failure).toMatchObject({
+        code: "conflict",
+        retryable: false,
+        message:
+          "Google Drive refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.",
+      });
+    });
+
+    it("applies to bytes and text requests too", async () => {
+      apiReplies.push(stale(400, "FAILED_PRECONDITION"), stale(409, "ABORTED"));
+      const drive = client();
+      await expect(drive.bytes(write, context(), undefined, { revisionGuarded: true })).rejects.toMatchObject({
+        code: "conflict",
+      });
+      await expect(drive.text(write, context(), "text/plain", { revisionGuarded: true })).rejects.toMatchObject({
+        code: "conflict",
+      });
+    });
+
+    it("leaves an unflagged request exactly as before", async () => {
+      apiReplies.push(stale(400, "FAILED_PRECONDITION"), stale(409, "ABORTED"));
+      const drive = client();
+      await expect(drive.json(write, context())).rejects.toMatchObject({ code: "connector_call_failed" });
+      await expect(drive.json(write, context(), {})).rejects.toMatchObject({ code: "connector_call_failed" });
+    });
+
+    it("does not turn an unrelated refusal into a conflict", async () => {
+      apiReplies.push(() =>
+        Response.json({ error: { code: 400, message: "Invalid requests[0]", status: "INVALID_ARGUMENT" } }, { status: 400 }),
+      );
+      await expect(client().json(write, context(), { revisionGuarded: true })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
     });
   });
 

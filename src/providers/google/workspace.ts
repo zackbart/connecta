@@ -20,7 +20,9 @@
  *
  * A product builds on three calls: `workspaceConnection(factory, options)` at
  * construction, `googleWorkspaceClient({...})` once, and the client's `json`,
- * `bytes`, or `text` per request. Nothing else here is the products' to touch.
+ * `bytes`, or `text` per request — plus `googleReasonsOf(error)` where a
+ * product must decide on a Google reason the shared mapping leaves generic.
+ * Nothing else here is the products' to touch.
  *
  * Setup, once per Workspace, shared by every product:
  *
@@ -242,17 +244,83 @@ interface FailureContext {
   notFound: NotFoundMeaning;
 }
 
+/** The canonical and legacy spellings of a refused precondition. */
+const PRECONDITION_REASONS = ["FAILED_PRECONDITION", "failedPrecondition"];
+/** Concurrency aborts, which a revision-checked write also answers with. */
+const ABORTED_REASONS = ["ABORTED", "aborted"];
+
+/** A reason token as Google spells one; anything else is not passed on. */
+const REASON_TOKEN = /^[A-Za-z0-9_.]{1,64}$/;
+/** More than this many reasons on one error is noise, not information. */
+const MAX_REASONS = 8;
+
+/** Google's reasons for each failure this layer mapped, beside the error. */
+const googleReasons = new WeakMap<ConnectorCallError, readonly string[]>();
+
+/**
+ * Google's machine-readable reasons for a failure the shared client mapped:
+ * `errors[].reason`, `details[].reason`, and the canonical `status`, in that
+ * order, deduplicated, at most eight, and only tokens of `[A-Za-z0-9_.]` up to
+ * 64 characters — never a message or any other part of the payload. An empty
+ * array for anything else, including a failure that never reached Google.
+ *
+ * For a product that needs a decision the shared mapping does not make, such
+ * as Drive telling `cannotDownloadAbusiveFile` from another refusal. Classify
+ * on these, never on the error's message.
+ */
+export function googleReasonsOf(error: unknown): readonly string[] {
+  return error instanceof ConnectorCallError ? googleReasons.get(error) ?? [] : [];
+}
+
 function apiFailure(
   context: FailureContext,
   status: number,
   headers: Headers,
   payload: unknown,
+  options: GoogleRequestOptions,
+): ConnectorCallError {
+  const failure = classifyApiFailure(context, status, headers, payload, options);
+  const error = asRecord(asRecord(payload)["error"]);
+  const reasons = [...reasonsOf(error)].filter((reason) => REASON_TOKEN.test(reason)).slice(0, MAX_REASONS);
+  googleReasons.set(failure, Object.freeze(reasons));
+  return failure;
+}
+
+function classifyApiFailure(
+  context: FailureContext,
+  status: number,
+  headers: Headers,
+  payload: unknown,
+  options: GoogleRequestOptions,
 ): ConnectorCallError {
   const { provider, api, scopes } = context;
   const error = asRecord(asRecord(payload)["error"]);
   const message = typeof error["message"] === "string" ? error["message"].trim().slice(0, 500) : "";
   const detail = message ? `${provider}: ${message}` : `${provider} returned HTTP ${status}.`;
   const reasons = reasonsOf(error);
+  const precondition = PRECONDITION_REASONS.some((reason) => reasons.has(reason));
+  // A write that named the revision it was made against hears "the item moved
+  // on" as a refused precondition or an abort. Fixed words, so no provider
+  // ever matches on Google's prose or on this file's.
+  if (
+    options.revisionGuarded === true &&
+    (status === 400 || status === 409) &&
+    (precondition || ABORTED_REASONS.some((reason) => reasons.has(reason)))
+  ) {
+    return new ConnectorCallError(
+      "conflict",
+      `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
+    );
+  }
+  // The API is off in the service account's project. Keyed on Google's own
+  // reason, whatever status carries it.
+  if (reasons.has("accessNotConfigured") || reasons.has("SERVICE_DISABLED")) {
+    return new ConnectorCallError(
+      "connector_call_failed",
+      `${detail} The ${api} is not enabled in the service account's Google Cloud project; an operator enables it there.`,
+      { retryable: false },
+    );
+  }
   if (
     status === 429 ||
     reasons.has("rateLimitExceeded") ||
@@ -279,10 +347,25 @@ function apiFailure(
         `${detail} The delegated token lacks a scope this call needs. The Admin console's domain-wide delegation entry must list exactly: ${scopes.join(",")}.`,
       );
     }
-    if (reasons.has("accessNotConfigured") || reasons.has("SERVICE_DISABLED")) {
+    // Where Google names the refusal precisely, so does the message.
+    if (reasons.has("exportSizeLimitExceeded")) {
       return new ConnectorCallError(
         "connector_call_failed",
-        `${detail} The ${api} is not enabled in the service account's Google Cloud project; an operator enables it there.`,
+        `${detail} The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.`,
+        { retryable: false },
+      );
+    }
+    if (reasons.has("domainPolicy")) {
+      return new ConnectorCallError(
+        "connector_call_failed",
+        `${detail} A Workspace domain policy forbids this action for this account; only a Workspace administrator can change that.`,
+        { retryable: false },
+      );
+    }
+    if (reasons.has("insufficientFilePermissions") || reasons.has("forbidden")) {
+      return new ConnectorCallError(
+        "connector_call_failed",
+        `${detail} This account does not have the permission on this item that the action needs — it may be shared view-only, or not shared with this user. Its owner can grant more.`,
         { retryable: false },
       );
     }
@@ -301,10 +384,13 @@ function apiFailure(
           { retryable: false },
         );
   }
-  if (status === 400 && (reasons.has("failedPrecondition") || reasons.has("FAILED_PRECONDITION"))) {
+  // Google uses the same reason for a product switched off for this user
+  // (Gmail's "Mail service not enabled") and for a stale write, so the
+  // classification asserts neither; Google's own message says which.
+  if (status === 400 && precondition) {
     return new ConnectorCallError(
       "connector_call_failed",
-      `${detail} The account is not in a state to serve this call — the product may be disabled for this user.`,
+      `${detail} Google refused the request's precondition; its message says which.`,
       { retryable: false },
     );
   }
@@ -369,14 +455,38 @@ interface GoogleText {
  */
 export interface GoogleWorkspaceClient {
   /** One JSON request; the parsed body, `undefined` for an empty one. */
-  json(request: GuardedRequest, ctx: ConnectorContext): Promise<unknown>;
+  json(request: GuardedRequest, ctx: ConnectorContext, options?: GoogleRequestOptions): Promise<unknown>;
   /**
    * One request whose answer is not JSON — a download, an export — as bytes,
    * bounded by `maxResponseBytes`. `accept` is sent as `Accept`.
    */
-  bytes(request: GuardedRequest, ctx: ConnectorContext, accept?: string): Promise<GoogleBytes>;
+  bytes(
+    request: GuardedRequest,
+    ctx: ConnectorContext,
+    accept?: string,
+    options?: GoogleRequestOptions,
+  ): Promise<GoogleBytes>;
   /** As {@link bytes}, decoded as text in the response's declared charset. */
-  text(request: GuardedRequest, ctx: ConnectorContext, accept?: string): Promise<GoogleText>;
+  text(
+    request: GuardedRequest,
+    ctx: ConnectorContext,
+    accept?: string,
+    options?: GoogleRequestOptions,
+  ): Promise<GoogleText>;
+}
+
+/** How one request's failures read, beyond the product's defaults. */
+interface GoogleRequestOptions {
+  /**
+   * The request is a write that names the revision it was made against —
+   * Docs, Slides, or Forms `writeControl.requiredRevisionId`. Google answers
+   * a stale one with HTTP 400 or 409 carrying FAILED_PRECONDITION or
+   * ABORTED, which then maps to `conflict` with fixed text telling the agent
+   * to re-read for the current revision and retry. Without it, such a refusal
+   * stays `connector_call_failed`, since the same reason also means things
+   * like a product switched off for the user.
+   */
+  revisionGuarded?: boolean;
 }
 
 /** The token the API refused, carried out of the mapper for one replay. */
@@ -437,6 +547,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     ctx: ConnectorContext,
     accept: string,
     read: (response: ReadableResponse) => Promise<T>,
+    requestOptions: GoogleRequestOptions = {},
   ): Promise<T> {
     // A 401 is answered by sending the same request again, so its body must
     // survive being sent twice. A stream is consumed by the first send; it
@@ -457,7 +568,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           if (!response.ok) {
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
-            const mapped = apiFailure(failure, response.status, response.headers, payload);
+            const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
             throw response.status === 401 ? new TokenRejected(mapped) : mapped;
           }
           return await read(response);
@@ -472,7 +583,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   }
 
   return {
-    json: (request, ctx) =>
+    json: (request, ctx, requestOptions) =>
       call(request, ctx, "application/json", async (response) => {
         const parsed = await response.jsonResult();
         if (!("value" in parsed)) {
@@ -483,13 +594,13 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           );
         }
         return parsed.value;
-      }),
-    bytes: (request, ctx, accept = "*/*") =>
+      }, requestOptions),
+    bytes: (request, ctx, accept = "*/*", requestOptions) =>
       call(request, ctx, accept, async (response) => ({
         bytes: await response.bytes(),
         contentType: response.headers.get("content-type") ?? undefined,
-      })),
-    text: (request, ctx, accept = "text/plain, */*") =>
+      }), requestOptions),
+    text: (request, ctx, accept = "text/plain, */*", requestOptions) =>
       call(request, ctx, accept, async (response) => {
         const contentType = response.headers.get("content-type") ?? undefined;
         const bytes = await response.bytes();
@@ -500,6 +611,6 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           text = new TextDecoder().decode(bytes);
         }
         return { text, contentType };
-      }),
+      }, requestOptions),
   };
 }
