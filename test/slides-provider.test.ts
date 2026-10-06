@@ -325,15 +325,100 @@ describe("reading a deck (H9, H10)", () => {
       "\n[… 18 more characters truncated; raise maxCharsPerSlide to read them]",
     );
     expect(first.notes).toBe("Welcome ev\n[… 7 more characters truncated; raise maxCharsPerSlide to read them]");
-    // The title field is the routing fact, uncut.
-    expect(first.title).toBe("Easter Sunday");
+    // The title is bounded by the same cap, and says so.
+    expect(first.title).toBe("Easter Sun\n[… 3 more characters truncated; raise maxCharsPerSlide to read them]");
   });
 
-  it("returns Slides' untouched presentation on raw: true, with no field mask", async () => {
+  it("never lets a slide title escape the cap, however long", async () => {
+    const long = "T".repeat(100_000);
+    route = () => ({
+      body: {
+        presentationId: "deck1",
+        slides: [{ objectId: "p", pageElements: [{ objectId: "t", shape: { placeholder: { type: "TITLE" }, text: textContent(long) } }] }],
+      },
+    });
+    const zero = await call(connection(), "get_presentation", { presentationId: "deck1", maxCharsPerSlide: 0 });
+    expect(zero.slides[0].title).toBe("\n[… 100000 more characters truncated; raise maxCharsPerSlide to read them]");
+    const most = await call(connection(), "get_presentation", { presentationId: "deck1", maxCharsPerSlide: 50_000 });
+    expect(most.slides[0].title).toMatch(/^T{500}\n\[… 99500 more characters truncated/);
+  });
+
+  it("keeps empty placeholders, with id and type, so a new slide can be filled", async () => {
+    route = () => ({
+      body: {
+        presentationId: "deck1",
+        slides: [
+          {
+            objectId: "gNew",
+            pageElements: [
+              { objectId: "gNew_body", transform: at(0, 2000000), shape: { shapeType: "TEXT_BOX", placeholder: { type: "BODY" } } },
+              { objectId: "gNew_title", transform: at(0, 500000), shape: { shapeType: "TEXT_BOX", placeholder: { type: "TITLE" } } },
+              { objectId: "deco", transform: at(0, 0), shape: { shapeType: "RECTANGLE" } },
+            ],
+          },
+        ],
+      },
+    });
+    const result = await call(connection(), "get_presentation", { presentationId: "deck1" });
+    expect(result.slides[0]).toEqual({
+      objectId: "gNew",
+      index: 0,
+      elements: [
+        { objectId: "gNew_title", kind: "shape", placeholder: "TITLE" },
+        { objectId: "gNew_body", kind: "shape", placeholder: "BODY" },
+      ],
+      omittedElements: 1,
+    });
+  });
+
+  it("orders rotated and nested groups by their absolute positions", async () => {
+    // ProtoJSON omits zero coefficients: a group turned 90° has no scale at
+    // all, and reading its omissions as 1 would put A first.
+    const turned = { shearX: -1, shearY: 1, translateY: 100, unit: "PT" };
+    const shape = (objectId: string, x: number, y: number) => ({
+      objectId,
+      transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: "PT" },
+      shape: { shapeType: "TEXT_BOX", text: textContent(objectId) },
+    });
+    route = () => ({
+      body: {
+        presentationId: "deck1",
+        slides: [
+          {
+            objectId: "p",
+            pageElements: [
+              { objectId: "outer", transform: turned, elementGroup: { children: [shape("A", 10, 0), shape("B", 0, 20)] } },
+              {
+                objectId: "wrapper",
+                // No transform at all is the identity, not a collapse to 0.
+                elementGroup: {
+                  children: [
+                    {
+                      objectId: "inner",
+                      transform: turned,
+                      elementGroup: { children: [shape("C", 200, 0), shape("D", 0, 300)] },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const result = await call(connection(), "get_presentation", { presentationId: "deck1" });
+    // Turned: (x, y) -> (-y, x + 100). B (-20, 100), A (0, 110), D (-300, 100), C (0, 300).
+    expect(result.slides[0].elements.map((element: any) => element.objectId)).toEqual(["D", "B", "A", "C"]);
+  });
+
+  it("returns this page's slides untouched on raw: true, unmasked and without layouts", async () => {
     route = () => ({ body: PRESENTATION });
-    const result = await call(connection(), "get_presentation", { presentationId: "deck1", raw: true });
+    const result = await call(connection(), "get_presentation", { presentationId: "deck1", raw: true, limit: 2 });
     expect(calls[0]!.url.search).toBe("");
-    expect(result).toEqual(PRESENTATION);
+    expect(result.slides).toEqual(PRESENTATION.slides.slice(0, 2));
+    expect(result.layouts).toBeUndefined();
+    expect(result).toMatchObject({ presentationId: "deck1", revisionId: "rev-1", slideCount: 3 });
+    expect(result.page).toEqual({ hasMore: true, nextCursor: expect.any(String) });
   });
 
   it("returns a thumbnail's short-lived link and size, never the image", async () => {
@@ -385,27 +470,44 @@ describe("errors (H11)", () => {
   });
 
   it.each([
-    ["INVALID_ARGUMENT", "invalid_args"],
-    ["FAILED_PRECONDITION", "connector_call_failed"],
-  ])("says a %s refusal of a revision-checked write may be a changed deck", async (status, code) => {
-    route = () => ({ status: 400, body: { error: { code: 400, message: "The request could not be applied.", status } } });
-    const failure = await call(connection(), "batch_update_presentation", {
+    ["batch_update_presentation", { requests: [{ deleteObject: { objectId: "title" } }] }],
+    ["replace_all_text", { replacements: [{ find: "a", replace: "b" }] }],
+  ])("maps a stale revision on %s to conflict", async (name, args) => {
+    route = () => ({
+      status: 400,
+      body: { error: { code: 400, message: "The required revision does not match.", status: "FAILED_PRECONDITION" } },
+    });
+    const failure = await call(connection(), name, {
       presentationId: "deck1",
       requiredRevisionId: "rev-old",
-      requests: [{ deleteObject: { objectId: "title" } }],
+      ...args,
     }).catch((error) => error);
-    expect(failure.code).toBe(code);
-    expect(failure.message).toContain("re-read it with get_presentation");
-    expect(failure.message).toContain("does not say whether");
+    expect(failure.code).toBe("conflict");
+    expect(failure.retryable).toBe(false);
+    expect(failure.message).toContain("Re-read it for the current revision");
   });
 
-  it("adds nothing to a refusal of a write that named no revision", async () => {
-    route = () => ({ status: 400, body: { error: { code: 400, message: "Invalid requests[0].createSlide.", status: "INVALID_ARGUMENT" } } });
+  it("leaves other refusals of a revision-checked write as they are", async () => {
+    route = () => ({ status: 400, body: { error: { code: 400, message: "Invalid requests[0].deleteObject.", status: "INVALID_ARGUMENT" } } });
+    const failure = await call(connection(), "batch_update_presentation", {
+      presentationId: "deck1",
+      requiredRevisionId: "rev-1",
+      requests: [{ deleteObject: { objectId: "nope" } }],
+    }).catch((error) => error);
+    expect(failure.code).toBe("invalid_args");
+    expect(failure.message).toContain("Invalid requests[0].deleteObject.");
+  });
+
+  it("never reads a precondition refusal as a conflict when no revision was named", async () => {
+    route = () => ({
+      status: 400,
+      body: { error: { code: 400, message: "Precondition check failed.", status: "FAILED_PRECONDITION" } },
+    });
     const failure = await call(connection(), "create_slide", { presentationId: "deck1", layout: "BIG_NUMBER" }).catch(
       (error) => error,
     );
-    expect(failure.code).toBe("invalid_args");
-    expect(failure.message).not.toContain("requiredRevisionId");
+    expect(failure.code).not.toBe("conflict");
+    expect(failure.message).toContain("Precondition check failed.");
   });
 });
 
@@ -646,13 +748,141 @@ describe("output schemas declare what the tools return (H8)", () => {
     });
   });
 
-  it("lets raw: true's untouched resource validate, full or empty", async () => {
+  it("lets raw: true's untouched slides validate, full or empty", async () => {
     const tool = (await connection().listTools(context())).find((entry) => entry.name === "get_presentation")!;
     for (const body of [PRESENTATION, EMPTY]) {
       route = () => ({ body });
       const result = await call(connection(), "get_presentation", { presentationId: body.presentationId, raw: true });
-      expect(result).toEqual(body);
+      expect(result.slides).toEqual("slides" in body ? body.slides : []);
       expect(validates(tool.outputSchema!, result, "decks.get_presentation")).toBeUndefined();
     }
+  });
+});
+
+describe("every result is deliverable, in a program and directly", () => {
+  /**
+   * A program's host call carries at most 256 KiB of serialized JSON
+   * (`MAX_HOST_RESULT_BYTES`); a direct call stashes more for get_result, up
+   * to 8 MiB by default. A page under the first is under both.
+   */
+  const BRIDGE_BYTES = 256 * 1024;
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+
+  /**
+   * The worst text for serialized size: a control character JSON escapes to
+   * six bytes, and a four-byte emoji, alternating.
+   */
+  const heavy = (chars: number) => "\u0001😀".repeat(Math.ceil(chars / 3)).slice(0, chars);
+
+  /**
+   * A deck that overflows every bound connecta sets, while staying under the
+   * 16 MiB the connector reads from Google: long escape-heavy text in every
+   * element, alt text, notes, title, and a layout list of thousands.
+   */
+  function worstDeck(slideCount: number, elementsPerSlide: number, chars: number, altChars = 2_000) {
+    return {
+      presentationId: "big1",
+      title: heavy(100_000),
+      revisionId: "rev-1",
+      layouts: Array.from({ length: 2_000 }, (_, index) => ({
+        objectId: `layout_${index}`,
+        layoutProperties: { name: "CUSTOM", displayName: heavy(200) },
+      })),
+      slides: Array.from({ length: slideCount }, (_, slide) => ({
+        objectId: `s${slide}`,
+        slideProperties: {
+          notesPage: {
+            notesProperties: { speakerNotesObjectId: `n${slide}` },
+            pageElements: [{ objectId: `n${slide}`, shape: { text: textContent(heavy(chars)) } }],
+          },
+        },
+        pageElements: Array.from({ length: elementsPerSlide }, (_, element) => ({
+          objectId: `s${slide}_e${element}`,
+          transform: at(element, element),
+          ...(altChars > 0 ? { title: heavy(altChars) } : {}),
+          shape: { shapeType: "TEXT_BOX", placeholder: { type: element === 0 ? "TITLE" : "BODY" }, text: textContent(heavy(chars)) },
+        })),
+      })),
+    };
+  }
+
+  /** Every page from the first cursor to the last, each measured. */
+  async function walk(connector: Connector, args: Record<string, unknown>) {
+    const pages: any[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await call(connector, "get_presentation", { presentationId: "big1", ...args, ...(cursor ? { cursor } : {}) });
+      pages.push(page);
+      cursor = page.page.nextCursor ?? undefined;
+    } while (cursor && pages.length < 1_000);
+    return pages;
+  }
+
+  it.each([
+    ["defaults", {}],
+    ["the explicit maxima", { limit: 100, maxCharsPerSlide: 50_000 }],
+    ["raw: true", { raw: true }],
+  ])("keeps every page of a worst-case deck under the bridge cap at %s, and reaches every slide", async (_label, args) => {
+    const deck = worstDeck(30, 4, 8_000);
+    route = () => ({ body: deck });
+    const connector = connection();
+    const pages = await walk(connector, args);
+    for (const page of pages) expect(bytes(page)).toBeLessThan(BRIDGE_BYTES);
+    // The byte budget, not the slide limit, is what ended these pages: 30
+    // slides fit two default pages, or one at limit 100.
+    expect(pages.length).toBeGreaterThan(2);
+    // Paging always moves forward: each slide appears once, in order.
+    expect(pages.flatMap((page) => page.slides.map((slide: any) => slide.objectId))).toEqual(
+      deck.slides.map((slide) => slide.objectId),
+    );
+  });
+
+  it("cuts a slide too large for one result to fit, and says the result's size was why", async () => {
+    route = () => ({ body: worstDeck(2, 4, 60_000) });
+    const result = await call(connection(), "get_presentation", { presentationId: "big1", maxCharsPerSlide: 50_000 });
+    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
+    const [first] = result.slides;
+    expect(first.truncated).toBe(true);
+    expect(JSON.stringify(first)).toContain("this slide is larger than one result can carry");
+    // The next slide starts the next page whole rather than being cut too.
+    expect(result.slides).toHaveLength(1);
+    expect(result.page.nextCursor).toBeTruthy();
+    // The layout list is bounded and counts what it left out.
+    expect(result.layoutsNotShown).toBeGreaterThan(0);
+    expect(result.layouts.length + result.layoutsNotShown).toBe(2_000);
+  });
+
+  it("leaves out and counts the last elements of a slide too crowded to fit even without text", async () => {
+    route = () => ({ body: worstDeck(1, 6_000, 10, 0) });
+    const result = await call(connection(), "get_presentation", { presentationId: "big1" });
+    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
+    const [slide] = result.slides;
+    expect(slide.elementsNotShown).toBeGreaterThan(0);
+    expect(slide.elements.length + slide.elementsNotShown).toBe(6_000);
+    expect(slide.elements[0].objectId).toBe("s0_e0");
+  });
+
+  it("names a raw slide no result can carry instead of returning it", async () => {
+    route = () => ({ body: worstDeck(2, 4, 60_000) });
+    const result = await call(connection(), "get_presentation", { presentationId: "big1", raw: true });
+    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
+    expect(result.slides).toEqual([
+      { objectId: "s0", rawNotShown: expect.stringMatching(/^This slide's raw JSON is \d+ bytes, more than one result can carry/) },
+    ]);
+    expect(result.page.nextCursor).toBeTruthy();
+  });
+
+  it("bounds every write result: replace_all_text echoes finds, not their full text", async () => {
+    const replacements = Array.from({ length: 50 }, (_, index) => ({ find: `${index}x${heavy(998)}`, replace: "" }));
+    route = () => ({ body: { presentationId: "deck1", replies: replacements.map(() => ({ replaceAllText: { occurrencesChanged: 1 } })) } });
+    const result = await call(connection(), "replace_all_text", { presentationId: "deck1", replacements });
+    expect(bytes(result)).toBeLessThan(32 * 1024);
+    const echoed: string = result.replacements[0].find;
+    expect(echoed.startsWith("0x\u0001😀")).toBe(true);
+    expect(echoed.endsWith("…")).toBe(true);
+    expect(echoed.length).toBeLessThanOrEqual(101);
+    // Never half an emoji: the cut falls between code points.
+    expect(echoed).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    expect(result.occurrencesChanged).toBe(50);
   });
 });

@@ -293,20 +293,27 @@ caller.
   plus `SLIDES_SCOPES` and `SLIDES_API_BASE_URL`. It requests exactly
   `https://www.googleapis.com/auth/presentations`. Six hand-written tools:
   `get_presentation` (title, page size, `revisionId`, layouts, and each
-  slide's text in reading order — top to bottom, then left to right, groups
-  opened — with table cells, alt text, linked charts' spreadsheet ids, and speaker notes, under a field mask
-  that leaves styles behind; cursor-paged by slide and capped per slide with
-  explicit markers; `raw: true` for the untouched deck) and
-  `get_slide_thumbnail` (the short-lived link and size, never the image) are
-  reads; `create_presentation` and `create_slide` (a predefined or the deck's
-  own layout, at an index or the end) are additive writes; `replace_all_text`
-  (literal, case-sensitive by default, several replacements in one atomic
-  batch, optionally at a required revision) and `batch_update_presentation`
-  (1 to 100 raw Slides requests, each refused locally unless it is one known
-  Request kind, always at a required `revisionId`) are destructive.
-  Slides cannot list decks, and the guide says that is Drive's job. A 404 is
-  reported as unknown-or-not-visible, because a deck is a Drive file. Setup is
-  documented on `slides()`.
+  slide's text in reading order — top to bottom, then left to right, rotated
+  and nested groups composed — with table cells, alt text, linked charts'
+  spreadsheet ids, speaker notes, and empty placeholders' ids for filling a
+  new slide, under a field mask that leaves styles behind; cursor-paged by
+  slide and capped per slide with explicit markers; `raw: true` for this
+  page's slides as Slides sends them) and `get_slide_thumbnail` (the
+  short-lived link and size, never the image) are reads; `create_presentation`
+  and `create_slide` (a predefined or the deck's own layout, at an index or
+  the end) are additive writes; `replace_all_text` (literal, case-sensitive by
+  default, several replacements in one atomic batch, optionally at a required
+  revision) and `batch_update_presentation` (1 to 100 raw Slides requests,
+  each refused locally unless it is one known Request kind, always at a
+  required `revisionId`) are destructive. A write refused because the deck
+  changed since its revision is a `conflict`. Every page of
+  `get_presentation` also ends before 192 KiB serialized, under the 256 KiB a
+  program's host call carries, so no page is undeliverable: a slide too large
+  for one result is cut to fit with markers saying so, and a raw slide too
+  large for any is named rather than returned. Slides cannot list decks, and
+  the guide says that is Drive's job. A 404 is reported as
+  unknown-or-not-visible, because a deck is a Drive file. Setup is documented
+  on `slides()`.
 - **Google Discovery drift checks.** `npm run providers:check -- --provider
   gmail` reads Gmail's credential-free Discovery document and digests the nine
   methods the tools call like any other touched endpoint, and also reports a
