@@ -4,13 +4,18 @@ import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
 import { createConnecta } from "../src/index.js";
 import { ccb } from "../src/providers/ccb.js";
+import { breeze } from "../src/providers/breeze.js";
+import { basecamp } from "../src/providers/basecamp.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { linear } from "../src/providers/linear.js";
 import { mixpanel } from "../src/providers/mixpanel.js";
 import { notion } from "../src/providers/notion.js";
+import { planningCenter } from "../src/providers/planning-center.js";
+import { overflow } from "../src/providers/overflow.js";
 import { revenuecat } from "../src/providers/revenuecat.js";
 import { stripe } from "../src/providers/stripe.js";
 import { vercel } from "../src/providers/vercel.js";
+import { tithely } from "../src/providers/tithely.js";
 import { connectorGuideSummary } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
@@ -160,7 +165,80 @@ const providers: ProviderCase[] = [
       ccb("ccb_sandbox", { purpose: "Rehearsing group changes", environment: "sandbox", mode: "identity", access: "read-write", clientId: "sandbox-client", clientSecret: "sandbox-secret" }),
     ]),
   },
+  {
+    name: "planning-center",
+    ids: ["pco_downtown", "pco_northside"] as const,
+    toolName: "search_people",
+    secondToolName: "list_plans",
+    descriptionMarks: ["Downtown campus staff", "Northside campus staff"],
+    admissionIds: ["pco_downtown", "pco_northside"],
+    meteredId: "pco_downtown",
+    staticCatalog: true,
+    factory: (storage: KVStorage) => deployment(storage, [
+      planningCenter("pco_downtown", { purpose: "Downtown campus staff" }),
+      planningCenter("pco_northside", { purpose: "Northside campus staff", title: "Northside PCO", callAdmission: budget }),
+    ], true),
+  },
+  {
+    name: "overflow",
+    ids: ["overflow_church", "overflow_sandbox"] as const,
+    toolName: "list_contributions",
+    secondToolName: "list_deposits",
+    descriptionMarks: ["production: Grace Church giving", "staging: Integration rehearsal"],
+    admissionIds: ["overflow_church", "overflow_sandbox"],
+    meteredId: "overflow_church",
+    staticCatalog: true,
+    factory: (storage: KVStorage) => deployment(storage, [
+      overflow("overflow_church", { environment: "production", purpose: "Grace Church giving and deposits" }),
+      overflow("overflow_sandbox", { environment: "staging", purpose: "Integration rehearsal" }),
+    ], true),
+  },
+  {
+    name: "tithely",
+    ids: ["tithely_grace", "tithely_rehearsal"] as const,
+    toolName: "list_charges",
+    secondToolName: "list_organizations",
+    descriptionMarks: ["live donors and real money — Grace Church giving", "test environment, no real money) — Rehearsing giving reports"],
+    // Tithe.ly publishes no rate limit, so only an operator-supplied budget meters.
+    admissionIds: ["tithely_grace"],
+    meteredId: "tithely_grace",
+    staticCatalog: true,
+    factory: (storage: KVStorage) => deployment(storage, [
+      tithely("tithely_grace", { purpose: "Grace Church giving", environment: "live", callAdmission: budget }),
+      tithely("tithely_rehearsal", { purpose: "Rehearsing giving reports", environment: "test" }),
+    ], true),
+  },
+  {
+    name: "breeze",
+    ids: ["breeze_main", "breeze_plant"] as const,
+    toolName: "list_people",
+    secondToolName: "list_contributions",
+    descriptionMarks: ["gracechurch.breezechms.com: Main campus pastoral care", "graceplant.breezechms.com: Church plant giving"],
+    admissionIds: ["breeze_main"],
+    meteredId: "breeze_main",
+    staticCatalog: true,
+    factory: (storage: KVStorage) => deployment(storage, [
+      breeze("breeze_main", { subdomain: "gracechurch", purpose: "Main campus pastoral care", callAdmission: budget }),
+      breeze("breeze_plant", { subdomain: "graceplant", purpose: "Church plant giving" }),
+    ], true),
+  },
+  {
+    name: "basecamp",
+    ids: ["basecamp_studio", "basecamp_client"] as const,
+    toolName: "list_projects",
+    secondToolName: "get_my_assignments",
+    descriptionMarks: ["The studio's own projects", "The client-shared account"],
+    admissionIds: ["basecamp_studio"],
+    meteredId: "basecamp_studio",
+    staticCatalog: false,
+    factory: (storage: KVStorage) => deployment(storage, [
+      basecamp("basecamp_studio", { purpose: "The studio's own projects", clientMetadataUrl: "https://connecta.example/oauth/basecamp-client", callAdmission: budget }),
+      basecamp("basecamp_client", { purpose: "The client-shared account", clientMetadataUrl: "https://connecta.example/oauth/basecamp-client", authScope: "personal" }),
+    ]),
+  },
 ];
+
+const byName = (name: string) => providers.find((provider) => provider.name === name)!;
 
 describe.each(providers)("$name() inside a real deployment", ({ factory, ids, toolName, secondToolName, descriptionMarks, admissionIds, meteredId, staticCatalog }) => {
   const realFetch = globalThis.fetch;
@@ -255,7 +333,7 @@ describe("provider-specific registry behavior", () => {
   });
 
   it("keeps Linear access-mode titles and descriptions byte-exact", () => {
-    const { registry } = providers[1]!.factory(memoryStorage());
+    const { registry } = byName("linear").factory(memoryStorage());
     expect(registry.getConnector("linear_product")?.title).toBe("Linear");
     expect(registry.getConnector("linear_product")?.description).toBe("Linear issue tracking and project planning — Product delivery planning");
     expect(registry.getConnector("linear_reporting")?.title).toBe("Linear (read-only)");
@@ -263,7 +341,7 @@ describe("provider-specific registry behavior", () => {
   });
 
   it("names each RevenueCat project in a distinct guide summary", () => {
-    const { registry } = providers[3]!.factory(memoryStorage());
+    const { registry } = byName("revenuecat").factory(memoryStorage());
     const ios = registry.getConnector("bepresent_ios")!;
     const scroll = registry.getConnector("biblescroll")!;
     expect(ios.title).toBe(scroll.title);
@@ -272,15 +350,27 @@ describe("provider-specific registry behavior", () => {
     expect(connectorGuideSummary(ios)).not.toEqual(connectorGuideSummary(scroll));
   });
 
+  it("names each Basecamp account in a distinct guide summary", () => {
+    const { registry } = providers.find((provider) => provider.name === "basecamp")!.factory(memoryStorage());
+    const studio = registry.getConnector("basecamp_studio")!;
+    const client = registry.getConnector("basecamp_client")!;
+    expect(studio.title).toBe(client.title);
+    expect(studio.authScope).toBeUndefined();
+    expect(client.authScope).toBe("personal");
+    expect(connectorGuideSummary(studio)).toContain("The studio's own projects");
+    expect(connectorGuideSummary(client)).toContain("The client-shared account");
+    expect(connectorGuideSummary(studio)).not.toEqual(connectorGuideSummary(client));
+  });
+
   it("serves Cloudflare's complete static catalog", async () => {
-    const { registry } = providers[4]!.factory(memoryStorage());
+    const { registry } = byName("cloudflare").factory(memoryStorage());
     const tools = await registry.getTools("cloudflare_prod", BASE_URL);
     expect(tools).toHaveLength(51);
     expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true)).toHaveLength(27);
   });
 
   it("serves equal complete Notion catalogs and refuses unknown addresses", async () => {
-    const { registry } = providers[5]!.factory(memoryStorage());
+    const { registry } = byName("notion").factory(memoryStorage());
     const eng = await registry.getTools("notion_eng", BASE_URL);
     const ops = await registry.getTools("notion_ops", BASE_URL);
     expect(eng.map((tool) => tool.name)).toEqual(ops.map((tool) => tool.name));
@@ -290,7 +380,7 @@ describe("provider-specific registry behavior", () => {
   });
 
   it("carries Cloudflare page bounds in search and compact describe", async () => {
-    const { registry } = providers[4]!.factory(memoryStorage());
+    const { registry } = byName("cloudflare").factory(memoryStorage());
     const catalog = new CatalogService(registry, BASE_URL);
     const search = await catalog.search({ connector: "cloudflare_prod", query: "list zones", includeSchemas: "compact" });
     expect(search.entries.find((entry) => entry.tool.name === "list_zones")?.tool.inputSchema).toContain("perPage?: integer /* >= 5; <= 50 */");
@@ -299,7 +389,7 @@ describe("provider-specific registry behavior", () => {
   });
 
   it("scopes Cloudflare defaults to each account guide", () => {
-    const { registry } = providers[4]!.factory(memoryStorage());
+    const { registry } = byName("cloudflare").factory(memoryStorage());
     const guide = (id: string) => (registry.getConnector(id)!.usageGuide as { content: string }).content;
     expect(guide("cloudflare_prod")).toContain("zone-prod");
     expect(guide("cloudflare_prod")).toContain("acct-prod");
@@ -308,9 +398,47 @@ describe("provider-specific registry behavior", () => {
     expect(guide("cloudflare_staging")).not.toContain("acct-prod");
   });
 
+  it("keeps Planning Center credentials, budgets, and guides separate", async () => {
+    const storage = memoryStorage();
+    const { registry } = byName("planning-center").factory(storage);
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.setAll("pco_downtown", { applicationId: "app_downtown", secret: "secret_downtown" }, "operator@example.com");
+    expect(await registry.contextFor("pco_downtown", BASE_URL).credential?.get("applicationId")).toBe("app_downtown");
+    expect(await registry.contextFor("pco_northside", BASE_URL).credential?.get("applicationId")).toBeNull();
+    const downtown = registry.getConnector("pco_downtown")!;
+    const northside = registry.getConnector("pco_northside")!;
+    expect(downtown.callAdmission?.rules[0]?.budget).toEqual({ kind: "rolling-window", maxCalls: 100, windowMs: 20_000 });
+    expect(northside.callAdmission).toEqual(budget);
+    expect(northside.title).toBe("Northside PCO");
+    const guide = (connector: Connector) => (connector.usageGuide as { content: string }).content;
+    expect(guide(downtown)).toContain("Downtown campus staff");
+    expect(guide(downtown)).not.toContain("Northside campus staff");
+    expect(await registry.getTools("pco_downtown", BASE_URL)).toHaveLength(
+      (await registry.getTools("pco_northside", BASE_URL)).length,
+    );
+  });
+
+  it("keeps Overflow environments, credentials, and guides separate", async () => {
+    const storage = memoryStorage();
+    const { registry } = providers.find((provider) => provider.name === "overflow")!.factory(storage);
+    const church = registry.getConnector("overflow_church")!;
+    const sandbox = registry.getConnector("overflow_sandbox")!;
+    expect(church.title).toBe("Overflow (production)");
+    expect(sandbox.title).toBe("Overflow (staging)");
+    expect(connectorGuideSummary(church)).toContain("production");
+    expect(connectorGuideSummary(sandbox)).toContain("staging");
+    const tools = await registry.getTools("overflow_church", BASE_URL);
+    expect(tools).toHaveLength(18);
+    expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true)).toHaveLength(17);
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.setAll("overflow_church", { clientId: "church-client", apiKey: "church-key" }, "operator@example.com");
+    expect(await registry.contextFor("overflow_church", BASE_URL).credential?.get("apiKey")).toBe("church-key");
+    expect(await registry.contextFor("overflow_sandbox", BASE_URL).credential?.getAll()).toBeNull();
+  });
+
   it("keeps Notion credentials and guides separate", async () => {
     const storage = memoryStorage();
-    const { registry } = providers[5]!.factory(storage);
+    const { registry } = byName("notion").factory(storage);
     const vault = new CredentialVault(storage, CREDENTIAL_KEY);
     await vault.set("notion_eng", "secret_eng_token", "operator@example.com");
     expect(await registry.contextFor("notion_eng", BASE_URL).credential?.get()).toBe("secret_eng_token");

@@ -12,9 +12,20 @@
 // - **Published MCP references.** When a provider publishes a tool reference,
 //   compare its documented inventory and public connection metadata with the
 //   maintained wrapper without needing account credentials. This catches an
-//   unclassified tool before a live workspace is available. Remote MCP schemas
+//   unclassified tool before a live workspace is available. A provider that
+//   publishes neither a setup page nor an inventory (Basecamp) is checked
+//   against the OAuth discovery metadata it serves instead. Remote MCP schemas
 //   are never vendored here: the provider's live `tools/list` response remains
 //   the runtime authority, and tests pin that passthrough.
+//
+// Planning Center is the one touched-endpoint provider with more than one
+// document. It publishes an OpenAPI document per product *and dated API
+// version*, and connecta pins one version per product, so its manifest names a
+// specification per product and the check asks one question the others do
+// not: has Planning Center published a newer version of a pinned product? That
+// answer comes from the credential-free documentation graph
+// (`/<app>/v2/documentation`), and like a deprecation it is reported as a
+// transition, so a reviewed publication stops being news once recorded.
 //
 // Published specifications are drift evidence and nothing else. Nothing here
 // generates a tool, and no runtime module reads a spec — schema ingestion stays
@@ -31,7 +42,27 @@ const repositoryRoot = resolvePath(
 const defaultManifestDirectory = resolvePath(repositoryRoot, "scripts/drift");
 
 /** Hand-written HTTP providers: a published specification, read as evidence. */
-const SPEC_PROVIDERS = ["cloudflare", "notion", "vercel", "ccb"];
+/**
+ * Hand-written HTTP providers: a published specification, read as evidence.
+ *
+ * Overflow publishes its OpenAPI document only on staging
+ * (server.stage.overflow.co/api/docs/openapi.json); production's equivalent
+ * answers 404. The check therefore reads staging's contract and relies on
+ * Overflow documenting one v3 API at two base URLs. Its manifest records all
+ * thirty-eight operations, because the maintained guide routes agents to
+ * every one of them, named tool or hatch.
+ */
+const SPEC_PROVIDERS = [
+  "cloudflare",
+  "notion",
+  "vercel",
+  "planning-center",
+  "overflow",
+  "tithely",
+  "ccb",
+];
+/** Providers whose manifest names one specification per product and version. */
+const VERSIONED_SPEC_PROVIDERS = new Set(["planning-center"]);
 /** Hosted MCP providers with official public documentation we can read. */
 const DOCS_PROVIDERS = [
   "cloudflare",
@@ -41,6 +72,7 @@ const DOCS_PROVIDERS = [
   "notion",
   "revenuecat",
   "vercel",
+  "basecamp",
 ];
 
 const DOCUMENTED_MCP = {
@@ -102,6 +134,20 @@ const DOCUMENTED_MCP = {
       format: "headings",
     },
   },
+  basecamp: {
+    // 37signals publishes no setup page and no tool inventory for this server:
+    // basecamp.com/agents, where its own 401 points, covers the CLI and SDKs
+    // and never names it. What the server does publish is its OAuth
+    // discovery, and `basecamp()` depends on two facts there — that the
+    // protected resource is the endpoint connecta calls, and that the
+    // authorization server still accepts a Client ID Metadata Document, which
+    // the constructor requires because Basecamp restricts dynamic registration
+    // for HTTPS callbacks. So the setup reference is that metadata, read as
+    // JSON rather than prose, and catalog drift stays runtime-only.
+    setup: "https://mcp.basecamp.com/.well-known/oauth-protected-resource/mcp",
+    setupFormat: "oauth-discovery",
+    inventory: undefined,
+  },
 };
 
 /**
@@ -133,6 +179,7 @@ function usage(message) {
       "  --docs                   only compare public MCP docs and connection metadata",
       "  --provider <id>          limit to one provider (repeatable)",
       "  --spec <id>=<file|url>   read a provider's published spec from here",
+      "                           (planning-center: --spec planning-center/<app>=…)",
       "  --tool-reference <id>=<file|url>",
       "                           read its published MCP tool reference here",
       "  --setup-reference <id>=<file|url>",
@@ -214,9 +261,19 @@ function parseArguments(argv) {
     ...(options.specs ? SPEC_PROVIDERS : []),
     ...(options.docs ? DOCS_PROVIDERS : []),
   ]);
+  for (const key of options.specSources.keys()) {
+    const [provider, app] = key.split("/");
+    if (VERSIONED_SPEC_PROVIDERS.has(provider) !== (app !== undefined)) {
+      usage(
+        VERSIONED_SPEC_PROVIDERS.has(provider)
+          ? `${provider} publishes one specification per product; name it --spec ${provider}/<app>=<file|url>`
+          : `${provider} publishes one specification; name it --spec ${provider}=<file|url>`,
+      );
+    }
+  }
   const requestedProviders = [
     ...options.providers,
-    ...options.specSources.keys(),
+    ...[...options.specSources.keys()].map((key) => key.split("/")[0]),
     ...options.toolReferenceSources.keys(),
     ...options.setupReferenceSources.keys(),
   ];
@@ -267,34 +324,120 @@ async function loadManifest(provider, options) {
   }
 }
 
+/**
+ * Assemble one document for a provider that publishes no combined spec.
+ *
+ * Tithe.ly's reference is a ReadMe site: each operation page, served as `.md`,
+ * embeds a one-operation OpenAPI 3.1 snippet under "# OpenAPI definition". The
+ * manifest lists those pages, and their `paths` merge here into the shape
+ * every other provider's document already has, so the comparison below needs
+ * no special case. A snippet that uses `$ref` is refused rather than digested:
+ * its components would not survive the merge, and a reference digested as an
+ * unresolved pointer would go blind to the change it exists to catch.
+ */
+async function loadOperationPages(provider, base, pages) {
+  if (pages.length === 0) {
+    throw new UnavailableError(`${provider}'s manifest lists no reference pages`);
+  }
+  const paths = {};
+  const versions = new Set();
+  for (const page of pages) {
+    const source = `${base}${page}.md`;
+    const markdown = await loadPublished(provider, "API reference page", source);
+    const fence = markdown.match(/# OpenAPI definition\s+```json\n([\s\S]*?)\n```/);
+    if (!fence) {
+      throw new UnavailableError(
+        `${provider}'s reference page ${source} no longer embeds an OpenAPI definition`,
+      );
+    }
+    let snippet;
+    try {
+      snippet = JSON.parse(fence[1]);
+    } catch (error) {
+      throw new UnavailableError(
+        `${provider}'s reference page ${source} embeds malformed OpenAPI JSON: ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
+    if (JSON.stringify(snippet.paths ?? {}).includes('"$ref"')) {
+      throw new UnavailableError(
+        `${provider}'s reference page ${source} now uses $ref; the page assembler cannot resolve references across snippets`,
+      );
+    }
+    versions.add(String(snippet.info?.version ?? "unknown"));
+    for (const [path, item] of Object.entries(snippet.paths ?? {})) {
+      for (const [method, operation] of Object.entries(item ?? {})) {
+        paths[path] ??= {};
+        if (paths[path][method]) {
+          throw new UnavailableError(
+            `${provider}'s reference documents ${method.toUpperCase()} ${path} on more than one page`,
+          );
+        }
+        paths[path][method] = operation;
+      }
+    }
+  }
+  return {
+    openapi: "3.1.0",
+    info: { version: [...versions].sort().join("+") },
+    paths,
+  };
+}
+
 async function loadSpecification(provider, manifest, options) {
   const source = options.specSources.get(provider) ?? manifest.specification.url;
+  // A provider documented page by page reads a page base, URL or directory; a
+  // `.json` override is a combined document like any other provider's.
+  if (
+    manifest.specification.format === "readme-operation-pages" &&
+    !source.endsWith(".json")
+  ) {
+    const base =
+      /^https?:\/\//.test(source) || source.endsWith("/") ? source : `${source}/`;
+    return {
+      source,
+      document: await loadOperationPages(
+        provider,
+        base,
+        manifest.specification.pages ?? [],
+      ),
+    };
+  }
+  return {
+    source,
+    document: await loadJson(`${provider}'s published specification`, source),
+  };
+}
+
+async function loadJson(label, source) {
   if (/^https?:\/\//.test(source)) {
     let response;
     try {
-      response = await fetch(source);
+      // Planning Center refuses a request without a descriptive User-Agent,
+      // and naming the caller costs every other provider nothing.
+      response = await fetch(source, {
+        headers: {
+          "User-Agent": "connecta-drift-check (+https://github.com/zackbart/connecta)",
+        },
+      });
     } catch (error) {
       throw new UnavailableError(
-        `could not fetch ${provider}'s published specification from ${source}: ` +
+        `could not fetch ${label} from ${source}: ` +
           (error instanceof Error ? error.message : String(error)),
       );
     }
     if (!response.ok) {
       throw new UnavailableError(
-        `could not fetch ${provider}'s published specification from ${source}: ` +
-          `HTTP ${response.status}`,
+        `could not fetch ${label} from ${source}: HTTP ${response.status}`,
       );
     }
-    return { source, document: await response.json() };
+    return await response.json();
   }
   try {
-    const document = JSON.parse(
-      await readFile(resolvePath(source), "utf8"),
-    );
-    return { source, document };
+    return JSON.parse(await readFile(resolvePath(source), "utf8"));
   } catch (error) {
     throw new UnavailableError(
-      `could not read ${provider}'s published specification from ${source}: ` +
+      `could not read ${label} from ${source}: ` +
         (error instanceof Error ? error.message : String(error)),
     );
   }
@@ -400,15 +543,29 @@ function operationFor(document, endpoint) {
 
 function checkSpecProvider(provider, manifest, specification) {
   const revision = specification.document.info?.version ?? "unknown";
+  const { findings, recorded } = checkEndpoints(manifest.endpoints, () => ({
+    document: specification.document,
+    revision,
+  }));
+  return { provider, revision, findings, recorded };
+}
+
+/**
+ * The touched-endpoint comparison itself. `documentFor` names the document,
+ * the path within it, and the revision each row is checked against — one for
+ * every row of a single-document provider, one per product for Planning Center.
+ */
+function checkEndpoints(endpoints, documentFor) {
   const findings = [];
   const recorded = [];
-  for (const endpoint of manifest.endpoints) {
+  for (const endpoint of endpoints) {
     const row = {
       method: endpoint.method,
       path: endpoint.path,
       specRevision: endpoint.specRevision,
     };
-    const { missing, operation } = operationFor(specification.document, endpoint);
+    const { document, path = endpoint.path, revision } = documentFor(endpoint);
+    const { missing, operation } = operationFor(document, { ...endpoint, path });
     if (missing) {
       findings.push({
         ...row,
@@ -424,7 +581,7 @@ function checkSpecProvider(provider, manifest, specification) {
       recorded.push(endpoint);
       continue;
     }
-    const digest = contractDigest(specification.document, operation);
+    const digest = contractDigest(document, operation);
     // The finding is the *transition*, not the state. A deprecation a
     // maintainer has already read and recorded is not news on every subsequent
     // release, and a check that can never reach its own "no drift" state is a
@@ -454,11 +611,112 @@ function checkSpecProvider(provider, manifest, specification) {
       contract: digest,
     });
   }
-  return { provider, revision, findings, recorded };
+  return { findings, recorded };
 }
 
-async function recordManifest(path, manifest, recorded) {
-  const next = { ...manifest, endpoints: recorded };
+/** `/people/v2/people/{person_id}` → `people`; the version segment is fixed. */
+function productOf(path) {
+  return /^\/([a-z-]+)\/v2(?:\/|$)/.exec(path)?.[1];
+}
+
+/** Non-beta versions a Planning Center documentation graph lists, newest first. */
+function publishedVersions(index) {
+  return (index?.data?.relationships?.versions?.data ?? [])
+    .filter(
+      (version) =>
+        typeof version?.id === "string" && version.attributes?.beta !== true,
+    )
+    .map((version) => version.id)
+    .sort()
+    .reverse();
+}
+
+/**
+ * Planning Center: every pinned product is checked for a newer published
+ * version, and every touched endpoint against the OpenAPI document of the
+ * version its product is pinned to. Only products a named tool touches are
+ * downloaded; the rest are version-checked alone, because the hatches send
+ * their pins too.
+ */
+async function checkVersionedProvider(provider, manifest, options) {
+  const findings = [];
+  const specifications = {};
+  const documents = new Map();
+  const touched = new Set(
+    manifest.endpoints.map((endpoint) => productOf(endpoint.path)),
+  );
+  for (const [app, specification] of Object.entries(manifest.specifications)) {
+    const index = await loadJson(
+      `${provider}'s ${app} documentation graph`,
+      specification.documentation,
+    );
+    const versions = publishedVersions(index);
+    const latest = versions[0];
+    const reviewed = specification.latestPublished ?? specification.version;
+    if (!versions.includes(specification.version)) {
+      findings.push({
+        app,
+        kind: "version-gone",
+        detail: `the documentation graph no longer lists pinned version ${specification.version}`,
+      });
+    }
+    if (latest !== undefined && latest !== reviewed) {
+      findings.push({
+        app,
+        kind: "version-published",
+        detail: `${latest} is published (pinned ${specification.version}, last reviewed ${reviewed}); read its changes before moving the pin`,
+      });
+    }
+    specifications[app] = {
+      ...specification,
+      ...(latest === undefined ? {} : { latestPublished: latest }),
+    };
+    if (!touched.has(app)) continue;
+    const source =
+      options.specSources.get(`${provider}/${app}`) ?? specification.url;
+    const document = await loadJson(
+      `${provider}'s ${app} specification`,
+      source,
+    );
+    if (document.info?.version !== specification.version) {
+      findings.push({
+        app,
+        kind: "version-mismatch",
+        detail: `the ${app} specification describes ${document.info?.version ?? "no version"}, not pinned ${specification.version}`,
+      });
+    }
+    documents.set(app, document);
+  }
+  const unknown = [...touched].filter((app) => !documents.has(app));
+  if (unknown.length > 0) {
+    throw new UnavailableError(
+      `${provider}'s manifest touches endpoints in ${unknown.join(", ")} without naming a specification for them`,
+    );
+  }
+  const endpoints = checkEndpoints(manifest.endpoints, (endpoint) => {
+    const app = productOf(endpoint.path);
+    return {
+      document: documents.get(app),
+      // The document's server is `/<app>/v2`, so its paths start below it.
+      path: endpoint.path.slice(`/${app}/v2`.length),
+      revision: manifest.specifications[app].version,
+    };
+  });
+  return {
+    provider,
+    revision: "per-product pins",
+    findings: [...findings, ...endpoints.findings],
+    recorded: endpoints.recorded,
+    specifications,
+  };
+}
+
+async function recordManifest(path, manifest, recorded, specifications) {
+  const next = {
+    ...manifest,
+    ...(specifications ? { specifications } : {}),
+    endpoints: recorded,
+  };
   await writeFile(path, `${JSON.stringify(next, null, 2)}\n`);
 }
 
@@ -489,7 +747,7 @@ async function loadPublished(provider, label, source) {
 
 async function loadDocumentedProviders() {
   try {
-    const [cloudflare, linear, stripe, mixpanel, notion, revenuecat, vercel] = await Promise.all([
+    const [cloudflare, linear, stripe, mixpanel, notion, revenuecat, vercel, basecamp] = await Promise.all([
       import("../src/providers/cloudflare.ts"),
       import("../src/providers/linear.ts"),
       import("../src/providers/stripe.ts"),
@@ -497,6 +755,7 @@ async function loadDocumentedProviders() {
       import("../src/providers/notion.ts"),
       import("../src/providers/revenuecat.ts"),
       import("../src/providers/vercel.ts"),
+      import("../src/providers/basecamp.ts"),
     ]);
     return {
       cloudflare: {
@@ -526,6 +785,10 @@ async function loadDocumentedProviders() {
       vercel: {
         endpoints: [vercel.VERCEL_MCP_ENDPOINT],
         catalog: vercel.VERCEL_MCP_VETTED_CATALOG,
+      },
+      basecamp: {
+        endpoints: [basecamp.BASECAMP_MCP_ENDPOINT],
+        catalog: basecamp.BASECAMP_VETTED_CATALOG,
       },
     };
   } catch (error) {
@@ -579,6 +842,78 @@ function documentedToolNames(markdown, inventory) {
   return [...new Set(names)].sort();
 }
 
+/** RFC 8414 metadata location for an issuer, path inserted after the host. */
+function authorizationServerMetadataUrl(issuer) {
+  const url = new URL(issuer);
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "");
+  return `${url.origin}/.well-known/oauth-authorization-server${path}`;
+}
+
+function parseMetadata(provider, label, text) {
+  try {
+    const value = JSON.parse(text);
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  } catch {
+    // Reported below without echoing the body.
+  }
+  throw new UnavailableError(`${provider}'s ${label} is not a JSON object`);
+}
+
+/**
+ * A provider with no public setup page: read its OAuth discovery instead.
+ *
+ * Only the facts the wrapper depends on become findings. The scopes the
+ * resource advertises are reported for the reader and never judged, because
+ * the MCP client requests whatever the server's own challenge names.
+ */
+async function checkOAuthDiscovery(provider, runtime, resource) {
+  const findings = [];
+  const advertised = Array.isArray(resource.scopes_supported)
+    ? resource.scopes_supported.filter((scope) => typeof scope === "string")
+    : [];
+  if (!runtime.endpoints.includes(resource.resource)) {
+    findings.push({
+      kind: "mcp-endpoint",
+      detail: `protected-resource metadata names ${String(resource.resource)}, not Connecta's endpoint ${runtime.endpoints.join(", ")}`,
+    });
+  }
+  const issuer = Array.isArray(resource.authorization_servers)
+    ? resource.authorization_servers.find((value) => typeof value === "string")
+    : undefined;
+  if (issuer === undefined) {
+    findings.push({
+      kind: "mcp-auth",
+      detail: "protected-resource metadata names no authorization server",
+    });
+    return { findings, authorizationServer: undefined, advertisedScopes: advertised };
+  }
+  const server = parseMetadata(
+    provider,
+    "authorization-server metadata",
+    await loadPublished(
+      provider,
+      "authorization-server metadata",
+      authorizationServerMetadataUrl(issuer),
+    ),
+  );
+  if (server.client_id_metadata_document_supported !== true) {
+    findings.push({
+      kind: "mcp-auth",
+      detail: `${issuer} no longer advertises Client ID Metadata Document support, which ${provider}() requires`,
+    });
+  }
+  if (
+    !Array.isArray(server.code_challenge_methods_supported) ||
+    !server.code_challenge_methods_supported.includes("S256")
+  ) {
+    findings.push({
+      kind: "mcp-auth",
+      detail: `${issuer} no longer advertises PKCE S256, which the MCP client requires`,
+    });
+  }
+  return { findings, authorizationServer: issuer, advertisedScopes: advertised };
+}
+
 async function checkDocumentedProvider(provider, runtime, options) {
   const defaults = DOCUMENTED_MCP[provider];
   const sources = {
@@ -615,6 +950,30 @@ async function checkDocumentedProvider(provider, runtime, options) {
     documented === undefined
       ? []
       : reviewed.filter((name) => !documentedSet.has(name));
+
+  if (defaults.setupFormat === "oauth-discovery") {
+    const discovery = await checkOAuthDiscovery(
+      provider,
+      runtime,
+      parseMetadata(provider, "protected-resource metadata", setup),
+    );
+    return {
+      provider,
+      toolReference: undefined,
+      setupReference: sources.setup,
+      setupKind: "oauth-discovery",
+      inventoryChecked: false,
+      documentedTools: undefined,
+      added: [],
+      removed: [],
+      intentionallyUnclassified: [],
+      findings: discovery.findings,
+      authorizationServer: discovery.authorizationServer,
+      advertisedScopes: discovery.advertisedScopes,
+      schemaAuthority: "live-tools-list",
+      schemasVendored: false,
+    };
+  }
 
   const findings = [];
   for (const endpoint of runtime.endpoints) {
@@ -661,9 +1020,10 @@ function printSpec(result, recorded) {
     } touched endpoints at revision ${result.revision}`,
   );
   for (const finding of result.findings) {
-    console.log(
-      `  ${finding.kind.padEnd(16)} ${finding.method} ${finding.path} — ${finding.detail}`,
-    );
+    const subject = finding.method
+      ? `${finding.method} ${finding.path}`
+      : finding.app;
+    console.log(`  ${finding.kind.padEnd(16)} ${subject} — ${finding.detail}`);
   }
   if (recorded) console.log(`  recorded     ${recorded}`);
 }
@@ -672,8 +1032,17 @@ function printDocs(result) {
   console.log(
     result.inventoryChecked
       ? `${result.provider} MCP docs: ${result.documentedTools} documented tools`
-      : `${result.provider} MCP docs: setup metadata only; no official tool inventory`,
+      : result.setupKind === "oauth-discovery"
+        ? `${result.provider} MCP: OAuth discovery metadata only; no public setup page or tool inventory`
+        : `${result.provider} MCP docs: setup metadata only; no official tool inventory`,
   );
+  if (result.setupKind === "oauth-discovery") {
+    console.log(
+      `  oauth        ${result.authorizationServer ?? "no authorization server"}; resource scopes ${
+        result.advertisedScopes.length ? result.advertisedScopes.join(" ") : "none advertised"
+      }`,
+    );
+  }
   for (const tool of result.added) {
     console.log(`  unclassified ${tool}`);
   }
@@ -716,9 +1085,21 @@ async function main() {
   if (options.specs) {
     for (const provider of selected(options, SPEC_PROVIDERS)) {
       const { path, manifest } = await loadManifest(provider, options);
-      const specification = await loadSpecification(provider, manifest, options);
-      const result = checkSpecProvider(provider, manifest, specification);
-      if (options.record) await recordManifest(path, manifest, result.recorded);
+      const versioned = VERSIONED_SPEC_PROVIDERS.has(provider);
+      const specification = versioned
+        ? { source: "per-product OpenAPI documents" }
+        : await loadSpecification(provider, manifest, options);
+      const result = versioned
+        ? await checkVersionedProvider(provider, manifest, options)
+        : checkSpecProvider(provider, manifest, specification);
+      if (options.record) {
+        await recordManifest(
+          path,
+          manifest,
+          result.recorded,
+          result.specifications,
+        );
+      }
       report.specs.push({
         provider,
         specification: specification.source,

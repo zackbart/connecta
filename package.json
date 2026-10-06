@@ -67,6 +67,14 @@
       "types": "./dist/auth/cloudflare-access.d.ts",
       "import": "./dist/auth/cloudflare-access.js"
     },
+    "./providers/breeze": {
+      "types": "./dist/providers/breeze.d.ts",
+      "import": "./dist/providers/breeze.js"
+    },
+    "./providers/basecamp": {
+      "types": "./dist/providers/basecamp.d.ts",
+      "import": "./dist/providers/basecamp.js"
+    },
     "./providers/cloudflare": {
       "types": "./dist/providers/cloudflare.d.ts",
       "import": "./dist/providers/cloudflare.js"
@@ -98,6 +106,18 @@
     "./providers/ccb": {
       "types": "./dist/providers/ccb.d.ts",
       "import": "./dist/providers/ccb.js"
+    },
+    "./providers/planning-center": {
+      "types": "./dist/providers/planning-center.d.ts",
+      "import": "./dist/providers/planning-center.js"
+    },
+    "./providers/overflow": {
+      "types": "./dist/providers/overflow.d.ts",
+      "import": "./dist/providers/overflow.js"
+    },
+    "./providers/tithely": {
+      "types": "./dist/providers/tithely.d.ts",
+      "import": "./dist/providers/tithely.js"
     },
     "./ui": {
       "types": "./dist/ui.d.ts",

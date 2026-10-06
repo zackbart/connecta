@@ -17,8 +17,10 @@ export const WORKERS_SUITES = [
   "test/artifacts-markdown.test.ts",
   "test/artifacts-operations.test.ts",
   "test/artifacts-validate.test.ts",
+  "test/basecamp-provider.test.ts",
   "test/bearer.test.ts",
   "test/branding.test.ts",
+  "test/breeze-provider.test.ts",
   "test/call-admission.test.ts",
   "test/call-admission-handoff.test.ts",
   "test/catalog-drift.test.ts",
@@ -86,6 +88,9 @@ export const WORKERS_SUITES = [
   "test/validate.test.ts",
   "test/vercel-provider.test.ts",
   "test/ccb-provider.test.ts",
+  "test/planning-center-provider.test.ts",
+  "test/overflow-provider.test.ts",
+  "test/tithely-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

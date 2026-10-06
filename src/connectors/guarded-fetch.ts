@@ -33,8 +33,15 @@ export interface GuardedRequest {
    * query parameters go in `query`, where they are encoded rather than parsed.
    */
   path: string;
-  /** Search parameters; `undefined` values are dropped, others stringified. */
-  query?: Record<string, string | number | boolean | undefined>;
+  /**
+   * Search parameters; `undefined` values are dropped, others stringified. An
+   * array repeats its key once per element, in order — the spelling of the key
+   * itself (`ids` or `ids[]`) is the provider's convention, not the helper's.
+   */
+  query?: Record<
+    string,
+    string | number | boolean | readonly (string | number | boolean)[] | undefined
+  >;
   /**
    * Per-request headers. `undefined` values are dropped, and a header that
    * collides with an authentication header is refused rather than allowed to
@@ -273,6 +280,11 @@ function confinedUrl(
   }
   for (const [key, value] of Object.entries(request.query ?? {})) {
     if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      url.searchParams.delete(key);
+      for (const item of value) url.searchParams.append(key, String(item));
+      continue;
+    }
     url.searchParams.set(key, String(value));
   }
   return url;

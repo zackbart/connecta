@@ -317,6 +317,16 @@ describe("public package boundary", () => {
     }
   });
 
+  it("keeps the Planning Center provider free of bare-specifier imports", () => {
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "planning-center.ts"),
+      "utf8",
+    );
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
+  });
+
   it("keeps the Vercel provider dependency-free and out of the root entry", () => {
     expect(packageJson.dependencies).not.toHaveProperty("@vercel/sdk");
     expect(packageJson.peerDependencies).not.toHaveProperty("@vercel/sdk");
@@ -339,6 +349,40 @@ describe("public package boundary", () => {
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
+  });
+
+  it("keeps the Overflow provider dependency-free and behind its own subpath", () => {
+    expect(packageJson.exports).toHaveProperty("./providers/overflow");
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "overflow.ts"),
+      "utf8",
+    );
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
+  });
+
+  it("keeps the Tithe.ly provider dependency-free", () => {
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "tithely.ts"),
+      "utf8",
+    );
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
+  });
+
+  // Breeze has no SDK worth wrapping and gets none: its API is keyed GETs
+  // against one church's host, so the provider stays Web-API fetch.
+  it("keeps the Breeze provider dependency-free and out of the root entry", () => {
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "breeze.ts"),
+      "utf8",
+    );
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
+    expect(source).not.toContain("remote-mcp");
   });
 });
 

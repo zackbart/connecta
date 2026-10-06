@@ -133,6 +133,23 @@ describe("guardedFetch() request construction", () => {
     expect(url.searchParams.has("skipped")).toBe(false);
   });
 
+  it("repeats an array-valued query key once per element, in order", async () => {
+    stubFetch(() => json({ ok: true }));
+    await transport()(
+      {
+        method: "GET",
+        path: "/gifts",
+        query: { "status[]": ["PENDING", "CONFIRMED"], ids: ["a&b"], none: [] },
+      },
+      context(),
+      asJson,
+    );
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.getAll("status[]")).toEqual(["PENDING", "CONFIRMED"]);
+    expect(url.searchParams.getAll("ids")).toEqual(["a&b"]);
+    expect(url.searchParams.has("none")).toBe(false);
+  });
+
   it("serializes a JSON body with its content type, and frames a raw body with none", async () => {
     stubFetch(() => json({}));
     const send = transport();

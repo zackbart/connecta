@@ -147,7 +147,7 @@
 //       loud unclassified tool on the approval path, never a quiet re-guess.
 //
 // This suite decides H2, H3, H5, H7, H8, H10, H12, H13, and H14's split for the
-// three `api()` providers. H1, H9, and H11 are mechanical too but are decided in
+// hand-written `api()` providers. H1, H9, and H11 are mechanical too but are decided in
 // each provider's own suite, where the mapped statuses and projections live, and
 // P1–P13 likewise in the proxies' suites: their bar is about the wrapper's
 // identity and classification, not about tool shapes it does not own. H4, H6,
@@ -162,9 +162,13 @@ import {
   compactDiscoverySchema,
 } from "../src/catalog.js";
 import { ccb } from "../src/providers/ccb.js";
+import { breeze } from "../src/providers/breeze.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
+import { planningCenter } from "../src/providers/planning-center.js";
+import { overflow } from "../src/providers/overflow.js";
 import { vercel } from "../src/providers/vercel.js";
+import { tithely } from "../src/providers/tithely.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
@@ -237,6 +241,37 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
     "vercel",
   ],
   ccb: ["list", "get", "ccb"],
+  "planning-center": [
+    "list",
+    "get",
+    "search",
+    "create",
+    "update",
+    "add",
+    // Refreshing a People list is Planning Center's own verb for it.
+    "run",
+    "apply",
+    "schedule",
+    // The escape hatches sort together under Planning Center's own
+    // abbreviation, the one its API headers use (`X-PCO-API-Version`).
+    "pco",
+  ],
+  // Reads only: every Overflow write moves money or edits a donor and crosses
+  // the destructive mutate hatch rather than a named verb.
+  overflow: ["list", "get", "overflow"],
+  // Reads only: every Tithe.ly write moves money or donor payment state and
+  // stays behind the approval-gated mutate hatch.
+  tithely: ["list", "get", "tithely"],
+  breeze: [
+    "list",
+    "get",
+    "add",
+    "update",
+    "assign",
+    "unassign",
+    "record",
+    "breeze",
+  ],
 };
 
 /**
@@ -287,6 +322,10 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   notion: [],
   vercel: [],
   ccb: [],
+  "planning-center": [],
+  overflow: [],
+  tithely: [],
+  breeze: [],
 };
 
 /**
@@ -380,6 +419,25 @@ const providers = await Promise.all([
       clientId: "client",
       clientSecret: "secret",
     }),
+  ),
+  surface(
+    "planning-center",
+    planningCenter("pco", { purpose: "Church staff operations" }),
+  ),
+  surface(
+    "overflow",
+    overflow("ov", {
+      environment: "production",
+      purpose: "Church giving, deposits, and recurring gifts",
+    }),
+  ),
+  surface(
+    "tithely",
+    tithely("tl", { purpose: "Church giving reports", environment: "live" }),
+  ),
+  surface(
+    "breeze",
+    breeze("chms", { subdomain: "gracechurch", purpose: "Pastoral care and giving reports" }),
   ),
 ]);
 

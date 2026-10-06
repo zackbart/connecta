@@ -5,7 +5,11 @@
     "A cap moves only in a change that says why. Raising one to make a check pass is the failure this file exists to catch.",
     "./artifacts is measured where it was introduced (#562): the store, the hand-written HTML tokenizer, the Markdown renderer, and validation, with no Effect and no dependency. The connector, guide, and page routes that follow it spend from the same baseline + 60,000 B allowance.",
     "./auth/access-tokens starts at 4,222 B gzip in #619. Its legacy record verifier and operator lifecycle use no runtime dependency; the cap uses the existing baseline + 60,000 B policy.",
-    "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy."
+    "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy.",
+    "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy.",
+    "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy.",
+    "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+    "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -23,6 +27,14 @@
     "./auth/cloudflare-access": {
       "baselineGzip": 447,
       "maxGzip": 60447
+    },
+    "./providers/breeze": {
+      "baselineGzip": 20637,
+      "maxGzip": 80637
+    },
+    "./providers/basecamp": {
+      "baselineGzip": 131228,
+      "maxGzip": 191228
     },
     "./providers/cloudflare": {
       "baselineGzip": 151186,
@@ -56,6 +68,14 @@
       "baselineGzip": 120479,
       "maxGzip": 180479
     },
+    "./providers/overflow": {
+      "baselineGzip": 20410,
+      "maxGzip": 80410
+    },
+    "./providers/tithely": {
+      "baselineGzip": 18076,
+      "maxGzip": 78076
+    },
     "./ui": {
       "baselineGzip": 68983,
       "maxGzip": 128983
@@ -83,6 +103,10 @@
     "./auth/access-tokens": {
       "baselineGzip": 4222,
       "maxGzip": 64222
+    },
+    "./providers/planning-center": {
+      "baselineGzip": 26970,
+      "maxGzip": 86970
     }
   }
 }
