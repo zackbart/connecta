@@ -251,13 +251,18 @@ caller.
   labeled with its question's title in form order, with any quiz grade and
   grader feedback, answers and feedback over 2,000 characters cut) and
   `get_response` (one whole, with file ids, quiz grades, and feedback text and
-  links), `create_form` (title, Drive file name, optionally unpublished — all
-  Google accepts at creation), `update_form_info` (replaces the title or
-  description), and `batch_update_form` (Google's own batchUpdate requests,
-  each exactly one of its six kinds, all or none, under a required
-  `requiredRevisionId` so an edit never lands on a form someone changed since
-  it was read). `create_form` is additive; the other two writes are
-  destructive. There is no list, delete, share, publish, or watch tool: Drive
+  links; `questionIds` narrows it), `create_form` (title, Drive file name,
+  optionally unpublished — all Google accepts at creation), `update_form_info`
+  (replaces the title or description), and `batch_update_form` (Google's own
+  batchUpdate requests, each exactly one of its six kinds, all or none, under a
+  required `requiredRevisionId` so an edit never lands on a form someone
+  changed since it was read; a stale revision fails `conflict`). Every result
+  stays inside 192 KiB, under `execute_code`'s 256 KiB host-result bridge: a
+  response page ends early and continues by cursor, a large form pages its
+  items under a cursor bound to its revision, a response too large to read
+  whole names the answers it left out in `omittedQuestionIds`, and `raw: true`
+  refuses a form too large for one result. `create_form` is additive; the
+  other two writes are destructive. There is no list, delete, share, publish, or watch tool: Drive
   lists forms, and this connection requests no Drive scope. A form is a Drive
   file, so a 404 is reported as unknown-or-not-visible, never as absence.
   Setup, with exactly `forms.body` and `forms.responses.readonly` for the

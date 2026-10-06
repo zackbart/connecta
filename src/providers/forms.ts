@@ -70,10 +70,26 @@ const LIST_ANSWER_CHARS = 2_000;
 const DESCRIPTION_CHARS = 2_000;
 /** Options shown per choice question; a long dropdown says how many it hid. */
 const MAX_OPTIONS = 100;
+/** An option or grid row is cut here; raw: true reads it whole. */
+const MAX_LABEL_CHARS = 300;
+/** One answer value in get_response, before it would crowd out the rest. */
+const MAX_ANSWER_CHARS = 50_000;
+/** Question ids one get_response call may name. */
+const MAX_QUESTION_IDS = 100;
 /** Requests in one batch_update_form call. */
 const MAX_REQUESTS = 100;
 /** A large form with embedded media metadata, or a page of long answers. */
 const FORMS_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/**
+ * What one result may weigh, serialized. A program in `execute_code` receives
+ * each host result across a bridge that refuses anything over 256 KiB, and a
+ * direct call stashes what passes the inline cap; staying well inside the
+ * first keeps every result deliverable both ways. A page ends early, with a
+ * cursor, rather than grow past it.
+ */
+const RESULT_BUDGET_BYTES = 192 * 1024;
+/** Room a filling page keeps for its own fields and its cursor. */
+const PAGE_RESERVE_BYTES = 4 * 1024;
 
 type JsonRecord = Record<string, any>;
 
@@ -111,6 +127,62 @@ function editUrl(formId: string): string {
   return `https://docs.google.com/forms/d/${encodeURIComponent(formId)}/edit`;
 }
 
+const encoder = new TextEncoder();
+
+/** A value's serialized size in UTF-8 bytes, the unit the bridge counts. */
+function sizeOf(value: unknown): number {
+  return encoder.encode(JSON.stringify(value)).length;
+}
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** What a cursor is bound to: its tool and every argument that decides its pages. */
+async function digestOf(bound: readonly unknown[]): Promise<string> {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(JSON.stringify(bound))));
+  return base64Url(hash.subarray(0, 16));
+}
+
+function encodeCursor(cursor: JsonRecord): string {
+  return base64Url(encoder.encode(JSON.stringify(cursor)));
+}
+
+/**
+ * A cursor this tool issued for these same arguments, or a refusal: one
+ * carried to another form, filter, or tool would page through something else.
+ */
+function decodeCursor(
+  value: string,
+  digest: string,
+  keys: readonly string[],
+  valid: (cursor: JsonRecord) => boolean,
+  again: string,
+): JsonRecord {
+  let cursor: JsonRecord;
+  try {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
+    cursor = asRecord(JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)))));
+  } catch {
+    cursor = {};
+  }
+  const shaped = Object.keys(cursor).length === keys.length && keys.every((key) => key in cursor);
+  if (!shaped || cursor["d"] !== digest || !valid(cursor)) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `cursor is not one this tool returned for these arguments. Pass page.nextCursor back unchanged, ${again}.`,
+    );
+  }
+  return cursor;
+}
+
+function isIndex(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 // --- Reading forms ----------------------------------------------------------------
 
 /** Google's question kinds, named as an agent would say them. */
@@ -139,7 +211,7 @@ function choiceOptions(choice: JsonRecord): JsonRecord {
   const hasOther = all.some((option) => option["isOther"] === true);
   const values = all
     .filter((option) => option["isOther"] !== true)
-    .map((option) => String(option["value"] ?? ""));
+    .map((option) => capped(String(option["value"] ?? ""), MAX_LABEL_CHARS, "pass raw: true to read it")!);
   return compact({
     options: values.slice(0, MAX_OPTIONS),
     moreOptions: values.length > MAX_OPTIONS ? values.length - MAX_OPTIONS : undefined,
@@ -209,7 +281,7 @@ function projectItem(value: unknown): JsonRecord {
   const item = asRecord(value);
   const base = {
     itemId: text(item["itemId"]),
-    title: text(item["title"]),
+    title: capped(text(item["title"]), DESCRIPTION_CHARS, "pass raw: true to read it"),
     description: capped(text(item["description"]), DESCRIPTION_CHARS, "pass raw: true to read it"),
   };
   if (item["questionItem"]) {
@@ -230,7 +302,10 @@ function projectItem(value: unknown): JsonRecord {
       gridType: group["grid"] ? CHOICE_TYPES[String(columns["type"])] ?? "unknown" : undefined,
       ...(group["grid"] ? choiceOptions(columns) : {}),
       questions: asArray(group["questions"]).map((question) =>
-        projectQuestion(question, text(asRecord(asRecord(question)["rowQuestion"])["title"])),
+        projectQuestion(
+          question,
+          capped(text(asRecord(asRecord(question)["rowQuestion"])["title"]), MAX_LABEL_CHARS, "pass raw: true to read it"),
+        ),
       ),
     });
   }
@@ -267,9 +342,29 @@ function projectForm(value: unknown): JsonRecord {
     // Absent on a legacy form, which has no publish settings at all.
     published: form["publishSettings"] ? publish["isPublished"] === true : undefined,
     acceptingResponses: form["publishSettings"] ? publish["isAcceptingResponses"] === true : undefined,
+    itemCount: items.length,
     questionCount: items.reduce((count, item) => count + asArray(item["questions"]).length, 0),
     items,
   });
+}
+
+/**
+ * An item cut to `budget` bytes. Options and labels are already bounded, so
+ * only a grid's rows can outgrow a page; the rows that fit are kept and the
+ * rest counted in `moreQuestions`, readable through `raw: true`.
+ */
+function fitItem(item: JsonRecord, budget: number): JsonRecord {
+  if (sizeOf(item) <= budget) return item;
+  const questions = asArray(item["questions"]);
+  const kept: unknown[] = [];
+  let used = sizeOf({ ...item, questions: [], moreQuestions: questions.length });
+  for (const question of questions) {
+    const size = sizeOf(question) + 1;
+    if (used + size > budget) break;
+    kept.push(question);
+    used += size;
+  }
+  return { ...item, questions: kept, moreQuestions: questions.length - kept.length };
 }
 
 // --- Reading responses ------------------------------------------------------------
@@ -301,7 +396,7 @@ function questionLabels(form: unknown): Map<string, QuestionLabel> {
  * A grader's feedback on one answer: its text, and the links or videos it
  * points to, each as the address a person opens and the label they were shown.
  */
-function projectFeedback(value: unknown, maxChars: number | undefined): JsonRecord | undefined {
+function projectFeedback(value: unknown, maxChars: number | undefined, remedy: string): JsonRecord | undefined {
   if (!value || typeof value !== "object") return undefined;
   const feedback = asRecord(value);
   const links = asArray(feedback["material"]).map((entry) => {
@@ -316,12 +411,17 @@ function projectFeedback(value: unknown, maxChars: number | undefined): JsonReco
   });
   const said = text(feedback["text"]);
   return compact({
-    text: maxChars === undefined ? said : capped(said, maxChars, "get_response returns it whole"),
+    text: maxChars === undefined ? said : capped(said, maxChars, remedy),
     links: links.length > 0 ? links : undefined,
   });
 }
 
-function projectResponse(value: unknown, labels: Map<string, QuestionLabel>, maxChars: number | undefined): JsonRecord {
+function projectResponse(
+  value: unknown,
+  labels: Map<string, QuestionLabel>,
+  maxChars: number | undefined,
+  remedy: string,
+): JsonRecord {
   const response = asRecord(value);
   const answers = Object.entries(asRecord(response["answers"])).map(([key, raw]) => {
     const answer = asRecord(raw);
@@ -329,7 +429,7 @@ function projectResponse(value: unknown, labels: Map<string, QuestionLabel>, max
     const grade = asRecord(answer["grade"]);
     const values = asArray(asRecord(answer["textAnswers"])["answers"]).map((entry) => {
       const value = String(asRecord(entry)["value"] ?? "");
-      return maxChars === undefined ? value : capped(value, maxChars, "get_response returns it whole")!;
+      return maxChars === undefined ? value : capped(value, maxChars, remedy)!;
     });
     const files = asArray(asRecord(answer["fileUploadAnswers"])["answers"]).map((entry) => {
       const file = asRecord(entry);
@@ -343,7 +443,7 @@ function projectResponse(value: unknown, labels: Map<string, QuestionLabel>, max
       files: files.length > 0 ? files : undefined,
       score: typeof grade["score"] === "number" ? grade["score"] : undefined,
       correct: typeof grade["correct"] === "boolean" ? grade["correct"] : undefined,
-      feedback: projectFeedback(grade["feedback"], maxChars),
+      feedback: projectFeedback(grade["feedback"], maxChars, remedy),
     });
   });
   // The form's order, then anything the form no longer asks.
@@ -357,6 +457,39 @@ function projectResponse(value: unknown, labels: Map<string, QuestionLabel>, max
     totalScore: typeof response["totalScore"] === "number" ? response["totalScore"] : undefined,
     answers,
   });
+}
+
+/**
+ * A response projected inside `budget` bytes: answers cut at each of `caps`
+ * in turn until it fits, and if even the last does not, answers left out from
+ * the end and named in `omittedQuestionIds`, for get_response to read by id.
+ */
+function fitResponse(
+  value: unknown,
+  labels: Map<string, QuestionLabel>,
+  caps: readonly (number | undefined)[],
+  remedy: string,
+  budget: number,
+): JsonRecord {
+  let projected: JsonRecord = {};
+  for (const cap of caps) {
+    projected = projectResponse(value, labels, cap, remedy);
+    if (sizeOf(projected) <= budget) return projected;
+  }
+  const answers = asArray(projected["answers"]).map(asRecord);
+  const kept: JsonRecord[] = [];
+  let used = sizeOf({ ...projected, answers: [], omittedQuestionIds: answers.map((answer) => answer["questionId"]) });
+  for (const answer of answers) {
+    const size = sizeOf(answer) + 1;
+    if (used + size > budget) break;
+    kept.push(answer);
+    used += size;
+  }
+  return {
+    ...projected,
+    answers: kept,
+    omittedQuestionIds: answers.slice(kept.length).map((answer) => answer["questionId"]),
+  };
 }
 
 // --- Writing ----------------------------------------------------------------------
@@ -407,12 +540,14 @@ const REVISION_PROPERTY: JsonSchema = {
   description: "revisionId from get_form, create_form, or the previous edit. Google refuses the edit if the form changed since; re-read it and retry.",
 };
 
-const CURSOR_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  maxLength: 1024,
-  description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same formId and submittedAfter.",
-};
+function cursorProperty(same: string): JsonSchema {
+  return {
+    type: "string",
+    minLength: 1,
+    maxLength: 4096,
+    description: `Opaque page.nextCursor from the previous page. Pass it back unchanged with the same ${same}.`,
+  };
+}
 
 const LIMIT_PROPERTY: JsonSchema = {
   type: "integer",
@@ -467,6 +602,7 @@ const RESPONSE_SCHEMA: JsonSchema = {
     lastSubmittedTime: { type: "string" },
     respondentEmail: { type: "string" },
     totalScore: { type: "number" },
+    omittedQuestionIds: { type: "array", items: { type: "string" } },
     answers: {
       type: "array",
       items: {
@@ -537,7 +673,9 @@ const FORM_SCHEMA: JsonSchema = {
     emailCollection: { type: "string" },
     published: { type: "boolean" },
     acceptingResponses: { type: "boolean" },
+    itemCount: { type: "integer" },
     questionCount: { type: "integer" },
+    page: PAGE_SCHEMA,
     items: {
       type: "array",
       items: {
@@ -550,6 +688,7 @@ const FORM_SCHEMA: JsonSchema = {
           gridType: { type: "string" },
           ...CHOICE_PROPERTIES,
           questions: { type: "array", items: QUESTION_SCHEMA },
+          moreQuestions: { type: "integer" },
         },
       },
     },
@@ -600,6 +739,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           }),
         },
         ctx,
+        // A named revision makes Google's refused precondition mean "the form
+        // moved on", which the shared client reports as `conflict`.
+        { revisionGuarded: revisionId !== undefined },
       ),
     );
 
@@ -607,22 +749,69 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "get_form",
       description:
-        "Get one Google Form: title, description, quiz and publish state, revisionId, and every item with its question ids, types, and options. Never lists forms; Drive does.",
+        "Get one Google Form: title, description, quiz and publish state, revisionId, and its items with question ids, types, and options, paged when large. Never lists forms.",
       annotations: readOnly,
       inputSchema: input(
         {
           formId: FORM_ID_PROPERTY,
           raw: {
             type: "boolean",
-            description: "Return Google's untouched Form resource (grading, images, section navigation) instead of the projection; read it before an updateItem that must keep them.",
+            description: "Return Google's untouched Form resource (grading, images, section navigation) instead of the projection; read it before an updateItem that must keep them. Not paged: a form too large for one result is refused.",
           },
+          cursor: cursorProperty("formId"),
         },
         ["formId"],
       ),
       outputSchema: FORM_SCHEMA,
       handler: async (args, ctx) => {
-        const form = await readForm(args["formId"], ctx);
-        return args["raw"] === true ? form : projectForm(form);
+        const formId: string = args["formId"];
+        if (args["raw"] === true && args["cursor"] !== undefined) {
+          throw new ConnectorCallError("invalid_args", "raw: true is not paged; omit cursor.");
+        }
+        const form = await readForm(formId, ctx);
+        if (args["raw"] === true) {
+          const size = sizeOf(form);
+          if (size > RESULT_BUDGET_BYTES) {
+            throw new ConnectorCallError(
+              "invalid_args",
+              `This form's raw resource is ${size} bytes, more than one result carries (${RESULT_BUDGET_BYTES}). Read the projection, which pages its items with page.nextCursor, or edit with the item indexes it lists.`,
+            );
+          }
+          return form;
+        }
+        const { items, ...header } = projectForm(form);
+        const all = asArray(items).map(asRecord);
+        const revision = text(asRecord(form)["revisionId"]) ?? "";
+        const digest = await digestOf(["get_form", formId]);
+        let start = 0;
+        if (typeof args["cursor"] === "string") {
+          const cursor = decodeCursor(args["cursor"], digest, ["d", "i", "r"], (c) => isIndex(c["i"]) && typeof c["r"] === "string", "with the same formId");
+          // Items are addressed by index, so a page of a changed form would
+          // skip or repeat items without saying so.
+          if (cursor["r"] !== revision || cursor["i"] > all.length) {
+            throw new ConnectorCallError(
+              "conflict",
+              "The form changed after the page this cursor continues. Read get_form again from the start, without cursor.",
+            );
+          }
+          start = cursor["i"];
+        }
+        const kept: JsonRecord[] = [];
+        let used = sizeOf({ ...header, items: [] }) + PAGE_RESERVE_BYTES;
+        let index = start;
+        for (; index < all.length; index += 1) {
+          let item = all[index]!;
+          let size = sizeOf(item) + 1;
+          if (used + size > RESULT_BUDGET_BYTES) {
+            if (kept.length > 0) break;
+            item = fitItem(item, RESULT_BUDGET_BYTES - used);
+            size = sizeOf(item) + 1;
+          }
+          kept.push(item);
+          used += size;
+        }
+        const nextCursor = index < all.length ? encodeCursor({ d: digest, i: index, r: revision }) : null;
+        return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
       },
     },
     {
@@ -693,7 +882,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "list_responses",
       description:
-        "List a Google Form's submitted responses, each answer labeled with its question's title in form order. Long answers are cut; get_response returns one whole.",
+        "List a Google Form's submitted responses, each answer labeled with its question's title in form order. Long answers are cut; get_response reads one whole.",
       annotations: readOnly,
       inputSchema: input(
         {
@@ -704,7 +893,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             description: "Only responses submitted after this UTC instant (exclusive), e.g. 2026-10-01T00:00:00Z or the newest lastSubmittedTime already read.",
           },
           limit: LIMIT_PROPERTY,
-          cursor: CURSOR_PROPERTY,
+          cursor: cursorProperty("formId and submittedAfter"),
         },
         ["formId"],
       ),
@@ -719,6 +908,29 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       },
       handler: async (args, ctx) => {
         const formId: string = args["formId"];
+        const limit: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
+        const digest = await digestOf(["list_responses", formId, args["submittedAfter"] ?? null]);
+        // A cursor names Google's page (its token and size) and how many of
+        // its responses earlier pages already returned: a page ends early when
+        // the next response would carry the result past its byte budget, and
+        // the rest of Google's page is re-read and skipped to on the next call.
+        const resume = typeof args["cursor"] === "string"
+          ? decodeCursor(
+              args["cursor"],
+              digest,
+              ["d", "t", "k", "n"],
+              (c) =>
+                (c["t"] === null || typeof c["t"] === "string") &&
+                isIndex(c["k"]) &&
+                isIndex(c["n"]) &&
+                c["n"] >= 1 &&
+                c["n"] <= MAX_PAGE_SIZE,
+              "with the same formId and submittedAfter",
+            )
+          : undefined;
+        const token: string | null = resume?.["t"] ?? null;
+        const size: number = resume?.["n"] ?? limit;
+        const skip: number = resume?.["k"] ?? 0;
         // The form labels the answers. Both reads are one person's view, so
         // either failing fails the call rather than returning bare ids.
         const [form, listing] = await Promise.all([
@@ -729,8 +941,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               path: `${formPath(formId)}/responses`,
               query: {
                 filter: args["submittedAfter"] ? `timestamp > ${args["submittedAfter"]}` : undefined,
-                pageSize: args["limit"] ?? DEFAULT_PAGE_SIZE,
-                pageToken: args["cursor"],
+                pageSize: size,
+                pageToken: token ?? undefined,
               },
             },
             ctx,
@@ -738,25 +950,53 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         ]);
         const labels = questionLabels(form);
         const page = asRecord(listing);
-        const next = text(page["nextPageToken"]) ?? null;
-        return {
-          formId,
-          responses: asArray(page["responses"]).map((response) =>
-            projectResponse(response, labels, LIST_ANSWER_CHARS),
-          ),
-          page: { hasMore: next !== null, nextCursor: next },
-        };
+        const rows = asArray(page["responses"]);
+        const responses: JsonRecord[] = [];
+        let used = sizeOf({ formId, responses: [], page: { hasMore: true, nextCursor: null } }) + PAGE_RESERVE_BYTES;
+        let index = skip;
+        for (; index < rows.length; index += 1) {
+          const room = RESULT_BUDGET_BYTES - used;
+          let response = projectResponse(rows[index], labels, LIST_ANSWER_CHARS, "get_response reads it whole");
+          if (sizeOf(response) + 1 > room) {
+            if (responses.length > 0) break;
+            response = fitResponse(
+              rows[index],
+              labels,
+              [LIST_ANSWER_CHARS, 200],
+              "get_response reads it whole",
+              room - 1,
+            );
+          }
+          responses.push(response);
+          used += sizeOf(response) + 1;
+        }
+        const googleNext = text(page["nextPageToken"]) ?? null;
+        const next = index < rows.length
+          ? { d: digest, t: token, k: index, n: size }
+          : googleNext
+            ? { d: digest, t: googleNext, k: 0, n: limit }
+            : undefined;
+        const nextCursor = next ? encodeCursor(next) : null;
+        return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
       },
     },
     {
       name: "get_response",
       description:
-        "Get one Google Form response whole, each answer labeled with its question's title, plus uploaded file ids and quiz grades and feedback where present.",
+        "Get one Google Form response whole, each answer labeled with its question's title, plus file ids, quiz grades, and feedback. questionIds narrows a large one.",
       annotations: readOnly,
       inputSchema: input(
         {
           formId: FORM_ID_PROPERTY,
           responseId: idProperty("Response id from list_responses."),
+          questionIds: {
+            type: "array",
+            minItems: 1,
+            maxItems: MAX_QUESTION_IDS,
+            uniqueItems: true,
+            items: idProperty("Question id from get_form, or from omittedQuestionIds."),
+            description: "Return only these questions' answers, for a response too large to read whole in one result.",
+          },
         },
         ["formId", "responseId"],
       ),
@@ -770,7 +1010,27 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         ]);
-        return projectResponse(response, questionLabels(form), undefined);
+        const wanted = Array.isArray(args["questionIds"]) ? new Set<string>(args["questionIds"]) : undefined;
+        const record = asRecord(response);
+        const narrowed = wanted
+          ? {
+              ...record,
+              answers: Object.fromEntries(
+                Object.entries(asRecord(record["answers"])).filter(([key, answer]) =>
+                  wanted.has(text(asRecord(answer)["questionId"]) ?? key),
+                ),
+              ),
+            }
+          : record;
+        // Whole when it fits; otherwise cut, then narrowed, with the ids left
+        // out named so a call with questionIds reads them.
+        return fitResponse(
+          narrowed,
+          questionLabels(form),
+          [undefined, MAX_ANSWER_CHARS, LIST_ANSWER_CHARS],
+          "more than one result carries; pass questionIds to read fewer answers, or read it in Forms",
+          RESULT_BUDGET_BYTES,
+        );
       },
     },
     {
@@ -894,16 +1154,24 @@ Drive, or take its id from an edit URL (\`/forms/d/<formId>/edit\`). The
 
 ## Reading
 
-- \`get_form\` lists every item with its \`questions\`: one for a question,
+- Every result stays inside ${RESULT_BUDGET_BYTES / 1024} KiB, so it crosses into
+  \`execute_code\` whole. A page that would outgrow that ends early with
+  \`page.hasMore\`; follow \`page.nextCursor\` rather than raising \`limit\`.
+- \`get_form\` lists items with their \`questions\`: one for a question,
   one per row for a grid, none for sections and media. Answers are keyed by
-  those \`questionId\`s. Long descriptions are cut with a marker; \`raw:
-  true\` returns Google's whole Form resource.
+  those \`questionId\`s. A large form pages its items (\`itemCount\` is the
+  total); a cursor from a form that has since changed fails \`conflict\`.
+  Long text is cut with a marker; \`raw: true\` returns Google's whole Form
+  resource, or refuses one too large for a result.
 - \`list_responses\` labels each answer with its question's title, in form
   order; an answer to a since-deleted question has no title. Answers longer
   than ${LIST_ANSWER_CHARS} characters end with a truncation marker; \`get_response\`
-  returns one whole. Page with \`page.nextCursor\` and the same
+  reads one whole. Page with \`page.nextCursor\` and the same
   \`submittedAfter\`. To read only new responses, pass the newest
   \`lastSubmittedTime\` already seen as \`submittedAfter\`.
+- A response too large for one result comes back cut, with the answers left
+  out named in \`omittedQuestionIds\`; pass them to \`get_response\` as
+  \`questionIds\`.
 
 ## Editing
 
@@ -913,8 +1181,8 @@ Drive, or take its id from an edit URL (\`/forms/d/<formId>/edit\`). The
 - \`batch_update_form\` is the escape hatch for everything else, and always
   needs approval. It takes Google's own Request objects, applied all or none,
   with the form's current \`revisionId\` as \`requiredRevisionId\`: a form
-  someone changed since you read it is refused, so re-read it and rebuild the
-  edit. Its reply carries the new \`revisionId\` and each created item's id.
+  someone changed since you read it is refused as \`conflict\`, so re-read it
+  and rebuild the edit. Its reply carries the new \`revisionId\` and each created item's id.
   An \`updateItem\` needs an \`updateMask\`; read \`raw: true\` first so the
   item it replaces keeps its grading, images, and navigation.
 - Publishing, sharing, deleting, and watches are not in this connection; the

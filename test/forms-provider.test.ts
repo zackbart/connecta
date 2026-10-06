@@ -289,7 +289,9 @@ describe("reading forms (H9)", () => {
       emailCollection: "VERIFIED",
       published: true,
       acceptingResponses: true,
+      itemCount: 7,
       questionCount: 6,
+      page: { hasMore: false, nextCursor: null },
       items: [
         {
           itemId: "i1",
@@ -392,7 +394,6 @@ describe("reading responses (H9, H10)", () => {
       formId: "form-1",
       submittedAfter: "2026-09-30T00:00:00Z",
       limit: 5,
-      cursor: "page-1",
     });
 
     const list = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
@@ -401,7 +402,6 @@ describe("reading responses (H9, H10)", () => {
     expect(Object.fromEntries(list.url.searchParams)).toEqual({
       filter: "timestamp > 2026-09-30T00:00:00Z",
       pageSize: "5",
-      pageToken: "page-1",
     });
     expect(calls.map((entry) => `${entry.method} ${entry.url.pathname}`).sort()).toEqual([
       "GET /v1/forms/form-1",
@@ -409,7 +409,8 @@ describe("reading responses (H9, H10)", () => {
     ]);
 
     expect(result.formId).toBe("form-1");
-    expect(result.page).toEqual({ hasMore: true, nextCursor: "page-2" });
+    expect(result.page.hasMore).toBe(true);
+    expect(result.page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
     const [response] = result.responses;
     expect(response).toMatchObject({
       responseId: "r1",
@@ -426,18 +427,41 @@ describe("reading responses (H9, H10)", () => {
     ]);
     expect(response.answers[0].values).toEqual(["Evening"]);
     expect(response.answers[1].values[0]).toBe(
-      `${"x".repeat(2_000)}\n[… 500 more characters truncated; get_response returns it whole]`,
+      `${"x".repeat(2_000)}\n[… 500 more characters truncated; get_response reads it whole]`,
     );
     // A grader's feedback survives the projection, its text cut like an answer.
     expect(response.answers[1]).toMatchObject({ score: 0, correct: false });
     expect(response.answers[1].feedback.text).toMatch(
-      /^See the allergy guide\. f+\n\[… 123 more characters truncated; get_response returns it whole\]$/,
+      /^See the allergy guide\. f+\n\[… 123 more characters truncated; get_response reads it whole\]$/,
     );
     expect(response.answers[1].feedback.links).toEqual([
       { uri: "https://church.example/allergies", displayText: "Allergy guide" },
       { uri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety", video: true },
     ]);
     expect(response.answers[2].values).toEqual(["Fri", "Sat"]);
+
+    // The cursor carries Google's token and page size back, for this same call only.
+    calls.length = 0;
+    await call(connection(), "list_responses", {
+      formId: "form-1",
+      submittedAfter: "2026-09-30T00:00:00Z",
+      cursor: result.page.nextCursor,
+    });
+    const next = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
+    expect(Object.fromEntries(next.url.searchParams)).toEqual({
+      filter: "timestamp > 2026-09-30T00:00:00Z",
+      pageSize: "5",
+      pageToken: "page-2",
+    });
+    calls.length = 0;
+    for (const args of [
+      { formId: "form-1", cursor: result.page.nextCursor },
+      { formId: "form-2", submittedAfter: "2026-09-30T00:00:00Z", cursor: result.page.nextCursor },
+      { formId: "form-1", cursor: "page-2" },
+    ]) {
+      await expect(call(connection(), "list_responses", args)).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toEqual([]);
     expect(response.answers[4]).toEqual({
       questionId: "q9",
       files: [{ fileId: "f1", fileName: "waiver.pdf", mimeType: "application/pdf" }],
@@ -766,18 +790,48 @@ describe("errors (H11)", () => {
     expect(failure.message).toContain("not visible to this account");
   });
 
-  it("maps a stale revision to invalid_args, so the caller re-reads rather than retries", async () => {
+  const staleBatch = {
+    formId: "form-1",
+    requests: [{ deleteItem: { location: { index: 0 } } }],
+    requiredRevisionId: "00000041",
+  };
+
+  it.each([
+    [400, "FAILED_PRECONDITION"],
+    [409, "ABORTED"],
+  ])("maps a revision-guarded write's HTTP %i %s to conflict, so the caller re-reads", async (status, reason) => {
+    route = () => ({
+      status,
+      body: { error: { code: status, message: "The form has changed since the required revision.", status: reason } },
+    });
+    const failure = await call(connection(), "batch_update_form", staleBatch).catch((error) => error);
+    expect(failure).toMatchObject({ code: "conflict", retryable: false });
+    expect(failure.message).toContain("changed after the revision it named");
+    expect(calls).toHaveLength(1);
+
+    // update_form_info is guarded exactly when it names a revision.
+    calls.length = 0;
+    await expect(
+      call(connection(), "update_form_info", { formId: "form-1", title: "T", requiredRevisionId: "00000041" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(calls[0]!.body.writeControl).toEqual({ requiredRevisionId: "00000041" });
+    calls.length = 0;
+    const unguarded = await call(connection(), "update_form_info", { formId: "form-1", title: "T" }).catch(
+      (error) => error,
+    );
+    expect(calls[0]!.body.writeControl).toBeUndefined();
+    expect(unguarded.code).not.toBe("conflict");
+  });
+
+  it("passes any other refusal of a guarded write through as Google classed it", async () => {
     route = () => ({
       status: 400,
-      body: { error: { code: 400, message: "The required revision ID 00000041 does not match the latest revision.", status: "INVALID_ARGUMENT" } },
+      body: { error: { code: 400, message: "Invalid requests[0].deleteItem: index out of range.", status: "INVALID_ARGUMENT" } },
     });
-    await expect(
-      call(connection(), "batch_update_form", {
-        formId: "form-1",
-        requests: [{ deleteItem: { location: { index: 0 } } }],
-        requiredRevisionId: "00000041",
-      }),
-    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("required revision") });
+    await expect(call(connection(), "batch_update_form", staleBatch)).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("index out of range"),
+    });
   });
 
   it("names the exact scopes when the delegated grant lacks one", async () => {
@@ -813,5 +867,167 @@ describe("errors (H11)", () => {
       code: "rate_limited",
       retryAfterMs: 7_000,
     });
+  });
+});
+
+// Every result must cross execute_code's host bridge, which refuses one
+// serialized host result over 256 KiB (`MAX_HOST_RESULT_BYTES` in
+// src/executors/quickjs-runtime.ts), as well as a direct call's inline cap.
+// These build the largest inputs the projections allow and page through them.
+describe("worst-case results fit one host result (256 KiB)", () => {
+  const BRIDGE_BYTES = 256 * 1024;
+  const bridged = (value: unknown) => new TextEncoder().encode(JSON.stringify({ ok: true, value })).length;
+  /**
+   * Three-byte characters, UTF-8's widest in the BMP, past the 2,000-character
+   * listing cut. Fixtures stay under the 8 MiB upstream ceiling, so what is
+   * measured is the projection, not a refused read.
+   */
+  const long = (chars: number) => "日".repeat(chars);
+  const LONG = long(5_000);
+
+  function paragraphForm(questions: number) {
+    return {
+      formId: "big",
+      revisionId: "00000007",
+      info: { title: "Big survey" },
+      items: Array.from({ length: questions }, (_, index) => ({
+        itemId: `i${index}`,
+        title: `Question ${index} ${"題".repeat(300)}`,
+        questionItem: { question: { questionId: `q${index}`, textQuestion: { paragraph: true } } },
+      })),
+    };
+  }
+
+  function responses(count: number, questions: number, value = LONG) {
+    return Array.from({ length: count }, (_, index) => ({
+      responseId: `r${index}`,
+      lastSubmittedTime: "2026-10-01T12:00:00Z",
+      answers: Object.fromEntries(
+        Array.from({ length: questions }, (_, question) => [
+          `q${question}`,
+          { questionId: `q${question}`, textAnswers: { answers: [{ value }] } },
+        ]),
+      ),
+    }));
+  }
+
+  /** A responses route that pages like Google: by token and page size. */
+  function serve(form: unknown, rows: unknown[]): Route {
+    return (request) => {
+      if (!request.url.pathname.endsWith("/responses")) return { body: form };
+      const offset = Number(request.url.searchParams.get("pageToken")?.slice(1) ?? 0);
+      const size = Number(request.url.searchParams.get("pageSize"));
+      const end = offset + size;
+      return {
+        body: {
+          responses: rows.slice(offset, end),
+          ...(end < rows.length ? { nextPageToken: `p${end}` } : {}),
+        },
+      };
+    };
+  }
+
+  async function everyPage(name: string, args: Record<string, unknown>): Promise<any[]> {
+    const connector = connection();
+    const pages: any[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await call(connector, name, { ...args, ...(cursor ? { cursor } : {}) });
+      expect(bridged(page)).toBeLessThan(BRIDGE_BYTES);
+      pages.push(page);
+      cursor = page.page.nextCursor ?? undefined;
+      expect(pages.length).toBeLessThan(500);
+    } while (cursor);
+    return pages;
+  }
+
+  it.each([
+    ["the default page", {}, 25, 30, 2_500],
+    ["the largest page", { limit: 100 }, 100, 10, 2_100],
+  ])("ends %s early and continues by cursor, losing and repeating nothing", async (_label, extra, count, questions, chars) => {
+    route = serve(paragraphForm(questions), responses(count, questions, long(chars)));
+    const pages = await everyPage("list_responses", { formId: "big", ...extra });
+    const seen = pages.flatMap((page) => page.responses.map((response: any) => response.responseId));
+    expect(seen).toEqual(Array.from({ length: count }, (_, index) => `r${index}`));
+    // Ended early: more pages than Google's one, each cut answer marked.
+    expect(pages.length).toBeGreaterThan(1);
+    const answer = pages[0].responses[0].answers[0].values[0] as string;
+    expect(answer).toContain("more characters truncated; get_response reads it whole");
+  });
+
+  it("narrows one response too large for a page, naming the answers it left out", async () => {
+    const form = paragraphForm(400);
+    const [giant] = responses(1, 400);
+    route = serve(form, [giant]);
+    const listed = await call(connection(), "list_responses", { formId: "big" });
+    expect(bridged(listed)).toBeLessThan(BRIDGE_BYTES);
+    const row = listed.responses[0];
+    expect(row.answers.length + row.omittedQuestionIds.length).toBe(400);
+    expect(row.omittedQuestionIds[0]).toBe(`q${row.answers.length}`);
+
+    route = (request) => (request.url.pathname.includes("/responses/") ? { body: giant } : { body: form });
+    const whole = await call(connection(), "get_response", { formId: "big", responseId: "r0" });
+    expect(bridged(whole)).toBeLessThan(BRIDGE_BYTES);
+    expect(whole.omittedQuestionIds.length).toBeGreaterThan(0);
+    // The omitted ids read back whole, a few at a time.
+    const some = whole.omittedQuestionIds.slice(0, 10);
+    const narrowed = await call(connection(), "get_response", { formId: "big", responseId: "r0", questionIds: some });
+    expect(bridged(narrowed)).toBeLessThan(BRIDGE_BYTES);
+    expect(narrowed.answers.map((answer: any) => answer.questionId)).toEqual(some);
+    expect(narrowed.answers[0].values[0]).toBe(LONG);
+    expect(narrowed.omittedQuestionIds).toBeUndefined();
+  });
+
+  it("pages a large form's items, and refuses a cursor once the form has changed", async () => {
+    const options = Array.from({ length: 150 }, (_, index) => ({ value: `${index} ${"選".repeat(400)}` }));
+    const form = {
+      formId: "huge",
+      revisionId: "00000009",
+      info: { title: "Huge", description: "説".repeat(3_000) },
+      items: [
+        ...Array.from({ length: 25 }, (_, index) => ({
+          itemId: `i${index}`,
+          title: "問".repeat(3_000),
+          description: "述".repeat(3_000),
+          questionItem: { question: { questionId: `q${index}`, choiceQuestion: { type: "DROP_DOWN", options } } },
+        })),
+        {
+          itemId: "grid",
+          title: "Grid",
+          questionGroupItem: {
+            grid: { columns: { type: "RADIO", options: options.slice(0, 5) } },
+            questions: Array.from({ length: 2_000 }, (_, index) => ({
+              questionId: `row${index}`,
+              rowQuestion: { title: "列".repeat(150) },
+            })),
+          },
+        },
+      ],
+    };
+    route = () => ({ body: form });
+    const pages = await everyPage("get_form", { formId: "huge" });
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.flatMap((page) => page.items.map((item: any) => item.itemId))).toEqual([
+      ...Array.from({ length: 25 }, (_, index) => `i${index}`),
+      "grid",
+    ]);
+    expect(pages.every((page) => page.itemCount === 26)).toBe(true);
+    const grid = pages.at(-1).items.at(-1);
+    expect(grid.questions.length + grid.moreQuestions).toBe(2_000);
+    expect(grid.questions.length).toBeGreaterThan(0);
+
+    // The same form whole is more than one result: raw refuses with guidance.
+    const raw = await call(connection(), "get_form", { formId: "huge", raw: true }).catch((error) => error);
+    expect(raw).toMatchObject({ code: "invalid_args", message: expect.stringContaining("pages its items") });
+
+    // Items are addressed by index; a page of a changed form would skip some.
+    const first = await call(connection(), "get_form", { formId: "huge" });
+    route = () => ({ body: { ...form, revisionId: "00000010" } });
+    await expect(
+      call(connection(), "get_form", { formId: "huge", cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      call(connection(), "get_form", { formId: "other", cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
   });
 });
