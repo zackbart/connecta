@@ -152,10 +152,12 @@ function tlv(der: Uint8Array, offset: number, limit = der.length): Tlv | undefin
 /**
  * The modulus size of a PKCS#8 `PrivateKeyInfo` wrapping an RSA key, or
  * undefined for anything else. Walks exactly the structure RFC 5208 and RFC
- * 8017 define — version 0, the rsaEncryption algorithm identifier, and an
- * octet string holding the nine integers of an `RSAPrivateKey` — so a
- * well-formed key of another algorithm, a PKCS#1 body in PKCS#8 armor, and a
- * truncated paste are all refused.
+ * 8017 define — version 0, the rsaEncryption algorithm identifier with NULL
+ * parameters, and an octet string holding exactly the nine integers of a
+ * two-prime `RSAPrivateKey` — and requires every structure to be consumed
+ * whole, so a well-formed key of another algorithm, a PKCS#1 body in PKCS#8
+ * armor, altered parameters, trailing bytes, and a truncated paste are all
+ * refused here rather than by Google on the first call.
  */
 function rsaPkcs8ModulusBits(der: Uint8Array): number | undefined {
   const info = tlv(der, 0);
@@ -175,11 +177,29 @@ function rsaPkcs8ModulusBits(der: Uint8Array): number | undefined {
   ) {
     return undefined;
   }
+  // rsaEncryption's parameters are exactly NULL, and nothing follows them.
+  const parameters = tlv(der, oid.end, algorithm.end);
+  if (
+    !parameters ||
+    parameters.tag !== 0x05 ||
+    parameters.end !== parameters.start ||
+    parameters.end !== algorithm.end
+  ) {
+    return undefined;
+  }
   const wrapped = tlv(der, algorithm.end, info.end);
   if (!wrapped || wrapped.tag !== 0x04) return undefined;
+  // PKCS#8 allows one optional [0] attributes set after the key; nothing else.
+  let tail = wrapped.end;
+  if (tail < info.end) {
+    const attributes = tlv(der, tail, info.end);
+    if (!attributes || attributes.tag !== 0xa0) return undefined;
+    tail = attributes.end;
+  }
+  if (tail !== info.end) return undefined;
   const key = tlv(der, wrapped.start, wrapped.end);
   if (!key || key.tag !== 0x30 || key.end !== wrapped.end) return undefined;
-  // version, n, e, d, p, q, dP, dQ, qInv
+  // version (0: two primes, no otherPrimeInfos), n, e, d, p, q, dP, dQ, qInv
   const integers: Tlv[] = [];
   let at = key.start;
   for (let index = 0; index < 9; index += 1) {
@@ -187,6 +207,10 @@ function rsaPkcs8ModulusBits(der: Uint8Array): number | undefined {
     if (!integer || integer.tag !== 0x02 || integer.end === integer.start) return undefined;
     integers.push(integer);
     at = integer.end;
+  }
+  const rsaVersion = integers[0]!;
+  if (at !== key.end || rsaVersion.end - rsaVersion.start !== 1 || der[rsaVersion.start] !== 0) {
+    return undefined;
   }
   const modulus = integers[1]!;
   let first = modulus.start;

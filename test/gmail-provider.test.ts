@@ -614,6 +614,24 @@ describe("writing drafts", () => {
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
   });
 
+  it("refuses a draft nested deeper than it inspects, rather than assuming it is safe", async () => {
+    // An attachment 22 multiparts down: past the depth the guard walks, so
+    // it must refuse instead of rebuilding a message that would drop it.
+    let deepest: Record<string, unknown> = {
+      mimeType: "application/pdf",
+      filename: "buried.pdf",
+      body: { attachmentId: "a9", size: 10 },
+    };
+    for (let level = 0; level < 22; level += 1) {
+      deepest = { mimeType: "multipart/mixed", parts: [{ mimeType: "text/plain", body: { data: b64url("x") } }, deepest] };
+    }
+    route = () => ({ body: existingDraft([{ name: "To", value: "ann@church.example" }], [deepest]) });
+    const failure = await call(connection(), "update_draft", { draftId: "d1", body: "Revised." }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    expect(failure.message).toContain("nested more than 20 levels");
+    expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+  });
+
   it("splits address lists as RFC 5322 does: quoted commas, comments, and groups", async () => {
     route = (request) =>
       request.method === "GET"
@@ -717,6 +735,38 @@ describe("a message's own body, apart from what it carries", () => {
     expect(path(1)).toBe("/messages/m8/attachments/body-1");
     expect(result).toMatchObject({ body: "A long body stored separately", bodyFormat: "text", bodyTruncated: false });
     expect(result.attachments).toBeUndefined();
+  });
+
+  it("lists an unnamed inline image, while a stored text body is still read as the body", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith("/attachments/body-3")
+        ? { body: { size: 40, data: b64url("<p>Logo <b>above</b></p>") } }
+        : {
+            body: {
+              id: "m10",
+              payload: {
+                mimeType: "multipart/related",
+                parts: [
+                  { mimeType: "text/html", filename: "", body: { size: 40, attachmentId: "body-3" } },
+                  {
+                    mimeType: "image/png",
+                    filename: "",
+                    headers: [
+                      { name: "Content-Disposition", value: "inline" },
+                      { name: "Content-ID", value: "<logo>" },
+                    ],
+                    body: { size: 2048, attachmentId: "img-1" },
+                  },
+                ],
+              },
+            },
+          };
+    const result = await call(connection(), "get_message", { messageId: "m10" });
+    expect(path(1)).toBe("/messages/m10/attachments/body-3");
+    expect(result).toMatchObject({ body: "Logo above", bodyFormat: "html" });
+    expect(result.attachments).toEqual([
+      { filename: "", mimeType: "image/png", size: 2048, attachmentId: "img-1" },
+    ]);
   });
 
   it("says so, never returning a silent empty body, when a stored body is too large to read", async () => {

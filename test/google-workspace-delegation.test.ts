@@ -70,6 +70,34 @@ const EC_PRIVATE_KEY = pem(
   )) as ArrayBuffer,
 );
 
+const RSA_OID = [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+
+function indexOf(der: Uint8Array, needle: readonly number[]): number {
+  for (let at = 0; at + needle.length <= der.length; at += 1) {
+    if (needle.every((byte, offset) => der[at + offset] === byte)) return at;
+  }
+  throw new Error("pattern not found in the fixture key");
+}
+
+/** Where the NULL parameters' tag sits, right after the rsaEncryption OID. */
+function afterOid(der: Uint8Array): number {
+  return indexOf(der, RSA_OID) + RSA_OID.length;
+}
+
+/** The RSAPrivateKey's own version byte: OCTET STRING, SEQUENCE, INTEGER 0. */
+function rsaVersionAt(der: Uint8Array): number {
+  const nullAt = afterOid(der);
+  // 05 00 | 04 82 hh ll | 30 82 hh ll | 02 01 00
+  return nullAt + 2 + 4 + 4 + 2;
+}
+
+/** The fixture key with its DER changed in place, plus any appended bytes. */
+function mutated(change: (der: Uint8Array) => void, append: number[] = []): string {
+  const der = Uint8Array.from(atob(DER_BASE64), (character) => character.charCodeAt(0));
+  change(der);
+  return armor(String.fromCharCode(...der, ...append));
+}
+
 /** Arbitrary binary in PEM armor. */
 function armor(binary: string): string {
   return `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`;
@@ -138,6 +166,7 @@ interface ApiCall {
   method: string;
   authorization: string | null;
   accept: string | null;
+  body: unknown;
 }
 
 type Reply = () => Response | Promise<Response>;
@@ -188,6 +217,7 @@ beforeEach(() => {
       method: init.method ?? "GET",
       authorization: new Headers(init.headers).get("authorization"),
       accept: new Headers(init.headers).get("accept"),
+      body: init.body instanceof Uint8Array ? [...init.body] : init.body,
     });
     return await answer(apiReplies.shift() ?? (() => Response.json({ labels: [] })));
   }) as unknown as typeof fetch;
@@ -306,14 +336,45 @@ describe("construction refuses a structural mistake", () => {
       { serviceAccount: { clientEmail: "a@b.c", privateKey: EC_PRIVATE_KEY } },
       /PKCS#8 RSA/,
     ],
+    [
+      "rsaEncryption parameters that are not NULL",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: mutated((der) => { der[afterOid(der)] = 0xff; }) } },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "bytes after the key that are not attributes",
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: mutated((der) => {
+            // Grow the outer SEQUENCE by two and put a NULL after the key.
+            const length = (der[2]! << 8) + der[3]! + 2;
+            der[2] = length >> 8;
+            der[3] = length & 0xff;
+          }, [0x05, 0x00]),
+        },
+      },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "a multi-prime RSAPrivateKey version with no other primes",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: mutated((der) => { der[rsaVersionAt(der)] = 0x01; }) } },
+      /PKCS#8 RSA/,
+    ],
     ["no subject", { subject: undefined }, /subject/],
     ["a fixed subject that is not an address", { subject: "alice" }, /email address/],
   ])("%s", (_name, overrides, message) => {
     expect(build(overrides)).toThrow(message);
   });
 
-  it("accepts a real RSA key", () => {
+  it("accepts a real RSA key, whose layout the mutations above target", () => {
     expect(build({})).not.toThrow();
+    // The mutations change exactly the byte they mean to, so each refusal is
+    // about that byte and not an accident of a misplaced offset.
+    const der = Uint8Array.from(atob(DER_BASE64), (character) => character.charCodeAt(0));
+    expect([der[afterOid(der)], der[afterOid(der) + 1]]).toEqual([0x05, 0x00]);
+    const version = rsaVersionAt(der);
+    expect([der[version - 2], der[version - 1], der[version]]).toEqual([0x02, 0x01, 0x00]);
   });
 
   it("never puts the key in a construction error", () => {
@@ -854,6 +915,39 @@ describe("the shared client reads bytes and text for the products that need them
       code: "connector_call_failed",
       message: expect.stringContaining("1024-byte"),
     });
+  });
+
+  it("replays a byte body intact after a 401", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => Response.json({ id: "f9" }),
+    );
+    const upload = new Uint8Array([1, 2, 3, 4]);
+    await client().json(
+      {
+        method: "POST",
+        path: "/files",
+        headers: { "Content-Type": "application/octet-stream" },
+        rawBody: upload,
+      },
+      context(),
+    );
+    expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+    expect(apiCalls.map((call) => call.body)).toEqual([[1, 2, 3, 4], [1, 2, 3, 4]]);
+  });
+
+  it("refuses a stream body, which a replay could not resend, before anything leaves", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    await expect(
+      client().json({ method: "POST", path: "/files", rawBody: stream }, context()),
+    ).rejects.toThrow(/replayable/);
+    expect(tokenCalls).toEqual([]);
+    expect(apiCalls).toEqual([]);
   });
 
   it("maps Google's error body and replays a 401 like the JSON path", async () => {

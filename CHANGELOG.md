@@ -69,8 +69,10 @@ deployment's own connectors still never learn their caller.
   forwarded email's — decoded from its charset, HTML converted only when no
   text part exists, fetched from the attachments endpoint when Gmail stored it
   apart, reported as `bodyFormat: "unavailable"` rather than empty when too
-  large to read, capped by `maxBodyChars` with an explicit marker, attachment
-  metadata only), `list_labels`, `list_drafts`, `get_draft`, `create_draft`
+  large to read, capped by `maxBodyChars` with an explicit marker, and
+  metadata only for attachments, which include unnamed inline images and any
+  other part that is not body text), `list_labels`, `list_drafts`,
+  `get_draft`, `create_draft`
   (To/Cc/Bcc, RFC 2047-encoded headers, an optional HTML alternative, and
   `replyToMessageId`, which sets the thread, `In-Reply-To`, `References`, a
   `Re:` subject, and every recipient of the replied message's Reply-To or
@@ -78,7 +80,8 @@ deployment's own connectors still never learn their caller.
   body; keeps From, To, Cc, Bcc, Reply-To, Subject, the thread, and the reply
   headers unless restated, and no other header; refuses, unchanged, a draft
   with attachments, inline images, or anything else Gmail's whole-message
-  update would delete). There is no send, delete, or label tool and no raw
+  update would delete, and one nested deeper than it inspects). There is no
+  send, delete, or label tool and no raw
   hatch; `gmail.compose` technically permits sending, and the tool surface is
   what forbids it. `create_draft` is an additive write and `update_draft` a
   destructive one; neither is exempt from approval unless the deployment says
@@ -91,8 +94,9 @@ deployment's own connectors still never learn their caller.
 - **Google Workspace domain-wide delegation, shared by every Workspace
   provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
   the downloaded JSON key's text, from deployment secrets rather than the vault,
-  because one key serves every Workspace connector; anything but a PKCS#8 RSA
-  key of at least 2048 bits throws at construction, and no key ever appears in
+  because one key serves every Workspace connector; anything but a complete,
+  exactly-encoded PKCS#8 RSA key of at least 2048 bits throws at construction,
+  and no key ever appears in
   a message. `subject` is a function from the authenticated
   `AuthenticatedIdentity` to a Workspace address — sync or async, for a
   directory lookup, with the call's abort signal — or one fixed address for
@@ -106,7 +110,8 @@ deployment's own connectors still never learn their caller.
   replaced a minute before expiry, and bounded at 512. Concurrent callers share
   one mint through plain outcomes and a deadline, never another request's
   signal, so a cancelled owner sends a waiting caller in another Worker request
-  to mint for itself. A 401 forgets only the token it rejected. Google's
+  to mint for itself. A 401 forgets only the token it rejected and replays the
+  request once, so a streamed request body is refused up front. Google's
   refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or

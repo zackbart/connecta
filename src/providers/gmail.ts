@@ -191,12 +191,23 @@ function mimeOf(part: JsonRecord): string {
  * not the message's body.
  */
 function isAttachment(part: JsonRecord): boolean {
+  const mime = mimeOf(part);
   return (
     Boolean(text(part["filename"])) ||
     /^\s*attachment\b/i.test(header(part, "Content-Disposition") ?? "") ||
-    mimeOf(part) === "message/rfc822"
+    mime === "message/rfc822" ||
+    // Any leaf that is not body text — an unnamed inline image, a calendar
+    // invitation — is carried content, listed rather than dropped. A text
+    // body Gmail stored apart (an attachmentId, no filename) stays a body.
+    (mime !== "" && !mime.startsWith("multipart/") && !BODY_TYPES.has(mime))
   );
 }
+
+/** The only parts that can be a message's own body. */
+const BODY_TYPES = new Set(["text/plain", "text/html"]);
+
+/** How deep a payload is walked; deeper than this is refused, not guessed. */
+const MAX_PART_DEPTH = 20;
 
 /**
  * Walk a payload keeping ancestry: the message's own parts, in order, and the
@@ -211,7 +222,7 @@ function walk(root: JsonRecord): { own: JsonRecord[]; attachments: JsonRecord[] 
       return;
     }
     own.push(part);
-    if (depth > 20) return;
+    if (depth >= MAX_PART_DEPTH) return;
     for (const child of asArray(part["parts"])) visit(asRecord(child), depth + 1);
   };
   visit(root, 0);
@@ -728,8 +739,14 @@ function unrebuildable(payload: JsonRecord): string[] {
       found.push(text(part["filename"]) ?? (mime || "an unnamed part"));
       return;
     }
-    if (depth > 20) return;
-    for (const child of asArray(part["parts"])) visit(asRecord(child), depth + 1);
+    const children = asArray(part["parts"]);
+    // Past the depth this inspects, what lies below is unknown, and unknown
+    // content is content the update could delete: refuse rather than assume.
+    if (depth >= MAX_PART_DEPTH && children.length > 0) {
+      found.push(`parts nested more than ${MAX_PART_DEPTH} levels deep`);
+      return;
+    }
+    for (const child of children) visit(asRecord(child), depth + 1);
   };
   visit(payload, 0);
   return found;

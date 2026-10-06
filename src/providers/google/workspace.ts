@@ -362,7 +362,10 @@ interface GoogleText {
  * resolves the subject once per call context, sends the cached or a freshly
  * minted token, maps Google's failures by what the caller does next, and
  * answers a 401 with one fresh token and one replay — safe for a write too,
- * since a 401 is a refusal before the request did anything.
+ * since a 401 is a refusal before the request did anything. Because of that
+ * replay a `rawBody` must be sendable twice: a `ReadableStream` is refused
+ * with a `TypeError` before any request; strings, bytes, Blobs, FormData, and
+ * URLSearchParams are fine.
  */
 export interface GoogleWorkspaceClient {
   /** One JSON request; the parsed body, `undefined` for an empty one. */
@@ -435,6 +438,14 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     accept: string,
     read: (response: ReadableResponse) => Promise<T>,
   ): Promise<T> {
+    // A 401 is answered by sending the same request again, so its body must
+    // survive being sent twice. A stream is consumed by the first send; it
+    // is a provider's wiring mistake, refused before anything leaves.
+    if (typeof ReadableStream !== "undefined" && request.rawBody instanceof ReadableStream) {
+      throw new TypeError(
+        `${provider}: a Workspace request body must be replayable — pass a string, Uint8Array, ArrayBuffer, Blob, FormData, or URLSearchParams, never a ReadableStream.`,
+      );
+    }
     const headed: GuardedRequest = { ...request, headers: { Accept: accept, ...request.headers } };
     for (let attempt = 0; ; attempt += 1) {
       // Subject first: no caller, or no mapped account, fails before any
