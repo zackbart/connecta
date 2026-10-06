@@ -29,7 +29,7 @@ interface ApiCall {
 
 type Route = (
   call: ApiCall,
-) => { status?: number; body?: unknown; raw?: string; unreachable?: boolean; brokenBody?: boolean } | undefined;
+) => { status?: number; body?: unknown; raw?: string; unreachable?: boolean; brokenBody?: boolean; oversized?: boolean } | undefined;
 
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
@@ -54,6 +54,10 @@ beforeEach(() => {
     calls.push(call);
     const reply = route(call) ?? {};
     if (reply.unreachable) throw new TypeError("fetch failed: connection reset");
+    if (reply.oversized) {
+      // A 2xx that declares more than the 24 MiB response ceiling.
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-length": String(25 * 1024 * 1024) } });
+    }
     if (reply.brokenBody) {
       // The status arrives; the body stream then dies, as a reset socket does.
       const body = new ReadableStream({
@@ -476,7 +480,7 @@ describe("editing a document", () => {
     expect(result.revisionId).toBe("r1");
   });
 
-  it("names the created document, unretryably, when its initial text fails", async () => {
+  it("names the created document, unretryably, when Google refuses its initial text", async () => {
     route = (request) =>
       request.url.pathname.endsWith(":batchUpdate")
         ? { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }
@@ -652,11 +656,8 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
-  it.each([
-    ["a Google 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
-    ["a dropped connection", { unreachable: true }],
-  ])("reports an edit's outcome as unknown after %s", async (_kind, reply) => {
-    route = () => reply;
+  it("reports an edit's outcome as unknown when no answer came back", async () => {
+    route = () => ({ unreachable: true });
     const failure = await call(connection(), "append_text", {
       documentId: "doc-1",
       text: "x",
@@ -673,34 +674,63 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(bare.message).not.toContain("is safe");
   });
 
-  it("says a created document's initial text may or may not exist when its write is uncertain", async () => {
-    for (const reply of [{ unreachable: true }, { brokenBody: true }, { status: 503, body: {} }, { status: 403, body: {} }]) {
-      route = (request) =>
-        request.url.pathname.endsWith(":batchUpdate") ? reply : { body: { documentId: "new-1", title: "Minutes" } };
-      const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
-      expect(failure, JSON.stringify(reply)).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("Created document new-1, but whether its initial text was written is unknown");
-      expect(failure.message).toContain("only if it is missing");
-    }
-  });
-
-  it("advises appending a created document's text only after Google explicitly refused it", async () => {
-    route = (request) =>
-      request.url.pathname.endsWith(":batchUpdate")
-        ? { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } }
-        : { body: { documentId: "new-1", title: "Minutes" } };
-    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("Google refused its initial text");
-    expect(failure.message).toContain("add the text with append_text on new-1");
+  it("passes an edit's 5xx through as Google's refusal, as the shared client mapped it", async () => {
+    route = () => ({ status: 503, body: { error: { code: 503, message: "Backend unavailable." } } });
+    const failure = await call(connection(), "append_text", { documentId: "doc-1", text: "x", requiredRevisionId: "rev-1" }).catch(
+      (error) => error,
+    );
+    expect(failure).toMatchObject({ code: "unavailable" });
+    expect(failure.message).not.toContain("outcome of this edit is unknown");
   });
 
   it.each([
-    ["a Google 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
-    ["a dropped connection", { unreachable: true }],
     ["a body that breaks after the status", { brokenBody: true }],
-  ])("never invites a repeat create after %s, since the document may exist", async (_kind, reply) => {
+    ["a body past the response ceiling", { oversized: true }],
+    ["a body that will not parse", { raw: "{oops" }],
+  ])("calls every edit probably applied after a 2xx with %s, and never invites a repeat", async (_kind, reply) => {
+    const args: Record<string, Record<string, unknown>> = {
+      append_text: { documentId: "d", text: "x" },
+      insert_text: { documentId: "d", index: 1, text: "x" },
+      replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
+      batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
+    };
     route = () => reply;
+    for (const [name, values] of Object.entries(args)) {
+      const failure = await call(connection(), name, values).catch((error) => error);
+      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message, name).toContain("so it was applied");
+      expect(failure.message, name).toContain("Do not repeat it");
+    }
+  });
+
+  it.each([
+    ["no answer", { unreachable: true }, "whether its initial text was written is unknown", "only if it is missing"],
+    ["a broken 2xx body", { brokenBody: true }, "whether its initial text was written is unknown", "only if it is missing"],
+    ["an oversized 2xx", { oversized: true }, "whether its initial text was written is unknown", "only if it is missing"],
+    [
+      "an explicit 4xx refusal",
+      { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } },
+      "Google refused its initial text",
+      "add the text with append_text on new-1",
+    ],
+    [
+      "a 5xx refusal",
+      { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } },
+      "Google refused its initial text",
+      "add the text with append_text on new-1",
+    ],
+  ])("after creating, advises on its initial text by outcome: %s", async (_kind, reply, says, advice) => {
+    route = (request) =>
+      request.url.pathname.endsWith(":batchUpdate") ? reply : { body: { documentId: "new-1", title: "Minutes" } };
+    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain(`Created document new-1, but ${says}`);
+    expect(failure.message).toContain(advice);
+    expect(failure.message).toContain("Do not create it again");
+  });
+
+  it("never invites a repeat create when no answer came back", async () => {
+    route = () => ({ unreachable: true });
     const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("Whether the document was created is unknown");
@@ -708,9 +738,27 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
+  it("never invites a repeat create after a 5xx either: a server error can leave a document behind", async () => {
+    route = () => ({ status: 503, body: { error: { code: 503, message: "Backend unavailable." } } });
+    const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("answered HTTP 503 to the create");
+    expect(failure.message).toContain('Drive search for "Minutes"');
+  });
+
+  it("passes a 4xx create refusal through: nothing was created", async () => {
+    route = () => ({ status: 400, body: { error: { code: 400, message: "Bad title.", status: "INVALID_ARGUMENT" } } });
+    await expect(call(connection(), "create_document", { title: "Minutes" })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("Bad title."),
+    });
+  });
+
   it.each([
     ["an unreadable reply", { raw: "{oops" }],
     ["a reply without an id", { body: { title: "Minutes" } }],
+    ["a body that breaks after the status", { brokenBody: true }],
+    ["a body past the response ceiling", { oversized: true }],
   ])("acknowledges a create Google answered 2xx with %s", async (_kind, reply) => {
     route = () => reply;
     const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
@@ -718,23 +766,6 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(failure.message).toContain("created the document (HTTP 2xx)");
     expect(failure.message).toContain('find "Minutes" in Drive');
   });
-
-  it.each(["append_text", "insert_text", "replace_all_text", "batch_update_document"])(
-    "calls %s's outcome unknown, not retryable, when the reply body breaks after a 200",
-    async (name) => {
-      route = () => ({ brokenBody: true });
-      const args: Record<string, Record<string, unknown>> = {
-        append_text: { documentId: "d", text: "x" },
-        insert_text: { documentId: "d", index: 1, text: "x" },
-        replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
-        batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
-      };
-      const failure = await call(connection(), name, args[name]).catch((error) => error);
-      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(failure.message).toContain("outcome of this edit is unknown");
-      expect(failure.message).not.toMatch(/nothing was applied/i);
-    },
-  );
 
   it("states the 404 ambiguity: a document id that is unknown or not shared look alike", async () => {
     route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } } });

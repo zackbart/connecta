@@ -28,6 +28,7 @@ import type { GuardedRequest } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import {
+  googleOutcomeOf,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
@@ -563,68 +564,83 @@ function revisionAfter(reply: JsonRecord): string | undefined {
   return text(asRecord(reply["writeControl"])["requiredRevisionId"]);
 }
 
-/**
- * Failures after which an edit may or may not have landed. A caller must not
- * be told "nothing was applied" about these, nor be told to simply repeat.
- */
-const UNCERTAIN = new WeakSet<ConnectorCallError>();
-
 function uncertain(message: string, cause: unknown): ConnectorCallError {
-  const error = new ConnectorCallError("connector_call_failed", message, { retryable: false, cause });
-  UNCERTAIN.add(error);
-  return error;
+  return new ConnectorCallError("connector_call_failed", message, { retryable: false, cause });
 }
 
 /**
- * Codes the shared client gives only to an explicit HTTP refusal: the request
- * reached Google and was turned down, so nothing it asked for happened.
- */
-const REFUSALS: ReadonlySet<string> = new Set(["invalid_args", "auth_required", "rate_limited", "not_found", "conflict"]);
-
-/**
- * What a failed write did to the document. The one place a write's failure is
- * classified, so the shared client's outcome facts slot in here when it
- * reports them.
+ * What a failed write did to the document, from how far the shared client
+ * saw the request get (`googleOutcomeOf`) — never from an error code, which
+ * the same outcome can arrive under several of.
  *
- * - `refused`: an explicit HTTP refusal. Nothing was applied.
- * - `opaque`: `connector_call_failed`, which the shared client uses both for a
- *   4xx refusal it has no better code for and for a reply it could not take
- *   after a 2xx (a redirect, a body past the response ceiling). It is already
- *   non-retryable and claims nothing, so it passes through; anything built on
- *   it (create's starting text) treats it as unknown.
- * - `unknown`: everything else — a 5xx, a dropped connection, a timeout, or a
- *   body stream that broke after the status arrived. Google may or may not
- *   have applied it.
+ * - `not-sent`: nothing left connecta. Nothing happened.
+ * - `refused`: Google answered with an error status, 4xx or 5xx. Google
+ *   reports nothing applied.
+ * - `no-answer`: sent, and no status came back. It may or may not have landed.
+ * - `probably-applied`: Google answered 2xx (or redirected) and the reply could
+ *   not be used — it broke off, overflowed the ceiling, or would not parse.
+ *
+ * A failure the client did not classify is treated as `no-answer`, the
+ * reading that never invites a duplicate.
  */
-function writeOutcome(error: unknown): "refused" | "opaque" | "unknown" {
-  if (!(error instanceof ConnectorCallError)) return "unknown";
-  if (REFUSALS.has(error.code)) return "refused";
-  return error.code === "connector_call_failed" ? "opaque" : "unknown";
+type WriteOutcome = "not-sent" | "refused" | "no-answer" | "probably-applied";
+
+function writeOutcome(error: unknown): WriteOutcome {
+  switch (googleOutcomeOf(error)?.phase) {
+    case "before-send":
+      return "not-sent";
+    case "refused":
+      return "refused";
+    case "reading-body":
+      return "probably-applied";
+    default:
+      return "no-answer";
+  }
 }
 
 function detailOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The words a write's uncertain outcomes are told in, per tool. */
+interface WriteWords {
+  /** Sent, and no answer came back. */
+  unknown: (detail: string) => string;
+  /** Google answered 2xx and the reply could not be used. */
+  applied: string;
+  /**
+   * A 5xx refusal, for a write that is not safe to repeat on Google's word
+   * alone. Omitted, a 5xx passes through as the shared client mapped it.
+   */
+  serverError?: (detail: string, status: number) => string;
+}
+
 /**
- * Send one write and read its reply as text, parsing it here, so a 2xx is
- * never mistaken for a refusal by a JSON decode failing inside the transport.
- * `unknown` and `applied` name the outcome for the caller's own words.
+ * Send one write and read its reply as text, parsing it here, so a reply that
+ * will not parse is a 2xx the client accepted, never a refusal. The shared
+ * client already makes an uncertain write non-retryable; this only replaces
+ * its generic words with the tool's own recovery advice, keyed on outcome.
  */
 async function sendWrite(
   client: GoogleWorkspaceClient,
   ctx: ConnectorContext,
   request: GuardedRequest,
   revisionGuarded: boolean,
-  words: { unknown: (detail: string) => string; applied: string },
+  words: WriteWords,
 ): Promise<JsonRecord> {
   let reply: { text: string };
   try {
     reply = await client.text(request, ctx, "application/json", revisionGuarded ? { revisionGuarded: true } : undefined);
   } catch (error) {
     // A cancelled call is the caller's own decision; its reason stays whole.
-    if (ctx.signal?.aborted || writeOutcome(error) !== "unknown") throw error;
-    throw uncertain(words.unknown(detailOf(error)), error);
+    if (ctx.signal?.aborted) throw error;
+    const outcome = writeOutcome(error);
+    const status = googleOutcomeOf(error)?.status;
+    if (outcome === "refused" && words.serverError && status !== undefined && status >= 500) {
+      throw uncertain(words.serverError(detailOf(error), status), error);
+    }
+    if (outcome === "not-sent" || outcome === "refused") throw error;
+    throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)), error);
   }
   if (reply.text.trim() === "") return {};
   try {
@@ -641,7 +657,8 @@ async function sendWrite(
  * ABORTED on a 400 or 409) and answers a stale revision with `conflict`.
  * Nothing here infers one: a revision read afterwards would prove nothing,
  * since a collaborator may have edited in between. See {@link writeOutcome}
- * for what every other failure means.
+ * for what every other failure means; a 5xx is Google's refusal and passes
+ * through as mapped, retryable with the same `requiredRevisionId`.
  */
 async function batchUpdate(
   client: GoogleWorkspaceClient,
@@ -1004,6 +1021,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             unknown: (detail) =>
               `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
             applied: createdButUnknown,
+            // Creating is not idempotent, and a server error can still leave
+            // a document behind, so not even a 5xx invites a second one.
+            serverError: (detail, status) =>
+              `Google Docs answered HTTP ${status} to the create: ${detail} It reports the create failed, but a server error can leave a document behind. Do not create it again until a Drive search for "${title}" shows it is missing.`,
           },
         );
         const documentId = text(created["documentId"]);
@@ -1027,7 +1048,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             const detail = detailOf(cause);
             throw new ConnectorCallError(
               "connector_call_failed",
-              writeOutcome(cause) === "refused"
+              ["refused", "not-sent"].includes(writeOutcome(cause))
                 ? `Created document ${documentId}, but Google refused its initial text: ${detail} Do not create it again; add the text with append_text on ${documentId}.`
                 : `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`,
               { retryable: false, cause },
@@ -1272,9 +1293,10 @@ not exist or is not shared with this person; Google does not say which.
 - \`create_document\` makes a new document in My Drive's root. A failure
   after the document exists names its id; append the text there rather than
   creating another.
-- An edit that fails with its outcome unknown (a dropped connection, a Google
-  5xx) says so: re-read before repeating it, or repeat it with the same
-  \`requiredRevisionId\`, which Google refuses if the first attempt landed.
+- An edit sent with no answer back says its outcome is unknown: re-read
+  before repeating it, or repeat it with the same \`requiredRevisionId\`,
+  which Google refuses if the first attempt landed. One Google answered 2xx
+  whose reply was unreadable says it was applied: do not repeat it.
 - \`append_text\` joins the last paragraph; begin with \`\\n\` for a new one.
 - \`replace_all_text\` changes every match at once; read first and make
   \`find\` specific.

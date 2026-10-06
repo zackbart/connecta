@@ -84,12 +84,13 @@ caller.
   requests of known generally available kinds (contents unvalidated), and
   requires `requiredRevisionId`. Every other edit takes it optionally, and a
   write naming one is revision-guarded, so a stale revision fails `conflict`
-  on Google's own reason code. Other refusals pass through as mapped and
-  applied nothing; an edit whose outcome is
-  unknown (a 5xx, a dropped connection, a reply body that breaks after the
-  status) says so, non-retryably, rather than claiming either; an unreadable
-  2xx reply says the edit was applied; and a create that may have left a
-  document behind never invites a second one. There is no search or
+  on Google's own reason code. Failures are classified by how far the request
+  got, from the shared client's outcome facts: refusals, 5xx included, pass
+  through as mapped and applied nothing; an edit sent with no answer back says
+  its outcome is unknown, non-retryably; a 2xx whose reply broke off,
+  overflowed, or would not parse says the edit was applied; and a create that
+  may have left a document behind — a 5xx included — never invites a second
+  one. There is no search or
   list tool: finding a document is Drive's job, and `documents` cannot list. A
   404 stays `connector_call_failed`, because Google answers it for an id that
   is unknown and for one not shared with the caller alike. Setup, including
