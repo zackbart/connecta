@@ -190,8 +190,10 @@ describe("reading a spreadsheet's shape (H9)", () => {
         { sheetId: 0, title: "Summary", index: 0, type: "GRID", rowCount: 1000, columnCount: 26, frozenRowCount: 1 },
         { sheetId: 7, title: "Q3 Budget", index: 1, type: "GRID", hidden: true, rowCount: 500, columnCount: 8 },
       ],
+      // Titles are always quoted: a bare whole-sheet title is a name Google
+      // resolves to a same-named named range first.
       namedRanges: [
-        { namedRangeId: "n1", name: "Totals", sheetId: 0, range: "Summary!A1:C5" },
+        { namedRangeId: "n1", name: "Totals", sheetId: 0, range: "'Summary'!A1:C5" },
         { namedRangeId: "n2", name: "Spend", sheetId: 7, range: "'Q3 Budget'!B2:D" },
         { namedRangeId: "n3", name: "Whole", sheetId: 7, range: "'Q3 Budget'" },
         { namedRangeId: "n4", name: "Rows", sheetId: 7, range: "'Q3 Budget'!3:9" },
@@ -258,26 +260,28 @@ describe("reading values (H9, H10)", () => {
     });
   });
 
-  it("pages by cell count, resuming a cut range where it stopped and then the ranges after it", async () => {
-    const rows = (from: number, count: number) =>
-      Array.from({ length: count }, (_, index) => [`r${from + index}`, from + index]);
-    route = (request) => {
-      const asked = request.url.searchParams.getAll("ranges");
-      return {
-        body: {
-          spreadsheetId: ID,
-          valueRanges: asked.map((range) =>
-            range === "Data!A1:B10" || range === "Data"
-              ? { range: "Data!A1:B10", values: rows(1, 10) }
-              : range === "Data!A4:B10"
-                ? { range: "Data!A4:B10", values: rows(4, 7) }
-                : { range: "Other!A1:A2", values: [["x"], ["y"]] },
-          ),
-        },
-      };
+  const rows = (from: number, count: number) =>
+    Array.from({ length: count }, (_, index) => [`r${from + index}`, from + index]);
+
+  /** Google's batchGet over a ten-row Data sheet and a two-row Other sheet. */
+  function sheetData(request: ApiCall) {
+    return {
+      body: {
+        spreadsheetId: ID,
+        valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
+          const start = /^Data!A(\d+):B10$/.exec(range);
+          if (start) return { range, values: rows(Number(start[1]), 11 - Number(start[1])) };
+          if (range === "Data") return { range: "Data!A1:B10", values: rows(1, 10) };
+          return { range: "Other!A1:A2", values: [["x"], ["y"]] };
+        }),
+      },
     };
+  }
+
+  it("pages by whole rows under maxCells, resuming a bounded range where it stopped", async () => {
+    route = sheetData;
     const connector = connection();
-    const ranges = ["Data", "Other!A1:A2"];
+    const ranges = ["Data!A1:B10", "Other!A1:A2"];
 
     const first = await call(connector, "get_values", { spreadsheetId: ID, ranges, maxCells: 6 });
     expect(first.valueRanges).toEqual([
@@ -289,7 +293,7 @@ describe("reading values (H9, H10)", () => {
 
     calls.length = 0;
     const second = await call(connector, "get_values", { spreadsheetId: ID, ranges, maxCells: 20, cursor: first.page.nextCursor });
-    // The cut range is rewritten to start past what was returned.
+    // The caller's own range, rewritten to start past what was returned.
     expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["Data!A4:B10", "Other!A1:A2"]);
     expect(second.valueRanges).toEqual([
       { range: "Data!A4:B10", values: rows(4, 7), rowCount: 7 },
@@ -298,7 +302,20 @@ describe("reading values (H9, H10)", () => {
     expect(second.page).toEqual({ hasMore: false, nextCursor: null });
   });
 
-  it("starts an unreached range over on the next page rather than reporting it half-read", async () => {
+  it("re-reads a sheet title or named range and says where the page starts", async () => {
+    route = sheetData;
+    const ranges = ["Data"];
+    const first = await call(connection(), "get_values", { spreadsheetId: ID, ranges, maxCells: 8 });
+    expect(first.valueRanges[0]).toMatchObject({ values: rows(1, 4), truncated: true, omittedRows: 6 });
+    calls.length = 0;
+    const second = await call(connection(), "get_values", { spreadsheetId: ID, ranges, maxCells: 20, cursor: first.page.nextCursor });
+    // A bare title could be a named range, so it is never rewritten.
+    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["Data"]);
+    expect(second.valueRanges).toEqual([{ range: "Data!A1:B10", rowOffset: 4, values: rows(5, 6), rowCount: 6 }]);
+    expect(second.page.hasMore).toBe(false);
+  });
+
+  it("starts an unreached range on the next page rather than reporting it half-read", async () => {
     route = (request) => ({
       body: {
         valueRanges: request.url.searchParams.getAll("ranges").map((range) =>
@@ -318,38 +335,74 @@ describe("reading values (H9, H10)", () => {
     expect(second.page.hasMore).toBe(false);
   });
 
-  it("resends and skips when Google's echoed range cannot be rewritten", async () => {
-    route = () => ({ body: { valueRanges: [{ range: "Odd", values: [[1], [2], [3]] }] } });
-    const first = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["Odd"], maxCells: 2 });
-    expect(first.valueRanges[0]).toMatchObject({ values: [[1], [2]], truncated: true, omittedRows: 1 });
-    calls.length = 0;
-    const second = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["Odd"], maxCells: 2, cursor: first.page.nextCursor });
-    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["Odd"]);
-    expect(second.valueRanges).toEqual([{ range: "Odd", values: [[3]], rowCount: 1 }]);
-    expect(second.page.hasMore).toBe(false);
+  it("never returns more than maxCells: a row wider than the page is refused, not cut", async () => {
+    const wideRow = Array.from({ length: 18_278 }, () => 1);
+    route = (request) => {
+      const range = request.url.searchParams.get("ranges")!;
+      return { body: { valueRanges: [{ range, values: range === "W!A2:ZZZ2" ? [wideRow] : [[1, 2, 3], wideRow] }] } };
+    };
+    const narrow = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["W!A1:ZZZ2"], maxCells: 1 }).catch((error) => error);
+    expect(narrow).toMatchObject({ code: "invalid_args" });
+    expect(narrow.message).toContain("raise maxCells to at least 3");
+
+    // The first row fits; the page stops before the one that cannot.
+    const first = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["W!A1:ZZZ2"], maxCells: 10_000 });
+    expect(first.cellCount).toBe(3);
+    expect(first.page.hasMore).toBe(true);
+    const wide = await call(connection(), "get_values", {
+      spreadsheetId: ID,
+      ranges: ["W!A1:ZZZ2"],
+      maxCells: 10_000,
+      cursor: first.page.nextCursor,
+    }).catch((error) => error);
+    expect(wide).toMatchObject({ code: "invalid_args" });
+    expect(wide.message).toContain("narrow the range's columns");
+    expect(wide.message).toContain("18278 cells");
   });
 
-  it("cuts a long cell with a marker in the text and counts it", async () => {
-    route = () => ({ body: { valueRanges: [{ range: "S!A1:B1", values: [["x".repeat(5_010), "short"]] }] } });
+  it("cuts a long cell with a marker that says how to read the rest, and reads it whole on request", async () => {
+    const long = "x".repeat(5_010);
+    route = () => ({ body: { valueRanges: [{ range: "S!A1:B1", values: [[long, "short"]] }] } });
     const result = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["S!A1:B1"] });
-    expect(result.valueRanges[0].values[0][0]).toBe(`${"x".repeat(5_000)}[… 10 more characters truncated]`);
+    expect(result.valueRanges[0].values[0][0]).toBe(
+      `${"x".repeat(5_000)}[… 10 more characters truncated; read this cell alone with maxCellChars up to 50000 for the rest]`,
+    );
     expect(result.valueRanges[0].values[0][1]).toBe("short");
     expect(result.truncatedCells).toBe(1);
+
+    const whole = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["S!A1"], maxCellChars: 50_000 });
+    expect(whole.valueRanges[0].values[0][0]).toBe(long);
+    expect(whole.truncatedCells).toBeUndefined();
   });
 
-  it("refuses a cursor from other ranges, or no cursor at all, before any request", async () => {
+  it("binds a cursor to its spreadsheet, ranges, and render options, and refuses one forged", async () => {
     route = () => ({ body: { valueRanges: [{ range: "S!A1:A3", values: [[1], [2], [3]] }] } });
-    const first = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["S!A1:A3"], maxCells: 1 });
+    const args = { spreadsheetId: ID, ranges: ["S!A1:A3"], valueRenderOption: "FORMULA" };
+    const first = await call(connection(), "get_values", { ...args, maxCells: 1 });
+    const cursor = first.page.nextCursor;
+    const forge = (value: unknown) =>
+      btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const decoded = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
     calls.length = 0;
-    for (const args of [
-      { ranges: ["S!A1:A3", "T!A1"], cursor: first.page.nextCursor },
-      { ranges: ["S!A1:A3"], cursor: "not-a-cursor" },
+    for (const attempt of [
+      // Replayed against other arguments of the same shape.
+      { ...args, ranges: ["Private!Z1:Z3"], cursor },
+      { ...args, spreadsheetId: "another-spreadsheet", cursor },
+      { ...args, valueRenderOption: "FORMATTED_VALUE", cursor },
+      // Forged: a range of its own, an index past the ranges, a wrong digest.
+      { ...args, cursor: forge({ n: 1, i: 0, r: "Private!Z1:Z2", s: 0 }) },
+      { ...args, cursor: forge({ ...decoded, r: "Private!Z1:Z2" }) },
+      { ...args, cursor: forge({ ...decoded, i: 1 }) },
+      { ...args, cursor: forge({ ...decoded, d: "AAAAAAAAAAAAAAAAAAAAAA" }) },
+      { ...args, cursor: "not-a-cursor" },
     ]) {
-      await expect(call(connection(), "get_values", { spreadsheetId: ID, ...args })).rejects.toMatchObject({
-        code: "invalid_args",
-      });
+      await expect(call(connection(), "get_values", attempt)).rejects.toMatchObject({ code: "invalid_args" });
     }
     expect(calls).toEqual([]);
+
+    // Whatever row offset a cursor claims, only the caller's own range is read.
+    await call(connection(), "get_values", { ...args, cursor: forge({ ...decoded, s: 2 }) });
+    expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["S!A3:A3"]);
   });
 });
 

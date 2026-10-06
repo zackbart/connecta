@@ -213,11 +213,14 @@ still never learn their caller.
   `@zackbart/connecta/providers/sheets` exports `sheets(id, options)` with the
   same Workspace options as `gmail()`, plus `SHEETS_SCOPES` and
   `SHEETS_API_BASE_URL`. Nine hand-written tools: `get_spreadsheet` (title,
-  sheets with ids and grid sizes, named ranges rendered as A1, never cell
-  values; `raw: true` for Google's untouched metadata) and `get_values` (one to
-  twenty A1 ranges through `values:batchGet`, value and date render options,
-  paged by cell count with a cursor that resumes a cut range at the row it
-  stopped, cells over 5,000 characters cut with a marker) are read-only;
+  sheets with ids and grid sizes, named ranges as A1 with the sheet title
+  always quoted, never cell values; `raw: true` for Google's untouched
+  metadata) and `get_values` (one to twenty A1 ranges through
+  `values:batchGet`, value and date render options, paged by whole rows under
+  `maxCells` — never more, a wider row is refused — with a cursor bound to the
+  call's spreadsheet, ranges, and render options that only ever continues the
+  caller's own ranges; cells over 5,000 characters cut with a marker, and
+  `maxCellChars` up to 50,000 to read one whole) are read-only;
   `create_spreadsheet`, `add_sheet`, and `append_values` (pinned to
   `INSERT_ROWS`, so nothing below the table is overwritten) are additive
   writes; `update_values`, `batch_update_values`, `clear_values`, and

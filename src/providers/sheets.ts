@@ -67,8 +67,12 @@ export type SheetsOptions = GoogleWorkspaceOptions;
 /** Cells per page of get_values: connecta's cap, since Sheets has no paging. */
 const DEFAULT_PAGE_CELLS = 2_000;
 const MAX_PAGE_CELLS = 10_000;
-/** A cell holds up to 50,000 characters; a read keeps this many of them. */
-const MAX_CELL_CHARS = 5_000;
+/**
+ * Characters a read keeps per cell by default. A cell holds at most 50,000
+ * (Sheets' own limit), so `maxCellChars` at that ceiling always reads one whole.
+ */
+const DEFAULT_CELL_CHARS = 5_000;
+const MAX_CELL_CHARS = 50_000;
 /** Ranges per read or clear. */
 const MAX_RANGES = 20;
 /** Ranges per batch_update_values. */
@@ -120,11 +124,14 @@ function columnLetters(index: number): string {
   return letters;
 }
 
-/** A sheet title as A1 needs it: bare when it can be, else single-quoted. */
+/**
+ * A sheet title as A1, always single-quoted. Bare, a whole-sheet range is
+ * indistinguishable from a named range of the same name — and Google resolves
+ * the named range first, so `Sheet1` handed to clear_values could clear
+ * something else. No named range can contain a quote, so quoted cannot.
+ */
 function sheetPrefix(title: string): string {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(title) && !/^[A-Za-z]{1,3}\d+$/.test(title)
-    ? title
-    : `'${title.replace(/'/g, "''")}'`;
+  return `'${title.replace(/'/g, "''")}'`;
 }
 
 /**
@@ -152,29 +159,44 @@ function gridRangeA1(range: JsonRecord, title: string | undefined): string | und
 // --- Reading values ---------------------------------------------------------------
 
 /**
- * Where a values read resumes: the index into the caller's `ranges`, the A1
- * range to send for it, and rows of that range already returned when the
- * range could not be rewritten to start past them.
+ * Where a values read resumes: an index into the caller's own `ranges` and
+ * the rows of that range already returned, bound by digest to the call's
+ * spreadsheet, ranges, and render options. It carries no range of its own, so
+ * a cursor can only ever continue what the arguments name.
  */
 interface ValuesCursor {
-  n: number;
+  d: string;
   i: number;
-  r: string;
   s: number;
 }
 
-function encodeCursor(cursor: ValuesCursor): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+function base64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function decodeCursor(value: string, ranges: readonly string[]): ValuesCursor {
+/** What a cursor is bound to: everything that decides which cells a page reads. */
+async function readDigest(args: JsonRecord): Promise<string> {
+  const bound = JSON.stringify([
+    args["spreadsheetId"],
+    args["ranges"],
+    args["valueRenderOption"] ?? null,
+    args["dateTimeRenderOption"] ?? null,
+  ]);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bound)));
+  return base64Url(hash.subarray(0, 16));
+}
+
+function encodeCursor(cursor: ValuesCursor): string {
+  return base64Url(new TextEncoder().encode(JSON.stringify(cursor)));
+}
+
+function decodeCursor(value: string, ranges: readonly string[], digest: string): ValuesCursor {
   const refuse = () =>
     new ConnectorCallError(
       "invalid_args",
-      "cursor is not one get_values returned for these ranges. Pass page.nextCursor back unchanged, with the same spreadsheetId and ranges.",
+      "cursor is not one get_values returned for this call. Pass page.nextCursor back unchanged, with the same spreadsheetId, ranges, and render options.",
     );
   let parsed: unknown;
   try {
@@ -185,40 +207,57 @@ function decodeCursor(value: string, ranges: readonly string[]): ValuesCursor {
     throw refuse();
   }
   const cursor = asRecord(parsed);
+  const index = integer(cursor["i"]);
+  const skip = integer(cursor["s"]);
   if (
-    cursor["n"] !== ranges.length ||
-    integer(cursor["i"]) === undefined ||
-    cursor["i"] < 0 ||
-    cursor["i"] >= ranges.length ||
-    typeof cursor["r"] !== "string" ||
-    !RANGE_REGEX.test(cursor["r"]) ||
-    integer(cursor["s"]) === undefined ||
-    cursor["s"] < 0
+    Object.keys(cursor).length !== 3 ||
+    cursor["d"] !== digest ||
+    index === undefined ||
+    index < 0 ||
+    index >= ranges.length ||
+    skip === undefined ||
+    skip < 0
   ) {
     throw refuse();
   }
-  return cursor as unknown as ValuesCursor;
+  return { d: digest, i: index, s: skip };
 }
 
 /**
- * The rest of a bounded A1 range after its first `rows` rows, or `undefined`
- * when the range Google echoed is not one this can rewrite. Google echoes the
- * whole requested range, bounded (`Sheet1!A1:D1000`), and values start at its
- * first row, so the continuation starts `rows` further down.
+ * The caller's own range past its first `rows` rows, when the range says
+ * where it starts: `Sheet1!C5:F100` → `Sheet1!C8:F100`, `B:D` → `B4:D`. A
+ * sheet title, a named range, or R1C1 does not, and is resent whole with the
+ * rows skipped instead — correct, but it re-reads what earlier pages did.
  */
 function rangeAfter(range: string, rows: number): string | undefined {
-  const match = /^(.*!)?([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(range);
-  if (!match || match[4] === undefined) return undefined;
-  const start = Number(match[3]) + rows;
-  if (start > Number(match[5])) return undefined;
-  return `${match[1] ?? ""}${match[2]}${start}:${match[4]}${match[5]}`;
+  if (rows === 0) return range;
+  const match = /^(.*!)?([A-Z]+)(\d+)?:([A-Z]+)(\d+)?$/.exec(range);
+  if (!match) return undefined;
+  const [, prefix = "", startColumn, startRow, endColumn, endRow] = match;
+  if (startRow === undefined && endRow !== undefined) return undefined;
+  const first = Number(startRow ?? 1);
+  if (endRow !== undefined && first > Number(endRow)) return undefined;
+  const start = first + rows;
+  if (endRow !== undefined && start > Number(endRow)) return undefined;
+  return `${prefix}${startColumn}${start}:${endColumn}${endRow ?? ""}`;
 }
 
-/** A cell as read, cut at {@link MAX_CELL_CHARS} with a marker in the text. */
-function cappedCell(value: unknown, cut: { cells: number }): unknown {
-  if (typeof value !== "string" || value.length <= MAX_CELL_CHARS) return value;
+/** A cell as read, cut at `max` characters with a marker saying how to read the rest. */
+function cappedCell(value: unknown, max: number, cut: { cells: number }): unknown {
+  if (typeof value !== "string" || value.length <= max) return value;
   cut.cells += 1;
-  return `${value.slice(0, MAX_CELL_CHARS)}[… ${value.length - MAX_CELL_CHARS} more characters truncated]`;
+  return `${value.slice(0, max)}[… ${value.length - max} more characters truncated; read this cell alone with maxCellChars up to ${MAX_CELL_CHARS} for the rest]`;
+}
+
+/** Refuse a row no page of `budget` cells can hold, rather than overrun the cap. */
+function rowTooWide(range: string, row: number, width: number, budget: number): ConnectorCallError {
+  const fix = width <= MAX_PAGE_CELLS
+    ? `raise maxCells to at least ${width}, or narrow the range's columns`
+    : `narrow the range's columns; a page holds at most ${MAX_PAGE_CELLS} cells`;
+  return new ConnectorCallError(
+    "invalid_args",
+    `Row ${row} of ${range} has ${width} cells, more than this page's maxCells of ${budget}; ${fix}.`,
+  );
 }
 
 // --- Writing values ---------------------------------------------------------------
@@ -310,7 +349,6 @@ const SPREADSHEET_ID_PROPERTY: JsonSchema = {
  * segment for append, and `.` or `..` there would climb out of it.
  */
 const RANGE_PATTERN = "^[^\\r\\n]*[^.\\r\\n][^\\r\\n]*$";
-const RANGE_REGEX = new RegExp(RANGE_PATTERN);
 
 function rangeProperty(description: string): JsonSchema {
   return { type: "string", minLength: 1, maxLength: 512, pattern: RANGE_PATTERN, description };
@@ -524,13 +562,19 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             type: "integer",
             minimum: 1,
             maximum: MAX_PAGE_CELLS,
-            description: `Cells per page, 1 to ${MAX_PAGE_CELLS}; defaults to ${DEFAULT_PAGE_CELLS}. Connecta's cap: Sheets returns whole ranges, so this pages by rows.`,
+            description: `Cells per page, 1 to ${MAX_PAGE_CELLS}; defaults to ${DEFAULT_PAGE_CELLS}. Connecta's cap: Sheets returns whole ranges, so this pages by whole rows.`,
+          },
+          maxCellChars: {
+            type: "integer",
+            minimum: 1,
+            maximum: MAX_CELL_CHARS,
+            description: `Characters kept per cell, to ${MAX_CELL_CHARS} (Sheets' cell limit, so the whole cell); defaults to ${DEFAULT_CELL_CHARS}. Longer cells end with a marker.`,
           },
           cursor: {
             type: "string",
             minLength: 1,
             maxLength: 1024,
-            description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same spreadsheetId, ranges, and options.",
+            description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same spreadsheetId, ranges, and render options.",
           },
         },
         ["spreadsheetId", "ranges"],
@@ -546,6 +590,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               properties: {
                 range: { type: "string" },
                 values: { type: "array", items: { type: "array", items: CELL_SCHEMA } },
+                rowOffset: { type: "integer" },
                 rowCount: { type: "integer" },
                 truncated: { type: "boolean" },
                 omittedRows: { type: "integer" },
@@ -561,10 +606,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         const ranges: string[] = args["ranges"];
         const budget: number = args["maxCells"] ?? DEFAULT_PAGE_CELLS;
-        const resume = typeof args["cursor"] === "string" ? decodeCursor(args["cursor"], ranges) : undefined;
-        const offset = resume?.i ?? 0;
-        const sent = resume ? [resume.r, ...ranges.slice(offset + 1)] : ranges;
-        const skip = resume?.s ?? 0;
+        const cellChars: number = args["maxCellChars"] ?? DEFAULT_CELL_CHARS;
+        const digest = await readDigest(args);
+        const resume = typeof args["cursor"] === "string"
+          ? decodeCursor(args["cursor"], ranges, digest)
+          : { d: digest, i: 0, s: 0 };
+        // Every range sent is the caller's own, or the caller's own rewritten
+        // to start further down; nothing in the cursor names a range.
+        const rewritten = rangeAfter(ranges[resume.i]!, resume.s);
+        const sent = [rewritten ?? ranges[resume.i]!, ...ranges.slice(resume.i + 1)];
+        const skip = rewritten === undefined ? resume.s : 0;
         const response = asRecord(
           await client.json(
             {
@@ -587,46 +638,46 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const returned = asArray(response["valueRanges"]);
         for (let index = 0; index < returned.length && next === undefined; index += 1) {
           const valueRange = asRecord(returned[index]);
-          const rows = asArray(valueRange["values"]).slice(index === 0 ? skip : 0);
+          // Rows of the caller's range earlier pages returned, and of those,
+          // how many Google sent again and this page drops.
+          const before = index === 0 ? resume.s : 0;
+          const dropped = index === 0 ? skip : 0;
+          const rows = asArray(valueRange["values"]).slice(dropped);
           const echoed = text(valueRange["range"]) ?? sent[index]!;
           const kept: unknown[][] = [];
           for (const row of rows) {
             // An empty row still costs one, so every page makes progress.
             const width = Math.max(1, asArray(row).length);
-            if (cells > 0 && cells + width > budget) break;
-            cells += width;
-            kept.push(asArray(row).map((cell) => cappedCell(cell, cut)));
-          }
-          if (kept.length < rows.length) {
-            const done = kept.length;
-            // A range this page never reached is not reported half-read; the
-            // next page starts it over.
-            if (done === 0) {
-              next = { n: ranges.length, i: offset + index, r: sent[index]!, s: 0 };
+            if (cells + width > budget) {
+              if (cells === 0) throw rowTooWide(echoed, dropped + kept.length + 1, width, budget);
               break;
             }
-            // Rewritten to start past the rows returned when Google's echo is
-            // a bounded A1 range; otherwise resent whole with a row skip.
-            const before = index === 0 ? skip : 0;
-            const rewritten = before > 0 ? undefined : rangeAfter(echoed, done);
-            next = {
-              n: ranges.length,
-              i: offset + index,
-              r: rewritten ?? sent[index]!,
-              s: rewritten ? 0 : before + done,
-            };
-            valueRanges.push({
+            cells += width;
+            kept.push(asArray(row).map((cell) => cappedCell(cell, cellChars, cut)));
+          }
+          if (kept.length < rows.length) {
+            next = { d: digest, i: resume.i + index, s: before + kept.length };
+            // A range this page never reached is not reported half-read; the
+            // next page starts it.
+            if (kept.length === 0) break;
+            valueRanges.push(compact({
               range: echoed,
+              rowOffset: dropped > 0 ? dropped : undefined,
               values: kept,
-              rowCount: done,
+              rowCount: kept.length,
               truncated: true,
-              omittedRows: rows.length - done,
-            });
+              omittedRows: rows.length - kept.length,
+            }));
             break;
           }
-          valueRanges.push({ range: echoed, values: kept, rowCount: kept.length });
+          valueRanges.push(compact({
+            range: echoed,
+            rowOffset: dropped > 0 ? dropped : undefined,
+            values: kept,
+            rowCount: kept.length,
+          }));
           if (cells >= budget && index + 1 < returned.length) {
-            next = { n: ranges.length, i: offset + index + 1, r: sent[index + 1]!, s: 0 };
+            next = { d: digest, i: resume.i + index + 1, s: 0 };
           }
         }
         const nextCursor = next ? encodeCursor(next) : null;
@@ -1018,10 +1069,15 @@ say which.
 - A1 notation. Quote a sheet title with spaces or punctuation:
   \`'Q3 Budget'!A1:D20\`, doubling any \`'\` inside it. A bare title is the
   whole sheet; \`Sheet1!B:B\` a whole column; a named range works by name.
-- \`get_values\` pages by cell count, not by range: page with
-  \`page.nextCursor\` and the same ranges. A cell over ${MAX_CELL_CHARS}
-  characters ends with a truncation marker. Reduce inside \`execute_code\`
-  before returning a large read.
+- \`get_values\` pages by whole rows under \`maxCells\`: page with
+  \`page.nextCursor\` and the same spreadsheetId, ranges, and render options.
+  A range with explicit rows (\`A1:D500\`, \`B:D\`) resumes where it
+  stopped; a sheet title or named range is re-read and its earlier rows
+  skipped, so \`rowOffset\` says how far into Google's echoed range the page
+  starts. A row wider than \`maxCells\` is refused, not cut; narrow the
+  columns. A cell over ${DEFAULT_CELL_CHARS} characters ends with a truncation
+  marker; read it alone with \`maxCellChars\` for the rest. Reduce inside
+  \`execute_code\` before returning a large read.
 
 ## Writing
 
