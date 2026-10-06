@@ -983,7 +983,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           );
         } catch (error) {
-          // Sent and not refused — no answer, a 5xx after Google received
+          // Sent and not refused — no answer, a 5xx or redirect after Google received
           // it, or a reply that broke: the form may exist, and there is no
           // form id to re-read. Another create would make a second one, so
           // say where to look first. The shared verdict (not retryable)

@@ -269,7 +269,7 @@ caller.
   for one result, and a batch reply too large to return whole drops question
   ids, then everything but counts, marked `truncated` and still reported as
   applied. `create_form` is additive; the other two writes are
-  destructive. A write Google may have applied — no answer, a 5xx after it
+  destructive. A write Google may have applied — no answer, a 5xx or redirect after it
   arrived, or a reply that broke — is reported as not retryable (no Forms
   write is sent as idempotent), and a create says to look in Drive before
   creating again. There is no list, delete, share, publish, or watch tool: Drive

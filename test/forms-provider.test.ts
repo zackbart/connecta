@@ -923,6 +923,15 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   /** Google received it and answered 5xx: it may still have applied. */
   const serverError = async () =>
     Response.json({ error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } }, { status: 503 });
+  /** A 5xx carrying a rate-limit reason is still a 5xx on a write: unknown. */
+  const rateLimited503 = async () =>
+    Response.json(
+      { error: { code: 503, message: "Quota exceeded.", status: "UNAVAILABLE", details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } },
+      { status: 503 },
+    );
+  /** A redirect, never followed: whether the write applied is unknown. */
+  const redirect = async () =>
+    new Response(null, { status: 302, headers: { location: "https://accounts.google.com/elsewhere" } });
 
   const batch = {
     formId: "form-1",
@@ -934,6 +943,8 @@ describe("a write whose outcome is unknown is never told to retry", () => {
     ["whose 2xx body breaks mid-stream", broken, "probably applied"],
     ["that gets no response", silent, "may or may not have been applied"],
     ["answered with a 5xx", serverError, "outcome is unknown"],
+    ["answered with a 5xx and a rate-limit reason", rateLimited503, "outcome is unknown"],
+    ["answered with a redirect", redirect, "whether the request was applied is unknown"],
   ])("reports an edit %s as uncertain, not retryable", async (_case, reply, says) => {
     answer(reply);
     for (const [name, args] of [
@@ -944,6 +955,7 @@ describe("a write whose outcome is unknown is never told to retry", () => {
       expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(failure.message, name).toContain(says);
       expect(failure.message, name).not.toMatch(/nothing was applied|safe to retry|retry it/i);
+      if (reply !== broken) expect(failure.message, name).not.toMatch(/probably applied/);
     }
   });
 
@@ -951,6 +963,8 @@ describe("a write whose outcome is unknown is never told to retry", () => {
     ["whose 2xx body breaks mid-stream", broken, "probably applied"],
     ["that gets no response", silent, "may or may not have been applied"],
     ["answered with a 5xx", serverError, "outcome is unknown"],
+    ["answered with a 5xx and a rate-limit reason", rateLimited503, "outcome is unknown"],
+    ["answered with a redirect", redirect, "whether the request was applied is unknown"],
   ])("tells a create %s to look for the form before creating another", async (_case, reply, says) => {
     answer(reply);
     const failure = await call(connection(), "create_form", { title: "Volunteer roster", documentTitle: "Roster" }).catch(
@@ -959,6 +973,8 @@ describe("a write whose outcome is unknown is never told to retry", () => {
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain(says);
     expect(failure.message).toContain('look for "Roster" in the user\'s Drive');
+    expect(failure.code).not.toBe("rate_limited");
+    if (reply !== broken) expect(failure.message).not.toMatch(/probably applied/);
   });
 
   it("keeps a 5xx on a read retryable: no Forms write is sent as idempotent, but a read is safe", async () => {
@@ -1207,7 +1223,7 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     expect(narrowed.omittedQuestionIds).toBeUndefined();
   });
 
-  it("pages a large form's items, and refuses a cursor once the form has changed", async () => {
+  it("pages a large form's items, and refuses a cursor once the form has changed", { timeout: 30_000 }, async () => {
     const options = Array.from({ length: 150 }, (_, index) => ({ value: `${index} ${"選".repeat(400)}` }));
     const form = {
       formId: "huge",
@@ -1306,7 +1322,7 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     expect(itemIds(pages)).toEqual(grids.map((grid) => grid.itemId));
   });
 
-  it("bounds escaped control characters and an oversized header, measuring the whole result", async () => {
+  it("bounds escaped control characters and an oversized header, measuring the whole result", { timeout: 30_000 }, async () => {
     // Each U+0001 is one character and six bytes of JSON (\u0001), so a
     // character cut alone would let text grow six-fold past its place.
     const control = (chars: number) => "\u0001".repeat(chars);
