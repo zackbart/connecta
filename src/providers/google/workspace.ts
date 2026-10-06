@@ -280,11 +280,13 @@ export function googleReasonsOf(error: unknown): readonly string[] {
  *   refused token, a local refusal. Nothing happened downstream.
  * - `awaiting-response`: the request was sent and no HTTP status came back.
  *   Google may or may not have applied it.
- * - `reading-body`: Google answered with a status that is not an error — a
- *   2xx, or a redirect — and the reply could not be used. A write probably
- *   applied.
- * - `server-error`: Google answered a non-idempotent write with a 5xx. It
- *   may have committed before failing, so the outcome is unknown.
+ * - `reading-body`: Google answered 2xx — it accepted the request — and the
+ *   reply could not be used. A write probably applied.
+ * - `redirected`: Google answered 3xx, which is never followed. It shows
+ *   neither that a write applied nor that it did not: outcome unknown.
+ * - `server-error`: Google answered a non-idempotent write with a 5xx,
+ *   whatever reason it named. It may have committed before failing, so the
+ *   outcome is unknown.
  * - `refused`: Google answered with a 4xx, or a read or idempotent write
  *   with a 5xx. Nothing to repeat blindly: a 4xx applied nothing, and a
  *   repeated read or idempotent write is harmless.
@@ -294,7 +296,7 @@ interface GoogleOutcome {
   readonly dispatched: boolean;
   /** The HTTP status Google answered with, when one arrived. */
   readonly status?: number;
-  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "server-error" | "refused";
+  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "redirected" | "server-error" | "refused";
 }
 
 /** What one attempt saw, as it happened. */
@@ -665,9 +667,8 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   /**
    * A 5xx answering a write that is not idempotent. Google can fail after a
    * change commits, so "unavailable, retry" would invite a duplicate insert
-   * or a second draft: the outcome is unknown and the write is not retried.
-   * A specific verdict the mapper reached from Google's reasons (a quota, a
-   * disabled API) stands; only the generic upstream failure is reconsidered.
+   * or a second draft: the outcome is unknown and the write is not retried,
+   * whatever reason the 5xx names. Its reasons stay readable beside it.
    */
   function serverErrorOnWrite(
     mapped: ConnectorCallError,
@@ -675,7 +676,10 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     method: string,
     requestOptions: GoogleRequestOptions,
   ): ConnectorCallError | undefined {
-    if (status < 500 || method === "GET" || requestOptions.idempotent === true || mapped.code !== "unavailable") {
+    // Any 5xx, whatever reason it names: a quota reason on a 503 does not
+    // prove the write was turned away before it committed. Only a 429, or a
+    // 4xx naming a quota, is a rejection that applied nothing.
+    if (status < 500 || method === "GET" || requestOptions.idempotent === true) {
       return undefined;
     }
     const unknown = new ConnectorCallError(
@@ -724,7 +728,9 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
             ? "server-error"
             : status >= 400
               ? "refused"
-              : "reading-body";
+              : status >= 300
+                ? "redirected"
+                : "reading-body";
       return outcome(error, { dispatched: true, phase, ...(status === undefined ? {} : { status }) });
     }
     if (status === undefined) {
@@ -737,9 +743,22 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         : error;
       return outcome(mapped, { dispatched: true, phase: "awaiting-response" });
     }
-    // Google answered with a status that is not an error — a 2xx whose body
-    // broke off, overflowed, or would not parse, or a redirect — and the
-    // reply could not be used.
+    // A redirect, which the transport refuses to follow. It shows neither
+    // that a write applied nor that it did not, so a write's outcome is
+    // unknown — never "probably applied". A read keeps the transport's own
+    // refusal.
+    if (status >= 300 && status < 400) {
+      const redirected = write
+        ? new ConnectorCallError(
+            "connector_call_failed",
+            `${provider} answered HTTP ${status} with a redirect, which this connection does not follow, so whether the request was applied is unknown. Re-read its target before repeating it.`,
+            { retryable: false, cause: error },
+          )
+        : error;
+      return outcome(redirected, { dispatched: true, status, phase: "redirected" });
+    }
+    // Google accepted the request — a 2xx — and its reply broke off,
+    // overflowed, or would not parse.
     const mapped = write
       ? new ConnectorCallError(
           "connector_call_failed",

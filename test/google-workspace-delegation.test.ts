@@ -1193,8 +1193,9 @@ describe("the shared client reads bytes and text for the products that need them
 
       const redirected = await failing(drive.json({ ...write, method: "DELETE" }, context()));
       expect(redirected).toMatchObject({ code: "connector_call_failed", retryable: false });
-      expect(redirected.message).toContain("probably applied");
-      expect(googleOutcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "reading-body" });
+      expect(redirected.message).toContain("whether the request was applied is unknown");
+      expect(redirected.message).not.toContain("probably applied");
+      expect(googleOutcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "redirected" });
 
       // A read that overflows keeps its own, unchanged refusal.
       const big = await failing(drive.bytes(read, context()));
@@ -1282,21 +1283,72 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
       });
 
-      it("keeps a rate limit a rate limit: Google rejected it before applying", async () => {
-        apiReplies.push(
-          () => Response.json({ error: { code: 429, message: "Quota", status: "RESOURCE_EXHAUSTED" } }, { status: 429 }),
-          () =>
-            Response.json(
-              { error: { code: 503, message: "Slow down", errors: [{ reason: "rateLimitExceeded" }] } },
-              { status: 503 },
-            ),
+      /** A quota refusal, carried on whichever status. */
+      const quota = (status: number, reason: string) => () =>
+        Response.json(
+          { error: { code: status, message: "Slow down", status: "RESOURCE_EXHAUSTED", errors: [{ reason }] } },
+          { status },
         );
+      const WRITES = ["POST", "PATCH", "PUT", "DELETE"] as const;
+
+      it.each(
+        WRITES.flatMap((method) =>
+          [
+            [429, "rateLimitExceeded"],
+            [403, "userRateLimitExceeded"],
+            [403, "RATE_LIMIT_EXCEEDED"],
+          ].map(([status, reason]) => [method, status as number, reason as string] as const),
+        ),
+      )("%s → %i %s stays rate_limited: Google rejected it before applying", async (method, status, reason) => {
+        apiReplies.push(quota(status, reason));
+        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+        expect(failure.code).toBe("rate_limited");
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
+      });
+
+      it.each(
+        WRITES.flatMap((method) =>
+          ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"].map((reason) => [method, reason] as const),
+        ),
+      )("%s → 503 %s is still an unknown outcome: a 5xx proves nothing was turned away", async (method, reason) => {
+        apiReplies.push(quota(503, reason));
+        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "server-error" });
+        // The reason is still there for a provider that wants it.
+        expect(googleReasonsOf(failure)).toContain(reason);
+      });
+
+      it.each(
+        WRITES.flatMap((method) => [301, 302, 303, 307, 308].map((status) => [method, status] as const)),
+      )("%s → %i redirect: outcome unknown, never probably applied", async (method, status) => {
+        apiReplies.push(() => new Response(null, { status, headers: { Location: "https://elsewhere.example/" } }));
+        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(failure.message).toContain(`answered HTTP ${status} with a redirect`);
+        expect(failure.message).not.toContain("probably applied");
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+      });
+
+      it("keeps a GET redirect's own refusal, phase redirected", async () => {
+        apiReplies.push(() => new Response(null, { status: 302, headers: { Location: "https://elsewhere.example/" } }));
+        const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(failure.message).toContain("never forwards its credential");
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 302, phase: "redirected" });
+      });
+
+      it("keeps a quota 5xx retryable for a read or an idempotent write", async () => {
+        apiReplies.push(quota(503, "rateLimitExceeded"), quota(503, "rateLimitExceeded"));
         const drive = client();
-        for (const status of [429, 503]) {
-          const failure = await failing(drive.json(write, context()));
-          expect(failure.code).toBe("rate_limited");
-          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "refused" });
-        }
+        const read = await failing(drive.json({ method: "GET", path: "/files/f1" }, context()));
+        expect(read.code).toBe("rate_limited");
+        expect(googleOutcomeOf(read)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+        const idempotent = await failing(
+          drive.json({ method: "PUT", path: "/files/f1", body: {} }, context(), { idempotent: true }),
+        );
+        expect(idempotent.code).toBe("rate_limited");
+        expect(googleOutcomeOf(idempotent)).toEqual({ dispatched: true, status: 503, phase: "refused" });
       });
 
       it("is unknown even when the 5xx body itself is past the ceiling", async () => {
@@ -1357,6 +1409,7 @@ describe("the shared client reads bytes and text for the products that need them
         ["POST", 503, "server-error"],
         ["GET", 503, "refused"],
         ["POST", 200, "reading-body"],
+        ["POST", 307, "redirected"],
       ] as const)("%s → %i records %s", async (method, status, phase) => {
         const ctx = cancelledOnAnswer(oversized(status));
         const failure = await failing(client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx));

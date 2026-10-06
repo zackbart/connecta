@@ -140,14 +140,16 @@ deployment's own connectors still never learn their caller.
   the result says whether it was `truncated`, with its HTTP status and
   `Content-Range`, so an empty file's 416 arrives as an empty result. A write
   is never told to retry when it may have landed: one Google accepted whose
-  reply broke off, overflowed, or redirected, and one sent with no answer at
-  all, or one Google answered with a 5xx after receiving it, fail as
-  non-retryable with words saying to re-read its target first — the verdict
-  core's `write_outcome_unknown` gives an exempt program write — while a read
+  reply broke off or overflowed, one answered with a redirect, one sent with
+  no answer at all, and one Google answered with any 5xx — whatever reason it
+  named — fail as non-retryable with words saying to re-read its target first,
+  the verdict core's `write_outcome_unknown` gives an exempt program write.
+  Only a 429, or a 4xx naming a quota, is a rate limit for a write. A read
   stays retryable, as does a write the provider marks `{ idempotent: true }`.
   An error status is a refusal even when its body cannot be read. A product
   can ask how far any failed request got: before sending, awaiting a
-  response, reading a reply, a server error on a write, or refused. Google's
+  response, reading an accepted reply, redirected, a server error on a write,
+  or refused. Google's
   refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or
