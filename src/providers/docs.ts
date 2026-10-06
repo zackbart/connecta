@@ -57,12 +57,30 @@ export const DOCS_SCOPES = ["https://www.googleapis.com/auth/documents"] as cons
 /** Options for {@link docs}: the shared Workspace delegation options. */
 export type DocsOptions = GoogleWorkspaceOptions;
 
-/** Rendered characters kept across a document's tabs by default. */
+/**
+ * Rendered characters kept across a document's tabs by default: at most about
+ * 60 KB of JSON even in a three-byte script, so a default read crosses the
+ * 256 KiB execute_code bridge with room for its index page and tab rows.
+ */
 const DEFAULT_MAX_CHARS = 20_000;
-/** Connecta's ceiling on one rendering; Google caps a document near 1.02M characters. */
+/**
+ * Connecta's ceiling on one rendering; Google caps a document near 1.02M
+ * characters. At most about 3 MB of JSON, inside what a direct call can stash
+ * and page with get_result; past 256 KiB it cannot cross into execute_code.
+ */
 const MAX_CHARS = 1_000_000;
-/** Index rows returned at most, across tabs, when indexes are asked for. */
-const MAX_ELEMENTS = 2_000;
+/**
+ * Connecta's ceiling on a raw document, in UTF-8 bytes of JSON: styles ride
+ * on every run, so this is a long document's whole structure, and past it one
+ * tab at a time is the readable answer.
+ */
+const MAX_RAW_BYTES = 4 * 1024 * 1024;
+/**
+ * Serialized bytes of index rows in one page. Rows are a few hundred bytes at
+ * most, so a page is hundreds of them; a long document pages by cursor rather
+ * than returning more than the execute_code bridge carries.
+ */
+const ELEMENT_PAGE_BYTES = 64 * 1024;
 /** Characters of each index row's text preview. */
 const PREVIEW_CHARS = 80;
 /** One text argument; Google caps a whole document near 1.02M characters. */
@@ -157,6 +175,10 @@ function integer(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
 function documentUrl(documentId: string): string {
   return `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
 }
@@ -187,16 +209,36 @@ interface RenderState {
   footnotes: { id: string; number: string }[];
   /** Index rows, collected only when asked for. */
   rows: IndexRow[] | undefined;
-  /** Set when rendered text includes a suggested insertion or deletion. */
-  marks: { suggested: boolean };
+  marks: Marks;
+}
+
+/** What a rendering noticed it could not show, shared with its footnotes. */
+interface Marks {
+  /** Rendered text includes a suggested insertion or deletion, unmarked. */
+  suggested: boolean;
+  /** An element of a kind this rendering does not know was skipped. */
+  unknown: boolean;
 }
 
 /**
  * What a tab holds that its text does not show, named so a reader never
  * mistakes the rendering for the whole document: headers, footers, floating
- * (positioned) images, and — in the inline view — which text is a suggestion.
+ * (positioned) images, in the inline view which text is a suggestion, and any
+ * element of a kind Google added after this rendering was written. Every
+ * paragraph element kind Docs v1 defines renders as something.
  */
-const NOT_RENDERED = ["headers", "footers", "positioned_objects", "suggestion_marks"] as const;
+const NOT_RENDERED = [
+  "headers",
+  "footers",
+  "positioned_objects",
+  "suggestion_marks",
+  "unknown_elements",
+] as const;
+
+const AUTO_TEXT: Readonly<Record<string, string>> = {
+  PAGE_NUMBER: "[page number]",
+  PAGE_COUNT: "[page count]",
+};
 
 function suggested(part: JsonRecord): boolean {
   return asArray(part["suggestedInsertionIds"]).length > 0 || asArray(part["suggestedDeletionIds"]).length > 0;
@@ -265,8 +307,21 @@ function elementText(element: JsonRecord, state: RenderState): { text: string; u
     const date = asRecord(asRecord(element["dateElement"])["dateElementProperties"]);
     return { text: text(date["displayText"]) ?? "[date]" };
   }
+  if (element["dropdown"]) {
+    const dropdown = asRecord(asRecord(element["dropdown"])["dropdownProperties"]);
+    return { text: text(dropdown["displayValue"]) ?? "[dropdown: no selection]" };
+  }
+  if (element["autoText"]) {
+    return { text: AUTO_TEXT[String(asRecord(element["autoText"])["type"] ?? "")] ?? "[auto text]" };
+  }
   if (element["horizontalRule"]) return { text: "---" };
+  // The API exposes no equation content, only that one is there.
   if (element["equation"]) return { text: "[equation]" };
+  if (element["pageBreak"]) return { text: "[page break]" };
+  if (element["columnBreak"]) return { text: "[column break]" };
+  if (Object.keys(element).some((key) => key !== "startIndex" && key !== "endIndex")) {
+    state.marks.unknown = true;
+  }
   return { text: "" };
 }
 
@@ -294,9 +349,15 @@ function paragraphText(paragraph: JsonRecord, state: RenderState): string {
     .replaceAll(VERTICAL_TAB, "\n");
 }
 
+/** Where to cut `value` near `max` UTF-16 units without splitting a surrogate pair. */
+function safeCut(value: string, max: number): number {
+  const code = value.charCodeAt(max - 1);
+  return max > 0 && code >= 0xd800 && code <= 0xdbff ? max - 1 : max;
+}
+
 function preview(value: string): string {
   const flat = value.replace(/\s+/g, " ").trim();
-  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS)}…` : flat;
+  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, safeCut(flat, PREVIEW_CHARS))}…` : flat;
 }
 
 /** Render structural elements as markdown-ish lines, collecting index rows. */
@@ -351,6 +412,8 @@ function renderContent(
       state.rows?.push(compact({ type: "table_of_contents" as const, startIndex: start, endIndex: end }));
       // The headings it lists are rendered where they stand.
       lines.push("[Table of contents]");
+    } else if (!element["sectionBreak"] && Object.keys(element).some((key) => !key.endsWith("Index"))) {
+      state.marks.unknown = true;
     }
     // A section break has no text and is not an edit target.
   }
@@ -363,7 +426,7 @@ function renderTab(
   sources: TabSources,
   rows: IndexRow[] | undefined,
 ): { text: string; notRendered: (typeof NOT_RENDERED)[number][] } {
-  const marks = { suggested: false };
+  const marks: Marks = { suggested: false, unknown: false };
   const state: RenderState = { sources, footnotes: [], rows, marks };
   const lines = renderContent(asRecord(tab["body"])["content"], state);
   const notes = state.footnotes.map(({ id, number }) => {
@@ -376,7 +439,9 @@ function renderTab(
   const notRendered = NOT_RENDERED.filter((part) =>
     part === "suggestion_marks"
       ? marks.suggested
-      : present(part === "positioned_objects" ? "positionedObjects" : part),
+      : part === "unknown_elements"
+        ? marks.unknown
+        : present(part === "positioned_objects" ? "positionedObjects" : part),
   );
   return {
     text: [...lines, ...(notes.length > 0 ? ["", ...notes] : [])]
@@ -437,14 +502,48 @@ function endIndexOf(body: unknown): number | undefined {
 /** Cut text at `max` characters, never inside a surrogate pair, and say so. */
 function capped(value: string, max: number): { text: string; textTruncated: boolean } {
   if (value.length <= max) return { text: value, textTruncated: false };
-  let cut = max;
-  const code = value.charCodeAt(cut - 1);
-  if (cut > 0 && code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  const cut = safeCut(value, max);
   const rest = value.length - cut;
   return {
     text: `${value.slice(0, cut)}${cut > 0 ? "\n" : ""}[… ${rest} more characters truncated; raise maxChars or pass tabId to read them]`,
     textTruncated: true,
   };
+}
+
+/** One tab as Google sent it, child tabs included, found at any depth. */
+function findRawTab(tabs: unknown, tabId: string, depth = 0): JsonRecord | undefined {
+  for (const value of asArray(tabs)) {
+    const tab = asRecord(value);
+    if (asRecord(tab["tabProperties"])["tabId"] === tabId) return tab;
+    if (depth < 20) {
+      const found = findRawTab(tab["childTabs"], tabId, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The untouched resource, narrowed to one tab when asked, under a byte
+ * ceiling that names its way out rather than handing back a partial tree.
+ */
+function rawDocument(document: JsonRecord, documentId: string, tabId: string | undefined): JsonRecord {
+  const resource = tabId === undefined ? document : { ...document, tabs: [findRawTab(document["tabs"], tabId)] };
+  const bytes = utf8Bytes(JSON.stringify(resource));
+  if (bytes > MAX_RAW_BYTES) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `The raw document${tabId === undefined ? "" : ` tab ${tabId}`} is ${bytes} bytes, past connecta's ${MAX_RAW_BYTES}-byte raw ceiling. ${tabId === undefined ? "Pass tabId for one tab, or" : "Read"} the rendering instead.`,
+    );
+  }
+  const id = text(document["documentId"]) ?? documentId;
+  return compact({
+    documentId: id,
+    title: text(document["title"]),
+    revisionId: text(document["revisionId"]),
+    url: documentUrl(id),
+    raw: resource,
+  });
 }
 
 const SUGGESTION_MODES: Readonly<Record<string, string>> = {
@@ -465,12 +564,38 @@ function revisionAfter(reply: JsonRecord): string | undefined {
 }
 
 /**
+ * Failures after which an edit may or may not have landed. A caller must not
+ * be told "nothing was applied" about these, nor be told to simply repeat.
+ */
+const UNCERTAIN = new WeakSet<ConnectorCallError>();
+
+function uncertain(message: string, cause: unknown): ConnectorCallError {
+  const error = new ConnectorCallError("connector_call_failed", message, { retryable: false, cause });
+  UNCERTAIN.add(error);
+  return error;
+}
+
+/**
  * One `documents.batchUpdate`, atomic on Google's side: every request applies
  * or none does. With `requiredRevisionId`, Google refuses the batch if the
- * document has moved on. Its refusal is a 400 that does not say which
- * precondition failed, so a refused edit that named a revision is followed by
- * one cheap read of the current revision: if it differs, the honest answer is
- * `conflict`, never a guess from Google's prose.
+ * document has moved on.
+ *
+ * What a failure means for the document:
+ *
+ * - An HTTP refusal — `invalid_args`, `auth_required`, `rate_limited`,
+ *   `not_found`, `conflict`, or a `connector_call_failed` the shared client
+ *   mapped from a 4xx — applied nothing, and passes through exactly as
+ *   mapped. A write naming `requiredRevisionId` is sent revision-guarded, so
+ *   the shared client reads Google's own reason (FAILED_PRECONDITION or
+ *   ABORTED on a 400 or 409) and answers a stale revision with `conflict`.
+ *   Nothing here infers one: a revision read afterwards would prove nothing,
+ *   since a collaborator may have edited in between.
+ * - `unavailable` or `timeout` arrive after the request may have been sent and
+ *   processed (a 5xx, a dropped connection), so the outcome is unknown.
+ * - A 2xx whose body is unreadable means Google applied the batch.
+ *
+ * The reply is read as text and parsed here, so a 2xx can never be mistaken
+ * for a refusal by a JSON decode failing inside the transport.
  */
 async function batchUpdate(
   client: GoogleWorkspaceClient,
@@ -479,50 +604,45 @@ async function batchUpdate(
   requests: unknown[],
   requiredRevisionId: string | undefined,
 ): Promise<JsonRecord> {
+  let reply: { text: string };
   try {
-    return asRecord(
-      await client.json(
-        {
-          method: "POST",
-          path: batchPath(documentId),
-          body: compact({
-            requests,
-            writeControl: requiredRevisionId ? { requiredRevisionId } : undefined,
-          }),
-        },
-        ctx,
-      ),
+    reply = await client.text(
+      {
+        method: "POST",
+        path: batchPath(documentId),
+        body: compact({
+          requests,
+          writeControl: requiredRevisionId ? { requiredRevisionId } : undefined,
+        }),
+      },
+      ctx,
+      "application/json",
+      requiredRevisionId ? { revisionGuarded: true } : undefined,
     );
   } catch (error) {
     if (
-      !requiredRevisionId ||
+      ctx.signal?.aborted ||
       !(error instanceof ConnectorCallError) ||
-      (error.code !== "invalid_args" && error.code !== "connector_call_failed")
+      (error.code !== "unavailable" && error.code !== "timeout")
     ) {
       throw error;
     }
-    let current: string | undefined;
-    try {
-      current = text(
-        asRecord(
-          await client.json(
-            {
-              method: "GET",
-              path: `/documents/${encodeURIComponent(documentId)}`,
-              query: { fields: "revisionId" },
-            },
-            ctx,
-          ),
-        )["revisionId"],
-      );
-    } catch {
-      throw error;
-    }
-    if (current === undefined || current === requiredRevisionId) throw error;
-    throw new ConnectorCallError(
-      "conflict",
-      `Google Docs refused the edit: the document is now at revision ${current}, not the requiredRevisionId it named, so someone changed it first. Nothing was applied. Re-read it with get_document, recompute any indexes, and retry against the new revisionId.`,
-      { cause: error },
+    throw uncertain(
+      `The outcome of this edit is unknown: ${error.message} Google may or may not have applied it. Re-read the document with get_document before doing anything else; repeating an insert blindly can duplicate it.${
+        requiredRevisionId
+          ? " Repeating it with the same requiredRevisionId is safe: if the first attempt applied, Google refuses the repeat."
+          : ""
+      }`,
+      error,
+    );
+  }
+  if (reply.text.trim() === "") return {};
+  try {
+    return asRecord(JSON.parse(reply.text));
+  } catch (cause) {
+    throw uncertain(
+      "Google Docs accepted this edit (HTTP 2xx), so it was applied, but its reply could not be read, so the new revisionId and any counts are unknown. Do not repeat it; re-read the document with get_document.",
+      cause,
     );
   }
 }
@@ -556,7 +676,7 @@ const REVISION_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: 512,
   pattern: "^\\S+$",
-  description: "revisionId from get_document or a previous edit. If the document has changed since, the edit fails with conflict and nothing is applied.",
+  description: "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied.",
 };
 
 const TEXT_PROPERTY: JsonSchema = {
@@ -564,6 +684,41 @@ const TEXT_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: MAX_TEXT_CHARS,
   description: "Plain text; \\n starts a new paragraph. Google caps a document near 1.02 million characters.",
+};
+
+/**
+ * Google's Document resource as returned with `includeTabsContent`: the tabs
+ * carry everything, and the legacy top-level content fields stay empty.
+ * Nothing is required, because ProtoJSON omits every empty field.
+ */
+const RAW_OUTPUT: JsonSchema = {
+  type: "object",
+  properties: {
+    documentId: { type: "string" },
+    title: { type: "string" },
+    revisionId: { type: "string" },
+    suggestionsViewMode: { type: "string" },
+    tabs: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          tabProperties: { type: "object" },
+          documentTab: { type: "object" },
+          childTabs: { type: "array", items: { type: "object" } },
+        },
+      },
+    },
+  },
+};
+
+const PAGE_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    hasMore: { type: "boolean" },
+    nextCursor: { type: ["string", "null"] },
+  },
+  required: ["hasMore", "nextCursor"],
 };
 
 const EDIT_OUTPUT: JsonSchema = {
@@ -629,7 +784,18 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           },
           withIndexes: {
             type: "boolean",
-            description: `Add each tab's elements: every paragraph, table, and table of contents with UTF-16 startIndex and endIndex, at most ${MAX_ELEMENTS} in all.`,
+            description: `Add each tab's elements: every paragraph, table, and table of contents with UTF-16 startIndex and endIndex, ${ELEMENT_PAGE_BYTES / 1024} KiB per page (connecta's cap); page with cursor.`,
+          },
+          cursor: {
+            type: "string",
+            minLength: 3,
+            maxLength: 12,
+            pattern: "^e:[0-9]{1,9}$",
+            description: "Opaque page.nextCursor from a withIndexes read; pass it back unchanged with the same arguments, and maxChars: 0 to skip the text again.",
+          },
+          raw: {
+            type: "boolean",
+            description: `Return Google's document resource (every style, header, footer, named range, list and segment id) for the tabs instead of the rendering; not with maxChars or withIndexes. Connecta caps it at ${MAX_RAW_BYTES} bytes.`,
           },
           suggestions: {
             type: "string",
@@ -647,12 +813,23 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           revisionId: { type: "string" },
           url: { type: "string" },
           tabs: { type: "array", items: TAB_OUTPUT },
-          elementsTruncated: { type: "boolean" },
+          page: PAGE_SCHEMA,
+          raw: RAW_OUTPUT,
         },
-        required: ["documentId", "tabs"],
+        required: ["documentId"],
       },
       handler: async (args, ctx) => {
         const documentId = String(args["documentId"]);
+        const raw = args["raw"] === true;
+        if (raw && (args["maxChars"] !== undefined || args["withIndexes"] !== undefined || args["cursor"] !== undefined)) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            "raw returns Google's resource untouched, so maxChars, withIndexes, and cursor do not apply; send raw alone, or read the rendering.",
+          );
+        }
+        if (args["cursor"] !== undefined && args["withIndexes"] !== true) {
+          throw new ConnectorCallError("invalid_args", "cursor pages index rows; send it with withIndexes: true.");
+        }
         const suggestions = typeof args["suggestions"] === "string" ? SUGGESTION_MODES[args["suggestions"]] : undefined;
         const document = asRecord(
           await client.json(
@@ -678,10 +855,15 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             );
           }
         }
+        if (raw) return rawDocument(document, documentId, wanted);
         const withIndexes = args["withIndexes"] === true;
         let budget = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MAX_CHARS;
-        let elementBudget = MAX_ELEMENTS;
-        let elementsTruncated = false;
+        // Index rows form one sequence across tabs; a page is the rows from
+        // the cursor's ordinal until the byte budget is spent.
+        const from = typeof args["cursor"] === "string" ? Number(args["cursor"].slice(2)) : 0;
+        let ordinal = 0;
+        let pageBytes = 0;
+        let next: number | undefined;
         const rendered = tabs.map((tab) => {
           const rows: IndexRow[] | undefined = withIndexes ? [] : undefined;
           const sources: TabSources = {
@@ -694,9 +876,19 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           budget = Math.max(0, budget - full.length);
           let elements: IndexRow[] | undefined;
           if (rows) {
-            elements = rows.slice(0, elementBudget);
-            if (rows.length > elementBudget) elementsTruncated = true;
-            elementBudget -= elements.length;
+            elements = [];
+            for (const row of rows) {
+              const at = ordinal;
+              ordinal += 1;
+              if (at < from || next !== undefined) continue;
+              const size = utf8Bytes(JSON.stringify(row)) + 1;
+              if (pageBytes + size > ELEMENT_PAGE_BYTES) {
+                next = at;
+                continue;
+              }
+              pageBytes += size;
+              elements.push(row);
+            }
           }
           return compact({
             tabId: tab.tabId,
@@ -715,7 +907,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           revisionId: text(document["revisionId"]),
           url: documentUrl(text(document["documentId"]) ?? documentId),
           tabs: rendered,
-          elementsTruncated: withIndexes ? elementsTruncated : undefined,
+          page: withIndexes
+            ? { hasMore: next !== undefined, nextCursor: next === undefined ? null : `e:${next}` }
+            : undefined,
         });
       },
     },
@@ -778,9 +972,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           } catch (cause) {
             // The document exists now. A retry of this call would make a
             // second one, so the failure names it and is not retryable.
+            const detail = cause instanceof Error ? cause.message : String(cause);
             throw new ConnectorCallError(
               "connector_call_failed",
-              `Created document ${documentId}, but writing its initial text failed: ${cause instanceof Error ? cause.message : String(cause)} Do not create it again; add the text with append_text on ${documentId}.`,
+              cause instanceof ConnectorCallError && UNCERTAIN.has(cause)
+                ? `Created document ${documentId}, but whether its initial text was written is unknown: ${detail} Do not create it again; read ${documentId} with get_document, and append the text with append_text only if it is missing.`
+                : `Created document ${documentId}, but writing its initial text failed: ${detail} Do not create it again; add the text with append_text on ${documentId}.`,
               { retryable: false, cause },
             );
           }
@@ -946,7 +1143,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           },
           requiredRevisionId: {
             ...REVISION_PROPERTY,
-            description: "revisionId from get_document or a previous edit; required, so raw edits are planned against what was read. A changed document fails conflict and nothing is applied.",
+            description: "revisionId from get_document or a previous edit; required, so raw edits are planned against what was read. If the document has changed, it fails conflict and nothing is applied.",
           },
         },
         ["documentId", "requests", "requiredRevisionId"],
@@ -989,7 +1186,7 @@ only an operator can change the mapping.
 
 ## Finding a document
 
-There is no search or list tool, and no pagination. Take the id from a
+There is no search or list tool. Take the id from a
 docs.google.com URL (the part after \`/d/\`), from the person, or from a
 Google Drive connection's file search. A failure on an id may mean it does
 not exist or is not shared with this person; Google does not say which.
@@ -1004,17 +1201,28 @@ not exist or is not shared with this person; Google does not say which.
   insertions and deletions in (read with \`suggestions\` to preview). Text past \`maxChars\` (shared across tabs) ends with a marker;
   pass \`tabId\` to read one tab.
 - Before an index-based edit, read with \`withIndexes: true\` and target an
-  element's \`startIndex\`/\`endIndex\`. Indexes are UTF-16 code units and
+  element's \`startIndex\`/\`endIndex\`. A long document's rows page with
+  \`page.nextCursor\`; send \`maxChars: 0\` on later pages, and start over if
+  \`revisionId\` changed between them. Indexes are UTF-16 code units and
   shift after every edit. Keep \`revisionId\` and pass it as
   \`requiredRevisionId\`, so an edit against a document someone else has
-  changed fails \`conflict\` with nothing applied. Indexes from a suggestions
-  preview (\`accepted\`/\`rejected\`) are not valid for edits.
+  changed fails \`conflict\` with nothing applied; re-read and recompute. Indexes
+  from a suggestions preview (\`accepted\`/\`rejected\`) are not valid for
+  edits.
+- \`raw: true\` returns Google's document resource for the tabs instead of
+  the rendering — styles, headers, footers, named ranges, list and segment ids
+  that \`batch_update_document\` requests may need. It is large: pass
+  \`tabId\`, and call it directly rather than inside \`execute_code\`,
+  which carries at most 256 KiB per result.
 
 ## Editing
 
 - \`create_document\` makes a new document in My Drive's root. A failure
   after the document exists names its id; append the text there rather than
   creating another.
+- An edit that fails with its outcome unknown (a dropped connection, a Google
+  5xx) says so: re-read before repeating it, or repeat it with the same
+  \`requiredRevisionId\`, which Google refuses if the first attempt landed.
 - \`append_text\` joins the last paragraph; begin with \`\\n\` for a new one.
 - \`replace_all_text\` changes every match at once; read first and make
   \`find\` specific.

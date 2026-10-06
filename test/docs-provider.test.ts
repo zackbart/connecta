@@ -27,7 +27,9 @@ interface ApiCall {
   body: any;
 }
 
-type Route = (call: ApiCall) => { status?: number; body?: unknown } | undefined;
+type Route = (
+  call: ApiCall,
+) => { status?: number; body?: unknown; raw?: string; unreachable?: boolean } | undefined;
 
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
@@ -51,6 +53,10 @@ beforeEach(() => {
     };
     calls.push(call);
     const reply = route(call) ?? {};
+    if (reply.unreachable) throw new TypeError("fetch failed: connection reset");
+    if (reply.raw !== undefined) {
+      return new Response(reply.raw, { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
+    }
     return Response.json(reply.body ?? {}, { status: reply.status ?? 200 });
   }) as unknown as typeof fetch;
 });
@@ -294,7 +300,7 @@ describe("reading a document (H9)", () => {
     route = () => ({ body: DOCUMENT });
     const result = await call(connection(), "get_document", { documentId: "doc-1", tabId: "t.0", withIndexes: true });
     expect(result.tabs).toHaveLength(1);
-    expect(result.elementsTruncated).toBe(false);
+    expect(result.page).toEqual({ hasMore: false, nextCursor: null });
     const elements = result.tabs[0].elements;
     expect(elements.slice(0, 3)).toEqual([
       { type: "paragraph", startIndex: 1, endIndex: 16, style: "TITLE", text: "Elders meeting" },
@@ -359,13 +365,78 @@ describe("reading a document (H9)", () => {
     expect(result.tabs).toEqual([{ endIndex: 7, text: "Hello", textTruncated: false }]);
   });
 
-  it("caps index rows across tabs and says so", async () => {
-    const content = Array.from({ length: 2_100 }, (_, index) => paragraph(index + 1, [run("x\n", index + 1)]));
-    route = () => ({ body: { documentId: "big", tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content } } }] } });
-    const result = await call(connection(), "get_document", { documentId: "big", withIndexes: true, maxChars: 0 });
-    expect(result.tabs[0].elements).toHaveLength(2_000);
-    expect(result.elementsTruncated).toBe(true);
+  it("pages index rows across tabs by cursor, every row exactly once", async () => {
+    const tab = (id: string, count: number) => ({
+      tabProperties: { tabId: id },
+      documentTab: {
+        body: { content: Array.from({ length: count }, (_, index) => paragraph(index + 1, [run(`${id} row ${index}\n`, index + 1)])) },
+      },
+    });
+    route = () => ({ body: { documentId: "big", revisionId: "r", tabs: [tab("t.0", 1_500), tab("t.1", 1_500)] } });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const result: any = await call(connection(), "get_document", {
+        documentId: "big",
+        withIndexes: true,
+        maxChars: 0,
+        ...(cursor ? { cursor } : {}),
+      });
+      pages += 1;
+      expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(96 * 1024);
+      for (const each of result.tabs) for (const row of each.elements) seen.push(row.text);
+      expect(result.page.hasMore).toBe(result.page.nextCursor !== null);
+      cursor = result.page.nextCursor ?? undefined;
+    } while (cursor && pages < 50);
+    expect(pages).toBeGreaterThan(1);
+    expect(seen).toHaveLength(3_000);
+    expect(new Set(seen).size).toBe(3_000);
+    expect(seen[0]).toBe("t.0 row 0");
+    expect(seen[2_999]).toBe("t.1 row 1499");
+  });
+
+  it("refuses a cursor without withIndexes, and an undeclared cursor shape, before any request", async () => {
+    await expect(call(connection(), "get_document", { documentId: "d", cursor: "e:5" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    await expect(
+      call(connection(), "get_document", { documentId: "d", withIndexes: true, cursor: "page-2" }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toEqual([]);
+  });
+
+  it("delivers a worst-case default read across the 256 KiB execute_code bridge", async () => {
+    // Three-byte characters, JSON-escaped quotes, a hundred titled tabs, and
+    // more index rows than one page holds: every default limit at once.
+    const heavy = "中\"".repeat(10_000);
+    const tabs = Array.from({ length: 100 }, (_, index) => ({
+      tabProperties: { tabId: `t.${index}`, title: "題".repeat(100), parentTabId: "t.0", nestingLevel: 1 },
+      documentTab: {
+        body: {
+          content: Array.from({ length: 60 }, (_, row) =>
+            paragraph(row * 200 + 1, [run(`${"題".repeat(40)}${heavy.slice(0, 120)}\n`, row * 200 + 1)], {
+              paragraphStyle: { namedStyleType: "HEADING_6" },
+            }),
+          ),
+        },
+      },
+    }));
+    tabs[0]!.documentTab.body.content.unshift(paragraph(1, [run(`${heavy}\n`, 1)]));
+    route = () => ({ body: { documentId: "worst", title: "題".repeat(200), revisionId: "r", tabs } });
+    const result = await call(connection(), "get_document", { documentId: "worst", withIndexes: true });
+    expect(result.page.hasMore).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(256 * 1024);
+  });
+
+  it("keeps the explicit maximum inside what a direct call can stash and page", async () => {
+    const text = "中".repeat(1_100_000);
+    route = () => ({
+      body: { documentId: "max", tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run(`${text}\n`, 1)])] } } }] },
+    });
+    const result = await call(connection(), "get_document", { documentId: "max", maxChars: 1_000_000, withIndexes: true });
     expect(result.tabs[0].textTruncated).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(8 * 1024 * 1024);
   });
 });
 
@@ -520,11 +591,11 @@ describe("editing a document", () => {
 });
 
 describe("failures, mapped to what the caller does next (H11)", () => {
-  it("answers a stale requiredRevisionId with conflict, after one read of the current revision", async () => {
-    route = (request) =>
-      request.method === "POST"
-        ? { status: 400, body: { error: { code: 400, message: "Precondition check failed.", status: "FAILED_PRECONDITION" } } }
-        : { body: { revisionId: "rev-7" } };
+  it.each([
+    ["a 400 FAILED_PRECONDITION", 400, "FAILED_PRECONDITION"],
+    ["a 409 ABORTED", 409, "ABORTED"],
+  ])("answers a stale requiredRevisionId (%s) with conflict, reading nothing more", async (_kind, status, reason) => {
+    route = () => ({ status, body: { error: { code: status, message: "The document changed.", status: reason } } });
     const failure = await call(connection(), "insert_text", {
       documentId: "doc-1",
       index: 5,
@@ -532,30 +603,75 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       requiredRevisionId: "rev-1",
     }).catch((error) => error);
     expect(failure).toMatchObject({ code: "conflict", retryable: false });
-    expect(failure.message).toContain("rev-7");
-    expect(failure.message).toContain("Nothing was applied");
-    expect(calls.map((entry) => `${entry.method} ${path(calls.indexOf(entry))}`)).toEqual([
-      "POST /documents/doc-1:batchUpdate",
-      "GET /documents/doc-1",
-    ]);
-    expect(calls[1]!.url.searchParams.get("fields")).toBe("revisionId");
+    expect(failure.message).toContain("changed after the revision it named");
+    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
-  it("keeps Google's refusal when the revision has not moved, and reads nothing without one", async () => {
-    route = (request) =>
-      request.method === "POST"
-        ? { status: 400, body: { error: { code: 400, message: "Index 500 must be less than the end index.", status: "INVALID_ARGUMENT" } } }
-        : { body: { revisionId: "rev-1" } };
-    await expect(
-      call(connection(), "insert_text", { documentId: "doc-1", index: 500, text: "x", requiredRevisionId: "rev-1" }),
-    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("Index 500") });
-    expect(calls).toHaveLength(2);
-
-    calls.length = 0;
-    await expect(call(connection(), "insert_text", { documentId: "doc-1", index: 500, text: "x" })).rejects.toMatchObject({
-      code: "invalid_args",
+  it("passes other refusals through as mapped, and a precondition without a revision is no conflict", async () => {
+    // A bad index is a refusal, not a conflict, revision or not.
+    route = () => ({
+      status: 400,
+      body: { error: { code: 400, message: "Index 500 must be less than the end index.", status: "INVALID_ARGUMENT" } },
     });
-    expect(calls).toHaveLength(1);
+    for (const revision of [{ requiredRevisionId: "rev-1" }, {}]) {
+      calls.length = 0;
+      await expect(
+        call(connection(), "insert_text", { documentId: "doc-1", index: 500, text: "x", ...revision }),
+      ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("Index 500") });
+      expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+    }
+    // Unguarded, FAILED_PRECONDITION means something else and is not relabeled.
+    route = () => ({ status: 400, body: { error: { code: 400, message: "Precondition check failed.", status: "FAILED_PRECONDITION" } } });
+    const unguarded = await call(connection(), "insert_text", { documentId: "doc-1", index: 5, text: "x" }).catch(
+      (error) => error,
+    );
+    expect(unguarded.code).toBe("connector_call_failed");
+  });
+
+  it("never calls a 2xx it could not read unapplied, nor invites a repeat", async () => {
+    route = () => ({ raw: "{not json" });
+    const failure = await call(connection(), "insert_text", {
+      documentId: "doc-1",
+      index: 5,
+      text: "x",
+      requiredRevisionId: "rev-1",
+    }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("it was applied");
+    expect(failure.message).toContain("Do not repeat it");
+    expect(failure.message).not.toMatch(/nothing was applied/i);
+    expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
+  });
+
+  it.each([
+    ["a Google 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
+    ["a dropped connection", { unreachable: true }],
+  ])("reports an edit's outcome as unknown after %s", async (_kind, reply) => {
+    route = () => reply;
+    const failure = await call(connection(), "append_text", {
+      documentId: "doc-1",
+      text: "x",
+      requiredRevisionId: "rev-1",
+    }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("outcome of this edit is unknown");
+    expect(failure.message).toContain("same requiredRevisionId is safe");
+    expect(failure.message).not.toMatch(/nothing was applied/i);
+
+    // Without a revision there is no safe repeat to offer.
+    const bare = await call(connection(), "append_text", { documentId: "doc-1", text: "x" }).catch((error) => error);
+    expect(bare.message).toContain("can duplicate it");
+    expect(bare.message).not.toContain("is safe");
+  });
+
+  it("says a created document's initial text may or may not exist when its write is uncertain", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith(":batchUpdate")
+        ? { unreachable: true }
+        : { body: { documentId: "new-1", title: "Minutes" } };
+    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("Created document new-1, but whether its initial text was written is unknown");
   });
 
   it("states the 404 ambiguity: a document id that is unknown or not shared look alike", async () => {
@@ -650,6 +766,7 @@ describe("every output is declared (H8, H9)", () => {
     route = () => ({ body: DOCUMENT });
     await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", withIndexes: true }));
     await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", maxChars: 3 }));
+    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", raw: true }));
 
     // ProtoJSON drops empty fields: an empty document is very nearly `{}`.
     route = () => ({ body: {} });
@@ -658,7 +775,7 @@ describe("every output is declared (H8, H9)", () => {
       documentId: "doc-0",
       url: "https://docs.google.com/document/d/doc-0/edit",
       tabs: [{ text: "", textTruncated: false, elements: [] }],
-      elementsTruncated: false,
+      page: { hasMore: false, nextCursor: null },
     });
     await check(connector, "get_document", empty);
     route = () => ({ body: { documentId: "doc-0", tabs: [{ tabProperties: { tabId: "t.0" } }] } });
@@ -740,5 +857,124 @@ describe("every output is declared (H8, H9)", () => {
     expect(result.tabs[0].notRendered).toEqual(["headers", "footers", "positioned_objects", "suggestion_marks"]);
     expect(result.tabs[0].text).toBe("Old text");
     expect(result.tabs[1].notRendered).toBeUndefined();
+  });
+});
+
+describe("raw reads (H9)", () => {
+  it("returns Google's resource untouched, all tabs or one, with nothing the rendering adds", async () => {
+    route = () => ({ body: DOCUMENT });
+    const all = await call(connection(), "get_document", { documentId: "doc-1", raw: true });
+    expect(all).toEqual({
+      documentId: "doc-1",
+      title: "Elders meeting",
+      revisionId: "rev-1",
+      url: "https://docs.google.com/document/d/doc-1/edit",
+      raw: DOCUMENT,
+    });
+    expect(all.tabs).toBeUndefined();
+
+    const child = await call(connection(), "get_document", { documentId: "doc-1", raw: true, tabId: "t.child" });
+    expect(child.raw.tabs).toEqual([DOCUMENT.tabs[0]!.childTabs[0]]);
+    expect(child.raw.title).toBe("Elders meeting");
+  });
+
+  it("returns an empty document as Google sent it, and validates", async () => {
+    route = () => ({ body: {} });
+    const empty = await call(connection(), "get_document", { documentId: "doc-0", raw: true });
+    expect(empty).toEqual({ documentId: "doc-0", url: "https://docs.google.com/document/d/doc-0/edit", raw: {} });
+    const tool = (await connection().listTools(context())).find((candidate) => candidate.name === "get_document")!;
+    expect(new Validator(tool.outputSchema as any, "2020-12", false).validate(empty).errors).toEqual([]);
+    expect(new Validator(tool.outputSchema as any, "2020-12", false).validate({ documentId: "d", raw: DOCUMENT }).errors).toEqual([]);
+  });
+
+  it("refuses a raw document past its ceiling by naming the way out, and raw beside rendering options", async () => {
+    const huge = "x".repeat(4 * 1024 * 1024);
+    route = () => ({
+      body: { documentId: "big", tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run(`${huge}\n`, 1)])] } } }] },
+    });
+    const failure = await call(connection(), "get_document", { documentId: "big", raw: true }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    expect(failure.message).toContain("raw ceiling");
+    expect(failure.message).toContain("tabId");
+
+    calls.length = 0;
+    for (const extra of [{ maxChars: 10 }, { withIndexes: true }]) {
+      await expect(call(connection(), "get_document", { documentId: "d", raw: true, ...extra })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    }
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("every inline element renders as something, or is named (H9)", () => {
+  /**
+   * One of each ParagraphElement kind in the Docs v1 Discovery document. The
+   * drift manifest digests documents.get's response schema, so a kind Google
+   * adds surfaces there before it can vanish here unnoticed.
+   */
+  const KINDS: Readonly<Record<string, Record<string, unknown>>> = {
+    textRun: { textRun: { content: "words" } },
+    autoText: { autoText: { type: "PAGE_NUMBER" } },
+    pageBreak: { pageBreak: {} },
+    columnBreak: { columnBreak: {} },
+    footnoteReference: { footnoteReference: { footnoteId: "f", footnoteNumber: "1" } },
+    horizontalRule: { horizontalRule: {} },
+    equation: { equation: {} },
+    inlineObjectElement: { inlineObjectElement: { inlineObjectId: "kix.none" } },
+    person: { person: { personProperties: { email: "ann@church.example" } } },
+    richLink: { richLink: { richLinkProperties: { uri: "https://example.org" } } },
+    dateElement: { dateElement: { dateElementProperties: { displayText: "Oct 6, 2026" } } },
+    dropdown: { dropdown: { dropdownProperties: { displayValue: "Approved" } } },
+  };
+
+  async function renderOne(element: Record<string, unknown>) {
+    route = () => ({
+      body: {
+        documentId: "d",
+        tabs: [
+          {
+            tabProperties: { tabId: "t.0" },
+            documentTab: {
+              body: { content: [paragraph(1, [{ startIndex: 1, endIndex: 2, ...element }, run("!\n", 2)])] },
+            },
+          },
+        ],
+      },
+    });
+    return (await call(connection(), "get_document", { documentId: "d" })).tabs[0];
+  }
+
+  it.each(Object.entries(KINDS))("renders %s as visible text", async (_kind, element) => {
+    const tab = await renderOne(element);
+    expect(tab.text.split("\n")[0]!.length).toBeGreaterThan(1);
+    expect(tab.notRendered).toBeUndefined();
+  });
+
+  it("renders a dropdown chip's selected value, and chips by what they show", async () => {
+    expect((await renderOne(KINDS["dropdown"]!)).text).toBe("Approved!");
+    expect((await renderOne({ dropdown: { dropdownProperties: {} } })).text).toBe("[dropdown: no selection]!");
+    expect((await renderOne(KINDS["autoText"]!)).text).toBe("[page number]!");
+    expect((await renderOne(KINDS["dateElement"]!)).text).toBe("Oct 6, 2026!");
+  });
+
+  it("names an element kind it does not know instead of dropping it silently", async () => {
+    const tab = await renderOne({ futureChip: { value: "?" } });
+    expect(tab.text).toBe("!");
+    expect(tab.notRendered).toEqual(["unknown_elements"]);
+  });
+
+  it("cuts an index preview without splitting a surrogate pair", async () => {
+    const body = `${"a".repeat(79)}🙏中`;
+    route = () => ({
+      body: {
+        documentId: "d",
+        tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run(`${body}\n`, 1)])] } } }],
+      },
+    });
+    const result = await call(connection(), "get_document", { documentId: "d", withIndexes: true });
+    const preview: string = result.tabs[0].elements[0].text;
+    expect(preview).toBe(`${"a".repeat(79)}…`);
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(preview)).toBe(false);
   });
 });
