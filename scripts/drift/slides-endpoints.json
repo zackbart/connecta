@@ -16,6 +16,12 @@
     },
     {
       "method": "GET",
+      "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}",
+      "specRevision": "20260930",
+      "contract": "sha256:06d099c356ad5668662829f3d5ce44834b04b505c6e312e6630e8f069c2a7516"
+    },
+    {
+      "method": "GET",
       "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
       "specRevision": "20260930",
       "contract": "sha256:860a4e43c44543d26ba7ab0f5c8a93c0bf23869f599ab92a5ea9986d4a4a4b9c"

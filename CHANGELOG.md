@@ -291,29 +291,38 @@ caller.
 - **Google Slides connection.** `@zackbart/connecta/providers/slides` exports
   `slides(id, options)` with the same Workspace delegation options as `gmail()`,
   plus `SLIDES_SCOPES` and `SLIDES_API_BASE_URL`. It requests exactly
-  `https://www.googleapis.com/auth/presentations`. Six hand-written tools:
-  `get_presentation` (title, page size, `revisionId`, layouts, and each
-  slide's text in reading order — top to bottom, then left to right, rotated
-  and nested groups composed — with table cells, alt text, linked charts'
-  spreadsheet ids, speaker notes, and empty placeholders' ids for filling a
-  new slide, under a field mask that leaves styles behind; cursor-paged by
-  slide and capped per slide with explicit markers; `raw: true` for this
-  page's slides as Slides sends them) and `get_slide_thumbnail` (the
-  short-lived link and size, never the image) are reads; `create_presentation`
-  and `create_slide` (a predefined or the deck's own layout, at an index or
-  the end) are additive writes; `replace_all_text` (literal, case-sensitive by
-  default, several replacements in one atomic batch, optionally at a required
-  revision) and `batch_update_presentation` (1 to 100 raw Slides requests,
-  each refused locally unless it is one known Request kind, always at a
-  required `revisionId`) are destructive. A write refused because the deck
-  changed since its revision is a `conflict`. Every page of
-  `get_presentation` also ends before 192 KiB serialized, under the 256 KiB a
-  program's host call carries, so no page is undeliverable: a slide too large
-  for one result is cut to fit with markers saying so, and a raw slide too
-  large for any is named rather than returned. Slides cannot list decks, and
-  the guide says that is Drive's job. A 404 is reported as
-  unknown-or-not-visible, because a deck is a Drive file. Setup is documented
-  on `slides()`.
+  `https://www.googleapis.com/auth/presentations`. Eight hand-written tools.
+  Four are reads: `get_presentation` (title, page size, `revisionId`, a
+  layout preview, and each slide's text in reading order — top to bottom,
+  then left to right, rotated and nested groups composed — with table cells,
+  alt text, linked charts' spreadsheet ids, speaker notes, and empty
+  placeholders' ids for filling a new slide, under a field mask that leaves
+  styles behind, capped per slide), `get_page` (any slide, layout, master, or
+  notes page by objectId: every element in reading order with its group and
+  placeholder type, index, and parent — what `placeholderIdMappings` needs —
+  and text continued across pages), `list_layouts` (masters, each followed by
+  its layouts), and `get_slide_thumbnail` (the short-lived link and size,
+  never the image). `create_presentation` and `create_slide` are additive
+  writes; `replace_all_text` (literal, case-sensitive by default, several
+  replacements in one atomic batch, optionally at a required revision) and
+  `batch_update_presentation` (1 to 100 raw Slides requests, each refused
+  locally unless it is one known Request kind, always at a required
+  `revisionId`) are destructive. A write refused because the deck changed
+  since its revision is a `conflict`, and a create whose outcome is unknown
+  says what to look for before creating again.
+  Every read result is built under the shared Workspace result budget, so it
+  is deliverable inside a program and directly alike, and nothing it cannot
+  carry is lost: cut text carries the `get_page` cursor that continues it
+  character by character, a crowded slide names the cursor for the elements
+  not shown, the layout preview continues in `list_layouts`, and `raw: true`
+  pages Slides' own JSON, sending an element too large for one result in
+  chunks that concatenate and parse. Every cursor is bound to the deck, page,
+  mode, and the revision it was read at — or, for a viewer Slides gives no
+  revision, a fingerprint of what its paging depends on — so a deck that
+  changed between pages is a `conflict` to restart, never a skipped or
+  repeated slide. Slides cannot list decks, and the guide says that is
+  Drive's job. A 404 is reported as unknown-or-not-visible, because a deck is
+  a Drive file. Setup is documented on `slides()`.
 - **Google Discovery drift checks.** `npm run providers:check -- --provider
   gmail` reads Gmail's credential-free Discovery document and digests the nine
   methods the tools call like any other touched endpoint, and also reports a

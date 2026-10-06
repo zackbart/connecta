@@ -290,7 +290,7 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
   sheets: ["get", "create", "add", "append", "update", "clear", "batch"],
   // The raw hatch keeps Google's own method name, batchUpdate, so an agent
   // that knows the Slides reference finds it by that name.
-  slides: ["get", "create", "replace", "batch"],
+  slides: ["get", "list", "create", "replace", "batch"],
 };
 
 /**

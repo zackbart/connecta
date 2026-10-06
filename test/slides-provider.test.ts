@@ -27,7 +27,8 @@ interface ApiCall {
   body: any;
 }
 
-type Route = (call: ApiCall) => { status?: number; body?: unknown } | undefined;
+/** A reply: a JSON body and status, or a whole Response, or a dropped connection. */
+type Route = (call: ApiCall) => { status?: number; body?: unknown; response?: () => Response } | undefined;
 
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
@@ -51,6 +52,7 @@ beforeEach(() => {
     };
     calls.push(call);
     const reply = route(call) ?? {};
+    if (reply.response) return reply.response();
     return Response.json(reply.body ?? {}, { status: reply.status ?? 200 });
   }) as unknown as typeof fetch;
 });
@@ -117,6 +119,7 @@ const PRESENTATION = {
       slideProperties: {
         layoutObjectId: "L1",
         notesPage: {
+          objectId: "p_notes",
           notesProperties: { speakerNotesObjectId: "n1" },
           pageElements: [
             { objectId: "slideImage", image: { contentUrl: "https://x" } },
@@ -157,6 +160,27 @@ const PRESENTATION = {
   ],
 };
 
+/** The second slide as pages.get returns it. */
+const SLIDE_PAGE = {
+  ...PRESENTATION.slides[1]!,
+  pageType: "SLIDE",
+  revisionId: "rev-1",
+  slideProperties: { layoutObjectId: "L2", masterObjectId: "M1", isSkipped: true, notesPage: { objectId: "s2_notes" } },
+};
+
+/** A layout as pages.get returns it: placeholders with their indexes. */
+const LAYOUT_PAGE = {
+  objectId: "L2",
+  pageType: "LAYOUT",
+  revisionId: "rev-1",
+  layoutProperties: { name: "TITLE_AND_BODY", displayName: "Title and body", masterObjectId: "M1" },
+  pageProperties: { pageBackgroundFill: { solidFill: { color: { themeColor: "LIGHT1" } } } },
+  pageElements: [
+    { objectId: "L2_body", transform: at(0, 2000000), shape: { shapeType: "TEXT_BOX", placeholder: { type: "BODY", index: 0, parentObjectId: "M1_body" } } },
+    { objectId: "L2_title", transform: at(0, 400000), shape: { shapeType: "TEXT_BOX", placeholder: { type: "TITLE", parentObjectId: "M1_title" } } },
+  ],
+};
+
 describe("slides() identity and surface (H1, H14)", () => {
   it("requires a purpose and names what it does in title, description, and guide", () => {
     expect(() => connection({ purpose: " " })).toThrow(/purpose/);
@@ -171,14 +195,16 @@ describe("slides() identity and surface (H1, H14)", () => {
     expect(guide(connector).required).toBe(true);
   });
 
-  it("has exactly six tools, and none that shares, moves, or deletes a deck", async () => {
+  it("has exactly eight tools, and none that shares, moves, or deletes a deck", async () => {
     const tools = await connection().listTools(context());
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "batch_update_presentation",
       "create_presentation",
       "create_slide",
+      "get_page",
       "get_presentation",
       "get_slide_thumbnail",
+      "list_layouts",
       "replace_all_text",
     ]);
   });
@@ -228,7 +254,7 @@ describe("reading a deck (H9, H10)", () => {
     expect(`${request.origin}${request.pathname}`).toBe(`${SLIDES_API_BASE_URL}/presentations/deck1`);
     const fields = request.searchParams.get("fields")!;
     expect(fields).toContain("textRun(content)");
-    expect(fields).toContain("notesPage(notesProperties");
+    expect(fields).toContain("notesPage(objectId,notesProperties");
     expect(fields).not.toContain("style");
     // A malformed mask is a 400 for every call; keep it balanced.
     let depth = 0;
@@ -247,8 +273,8 @@ describe("reading a deck (H9, H10)", () => {
       pageSize: { width: { magnitude: 9144000, unit: "EMU" }, height: { magnitude: 5143500, unit: "EMU" } },
       slideCount: 3,
       layouts: [
-        { objectId: "L1", name: "TITLE", displayName: "Title slide" },
-        { objectId: "L2", name: "TITLE_AND_BODY", displayName: "Title and body" },
+        { objectId: "L1", kind: "layout", name: "TITLE", displayName: "Title slide" },
+        { objectId: "L2", kind: "layout", name: "TITLE_AND_BODY", displayName: "Title and body" },
       ],
       slides: [
         {
@@ -262,6 +288,7 @@ describe("reading a deck (H9, H10)", () => {
             { objectId: "body", kind: "shape", placeholder: "SUBTITLE", text: "He is risen\nindeed" },
           ],
           omittedElements: 2,
+          notesPageId: "p_notes",
           notes: "Welcome everyone.",
         },
         {
@@ -317,16 +344,20 @@ describe("reading a deck (H9, H10)", () => {
       objectId: "title",
       kind: "shape",
       placeholder: "CENTERED_TITLE",
-      text: "Easter Sun\n[… 3 more characters truncated; raise maxCharsPerSlide to read them]",
+      text: "Easter Sun\n[… 3 more characters truncated; raise maxCharsPerSlide, or continue with get_page from textCursor]",
       truncated: true,
+      textCursor: expect.any(String),
     });
     // The budget is spent: the next element says so rather than vanishing.
     expect(first.elements[1].text).toBe(
-      "\n[… 18 more characters truncated; raise maxCharsPerSlide to read them]",
+      "\n[… 18 more characters truncated; raise maxCharsPerSlide, or continue with get_page from textCursor]",
     );
-    expect(first.notes).toBe("Welcome ev\n[… 7 more characters truncated; raise maxCharsPerSlide to read them]");
-    // The title is bounded by the same cap, and says so.
-    expect(first.title).toBe("Easter Sun\n[… 3 more characters truncated; raise maxCharsPerSlide to read them]");
+    expect(first.notes).toBe(
+      "Welcome ev\n[… 7 more characters truncated; raise maxCharsPerSlide, or continue with get_page from notesCursor]",
+    );
+    expect(first.notesCursor).toEqual(expect.any(String));
+    // The title is bounded by the same cap, and says where the rest is.
+    expect(first.title).toBe("Easter Sun\n[… 3 more characters; the title element's text has them]");
   });
 
   it("never lets a slide title escape the cap, however long", async () => {
@@ -338,9 +369,9 @@ describe("reading a deck (H9, H10)", () => {
       },
     });
     const zero = await call(connection(), "get_presentation", { presentationId: "deck1", maxCharsPerSlide: 0 });
-    expect(zero.slides[0].title).toBe("\n[… 100000 more characters truncated; raise maxCharsPerSlide to read them]");
+    expect(zero.slides[0].title).toBe("\n[… 100000 more characters; the title element's text has them]");
     const most = await call(connection(), "get_presentation", { presentationId: "deck1", maxCharsPerSlide: 50_000 });
-    expect(most.slides[0].title).toMatch(/^T{500}\n\[… 99500 more characters truncated/);
+    expect(most.slides[0].title).toMatch(/^T{500}\n\[… 99500 more characters; the title/);
   });
 
   it("keeps empty placeholders, with id and type, so a new slide can be filled", async () => {
@@ -508,6 +539,75 @@ describe("errors (H11)", () => {
     );
     expect(failure.code).not.toBe("conflict");
     expect(failure.message).toContain("Precondition check failed.");
+  });
+});
+
+describe("writes whose outcome is unknown", () => {
+  /** A 2xx whose body breaks off mid-stream: accepted, answer unreadable. */
+  const broken = () => ({
+    response: () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"presentationId":'));
+            controller.error(new TypeError("other side closed"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+  });
+  /** Sent, and no answer at all. */
+  const dropped = () => ({
+    response: () => {
+      throw new TypeError("fetch failed");
+    },
+  });
+
+  it.each([
+    ["create_presentation", { title: "Easter" }, "Search Drive for a deck with this title"],
+    ["create_slide", { presentationId: "deck1" }, "look for the new slide before adding another"],
+  ])("%s says the create probably applied, and what to look for, when its 2xx body breaks", async (name, args, advice) => {
+    route = broken;
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("the change probably applied");
+    expect(failure.message).toContain(advice);
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["create_presentation", { title: "Easter" }, "Search Drive for a deck with this title"],
+    ["create_slide", { presentationId: "deck1" }, "look for the new slide before adding another"],
+  ])("%s says the create may or may not have applied, and what to look for, with no answer", async (name, args, advice) => {
+    route = dropped;
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("may or may not have been applied");
+    expect(failure.message).toContain(advice);
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["replace_all_text", { presentationId: "deck1", replacements: [{ find: "a", replace: "b" }] }],
+    ["batch_update_presentation", { presentationId: "deck1", requiredRevisionId: "rev-1", requests: [{ deleteObject: { objectId: "x" } }] }],
+  ])("%s keeps the shared verdict, never retryable, never 'nothing was applied'", async (name, args) => {
+    for (const [reply, verdict] of [
+      [broken, "the change probably applied"],
+      [dropped, "may or may not have been applied"],
+    ] as const) {
+      route = reply;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain(verdict);
+      expect(failure.message).not.toMatch(/nothing was (applied|changed)/i);
+    }
+  });
+
+  it("leaves a refusal of a create as Google stated it", async () => {
+    route = () => ({ status: 400, body: { error: { code: 400, message: "Invalid layout.", status: "INVALID_ARGUMENT" } } });
+    const failure = await call(connection(), "create_slide", { presentationId: "deck1", layout: "BIG_NUMBER" }).catch((error) => error);
+    expect(failure.code).toBe("invalid_args");
+    expect(failure.message).not.toContain("look for the new slide");
   });
 });
 
@@ -692,6 +792,14 @@ describe("output schemas declare what the tools return (H8)", () => {
     ]);
     route = () => ({ body: EMPTY });
     outputs.push(["get_presentation", await call(connector, "get_presentation", { presentationId: "empty1" })]);
+    route = () => ({ body: LAYOUT_PAGE });
+    outputs.push(["get_page", await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "L2" })]);
+    route = () => ({ body: { ...SLIDE_PAGE, revisionId: undefined } });
+    outputs.push(["get_page", await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "s2" })]);
+    route = () => ({ body: PRESENTATION });
+    outputs.push(["list_layouts", await call(connector, "list_layouts", { presentationId: "deck1", limit: 1 })]);
+    route = () => ({ body: EMPTY });
+    outputs.push(["list_layouts", await call(connector, "list_layouts", { presentationId: "empty1" })]);
     route = () => ({ body: { contentUrl: "https://lh7/x", width: 200, height: 113 } });
     outputs.push([
       "get_slide_thumbnail",
@@ -884,5 +992,317 @@ describe("every result is deliverable, in a program and directly", () => {
     // Never half an emoji: the cut falls between code points.
     expect(echoed).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
     expect(result.occurrencesChanged).toBe(50);
+  });
+});
+
+describe("get_page and list_layouts: every page, element, and layout is reachable", () => {
+  const BRIDGE_BYTES = 256 * 1024;
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  /** Long text whose every position is distinct, with emoji to test surrogate-safe cuts. */
+  const long = (length: number) =>
+    Array.from({ length }, (_, index) => (index % 997 === 0 ? "😀" : String.fromCharCode(97 + (index % 26)))).join("").slice(0, length);
+  const CONTINUES = /\n\[… \d+ more characters continue on the next page\]$/;
+
+  /** Routes the deck to presentations.get and each page to pages.get. */
+  function serve(deck: any, pages: Record<string, any> = {}) {
+    route = (request) => {
+      const match = /\/pages\/([^/]+)$/.exec(request.url.pathname);
+      if (!match) return { body: deck };
+      const id = decodeURIComponent(match[1]!);
+      const page = pages[id] ?? deck.slides?.find((slide: any) => slide.objectId === id);
+      return page
+        ? { body: { revisionId: deck.revisionId, ...page } }
+        : { status: 404, body: { error: { code: 404, message: "Not found", status: "NOT_FOUND" } } };
+    };
+  }
+
+  /** Follow get_page from `cursor` to the end, gathering each page. */
+  async function follow(connector: Connector, args: Record<string, unknown>, cursor?: string) {
+    const pages: any[] = [];
+    do {
+      const page = await call(connector, "get_page", { presentationId: "deck1", ...args, ...(cursor ? { cursor } : {}) });
+      expect(bytes(page)).toBeLessThan(BRIDGE_BYTES);
+      pages.push(page);
+      cursor = page.page.nextCursor ?? undefined;
+    } while (cursor && pages.length < 200);
+    return pages;
+  }
+
+  it("reads a layout's placeholders, with the types, indexes, and parents placeholderIdMappings needs", async () => {
+    route = () => ({ body: LAYOUT_PAGE });
+    const result = await call(connection(), "get_page", { presentationId: "deck1", pageObjectId: "L2" });
+    expect(calls[0]!.url.pathname).toBe("/v1/presentations/deck1/pages/L2");
+    const fields = calls[0]!.url.searchParams.get("fields")!;
+    expect(fields).toContain("placeholder(type,index,parentObjectId)");
+    expect(fields).toContain("layoutProperties(name,displayName,masterObjectId)");
+    expect(result).toEqual({
+      presentationId: "deck1",
+      pageObjectId: "L2",
+      revisionId: "rev-1",
+      pageType: "LAYOUT",
+      masterId: "M1",
+      name: "TITLE_AND_BODY",
+      displayName: "Title and body",
+      elementCount: 2,
+      elements: [
+        { objectId: "L2_title", kind: "shape", placeholder: "TITLE", placeholderParentId: "M1_title" },
+        { objectId: "L2_body", kind: "shape", placeholder: "BODY", placeholderIndex: 0, placeholderParentId: "M1_body" },
+      ],
+      page: { hasMore: false, nextCursor: null },
+    });
+  });
+
+  it("reads a slide's every element in reading order, groups named, notes page linked", async () => {
+    route = () => ({ body: SLIDE_PAGE });
+    const result = await call(connection(), "get_page", { presentationId: "deck1", pageObjectId: "s2" });
+    expect(result).toMatchObject({ pageType: "SLIDE", layoutId: "L2", masterId: "M1", notesPageId: "s2_notes", skipped: true, elementCount: 3 });
+    expect(result.elements).toEqual([
+      { objectId: "photo", kind: "image", altText: "Empty tomb: Sunrise photo" },
+      { objectId: "g-table", kind: "table", groupId: "group", text: "Time\tService\n9:00\tSunrise service" },
+      { objectId: "chart", kind: "chart", spreadsheetId: "sheet1" },
+    ]);
+  });
+
+  it("pages elements by limit, with the same reading order", async () => {
+    route = () => ({ body: SLIDE_PAGE });
+    const pages = await follow(connection(), { pageObjectId: "s2", limit: 1 });
+    expect(pages.map((page) => page.elements.map((element: any) => element.objectId))).toEqual([["photo"], ["g-table"], ["chart"]]);
+  });
+
+  it("continues text cut on a slide from its textCursor until the last character", async () => {
+    const full = long(300_000);
+    const deck = {
+      presentationId: "deck1",
+      revisionId: "rev-1",
+      slides: [{ objectId: "p", pageElements: [{ objectId: "essay", shape: { shapeType: "TEXT_BOX", text: textContent(full) } }] }],
+    };
+    serve(deck);
+    const connector = connection();
+    const read = await call(connector, "get_presentation", { presentationId: "deck1", maxCharsPerSlide: 50_000 });
+    const [element] = read.slides[0].elements;
+    let gathered = element.text.replace(/\n\[… \d+ more characters truncated; [^\]]*\]$/, "");
+    expect(gathered.length).toBe(50_000);
+    const pages = await follow(connector, { pageObjectId: "p" }, element.textCursor);
+    expect(pages.length).toBeGreaterThan(1);
+    for (const page of pages) {
+      for (const row of page.elements) {
+        expect(row.textOffset).toBe(gathered.length);
+        gathered += row.truncated ? row.text.replace(CONTINUES, "") : row.text;
+      }
+    }
+    expect(gathered).toBe(full);
+  });
+
+  it("continues cut speaker notes from notesCursor on the notes page", async () => {
+    const notes = long(9_000);
+    const notesPage = {
+      objectId: "p_notes",
+      pageType: "NOTES",
+      notesProperties: { speakerNotesObjectId: "n1" },
+      pageElements: [
+        { objectId: "img", transform: at(0, 0), image: { contentUrl: "x" } },
+        { objectId: "n1", transform: at(0, 5000000), shape: { shapeType: "TEXT_BOX", text: textContent(notes) } },
+      ],
+    };
+    const deck = { presentationId: "deck1", revisionId: "rev-1", slides: [{ objectId: "p", slideProperties: { notesPage: notesPage } }] };
+    serve(deck, { p_notes: notesPage });
+    const connector = connection();
+    const read = await call(connector, "get_presentation", { presentationId: "deck1" });
+    const slide = read.slides[0];
+    const [rest] = (await follow(connector, { pageObjectId: "p_notes" }, slide.notesCursor)).flatMap((page) => page.elements);
+    expect(rest.objectId).toBe("n1");
+    expect(slide.notes.replace(/\n\[… [^\]]*\]$/, "") + rest.text).toBe(notes);
+  });
+
+  it("lists the elements a crowded slide could not, from elementsCursor", async () => {
+    const elements = Array.from({ length: 6_000 }, (_, index) => ({
+      objectId: `e${index}`,
+      transform: at(index, index),
+      shape: { shapeType: "TEXT_BOX", placeholder: { type: "BODY" }, text: textContent(`${index}`) },
+    }));
+    const deck = { presentationId: "deck1", revisionId: "rev-1", slides: [{ objectId: "p", pageElements: elements }] };
+    serve(deck);
+    const connector = connection();
+    const read = await call(connector, "get_presentation", { presentationId: "deck1" });
+    const slide = read.slides[0];
+    expect(slide.elementsNotShown).toBeGreaterThan(0);
+    const shown = slide.elements.map((element: any) => element.objectId);
+    const rest = (await follow(connector, { pageObjectId: "p", limit: 500 }, slide.elementsCursor)).flatMap((page) =>
+      page.elements.map((element: any) => element.objectId),
+    );
+    expect([...shown, ...rest]).toEqual(elements.map((element) => element.objectId));
+  });
+
+  it("sends a raw element too large for one result in JSON chunks that parse back to it", async () => {
+    const huge = {
+      objectId: "essay",
+      transform: at(0, 0),
+      shape: { shapeType: "TEXT_BOX", text: { textElements: [{ textRun: { content: long(400_000), style: { bold: true } } }] } },
+    };
+    const small = { objectId: "small", transform: at(0, 0), shape: { shapeType: "TEXT_BOX" } };
+    const page = { objectId: "p", pageType: "SLIDE", revisionId: "rev-1", pageElements: [small, huge, small] };
+    route = () => ({ body: page });
+    const pages = await follow(connection(), { pageObjectId: "p", raw: true });
+    expect(calls[0]!.url.searchParams.get("fields")).toBeNull();
+    expect(pages[0].properties).toEqual({ objectId: "p", pageType: "SLIDE", revisionId: "rev-1" });
+    const entries = pages.flatMap((entry) => entry.elements);
+    expect(entries[0]).toEqual(small);
+    const chunks = entries.filter((entry: any) => entry.rawJson);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((entry: any) => entry.objectId === "essay")).toBe(true);
+    let json = "";
+    for (const { rawJson } of chunks) {
+      expect(rawJson.offset).toBe(json.length);
+      json += rawJson.json;
+    }
+    expect(JSON.parse(json)).toEqual(huge);
+    expect(entries[entries.length - 1]).toEqual(small);
+  });
+
+  it("bounds a 300,000-character layout name everywhere, and raw get_page still has all of it", async () => {
+    const name = long(300_000);
+    const deck = {
+      ...PRESENTATION,
+      masters: [{ objectId: "M1", masterProperties: { displayName: "Theme" } }],
+      layouts: [{ objectId: "L1", layoutProperties: { name: "CUSTOM", displayName: name, masterObjectId: "M1" } }],
+      slides: [{ objectId: "p", slideProperties: { layoutObjectId: "L1" }, pageElements: [] }],
+    };
+    const layoutPage = { objectId: "L1", pageType: "LAYOUT", revisionId: "rev-1", layoutProperties: deck.layouts[0]!.layoutProperties, pageElements: [] };
+    serve(deck, { L1: layoutPage });
+    const connector = connection();
+    const results = [
+      await call(connector, "get_presentation", { presentationId: "deck1" }),
+      await call(connector, "list_layouts", { presentationId: "deck1" }),
+      await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "L1" }),
+    ];
+    for (const result of results) expect(bytes(result)).toBeLessThan(32 * 1024);
+    expect(results[0].slides[0].layout).toMatch(/\[… \d+ more characters; get_page on layoutId with raw: true has the whole name\]$/);
+    expect(results[1].layouts[1].displayName).toMatch(/has the whole name\]$/);
+    // The raw page carries the whole name, in chunks if it must.
+    const pages = await follow(connector, { pageObjectId: "L1", raw: true });
+    let json = "";
+    for (const page of pages) json += page.propertiesJson?.json ?? "";
+    const properties = json ? JSON.parse(json) : pages[0].properties;
+    expect(properties.layoutProperties.displayName).toBe(name);
+  });
+
+  it("continues the layout preview in list_layouts from layoutsCursor, masters first", async () => {
+    const masters = [{ objectId: "M1", masterProperties: { displayName: "Light" } }, { objectId: "M2", masterProperties: { displayName: "Dark" } }];
+    const layouts = Array.from({ length: 1_200 }, (_, index) => ({
+      objectId: `L${index}`,
+      layoutProperties: { name: "CUSTOM", displayName: `Layout ${index} ${"x".repeat(60)}`, masterObjectId: index % 2 ? "M2" : "M1" },
+    }));
+    serve({ ...PRESENTATION, masters, layouts });
+    const connector = connection();
+    const read = await call(connector, "get_presentation", { presentationId: "deck1" });
+    expect(read.layoutsNotShown).toBeGreaterThan(0);
+    const rows = [...read.layouts];
+    let cursor: string | undefined = read.layoutsCursor;
+    while (cursor) {
+      const page = await call(connector, "list_layouts", { presentationId: "deck1", cursor, limit: 500 });
+      expect(bytes(page)).toBeLessThan(BRIDGE_BYTES);
+      rows.push(...page.layouts);
+      cursor = page.page.nextCursor ?? undefined;
+    }
+    const expected = [
+      "M1",
+      ...layouts.filter((_, index) => index % 2 === 0).map((layout) => layout.objectId),
+      "M2",
+      ...layouts.filter((_, index) => index % 2 === 1).map((layout) => layout.objectId),
+    ];
+    expect(rows.map((row) => row.objectId)).toEqual(expected);
+    expect(rows[0]).toEqual({ objectId: "M1", kind: "master", displayName: "Light" });
+    expect(rows[1]).toMatchObject({ objectId: "L0", kind: "layout", masterId: "M1" });
+  });
+
+  describe("cursors are bound to the deck, the page, the mode, and the revision", () => {
+    const three = (revisionId?: string, ids = ["A", "B", "C"]) => ({
+      presentationId: "deck1",
+      ...(revisionId ? { revisionId } : {}),
+      slides: ids.map((objectId) => ({ objectId, pageElements: [] })),
+    });
+
+    async function firstPage(connector: Connector, deck: any) {
+      route = () => ({ body: deck });
+      const page = await call(connector, "get_presentation", { presentationId: "deck1", limit: 1 });
+      expect(page.slides.map((slide: any) => slide.objectId)).toEqual(["A"]);
+      return page.page.nextCursor as string;
+    }
+
+    it.each([
+      ["a revision", "rev-1", "rev-2"],
+      ["no revision (a viewer)", undefined, undefined],
+    ])("with %s, a deleted slide is a conflict rather than a skipped one", async (_label, before, after) => {
+      const connector = connection();
+      const cursor = await firstPage(connector, three(before));
+      route = () => ({ body: three(after, ["B", "C"]) });
+      await expect(call(connector, "get_presentation", { presentationId: "deck1", limit: 1, cursor })).rejects.toMatchObject({
+        code: "conflict",
+        message: expect.stringContaining("Start again without a cursor"),
+      });
+    });
+
+    it.each([
+      ["a revision", "rev-1", "rev-2"],
+      ["no revision (a viewer)", undefined, undefined],
+    ])("with %s, an inserted slide is a conflict rather than a repeated one", async (_label, before, after) => {
+      const connector = connection();
+      const cursor = await firstPage(connector, three(before));
+      route = () => ({ body: three(after, ["Z", "A", "B", "C"]) });
+      await expect(call(connector, "get_presentation", { presentationId: "deck1", limit: 1, cursor })).rejects.toMatchObject({
+        code: "conflict",
+      });
+    });
+
+    it("continues an unchanged deck, revision or not", async () => {
+      for (const revision of ["rev-1", undefined]) {
+        const connector = connection();
+        const cursor = await firstPage(connector, three(revision));
+        const next = await call(connector, "get_presentation", { presentationId: "deck1", limit: 1, cursor });
+        expect(next.slides.map((slide: any) => slide.objectId)).toEqual(["B"]);
+      }
+    });
+
+    it("refuses a cursor from another deck, page, tool, or mode before any request", async () => {
+      const connector = connection();
+      const deckCursor = await firstPage(connector, three("rev-1"));
+      route = () => ({ body: SLIDE_PAGE });
+      const pageCursor = (await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "s2", limit: 1 })).page.nextCursor;
+      calls.length = 0;
+      const refusals = [
+        ["get_presentation", { presentationId: "deck2", cursor: deckCursor }, "different presentation"],
+        ["get_presentation", { presentationId: "deck1", cursor: deckCursor, raw: true }, "raw: false"],
+        ["get_page", { presentationId: "deck1", pageObjectId: "s2", cursor: deckCursor }, "another tool"],
+        ["get_page", { presentationId: "deck1", pageObjectId: "s3", cursor: pageCursor }, "different page"],
+        ["list_layouts", { presentationId: "deck1", cursor: pageCursor }, "another tool"],
+      ] as const;
+      for (const [name, args, why] of refusals) {
+        await expect(call(connector, name, args)).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(why) });
+      }
+      expect(calls).toEqual([]);
+    });
+
+    it("binds a viewer's get_page cursor to the page's text, so an edit is a conflict", async () => {
+      const page = (content: string) => ({
+        objectId: "p",
+        pageElements: [{ objectId: "essay", shape: { shapeType: "TEXT_BOX", text: textContent(content) } }],
+      });
+      const connector = connection();
+      route = () => ({ body: page(long(300_000)) });
+      const first = await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p" });
+      expect(first.page.hasMore).toBe(true);
+      route = () => ({ body: page(`inserted ${long(300_000)}`) });
+      await expect(
+        call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", cursor: first.page.nextCursor }),
+      ).rejects.toMatchObject({ code: "conflict" });
+    });
+  });
+
+  it("refuses, explicitly, a result it cannot fit rather than returning it", async () => {
+    route = () => ({ body: { ...PRESENTATION, locale: "x".repeat(300_000) } });
+    await expect(call(connection(), "get_presentation", { presentationId: "deck1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      message: expect.stringContaining("more than one result can carry"),
+    });
   });
 });

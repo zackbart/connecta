@@ -1,9 +1,9 @@
 /**
  * Google Slides as the signed-in Workspace user: read a deck's text slide by
- * slide, fetch a slide's thumbnail link, create a deck, add a slide, replace
- * text, and send raw `batchUpdate` requests behind approval. Hand-written
- * against the Slides API v1 reference
- * (https://developers.google.com/workspace/slides/api/reference/rest).
+ * slide, any page element by element, its layouts and masters, and a slide's
+ * thumbnail link; create a deck, add a slide, replace text, and send raw
+ * `batchUpdate` requests behind approval. Hand-written against the Slides API
+ * v1 reference (https://developers.google.com/workspace/slides/api/reference/rest).
  *
  * Whose decks. Access is a service account with domain-wide delegation
  * (`src/providers/google/workspace.ts`): deployment config maps the admitted
@@ -13,6 +13,15 @@
  * request reaches exactly the decks that person can open, and no argument
  * names an account.
  *
+ * Everything readable is reachable. Every read result is built under the
+ * shared Workspace result budget, so it is deliverable inside a program and
+ * directly alike, and whatever a result cannot carry is named with the exact
+ * cursor that reads it: text cut on a slide continues in get_page, element by
+ * element and character by character; a page's raw JSON continues in chunks;
+ * layouts continue in list_layouts. Every cursor is bound to the deck and to
+ * the revision it was issued at, so a deck that changed between pages is a
+ * `conflict` to restart, never a page that skips or repeats.
+ *
  * What it does not do. Slides has no list method; finding a deck is Drive's
  * job, and this connection says so rather than guessing. Nothing here shares,
  * moves, or deletes a file. Every write but the two additive ones is
@@ -21,14 +30,16 @@
  * changed since.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/slides-endpoints.json` records the four methods the tools
+ * `scripts/drift/slides-endpoints.json` records the five methods the tools
  * call, and `npm run providers:check -- --provider slides` reports a touched
  * contract that moved or a method that stopped accepting the scope below.
  */
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
+import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 import {
+  googleOutcomeOf,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
@@ -59,6 +70,10 @@ export type SlidesOptions = GoogleWorkspaceOptions;
 /** Slides per page of get_presentation. Slides itself returns the whole deck. */
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
+/** Elements per page of get_page, and rows per page of list_layouts. */
+const MAX_ROWS = 500;
+const DEFAULT_ELEMENTS = 50;
+const DEFAULT_LAYOUTS = 100;
 /** Text kept per slide (its elements together, and its notes apart). */
 const DEFAULT_SLIDE_CHARS = 4_000;
 const MAX_SLIDE_CHARS = 50_000;
@@ -128,17 +143,14 @@ const REQUEST_KINDS: ReadonlySet<string> = new Set([
   "updateVideoProperties",
 ]);
 
-/**
- * Serialized bytes one get_presentation page may reach. A program's host
- * call carries at most 256 KiB (`MAX_HOST_RESULT_BYTES`), and a direct call
- * stashes anything past the inline cap for get_result; this stays under both
- * with room for the envelope, so no page is ever undeliverable.
- */
-const MAX_RESULT_BYTES = 192 * 1024;
-/** Of that, what the first page's layout list may take. */
-const MAX_LAYOUT_BYTES = 24 * 1024;
+/** What get_presentation's first page may spend on its layout preview. */
+const MAX_LAYOUT_PREVIEW_BYTES = 24 * 1024;
+/** Byte bounds for short labels: names, titles, alt text. */
+const MAX_NAME_BYTES = 256;
+const MAX_TITLE_BYTES = 4 * 1024;
+const MAX_ALT_TEXT_BYTES = 4 * 1024;
+/** A slide title in get_presentation, in characters, before maxCharsPerSlide. */
 const MAX_TITLE_CHARS = 500;
-const MAX_ALT_TEXT_CHARS = 1_000;
 /** replace_all_text echoes each find this far, in order with its count. */
 const MAX_ECHO_CHARS = 100;
 
@@ -146,24 +158,42 @@ const MAX_ECHO_CHARS = 100;
 const EMU_PER_PT = 12_700;
 
 /**
- * The partial response get_presentation asks for: ids, layout names, and
- * text, without the styles that are most of a deck's bytes. Each element kind
- * keeps one field Slides always sets, so its presence survives the mask.
- * Groups stay whole, because a mask cannot recurse into their children.
+ * The partial responses the projected reads ask for: ids, names, and text,
+ * without the styles that are most of a deck's bytes. Each element kind keeps
+ * one field Slides always sets, so its presence survives the mask. Groups stay
+ * whole, because a mask cannot recurse into their children. get_presentation
+ * and get_page ask for the same element fields, so both read a page's
+ * elements identically — the same reading order, the same text — and a
+ * cursor one issues the other honors.
  */
 const TEXT_ONLY = "text(textElements(textRun(content),autoText(content)))";
+const ELEMENT_FIELDS =
+  "objectId,title,description,transform,elementGroup,line(lineType),image(contentUrl),video(source)," +
+  `sheetsChart(spreadsheetId),wordArt,table(rows,columns,tableRows(tableCells(${TEXT_ONLY}))),` +
+  `shape(shapeType,placeholder(type,index,parentObjectId),${TEXT_ONLY})`;
+const LAYOUT_FIELDS =
+  "masters(objectId,masterProperties(displayName)),layouts(objectId,layoutProperties(name,displayName,masterObjectId))";
 const PRESENTATION_FIELDS = [
   "presentationId",
   "title",
   "revisionId",
   "locale",
   "pageSize",
-  "layouts(objectId,layoutProperties(name,displayName))",
-  `slides(objectId,slideProperties(layoutObjectId,isSkipped,notesPage(notesProperties,pageElements(objectId,shape(${TEXT_ONLY})))),` +
-    "pageElements(objectId,title,description,transform,elementGroup,line(lineType),image(contentUrl),video(source)," +
-    `sheetsChart(spreadsheetId),wordArt,table(rows,columns,tableRows(tableCells(${TEXT_ONLY}))),` +
-    `shape(shapeType,placeholder(type),${TEXT_ONLY})))`,
+  LAYOUT_FIELDS,
+  `slides(objectId,slideProperties(layoutObjectId,isSkipped,notesPage(objectId,notesProperties,pageElements(${ELEMENT_FIELDS}))),` +
+    `pageElements(${ELEMENT_FIELDS}))`,
 ].join(",");
+const PAGE_FIELDS = [
+  "objectId",
+  "pageType",
+  "revisionId",
+  "slideProperties(layoutObjectId,masterObjectId,isSkipped,notesPage(objectId))",
+  "layoutProperties(name,displayName,masterObjectId)",
+  "masterProperties(displayName)",
+  "notesProperties(speakerNotesObjectId)",
+  `pageElements(${ELEMENT_FIELDS})`,
+].join(",");
+const LAYOUT_LIST_FIELDS = `presentationId,revisionId,${LAYOUT_FIELDS}`;
 
 type JsonRecord = Record<string, any>;
 
@@ -191,7 +221,155 @@ function editUrl(presentationId: string): string {
   return `https://docs.google.com/presentation/d/${encodeURIComponent(presentationId)}/edit`;
 }
 
-// --- Reading a deck ---------------------------------------------------------------
+// --- Result size --------------------------------------------------------------------
+
+/**
+ * The postcondition every read result meets: one result, under the shared
+ * budget, whichever way it was called. Each read is built to fit, so this
+ * failing means a shape the building missed; it refuses, explicitly, rather
+ * than hand back a result neither delivery route can carry.
+ */
+function deliverable<T>(result: T, tool: string): T {
+  const bytes = jsonBytes(result);
+  if (bytes > RESULT_BUDGET_BYTES) {
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      `${tool} built a result of ${bytes} bytes, more than one result can carry (${RESULT_BUDGET_BYTES}). Nothing was changed; read a smaller part, or with raw: true, which pages in chunks.`,
+      { retryable: false },
+    );
+  }
+  return result;
+}
+
+/** A label cut to `maxBytes` of JSON, saying where the whole of it is. */
+function label(value: string | undefined, maxBytes: number, whole: string): string | undefined {
+  return value === undefined
+    ? undefined
+    : clampText(value, maxBytes, (dropped) => `[… ${dropped} more characters; ${whole}]`);
+}
+
+/** The first `max` UTF-16 units of `value`, never ending half a surrogate pair. */
+function headOf(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const code = value.charCodeAt(max - 1);
+  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
+}
+
+/**
+ * The longest prefix of `value` whose JSON fits `maxBytes` together with the
+ * marker its cut earns, as text and as the number of characters it keeps.
+ */
+function prefixWithin(
+  value: string,
+  maxBytes: number,
+  marker: (dropped: number) => string,
+): { text: string; kept: number } {
+  let dropped = 0;
+  const clamped = clampText(value, maxBytes, (count) => {
+    dropped = count;
+    return marker(count);
+  });
+  if (clamped === value) return { text: value, kept: value.length };
+  if (clamped === "") return { text: "", kept: 0 };
+  return { text: clamped, kept: value.length - dropped };
+}
+
+// --- Cursors ------------------------------------------------------------------------
+
+/**
+ * Where a read continues, and the deck state it continues from. Opaque to a
+ * caller: base64url JSON, checked field by field on the way back in.
+ */
+interface Cursor {
+  /** The tool that issued it. */
+  k: "deck" | "layouts" | "page";
+  /** The presentation it continues, and for get_page the page. */
+  p: string;
+  g?: string | undefined;
+  /** The state it was issued at: `r:` and the revision, or `f:` and a fingerprint. */
+  s: string;
+  /** Issued by a raw read. */
+  raw?: 1 | undefined;
+  /** The next row: slide, layout, or element. */
+  i: number;
+  /** Within that row: a text offset, or a raw JSON offset. */
+  o?: number | undefined;
+}
+
+function encodeCursor(cursor: Cursor): string {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(JSON.stringify(compact(cursor)))) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * A cursor this tool issued for this deck and page, in this mode, or a
+ * refusal that says which of those it is not. The state is checked later,
+ * against the deck as it is read.
+ */
+function decodeCursor(
+  value: unknown,
+  expected: { k: Cursor["k"]; p: string; g?: string; raw: boolean },
+): Cursor | undefined {
+  if (value === undefined) return undefined;
+  const refuse = (why: string) => new ConnectorCallError("invalid_args", `${why} Omit cursor to start from the beginning.`);
+  let cursor: Cursor;
+  try {
+    const base64 = String(value).replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
+    cursor = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0))));
+  } catch {
+    throw refuse("cursor is not one this connection issued; pass page.nextCursor back unchanged.");
+  }
+  const counter = (field: unknown) => field === undefined || (Number.isSafeInteger(field) && (field as number) >= 0);
+  if (
+    !cursor ||
+    typeof cursor !== "object" ||
+    typeof cursor.p !== "string" ||
+    typeof cursor.s !== "string" ||
+    !Number.isSafeInteger(cursor.i) ||
+    cursor.i < 0 ||
+    !counter(cursor.o)
+  ) {
+    throw refuse("cursor is not one this connection issued; pass page.nextCursor back unchanged.");
+  }
+  if (cursor.k !== expected.k) {
+    throw refuse(`cursor belongs to another tool (${cursor.k === "deck" ? "get_presentation" : cursor.k === "layouts" ? "list_layouts" : "get_page"}).`);
+  }
+  if (cursor.p !== expected.p) throw refuse("cursor continues a different presentation.");
+  if ((cursor.g ?? undefined) !== expected.g) throw refuse("cursor continues a different page.");
+  if ((cursor.raw === 1) !== expected.raw) {
+    throw refuse(`cursor was issued with raw: ${cursor.raw === 1}; pass the same raw to continue.`);
+  }
+  return cursor;
+}
+
+/**
+ * The deck state a cursor binds to: the revision when Slides gives one, which
+ * it does to anyone who may edit. A viewer gets none, so a cursor binds to a
+ * fingerprint of exactly what its paging depends on instead.
+ */
+async function stateOf(revisionId: unknown, fingerprint: () => unknown): Promise<string> {
+  if (typeof revisionId === "string" && revisionId !== "") return `r:${revisionId}`;
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(fingerprint()))),
+  );
+  return `f:${Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** A cursor's deck changed under it: continuing could skip or repeat. */
+function assertUnchanged(cursor: Cursor | undefined, state: string, what: string): void {
+  if (cursor && cursor.s !== state) {
+    throw new ConnectorCallError(
+      "conflict",
+      `The ${what} changed since this cursor was issued, so continuing from it could skip or repeat what changed. Start again without a cursor.`,
+    );
+  }
+}
+
+// --- Reading elements ---------------------------------------------------------------
 
 /** A shape's or cell's text: runs and auto text in order, soft breaks as newlines. */
 function textOf(content: unknown): string {
@@ -254,30 +432,20 @@ function compose(parent: Matrix, child: Matrix): Matrix {
   ];
 }
 
-interface Placed {
+type ElementKind = "shape" | "table" | "wordArt" | "image" | "video" | "chart" | "line" | "other";
+
+/** One leaf of a page — groups opened — with what both readers derive from it. */
+interface Leaf {
   element: JsonRecord;
+  groupId: string | undefined;
+  kind: ElementKind;
+  /** Its readable text, whole: a shape's, a table's cells, word art's. */
+  text: string;
   x: number;
   y: number;
 }
 
-/** Every leaf element of a page, groups opened, at its absolute position. */
-function leaves(elements: unknown, parent: Matrix, depth = 0): Placed[] {
-  const out: Placed[] = [];
-  for (const element of asArray(elements).map(asRecord)) {
-    const matrix = compose(parent, matrixOf(element["transform"]));
-    const group = asRecord(element["elementGroup"]);
-    if (Array.isArray(group["children"]) && depth < 20) {
-      out.push(...leaves(group["children"], matrix, depth + 1));
-    } else {
-      out.push({ element, x: matrix[4], y: matrix[5] });
-    }
-  }
-  return out;
-}
-
-type ElementKind = "shape" | "table" | "wordArt" | "image" | "video" | "chart" | "other";
-
-function kindOf(element: JsonRecord): ElementKind | "line" {
+function kindOf(element: JsonRecord): ElementKind {
   if (element["shape"]) return "shape";
   if (element["table"]) return "table";
   if (element["wordArt"]) return "wordArt";
@@ -288,152 +456,240 @@ function kindOf(element: JsonRecord): ElementKind | "line" {
   return "other";
 }
 
-/** Why text was cut, as the marker tells the reader. */
-const RAISE_CAP = "raise maxCharsPerSlide to read them";
-const OVER_RESULT = "this slide is larger than one result can carry";
-
-/** Cut `value` at `max` characters and say so, and why, in the text itself. */
-function capped(value: string, max: number, why = RAISE_CAP): { text: string; truncated: boolean } {
-  if (value.length <= max) return { text: value, truncated: false };
-  const head = headOf(value, max);
-  return {
-    text: `${head}\n[… ${value.length - head.length} more characters truncated; ${why}]`,
-    truncated: true,
-  };
+function collect(elements: unknown, parent: Matrix, groupId: string | undefined, depth: number, out: Leaf[]): void {
+  for (const element of asArray(elements).map(asRecord)) {
+    const matrix = compose(parent, matrixOf(element["transform"]));
+    const group = asRecord(element["elementGroup"]);
+    if (Array.isArray(group["children"]) && depth < 20) {
+      collect(group["children"], matrix, text(element["objectId"]), depth + 1, out);
+      continue;
+    }
+    const kind = kindOf(element);
+    out.push({
+      element,
+      groupId,
+      kind,
+      text:
+        kind === "shape"
+          ? textOf(asRecord(element["shape"])["text"])
+          : kind === "table"
+            ? tableText(asRecord(element["table"]))
+            : kind === "wordArt"
+              ? (text(asRecord(element["wordArt"])["renderedText"]) ?? "")
+              : "",
+      x: matrix[4],
+      y: matrix[5],
+    });
+  }
 }
 
-/** The first `max` UTF-16 units of `value`, never ending half a surrogate pair. */
-function headOf(value: string, max: number): string {
-  const code = value.charCodeAt(max - 1);
-  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
-}
-
-/** UTF-8 bytes of a value as JSON: what the bridge and the stash measure. */
-function jsonBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
-}
-
-const TITLE_PLACEHOLDERS = new Set(["TITLE", "CENTERED_TITLE"]);
-
-interface SlideProjection {
-  slide: JsonRecord;
-  truncated: boolean;
-}
-
-function projectSlide(
-  value: unknown,
-  index: number,
-  layouts: ReadonlyMap<string, string>,
-  maxChars: number,
-  why = RAISE_CAP,
-): SlideProjection {
-  const slide = asRecord(value);
-  const properties = asRecord(slide["slideProperties"]);
-  // Reading order: top to bottom, then left to right, by absolute position
-  // rounded to the point, so a hairline offset does not reorder a row.
-  const placed = leaves(slide["pageElements"], IDENTITY).sort(
+/**
+ * A page's leaf elements in reading order: top to bottom, then left to right,
+ * by absolute position rounded to the point, so a hairline offset does not
+ * reorder a row. The index into this list is what a get_page cursor counts.
+ */
+function readingOrder(elements: unknown): Leaf[] {
+  const out: Leaf[] = [];
+  collect(elements, IDENTITY, undefined, 0, out);
+  return out.sort(
     (left, right) =>
       Math.round(left.y / EMU_PER_PT) - Math.round(right.y / EMU_PER_PT) ||
       Math.round(left.x / EMU_PER_PT) - Math.round(right.x / EMU_PER_PT),
   );
+}
+
+/** What a projected page's cursor depends on when there is no revision. */
+function leafFingerprint(leaves: readonly Leaf[]): unknown {
+  return leaves.map((leaf) => [leaf.element["objectId"] ?? null, leaf.kind, leaf.text.length]);
+}
+
+function placeholderOf(leaf: Leaf): JsonRecord {
+  return leaf.kind === "shape" ? asRecord(asRecord(leaf.element["shape"])["placeholder"]) : {};
+}
+
+function altTextOf(element: JsonRecord): string | undefined {
+  return [text(element["title"]), text(element["description"])].filter(Boolean).join(": ") || undefined;
+}
+
+/** The fields of an element both readers share: what it is, and how to address it. */
+function describeLeaf(leaf: Leaf, raw: string): JsonRecord {
+  const placeholder = placeholderOf(leaf);
+  return compact({
+    objectId: text(leaf.element["objectId"]),
+    kind: leaf.kind,
+    placeholder: text(placeholder["type"]),
+    altText: label(altTextOf(leaf.element), MAX_ALT_TEXT_BYTES, raw),
+    // A linked chart's data lives in Sheets; the id is how to reach it.
+    spreadsheetId: leaf.kind === "chart" ? text(asRecord(leaf.element["sheetsChart"])["spreadsheetId"]) : undefined,
+  });
+}
+
+const RAW_HAS_IT = "get_page with raw: true has all of it";
+
+// --- get_presentation ---------------------------------------------------------------
+
+const TITLE_PLACEHOLDERS = new Set(["TITLE", "CENTERED_TITLE"]);
+
+/** Everything about a deck one slide's projection needs. */
+interface DeckContext {
+  presentationId: string;
+  revisionId: unknown;
+  layouts: ReadonlyMap<string, string>;
+}
+
+/** Why text was cut, as the marker tells the reader. */
+const RAISE_CAP = "raise maxCharsPerSlide, or continue with get_page from textCursor";
+const OVER_RESULT = "this slide is larger than one result can carry; continue with get_page from textCursor";
+
+/**
+ * One slide's projection: its elements' text in reading order under a shared
+ * per-slide character budget, its speaker notes under the same budget apart,
+ * and, for every cut, the get_page cursor that reads on from the cut.
+ */
+async function projectSlide(
+  value: unknown,
+  index: number,
+  deck: DeckContext,
+  maxChars: number,
+  why = RAISE_CAP,
+): Promise<JsonRecord> {
+  const slide = asRecord(value);
+  const slideId = text(slide["objectId"]) ?? "";
+  const properties = asRecord(slide["slideProperties"]);
+  const leaves = readingOrder(slide["pageElements"]);
+  let state: Promise<string> | undefined;
+  const slideState = () => (state ??= stateOf(deck.revisionId, () => leafFingerprint(leaves)));
   let budget = maxChars;
   let truncated = false;
   let omitted = 0;
   let title: string | undefined;
   const elements: JsonRecord[] = [];
-  for (const { element } of placed) {
-    const kind = kindOf(element);
-    const shape = asRecord(element["shape"]);
-    const placeholder = text(asRecord(shape["placeholder"])["type"]);
-    const full =
-      kind === "shape"
-        ? textOf(shape["text"])
-        : kind === "table"
-          ? tableText(asRecord(element["table"]))
-          : kind === "wordArt"
-            ? (text(asRecord(element["wordArt"])["renderedText"]) ?? "")
-            : "";
-    const alt = [text(element["title"]), text(element["description"])].filter(Boolean).join(": ");
+  for (const [position, leaf] of leaves.entries()) {
+    const placeholder = text(placeholderOf(leaf)["type"]);
+    const alt = altTextOf(leaf.element);
     // Decorative lines and empty boxes carry nothing to read; they are
     // counted, not listed. An empty placeholder is kept: its id is where
     // insertText fills a new slide's title or body.
-    if (kind === "line" || (!full && !alt && !placeholder && (kind === "shape" || kind === "wordArt"))) {
+    if (leaf.kind === "line" || (!leaf.text && !alt && !placeholder && (leaf.kind === "shape" || leaf.kind === "wordArt"))) {
       omitted += 1;
       continue;
     }
-    if (placeholder && TITLE_PLACEHOLDERS.has(placeholder) && title === undefined && full) {
-      title = capped(full.replace(/\n+/g, " "), Math.min(MAX_TITLE_CHARS, maxChars), why).text;
+    if (placeholder && TITLE_PLACEHOLDERS.has(placeholder) && title === undefined && leaf.text) {
+      const line = leaf.text.replace(/\n+/g, " ");
+      const keep = headOf(line, Math.min(MAX_TITLE_CHARS, maxChars));
+      title = keep.length < line.length
+        ? `${keep}\n[… ${line.length - keep.length} more characters; the title element's text has them]`
+        : line;
     }
-    const altCut = alt ? capped(alt, Math.min(MAX_ALT_TEXT_CHARS, maxChars), why) : undefined;
-    const altText = altCut?.text;
-    truncated ||= altCut?.truncated ?? false;
-    const cut = full ? capped(full, Math.max(budget, 0), why) : { text: undefined, truncated: false };
-    if (full) budget -= Math.min(full.length, Math.max(budget, 0));
-    truncated ||= cut.truncated;
-    elements.push(
-      compact({
-        objectId: text(element["objectId"]),
-        kind,
-        placeholder,
-        text: cut.text,
-        altText,
-        // A linked chart's data lives in Sheets; the id is how to reach it.
-        spreadsheetId: kind === "chart" ? text(asRecord(element["sheetsChart"])["spreadsheetId"]) : undefined,
-        truncated: cut.truncated || undefined,
-      }),
-    );
+    const row = describeLeaf(leaf, RAW_HAS_IT);
+    if (row["altText"] !== alt) truncated = true;
+    if (leaf.text) {
+      const kept = headOf(leaf.text, Math.max(budget, 0));
+      budget -= kept.length;
+      if (kept.length < leaf.text.length) {
+        truncated = true;
+        row["text"] = `${kept}\n[… ${leaf.text.length - kept.length} more characters truncated; ${why}]`;
+        row["truncated"] = true;
+        row["textCursor"] = encodeCursor({ k: "page", p: deck.presentationId, g: slideId, s: await slideState(), i: position, o: kept.length });
+      } else {
+        row["text"] = kept;
+      }
+    }
+    row["position"] = position;
+    elements.push(row);
   }
   const notesPage = asRecord(properties["notesPage"]);
+  const notesPageId = text(notesPage["objectId"]);
   const notesId = text(asRecord(notesPage["notesProperties"])["speakerNotesObjectId"]);
-  const notesShape = asArray(notesPage["pageElements"])
-    .map(asRecord)
-    .find((element) => notesId !== undefined && element["objectId"] === notesId);
-  const notesText = notesShape ? textOf(asRecord(notesShape["shape"])["text"]) : "";
-  const notes = notesText ? capped(notesText, maxChars, why) : undefined;
-  truncated ||= notes?.truncated ?? false;
+  const notesLeaves = readingOrder(notesPage["pageElements"]);
+  const notesAt = notesLeaves.findIndex((leaf) => notesId !== undefined && leaf.element["objectId"] === notesId);
+  const notesText = notesAt >= 0 ? notesLeaves[notesAt]!.text : "";
+  let notes: string | undefined;
+  let notesCursor: string | undefined;
+  if (notesText) {
+    const kept = headOf(notesText, maxChars);
+    if (kept.length < notesText.length) {
+      truncated = true;
+      notes = `${kept}\n[… ${notesText.length - kept.length} more characters truncated; ${why.replace("textCursor", "notesCursor")}]`;
+      notesCursor = encodeCursor({
+        k: "page",
+        p: deck.presentationId,
+        g: notesPageId ?? "",
+        s: await stateOf(deck.revisionId, () => leafFingerprint(notesLeaves)),
+        i: notesAt,
+        o: kept.length,
+      });
+    } else {
+      notes = notesText;
+    }
+  }
   const layoutId = text(properties["layoutObjectId"]);
+  return compact({
+    objectId: slideId || undefined,
+    index,
+    layout: layoutId ? deck.layouts.get(layoutId) : undefined,
+    layoutId,
+    skipped: properties["isSkipped"] === true || undefined,
+    title,
+    elements,
+    omittedElements: omitted > 0 ? omitted : undefined,
+    notesPageId,
+    notes,
+    notesCursor,
+    truncated: truncated || undefined,
+    // Kept for fitting: where each listed element sits among the page's
+    // leaves, which an elementsCursor counts. Removed before returning.
+    _state: slideState,
+  });
+}
+
+/** A projected slide as returned: the fitting bookkeeping gone. */
+function finished(slide: JsonRecord): JsonRecord {
+  const { _state, ...rest } = slide;
   return {
-    slide: compact({
-      objectId: text(slide["objectId"]),
-      index,
-      layout: layoutId ? layouts.get(layoutId) : undefined,
-      layoutId,
-      skipped: properties["isSkipped"] === true || undefined,
-      title,
-      elements,
-      omittedElements: omitted > 0 ? omitted : undefined,
-      notes: notes?.text,
-      truncated: truncated || undefined,
+    ...rest,
+    elements: asArray(rest["elements"]).map((element) => {
+      const { position: _position, ...row } = asRecord(element);
+      return row;
     }),
-    truncated,
   };
 }
 
 /**
- * A slide too large for the `room` a page has left, made to fit: its text
- * halved until it does, and, for a slide of so many elements that it does not
- * fit even with no text, its last elements left out and counted. Only a
- * page's first slide is fitted; a later one that does not fit starts the next
- * page whole. Every cut says it was the result's size, not maxCharsPerSlide.
+ * A page's first slide that is too large for the `room` left, made to fit:
+ * its text halved until it does, then — for a slide of so many elements that
+ * it does not fit with no text — its last elements left out, counted, and
+ * named by the get_page cursor that lists them. Every cut says it was the
+ * result's size, not maxCharsPerSlide. A later slide that does not fit starts
+ * the next page whole instead.
  */
-function fitSlide(
+async function fitSlide(
   value: unknown,
   index: number,
-  layouts: ReadonlyMap<string, string>,
+  deck: DeckContext,
   maxChars: number,
   room: number,
-): JsonRecord {
+): Promise<JsonRecord> {
   for (let chars = Math.floor(maxChars / 2); ; chars = Math.floor(chars / 2)) {
-    const { slide } = projectSlide(value, index, layouts, chars, OVER_RESULT);
-    if (jsonBytes(slide) <= room) return slide;
+    const slide = await projectSlide(value, index, deck, chars, OVER_RESULT);
+    if (jsonBytes(finished(slide)) <= room) return finished(slide);
     if (chars > 0) continue;
-    const elements = asArray(slide["elements"]);
-    const keeping = (count: number) => ({
-      ...slide,
-      elements: elements.slice(0, count),
-      elementsNotShown: elements.length - count,
-      truncated: true,
-    });
+    const elements = asArray(slide["elements"]).map(asRecord);
+    const state = await (slide["_state"] as () => Promise<string>)();
+    const keeping = (count: number) =>
+      finished({
+        ...slide,
+        elements: elements.slice(0, count),
+        elementsNotShown: elements.length - count,
+        elementsCursor: encodeCursor({
+          k: "page",
+          p: deck.presentationId,
+          g: text(asRecord(value)["objectId"]) ?? "",
+          s: state,
+          i: count < elements.length ? Number(elements[count]!["position"]) : 0,
+        }),
+        truncated: true,
+      });
     let low = 0;
     let high = elements.length;
     while (low < high) {
@@ -441,52 +697,96 @@ function fitSlide(
       if (jsonBytes(keeping(middle)) <= room) low = middle;
       else high = middle - 1;
     }
+    // The result's postcondition refuses a slide that still does not fit.
     return keeping(low);
   }
 }
 
-/** A raw slide no result can carry, named and measured in its place. */
+/** A raw slide no result can carry, named, with where to read it instead. */
 function rawNotShown(value: unknown, bytes: number): JsonRecord {
+  const id = text(asRecord(value)["objectId"]);
   return compact({
-    objectId: text(asRecord(value)["objectId"]),
-    rawNotShown: `This slide's raw JSON is ${bytes} bytes, more than one result can carry. Read it without raw for its text.`,
+    objectId: id,
+    rawNotShown: `This slide's raw JSON is ${bytes} bytes, more than one result can carry. get_page with pageObjectId "${id ?? ""}" and raw: true reads all of it, in chunks.`,
   });
 }
 
-/**
- * The deck's layouts for create_slide, bounded in bytes: a deck with many
- * masters carries many layouts, and the list rides on a result's first page.
- */
-function layoutList(presentation: JsonRecord): { layouts: JsonRecord[]; notShown: number } {
-  const all = asArray(presentation["layouts"]).map((value) => {
-    const layout = asRecord(value);
+// --- Layouts ------------------------------------------------------------------------
+
+/** Masters, each followed by its layouts, as rows create_slide and get_page take ids from. */
+function layoutRows(presentation: JsonRecord): JsonRecord[] {
+  const whole = "get_page on this id with raw: true has the whole name";
+  const masters = asArray(presentation["masters"]).map(asRecord);
+  const layouts = asArray(presentation["layouts"]).map(asRecord);
+  const layoutRow = (layout: JsonRecord) => {
     const properties = asRecord(layout["layoutProperties"]);
     return compact({
       objectId: text(layout["objectId"]),
-      name: text(properties["name"]),
-      displayName: text(properties["displayName"]),
+      kind: "layout",
+      name: label(text(properties["name"]), MAX_NAME_BYTES, whole),
+      displayName: label(text(properties["displayName"]), MAX_NAME_BYTES, whole),
+      masterId: text(properties["masterObjectId"]),
     });
-  });
-  const layouts: JsonRecord[] = [];
-  let used = 2;
-  for (const layout of all) {
-    used += jsonBytes(layout) + 1;
-    if (used > MAX_LAYOUT_BYTES) break;
-    layouts.push(layout);
+  };
+  const rows: JsonRecord[] = [];
+  const placed = new Set<JsonRecord>();
+  for (const master of masters) {
+    const id = text(master["objectId"]);
+    rows.push(
+      compact({
+        objectId: id,
+        kind: "master",
+        displayName: label(text(asRecord(master["masterProperties"])["displayName"]), MAX_NAME_BYTES, whole),
+      }),
+    );
+    for (const layout of layouts) {
+      if (id !== undefined && asRecord(layout["layoutProperties"])["masterObjectId"] === id) {
+        rows.push(layoutRow(layout));
+        placed.add(layout);
+      }
+    }
   }
-  return { layouts, notShown: all.length - layouts.length };
+  for (const layout of layouts) if (!placed.has(layout)) rows.push(layoutRow(layout));
+  return rows;
 }
 
-/** A layout's name as a person picks it: its display name, else its kind. */
+/** What a list_layouts cursor depends on when there is no revision. */
+function layoutFingerprint(rows: readonly JsonRecord[]): unknown {
+  return rows.map((row) => row["objectId"] ?? null);
+}
+
+/** A layout's name as a person picks it, bounded: its display name, else its kind. */
 function layoutNames(presentation: JsonRecord): Map<string, string> {
   const names = new Map<string, string>();
   for (const layout of asArray(presentation["layouts"]).map(asRecord)) {
     const id = text(layout["objectId"]);
     const properties = asRecord(layout["layoutProperties"]);
-    const name = text(properties["displayName"]) ?? text(properties["name"]);
+    const name = label(
+      text(properties["displayName"]) ?? text(properties["name"]),
+      MAX_NAME_BYTES,
+      "get_page on layoutId with raw: true has the whole name",
+    );
     if (id && name) names.set(id, name);
   }
   return names;
+}
+
+/**
+ * Rows from `start` that fit `room` bytes and `limit` rows, as a page of
+ * them and the index the next page starts at.
+ */
+function rowsWithin(rows: readonly JsonRecord[], start: number, limit: number, room: number): { rows: JsonRecord[]; next: number } {
+  const out: JsonRecord[] = [];
+  let used = 2;
+  let next = start;
+  while (next < rows.length && out.length < limit) {
+    const size = jsonBytes(rows[next]) + 1;
+    if (used + size > room) break;
+    out.push(rows[next]!);
+    used += size;
+    next += 1;
+  }
+  return { rows: out, next };
 }
 
 function dimension(value: unknown): { magnitude: number; unit: string } | undefined {
@@ -496,19 +796,164 @@ function dimension(value: unknown): { magnitude: number; unit: string } | undefi
     : undefined;
 }
 
-/** The cursor get_presentation pages with: the next slide's index, opaque. */
-const CURSOR_PREFIX = "slide:";
+/** The size of a page object carrying the longest cursor a result may hold. */
+function pageEnvelopeBytes(cursor: Cursor): number {
+  return jsonBytes({ page: { hasMore: true, nextCursor: encodeCursor({ ...cursor, i: 999_999, o: 99_999_999 }) } });
+}
 
-function cursorStart(cursor: unknown): number {
-  if (cursor === undefined) return 0;
-  const match = new RegExp(`^${CURSOR_PREFIX}(\\d{1,6})$`).exec(String(cursor));
-  if (!match) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "cursor is not a page.nextCursor this connection returned; pass it back unchanged, or omit it for the first page.",
-    );
+// --- get_page -------------------------------------------------------------------------
+
+/** What get_page says about the page itself, by the page's kind. */
+function describePage(page: JsonRecord): JsonRecord {
+  const whole = "raw: true has the whole name";
+  const slide = asRecord(page["slideProperties"]);
+  const layout = asRecord(page["layoutProperties"]);
+  return compact({
+    pageType: text(page["pageType"]),
+    layoutId: text(slide["layoutObjectId"]),
+    masterId: text(slide["masterObjectId"]) ?? text(layout["masterObjectId"]),
+    notesPageId: text(asRecord(slide["notesPage"])["objectId"]),
+    skipped: slide["isSkipped"] === true || undefined,
+    speakerNotesObjectId: text(asRecord(page["notesProperties"])["speakerNotesObjectId"]),
+    name: label(text(layout["name"]), MAX_NAME_BYTES, whole),
+    displayName: label(
+      text(layout["displayName"]) ?? text(asRecord(page["masterProperties"])["displayName"]),
+      MAX_NAME_BYTES,
+      whole,
+    ),
+  });
+}
+
+/**
+ * A page's raw rows: the page itself without its elements — its notes page
+ * reduced to its id, which get_page reads on its own — then each top-level
+ * element as Slides sends it.
+ */
+function rawItems(page: JsonRecord): JsonRecord[] {
+  const { pageElements, ...properties } = page;
+  const slide = asRecord(properties["slideProperties"]);
+  if (slide["notesPage"]) {
+    properties["slideProperties"] = { ...slide, notesPage: compact({ objectId: text(asRecord(slide["notesPage"])["objectId"]) }) };
   }
-  return Number(match[1]);
+  return [properties, ...asArray(pageElements).map(asRecord)];
+}
+
+interface PageRows {
+  elements: JsonRecord[];
+  properties?: JsonRecord;
+  propertiesJson?: JsonRecord;
+  next: { i: number; o?: number } | undefined;
+}
+
+/**
+ * Projected rows of a page from element `i`, text offset `o`: every leaf,
+ * in reading order, with its text continued across pages wherever one page
+ * cannot hold it.
+ */
+function projectedRows(leaves: readonly Leaf[], start: { i: number; o: number }, limit: number, room: number): PageRows {
+  const elements: JsonRecord[] = [];
+  let used = 2;
+  let index = start.i;
+  let offset = start.o;
+  while (index < leaves.length && elements.length < limit) {
+    const leaf = leaves[index]!;
+    const placeholder = placeholderOf(leaf);
+    const row: JsonRecord = {
+      ...describeLeaf(leaf, RAW_HAS_IT),
+      ...compact({
+        groupId: leaf.groupId,
+        placeholderIndex: typeof placeholder["index"] === "number" ? placeholder["index"] : undefined,
+        placeholderParentId: text(placeholder["parentObjectId"]),
+        textOffset: offset > 0 ? offset : undefined,
+      }),
+    };
+    const rest = leaf.text.slice(offset);
+    if (!rest) {
+      const size = jsonBytes(row) + 1;
+      if (used + size > room) break;
+      elements.push(row);
+      used += size;
+      index += 1;
+      offset = 0;
+      continue;
+    }
+    // The row as it would be if its text were cut, so the text's share is
+    // measured against everything else the row carries.
+    const shell = { ...row, text: "", truncated: true, textLength: leaf.text.length };
+    const available = room - used - 1 - (jsonBytes(shell) - 2);
+    const cut = available > 2
+      ? prefixWithin(rest, available, (dropped) => `\n[… ${dropped} more characters continue on the next page]`)
+      : { text: "", kept: 0 };
+    if (cut.kept === 0 && elements.length > 0) break;
+    if (cut.kept === rest.length) {
+      const whole = { ...row, text: rest };
+      used += jsonBytes(whole) + 1;
+      elements.push(whole);
+      index += 1;
+      offset = 0;
+      continue;
+    }
+    if (cut.kept === 0) {
+      throw new ConnectorCallError("connector_call_failed", "get_page could not fit any of an element's text in one result.", { retryable: false });
+    }
+    elements.push({ ...shell, text: cut.text });
+    return { elements, next: { i: index, o: offset + cut.kept } };
+  }
+  return { elements, next: index < leaves.length ? { i: index, o: offset } : undefined };
+}
+
+/**
+ * Raw rows of a page from item `i` (0 is the page's own properties), JSON
+ * offset `o`: each whole where it fits, and one that fits no page alone in
+ * chunks of its JSON text, which concatenated parse to the item.
+ */
+function rawRows(items: readonly JsonRecord[], start: { i: number; o: number }, limit: number, room: number): PageRows {
+  const out: PageRows = { elements: [], next: undefined };
+  let used = 2;
+  let index = start.i;
+  let offset = start.o;
+  let rows = 0;
+  while (index < items.length && rows < limit) {
+    const item = items[index]!;
+    const size = jsonBytes(item) + 32;
+    if (offset === 0 && used + size <= room) {
+      if (index === 0) out.properties = item;
+      else out.elements.push(item);
+      used += size;
+      rows += 1;
+      index += 1;
+      continue;
+    }
+    // Whole on a page of its own: start the next page with it.
+    if (offset === 0 && rows > 0 && size <= room) break;
+    const json = JSON.stringify(item);
+    const objectId = index === 0 ? undefined : text(item["objectId"]);
+    const shell = { objectId, rawJson: { json: "", offset, length: json.length } };
+    const available = room - used - (jsonBytes(shell) - 2) - 32;
+    const cut = available > 2 ? prefixWithin(json.slice(offset), available, () => "") : { text: "", kept: 0 };
+    if (cut.kept === 0) {
+      if (rows > 0) break;
+      throw new ConnectorCallError("connector_call_failed", "get_page could not fit any part of a raw item in one result.", { retryable: false });
+    }
+    const chunk = { json: cut.text, offset, length: json.length };
+    if (index === 0) out.propertiesJson = chunk;
+    else out.elements.push(compact({ objectId, rawJson: chunk }));
+    rows += 1;
+    if (offset + cut.kept < json.length) {
+      out.next = { i: index, o: offset + cut.kept };
+      return out;
+    }
+    used += jsonBytes(chunk) + 32;
+    index += 1;
+    offset = 0;
+  }
+  out.next = index < items.length ? { i: index, o: offset } : undefined;
+  return out;
+}
+
+/** What a raw get_page cursor depends on when there is no revision. */
+function rawFingerprint(items: readonly JsonRecord[]): unknown {
+  return items.map((item) => [item["objectId"] ?? null, jsonBytes(item)]);
 }
 
 // --- Writing ----------------------------------------------------------------------
@@ -540,6 +985,20 @@ async function batchUpdate(
       { revisionGuarded: requiredRevisionId !== undefined },
     ),
   );
+}
+
+/**
+ * A create whose outcome Google left unknown — sent with no answer back, or
+ * accepted with an answer that broke — keeps the shared verdict and adds what
+ * to look for before creating again, since a second create makes a second
+ * deck or slide. Any other failure passes through untouched.
+ */
+function afterUnknownCreate(error: unknown, lookFor: string): unknown {
+  const phase = googleOutcomeOf(error)?.phase;
+  if (!(error instanceof ConnectorCallError) || (phase !== "reading-body" && phase !== "awaiting-response")) {
+    return error;
+  }
+  return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, { retryable: error.retryable, cause: error });
 }
 
 /** The revision a write left the deck at, for the next write to name. */
@@ -574,6 +1033,23 @@ const REVISION_PROPERTY: JsonSchema = {
   description: "revisionId from get_presentation; the write is refused, unapplied, if the deck changed since.",
 };
 
+const CURSOR_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  maxLength: 4096,
+  pattern: "^[A-Za-z0-9_-]+$",
+  description: "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged.",
+};
+
+function limitProperty(maximum: number, fallback: number, what: string): JsonSchema {
+  return {
+    type: "integer",
+    minimum: 1,
+    maximum,
+    description: `${what} per page, 1 to ${maximum}; defaults to ${fallback}. A page also ends before ~192 KB.`,
+  };
+}
+
 const PAGE_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -588,16 +1064,22 @@ const DIMENSION_SCHEMA: JsonSchema = {
   properties: { magnitude: { type: "number" }, unit: { type: "string" } },
 };
 
-const ELEMENT_SCHEMA: JsonSchema = {
+const KIND_SCHEMA: JsonSchema = {
+  type: "string",
+  enum: ["shape", "table", "wordArt", "image", "video", "chart", "line", "other"],
+};
+
+const SLIDE_ELEMENT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     objectId: { type: "string" },
-    kind: { type: "string", enum: ["shape", "table", "wordArt", "image", "video", "chart", "other"] },
+    kind: KIND_SCHEMA,
     placeholder: { type: "string" },
     text: { type: "string" },
+    truncated: { type: "boolean" },
+    textCursor: { type: "string" },
     altText: { type: "string" },
     spreadsheetId: { type: "string" },
-    truncated: { type: "boolean" },
   },
 };
 
@@ -610,12 +1092,50 @@ const SLIDE_SCHEMA: JsonSchema = {
     layoutId: { type: "string" },
     skipped: { type: "boolean" },
     title: { type: "string" },
-    elements: { type: "array", items: ELEMENT_SCHEMA },
+    elements: { type: "array", items: SLIDE_ELEMENT_SCHEMA },
     omittedElements: { type: "integer" },
     elementsNotShown: { type: "integer" },
+    elementsCursor: { type: "string" },
+    notesPageId: { type: "string" },
     notes: { type: "string" },
+    notesCursor: { type: "string" },
     truncated: { type: "boolean" },
     rawNotShown: { type: "string" },
+  },
+};
+
+const LAYOUT_ROW_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    objectId: { type: "string" },
+    kind: { type: "string", enum: ["master", "layout"] },
+    name: { type: "string" },
+    displayName: { type: "string" },
+    masterId: { type: "string" },
+  },
+};
+
+const CHUNK_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: { json: { type: "string" }, offset: { type: "integer" }, length: { type: "integer" } },
+};
+
+const PAGE_ELEMENT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    objectId: { type: "string" },
+    kind: KIND_SCHEMA,
+    groupId: { type: "string" },
+    placeholder: { type: "string" },
+    placeholderIndex: { type: "integer" },
+    placeholderParentId: { type: "string" },
+    text: { type: "string" },
+    textOffset: { type: "integer" },
+    textLength: { type: "integer" },
+    truncated: { type: "boolean" },
+    altText: { type: "string" },
+    spreadsheetId: { type: "string" },
+    rawJson: CHUNK_SCHEMA,
   },
 };
 
@@ -628,6 +1148,8 @@ const WRITE_RESULT_PROPERTIES: Record<string, JsonSchema> = {
 
 function tools(client: GoogleWorkspaceClient): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
+  const presentationPath = (id: string) => `/presentations/${encodeURIComponent(id)}`;
+  const nextPage = (cursor: string | null) => ({ hasMore: cursor !== null, nextCursor: cursor });
 
   return [
     {
@@ -638,23 +1160,13 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       inputSchema: input(
         {
           presentationId: PRESENTATION_ID,
-          limit: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_PAGE_SIZE,
-            description: `Slides per page, 1 to ${MAX_PAGE_SIZE}; defaults to ${DEFAULT_PAGE_SIZE}. Connecta's paging, which also ends a page before ~192 KB.`,
-          },
-          cursor: {
-            type: "string",
-            minLength: 1,
-            maxLength: 64,
-            description: "Opaque page.nextCursor from the previous page. Pass it back unchanged.",
-          },
+          limit: limitProperty(MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE, "Slides"),
+          cursor: CURSOR_PROPERTY,
           maxCharsPerSlide: {
             type: "integer",
             minimum: 0,
             maximum: MAX_SLIDE_CHARS,
-            description: `Text kept per slide (notes apart), 0 to ${MAX_SLIDE_CHARS}; defaults to ${DEFAULT_SLIDE_CHARS}. Cut text ends with a marker.`,
+            description: `Text kept per slide (notes apart), 0 to ${MAX_SLIDE_CHARS}; defaults to ${DEFAULT_SLIDE_CHARS}. A cut gives a get_page cursor for the rest.`,
           },
           raw: {
             type: "boolean",
@@ -676,14 +1188,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             properties: { width: DIMENSION_SCHEMA, height: DIMENSION_SCHEMA },
           },
           slideCount: { type: "integer" },
-          layouts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { objectId: { type: "string" }, name: { type: "string" }, displayName: { type: "string" } },
-            },
-          },
+          layouts: { type: "array", items: LAYOUT_ROW_SCHEMA },
           layoutsNotShown: { type: "integer" },
+          layoutsCursor: { type: "string" },
           slides: { type: "array", items: SLIDE_SCHEMA },
           page: PAGE_SCHEMA,
         },
@@ -692,61 +1199,232 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         required: ["presentationId", "slides", "page"],
       },
       handler: async (args, ctx) => {
-        const start = cursorStart(args["cursor"]);
+        const presentationId: string = args["presentationId"];
         const raw = args["raw"] === true;
+        const cursor = decodeCursor(args["cursor"], { k: "deck", p: presentationId, raw });
         const presentation = asRecord(
           await client.json(
             {
               method: "GET",
-              path: `/presentations/${encodeURIComponent(args["presentationId"])}`,
+              path: presentationPath(presentationId),
               query: { fields: raw ? undefined : PRESENTATION_FIELDS },
             },
             ctx,
           ),
         );
         const all = asArray(presentation["slides"]);
+        const revisionId = presentation["revisionId"];
+        const state = await stateOf(revisionId, () => all.map((slide) => asRecord(slide)["objectId"] ?? null));
+        assertUnchanged(cursor, state, "deck's slides");
+        const start = cursor?.i ?? 0;
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_PAGE_SIZE;
         const maxChars = typeof args["maxCharsPerSlide"] === "number" ? args["maxCharsPerSlide"] : DEFAULT_SLIDE_CHARS;
-        const layouts = layoutNames(presentation);
-        const id = text(presentation["presentationId"]) ?? args["presentationId"];
+        const deck: DeckContext = { presentationId, revisionId, layouts: layoutNames(presentation) };
         const pageSize = asRecord(presentation["pageSize"]);
         const width = dimension(pageSize["width"]);
         const height = dimension(pageSize["height"]);
-        const title = text(presentation["title"]);
-        const listed = start === 0 && !raw ? layoutList(presentation) : undefined;
+        // The first projected page previews the layouts, bounded; the rest
+        // continue in list_layouts from layoutsCursor.
+        let preview: JsonRecord = {};
+        if (start === 0 && !raw) {
+          const rows = layoutRows(presentation);
+          const shown = rowsWithin(rows, 0, MAX_ROWS, MAX_LAYOUT_PREVIEW_BYTES);
+          preview = compact({
+            layouts: shown.rows,
+            layoutsNotShown: shown.next < rows.length ? rows.length - shown.next : undefined,
+            layoutsCursor:
+              shown.next < rows.length
+                ? encodeCursor({
+                    k: "layouts",
+                    p: presentationId,
+                    s: await stateOf(revisionId, () => layoutFingerprint(rows)),
+                    i: shown.next,
+                  })
+                : undefined,
+          });
+        }
         const header = compact({
-          presentationId: id,
-          title: title ? capped(title, MAX_TITLE_CHARS, "the title is longer than this connection returns").text : undefined,
+          presentationId: text(presentation["presentationId"]) ?? presentationId,
+          title: label(text(presentation["title"]), MAX_TITLE_BYTES, "Drive shows the whole title"),
           // Only an account that may edit the deck is given one.
-          revisionId: text(presentation["revisionId"]),
-          url: editUrl(id),
+          revisionId: text(revisionId),
+          url: editUrl(presentationId),
           locale: text(presentation["locale"]),
           pageSize: width && height ? { width, height } : undefined,
           slideCount: all.length,
-          layouts: listed?.layouts,
-          layoutsNotShown: listed?.notShown || undefined,
+          ...preview,
         });
+        const issue = (i: number) => encodeCursor({ k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
         // A page ends at the slide limit or at the byte budget, whichever is
-        // first, so it is always one deliverable result: the budget counts
-        // the header and the largest page object it could carry.
-        let used = jsonBytes({ ...header, slides: [], page: { hasMore: true, nextCursor: `${CURSOR_PREFIX}999999` } });
+        // first; the budget counts the header and the longest cursor.
+        let used = jsonBytes({ ...header, slides: [] }) + pageEnvelopeBytes({ k: "deck", p: presentationId, s: state, i: 0 });
         const slides: JsonRecord[] = [];
         let next = start;
         while (next < all.length && slides.length < limit) {
-          const room = MAX_RESULT_BYTES - used - 1;
-          let slide = raw ? asRecord(all[next]) : projectSlide(all[next], next, layouts, maxChars).slide;
+          const room = RESULT_BUDGET_BYTES - used - 1;
+          let slide = raw ? asRecord(all[next]) : finished(await projectSlide(all[next], next, deck, maxChars));
           let size = jsonBytes(slide);
           if (size > room) {
             if (slides.length > 0) break;
-            slide = raw ? rawNotShown(all[next], size) : fitSlide(all[next], next, layouts, maxChars, room);
+            slide = raw ? rawNotShown(all[next], size) : await fitSlide(all[next], next, deck, maxChars, room);
             size = jsonBytes(slide);
           }
           slides.push(slide);
           used += size + 1;
           next += 1;
         }
-        const cursor = next < all.length ? `${CURSOR_PREFIX}${next}` : null;
-        return { ...header, slides, page: { hasMore: cursor !== null, nextCursor: cursor } };
+        return deliverable(
+          { ...header, slides, page: nextPage(next < all.length ? issue(next) : null) },
+          "get_presentation",
+        );
+      },
+    },
+    {
+      name: "get_page",
+      description:
+        "Read one page by objectId — slide, layout, master, or notes page — every element in reading order, with placeholder ids and text continued across pages.",
+      annotations: readOnly,
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          pageObjectId: objectIdProperty("A slide's, layout's, master's, or notes page's objectId."),
+          limit: limitProperty(MAX_ROWS, DEFAULT_ELEMENTS, "Elements"),
+          cursor: CURSOR_PROPERTY,
+          raw: {
+            type: "boolean",
+            description: "The page and its top-level elements as Slides sends them; one too large is sent in JSON chunks.",
+          },
+        },
+        ["presentationId", "pageObjectId"],
+      ),
+      outputSchema: {
+        type: "object",
+        properties: {
+          presentationId: { type: "string" },
+          pageObjectId: { type: "string" },
+          revisionId: { type: "string" },
+          pageType: { type: "string" },
+          layoutId: { type: "string" },
+          masterId: { type: "string" },
+          notesPageId: { type: "string" },
+          skipped: { type: "boolean" },
+          speakerNotesObjectId: { type: "string" },
+          name: { type: "string" },
+          displayName: { type: "string" },
+          elementCount: { type: "integer" },
+          properties: { type: "object" },
+          propertiesJson: CHUNK_SCHEMA,
+          elements: { type: "array", items: PAGE_ELEMENT_SCHEMA },
+          page: PAGE_SCHEMA,
+        },
+        required: ["presentationId", "pageObjectId", "elements", "page"],
+      },
+      handler: async (args, ctx) => {
+        const presentationId: string = args["presentationId"];
+        const pageObjectId: string = args["pageObjectId"];
+        const raw = args["raw"] === true;
+        const cursor = decodeCursor(args["cursor"], { k: "page", p: presentationId, g: pageObjectId, raw });
+        const page = asRecord(
+          await client.json(
+            {
+              method: "GET",
+              path: `${presentationPath(presentationId)}/pages/${encodeURIComponent(pageObjectId)}`,
+              query: { fields: raw ? undefined : PAGE_FIELDS },
+            },
+            ctx,
+          ),
+        );
+        const items = raw ? rawItems(page) : [];
+        const leaves = raw ? [] : readingOrder(page["pageElements"]);
+        const state = await stateOf(page["revisionId"], () => (raw ? rawFingerprint(items) : leafFingerprint(leaves)));
+        assertUnchanged(cursor, state, "page");
+        const header = compact({
+          presentationId,
+          pageObjectId: text(page["objectId"]) ?? pageObjectId,
+          revisionId: text(page["revisionId"]),
+          ...describePage(page),
+          elementCount: raw ? items.length - 1 : leaves.length,
+        });
+        const room =
+          RESULT_BUDGET_BYTES -
+          jsonBytes({ ...header, elements: [] }) -
+          pageEnvelopeBytes({ k: "page", p: presentationId, g: pageObjectId, s: state, raw: raw ? 1 : undefined, i: 0 }) -
+          64;
+        const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_ELEMENTS;
+        const start = { i: cursor?.i ?? 0, o: cursor?.o ?? 0 };
+        const rows = raw ? rawRows(items, start, limit, room) : projectedRows(leaves, start, limit, room);
+        const nextCursor = rows.next
+          ? encodeCursor({
+              k: "page",
+              p: presentationId,
+              g: pageObjectId,
+              s: state,
+              raw: raw ? 1 : undefined,
+              i: rows.next.i,
+              o: rows.next.o ? rows.next.o : undefined,
+            })
+          : null;
+        return deliverable(
+          compact({
+            ...header,
+            properties: rows.properties,
+            propertiesJson: rows.propertiesJson,
+            elements: rows.elements,
+            page: nextPage(nextCursor),
+          }),
+          "get_page",
+        );
+      },
+    },
+    {
+      name: "list_layouts",
+      description:
+        "List a deck's masters, each followed by its layouts, with the ids create_slide and get_page take. Names only; get_page reads a layout's placeholders.",
+      annotations: readOnly,
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          limit: limitProperty(MAX_ROWS, DEFAULT_LAYOUTS, "Masters and layouts"),
+          cursor: CURSOR_PROPERTY,
+        },
+        ["presentationId"],
+      ),
+      outputSchema: {
+        type: "object",
+        properties: {
+          presentationId: { type: "string" },
+          revisionId: { type: "string" },
+          total: { type: "integer" },
+          layouts: { type: "array", items: LAYOUT_ROW_SCHEMA },
+          page: PAGE_SCHEMA,
+        },
+        required: ["presentationId", "layouts", "page"],
+      },
+      handler: async (args, ctx) => {
+        const presentationId: string = args["presentationId"];
+        const cursor = decodeCursor(args["cursor"], { k: "layouts", p: presentationId, raw: false });
+        const presentation = asRecord(
+          await client.json(
+            { method: "GET", path: presentationPath(presentationId), query: { fields: LAYOUT_LIST_FIELDS } },
+            ctx,
+          ),
+        );
+        const rows = layoutRows(presentation);
+        const state = await stateOf(presentation["revisionId"], () => layoutFingerprint(rows));
+        assertUnchanged(cursor, state, "deck's layouts");
+        const header = compact({
+          presentationId,
+          revisionId: text(presentation["revisionId"]),
+          total: rows.length,
+        });
+        const room =
+          RESULT_BUDGET_BYTES -
+          jsonBytes({ ...header, layouts: [] }) -
+          pageEnvelopeBytes({ k: "layouts", p: presentationId, s: state, i: 0 });
+        const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_LAYOUTS;
+        const shown = rowsWithin(rows, cursor?.i ?? 0, limit, room);
+        const next = shown.next < rows.length ? encodeCursor({ k: "layouts", p: presentationId, s: state, i: shown.next }) : null;
+        return deliverable({ ...header, layouts: shown.rows, page: nextPage(next) }, "list_layouts");
       },
     },
     {
@@ -828,7 +1506,14 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       },
       handler: async (args, ctx) => {
         const presentation = asRecord(
-          await client.json({ method: "POST", path: "/presentations", body: { title: args["title"] } }, ctx),
+          await client
+            .json({ method: "POST", path: "/presentations", body: { title: args["title"] } }, ctx)
+            .catch((error: unknown) => {
+              throw afterUnknownCreate(
+                error,
+                "Search Drive for a deck with this title before creating it again; a second create makes a second deck.",
+              );
+            }),
         );
         const id = text(presentation["presentationId"]) ?? "";
         return compact({
@@ -895,7 +1580,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               : undefined;
         const response = await batchUpdate(client, ctx, args["presentationId"], [
           { createSlide: compact({ insertionIndex: args["insertionIndex"], slideLayoutReference: reference }) },
-        ]);
+        ]).catch((error: unknown) => {
+          throw afterUnknownCreate(
+            error,
+            "Read the deck with get_presentation and look for the new slide before adding another.",
+          );
+        });
         return compact({
           presentationId: text(response["presentationId"]) ?? args["presentationId"],
           revisionId: revisionAfter(response),
@@ -1083,20 +1773,27 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
 
 - \`get_presentation\` returns each slide's text in reading order (top to
   bottom, then left to right), speaker notes, and alt text for images,
-  videos, and charts. Empty placeholders are listed with their id and type,
-  so a new slide's title and body can be filled; lines and other empty
-  shapes are counted in \`omittedElements\`. Text past \`maxCharsPerSlide\`
-  ends with a truncation marker. Page with \`page.nextCursor\`; each page
-  re-reads the deck, and only the first lists \`layouts\`.
-- A page also ends before it outgrows one result (about 192 KB), so it may
-  hold fewer slides than \`limit\`. A single slide too large for one result
-  is cut to fit, and its markers say so; raising \`maxCharsPerSlide\` will
-  not bring that text back.
-- Styles, positions, and image links are left out. \`raw: true\` returns
-  this page's slides as Slides sends them, without layouts or masters; a
-  slide whose raw JSON is too large for any result is named in
-  \`rawNotShown\` instead.
-- \`index\` is 0-based, the same numbering \`create_slide\` takes.
+  videos, and charts. Empty placeholders are listed with their id and type;
+  lines and other empty shapes are counted in \`omittedElements\`. \`index\`
+  is 0-based, the numbering \`create_slide\` takes.
+- Nothing is cut without a way back. Text past \`maxCharsPerSlide\`, or past
+  what one result can carry (about 192 KB), ends with a marker, and its
+  element's \`textCursor\` (the slide's \`notesCursor\` for notes) is a
+  \`get_page\` cursor that continues from the cut. A slide too crowded to
+  list whole gives \`elementsNotShown\` and an \`elementsCursor\`.
+- \`get_page\` reads any page by objectId — a slide, a layout (its
+  placeholders' types and indexes, for \`placeholderIdMappings\`), a master,
+  or a notes page (\`notesPageId\`) — listing every element, groups opened,
+  and continuing long text across pages from \`page.nextCursor\`.
+- \`list_layouts\` lists masters and their layouts; \`get_presentation\`
+  previews them, and \`layoutsCursor\` continues where the preview stops.
+- \`raw: true\` returns Slides' own JSON: \`get_presentation\` a page of
+  slides, \`get_page\` the page and its top-level elements. One too large
+  for a result is named (\`rawNotShown\`) or sent in \`rawJson\` chunks;
+  join the chunks' \`json\` in order and parse.
+- Every cursor is bound to the deck and the revision it was read at. A
+  \`conflict\` on a cursor means the deck changed: start again without one.
+  A page may hold fewer rows than \`limit\`; follow \`page.nextCursor\`.
 - \`get_slide_thumbnail\` returns a link, never the image. The link opens as
   this person for about 30 minutes; do not share it.
 
