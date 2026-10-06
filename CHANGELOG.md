@@ -13,10 +13,16 @@ OAuth client that could send stored credentials to an authorization server the
 MCP server chose; `npm run check:security` failed on it. Connecta's own issuer
 binding already kept a `remoteMcp()` grant away from a server the downstream
 switches to, and tests now prove it end to end. Nothing in configuration
-changes. Two things a deployment may notice: a refresh whose rotated tokens
-cannot be stored now fails as that storage error instead of reporting
-`auth_required`, and `/mcp` bodies are still bounded by the host, not by the
-4 MiB default the server SDK adopted in 2.1.0 (#687).
+changes. What a deployment may notice: a refresh whose rotated tokens cannot
+be stored now fails as a retryable outage instead of `auth_required`; `/mcp`
+bodies stay bounded by the host, not by the 4 MiB default the server SDK
+adopted. Two inbound refusals arrive with the server SDK and are kept, because
+the protocol requires them: a client that claims 2026-07-28 in its request body
+but sends no `MCP-Protocol-Version` header is answered `400` with
+`HeaderMismatch` (`-32020`) where it was served before, and a JSON-RPC batch of
+more than 100 messages is answered `400` (`-32600`) where it was accepted.
+Every client the SDK builds sends the header; a 2025-era client that sends
+neither the header nor the 2026-07-28 claim is served exactly as before (#687).
 
 ### Changed
 
@@ -32,17 +38,46 @@ cannot be stored now fails as that storage error instead of reporting
   in the legacy handshake, so connecta's workaround for
   [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
   is gone; the handshake teardown sweeps prove no rejection escapes under
-  workerd without it. Bundles grow by about 4.8 KB gzip at the root and the
-  Worker example and about 2 KB for each hosted-MCP provider, within every cap.
+  workerd without it. Bundles grow by about 5.1 KB gzip at the root and the
+  Worker example and about 2.4 KB for each hosted-MCP provider, within every cap.
+- **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
+  transport requires the header on every POST and has the server reject a
+  request without it, so an intermediary routing on the header and the server
+  executing the body cannot disagree; server 2.0.0 served such a request
+  anyway. A client breaks here only if it puts the
+  `io.modelcontextprotocol/protocolVersion` claim in the request's `_meta`,
+  sends `Mcp-Method`, and omits `MCP-Protocol-Version` — a hand-rolled modern
+  client, or a proxy that strips the header. It must send the header with the
+  same value as the claim. Defaulting the header for it is not open to
+  connecta: the spec's allowance to assume `2025-03-26` covers only clients
+  older than 2025-06-18, which send no 2026-07-28 claim and are still served
+  on the legacy leg.
+- **A JSON-RPC batch holds at most 100 messages.** Batching left the protocol
+  in 2025-06-18, so only a 2025-03-26 client sends one; server 2.1.0 answers a
+  longer batch `400` with `-32600` and dispatches none of it. The cap is a
+  constant in the SDK. A client that batches more must split the batch.
 
 ### Fixed
 
-- **A rotation that cannot be stored is not reported as needing consent.**
+- **No token endpoint's text reaches the host's console.** From client 2.1.0
+  the SDK writes a failed refresh or code exchange's `error_description`, or
+  the raw body of a non-OAuth answer, to `console.warn`, below any logger a
+  deployment configures. A token endpoint that echoes the form it refused
+  would put the refresh token, client secret, or authorization code there.
+  Every token-endpoint failure now reaches the SDK rebuilt: its OAuth `error`
+  code, a fixed description, the status, and `Retry-After`. A code outside the
+  registered set becomes `invalid_request`, and a body with no code
+  `server_error`, the classes the SDK already gave them, so refresh verdicts and
+  callback outcomes are unchanged. A grant stored before issuer binding is also
+  handed back stamped, so the SDK no longer warns about it on every read.
+- **A rotation that cannot be stored is a retryable outage, not consent.**
   When the authorization server honored a refresh but its new tokens could not
   be written, the SDK used to swallow the failure and start authorization, so
   a passive call answered `auth_required` for a grant that was still good. It
-  now fails with the storage error, writes no consent URL, and leaves the
-  stored grant as it was.
+  now fails `unavailable` and retryable, writes no consent URL, and leaves the
+  stored grant as it was. Any failed credential write — tokens, client
+  registration, PKCE verifier — reports fixed text with no cause attached,
+  because a store's own error can quote the value it refused.
 - **A token endpoint cannot stamp its own issuer.** A refresh answer carrying
   `issuer` had that field kept when connecta persisted a rotation for a
   cancelled caller with no issuer to stamp. Only the client binds a grant, so

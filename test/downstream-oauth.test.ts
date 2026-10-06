@@ -17,7 +17,7 @@ import {
 } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { classifyCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { CredentialVault } from "../src/credentials.js";
 import { vaultOAuthSealer } from "../src/oauth-sealing.js";
@@ -36,6 +36,22 @@ import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
+
+/**
+ * Everything written to the console for the rest of the test. The SDK logs
+ * there directly, below any logger a deployment configures, so a secret it is
+ * handed reaches the host's output whatever connecta's own logger does.
+ */
+function consoleOutput(): () => string {
+  const lines: string[] = [];
+  for (const method of ["debug", "error", "info", "log", "warn"] as const) {
+    const spy = vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((arg) => (arg instanceof Error ? `${arg.stack}` : typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
+    });
+    onTestFinished(() => spy.mockRestore());
+  }
+  return () => lines.join("\n");
+}
 
 async function storeCurrentOAuthValue(
   storage: KVStorage,
@@ -90,8 +106,9 @@ describe("KvOAuthProvider over memoryStorage", () => {
     else await writer.invalidateCredentials("tokens");
     release.resolve();
     await binding;
+    // An issuer-aware read hands back the stamp its envelope is bound to.
     expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens(issuer)).toEqual(
-      mutation === "rotation" ? rotated : undefined,
+      mutation === "rotation" ? { ...rotated, ...issuer } : undefined,
     );
   });
 
@@ -314,8 +331,10 @@ describe("KvOAuthProvider over memoryStorage", () => {
     await p.saveClientInformation(info, issuer);
     await p.saveTokens(tokens, issuer);
 
-    expect(await p.clientInformation(issuer)).toEqual(info);
-    expect(await p.tokens(issuer)).toEqual(tokens);
+    // An issuer-aware read hands back the stamp, so the SDK's own SEP-2352
+    // check reads the value as bound rather than warning on the console.
+    expect(await p.clientInformation(issuer)).toEqual({ ...info, ...issuer });
+    expect(await p.tokens(issuer)).toEqual({ ...tokens, ...issuer });
     // Token attachment has no issuer context, so it reads the already-bound
     // credential selected during validated discovery.
     expect(await p.tokens()).toEqual(tokens);
@@ -1772,8 +1791,8 @@ describe("KvOAuthProvider sealed state", () => {
     expect(await storage.get("oauth:generation")).toBe(generation);
 
     const reader = sealedProvider(storage);
-    expect(await reader.tokens(issuer)).toEqual(tokens);
-    expect(await reader.clientInformation(issuer)).toEqual(client);
+    expect(await reader.tokens(issuer)).toEqual({ ...tokens, ...issuer });
+    expect(await reader.clientInformation(issuer)).toEqual({ ...client, ...issuer });
     expect(await reader.codeVerifier()).toBe("secret-verifier");
     expect(await reader.discoveryState()).toEqual(discovery);
     expect(await reader.verifyState(state)).toBe(true);
@@ -1831,7 +1850,7 @@ describe("KvOAuthProvider sealed state", () => {
     await storage.set(verifierKey, seed.verifier());
 
     const p = sealedProvider(storage);
-    expect(await p.tokens(seed.ctx)).toEqual(tokens);
+    expect(await p.tokens(seed.ctx)).toEqual({ ...tokens, ...seed.ctx });
     expect(await p.codeVerifier()).toBe("legacy-verifier");
 
     for (const key of [tokensKey, verifierKey]) {
@@ -1843,7 +1862,7 @@ describe("KvOAuthProvider sealed state", () => {
     // The upgrade re-encodes; it neither moves the epoch nor loses the issuer.
     expect(await storage.get("oauth:generation")).toBe(seed.generation);
     const reader = sealedProvider(storage);
-    expect(await reader.tokens(seed.ctx)).toEqual(tokens);
+    expect(await reader.tokens(seed.ctx)).toEqual({ ...tokens, ...seed.ctx });
     expect(await reader.codeVerifier()).toBe("legacy-verifier");
     expect(await storage.get("oauth:generation")).toBe(seed.generation);
   });
@@ -2106,8 +2125,12 @@ describe("OAuthRefreshCoordinator", () => {
       malformed,
       baseFetch,
     )("https://auth.example/token", refreshInit("refresh-old"));
-    await expect(malformedResponse.json()).resolves.toMatchObject({
-      refresh_token: 123,
+    // The SDK gets an outage it falls through on, rebuilt with nothing the
+    // server wrote: the malformed body never reaches its console.
+    expect(malformedResponse.status).toBe(200);
+    await expect(malformedResponse.json()).resolves.toEqual({
+      error: "server_error",
+      error_description: "The authorization server is temporarily unavailable.",
     });
 
     // The SDK rejects the first body before any provider callback. Its gate
@@ -3474,7 +3497,7 @@ describe("OAuthRefreshCoordinator", () => {
 
   it("shares a storage mutation failure before allowing an independent retry", async () => {
     const backing = memoryStorage();
-    const storageFailure = new Error("token storage unavailable");
+    let storageFailure!: Error;
     let failTokenWrite = false;
     let observedFailedWrite!: () => void;
     let releaseFailedWrite!: () => void;
@@ -3489,6 +3512,8 @@ describe("OAuthRefreshCoordinator", () => {
       set: async (key, value, options) => {
         if (failTokenWrite && key === "oauth:tokens") {
           failTokenWrite = false;
+          // A store whose error quotes the value it refused.
+          storageFailure = new Error(`write refused: ${value}`);
           observedFailedWrite();
           await failedWriteBarrier;
           throw storageFailure;
@@ -3565,10 +3590,20 @@ describe("OAuthRefreshCoordinator", () => {
     expect(upstreamRequests).toBe(1);
     releaseFailedWrite();
     const outcomes = await failedOutcomes;
-    expect(outcomes).toEqual([
-      { status: "rejected", reason: storageFailure },
-      { status: "rejected", reason: storageFailure },
-    ]);
+    // Both see one failure, in fixed text: the store's own error never leaves.
+    expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
+    const [ownerFailure, followerFailure] = outcomes.map(
+      (outcome) => (outcome as PromiseRejectedResult).reason as unknown,
+    );
+    expect(followerFailure).toBe(ownerFailure);
+    expect(ownerFailure).toBeInstanceOf(ConnectorCallError);
+    expect(ownerFailure).toMatchObject({
+      code: "unavailable",
+      message: 'Connector "svc" could not store its OAuth credentials; try again shortly.',
+    });
+    expect((ownerFailure as Error).cause).toBeUndefined();
+    expect(storageFailure.message).toContain("access-new");
+    expect(String(ownerFailure)).not.toContain("access-new");
     expect(await owner.tokens()).toMatchObject({
       access_token: "access-old",
       refresh_token: "refresh-old",
@@ -5575,6 +5610,159 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
   });
 });
 
+// ---------------------------------------------------------------------------
+// From client 2.1.0 the SDK writes a token-endpoint failure's description — or
+// its raw body — to the console. Connecta hands it nothing the server wrote
+// but the OAuth code, so a server echoing the form it refused cannot put the
+// refresh token, client secret, or authorization code there.
+// ---------------------------------------------------------------------------
+describe("remoteMcp() token endpoint failures and the host's console", () => {
+  const issuer = "https://auth.example";
+  const mcpUrl = "https://downstream.example/mcp";
+  const resourceMetadataUrl =
+    "https://downstream.example/.well-known/oauth-protected-resource";
+  const SECRETS = /client-secret-xyz|refresh-secret|code-secret/;
+
+  type Refusal = (form: URLSearchParams) => Response;
+  const echo = (form: URLSearchParams) => form.toString();
+  const refusals: [string, Refusal][] = [
+    [
+      "an OAuth error whose description echoes the form",
+      (form) => Response.json({ error: "invalid_grant", error_description: `rejected ${echo(form)}` }, { status: 400 }),
+    ],
+    [
+      "a client refusal whose description echoes the form",
+      (form) => Response.json({ error: "invalid_client", error_description: `rejected ${echo(form)}` }, { status: 401 }),
+    ],
+    [
+      "an unregistered code carrying the form",
+      (form) => Response.json({ error: `bad_${echo(form)}` }, { status: 400 }),
+    ],
+    ["a non-JSON body echoing the form", (form) => new Response(`bad request: ${echo(form)}`, { status: 400 })],
+    ["an outage echoing the form", (form) => new Response(`unavailable: ${echo(form)}`, { status: 503 })],
+    [
+      "an outage whose description echoes the form",
+      (form) => Response.json({ error: "server_error", error_description: echo(form) }, { status: 500 }),
+    ],
+    [
+      "a 2xx OAuth error echoing the form",
+      (form) => Response.json({ error: "invalid_grant", error_description: echo(form) }),
+    ],
+    ["a 2xx body that is no token response", (form) => Response.json({ note: echo(form) })],
+    ["a 2xx body that is no JSON", (form) => new Response(`ok ${echo(form)}`)],
+  ];
+
+  function downstream() {
+    const refuse: { grant?: string; answer?: Refusal } = {};
+    let issued = 0;
+    const fetchStub: FetchLike = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.href === resourceMetadataUrl) {
+        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["client_secret_post"],
+        });
+      }
+      if (url.href === `${issuer}/register`) {
+        return Response.json({
+          ...(JSON.parse(String(init.body)) as object),
+          client_id: "registered-client",
+          client_secret: "client-secret-xyz",
+        });
+      }
+      if (url.href === `${issuer}/token`) {
+        const form = new URLSearchParams(String(init.body));
+        if (refuse.answer && form.get("grant_type") === refuse.grant) return refuse.answer(form);
+        issued++;
+        return Response.json({
+          access_token: `access-${issued}`,
+          token_type: "Bearer",
+          refresh_token: `refresh-secret-${issued}`,
+        });
+      }
+      if (url.href === mcpUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        });
+      }
+      throw new Error(`Unexpected OAuth test request: ${url.href}`);
+    };
+    return { fetchStub, refuse };
+  }
+
+  function logged() {
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => {
+      lines.push(args.map((arg) => (arg instanceof Error ? `${arg.stack} ${String(arg.cause)}` : String(arg))).join(" "));
+    };
+    return { logger: { debug: record, info: record, warn: record, error: record }, lines };
+  }
+
+  const connector = () =>
+    remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+
+  async function consentUrl(c: Connector, storage: KVStorage) {
+    const started = await c.startAuth!({ ...ctx(storage), requestScope: {} }, { force: true });
+    const url = new URL(required(started.authorizationUrl));
+    return required(url.searchParams.get("state") ?? undefined);
+  }
+
+  it.each(refusals)("keeps %s out of the console on a refresh", async (_label, answer) => {
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const storage = memoryStorage();
+    const c = connector();
+    const state = await consentUrl(c, storage);
+    const callback = { ...ctx(storage), requestScope: {} };
+    await c.finishAuth!("code-secret", callback, new URLSearchParams({ code: "code-secret", state }));
+
+    server.refuse.grant = "refresh_token";
+    server.refuse.answer = answer;
+    const output = consoleOutput();
+    const log = logged();
+    const passive = { ...ctx(storage), logger: log.logger, requestScope: {} };
+    const error = await c.listTools(passive).then(() => undefined, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    for (const surface of [output(), log.lines.join("\n"), String(error), JSON.stringify(classifyCallError(error))]) {
+      expect(surface).not.toMatch(SECRETS);
+    }
+    await c.closeScope?.(passive);
+  });
+
+  it.each(refusals)("keeps %s out of the console on a code exchange", async (_label, answer) => {
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const storage = memoryStorage();
+    const c = connector();
+    const state = await consentUrl(c, storage);
+
+    server.refuse.grant = "authorization_code";
+    server.refuse.answer = answer;
+    const output = consoleOutput();
+    const log = logged();
+    const callback = { ...ctx(storage), logger: log.logger, requestScope: {} };
+    const error = await c.finishAuth!("code-secret", callback, new URLSearchParams({ code: "code-secret", state }))
+      .then(() => undefined, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    for (const surface of [output(), log.lines.join("\n"), String(error), JSON.stringify(classifyCallError(error))]) {
+      expect(surface).not.toMatch(SECRETS);
+    }
+  });
+});
+
 describe("remoteMcp() finishAuth", () => {
   it("drives transport.finishAuth, clears pending, and reconnects next use", async () => {
     const storage = memoryStorage();
@@ -6627,23 +6815,62 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     },
   );
 
-  it("reports a redeemed rotation it could not store as the storage failure, not as consent", async () => {
+  it("refreshes a grant stored before issuer binding without the SDK warning on the console", async () => {
+    // Raw legacy strings, as a release before issuer binding left them.
+    const storage = memoryStorage();
+    await storage.set("oauth:client", JSON.stringify({
+      client_id: "connecta-client",
+      redirect_uris: [REDIRECT],
+      token_endpoint_auth_method: "none",
+    }));
+    await storage.set("oauth:tokens", JSON.stringify({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    }));
+    const server = downstream({
+      current: () =>
+        Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" }),
+    });
+    const c = connector();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const output = consoleOutput();
+    try {
+      const passive = scope(storage);
+      await expect(c.listTools(passive)).resolves.toEqual([]);
+      expect(server.redeemed).toEqual(["refresh-old"]);
+      // Bound on this first read, and handed to the SDK stamped, so its own
+      // SEP-2352 check has nothing to warn about.
+      expect(output()).toBe("");
+      await c.closeScope?.(passive);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports a redeemed rotation it could not store as a retryable outage in fixed text, not as consent", async () => {
     // Through @modelcontextprotocol/client 2.0.0, `auth()` swallowed a
     // `saveTokens` failure and fell through to a fresh authorization, which a
     // passive call reported as auth_required: a grant the server had just
-    // honored, sent to consent. From 2.1.0 the failure propagates.
+    // honored, sent to consent. From 2.1.0 the failure propagates, so what it
+    // says is connecta's to decide.
     const seeded = await seededStorage();
-    const storageFailure = new Error("token storage unavailable");
+    let storageFailure: Error | undefined;
     const storage: KVStorage = {
       ...seeded,
       get: (key) => seeded.get(key),
       list: (prefix) => seeded.list!(prefix),
       delete: (key) => seeded.delete(key),
       set: async (key, value, options) => {
-        if (key === "oauth:tokens" && value.includes("access-new")) throw storageFailure;
+        if (key === "oauth:tokens" && value.includes("access-new")) {
+          // A store whose error quotes the value it refused.
+          storageFailure = new Error(`write refused: ${value}`);
+          throw storageFailure;
+        }
         await seeded.set(key, value, options);
       },
     };
+    const output = consoleOutput();
     const server = downstream({
       current: () =>
         Response.json({
@@ -6657,11 +6884,15 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     try {
       const passive = scope(storage);
       const { error, classified } = await failureOf(c.listTools(passive));
-      expect(error).toBe(storageFailure);
+      expect(storageFailure?.message).toContain("refresh-new");
       expect(classified).toMatchObject({
-        code: "connector_call_failed",
-        message: "token storage unavailable",
+        code: "unavailable",
+        retryable: true,
+        message: 'Connector "svc" could not store its OAuth credentials; try again shortly.',
       });
+      for (const surface of [String(error), JSON.stringify(classified), output()]) {
+        expect(surface).not.toMatch(/access-new|refresh-new/);
+      }
       expect(server.counts.token).toBe(1);
       expect(server.counts.register).toBe(0);
       const reader = new KvOAuthProvider("svc", seeded, REDIRECT);

@@ -219,14 +219,29 @@ function firstRejection(
   return undefined;
 }
 
-function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
-  if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
+/**
+ * A bound credential as an issuer-aware read hands it back: carrying the
+ * issuer its envelope is bound to. Connecta binds the envelope, so a value
+ * written before binding has no stamp of its own, and the SDK's matching
+ * SEP-2352 check would otherwise warn on the console at every read.
+ */
+function stampedValue<T>(value: T, issuer: string): T {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value, issuer }
+    : value;
+}
+
+/** The `grant_type` of a token request, or undefined for any other request. */
+function tokenGrantType(init: RequestInit | undefined): string | undefined {
+  if ((init?.method ?? "GET").toUpperCase() !== "POST") return undefined;
   const body = init?.body;
-  if (body instanceof URLSearchParams) {
-    return body.get("grant_type") === "refresh_token";
-  }
-  if (typeof body !== "string") return false;
-  return new URLSearchParams(body).get("grant_type") === "refresh_token";
+  if (body instanceof URLSearchParams) return body.get("grant_type") ?? undefined;
+  if (typeof body !== "string") return undefined;
+  return new URLSearchParams(body).get("grant_type") ?? undefined;
+}
+
+function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
+  return tokenGrantType(init) === "refresh_token";
 }
 
 function sdkAcceptsOAuthTokens(value: unknown): boolean {
@@ -351,32 +366,77 @@ function transientFailure(
   };
 }
 
-/** What the SDK sees for a refused grant it would otherwise misread. */
-function refusedGrantResponse(original: Response): Response {
-  void original.body?.cancel().catch(() => {});
-  return Response.json(
-    {
-      error: "invalid_grant",
-      error_description: "The authorization server refused the refresh token.",
-    },
-    { status: 400 },
-  );
-}
+/**
+ * The OAuth `error` codes a token-endpoint failure may carry to the SDK, each
+ * with the only description it will ever see beside it. RFC 6749's error
+ * codes, RFC 8707's, and RFC 9449's: the SDK decides its control flow on the
+ * code, so the code is all that has to survive.
+ */
+const SDK_TOKEN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  invalid_request: "The authorization server refused the token request.",
+  invalid_client: "The authorization server refused the client.",
+  invalid_grant: "The authorization server refused the grant.",
+  unauthorized_client: "The authorization server refused the client for this grant.",
+  unsupported_grant_type: "The authorization server refused the grant type.",
+  invalid_scope: "The authorization server refused the requested scope.",
+  invalid_target: "The authorization server refused the requested resource.",
+  server_error: "The authorization server is temporarily unavailable.",
+  temporarily_unavailable: "The authorization server is temporarily unavailable.",
+  invalid_dpop_proof: "The authorization server refused the DPoP proof.",
+  use_dpop_nonce: "The authorization server requires a DPoP nonce.",
+};
 
-/** What the SDK sees for an outage whose body names a restarting code. */
-function outageResponse(original: Response): Response {
+/**
+ * A token-endpoint failure as the SDK gets to parse it: the OAuth `error`
+ * code, a fixed description, the status, and `Retry-After`, and nothing else
+ * the server wrote. Since client 2.1.0 the SDK writes a failure's description
+ * to `console.warn` when it restarts or falls through to consent, and a body
+ * that is no OAuth error at all goes there raw. A token endpoint that echoes
+ * the form it refused would put the refresh token and client secret in the
+ * host's console, below any logger the deployment configured.
+ */
+function sdkTokenFailure(
+  original: Response,
+  code: string,
+  status = original.status,
+): Response {
   void original.body?.cancel().catch(() => {});
   const retryAfter = original.headers.get("retry-after");
+  const known = code in SDK_TOKEN_ERROR_DESCRIPTIONS ? code : "invalid_request";
   return Response.json(
+    { error: known, error_description: SDK_TOKEN_ERROR_DESCRIPTIONS[known] },
     {
-      error: "server_error",
-      error_description: "The authorization server is temporarily unavailable.",
-    },
-    {
-      status: original.status,
+      status,
       ...(retryAfter !== null ? { headers: { "retry-after": retryAfter } } : {}),
     },
   );
+}
+
+/**
+ * Rebuild a failed code exchange (or any token request but a refresh, which
+ * `refreshResponseOutcome` classifies) before the SDK parses it. A code
+ * outside the registered set becomes `invalid_request` and a body with no code
+ * becomes `server_error`, the two classes the SDK already gave them. A token
+ * response, and a 2xx body that is no OAuth error, pass through untouched.
+ */
+async function sdkSafeTokenResponse(response: Response): Promise<Response> {
+  let parsed: unknown;
+  try {
+    parsed = await readRefreshResponse(response);
+  } catch (error) {
+    if (error instanceof OversizedRefreshResponse) {
+      return sdkTokenFailure(response, "server_error");
+    }
+    // Not JSON: a failure has only its status to go on.
+    return response.ok ? response : sdkTokenFailure(response, "server_error");
+  }
+  const code = oauthErrorCode(parsed);
+  if (response.ok) {
+    return code === undefined || sdkAcceptsOAuthTokens(parsed)
+      ? response
+      : sdkTokenFailure(response, code);
+  }
+  return sdkTokenFailure(response, code ?? "server_error");
 }
 
 type RefreshResponseOutcome =
@@ -409,7 +469,9 @@ type RefreshResponseOutcome =
  * (`bad_refresh_token`, `invalid_scope`, …) reaches it as `invalid_grant`, and
  * an outage whose body names any code but `server_error` reaches it as
  * `server_error` — a 5xx `invalid_grant` must not make the SDK drop a grant
- * nobody refused. The provider hooks below finish the job. If the SDK moves,
+ * nobody refused. Every failure reaches it rebuilt by `sdkTokenFailure`, so
+ * nothing the server wrote but the code it chose is ever the SDK's to log.
+ * The provider hooks below finish the job. If the SDK moves,
  * the tests under "remoteMcp() dead and transient refresh grants" fail first.
  */
 async function refreshResponseOutcome(
@@ -433,17 +495,14 @@ async function refreshResponseOutcome(
         verdict: { kind: "dead" },
         forSdk:
           code !== undefined && SDK_RESTARTING_CODES.has(code)
-            ? response
-            : refusedGrantResponse(response),
+            ? sdkTokenFailure(response, code)
+            : sdkTokenFailure(response, "invalid_grant", 400),
       };
     }
     return {
       failure,
       verdict: transientFailure(`answered HTTP ${response.status}`, response),
-      forSdk:
-        code !== undefined && code !== "server_error"
-          ? outageResponse(response)
-          : response,
+      forSdk: sdkTokenFailure(response, "server_error"),
     };
   }
   let parsed: unknown;
@@ -454,7 +513,7 @@ async function refreshResponseOutcome(
     return {
       failure: new Error("OAuth refresh response did not contain JSON tokens."),
       verdict: transientFailure("answered without a token response", response),
-      forSdk: response,
+      forSdk: sdkTokenFailure(response, "server_error"),
     };
   }
   if (sdkAcceptsOAuthTokens(parsed)) {
@@ -467,13 +526,13 @@ async function refreshResponseOutcome(
     return {
       failure: new Error("OAuth refresh was refused by the authorization server."),
       verdict: { kind: "dead" },
-      forSdk: refusedGrantResponse(response),
+      forSdk: sdkTokenFailure(response, "invalid_grant", 400),
     };
   }
   return {
     failure: new Error("OAuth refresh response did not match the token schema."),
     verdict: transientFailure("answered without a token response", response),
-    forSdk: response,
+    forSdk: sdkTokenFailure(response, "server_error"),
   };
 }
 
@@ -697,7 +756,11 @@ export class OAuthRefreshCoordinator {
             ? AbortSignal.any([requestSignal, init.signal])
             : requestSignal
           : init?.signal;
-        return await baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        const response = await baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        // A code exchange's failure is the SDK's to log as well.
+        return tokenGrantType(init) === undefined
+          ? response
+          : await sdkSafeTokenResponse(response);
       }
 
       // A verdict belongs to one refresh; never let an older one decide this.
@@ -1337,6 +1400,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * answering that with `UnauthorizedError` would tell the agent a working
    * grant needs consent.
    */
+  /**
+   * A credential write that storage refused, in fixed text and with no
+   * cause attached. Retryable: the grant it held is untouched, so the next
+   * call either refreshes again or meets the server's verdict on it.
+   */
+  private credentialWriteError(): ConnectorCallError {
+    return new ConnectorCallError(
+      "unavailable",
+      `Connector "${this.connectorId}" could not store its OAuth credentials; try again shortly.`,
+    );
+  }
+
   private authorizationRefused(): Error {
     const failure = this.refreshFailure;
     return failure?.kind === "transient"
@@ -1465,10 +1540,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
           } satisfies SealedOAuthValue)
         : plaintext;
     if (!commitAcceptedRefresh && this.signal?.aborted) return;
-    if (expected === undefined) {
-      await this.storage.set(physicalKey, serialized);
-    } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
-      return;
+    try {
+      if (expected === undefined) {
+        await this.storage.set(physicalKey, serialized);
+      } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
+        return;
+      }
+    } catch (error) {
+      // A store's own error can quote the value it refused, and from here a
+      // failed credential write reaches the SDK, its console, and the agent.
+      if (SEALED_OAUTH_KEYS.has(key)) throw this.credentialWriteError();
+      throw error;
     }
     // If reset landed after the pre-write check and completed its cleanup
     // before this set, remove the now-unreachable residue ourselves. The epoch
@@ -1697,9 +1779,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
         ...stored,
         issuer: ctx.issuer,
       } satisfies StoredOAuthValue<T>), read.raw);
-      return stored.value;
+      return stampedValue(stored.value, ctx.issuer);
     }
-    if (stored.issuer === ctx.issuer) return stored.value;
+    if (stored.issuer === ctx.issuer) return stampedValue(stored.value, ctx.issuer);
 
     if (this.signal?.aborted) throw this.signal.reason;
     try {

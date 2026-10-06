@@ -423,6 +423,15 @@ and the provider hooks it calls next finish the job. The pinned SDK behavior is
 spelled out beside `refreshResponseOutcome`. An explicit authorization during
 an outage still falls through to consent, since that is what it asked for.
 
+That answer, and a failed code exchange's, is rebuilt from the OAuth `error`
+code alone, with fixed text beside it. The SDK writes a failure's description
+to the console, below any logger the deployment configured, and a token
+endpoint that echoes the form it refused would otherwise put the refresh token,
+client secret, or authorization code there. A refresh the server honored but
+whose tokens could not be stored is neither verdict: it is a retryable
+`unavailable` in fixed text, the stored grant untouched, because a store's own
+error can quote the value it refused.
+
 ## URLs a downstream advertises
 
 A `remoteMcp()` OAuth connector learns most of the URLs it fetches from the
