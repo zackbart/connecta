@@ -27,6 +27,7 @@
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
+import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
 import {
   googleWorkspaceClient,
   workspaceConnection,
@@ -66,12 +67,15 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 /** A listed answer is cut here; get_response returns it whole. */
 const LIST_ANSWER_CHARS = 2_000;
-/** A form or item description is cut here in get_form's projection. */
+/** A form or item title or description is cut here in get_form's projection. */
 const DESCRIPTION_CHARS = 2_000;
+/** ...and bounded here in bytes, so escaped control characters cannot grow it. */
+const DESCRIPTION_BYTES = 8 * 1024;
 /** Options shown per choice question; a long dropdown says how many it hid. */
 const MAX_OPTIONS = 100;
 /** An option or grid row is cut here; raw: true reads it whole. */
 const MAX_LABEL_CHARS = 300;
+const MAX_LABEL_BYTES = 1024;
 /** One answer value in get_response, before it would crowd out the rest. */
 const MAX_ANSWER_CHARS = 50_000;
 /** Question ids one get_response call may name. */
@@ -81,14 +85,12 @@ const MAX_REQUESTS = 100;
 /** A large form with embedded media metadata, or a page of long answers. */
 const FORMS_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /**
- * What one result may weigh, serialized. A program in `execute_code` receives
- * each host result across a bridge that refuses anything over 256 KiB, and a
- * direct call stashes what passes the inline cap; staying well inside the
- * first keeps every result deliverable both ways. A page ends early, with a
- * cursor, rather than grow past it.
+ * Room a filling page keeps for its own fields and its cursor. Every result
+ * stays inside the shared RESULT_BUDGET_BYTES (`./google/result-size.ts`), so
+ * it crosses execute_code's host bridge and a direct call alike; a page ends
+ * early, with a cursor, rather than grow past it, and the complete result,
+ * cursor included, is measured before it is returned.
  */
-const RESULT_BUDGET_BYTES = 192 * 1024;
-/** Room a filling page keeps for its own fields and its cursor. */
 const PAGE_RESERVE_BYTES = 4 * 1024;
 
 type JsonRecord = Record<string, any>;
@@ -123,16 +125,21 @@ function capped(value: string | undefined, max: number, remedy: string): string 
   return `${value.slice(0, max)}\n[… ${value.length - max} more characters truncated; ${remedy}]`;
 }
 
+/**
+ * Text cut at `chars` characters, then held to `bytes` of JSON — quotes and
+ * escapes counted — so a run of control characters cannot outgrow its place.
+ */
+function bounded(value: string | undefined, chars: number, bytes: number): string | undefined {
+  const cut = capped(value, chars, "pass raw: true to read it");
+  if (cut === undefined || jsonBytes(cut) <= bytes) return cut;
+  return clampText(value!, bytes, (dropped) => `\n[… ${dropped} more characters truncated; pass raw: true to read it]`);
+}
+
 function editUrl(formId: string): string {
   return `https://docs.google.com/forms/d/${encodeURIComponent(formId)}/edit`;
 }
 
 const encoder = new TextEncoder();
-
-/** A value's serialized size in UTF-8 bytes, the unit the bridge counts. */
-function sizeOf(value: unknown): number {
-  return encoder.encode(JSON.stringify(value)).length;
-}
 
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -211,7 +218,7 @@ function choiceOptions(choice: JsonRecord): JsonRecord {
   const hasOther = all.some((option) => option["isOther"] === true);
   const values = all
     .filter((option) => option["isOther"] !== true)
-    .map((option) => capped(String(option["value"] ?? ""), MAX_LABEL_CHARS, "pass raw: true to read it")!);
+    .map((option) => bounded(String(option["value"] ?? ""), MAX_LABEL_CHARS, MAX_LABEL_BYTES) ?? "");
   return compact({
     options: values.slice(0, MAX_OPTIONS),
     moreOptions: values.length > MAX_OPTIONS ? values.length - MAX_OPTIONS : undefined,
@@ -281,8 +288,8 @@ function projectItem(value: unknown): JsonRecord {
   const item = asRecord(value);
   const base = {
     itemId: text(item["itemId"]),
-    title: capped(text(item["title"]), DESCRIPTION_CHARS, "pass raw: true to read it"),
-    description: capped(text(item["description"]), DESCRIPTION_CHARS, "pass raw: true to read it"),
+    title: bounded(text(item["title"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    description: bounded(text(item["description"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
   };
   if (item["questionItem"]) {
     return compact({
@@ -304,7 +311,7 @@ function projectItem(value: unknown): JsonRecord {
       questions: asArray(group["questions"]).map((question) =>
         projectQuestion(
           question,
-          capped(text(asRecord(asRecord(question)["rowQuestion"])["title"]), MAX_LABEL_CHARS, "pass raw: true to read it"),
+          bounded(text(asRecord(asRecord(question)["rowQuestion"])["title"]), MAX_LABEL_CHARS, MAX_LABEL_BYTES),
         ),
       ),
     });
@@ -330,9 +337,9 @@ function projectForm(value: unknown): JsonRecord {
   const items = asArray(form["items"]).map(projectItem);
   return compact({
     formId,
-    title: text(info["title"]),
-    documentTitle: text(info["documentTitle"]),
-    description: capped(text(info["description"]), DESCRIPTION_CHARS, "pass raw: true to read it"),
+    title: bounded(text(info["title"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    documentTitle: bounded(text(info["documentTitle"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
+    description: bounded(text(info["description"]), DESCRIPTION_CHARS, DESCRIPTION_BYTES),
     revisionId: text(form["revisionId"]),
     responderUri: text(form["responderUri"]),
     editUrl: formId ? editUrl(formId) : undefined,
@@ -349,17 +356,19 @@ function projectForm(value: unknown): JsonRecord {
 }
 
 /**
- * An item cut to `budget` bytes. Options and labels are already bounded, so
- * only a grid's rows can outgrow a page; the rows that fit are kept and the
- * rest counted in `moreQuestions`, readable through `raw: true`.
+ * An item cut to `budget` bytes. Its own text and every option and label are
+ * already bounded (an item without questions stays under ~120 KiB), so only a
+ * grid's rows can outgrow a page; the rows that fit are kept and the rest
+ * counted in `moreQuestions`, readable through `raw: true`. The caller still
+ * measures what it returns.
  */
 function fitItem(item: JsonRecord, budget: number): JsonRecord {
-  if (sizeOf(item) <= budget) return item;
+  if (jsonBytes(item) <= budget) return item;
   const questions = asArray(item["questions"]);
   const kept: unknown[] = [];
-  let used = sizeOf({ ...item, questions: [], moreQuestions: questions.length });
+  let used = jsonBytes({ ...item, questions: [], moreQuestions: questions.length });
   for (const question of questions) {
-    const size = sizeOf(question) + 1;
+    const size = jsonBytes(question) + 1;
     if (used + size > budget) break;
     kept.push(question);
     used += size;
@@ -474,13 +483,13 @@ function fitResponse(
   let projected: JsonRecord = {};
   for (const cap of caps) {
     projected = projectResponse(value, labels, cap, remedy);
-    if (sizeOf(projected) <= budget) return projected;
+    if (jsonBytes(projected) <= budget) return projected;
   }
   const answers = asArray(projected["answers"]).map(asRecord);
   const kept: JsonRecord[] = [];
-  let used = sizeOf({ ...projected, answers: [], omittedQuestionIds: answers.map((answer) => answer["questionId"]) });
+  let used = jsonBytes({ ...projected, answers: [], omittedQuestionIds: answers.map((answer) => answer["questionId"]) });
   for (const answer of answers) {
-    const size = sizeOf(answer) + 1;
+    const size = jsonBytes(answer) + 1;
     if (used + size > budget) break;
     kept.push(answer);
     used += size;
@@ -770,7 +779,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         const form = await readForm(formId, ctx);
         if (args["raw"] === true) {
-          const size = sizeOf(form);
+          const size = jsonBytes(form);
           if (size > RESULT_BUDGET_BYTES) {
             throw new ConnectorCallError(
               "invalid_args",
@@ -797,21 +806,42 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           start = cursor["i"];
         }
         const kept: JsonRecord[] = [];
-        let used = sizeOf({ ...header, items: [] }) + PAGE_RESERVE_BYTES;
-        let index = start;
-        for (; index < all.length; index += 1) {
+        let used = jsonBytes({ ...header, items: [] }) + PAGE_RESERVE_BYTES;
+        for (let index = start; index < all.length; index += 1) {
           let item = all[index]!;
-          let size = sizeOf(item) + 1;
+          let size = jsonBytes(item) + 1;
           if (used + size > RESULT_BUDGET_BYTES) {
             if (kept.length > 0) break;
             item = fitItem(item, RESULT_BUDGET_BYTES - used);
-            size = sizeOf(item) + 1;
+            size = jsonBytes(item) + 1;
           }
           kept.push(item);
           used += size;
         }
-        const nextCursor = index < all.length ? encodeCursor({ d: digest, i: index, r: revision }) : null;
-        return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
+        const build = () => {
+          const next = start + kept.length;
+          const nextCursor = next < all.length ? encodeCursor({ d: digest, i: next, r: revision }) : null;
+          return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
+        };
+        // The estimate above reserved room; the complete result, cursor and
+        // all, is what has to fit.
+        let result = build();
+        while (jsonBytes(result) > RESULT_BUDGET_BYTES && kept.length > 1) {
+          kept.pop();
+          result = build();
+        }
+        if (jsonBytes(result) > RESULT_BUDGET_BYTES && kept.length === 1) {
+          kept[0] = fitItem(all[start]!, RESULT_BUDGET_BYTES - jsonBytes({ ...result, items: [] }) - 1);
+          result = build();
+        }
+        if (jsonBytes(result) > RESULT_BUDGET_BYTES) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Item ${start} of this form cannot be projected inside one result (${RESULT_BUDGET_BYTES} bytes), even alone; open the form in Forms.`,
+            { retryable: false },
+          );
+        }
+        return result;
       },
     },
     {
@@ -910,18 +940,20 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const formId: string = args["formId"];
         const limit: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
         const digest = await digestOf(["list_responses", formId, args["submittedAfter"] ?? null]);
-        // A cursor names Google's page (its token and size) and how many of
-        // its responses earlier pages already returned: a page ends early when
-        // the next response would carry the result past its byte budget, and
-        // the rest of Google's page is re-read and skipped to on the next call.
+        // A cursor names Google's page (its token and size) and, when a page
+        // ended early to stay inside its byte budget, the last response it
+        // returned. The next call re-reads that Google page and continues
+        // strictly after that response — by id, never by position, so a
+        // submission landing earlier on the page or a shorter page cannot make
+        // it repeat or skip anything. An anchor no longer there is refused.
         const resume = typeof args["cursor"] === "string"
           ? decodeCursor(
               args["cursor"],
               digest,
-              ["d", "t", "k", "n"],
+              ["d", "t", "a", "n"],
               (c) =>
                 (c["t"] === null || typeof c["t"] === "string") &&
-                isIndex(c["k"]) &&
+                (c["a"] === null || (typeof c["a"] === "string" && c["a"] !== "")) &&
                 isIndex(c["n"]) &&
                 c["n"] >= 1 &&
                 c["n"] <= MAX_PAGE_SIZE,
@@ -930,7 +962,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           : undefined;
         const token: string | null = resume?.["t"] ?? null;
         const size: number = resume?.["n"] ?? limit;
-        const skip: number = resume?.["k"] ?? 0;
+        const anchor: string | null = resume?.["a"] ?? null;
         // The form labels the answers. Both reads are one person's view, so
         // either failing fails the call rather than returning bare ids.
         const [form, listing] = await Promise.all([
@@ -951,33 +983,77 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const labels = questionLabels(form);
         const page = asRecord(listing);
         const rows = asArray(page["responses"]);
-        const responses: JsonRecord[] = [];
-        let used = sizeOf({ formId, responses: [], page: { hasMore: true, nextCursor: null } }) + PAGE_RESERVE_BYTES;
-        let index = skip;
-        for (; index < rows.length; index += 1) {
-          const room = RESULT_BUDGET_BYTES - used;
-          let response = projectResponse(rows[index], labels, LIST_ANSWER_CHARS, "get_response reads it whole");
-          if (sizeOf(response) + 1 > room) {
-            if (responses.length > 0) break;
-            response = fitResponse(
-              rows[index],
-              labels,
-              [LIST_ANSWER_CHARS, 200],
-              "get_response reads it whole",
-              room - 1,
+        const idOf = (row: unknown) => text(asRecord(row)["responseId"]);
+        let start = 0;
+        if (anchor !== null) {
+          const at = rows.findIndex((row) => idOf(row) === anchor);
+          if (at < 0) {
+            throw new ConnectorCallError(
+              "conflict",
+              "The response this cursor continues after is no longer on its page: it was deleted, or the page changed. Start again without cursor, or pass the newest lastSubmittedTime already read as submittedAfter.",
             );
           }
+          start = at + 1;
+        }
+        const remedy = "get_response reads it whole";
+        const responses: JsonRecord[] = [];
+        let used = jsonBytes({ formId, responses: [], page: { hasMore: true, nextCursor: null } }) + PAGE_RESERVE_BYTES;
+        for (let index = start; index < rows.length; index += 1) {
+          const room = RESULT_BUDGET_BYTES - used;
+          let response = projectResponse(rows[index], labels, LIST_ANSWER_CHARS, remedy);
+          if (jsonBytes(response) + 1 > room) {
+            if (responses.length > 0) break;
+            response = fitResponse(rows[index], labels, [LIST_ANSWER_CHARS, 200], remedy, room - 1);
+          }
           responses.push(response);
-          used += sizeOf(response) + 1;
+          used += jsonBytes(response) + 1;
         }
         const googleNext = text(page["nextPageToken"]) ?? null;
-        const next = index < rows.length
-          ? { d: digest, t: token, k: index, n: size }
-          : googleNext
-            ? { d: digest, t: googleNext, k: 0, n: limit }
-            : undefined;
-        const nextCursor = next ? encodeCursor(next) : null;
-        return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
+        const build = () => {
+          const last = start + responses.length - 1;
+          // Rows left on Google's page: continue after the last one returned.
+          // A page that ended on an anchor with nothing after it has no
+          // response of its own to anchor on, and moves to Google's next page.
+          let next: JsonRecord | undefined;
+          if (start + responses.length < rows.length && responses.length > 0) {
+            const after = idOf(rows[last]);
+            if (after === undefined) {
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "Google returned a response without an id, so this page cannot be continued safely.",
+                { retryable: false },
+              );
+            }
+            next = { d: digest, t: token, a: after, n: size };
+          } else if (googleNext) {
+            next = { d: digest, t: googleNext, a: null, n: limit };
+          }
+          const nextCursor = next ? encodeCursor(next) : null;
+          return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
+        };
+        let result = build();
+        while (jsonBytes(result) > RESULT_BUDGET_BYTES && responses.length > 1) {
+          responses.pop();
+          result = build();
+        }
+        if (jsonBytes(result) > RESULT_BUDGET_BYTES && responses.length === 1) {
+          responses[0] = fitResponse(
+            rows[start],
+            labels,
+            [LIST_ANSWER_CHARS, 200],
+            remedy,
+            RESULT_BUDGET_BYTES - jsonBytes({ ...result, responses: [] }) - 1,
+          );
+          result = build();
+        }
+        if (jsonBytes(result) > RESULT_BUDGET_BYTES) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "A response on this page cannot be listed inside one result, even cut; read it with get_response and questionIds.",
+            { retryable: false },
+          );
+        }
+        return result;
       },
     },
     {
@@ -1024,13 +1100,20 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           : record;
         // Whole when it fits; otherwise cut, then narrowed, with the ids left
         // out named so a call with questionIds reads them.
-        return fitResponse(
+        const result = fitResponse(
           narrowed,
           questionLabels(form),
           [undefined, MAX_ANSWER_CHARS, LIST_ANSWER_CHARS],
           "more than one result carries; pass questionIds to read fewer answers, or read it in Forms",
           RESULT_BUDGET_BYTES,
         );
+        if (jsonBytes(result) > RESULT_BUDGET_BYTES) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            "This response cannot be returned inside one result even with its answers cut; pass fewer questionIds.",
+          );
+        }
+        return result;
       },
     },
     {
@@ -1168,7 +1251,10 @@ Drive, or take its id from an edit URL (\`/forms/d/<formId>/edit\`). The
   than ${LIST_ANSWER_CHARS} characters end with a truncation marker; \`get_response\`
   reads one whole. Page with \`page.nextCursor\` and the same
   \`submittedAfter\`. To read only new responses, pass the newest
-  \`lastSubmittedTime\` already seen as \`submittedAfter\`.
+  \`lastSubmittedTime\` already seen as \`submittedAfter\`. A cursor
+  continues after the last response it returned; if that response has
+  since been deleted, it fails \`conflict\` — start again, or use
+  \`submittedAfter\`.
 - A response too large for one result comes back cut, with the answers left
   out named in \`omittedQuestionIds\`; pass them to \`get_response\` as
   \`questionIds\`.

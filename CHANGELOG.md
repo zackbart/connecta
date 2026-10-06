@@ -257,8 +257,11 @@ caller.
   batchUpdate requests, each exactly one of its six kinds, all or none, under a
   required `requiredRevisionId` so an edit never lands on a form someone
   changed since it was read; a stale revision fails `conflict`). Every result
-  stays inside 192 KiB, under `execute_code`'s 256 KiB host-result bridge: a
-  response page ends early and continues by cursor, a large form pages its
+  stays inside 192 KiB, under `execute_code`'s 256 KiB host-result bridge,
+  measured whole, cursor included: a response page ends early and continues
+  after the last response it returned, by id (a cursor whose response was
+  deleted fails `conflict`), every projected text is bounded in bytes as well
+  as characters, a large form pages its
   items under a cursor bound to its revision, a response too large to read
   whole names the answers it left out in `omittedQuestionIds`, and `raw: true`
   refuses a form too large for one result. `create_form` is additive; the

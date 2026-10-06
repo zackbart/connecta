@@ -7,6 +7,7 @@ import { Validator } from "@cfworker/json-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachCaller } from "../src/connector-caller.js";
 import { FORMS_API_BASE_URL, FORMS_SCOPES, forms } from "../src/providers/forms.js";
+import { jsonBytes, RESULT_BUDGET_BYTES } from "../src/providers/google/result-size.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import { silentLogger } from "./helpers.js";
@@ -540,14 +541,15 @@ function undeclared(value: unknown, schema: any, path: string, found: string[]):
   return found;
 }
 
-describe("output schemas declare what each tool returns (H8)", () => {
-  async function conforms(connector: Connector, name: string, result: unknown, projected = true) {
-    const tool = (await connector.listTools(context())).find((candidate) => candidate.name === name)!;
-    const validation = new Validator(tool.outputSchema as never, "2020-12", false).validate(result);
-    expect(validation.errors, name).toEqual([]);
-    if (projected) expect(undeclared(result, tool.outputSchema, name, []), name).toEqual([]);
-  }
+/** A result validates against its tool's output schema, which declares every key it carries. */
+async function conforms(connector: Connector, name: string, result: unknown, projected = true) {
+  const tool = (await connector.listTools(context())).find((candidate) => candidate.name === name)!;
+  const validation = new Validator(tool.outputSchema as never, "2020-12", false).validate(result);
+  expect(validation.errors, name).toEqual([]);
+  if (projected) expect(undeclared(result, tool.outputSchema, name, []), name).toEqual([]);
+}
 
+describe("output schemas declare what each tool returns (H8)", () => {
   /** Every question kind, a grid, quiz grading, and an over-long option list. */
   const RICH_FORM = {
     ...FORM,
@@ -933,7 +935,11 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     let cursor: string | undefined;
     do {
       const page = await call(connector, name, { ...args, ...(cursor ? { cursor } : {}) });
+      // The complete result, cursor included, inside the shared budget — and
+      // so inside the bridge, envelope and all.
+      expect(jsonBytes(page)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
       expect(bridged(page)).toBeLessThan(BRIDGE_BYTES);
+      await conforms(connector, name, page);
       pages.push(page);
       cursor = page.page.nextCursor ?? undefined;
       expect(pages.length).toBeLessThan(500);
@@ -959,15 +965,20 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     const form = paragraphForm(400);
     const [giant] = responses(1, 400);
     route = serve(form, [giant]);
-    const listed = await call(connection(), "list_responses", { formId: "big" });
+    const connector = connection();
+    const listed = await call(connector, "list_responses", { formId: "big" });
+    expect(jsonBytes(listed)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     expect(bridged(listed)).toBeLessThan(BRIDGE_BYTES);
+    await conforms(connector, "list_responses", listed);
     const row = listed.responses[0];
     expect(row.answers.length + row.omittedQuestionIds.length).toBe(400);
     expect(row.omittedQuestionIds[0]).toBe(`q${row.answers.length}`);
 
     route = (request) => (request.url.pathname.includes("/responses/") ? { body: giant } : { body: form });
-    const whole = await call(connection(), "get_response", { formId: "big", responseId: "r0" });
+    const whole = await call(connector, "get_response", { formId: "big", responseId: "r0" });
+    expect(jsonBytes(whole)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     expect(bridged(whole)).toBeLessThan(BRIDGE_BYTES);
+    await conforms(connector, "get_response", whole);
     expect(whole.omittedQuestionIds.length).toBeGreaterThan(0);
     // The omitted ids read back whole, a few at a time.
     const some = whole.omittedQuestionIds.slice(0, 10);
@@ -1012,6 +1023,8 @@ describe("worst-case results fit one host result (256 KiB)", () => {
       "grid",
     ]);
     expect(pages.every((page) => page.itemCount === 26)).toBe(true);
+    // everyPage ran each page, this trimmed grid's moreQuestions included,
+    // through schema validation and the undeclared-key walk.
     const grid = pages.at(-1).items.at(-1);
     expect(grid.questions.length + grid.moreQuestions).toBe(2_000);
     expect(grid.questions.length).toBeGreaterThan(0);
@@ -1029,5 +1042,128 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     await expect(
       call(connection(), "get_form", { formId: "other", cursor: first.page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("bounds escaped control characters and an oversized header, measuring the whole result", async () => {
+    // Each U+0001 is one character and six bytes of JSON (\u0001), so a
+    // character cut alone would let text grow six-fold past its place.
+    const control = (chars: number) => "\u0001".repeat(chars);
+    const options = Array.from({ length: 100 }, () => ({ value: control(400) }));
+    const form = {
+      formId: "escaped",
+      revisionId: "00000003",
+      info: { title: control(5_000), documentTitle: control(5_000), description: control(5_000) },
+      items: [
+        ...Array.from({ length: 12 }, (_, index) => ({
+          itemId: `i${index}`,
+          title: control(5_000),
+          description: control(5_000),
+          questionItem: { question: { questionId: `q${index}`, choiceQuestion: { type: "CHECKBOX", options } } },
+        })),
+        {
+          itemId: "grid",
+          title: control(5_000),
+          questionGroupItem: {
+            grid: { columns: { type: "CHECKBOX", options } },
+            questions: Array.from({ length: 1_000 }, (_, index) => ({
+              questionId: `row${index}`,
+              rowQuestion: { title: control(400) },
+            })),
+          },
+        },
+      ],
+    };
+    route = () => ({ body: form });
+    const pages = await everyPage("get_form", { formId: "escaped" });
+    expect(pages.flatMap((page) => page.items.map((item: any) => item.itemId))).toEqual([
+      ...Array.from({ length: 12 }, (_, index) => `i${index}`),
+      "grid",
+    ]);
+    const header = pages[0];
+    for (const field of ["title", "documentTitle", "description"]) {
+      expect(jsonBytes(header[field])).toBeLessThanOrEqual(8 * 1024);
+      expect(header[field]).toMatch(/more characters truncated; pass raw: true to read it\]$/);
+    }
+    expect(jsonBytes(pages[0].items[0].questions[0].options[0])).toBeLessThanOrEqual(1024);
+  });
+});
+
+describe("list_responses resumes after the last response it returned, by id", () => {
+  /** Twelve long answers each: two responses fill a page, a third does not. */
+  const form = {
+    formId: "f",
+    revisionId: "1",
+    info: { title: "Retreat" },
+    items: Array.from({ length: 12 }, (_, index) => ({
+      itemId: `i${index}`,
+      title: `Q${index}`,
+      questionItem: { question: { questionId: `q${index}`, textQuestion: { paragraph: true } } },
+    })),
+  };
+  const response = (id: string) => ({
+    responseId: id,
+    answers: Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [
+        `q${index}`,
+        { questionId: `q${index}`, textAnswers: { answers: [{ value: "日".repeat(2_500) }] } },
+      ]),
+    ),
+  });
+  const ids = (page: any) => page.responses.map((entry: any) => entry.responseId);
+
+  it.each([
+    ["a submission inserted before the anchor", ["new", "r0", "r1", "r2", "r3", "r4"], ["r2", "r3"], true],
+    ["a submission inserted after the anchor", ["r0", "r1", "new", "r2", "r3", "r4"], ["new", "r2"], true],
+    ["a shorter refetched page", ["r0", "r1", "r2"], ["r2"], false],
+  ])("neither repeats nor skips on %s", async (_case, refetched, expected, more) => {
+    let rows = ["r0", "r1", "r2", "r3", "r4"];
+    route = (request) =>
+      request.url.pathname.endsWith("/responses") ? { body: { responses: rows.map(response) } } : { body: form };
+    const connector = connection();
+    const first = await call(connector, "list_responses", { formId: "f" });
+    expect(ids(first)).toEqual(["r0", "r1"]);
+    expect(jsonBytes(first)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+
+    rows = refetched;
+    calls.length = 0;
+    const second = await call(connector, "list_responses", { formId: "f", cursor: first.page.nextCursor });
+    expect(ids(second)).toEqual(expected);
+    expect(second.page.hasMore).toBe(more);
+    // The same Google page, re-read at the same size, with no token.
+    const list = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
+    expect(Object.fromEntries(list.url.searchParams)).toEqual({ pageSize: "25" });
+  });
+
+  it("refuses with restart guidance when the anchor is gone, rather than guessing", async () => {
+    let rows = ["r0", "r1", "r2", "r3", "r4"];
+    route = (request) =>
+      request.url.pathname.endsWith("/responses") ? { body: { responses: rows.map(response) } } : { body: form };
+    const first = await call(connection(), "list_responses", { formId: "f" });
+    rows = ["r0", "r2", "r3", "r4"];
+    const failure = await call(connection(), "list_responses", { formId: "f", cursor: first.page.nextCursor }).catch(
+      (error) => error,
+    );
+    expect(failure).toMatchObject({ code: "conflict" });
+    expect(failure.message).toContain("Start again without cursor");
+  });
+
+  it("moves to Google's next page once the anchored page is spent", async () => {
+    const pages: Record<string, { responses: unknown[]; nextPageToken?: string }> = {
+      "": { responses: ["r0", "r1", "r2"].map(response), nextPageToken: "g2" },
+      g2: { responses: ["r3"].map(response) },
+    };
+    route = (request) =>
+      request.url.pathname.endsWith("/responses")
+        ? { body: pages[request.url.searchParams.get("pageToken") ?? ""] }
+        : { body: form };
+    const connector = connection();
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await call(connector, "list_responses", { formId: "f", ...(cursor ? { cursor } : {}) });
+      seen.push(...ids(page));
+      cursor = page.page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(seen).toEqual(["r0", "r1", "r2", "r3"]);
   });
 });
