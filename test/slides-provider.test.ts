@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SLIDES_API_BASE_URL, SLIDES_SCOPES, slides } from "../src/providers/slides.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
+import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
-import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../src/types.js";
+import type { Connector, ConnectorContext, ConnectorUsageGuide, JsonSchema } from "../src/types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -272,7 +273,7 @@ describe("reading a deck (H9, H10)", () => {
           elements: [
             { objectId: "photo", kind: "image", altText: "Empty tomb: Sunrise photo" },
             { objectId: "g-table", kind: "table", text: "Time\tService\n9:00\tSunrise service" },
-            { objectId: "chart", kind: "chart" },
+            { objectId: "chart", kind: "chart", spreadsheetId: "sheet1" },
           ],
         },
         { objectId: "s3", index: 2, layout: "Title and body", layoutId: "L2", elements: [] },
@@ -543,5 +544,115 @@ describe("writing", () => {
     expect(failure.message).toContain("nothing was sent");
     expect(calls).toEqual([]);
     expect(tokenCalls).toBe(0);
+  });
+});
+
+describe("output schemas declare what the tools return (H8)", () => {
+  /**
+   * Every key a projection emits, walked against the declared schema. An
+   * object node with no `properties` is opaque, and an opaque node hides an
+   * omission, so each one is reported unless it is listed as a passthrough.
+   */
+  function undeclared(schema: any, value: unknown, at: string, out: string[]): void {
+    if (Array.isArray(value)) {
+      for (const item of value) undeclared(schema?.items, item, `${at}[]`, out);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    if (!schema?.properties) {
+      out.push(`${at} (opaque)`);
+      return;
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (!(key in schema.properties)) out.push(`${at}.${key}`);
+      else undeclared(schema.properties[key], item, `${at}.${key}`, out);
+    }
+  }
+
+  function validates(schema: JsonSchema, value: unknown, address: string): string | undefined {
+    return validateToolInput(schema, value, { address, logger: silentLogger, failClosed: true })?.message;
+  }
+
+  /** A deck as ProtoJSON sends an empty one: no slides, no layouts, no arrays at all. */
+  const EMPTY = { presentationId: "empty1", title: "Untitled presentation", revisionId: "rev-0" };
+
+  it("declares every key each projection emits, at every depth", async () => {
+    const connector = connection();
+    const schemas = Object.fromEntries(
+      (await connector.listTools(context())).map((tool) => [tool.name, tool.outputSchema]),
+    );
+    const outputs: [string, unknown][] = [];
+    route = () => ({ body: PRESENTATION });
+    outputs.push(["get_presentation", await call(connector, "get_presentation", { presentationId: "deck1" })]);
+    outputs.push([
+      "get_presentation",
+      await call(connector, "get_presentation", { presentationId: "deck1", maxCharsPerSlide: 5, limit: 1 }),
+    ]);
+    route = () => ({ body: EMPTY });
+    outputs.push(["get_presentation", await call(connector, "get_presentation", { presentationId: "empty1" })]);
+    route = () => ({ body: { contentUrl: "https://lh7/x", width: 200, height: 113 } });
+    outputs.push([
+      "get_slide_thumbnail",
+      await call(connector, "get_slide_thumbnail", { presentationId: "deck1", slideObjectId: "p" }),
+    ]);
+    route = () => ({ body: { ...EMPTY, slides: [{ objectId: "p" }] } });
+    outputs.push(["create_presentation", await call(connector, "create_presentation", { title: "Untitled" })]);
+    route = () => ({
+      body: { presentationId: "deck1", replies: [{ createSlide: { objectId: "g1" } }], writeControl: { requiredRevisionId: "r" } },
+    });
+    outputs.push(["create_slide", await call(connector, "create_slide", { presentationId: "deck1" })]);
+    route = () => ({ body: { presentationId: "deck1", replies: [{ replaceAllText: { occurrencesChanged: 1 } }] } });
+    outputs.push([
+      "replace_all_text",
+      await call(connector, "replace_all_text", { presentationId: "deck1", replacements: [{ find: "a", replace: "b" }] }),
+    ]);
+    route = () => ({
+      body: { presentationId: "deck1", replies: [{ createShape: { objectId: "s" } }], writeControl: { requiredRevisionId: "r" } },
+    });
+    outputs.push([
+      "batch_update_presentation",
+      await call(connector, "batch_update_presentation", {
+        presentationId: "deck1",
+        requiredRevisionId: "rev-1",
+        requests: [{ createShape: { shapeType: "TEXT_BOX" } }],
+      }),
+    ]);
+
+    // The validator bites: a wrong type is caught, so a pass below means something.
+    expect(validates(schemas["get_presentation"]!, { presentationId: 7 }, "decks.get_presentation")).toBeDefined();
+    const gaps: string[] = [];
+    for (const [name, output] of outputs) {
+      undeclared(schemas[name], output, name, gaps);
+      expect(validates(schemas[name]!, output, `decks.${name}`), name).toBeUndefined();
+    }
+    // The one passthrough: Slides' own Response union, one reply per request,
+    // with as many kinds as the requests have.
+    expect([...new Set(gaps)]).toEqual(["batch_update_presentation.replies[] (opaque)"]);
+    expect(new Set(outputs.map(([name]) => name))).toEqual(new Set(Object.keys(schemas)));
+  });
+
+  it("projects an empty deck, which Slides sends with no slides array at all", async () => {
+    route = () => ({ body: EMPTY });
+    const result = await call(connection(), "get_presentation", { presentationId: "empty1" });
+    expect(result).toEqual({
+      presentationId: "empty1",
+      title: "Untitled presentation",
+      revisionId: "rev-0",
+      url: "https://docs.google.com/presentation/d/empty1/edit",
+      slideCount: 0,
+      layouts: [],
+      slides: [],
+      page: { hasMore: false, nextCursor: null },
+    });
+  });
+
+  it("lets raw: true's untouched resource validate, full or empty", async () => {
+    const tool = (await connection().listTools(context())).find((entry) => entry.name === "get_presentation")!;
+    for (const body of [PRESENTATION, EMPTY]) {
+      route = () => ({ body });
+      const result = await call(connection(), "get_presentation", { presentationId: body.presentationId, raw: true });
+      expect(result).toEqual(body);
+      expect(validates(tool.outputSchema!, result, "decks.get_presentation")).toBeUndefined();
+    }
   });
 });

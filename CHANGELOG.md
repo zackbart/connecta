@@ -294,7 +294,7 @@ caller.
   `https://www.googleapis.com/auth/presentations`. Six hand-written tools:
   `get_presentation` (title, page size, `revisionId`, layouts, and each
   slide's text in reading order — top to bottom, then left to right, groups
-  opened — with table cells, alt text, and speaker notes, under a field mask
+  opened — with table cells, alt text, linked charts' spreadsheet ids, and speaker notes, under a field mask
   that leaves styles behind; cursor-paged by slide and capped per slide with
   explicit markers; `raw: true` for the untouched deck) and
   `get_slide_thumbnail` (the short-lived link and size, never the image) are

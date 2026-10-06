@@ -338,6 +338,8 @@ function projectSlide(
         placeholder,
         text: cut.text,
         altText,
+        // A linked chart's data lives in Sheets; the id is how to reach it.
+        spreadsheetId: kind === "chart" ? text(asRecord(element["sheetsChart"])["spreadsheetId"]) : undefined,
         truncated: cut.truncated || undefined,
       }),
     );
@@ -497,6 +499,11 @@ const PAGE_SCHEMA: JsonSchema = {
   required: ["hasMore", "nextCursor"],
 };
 
+const DIMENSION_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: { magnitude: { type: "number" }, unit: { type: "string" } },
+};
+
 const ELEMENT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -505,6 +512,7 @@ const ELEMENT_SCHEMA: JsonSchema = {
     placeholder: { type: "string" },
     text: { type: "string" },
     altText: { type: "string" },
+    spreadsheetId: { type: "string" },
     truncated: { type: "boolean" },
   },
 };
@@ -577,13 +585,24 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           revisionId: { type: "string" },
           url: { type: "string" },
           locale: { type: "string" },
-          pageSize: { type: "object" },
+          pageSize: {
+            type: "object",
+            properties: { width: DIMENSION_SCHEMA, height: DIMENSION_SCHEMA },
+          },
           slideCount: { type: "integer" },
-          layouts: { type: "array", items: { type: "object" } },
+          layouts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { objectId: { type: "string" }, name: { type: "string" }, displayName: { type: "string" } },
+            },
+          },
           slides: { type: "array", items: SLIDE_SCHEMA },
           page: PAGE_SCHEMA,
         },
-        required: ["presentationId", "slides", "page"],
+        // Only the id: `raw: true` returns Slides' own resource, which has no
+        // page and omits an empty slides list, as ProtoJSON drops empty arrays.
+        required: ["presentationId"],
       },
       handler: async (args, ctx) => {
         const start = cursorStart(args["cursor"]);
@@ -959,7 +978,9 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   bottom, then left to right), speaker notes, and alt text for images,
   videos, and charts. Lines and empty shapes are counted in
   \`omittedElements\`, not listed. Text past \`maxCharsPerSlide\` ends with a
-  truncation marker. Page with \`page.nextCursor\`; each page re-reads the deck.
+  truncation marker. Page with \`page.nextCursor\`; each page re-reads the deck,
+  and only the first lists \`layouts\`. Styles, positions, and image links
+  are left out; \`raw: true\` returns the whole deck as Slides sends it.
 - \`index\` is 0-based, the same numbering \`create_slide\` takes.
 - \`get_slide_thumbnail\` returns a link, never the image. The link opens as
   this person for about 30 minutes; do not share it.
