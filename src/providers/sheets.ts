@@ -32,7 +32,6 @@
  */
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
-import { MAX_QUICKJS_HOST_RPC_BYTES } from "../executors/quickjs-protocol.js";
 import type { Connector, JsonSchema } from "../types.js";
 import {
   googleWorkspaceClient,
@@ -40,6 +39,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
+import { jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
 
 export type {
   GoogleServiceAccount,
@@ -69,16 +69,17 @@ export type SheetsOptions = GoogleWorkspaceOptions;
 const DEFAULT_PAGE_CELLS = 2_000;
 const MAX_PAGE_CELLS = 10_000;
 /**
- * Serialized bytes per page of get_values, beside the cell count: a page has
- * to be deliverable, and cells say nothing about size — 60 cells of 5,000
+ * Bytes per page of get_values as serialized, beside the cell count: a page
+ * has to be deliverable, and cells say nothing about size — 60 cells of 5,000
  * characters already outgrow the QuickJS executor's host bridge. The default
- * is three quarters of that bridge's limit, leaving the rest for the page's
- * own fields, so an execute_code program always receives a default page. A
+ * is the Workspace providers' shared result budget, so an execute_code
+ * program always receives a default page; unlike that budget's envelope
+ * allowance, maxBytes bounds the whole page, fields and cursor included. A
  * direct call_tool caller may ask for more, up to 4 MiB: base64 in the result
  * stash makes that about 5.6 MiB, under the stash's default 8 MiB, so an
  * oversized page still pages through get_result rather than being dropped.
  */
-const DEFAULT_PAGE_BYTES = (MAX_QUICKJS_HOST_RPC_BYTES * 3) / 4;
+const DEFAULT_PAGE_BYTES = RESULT_BUDGET_BYTES;
 const MAX_PAGE_BYTES = 4 * 1024 * 1024;
 /**
  * Characters a read keeps per cell by default. A cell holds at most 50,000
@@ -263,14 +264,26 @@ function cappedCell(value: unknown, max: number, cut: { cells: number }): unknow
 }
 
 /** Refuse a row no page of `budget` bytes can hold, rather than overrun the cap. */
-function rowTooLarge(range: string, row: number, bytes: number, budget: number): ConnectorCallError {
-  const raise = bytes <= MAX_PAGE_BYTES
-    ? `, or raise maxBytes to at least ${bytes} (above ${DEFAULT_PAGE_BYTES}, only for a direct call_tool read: execute_code cannot receive it)`
-    : "";
+function rowTooLarge(range: string, row: number, needed: number, budget: number): ConnectorCallError {
   return new ConnectorCallError(
     "invalid_args",
-    `Row ${row} of ${range} serializes to ${bytes} bytes, more than this page's maxBytes of ${budget}; narrow the range's columns or lower maxCellChars${raise}.`,
+    `Row ${row} of ${range} needs a page of ${needed} bytes with the page's own fields, more than this page's maxBytes of ${budget}; narrow the range's columns or lower maxCellChars${raiseBytes(needed)}.`,
   );
+}
+
+/** Refuse a page too small for even one range's own fields. */
+function pageTooSmall(range: string, needed: number, budget: number): ConnectorCallError {
+  return new ConnectorCallError(
+    "invalid_args",
+    `A page reporting ${range} needs ${needed} bytes before any of its rows, more than this page's maxBytes of ${budget}; shorten the range${raiseBytes(needed)}.`,
+  );
+}
+
+function raiseBytes(needed: number): string {
+  if (needed > MAX_PAGE_BYTES) return "";
+  return needed <= DEFAULT_PAGE_BYTES
+    ? `, or raise maxBytes to at least ${needed}`
+    : `, or raise maxBytes to at least ${needed} (above ${DEFAULT_PAGE_BYTES}, only for a direct call_tool read: execute_code cannot receive it)`;
 }
 
 /** Refuse a row no page of `budget` cells can hold, rather than overrun the cap. */
@@ -592,7 +605,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             type: "integer",
             minimum: 1_024,
             maximum: MAX_PAGE_BYTES,
-            description: `Serialized bytes per page; defaults to ${DEFAULT_PAGE_BYTES}, what execute_code can receive. Raise it, to ${MAX_PAGE_BYTES}, only for a direct call_tool read.`,
+            description: `Bytes of the whole page as JSON; defaults to ${DEFAULT_PAGE_BYTES}, what execute_code can receive. Raise it, to ${MAX_PAGE_BYTES}, only for a direct call_tool read.`,
           },
           maxCellChars: {
             type: "integer",
@@ -662,11 +675,23 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
+        const spreadsheetId: string = text(response["spreadsheetId"]) ?? args["spreadsheetId"];
         const valueRanges: JsonRecord[] = [];
         const cut = { cells: 0 };
         let cells = 0;
-        let bytes = 0;
-        const encoder = new TextEncoder();
+        // maxBytes bounds the whole page as serialized, not just its cells. The
+        // envelope is reserved first at its largest: both counts at their
+        // ceiling and the longest cursor this call could end with.
+        let bytes = jsonBytes({
+          spreadsheetId,
+          valueRanges: [],
+          cellCount: MAX_PAGE_CELLS,
+          truncatedCells: MAX_PAGE_CELLS,
+          page: {
+            hasMore: false,
+            nextCursor: encodeCursor({ d: digest, i: ranges.length - 1, s: Number.MAX_SAFE_INTEGER }),
+          },
+        });
         let next: ValuesCursor | undefined;
         const returned = asArray(response["valueRanges"]);
         for (let index = 0; index < returned.length && next === undefined; index += 1) {
@@ -677,21 +702,46 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           const dropped = index === 0 ? skip : 0;
           const rows = asArray(valueRange["values"]).slice(dropped);
           const echoed = text(valueRange["range"]) ?? sent[index]!;
+          const entry = (kept: unknown[][], truncated: boolean) =>
+            compact({
+              range: echoed,
+              rowOffset: dropped > 0 ? dropped : undefined,
+              values: kept,
+              rowCount: kept.length,
+              truncated: truncated ? true : undefined,
+              omittedRows: truncated ? rows.length - kept.length : undefined,
+            });
+          // This range's own fields at their largest, and the comma before it;
+          // an empty range costs them too.
+          const fields = jsonBytes(compact({
+            range: echoed,
+            rowOffset: dropped > 0 ? dropped : undefined,
+            values: [],
+            rowCount: rows.length,
+            truncated: true,
+            omittedRows: rows.length,
+          })) + 1;
+          if (bytes + fields > byteBudget) {
+            if (valueRanges.length === 0) throw pageTooSmall(echoed, bytes + fields, byteBudget);
+            next = { d: digest, i: resume.i + index, s: before };
+            break;
+          }
+          bytes += fields;
           const kept: unknown[][] = [];
           for (const row of rows) {
-            // An empty row still costs one, so every page makes progress, and
-            // a page is empty exactly while `cells` is 0.
+            const empty = valueRanges.length === 0 && kept.length === 0;
+            // An empty row still costs one cell, so every page makes progress.
             const width = Math.max(1, asArray(row).length);
             if (cells + width > budget) {
-              if (cells === 0) throw rowTooWide(echoed, dropped + 1, width, budget);
+              if (cells === 0) throw rowTooWide(echoed, dropped + kept.length + 1, width, budget);
               break;
             }
             const rowCut = { cells: 0 };
             const capped = asArray(row).map((cell) => cappedCell(cell, cellChars, rowCut));
-            // The row as it will be serialized, plus the comma between rows.
-            const size = encoder.encode(JSON.stringify(capped)).length + 1;
+            // The row as serialized, plus the comma before it.
+            const size = jsonBytes(capped) + 1;
             if (bytes + size > byteBudget) {
-              if (cells === 0) throw rowTooLarge(echoed, dropped + 1, size, byteBudget);
+              if (empty) throw rowTooLarge(echoed, dropped + 1, bytes + size, byteBudget);
               break;
             }
             cells += width;
@@ -703,30 +753,17 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             next = { d: digest, i: resume.i + index, s: before + kept.length };
             // A range this page never reached is not reported half-read; the
             // next page starts it.
-            if (kept.length === 0) break;
-            valueRanges.push(compact({
-              range: echoed,
-              rowOffset: dropped > 0 ? dropped : undefined,
-              values: kept,
-              rowCount: kept.length,
-              truncated: true,
-              omittedRows: rows.length - kept.length,
-            }));
+            if (kept.length > 0) valueRanges.push(entry(kept, true));
             break;
           }
-          valueRanges.push(compact({
-            range: echoed,
-            rowOffset: dropped > 0 ? dropped : undefined,
-            values: kept,
-            rowCount: kept.length,
-          }));
-          if ((cells >= budget || bytes >= byteBudget) && index + 1 < returned.length) {
+          valueRanges.push(entry(kept, false));
+          if (cells >= budget && index + 1 < returned.length) {
             next = { d: digest, i: resume.i + index + 1, s: 0 };
           }
         }
         const nextCursor = next ? encodeCursor(next) : null;
         return compact({
-          spreadsheetId: text(response["spreadsheetId"]) ?? args["spreadsheetId"],
+          spreadsheetId,
           valueRanges,
           cellCount: cells,
           truncatedCells: cut.cells > 0 ? cut.cells : undefined,

@@ -450,6 +450,89 @@ describe("pages that can be delivered", () => {
     expect(seen).toEqual(Array.from({ length: 40 }, (_, index) => index + 1));
   });
 
+  /** Page through a whole read, asserting every page fits maxBytes as serialized. */
+  async function pageAll(connector: Connector, args: Record<string, unknown>, maxBytes: number) {
+    const pages: any[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 500; guard += 1) {
+      const result = await call(connector, "get_values", cursor ? { ...args, cursor } : args);
+      expect(utf8(result), `page ${pages.length}`).toBeLessThanOrEqual(maxBytes);
+      pages.push(result);
+      if (!result.page.hasMore) return pages;
+      cursor = result.page.nextCursor;
+    }
+    throw new Error("paging did not terminate");
+  }
+
+  it("counts the page's own fields: a row that fills maxBytes alone is refused, then fits exactly where it says", async () => {
+    route = () => ({ body: { spreadsheetId: ID, valueRanges: [{ range: "S!A1", values: [["x".repeat(1_019)]] }] } });
+    const args = { spreadsheetId: ID, ranges: ["S!A1"] };
+    const failure = await call(connection(), "get_values", { ...args, maxBytes: 1_024 }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    const needed = Number(/raise maxBytes to at least (\d+)/.exec(failure.message)![1]);
+    expect(needed).toBeGreaterThan(1_024);
+    const result = await call(connection(), "get_values", { ...args, maxBytes: needed });
+    expect(result.valueRanges[0].values[0][0]).toHaveLength(1_019);
+    expect(utf8(result)).toBeLessThanOrEqual(needed);
+    await expect(call(connection(), "get_values", { ...args, maxBytes: needed - 1 })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+  });
+
+  it("charges empty ranges their fields, paging twenty of them under a small maxBytes", async () => {
+    const ranges = Array.from({ length: 20 }, (_, index) => `'Long sheet title number ${index}'!A1:Z1000`);
+    route = (request) => ({
+      body: { spreadsheetId: ID, valueRanges: request.url.searchParams.getAll("ranges").map((range) => ({ range })) },
+    });
+    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges, maxBytes: 1_024 }, 1_024);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.flatMap((page) => page.valueRanges.map((entry: any) => entry.range))).toEqual(ranges);
+  });
+
+  it("keeps a default twenty-range page of long cells under the advertised default", async () => {
+    const ranges = Array.from({ length: 20 }, (_, index) => `'Quarterly ledger ${index} — "détail"'!A1:C10`);
+    const cell = `é"\\`.repeat(1_250);
+    route = (request) => ({
+      body: {
+        spreadsheetId: ID,
+        valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
+          const start = Number(/!A(\d+):/.exec(range)![1]);
+          return { range, values: Array.from({ length: 11 - start }, () => [cell, cell, cell]) };
+        }),
+      },
+    });
+    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges }, 196_608);
+    const rows = pages.flatMap((page) => page.valueRanges).reduce((sum: number, entry: any) => sum + entry.rowCount, 0);
+    expect(rows).toBe(20 * 10);
+    expect(Math.max(...pages.map(utf8))).toBeGreaterThan(150_000);
+  });
+
+  it.each([1_024, 1_500, 2_048, 4_096, 9_999])("never exceeds maxBytes %i across mixed rows, ranges, and markers", async (maxBytes) => {
+    const ranges = ["A!A1:C30", "Empty!A1:B2", "'B b'!A1:A30", "C"];
+    const value = (row: number, column: number) =>
+      [row * 7 + column, `r${row}c${column}`, "é".repeat((row * 37 + column * 11) % 300), true, ""][(row + column) % 5];
+    route = (request) => ({
+      body: {
+        spreadsheetId: ID,
+        valueRanges: request.url.searchParams.getAll("ranges").map((range) => {
+          if (range.startsWith("Empty")) return { range };
+          const start = Number(/!A(\d+):/.exec(range)?.[1] ?? 1);
+          const width = range.startsWith("A") ? 3 : 1;
+          return {
+            range: range === "C" ? "C!A1:B30" : range,
+            values: Array.from({ length: 31 - start }, (_, index) =>
+              Array.from({ length: width }, (_, column) => value(start + index, column))),
+          };
+        }),
+      },
+    });
+    const pages = await pageAll(connection(), { spreadsheetId: ID, ranges, maxBytes, maxCellChars: 120 }, maxBytes);
+    const seen = (prefix: string) =>
+      pages.flatMap((page) => page.valueRanges).filter((entry: any) => entry.range.startsWith(prefix))
+        .reduce((sum: number, entry: any) => sum + entry.rowCount, 0);
+    expect([seen("A!"), seen("'B b'"), seen("C!")]).toEqual([30, 30, 30]);
+  });
+
   it("refuses a single row too large for the page, naming every way out", async () => {
     // Sixty 5,000-character cells: well inside maxCells, far past the bridge.
     route = bigSheet(1, 60);
