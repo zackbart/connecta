@@ -518,9 +518,10 @@ interface GoogleText {
 /** {@link GoogleRequestOptions}, plus a bound on how much of the body to read. */
 interface GoogleReadOptions extends GoogleRequestOptions {
   /**
-   * Read at most this many bytes of the body: the stream is consumed only
-   * one byte past it, to learn whether there was more (`truncated`), and the
-   * rest is cancelled unread. A declared length past the client's ceiling is
+   * Read at most this many bytes of the body: the result retains at most
+   * `maxBytes` (+1 to detect overflow, reported as `truncated`) and may
+   * consume at most one extra transport chunk from the stream; the rest is
+   * cancelled unread. A declared length past the client's ceiling is
    * then no reason to refuse; the ceiling still bounds the read. With it set,
    * a 416 carrying `Content-Range: bytes *\/0` — a Range request against an
    * empty file — answers an empty result with that status, not a failure.
