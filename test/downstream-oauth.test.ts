@@ -38,25 +38,6 @@ const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
 
 /**
- * Discovery state as a release before issuer binding kept it at consent: raw
- * JSON in the legacy epoch, or an unmarked envelope in a modern one. It is the
- * only evidence an unstamped credential may be bound by.
- */
-async function recordConsentIssuer(
-  storage: KVStorage,
-  issuer: string,
-  generation: string = "legacy",
-): Promise<void> {
-  const state: OAuthDiscoveryState = { authorizationServerUrl: issuer };
-  await storage.set(
-    oauthValueStorageKey("oauth:discovery", generation),
-    generation === "legacy"
-      ? JSON.stringify(state)
-      : JSON.stringify({ connectaOAuthVersion: 2, generation, value: state }),
-  );
-}
-
-/**
  * Everything written to the console for the rest of the test. The SDK logs
  * there directly, below any logger a deployment configures, so a secret it is
  * handed reaches the host's output whatever connecta's own logger does.
@@ -94,42 +75,25 @@ async function storeCurrentOAuthValue(
 // KvOAuthProvider unit behavior (no authorization server involved).
 // ---------------------------------------------------------------------------
 describe("KvOAuthProvider over memoryStorage", () => {
-  it.each(["rotation", "revocation"])("issuer binding cannot overwrite a concurrent token %s", async mutation => {
-    const backing = memoryStorage();
-    await recordConsentIssuer(backing, "https://synthetic.test");
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    const pauseBinding = async (key: string, value: string | null) => {
-      if (key === "oauth:tokens" && value?.includes('"issuer"') && value.includes('"old-refresh"')) {
-        entered.resolve();
-        await release.promise;
-      }
-    };
-    const storage: KVStorage = { ...backing,
-      async set(key, value, options) {
-        await pauseBinding(key, value);
-        await backing.set(key, value, options);
-      },
-      async compareAndSet(key, expected, next, options) {
-        await pauseBinding(key, next);
-        return backing.compareAndSet!(key, expected, next, options);
-      },
-    };
+  it("retires a credential written before issuer binding on its first issuer-aware read", async () => {
+    // v0.8.x stored no issuer and nothing that names one, so no read can
+    // tell which server the grant belongs to. It is never bound to any.
+    const storage = memoryStorage();
     const old = { access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" };
-    const rotated = { ...old, access_token: "new", refresh_token: "new-refresh" };
+    await storage.set("oauth:client", JSON.stringify({ client_id: "old-client", client_secret: "old-secret" }));
+    await storage.set("oauth:tokens", JSON.stringify(old));
     const issuer = { issuer: "https://synthetic.test" };
-    await new KvOAuthProvider("svc", backing, REDIRECT).saveTokens(old);
-    const binding = new KvOAuthProvider("svc", storage, REDIRECT).tokens(issuer);
-    await entered.promise;
-    const writer = new KvOAuthProvider("svc", backing, REDIRECT);
-    if (mutation === "rotation") await writer.saveTokens(rotated, issuer);
-    else await writer.invalidateCredentials("tokens");
-    release.resolve();
-    await binding;
-    // An issuer-aware read hands back the stamp its envelope is bound to.
-    expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens(issuer)).toEqual(
-      mutation === "rotation" ? { ...rotated, ...issuer } : undefined,
-    );
+
+    // Token attachment has no issuer context: the configured resource server
+    // may still be sent the access token, as it always was.
+    expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toEqual(old);
+
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    expect(await p.tokens(issuer)).toBeUndefined();
+    expect(await p.generation()).toMatch(/^v2:/);
+    expect(await p.clientInformation(issuer)).toBeUndefined();
+    const values = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
+    expect(values.filter((value) => /old-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   });
 
   it("retains cleanup lineage when the generation write commits before rejecting", async () => {
@@ -401,9 +365,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     });
   });
 
-  it("upgrades a v1 credential envelope by binding it on first issuer-aware read", async () => {
+  it("retires a v1 credential envelope on its first issuer-aware read", async () => {
     const storage = memoryStorage();
-    await recordConsentIssuer(storage, "https://auth.example");
     await storage.set(
       "oauth:client",
       JSON.stringify({
@@ -419,13 +382,9 @@ describe("KvOAuthProvider over memoryStorage", () => {
 
     await expect(
       p.clientInformation({ issuer: "https://auth.example" }),
-    ).resolves.toMatchObject({ client_id: "upgrade-client" });
-    expect(JSON.parse((await storage.get("oauth:client"))!)).toMatchObject({
-      connectaOAuthVersion: 2,
-      generation: "legacy",
-      issuer: "https://auth.example",
-      value: { client_id: "upgrade-client" },
-    });
+    ).resolves.toBeUndefined();
+    expect(await storage.get("oauth:client")).toBeNull();
+    expect(await p.generation()).toMatch(/^v2:/);
   });
 
   it("round-trips the PKCE code verifier and throws when missing", async () => {
@@ -1806,8 +1765,6 @@ describe("KvOAuthProvider sealed state", () => {
         generation,
         // Only the pending URL carries its write time, and it is plaintext.
         ...(key === "oauth:pending" ? { writtenAt: expect.any(Number) } : {}),
-        // Discovery this release wrote vouches for no unstamped credential.
-        ...(key === "oauth:discovery" ? { discoveredAfterBinding: true } : {}),
         value,
       });
     }
@@ -3105,7 +3062,6 @@ describe("OAuthRefreshCoordinator", () => {
 
   it("replays byte-identical success completed before wrapped fetch", async () => {
     const storage = memoryStorage();
-    await recordConsentIssuer(storage, "https://auth.example");
     const coordinator = new OAuthRefreshCoordinator();
     const owner = new KvOAuthProvider(
       "svc",
@@ -3127,7 +3083,7 @@ describe("OAuthRefreshCoordinator", () => {
       token_type: "Bearer",
       refresh_token: "refresh-same",
     };
-    await owner.saveTokens(unchanged);
+    await owner.saveTokens(unchanged, { issuer: "https://auth.example" });
     await contender.tokens({ issuer: "https://auth.example" });
     let upstreamRequests = 0;
     const baseFetch: FetchLike = async () => {
@@ -3152,7 +3108,6 @@ describe("OAuthRefreshCoordinator", () => {
 
   it("captures success identity before the SDK token-basis read", async () => {
     const backing = memoryStorage();
-    await recordConsentIssuer(backing, "https://auth.example");
     let blockBasisRead = false;
     let observedBasisRead!: () => void;
     let releaseBasisRead!: () => void;
@@ -3196,7 +3151,7 @@ describe("OAuthRefreshCoordinator", () => {
       token_type: "Bearer",
       refresh_token: "refresh-same",
     };
-    await owner.saveTokens(unchanged);
+    await owner.saveTokens(unchanged, { issuer: "https://auth.example" });
     blockBasisRead = true;
     const contenderBasis = contender.tokens({
       issuer: "https://auth.example",
@@ -3228,7 +3183,6 @@ describe("OAuthRefreshCoordinator", () => {
 
   it("detects byte-identical success across a complete flight ABA", async () => {
     const storage = memoryStorage();
-    await recordConsentIssuer(storage, "https://auth.example");
     const coordinator = new OAuthRefreshCoordinator();
     const contender = new KvOAuthProvider(
       "svc",
@@ -3250,7 +3204,7 @@ describe("OAuthRefreshCoordinator", () => {
       token_type: "Bearer",
       refresh_token: "refresh-same",
     };
-    await contender.saveTokens(unchanged);
+    await contender.saveTokens(unchanged, { issuer: "https://auth.example" });
     await contender.tokens({ issuer: "https://auth.example" });
     let upstreamRequests = 0;
     const baseFetch: FetchLike = async () => {
@@ -3760,7 +3714,6 @@ describe("OAuthRefreshCoordinator", () => {
 
   it("shares a successful refresh that keeps the existing refresh token", async () => {
     const storage = memoryStorage();
-    await recordConsentIssuer(storage, "https://auth.example");
     const coordinator = new OAuthRefreshCoordinator();
     const owner = new KvOAuthProvider(
       "svc",
@@ -3773,7 +3726,7 @@ describe("OAuthRefreshCoordinator", () => {
       access_token: "access-old",
       token_type: "Bearer",
       refresh_token: "refresh-old",
-    });
+    }, { issuer: "https://auth.example" });
     const follower = new KvOAuthProvider(
       "svc",
       storage,
@@ -3973,7 +3926,6 @@ describe("OAuthRefreshCoordinator", () => {
 
   it("cannot let late old-generation success replace the active success identity", async () => {
     const backing = memoryStorage();
-    await recordConsentIssuer(backing, "https://auth.example");
     let blockOldWrite = false;
     let observedOldWrite!: () => void;
     let releaseOldWrite!: () => void;
@@ -5641,15 +5593,15 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
   // says which server issued it. The advisory names exactly this state.
   async function legacyGrant(storage: KVStorage) {
     await storage.set("oauth:client", JSON.stringify({
-      client_id: "trusted-client",
-      client_secret: "trusted-secret",
+      client_id: "legacy-client",
+      client_secret: "legacy-secret",
       redirect_uris: [`${BASE}/oauth/callback/svc`],
       token_endpoint_auth_method: "client_secret_post",
     }));
     await storage.set("oauth:tokens", JSON.stringify({
-      access_token: "trusted-access-0",
+      access_token: "legacy-access",
       token_type: "Bearer",
-      refresh_token: "trusted-refresh-0",
+      refresh_token: "legacy-refresh",
     }));
   }
 
@@ -5663,7 +5615,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     // Fresh discovery asks the foreign server for its metadata first.
     if (discovered) expect(toForeign.length).toBeGreaterThan(0);
     for (const { url, text } of toForeign) {
-      expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
+      expect(text, url).not.toMatch(/legacy-(refresh|access|secret|client)/);
     }
     expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
     expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
@@ -5671,10 +5623,26 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     // Retired behind a new epoch: an operator re-authorizes once.
     expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
     const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
-    expect(stored.filter((value) => /trusted-(refresh|secret)/.test(value ?? ""))).toEqual([]);
+    expect(stored.filter((value) => /legacy-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   }
 
-  it("retires a grant from before issuer binding that nothing recorded at consent vouches for", async () => {
+  /** Discovery as a release from v0.9.0 left it: raw JSON, saved before any credential was read. */
+  async function savedDiscovery(storage: KVStorage, server: string) {
+    await storage.set("oauth:discovery", JSON.stringify({
+      authorizationServerUrl: server,
+      authorizationServerMetadata: {
+        issuer: server,
+        authorization_endpoint: `${server}/authorize`,
+        token_endpoint: `${server}/token`,
+        registration_endpoint: `${server}/register`,
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["client_secret_post"],
+      },
+    }));
+  }
+
+  it("retires a grant from before issuer binding instead of binding it to the server fresh discovery names", async () => {
     const server = downstream();
     vi.stubGlobal("fetch", server.fetchStub);
     onTestFinished(() => { vi.unstubAllGlobals(); });
@@ -5688,28 +5656,18 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     await expectRetiredWithNothingSent(server, storage, error);
   });
 
-  it("does not take discovery this release wrote as the consent record of an older grant", async () => {
-    // Another request discovered afresh and saved what the downstream named
-    // before this one read the grant. That record is the downstream's word.
+  it("does not take a discovery record saved before a failed credential read as the grant's issuer", async () => {
+    // A release from v0.9.0 saves discovery before it reads credentials. If
+    // that read failed after a downstream named its own server, the foreign
+    // record was left beside an unbound grant, with nothing to tell it apart
+    // from one kept at consent.
     const server = downstream();
     vi.stubGlobal("fetch", server.fetchStub);
     onTestFinished(() => { vi.unstubAllGlobals(); });
     const storage = memoryStorage();
     await legacyGrant(storage);
+    await savedDiscovery(storage, foreign);
     server.advertise(foreign);
-    const other = new KvOAuthProvider("svc", storage, `${BASE}/oauth/callback/svc`);
-    await other.saveDiscoveryState({
-      authorizationServerUrl: foreign,
-      authorizationServerMetadata: {
-        issuer: foreign,
-        authorization_endpoint: `${foreign}/authorize`,
-        token_endpoint: `${foreign}/token`,
-        registration_endpoint: `${foreign}/register`,
-        response_types_supported: ["code"],
-        code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["client_secret_post"],
-      },
-    });
 
     const c = connector();
     const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
@@ -5718,29 +5676,70 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     await expectRetiredWithNothingSent(server, storage, error, { discovered: false });
   });
 
-  it("keeps a grant from before issuer binding at the issuer recorded at its consent", async () => {
+  it("leaves a consent that completes when Continue retires a grant from before issuer binding", async () => {
+    // Retirement lands mid-flow, after discovery was saved into the epoch it
+    // retires. The client, verifier, and consent URL the flow writes next go
+    // to the replacement epoch, and so must the discovery the callback checks.
     const server = downstream();
     vi.stubGlobal("fetch", server.fetchStub);
     onTestFinished(() => { vi.unstubAllGlobals(); });
     const storage = memoryStorage();
     await legacyGrant(storage);
-    await recordConsentIssuer(storage, trusted);
-    // The downstream now names another server; the record says otherwise.
-    server.advertise(foreign);
 
     const c = connector();
-    await c.listTools(scope(storage)).catch(() => {});
+    const started = await c.startAuth!(scope(storage), { force: false });
+    expect(started.state).toBe("auth_required");
+    const url = required(started.authorizationUrl);
+    expect(new URL(url).origin).toBe(trusted);
+    const generation = await storage.get("oauth:generation");
+    expect(generation).toMatch(/^v2:/);
+    expect(await storage.get(oauthValueStorageKey("oauth:discovery", generation))).not.toBeNull();
 
-    const refresh = server.requests.find(({ url }) => url === `${trusted}/token`);
-    expect(refresh?.text).toContain("refresh_token=trusted-refresh-0");
-    expect(refresh?.text).toContain("client_secret=trusted-secret");
-    expect(server.requests.filter(({ url }) => new URL(url).origin === foreign)).toEqual([]);
-    // Bound where it was granted, so the next read needs no record at all.
-    expect(await storage.get("oauth:generation")).toBeNull();
-    expect(JSON.parse(required((await storage.get("oauth:client")) ?? undefined))).toMatchObject({
-      issuer: trusted,
-      value: { client_id: "trusted-client" },
-    });
+    // Continue hands back the same consent, untouched.
+    const continued = await c.startAuth!(scope(storage), { force: false });
+    expect(continued).toMatchObject({ authorizationUrl: url, authorizationReused: true });
+
+    const state = required(new URL(url).searchParams.get("state") ?? undefined);
+    const callback = scope(storage);
+    expect(await c.verifyState!(state, callback)).toBe(true);
+    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
+
+    const exchange = server.requests.find(
+      ({ url: requested, text }) => requested === `${trusted}/token` && text.includes("grant_type=authorization_code"),
+    );
+    expect(exchange).toBeDefined();
+    expect(await storage.get("oauth:generation")).toBe(generation);
+    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", generation))) ?? undefined)))
+      .toMatchObject({ issuer: trusted, value: { refresh_token: expect.stringMatching(/^trusted-refresh-/) } });
+    // The connection is healthy again: Continue has nothing left to hand back.
+    const after = await c.startAuth!(scope(storage), { force: false });
+    expect(after.authorizationUrl).toBeUndefined();
+    expect(after.state).not.toBe("auth_required");
+  });
+
+  it("retires a grant from before issuer binding even beside discovery naming the server that issued it", async () => {
+    // No record can prove where an unstamped grant came from, so even one that
+    // happens to be right buys it nothing: it is authorized once more.
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const storage = memoryStorage();
+    await legacyGrant(storage);
+    await savedDiscovery(storage, trusted);
+
+    const c = connector();
+    const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
+
+    expect(classifyCallError(error).code).toBe("auth_required");
+    expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
+    // The access token still reaches the configured resource server, as it
+    // always did; the refresh token and client secret reach no one.
+    for (const { url, text } of server.requests) {
+      expect(text, url).not.toMatch(/legacy-(refresh|secret)/);
+    }
+    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
+    const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
+    expect(stored.filter((value) => /legacy-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   });
 });
 
@@ -6962,17 +6961,18 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     },
   );
 
-  it("refreshes a grant stored before issuer binding at the issuer recorded at consent, without the SDK warning on the console", async () => {
-    // Raw legacy strings, as a release before issuer binding left them,
-    // beside the discovery it kept from the original consent.
+  it("refreshes a grant an earlier release bound, without the SDK warning on the console", async () => {
+    // From v0.9.0 to v0.28.1 a grant from before binding was bound on its
+    // first read: the envelope carries the issuer, the value inside does not.
     const storage = memoryStorage();
-    await recordConsentIssuer(storage, issuer);
-    await storage.set("oauth:client", JSON.stringify({
+    const bound = (value: object) =>
+      JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer, value });
+    await storage.set("oauth:client", bound({
       client_id: "connecta-client",
       redirect_uris: [REDIRECT],
       token_endpoint_auth_method: "none",
     }));
-    await storage.set("oauth:tokens", JSON.stringify({
+    await storage.set("oauth:tokens", bound({
       access_token: "access-old",
       token_type: "Bearer",
       refresh_token: "refresh-old",
@@ -6988,8 +6988,8 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       const passive = scope(storage);
       await expect(c.listTools(passive)).resolves.toEqual([]);
       expect(server.redeemed).toEqual(["refresh-old"]);
-      // Bound on this first read, and handed to the SDK stamped, so its own
-      // SEP-2352 check has nothing to warn about.
+      // Handed to the SDK carrying the stamp its envelope holds, so the SDK's
+      // own SEP-2352 check has nothing to warn about.
       expect(output()).toBe("");
       await c.closeScope?.(passive);
     } finally {

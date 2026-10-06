@@ -11,20 +11,21 @@ lockstep, because client and server each pin the same exact
 [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h), an
 OAuth client that could send stored credentials to an authorization server the
 MCP server chose; `npm run check:security` failed on it. Connecta's issuer
-binding kept every grant written since binding arrived away from a server the
-downstream switches to, but not a grant from before it: such a grant carries no
-issuer, and connecta bound it on first read to whichever server that read's
-discovery named — the downstream's choice when discovery was not cached. Such a
-grant now binds only to the issuer an older release recorded beside it at
-consent, and is otherwise retired with nothing it holds sent anywhere. **Some
-existing `remoteMcp()` connections authorized before issuer binding will need
-to be authorized once more** — those not used since issuer binding arrived
-(any use since then bound them) whose consent left no discovery record. Their
-next use answers `auth_required`, and Connect or `authorize_connector` repairs
-them. A grant an earlier release bound on first use was bound to whichever
-issuer that use discovered; it keeps that binding. A grant that may have met an untrusted
-downstream before this release should have its tokens revoked and any client
-secret rotated at the provider. Nothing in configuration changes. What else a
+binding, which shipped in v0.9.0, kept every grant written since then away
+from a server the downstream switches to, but not a grant from before it: such
+a grant carries no issuer, and connecta bound it on first read to whichever
+server that read's discovery named — the downstream's choice when discovery
+was not cached. Nothing a release before v0.9.0 stored names the issuer, and
+discovery a later release saved may have been saved from a downstream's
+say-so, so no record can vouch for such a grant. It is now retired on its first
+use with nothing it holds sent anywhere. **Every `remoteMcp()` connection
+authorized on v0.8.1 or earlier and not used since is authorized once more**:
+its next use answers `auth_required`, and Connect or `authorize_connector`
+repairs it. A grant v0.9.0 through v0.28.1 bound on first use was bound to
+whichever issuer that use discovered, and keeps that binding. Any grant that may
+have met an untrusted downstream on an earlier release should have its tokens
+revoked and any client secret rotated at the provider, as the advisory itself
+advises. Nothing in configuration changes. What else a
 deployment may notice: a refresh whose rotated tokens cannot be stored now
 fails as a retryable outage instead of `auth_required`, and `/mcp` bodies stay
 bounded by the host, not by the 4 MiB default the server SDK adopted. Two
@@ -50,8 +51,8 @@ nor the 2026-07-28 claim is served exactly as before (#687).
   in the legacy handshake, so connecta's workaround for
   [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
   is gone; the handshake teardown sweeps prove no rejection escapes under
-  workerd without it. Bundles grow by about 5.4 KB gzip at the root and the
-  Worker example and about 2.6 KB for each hosted-MCP provider, within every cap.
+  workerd without it. Bundles grow by about 5.2 KB gzip at the root and the
+  Worker example and about 2.4 KB for each hosted-MCP provider, within every cap.
 - **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
   transport requires the header on every POST and has the server reject a
   request without it, so an intermediary routing on the header and the server
@@ -73,18 +74,28 @@ nor the 2026-07-28 claim is served exactly as before (#687).
 
 ### Fixed
 
-- **A grant from before issuer binding is not bound to whoever is named.** A
-  token set or client registration written before issuer binding carries no
-  stamp, and connecta bound it on first read to the issuer that read's
+- **A grant from before issuer binding is retired, not bound to whoever is
+  named.** A token set or client registration v0.8.1 or earlier wrote carries
+  no stamp, and connecta bound it on first read to the issuer that read's
   discovery found. With discovery not cached, that was the server a
   compromised downstream named, and the refresh token and client secret went
-  to its token endpoint. Such a grant now binds only to the issuer in discovery
-  an older release kept from the original consent — the only record no
-  downstream can have written — and is otherwise retired behind a new epoch
-  before anything it holds is sent. Discovery this release writes is marked,
-  so a fresh discovery saved by another request never stands in for that
-  record. The SDK's own SEP-2352 check does not cover this state, as its
-  advisory says: it trusts whatever stamp the provider hands back.
+  to its token endpoint. No stored record proves where such a grant came from:
+  v0.8.1 kept no discovery at all, and a later release saves discovery before
+  it reads credentials, so a record beside an unbound grant may be the
+  downstream's. Such a grant is now retired behind a new epoch on its first
+  issuer-aware read before anything it holds is sent; the access token still
+  reaches the configured resource server, as it always did. The SDK's own
+  SEP-2352 check does not cover this state, as its advisory says: it trusts
+  whatever stamp the provider hands back.
+- **A consent started over a retired grant completes.** Retirement lands
+  mid-flow, after the flow saved its discovery into the epoch being retired,
+  and the flow goes on to register a client and write a consent URL into the
+  replacement epoch. Without discovery there, the callback failed its
+  authorization-server check, and Continue handed back the same broken URL
+  until a forced restart. The flow's discovery is now carried into the
+  replacement epoch, so the consent completes and Continue reuses a URL that
+  works. This applies equally to a grant retired because its stamp names
+  another server.
 - **No token endpoint's text reaches the host's console.** From client 2.1.0
   the SDK writes a failed refresh or code exchange's `error_description`, or
   the raw body of a non-OAuth answer, to `console.warn`, below any logger a
