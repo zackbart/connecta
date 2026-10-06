@@ -571,6 +571,61 @@ describe("editing a document", () => {
       documentId: "doc-1",
       revisionId: "rev-3",
       replies: [{}, { createNamedRange: { namedRangeId: "kix.nr1" } }],
+      replyCount: 2,
+    });
+  });
+
+  it("keeps a large reply inside the result budget, still saying the batch applied", async () => {
+    const BUDGET = 192 * 1024;
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    const requests = Array.from({ length: 100 }, () => ({ insertText: {} }));
+    const send = () =>
+      call(connection(), "batch_update_document", { documentId: "doc-1", requests, requiredRevisionId: "r1" });
+
+    // Ids and counts under bulky echoes: projection alone fits.
+    route = () => ({
+      body: {
+        documentId: "doc-1",
+        writeControl: { requiredRevisionId: "r2" },
+        replies: Array.from({ length: 100 }, (_, index) => ({
+          addDocumentTab: { tabProperties: { tabId: `t.${index}`, title: "題".repeat(2_000), index }, echo: ["x".repeat(5_000)] },
+        })),
+      },
+    });
+    const projected = await send();
+    expect(bytes(projected)).toBeLessThanOrEqual(BUDGET);
+    expect(projected).toMatchObject({ documentId: "doc-1", revisionId: "r2", replyCount: 100, repliesTruncated: true });
+    expect(projected.replies).toHaveLength(100);
+    expect(projected.replies[42].addDocumentTab.tabProperties).toMatchObject({ tabId: "t.42", index: 42 });
+    expect(projected.replies[42].addDocumentTab.echo).toBeUndefined();
+    expect(projected.notice).toContain("The batch applied");
+    expect(projected.notice).not.toMatch(/nothing was (applied|changed)/i);
+
+    // Too many even projected: the longest prefix that fits, counted.
+    route = () => ({
+      body: {
+        documentId: "doc-1",
+        replies: Array.from({ length: 100 }, (_, index) => ({
+          createNamedRange: Object.fromEntries(Array.from({ length: 10 }, (_, key) => [`id${key}`, `${index}-${"n".repeat(480)}`])),
+        })),
+      },
+    });
+    const cut = await send();
+    expect(bytes(cut)).toBeLessThanOrEqual(BUDGET);
+    expect(cut.replyCount).toBe(100);
+    expect(cut.replies.length).toBeGreaterThan(0);
+    expect(cut.replies.length).toBeLessThan(100);
+    expect(cut.replies[0].createNamedRange.id0.startsWith("0-")).toBe(true);
+    expect(cut.notice).toContain(`${cut.replies.length} of 100 replies`);
+    expect(cut.notice).toContain("Do not repeat it");
+
+    // Small replies come back whole, with nothing added.
+    route = () => ({ body: { documentId: "doc-1", replies: [{}, { createNamedRange: { namedRangeId: "kix.1" } }] } });
+    const small = await send();
+    expect(small).toEqual({
+      documentId: "doc-1",
+      replies: [{}, { createNamedRange: { namedRangeId: "kix.1" } }],
+      replyCount: 2,
     });
   });
 

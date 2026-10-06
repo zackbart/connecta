@@ -81,7 +81,9 @@ caller.
   and `insert_text` (additive), `replace_all_text` (string or RE2, by tab,
   reporting the count), and `batch_update_document`, a raw
   `documents.batchUpdate` passthrough that is always destructive, takes 1–100
-  requests of known generally available kinds (contents unvalidated), and
+  requests of known generally available kinds (contents unvalidated), returns
+  Google's replies within the shared result budget (projected to ids and
+  counts, then cut to a counted prefix, still saying the batch applied), and
   requires `requiredRevisionId`. Every other edit takes it optionally, and a
   write naming one is revision-guarded, so a stale revision fails `conflict`
   on Google's own reason code. Failures are classified by how far the request

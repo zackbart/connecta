@@ -34,7 +34,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
-import { jsonBytes } from "./google/result-size.js";
+import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 
 export type {
   GoogleServiceAccount,
@@ -692,6 +692,55 @@ async function batchUpdate(
   );
 }
 
+/** Bytes of one projected reply string: an id or a short value, never prose. */
+const REPLY_STRING_BYTES = 512;
+
+/**
+ * One batchUpdate reply kept to what a later request needs: its kind, and
+ * the ids and counts beneath it to two levels, strings clamped. Most replies
+ * are `{}` or one id; this only bites on the rare kind that echoes more.
+ */
+function projectReply(value: JsonRecord, depth = 0): JsonRecord {
+  const kept: JsonRecord = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string") {
+      kept[key] = clampText(entry, REPLY_STRING_BYTES, (dropped) => `… [${dropped} more characters]`);
+    } else if (typeof entry === "number" || typeof entry === "boolean") {
+      kept[key] = entry;
+    } else if (entry && typeof entry === "object" && !Array.isArray(entry) && depth < 2) {
+      kept[key] = projectReply(entry as JsonRecord, depth + 1);
+    }
+  }
+  return kept;
+}
+
+/**
+ * A successful batch's result, inside the delivery budget whatever Google
+ * echoed. Replies come back whole when they fit; otherwise projected to ids
+ * and counts; otherwise the longest prefix that fits, so `replies[i]` still
+ * answers `requests[i]`. A cut result still says the batch applied — it did.
+ */
+function boundedReplies(saved: JsonRecord, replies: JsonRecord[]): JsonRecord {
+  const whole = { ...saved, replies, replyCount: replies.length };
+  if (jsonBytes(whole) <= RESULT_BUDGET_BYTES) return whole;
+  const projected = replies.map((reply) => projectReply(reply));
+  const slim = { ...saved, replies: projected, replyCount: replies.length, repliesTruncated: true };
+  const notice = (shown: number) =>
+    `The batch applied. ${shown === replies.length ? "Every" : `${shown} of ${replies.length}`} replies ${shown === replies.length ? "is" : "are"} shown, projected to ids and counts, to stay inside the result budget. Do not repeat it; re-read the document with get_document for anything else.`;
+  if (jsonBytes({ ...slim, notice: notice(replies.length) }) <= RESULT_BUDGET_BYTES) {
+    return { ...slim, notice: notice(replies.length) };
+  }
+  const kept: JsonRecord[] = [];
+  let bytes = jsonBytes({ ...slim, replies: [], notice: notice(replies.length) });
+  for (const reply of projected) {
+    const size = jsonBytes(reply) + 1;
+    if (bytes + size > RESULT_BUDGET_BYTES) break;
+    bytes += size;
+    kept.push(reply);
+  }
+  return { ...slim, replies: kept, notice: notice(kept.length) };
+}
+
 function savedEdit(documentId: string, reply: JsonRecord): JsonRecord {
   return compact({ documentId, revisionId: revisionAfter(reply) });
 }
@@ -1227,14 +1276,15 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           documentId: { type: "string" },
           revisionId: { type: "string" },
           replies: { type: "array", items: { type: "object" } },
+          replyCount: { type: "integer" },
+          repliesTruncated: { type: "boolean" },
+          notice: { type: "string" },
         },
-        required: ["documentId", "replies"],
+        required: ["documentId", "replies", "replyCount"],
       },
       handler: async (args, ctx) => {
         const reply = await batchUpdate(client, ctx, args["documentId"], args["requests"], revision(args));
-        // Replies are one small object per request (a created id, a count),
-        // empty for most; they are what a later request needs, so kept whole.
-        return { ...savedEdit(args["documentId"], reply), replies: asArray(reply["replies"]).map(asRecord) };
+        return boundedReplies(savedEdit(args["documentId"], reply), asArray(reply["replies"]).map(asRecord));
       },
     },
   ];
