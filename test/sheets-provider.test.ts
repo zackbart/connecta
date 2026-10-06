@@ -965,6 +965,38 @@ describe("errors (H11)", () => {
     },
   );
 
+  /** A redirect, which the client never follows. */
+  const redirect = () => ({
+    raw: () => new Response(null, { status: 307, headers: { Location: "https://sheets.googleapis.com/elsewhere" } }),
+  });
+  const advice: Record<string, string> = {
+    append_values: "Appending again would add the rows a second time",
+    create_spreadsheet: "Search Drive for this title before creating it again",
+  };
+
+  it.each(writes)("treats a redirect answering %s as an unknown outcome, never as applied", async (name, args) => {
+    route = redirect;
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("unknown");
+    expect(failure.message).not.toMatch(/probably applied|nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+    if (advice[name]) expect(failure.message).toContain(advice[name]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps a 503 with a rate-limit reason on a non-idempotent write an unknown outcome, not a rate limit", async () => {
+    route = () => ({
+      status: 503,
+      body: { error: { code: 503, message: "Quota exceeded.", status: "UNAVAILABLE", details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } },
+    });
+    const failure = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.code).not.toBe("rate_limited");
+    expect(failure.message).toContain("outcome is unknown");
+    expect(failure.message).toContain(advice["append_values"]);
+    expect(calls).toHaveLength(1);
+  });
+
   it("gives a 5xx append or create the same advice as one that got no answer", async () => {
     route = serverError;
     const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);

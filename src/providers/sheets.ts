@@ -368,23 +368,22 @@ function checkRequestKinds(requests: readonly unknown[]): void {
   });
 }
 
-/** The phases after which a write may have applied without saying so. */
-const UNCERTAIN_PHASES: ReadonlySet<string> = new Set(["reading-body", "awaiting-response", "server-error"]);
-
 /**
- * A write whose outcome is unknown — Google took it and the reply broke off,
- * no reply came, or Google answered 5xx after receiving it — told what to
- * read before trying again, for the writes where the shared "re-read before
- * repeating it" has nothing to re-read or where repeating does harm. Every
- * other failure, and a refusal above all, passes through as the client
- * mapped it.
+ * A write whose outcome is unknown — sent, and then anything but an answer
+ * Google refused it with: a reply that broke off, no reply, a redirect, or a
+ * 5xx after receiving it — told what to read before trying again, for the
+ * writes where the shared "re-read before repeating it" has nothing to re-read
+ * or where repeating does harm. The advice claims nothing either way; only
+ * the client's own message says "probably applied", and only for a 2xx whose
+ * body broke off. A refusal, and anything never sent, passes through as the
+ * client mapped it.
  */
 async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promise<T> {
   try {
     return await write();
   } catch (error) {
-    const phase = googleOutcomeOf(error)?.phase;
-    if (!(error instanceof ConnectorCallError) || phase === undefined || !UNCERTAIN_PHASES.has(phase)) {
+    const outcome = googleOutcomeOf(error);
+    if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
       throw error;
     }
     throw new ConnectorCallError(error.code, `${error.message} ${advice}`, { retryable: false, cause: error });
