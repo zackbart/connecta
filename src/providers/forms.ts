@@ -297,6 +297,30 @@ function questionLabels(form: unknown): Map<string, QuestionLabel> {
   return labels;
 }
 
+/**
+ * A grader's feedback on one answer: its text, and the links or videos it
+ * points to, each as the address a person opens and the label they were shown.
+ */
+function projectFeedback(value: unknown, maxChars: number | undefined): JsonRecord | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const feedback = asRecord(value);
+  const links = asArray(feedback["material"]).map((entry) => {
+    const material = asRecord(entry);
+    const link = asRecord(material["link"]);
+    const video = asRecord(material["video"]);
+    return compact({
+      uri: text(link["uri"]) ?? text(video["youtubeUri"]),
+      displayText: text(link["displayText"]) ?? text(video["displayText"]),
+      video: material["video"] ? true : undefined,
+    });
+  });
+  const said = text(feedback["text"]);
+  return compact({
+    text: maxChars === undefined ? said : capped(said, maxChars, "get_response returns it whole"),
+    links: links.length > 0 ? links : undefined,
+  });
+}
+
 function projectResponse(value: unknown, labels: Map<string, QuestionLabel>, maxChars: number | undefined): JsonRecord {
   const response = asRecord(value);
   const answers = Object.entries(asRecord(response["answers"])).map(([key, raw]) => {
@@ -319,6 +343,7 @@ function projectResponse(value: unknown, labels: Map<string, QuestionLabel>, max
       files: files.length > 0 ? files : undefined,
       score: typeof grade["score"] === "number" ? grade["score"] : undefined,
       correct: typeof grade["correct"] === "boolean" ? grade["correct"] : undefined,
+      feedback: projectFeedback(grade["feedback"], maxChars),
     });
   });
   // The form's order, then anything the form no longer asks.
@@ -407,6 +432,33 @@ const PAGE_SCHEMA: JsonSchema = {
   required: ["hasMore", "nextCursor"],
 };
 
+const FILE_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    fileId: { type: "string" },
+    fileName: { type: "string" },
+    mimeType: { type: "string" },
+  },
+};
+
+const FEEDBACK_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+    links: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          uri: { type: "string" },
+          displayText: { type: "string" },
+          video: { type: "boolean" },
+        },
+      },
+    },
+  },
+};
+
 const RESPONSE_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -423,13 +475,21 @@ const RESPONSE_SCHEMA: JsonSchema = {
           questionId: { type: "string" },
           title: { type: "string" },
           values: { type: "array", items: { type: "string" } },
-          files: { type: "array", items: { type: "object" } },
+          files: { type: "array", items: FILE_SCHEMA },
           score: { type: "number" },
           correct: { type: "boolean" },
+          feedback: FEEDBACK_SCHEMA,
         },
       },
     },
   },
+};
+
+/** A choice question's, or a grid's shared, options. */
+const CHOICE_PROPERTIES: Record<string, JsonSchema> = {
+  options: { type: "array", items: { type: "string" } },
+  moreOptions: { type: "integer" },
+  hasOther: { type: "boolean" },
 };
 
 const QUESTION_SCHEMA: JsonSchema = {
@@ -439,15 +499,31 @@ const QUESTION_SCHEMA: JsonSchema = {
     type: { type: "string" },
     rowTitle: { type: "string" },
     required: { type: "boolean" },
-    options: { type: "array", items: { type: "string" } },
-    hasOther: { type: "boolean" },
-    scale: { type: "object" },
     points: { type: "integer" },
+    ...CHOICE_PROPERTIES,
+    scale: {
+      type: "object",
+      properties: {
+        low: { type: "integer" },
+        high: { type: "integer" },
+        lowLabel: { type: "string" },
+        highLabel: { type: "string" },
+      },
+    },
+    includesYear: { type: "boolean" },
+    includesTime: { type: "boolean" },
+    duration: { type: "boolean" },
   },
 };
 
+/**
+ * get_form's result. Only `formId` is required, because `raw: true` returns
+ * Google's own Form resource instead, where ProtoJSON omits every empty field —
+ * an empty form has no `items` at all. The projection always carries `items`.
+ */
 const FORM_SCHEMA: JsonSchema = {
   type: "object",
+  description: "The projection; with raw: true, Google's Form resource (formId, info, settings, publishSettings, items, revisionId), empty fields omitted.",
   properties: {
     formId: { type: "string" },
     title: { type: "string" },
@@ -470,12 +546,15 @@ const FORM_SCHEMA: JsonSchema = {
           itemId: { type: "string" },
           kind: { type: "string" },
           title: { type: "string" },
+          description: { type: "string" },
+          gridType: { type: "string" },
+          ...CHOICE_PROPERTIES,
           questions: { type: "array", items: QUESTION_SCHEMA },
         },
       },
     },
   },
-  required: ["formId", "items"],
+  required: ["formId"],
 };
 
 /**
@@ -672,7 +751,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "get_response",
       description:
-        "Get one Google Form response whole, each answer labeled with its question's title, plus uploaded file ids and quiz grades where present.",
+        "Get one Google Form response whole, each answer labeled with its question's title, plus uploaded file ids and quiz grades and feedback where present.",
       annotations: readOnly,
       inputSchema: input(
         {

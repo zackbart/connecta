@@ -3,6 +3,7 @@
 // have — H1, H9, H10, H11, and H14 for this provider. Delegation, subjects,
 // and tokens are test/google-workspace-delegation.test.ts; one fail-closed
 // case is repeated here so this connection is seen to inherit them.
+import { Validator } from "@cfworker/json-schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachCaller } from "../src/connector-caller.js";
 import { FORMS_API_BASE_URL, FORMS_SCOPES, forms } from "../src/providers/forms.js";
@@ -158,7 +159,21 @@ const RESPONSE = {
   lastSubmittedTime: "2026-10-01T12:05:00.000Z",
   respondentEmail: "ann@church.example",
   answers: {
-    q2: { questionId: "q2", textAnswers: { answers: [{ value: "x".repeat(2_500) }] } },
+    q2: {
+      questionId: "q2",
+      textAnswers: { answers: [{ value: "x".repeat(2_500) }] },
+      grade: {
+        score: 0,
+        correct: false,
+        feedback: {
+          text: `See the allergy guide. ${"f".repeat(2_100)}`,
+          material: [
+            { link: { uri: "https://church.example/allergies", displayText: "Allergy guide" } },
+            { video: { youtubeUri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety" } },
+          ],
+        },
+      },
+    },
     q1: { questionId: "q1", textAnswers: { answers: [{ value: "Evening" }] } },
     q5: { questionId: "q5", textAnswers: { answers: [{ value: "Fri" }, { value: "Sat" }] } },
     gone: { questionId: "gone", textAnswers: { answers: [{ value: "from a deleted question" }] } },
@@ -413,6 +428,15 @@ describe("reading responses (H9, H10)", () => {
     expect(response.answers[1].values[0]).toBe(
       `${"x".repeat(2_000)}\n[… 500 more characters truncated; get_response returns it whole]`,
     );
+    // A grader's feedback survives the projection, its text cut like an answer.
+    expect(response.answers[1]).toMatchObject({ score: 0, correct: false });
+    expect(response.answers[1].feedback.text).toMatch(
+      /^See the allergy guide\. f+\n\[… 123 more characters truncated; get_response returns it whole\]$/,
+    );
+    expect(response.answers[1].feedback.links).toEqual([
+      { uri: "https://church.example/allergies", displayText: "Allergy guide" },
+      { uri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety", video: true },
+    ]);
     expect(response.answers[2].values).toEqual(["Fri", "Sat"]);
     expect(response.answers[4]).toEqual({
       questionId: "q9",
@@ -463,7 +487,158 @@ describe("reading responses (H9, H10)", () => {
     expect(result.totalScore).toBe(3);
     expect(result.answers[0]).toEqual({ questionId: "q1", title: "Which session?", values: ["Evening"], score: 3, correct: true });
     expect(result.answers[1].values[0]).toHaveLength(2_500);
+    expect(result.answers[1].feedback).toEqual({
+      text: `See the allergy guide. ${"f".repeat(2_100)}`,
+      links: [
+        { uri: "https://church.example/allergies", displayText: "Allergy guide" },
+        { uri: "https://www.youtube.com/watch?v=abc", displayText: "Kitchen safety", video: true },
+      ],
+    });
     expect(result.formId).toBeUndefined();
+  });
+});
+
+/**
+ * Every key a result carries, at every depth, that its output schema does not
+ * declare. Output schemas are open, so validation alone would pass a
+ * projection that grew a field the schema never learned about.
+ */
+function undeclared(value: unknown, schema: any, path: string, found: string[]): string[] {
+  if (Array.isArray(value)) {
+    for (const entry of value) undeclared(entry, schema?.items, `${path}[]`, found);
+  } else if (value && typeof value === "object") {
+    for (const [key, entry] of Object.entries(value)) {
+      const property = schema?.properties?.[key];
+      if (!property) found.push(`${path}.${key}`);
+      else undeclared(entry, property, `${path}.${key}`, found);
+    }
+  }
+  return found;
+}
+
+describe("output schemas declare what each tool returns (H8)", () => {
+  async function conforms(connector: Connector, name: string, result: unknown, projected = true) {
+    const tool = (await connector.listTools(context())).find((candidate) => candidate.name === name)!;
+    const validation = new Validator(tool.outputSchema as never, "2020-12", false).validate(result);
+    expect(validation.errors, name).toEqual([]);
+    if (projected) expect(undeclared(result, tool.outputSchema, name, []), name).toEqual([]);
+  }
+
+  /** Every question kind, a grid, quiz grading, and an over-long option list. */
+  const RICH_FORM = {
+    ...FORM,
+    settings: { quizSettings: { isQuiz: true }, emailCollectionType: "RESPONDER_INPUT" },
+    info: { ...FORM.info, description: "d".repeat(2_100) },
+    items: [
+      ...FORM.items,
+      {
+        itemId: "i8",
+        title: "Arrival time",
+        description: "e".repeat(2_100),
+        questionItem: { question: { questionId: "q7", timeQuestion: { duration: true } } },
+      },
+      {
+        itemId: "i9",
+        title: "Meal",
+        questionItem: {
+          question: {
+            questionId: "q8",
+            grading: { pointValue: 2, correctAnswers: { answers: [{ value: "Soup" }] } },
+            choiceQuestion: {
+              type: "DROP_DOWN",
+              options: Array.from({ length: 105 }, (_, index) => ({ value: `Meal ${index}` })),
+            },
+          },
+        },
+      },
+      {
+        itemId: "i10",
+        title: "Rate it",
+        questionItem: { question: { questionId: "q9", ratingQuestion: { ratingScaleLevel: 5, iconType: "STAR" } } },
+      },
+      {
+        itemId: "i11",
+        title: "Waiver",
+        questionItem: { question: { questionId: "q10", fileUploadQuestion: { folderId: "folder" } } },
+      },
+      {
+        itemId: "i12",
+        title: "Seat",
+        questionGroupItem: {
+          grid: { columns: { type: "RADIO", options: [{ value: "Front" }, { value: "Back" }, { isOther: true }] } },
+          questions: [{ questionId: "q11", rowQuestion: { title: "Adults" } }],
+        },
+      },
+      { itemId: "i13", title: "Welcome", textItem: {} },
+      { itemId: "i14", title: "Tour", videoItem: { video: { youtubeUri: "https://youtube.example" } } },
+    ],
+  };
+
+  it("declares every key of a projected form, and validates Google's empty raw form", async () => {
+    const connector = connection();
+    route = () => ({ body: RICH_FORM });
+    const projected = await call(connector, "get_form", { formId: "form-1" });
+    // The fixture reaches every branch the projection has.
+    expect(JSON.stringify(projected)).toMatch(/includesYear[\s\S]*duration[\s\S]*moreOptions[\s\S]*gridType/);
+    await conforms(connector, "get_form", projected);
+
+    // ProtoJSON omits empty repeated fields: a new form has no `items` key.
+    const empty = { formId: "new-1", revisionId: "00000001", info: { title: "Untitled", documentTitle: "Untitled" } };
+    route = () => ({ body: empty });
+    const raw = await call(connector, "get_form", { formId: "new-1", raw: true });
+    expect(raw).toEqual(empty);
+    await conforms(connector, "get_form", raw, false);
+    // Its projection still lists the (empty) items.
+    const projectedEmpty = await call(connector, "get_form", { formId: "new-1" });
+    expect(projectedEmpty.items).toEqual([]);
+    await conforms(connector, "get_form", projectedEmpty);
+  });
+
+  it("declares every key of listed and fetched responses", async () => {
+    const connector = connection();
+    route = (request) =>
+      request.url.pathname.endsWith("/responses")
+        ? { body: { responses: [{ ...RESPONSE, totalScore: 1 }], nextPageToken: "next" } }
+        : request.url.pathname.includes("/responses/")
+          ? { body: { ...RESPONSE, totalScore: 1 } }
+          : { body: RICH_FORM };
+    await conforms(connector, "list_responses", await call(connector, "list_responses", { formId: "form-1" }));
+    await conforms(
+      connector,
+      "get_response",
+      await call(connector, "get_response", { formId: "form-1", responseId: "r1" }),
+    );
+  });
+
+  it("declares every key of each write's result", async () => {
+    const connector = connection();
+    route = (request) =>
+      request.url.pathname.endsWith(":batchUpdate")
+        ? {
+            body: {
+              writeControl: { requiredRevisionId: "00000002" },
+              replies: [{ createItem: { itemId: "i1", questionId: ["q1"] } }],
+            },
+          }
+        : {
+            body: {
+              formId: "new-1",
+              revisionId: "00000001",
+              responderUri: "https://docs.google.com/forms/d/e/x/viewform",
+              info: { title: "New", documentTitle: "New" },
+            },
+          };
+    await conforms(connector, "create_form", await call(connector, "create_form", { title: "New" }));
+    await conforms(connector, "update_form_info", await call(connector, "update_form_info", { formId: "new-1", title: "Newer" }));
+    await conforms(
+      connector,
+      "batch_update_form",
+      await call(connector, "batch_update_form", {
+        formId: "new-1",
+        requiredRevisionId: "00000001",
+        requests: [{ createItem: { item: { title: "Q", questionItem: { question: { textQuestion: {} } } }, location: { index: 0 } } }],
+      }),
+    );
   });
 });
 

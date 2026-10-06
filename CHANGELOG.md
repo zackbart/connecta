@@ -248,9 +248,10 @@ caller.
   options, and required flags; long descriptions and option lists cut with
   explicit markers; `raw: true` for Google's whole Form), `list_responses`
   (cursor-paged, an optional exclusive `submittedAfter` instant, each answer
-  labeled with its question's title in form order, answers over 2,000
-  characters cut) and `get_response` (one whole, with file ids and quiz
-  grades), `create_form` (title, Drive file name, optionally unpublished — all
+  labeled with its question's title in form order, with any quiz grade and
+  grader feedback, answers and feedback over 2,000 characters cut) and
+  `get_response` (one whole, with file ids, quiz grades, and feedback text and
+  links), `create_form` (title, Drive file name, optionally unpublished — all
   Google accepts at creation), `update_form_info` (replaces the title or
   description), and `batch_update_form` (Google's own batchUpdate requests,
   each exactly one of its six kinds, all or none, under a required
