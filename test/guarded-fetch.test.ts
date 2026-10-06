@@ -283,6 +283,42 @@ describe("guardedFetch() response handling", () => {
     expect(error.message).toContain("Could not reach the Example API");
   });
 
+  it("reads a bounded prefix, past a declared ceiling only when asked, and cancels the rest", async () => {
+    let cancelled = false;
+    let pulled = 0;
+    stubFetch(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                pulled += 1;
+                if (pulled > 64) controller.close();
+                else controller.enqueue(new Uint8Array(512).fill(120));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { headers: { "content-length": String(64 * 512) } },
+        ),
+    );
+    const prefix = await transport()(
+      { method: "GET", path: "/big", prefixOnly: true },
+      context(),
+      (response) => response.prefix(10),
+    );
+    expect(prefix).toEqual({ bytes: new Uint8Array(10).fill(120), truncated: true });
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+    expect(pulled).toBeLessThan(4);
+    // Without the flag, the declared length past the ceiling is still refused.
+    await expect(
+      transport()({ method: "GET", path: "/big" }, context(), (response) => response.prefix(10)),
+    ).rejects.toMatchObject({ code: "connector_call_failed" });
+  });
+
   it("refuses a body past the ceiling, declared or streamed", async () => {
     stubFetch(
       () =>

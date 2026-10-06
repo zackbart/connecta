@@ -439,12 +439,38 @@ interface GoogleBytes {
   bytes: Uint8Array;
   /** The response's `Content-Type`, when it sent one. */
   contentType: string | undefined;
+  /**
+   * Whether the body went on past what was kept. Only a request with
+   * `maxBytes` keeps less than the whole body, so without it this is false.
+   */
+  truncated: boolean;
+  /** The HTTP status: 200, 206 for an honored Range, 416 for an empty file. */
+  status: number;
+  /** The response's `Content-Range`, when it sent one. */
+  contentRange: string | undefined;
 }
 
 /** A text response body, decoded in the charset its `Content-Type` names. */
 interface GoogleText {
   text: string;
   contentType: string | undefined;
+  truncated: boolean;
+  status: number;
+  contentRange: string | undefined;
+}
+
+/** {@link GoogleRequestOptions}, plus a bound on how much of the body to read. */
+interface GoogleReadOptions extends GoogleRequestOptions {
+  /**
+   * Read at most this many bytes of the body: the stream is consumed only
+   * one byte past it, to learn whether there was more (`truncated`), and the
+   * rest is cancelled unread. A declared length past the client's ceiling is
+   * then no reason to refuse; the ceiling still bounds the read. With it set,
+   * a 416 carrying `Content-Range: bytes *\/0` — a Range request against an
+   * empty file — answers an empty result with that status, not a failure.
+   * A whole number of bytes, zero or more.
+   */
+  maxBytes?: number;
 }
 
 /**
@@ -468,14 +494,17 @@ export interface GoogleWorkspaceClient {
     request: GuardedRequest,
     ctx: ConnectorContext,
     accept?: string,
-    options?: GoogleRequestOptions,
+    options?: GoogleReadOptions,
   ): Promise<GoogleBytes>;
-  /** As {@link bytes}, decoded as text in the response's declared charset. */
+  /**
+   * As {@link bytes}, decoded as text in the response's declared charset. A
+   * truncated prefix drops a code point the cut left incomplete.
+   */
   text(
     request: GuardedRequest,
     ctx: ConnectorContext,
     accept?: string,
-    options?: GoogleRequestOptions,
+    options?: GoogleReadOptions,
   ): Promise<GoogleText>;
 }
 
@@ -507,6 +536,12 @@ interface ReadableResponse {
   readonly headers: Headers;
   bytes(): Promise<Uint8Array>;
   jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
+  prefix(maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }>;
+}
+
+/** A Range request against an empty file: Google's verified "nothing here". */
+function isEmptyRange(response: ReadableResponse): boolean {
+  return response.status === 416 && /^bytes \*\/0$/i.test(response.headers.get("content-range")?.trim() ?? "");
 }
 
 function charsetOf(contentType: string | undefined): string {
@@ -569,7 +604,8 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       const token = await delegatedToken(delegated, ctx);
       try {
         return await transport(token)(headed, ctx, async (response) => {
-          if (!response.ok) {
+          // A bounded read answers an empty file's 416 as an empty result.
+          if (!response.ok && !(headed.prefixOnly === true && isEmptyRange(response))) {
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
             const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
@@ -600,21 +636,52 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         return parsed.value;
       }, requestOptions),
     bytes: (request, ctx, accept = "*/*", requestOptions) =>
-      call(request, ctx, accept, async (response) => ({
-        bytes: await response.bytes(),
-        contentType: response.headers.get("content-type") ?? undefined,
-      }), requestOptions),
-    text: (request, ctx, accept = "text/plain, */*", requestOptions) =>
-      call(request, ctx, accept, async (response) => {
-        const contentType = response.headers.get("content-type") ?? undefined;
-        const bytes = await response.bytes();
-        let text: string;
-        try {
-          text = new TextDecoder(charsetOf(contentType)).decode(bytes);
-        } catch {
-          text = new TextDecoder().decode(bytes);
-        }
-        return { text, contentType };
-      }, requestOptions),
+      read(request, ctx, accept, requestOptions),
+    text: async (request, ctx, accept = "text/plain, */*", requestOptions) => {
+      const { bytes, ...rest } = await read(request, ctx, accept, requestOptions);
+      let text: string;
+      try {
+        // A cut prefix may end inside a code point; streaming decode drops
+        // the incomplete tail instead of inventing a replacement character.
+        text = new TextDecoder(charsetOf(rest.contentType)).decode(bytes, { stream: rest.truncated });
+      } catch {
+        text = new TextDecoder().decode(bytes, { stream: rest.truncated });
+      }
+      return { text, ...rest };
+    },
   };
+
+  /** The body as bytes: whole, or a bounded prefix when `maxBytes` is set. */
+  async function read(
+    request: GuardedRequest,
+    ctx: ConnectorContext,
+    accept: string,
+    requestOptions: GoogleReadOptions = {},
+  ): Promise<GoogleBytes> {
+    const { maxBytes } = requestOptions;
+    if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 0)) {
+      throw new TypeError(`${provider}: maxBytes must be a whole number of bytes, zero or more.`);
+    }
+    const bounded = maxBytes !== undefined;
+    return call(
+      bounded ? { ...request, prefixOnly: true } : request,
+      ctx,
+      accept,
+      async (response) => {
+        const facts = {
+          contentType: response.headers.get("content-type") ?? undefined,
+          status: response.status,
+          contentRange: response.headers.get("content-range") ?? undefined,
+        };
+        if (!bounded) return { bytes: await response.bytes(), truncated: false, ...facts };
+        if (!response.ok) {
+          // Only the empty-file 416 reaches here; its body is not the file.
+          await response.prefix(0);
+          return { bytes: new Uint8Array(), truncated: false, ...facts };
+        }
+        return { ...(await response.prefix(maxBytes)), ...facts };
+      },
+      requestOptions,
+    );
+  }
 }

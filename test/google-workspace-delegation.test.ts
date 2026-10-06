@@ -986,7 +986,13 @@ describe("the shared client reads bytes and text for the products that need them
       () => new Response(new Uint8Array([67, 97, 102, 0xe9]), { headers: { "Content-Type": "text/plain; charset=iso-8859-1" } }),
     );
     const result = await client().text({ method: "GET", path: "/files/f1/export", query: { mimeType: "text/plain" } }, context());
-    expect(result).toEqual({ text: "Café", contentType: "text/plain; charset=iso-8859-1" });
+    expect(result).toEqual({
+      text: "Café",
+      contentType: "text/plain; charset=iso-8859-1",
+      truncated: false,
+      status: 200,
+      contentRange: undefined,
+    });
   });
 
   it("bounds the body by the product's ceiling", async () => {
@@ -1085,6 +1091,121 @@ describe("the shared client reads bytes and text for the products that need them
       await expect(client().json(write, context(), { revisionGuarded: true })).rejects.toMatchObject({
         code: "invalid_args",
       });
+    });
+  });
+
+  describe("a bounded read (maxBytes)", () => {
+    const CHUNK = 64 * 1024;
+
+    /** A 2 MiB body produced chunk by chunk, recording what was pulled. */
+    function source(chunks = 32) {
+      const seen = { pulled: 0, cancelled: false };
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (seen.pulled >= chunks) {
+              controller.close();
+              return;
+            }
+            seen.pulled += 1;
+            controller.enqueue(new Uint8Array(CHUNK).fill(65));
+          },
+          cancel() {
+            seen.cancelled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      return { seen, stream };
+    }
+
+    it("reads one byte past the bound, then cancels the rest of the stream unread", async () => {
+      const { seen, stream } = source();
+      apiReplies.push(
+        () =>
+          new Response(stream, {
+            status: 206,
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Length": String(32 * CHUNK),
+              "Content-Range": "bytes 0-9/2097152",
+            },
+          }),
+      );
+      const result = await client(16 * 1024 * 1024).bytes(
+        { method: "GET", path: "/files/f1", query: { alt: "media" }, headers: { Range: "bytes=0-9" } },
+        context(),
+        undefined,
+        { maxBytes: 10 },
+      );
+      expect(result.bytes).toEqual(new Uint8Array(10).fill(65));
+      expect(result).toMatchObject({ truncated: true, status: 206, contentRange: "bytes 0-9/2097152" });
+      // An ignored Range sent the whole file; almost none of it was read.
+      await vi.waitFor(() => expect(seen.cancelled).toBe(true));
+      expect(seen.pulled).toBeLessThan(4);
+    });
+
+    it("returns a capped prefix of a body past the ceiling instead of failing", async () => {
+      apiReplies.push(
+        () => new Response(new Uint8Array(4096).fill(66), { headers: { "Content-Length": "4096" } }),
+        () => new Response(new Uint8Array(4096).fill(67), { headers: { "Content-Length": "4096" } }),
+      );
+      const drive = client(1024);
+      const small = await drive.bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 100 });
+      expect(small).toMatchObject({ truncated: true, status: 200 });
+      expect(small.bytes.length).toBe(100);
+      // A bound past the ceiling reads to the ceiling, and says it stopped.
+      const large = await drive.bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 5000 });
+      expect(large).toMatchObject({ truncated: true });
+      expect(large.bytes.length).toBe(1024);
+    });
+
+    it("reports a body that fits the bound as whole", async () => {
+      apiReplies.push(() => new Response("hello", { headers: { "Content-Type": "text/plain" } }));
+      const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 5 });
+      expect(result).toEqual({ text: "hello", contentType: "text/plain", truncated: false, status: 200, contentRange: undefined });
+    });
+
+    it("drops a code point the cut left incomplete", async () => {
+      apiReplies.push(() => new Response("hé!", { headers: { "Content-Type": "text/plain; charset=utf-8" } }));
+      const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 2 });
+      expect(result).toMatchObject({ text: "h", truncated: true });
+    });
+
+    it("answers an empty file's 416 as an empty result, only when bounded", async () => {
+      const empty = () =>
+        new Response("Requested range not satisfiable", {
+          status: 416,
+          headers: { "Content-Range": "bytes */0", "Content-Type": "text/plain" },
+        });
+      apiReplies.push(empty, empty, () =>
+        new Response("Requested range not satisfiable", { status: 416, headers: { "Content-Range": "bytes */100" } }),
+      );
+      const drive = client();
+      const request = { method: "GET" as const, path: "/files/f1", query: { alt: "media" }, headers: { Range: "bytes=0-99" } };
+      await expect(drive.bytes(request, context(), undefined, { maxBytes: 100 })).resolves.toEqual({
+        bytes: new Uint8Array(),
+        truncated: false,
+        status: 416,
+        contentType: "text/plain",
+        contentRange: "bytes */0",
+      });
+      // Unbounded reads behave exactly as before: a 416 is a failure.
+      await expect(drive.bytes(request, context())).rejects.toMatchObject({ code: "connector_call_failed" });
+      // And a 416 for a file that is not empty is still one.
+      await expect(drive.bytes(request, context(), undefined, { maxBytes: 100 })).rejects.toMatchObject({
+        code: "connector_call_failed",
+      });
+    });
+
+    it("refuses a bound that is not a whole number of bytes, before anything leaves", async () => {
+      for (const maxBytes of [-1, 1.5, Number.NaN]) {
+        await expect(
+          client().bytes({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes }),
+        ).rejects.toThrow(TypeError);
+      }
+      expect(apiCalls).toEqual([]);
+      expect(tokenCalls).toEqual([]);
     });
   });
 

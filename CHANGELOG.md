@@ -126,7 +126,10 @@ deployment's own connectors still never learn their caller.
   product can read Google's reason codes for any mapped failure — sanitized
   tokens only, never its prose — and `exportSizeLimitExceeded`,
   `domainPolicy`, and `insufficientFilePermissions`/`forbidden` refusals
-  name themselves precisely. Google's
+  name themselves precisely. A download or export can pass `{ maxBytes }` to
+  read only a prefix: the body is streamed, the rest is cancelled unread, and
+  the result says whether it was `truncated`, with its HTTP status and
+  `Content-Range`, so an empty file's 416 arrives as an empty result. Google's
   refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or
