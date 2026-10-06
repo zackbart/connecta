@@ -261,6 +261,9 @@ export async function authorize(
         ...(operator ? { uiAdminEligible: true } : {}),
       };
     }
+    // A recognized credential refused on its merits is the answer; asking the
+    // next provider could admit the same request as someone else.
+    if (result.final === true) return { ok: false, response: result.response };
     lastResponse = result.response;
   }
   return {

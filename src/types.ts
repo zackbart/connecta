@@ -511,7 +511,16 @@ export type AuthResult =
       /** Human owner represented by a non-interactive access credential. */
       principal?: IdentityReference;
     }
-  | { ok: false; response: Response };
+  | {
+      ok: false;
+      response: Response;
+      /**
+       * The provider recognized the credential and refuses the request
+       * anyway, so no later provider is consulted. Omit it for a non-match,
+       * which lets another configured provider admit the request.
+       */
+      final?: true;
+    };
 
 /** Stable identity inside one configured authentication directory. */
 export interface IdentityReference {

@@ -6,7 +6,10 @@ Inbound auth decides who may reach the MCP endpoint. Import `bearerToken` from
 static bearers are checked first, then other providers in configuration order.
 An `InboundAuth` provider's `authorize(request, baseUrl, runtimeContext)`
 returns either `{ ok: true, userId?, subjectId?, principal? }` or a refusal
-carrying its own `Response`, so the provider owns its challenge. Connecta
+carrying its own `Response`, so the provider owns its challenge. A refusal is
+normally a non-match and the next provider gets its turn; one marked
+`final: true` is a credential the provider recognized and refuses anyway, and
+it ends the walk. Connecta
 issues managed client tokens only when the optional `accessTokens` module is configured.
 
 The bearer adapter challenges with `WWW-Authenticate: Bearer` and deliberately
@@ -182,7 +185,9 @@ are additive. An unknown or unprincipalled identity gets an empty view. The
 example assumes the two exact tools have been reviewed as read-only; the names
 themselves carry no safety meaning. The guarded grants also check the current
 loaded annotations before discovery or use. Use a stable authenticated
-principal or subject for membership, never a request header or tool argument. A pool can
+principal or subject for membership, never a request header or tool argument —
+an [asserted principal](#a-trusted-agent-acting-for-its-users) arrives in a
+header, but inbound auth has already vouched for it by then. A pool can
 narrow any of these views on its endpoint, but cannot make plain `/mcp` narrower.
 
 New tool names are excluded until added to a reviewed list. A removed or
@@ -223,6 +228,126 @@ visibility. These are the checks for a team read set:
 
 Integration tests in `test/identity-scope.test.ts` exercise these paths and
 the older unrestricted exact-grant behavior.
+
+## A trusted agent acting for its users
+
+An agent platform such as Eve talks to connecta with one service credential
+while serving a whole team. As a plain bearer subject, every one of those
+people is the same bot: one view, one result partition, one activity actor,
+and no principal for personal connectors. `assertedPrincipal` lets that one
+secret say which user each request is for
+([#679](https://github.com/zackbart/connecta/issues/679)):
+
+```ts
+import { bearerToken } from "@zackbart/connecta/auth/bearer";
+
+createConnecta({
+  auth: [
+    bearerToken(env.CONNECTA_AGENT_SECRET, {
+      assertedPrincipal: {
+        header: "X-Connecta-Principal",
+        namespace: "eve:example.com",
+        accept: (id) => /^[a-z0-9._%+-]+@example\.com$/.test(id),
+      },
+    }),
+    clerkAuth({ publishableKey, secretKey }),
+  ],
+  identity: { connectorAccess },
+  connectors,
+  executor,
+});
+```
+
+The header counts only beside the secret. Without the secret it is never read:
+the bearer reports its ordinary 401 non-match and the next provider decides, as
+if the header were not there. With the secret, the request must name someone.
+A missing or blank header is a 403 `asserted principal required`. An id that is
+not a valid identity reference (1–256 printable, non-space ASCII), or that
+`accept` declines, throws on, or answers with anything but a literal `true`, is
+a 403 `asserted principal refused`. Both are `final`, so no later provider is
+asked: a Cloudflare Access identity riding the same request cannot admit what
+the assertion could not, and the secret is never admitted as the bare service.
+`accept` may be async.
+
+An admitted request carries `principal: { namespace, id }`, and the same id is
+its subject, in the same namespace. `connectorAccess`, pool grants, personal
+connectors, and `callerOf(ctx)` see that user; `get_result` pages are
+partitioned per user instead of shared by everyone the agent serves; activity
+records the actor as `{ kind: "bearer", id, namespace }`, the identity fields
+every event already carries and nothing else. The identity is not interactive,
+so it gets no operator pages, credential administration, or personal OAuth
+start, exactly like any bearer. `subjectId` is refused beside the option,
+because the asserted user is the subject. Construction throws on a header that
+is not an HTTP token or that another layer already owns (`Authorization`,
+`Proxy-Authorization`, `Cookie`, `Host`, `Origin`), an invalid namespace, a
+missing `accept`, or an unknown key.
+
+Header names match case-insensitively, as HTTP's always do. Ids lose
+surrounding whitespace and nothing else. Connecta does not case-fold, because
+it cannot know an id's grammar: one namespace holds emails, another
+case-sensitive directory ids. The id is a partition key, so `Alice@example.com`
+and `alice@example.com` would be two people with two sets of personal state.
+Send canonical ids and have `accept` refuse anything else, as the lowercase-only
+pattern above does; a mixed-case address then fails loudly instead of quietly
+splitting someone's history. A header sent twice arrives joined by a comma and a
+space, which no valid id contains.
+
+The asserted principal is its own. Unless the namespace and id equal what an
+interactive provider derives, the same person signed in through Clerk is a
+different principal with different personal partitions.
+
+### From an Eve agent
+
+Eve connections can resolve headers per caller inside the active turn, where the
+model cannot reach them:
+
+```ts
+// agent/connections/connecta.ts
+import { defineMcpClientConnection } from "eve/connections";
+import { slackEmail } from "../lib/slack-email";
+
+export default defineMcpClientConnection({
+  url: "https://connecta.example.com/mcp",
+  description: "Company tools through connecta.",
+  auth: {
+    principalType: "user",
+    getToken: async () => ({ token: process.env.CONNECTA_AGENT_SECRET! }),
+  },
+  headers: {
+    "X-Connecta-Principal": async ({ session }) => {
+      const caller = session.auth.current;
+      const slackUser = caller?.principalType === "user"
+        ? caller.attributes.user_id
+        : undefined;
+      if (typeof slackUser !== "string") throw new Error("no Slack user on this turn");
+      return (await slackEmail(slackUser)).toLowerCase();
+    },
+  },
+});
+```
+
+`principalType: "user"` makes Eve refuse a turn with no authenticated user — a
+schedule, a runtime caller — with `principal_required` instead of calling
+connecta as nobody, which connecta would refuse anyway. Eve's Slack channel
+identifies the sender by Slack user id (`attributes.user_id`), not by email, so
+`slackEmail` is a Slack `users.info` lookup with the `users:read.email` scope.
+Cache it; Slack rate-limits that method and an email rarely changes.
+
+### What the secret is worth
+
+Whoever holds the secret can act as any user `accept` admits. That is the
+feature, and the reason for the rest:
+
+- Keep the secret in the agent platform's secret store, never in a client,
+  a prompt, or a repository.
+- Scope `accept` as tightly as the deployment allows — one email domain, or an
+  explicit list — so a leaked secret reaches no one outside it.
+- Rotate it like any service credential. Nothing is cached, so a removed secret
+  stops on the next request; during a rollover configure two asserting bearers,
+  old and new, and drop the old one once the platform has moved.
+- Give it to one bearer only. Bearers are tried in configuration order, so a
+  plain `bearerToken` with the same secret listed first would admit it as the
+  bare service before the assertion was ever consulted.
 
 ## Pools
 

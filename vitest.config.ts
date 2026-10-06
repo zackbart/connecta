@@ -17,6 +17,7 @@ export const WORKERS_SUITES = [
   "test/artifacts-markdown.test.ts",
   "test/artifacts-operations.test.ts",
   "test/artifacts-validate.test.ts",
+  "test/asserted-principal.test.ts",
   "test/basecamp-provider.test.ts",
   "test/bearer.test.ts",
   "test/branding.test.ts",
