@@ -621,6 +621,42 @@ describe("writes whose outcome is unknown", () => {
     expect(calls).toHaveLength(1);
   });
 
+  const everyWrite = [
+    ["create_presentation", { title: "Easter" }, "Search Drive for a deck with this title"],
+    ["create_slide", { presentationId: "deck1" }, "look for the new slide before adding another"],
+    ["replace_all_text", { presentationId: "deck1", replacements: [{ find: "a", replace: "aa" }] }, undefined],
+    ["batch_update_presentation", { presentationId: "deck1", requiredRevisionId: "rev-1", requests: [{ deleteObject: { objectId: "x" } }] }, undefined],
+  ] as const;
+
+  it.each(everyWrite)("%s treats a redirect after sending as uncertain, never as applied", async (name, args, advice) => {
+    route = () => ({ response: () => new Response(null, { status: 303, headers: { Location: "https://elsewhere.example/" } }) });
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("unknown");
+    expect(failure.message).not.toMatch(/probably applied|\bapplied —|nothing (was|is) (applied|changed)/i);
+    if (advice) expect(failure.message).toContain(advice);
+    // Never followed: the one request is all that left.
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each(everyWrite)("%s treats a 503 with a rate-limit reason as an unknown outcome, not a rate limit", async (name, args, advice) => {
+    route = () => ({
+      status: 503,
+      body: { error: { code: 503, message: "Quota exceeded.", status: "UNAVAILABLE", details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } },
+    });
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("its outcome is unknown");
+    if (advice) expect(failure.message).toContain(advice);
+  });
+
+  it("keeps a 429 on a write a rate limit: Google refused it", async () => {
+    route = () => ({ status: 429, body: { error: { code: 429, message: "Slow down.", status: "RESOURCE_EXHAUSTED" } } });
+    const failure = await call(connection(), "create_slide", { presentationId: "deck1" }).catch((error) => error);
+    expect(failure.code).toBe("rate_limited");
+    expect(failure.message).not.toContain("look for the new slide");
+  });
+
   it("keeps a 5xx on a read retryable: reading again is safe", async () => {
     route = () => ({ status: 503, body: { error: { code: 503, message: "Backend Error", status: "UNAVAILABLE" } } });
     for (const [name, args] of [
@@ -779,6 +815,56 @@ describe("writing", () => {
   });
 });
 
+/** A Post as Slides' Response reference shapes it, with long content and HTML. */
+function post(postId: string) {
+  return {
+    postId,
+    author: { displayName: "Ann Elder", me: false, user: "users/123" },
+    createTime: "2026-10-06T12:00:00Z",
+    updateTime: "2026-10-06T12:00:00Z",
+    content: "c".repeat(2_048),
+    contentHtml: `<p>${"h".repeat(2_048)}</p>`,
+  };
+}
+
+/** insertComment and addCommentReply replies, nested as Slides sends them. */
+function commentReplies(count: number) {
+  return Array.from({ length: count }, (_, index) =>
+    index % 2 === 0
+      ? {
+          insertComment: {
+            commentThread: {
+              commentId: `comment-${index}`,
+              anchorId: `anchor-${index}`,
+              status: "OPEN",
+              plainTextQuote: "q".repeat(2_000),
+              headPost: post(`head-${index}`),
+              replies: [post(`reply-${index}-a`), post(`reply-${index}-b`)],
+            },
+          },
+        }
+      : { addCommentReply: { post: post(`post-${index}`) } },
+  );
+}
+
+/** Every kind of reply Slides' batchUpdate sends, from Discovery's `Response` schema. */
+const RESPONSE_KINDS: ReadonlySet<string> = new Set([
+  "addCommentReply",
+  "createImage",
+  "createLine",
+  "createSheetsChart",
+  "createShape",
+  "createSlide",
+  "createTable",
+  "createVideo",
+  "duplicateObject",
+  "groupObjects",
+  "insertComment",
+  "replaceAllShapesWithImage",
+  "replaceAllShapesWithSheetsChart",
+  "replaceAllText",
+]);
+
 describe("output schemas declare what the tools return (H8)", () => {
   /**
    * Every key a projection emits, walked against the declared schema. An
@@ -796,6 +882,13 @@ describe("output schemas declare what the tools return (H8)", () => {
       return;
     }
     for (const [key, item] of Object.entries(value)) {
+      // A batch reply is Slides' own Response, one kind per reply, beside
+      // the `cut` connecta declares: the kinds are checked against Slides'
+      // list rather than declared, and what is inside them is Google's.
+      if (at.endsWith("replies[]") && !(key in schema.properties)) {
+        if (!RESPONSE_KINDS.has(key)) out.push(`${at}.${key} (not a Slides reply kind)`);
+        continue;
+      }
       if (!(key in schema.properties)) out.push(`${at}.${key}`);
       else undeclared(schema.properties[key], item, `${at}.${key}`, out);
     }
@@ -857,6 +950,17 @@ describe("output schemas declare what the tools return (H8)", () => {
         requests: [{ createShape: { shapeType: "TEXT_BOX" } }],
       }),
     ]);
+    // Summarized replies too, whose `cut` the walk must find declared.
+    route = () => ({ body: { presentationId: "deck1", replies: commentReplies(4) } });
+    outputs.push([
+      "batch_update_presentation",
+      await call(connector, "batch_update_presentation", {
+        presentationId: "deck1",
+        requiredRevisionId: "rev-1",
+        requests: Array.from({ length: 4 }, () => ({ insertComment: {} })),
+      }),
+    ]);
+    expect((outputs[outputs.length - 1]![1] as any).replies[0].cut.length).toBeGreaterThan(0);
 
     // The validator bites: a wrong type is caught, so a pass below means something.
     expect(validates(schemas["get_presentation"]!, { presentationId: 7 }, "decks.get_presentation")).toBeDefined();
@@ -865,9 +969,7 @@ describe("output schemas declare what the tools return (H8)", () => {
       undeclared(schemas[name], output, name, gaps);
       expect(validates(schemas[name]!, output, `decks.${name}`), name).toBeUndefined();
     }
-    // The one passthrough: Slides' own Response union, one reply per request,
-    // with as many kinds as the requests have.
-    expect([...new Set(gaps)]).toEqual(["batch_update_presentation.replies[] (opaque)"]);
+    expect([...new Set(gaps)]).toEqual([]);
     expect(new Set(outputs.map(([name]) => name))).toEqual(new Set(Object.keys(schemas)));
   });
 
@@ -1431,7 +1533,8 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
 
   it("counts the replies that cannot fit and says the write applied", async () => {
     const replies = Array.from({ length: 400 }, (_, index) => ({
-      createShape: Object.fromEntries([["objectId", `s${index}`], ...Array.from({ length: 30 }, (_, field) => [`f${field}`, "z".repeat(200)])]),
+      // Each one small enough to pass whole, but 400 of them are not.
+      createShape: { objectId: `s${index}_${"z".repeat(900)}` },
     }));
     route = () => ({ body: { presentationId: "deck1", replies } });
     const result = await call(connection(), "batch_update_presentation", {
@@ -1442,7 +1545,7 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
     expect(result.repliesNotShown).toBeGreaterThan(0);
     expect(result.replies.length + result.repliesNotShown).toBe(400);
-    expect(result.replies[0].createShape.objectId).toBe("s0");
+    expect(result.replies[0].createShape.objectId).toBe(`s0_${"z".repeat(900)}`);
     expect(result.note).toContain("The write applied");
     expect(result.note).toContain("re-read with get_presentation or get_page");
   });
@@ -1454,5 +1557,117 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     );
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("open the slide in Slides instead");
+  });
+});
+
+describe("round four: nested reply ids, and every write result bounded", () => {
+  const BRIDGE_BYTES = 256 * 1024;
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const batch = (count: number) => ({
+    presentationId: "deck1",
+    requiredRevisionId: "rev-1",
+    requests: Array.from({ length: count }, () => ({ insertComment: {} })),
+  });
+
+  it("keeps every nested comment and post id in Slides' real reply shapes while cutting content", async () => {
+    route = () => ({ body: { presentationId: "deck1", replies: commentReplies(100), writeControl: { requiredRevisionId: "rev-2" } } });
+    const result = await call(connection(), "batch_update_presentation", batch(100));
+    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
+    expect(result.replies).toHaveLength(100);
+    expect(result.repliesNotShown).toBeUndefined();
+    const thread = result.replies[0].insertComment.commentThread;
+    expect(thread).toMatchObject({
+      commentId: "comment-0",
+      anchorId: "anchor-0",
+      status: "OPEN",
+      headPost: { postId: "head-0", author: { displayName: "Ann Elder", me: false, user: "users/123" } },
+    });
+    expect(thread.replies.map((reply: any) => reply.postId)).toEqual(["reply-0-a", "reply-0-b"]);
+    expect(thread.headPost.content).toBeUndefined();
+    expect(result.replies[0].cut).toEqual(
+      expect.arrayContaining([
+        "insertComment.commentThread.plainTextQuote",
+        "insertComment.commentThread.headPost.content",
+        "insertComment.commentThread.headPost.contentHtml",
+      ]),
+    );
+    expect(result.replies[1]).toMatchObject({ addCommentReply: { post: { postId: "post-1" } } });
+    expect(result.replies[1].cut).toEqual(["addCommentReply.post.content", "addCommentReply.post.contentHtml"]);
+    expect(result.note).toMatch(/^The write applied\./);
+  });
+
+  it("keeps ids whole even when only ids fit, and never cuts one", async () => {
+    const longId = `id-${"x".repeat(900)}`;
+    const reply = { insertComment: { commentThread: { commentId: longId, headPost: { ...post(longId), author: { displayName: "d".repeat(250) } } } } };
+    route = () => ({ body: { presentationId: "deck1", replies: [reply] } });
+    const result = await call(connection(), "batch_update_presentation", batch(1));
+    const thread = result.replies[0].insertComment.commentThread;
+    expect(thread.commentId).toBe(longId);
+    expect(thread.headPost.postId).toBe(longId);
+  });
+
+  it("drops, flags, and never cuts a revision too long to copy, on every write", async () => {
+    const huge = "r".repeat(300_000);
+    const cases = [
+      ["create_presentation", { title: "Easter" }, { presentationId: "new1", revisionId: huge, slides: [{ objectId: "p" }] }],
+      ["create_slide", { presentationId: "deck1" }, { replies: [{ createSlide: { objectId: "g1" } }], writeControl: { requiredRevisionId: huge } }],
+      ["replace_all_text", { presentationId: "deck1", replacements: [{ find: "a", replace: "b" }] }, { writeControl: { requiredRevisionId: huge } }],
+      ["batch_update_presentation", batch(1), { presentationId: `deck-${huge}`, replies: [{}], writeControl: { requiredRevisionId: huge } }],
+    ] as const;
+    for (const [name, args, body] of cases) {
+      route = () => ({ body });
+      const result = await call(connection(), name, args);
+      expect(bytes(result), name).toBeLessThan(4 * 1024);
+      expect(result.revisionId, name).toBeUndefined();
+      expect(result.revisionIdNotShown, name).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("rrrrrrrrrr");
+    }
+    // The presentation id is the caller's own, never Google's echo of it.
+    route = () => ({ body: { presentationId: `deck-${huge}`, replies: [{}] } });
+    expect((await call(connection(), "batch_update_presentation", batch(1))).presentationId).toBe("deck1");
+  });
+
+  it.each([
+    ["create_presentation", { title: "Easter" }, { presentationId: "p".repeat(300_000) }, "search Drive for the deck by its title"],
+    ["create_slide", { presentationId: "deck1" }, { replies: [{ createSlide: { objectId: "g".repeat(300_000) } }] }, "find the new slide"],
+  ])("%s refuses an unusable new id after a 2xx by saying the write applied", async (name, args, body, reread) => {
+    route = () => ({ body });
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("applied — Google answered 2xx");
+    expect(failure.message).toContain("Do not repeat it");
+    expect(failure.message).toContain(reread);
+    expect(failure.message).not.toMatch(/nothing (was|is) (applied|changed)/i);
+    expect(bytes(failure.message)).toBeLessThan(1024);
+  });
+
+  it("bounds a copied title and a copied slide id list", async () => {
+    route = () => ({
+      body: {
+        presentationId: "new1",
+        title: "t".repeat(300_000),
+        slides: [{ objectId: "p" }, { objectId: "q".repeat(5_000) }],
+      },
+    });
+    const result = await call(connection(), "create_presentation", { title: "Easter" });
+    expect(bytes(result)).toBeLessThan(8 * 1024);
+    expect(result.title).toMatch(/Drive shows the whole title\]$/);
+    expect(result.slideObjectIds).toEqual(["p"]);
+    expect(result.slideObjectIdsNotShown).toBe(1);
+  });
+
+  it("refuses a write result too large to deliver by saying the write applied, never that nothing changed", async () => {
+    // Many whole ids, each within bounds, whose sum is not.
+    route = () => ({
+      body: {
+        presentationId: "new1",
+        slides: Array.from({ length: 400 }, (_, index) => ({ objectId: `s${index}_${"x".repeat(900)}` })),
+      },
+    });
+    const failure = await call(connection(), "create_presentation", { title: "Easter" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("create_presentation applied — Google answered 2xx — but its result is");
+    expect(failure.message).toContain("search Drive for the deck by its title");
+    expect(failure.message).not.toMatch(/nothing (was|is) (applied|changed)/i);
   });
 });

@@ -307,9 +307,12 @@ caller.
   replacements in one atomic batch, optionally at a required revision) and
   `batch_update_presentation` (1 to 100 raw Slides requests, each refused
   locally unless it is one known Request kind, always at a required
-  `revisionId`, its replies bounded — every new object's id kept, large
-  fields named in `cut`, overflow counted, and the write reported as applied)
-  are destructive. A write refused because the deck changed since its
+  `revisionId`, its replies bounded — every id at every depth kept whole,
+  comment and post ids included, large fields named in `cut`, overflow
+  counted, and the write reported as applied) are destructive. Every write
+  result is size-checked too: copied ids and revisions are whole or flagged,
+  never cut, and a result that still cannot be delivered after Google's 2xx
+  is refused with "applied — do not repeat it; re-read". A write refused because the deck changed since its
   revision is a `conflict`, and a create whose outcome is unknown says what to
   look for before creating again.
   Every read result is built under the shared Workspace result budget, so it

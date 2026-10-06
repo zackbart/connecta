@@ -155,6 +155,11 @@ const MAX_TITLE_CHARS = 500;
 const MAX_URL_BYTES = 16 * 1024;
 /** One batchUpdate reply kept whole up to this; a larger one is summarized. */
 const MAX_REPLY_BYTES = 2 * 1024;
+/** How deep, and how many array items, a reply summary walks. */
+const MAX_REPLY_DEPTH = 12;
+const MAX_REPLY_ITEMS = 20;
+/** An id or revision longer than this is not copied into a result. */
+const MAX_ID_BYTES = 1024;
 /** replace_all_text echoes each find this far, in order with its count. */
 const MAX_ECHO_CHARS = 100;
 
@@ -248,6 +253,26 @@ function deliverable<T>(
     );
   }
   return result;
+}
+
+/**
+ * The same postcondition for a write's result, which comes after Google
+ * answered 2xx: the write has applied, so a result too large to deliver is
+ * refused with that said, and with where to see the outcome — never as if
+ * nothing changed, and never as something to retry.
+ */
+function appliedDeliverable<T>(result: T, tool: string, reread: string): T {
+  const bytes = jsonBytes(result);
+  if (bytes > RESULT_BUDGET_BYTES) throw appliedButUnreadable(tool, `its result is ${bytes} bytes, more than one result can carry`, reread);
+  return result;
+}
+
+function appliedButUnreadable(tool: string, why: string, reread: string): ConnectorCallError {
+  return new ConnectorCallError(
+    "connector_call_failed",
+    `${tool} applied — Google answered 2xx — but ${why}. Do not repeat it; ${reread}.`,
+    { retryable: false },
+  );
 }
 
 /** A label cut to `maxBytes` of JSON, saying where the whole of it is. */
@@ -1004,13 +1029,15 @@ async function batchUpdate(
 }
 
 /**
- * A create whose outcome Google left unknown — sent with no answer back, a
- * server failure after it was sent, or accepted with an answer that broke —
+ * A create whose outcome Google left uncertain — sent with no answer back, a
+ * redirect, a server failure after it was sent, or a 2xx whose answer broke —
  * keeps the shared verdict and adds what to look for before creating again,
  * since a second create makes a second deck or slide. Only a request that
  * never left, or that Google explicitly refused, is known not to have
- * applied, so every other dispatched outcome counts as unknown, whatever
- * phase name the shared layer gives it. Any other failure passes through.
+ * applied, so every other dispatched outcome gets the advice, whatever phase
+ * name the shared layer gives it. The advice claims nothing about whether it
+ * applied; the shared verdict says that, and says "probably applied" only
+ * after a recorded 2xx. Any other failure passes through.
  */
 function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   const outcome = googleOutcomeOf(error);
@@ -1020,39 +1047,75 @@ function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, { retryable: error.retryable, cause: error });
 }
 
+/** A field that names something to address later: objectId, commentId, postId, anchorId, … */
+const ID_KEY = /^(id|[a-z][A-Za-z0-9]*Id)$/;
+
+/**
+ * An id as copied from Google into a result: whole, or not at all. A cut id
+ * names nothing, so one too long to return is dropped and flagged instead.
+ */
+function wholeId(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" && jsonBytes(value) <= MAX_ID_BYTES ? value : undefined;
+}
+
+/**
+ * `value` keeping, at any depth, every id whole, every number and boolean,
+ * and — in "short" mode — strings short enough to read at a glance; every
+ * path left out goes to `cut`. Arrays keep their first items, and nesting
+ * deeper than any reply Slides sends is cut where it starts.
+ */
+function pruned(value: unknown, key: string, path: string, mode: "short" | "ids", cut: string[], depth: number): unknown {
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const keep = ID_KEY.test(key) ? wholeId(value) !== undefined : mode === "short" && jsonBytes(value) <= MAX_NAME_BYTES;
+    if (keep) return value;
+    cut.push(path);
+    return undefined;
+  }
+  if (typeof value !== "object" || depth >= MAX_REPLY_DEPTH) {
+    cut.push(path);
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_REPLY_ITEMS) cut.push(`${path}[${MAX_REPLY_ITEMS}…${value.length - 1}]`);
+    return value
+      .slice(0, MAX_REPLY_ITEMS)
+      .map((item, index) => pruned(item, key, `${path}[${index}]`, mode, cut, depth + 1) ?? null);
+  }
+  const out: JsonRecord = {};
+  for (const [field, item] of Object.entries(value)) {
+    const kept = pruned(item, field, path ? `${path}.${field}` : field, mode, cut, depth + 1);
+    if (kept !== undefined) out[field] = kept;
+  }
+  return out;
+}
+
+/** The paths a summary left out, bounded: the first ten, then a count. */
+function cutList(cut: readonly string[]): string[] {
+  const named = cut.slice(0, 10).map((path) => clampText(path, 160, () => "…"));
+  return cut.length > named.length ? [...named, `(${cut.length - named.length} more)`] : named;
+}
+
 /**
  * One batchUpdate reply, small enough to return. Most are tiny — a new
- * object's id, a count — and pass whole. One that is not keeps its numbers,
- * booleans, and short strings (every id among them) and names the fields it
- * left out in `cut`, so nothing is dropped without a word.
+ * object's id, a count — and pass whole. One that is not, such as a comment
+ * thread with its content and HTML, is walked: every id at every depth
+ * (`insertComment.commentThread.commentId`, `.headPost.postId`, …) is kept
+ * whole, then short fields while they fit, and every path left out is named
+ * in `cut`, so nothing is dropped without a word.
  */
 function summarizeReply(reply: JsonRecord): JsonRecord {
   if (jsonBytes(reply) <= MAX_REPLY_BYTES) return reply;
-  const kept: JsonRecord = {};
-  const cut: string[] = [];
-  for (const [kind, body] of Object.entries(reply)) {
-    const fields: JsonRecord = {};
-    for (const [field, value] of Object.entries(asRecord(body))) {
-      const small =
-        typeof value === "number" ||
-        typeof value === "boolean" ||
-        (typeof value === "string" && jsonBytes(value) <= MAX_NAME_BYTES);
-      if (small && jsonBytes(fields) + jsonBytes(value) < MAX_REPLY_BYTES / 2) fields[field] = value;
-      else cut.push(`${kind}.${field}`);
-    }
-    kept[kind] = fields;
+  let summary: JsonRecord = {};
+  for (const mode of ["short", "ids"] as const) {
+    const cut: string[] = [];
+    summary = { ...asRecord(pruned(reply, "", "", mode, cut, 0)), cut: cutList(cut) };
+    if (jsonBytes(summary) <= MAX_REPLY_BYTES) return summary;
   }
-  const named = cut.slice(0, 10).map((path) => path.slice(0, 64));
-  const summary = { ...kept, cut: cut.length > named.length ? [...named, `(${cut.length - named.length} more)`] : named };
-  if (jsonBytes(summary) <= MAX_REPLY_BYTES) return summary;
-  // A reply of many kinds, which Slides does not send, still ends small and
-  // keeps the one thing a caller cannot recover by asking: what it created.
-  const ids: JsonRecord = {};
-  for (const [kind, body] of Object.entries(reply).slice(0, 8)) {
-    const objectId = asRecord(body)["objectId"];
-    if (typeof objectId === "string" && jsonBytes(objectId) <= MAX_NAME_BYTES / 2) ids[kind.slice(0, 64)] = { objectId };
-  }
-  return { ...ids, cut: ["(the rest of the reply)"] };
+  // Ids alone over the per-reply share: still returned, since what a write
+  // created is the one thing a caller cannot ask for again; the result's
+  // budget counts it, and a reply past that is counted as not shown.
+  return summary;
 }
 
 /**
@@ -1073,9 +1136,15 @@ function boundedReplies(replies: readonly unknown[], used: number): { replies: J
   return { replies: out, notShown: replies.length - out.length };
 }
 
-/** The revision a write left the deck at, for the next write to name. */
-function revisionAfter(response: JsonRecord): string | undefined {
-  return text(asRecord(response["writeControl"])["requiredRevisionId"]);
+/**
+ * The revision a write left the deck at, for the next write to name — whole,
+ * or flagged as not shown when too long to copy, never cut.
+ */
+function revisionFields(response: JsonRecord): { revisionId?: string; revisionIdNotShown?: true } {
+  const revision = asRecord(response["writeControl"])["requiredRevisionId"];
+  const whole = wholeId(revision);
+  if (whole !== undefined) return { revisionId: whole };
+  return typeof revision === "string" && revision !== "" ? { revisionIdNotShown: true } : {};
 }
 
 // --- Schemas ----------------------------------------------------------------------
@@ -1214,6 +1283,7 @@ const PAGE_ELEMENT_SCHEMA: JsonSchema = {
 const WRITE_RESULT_PROPERTIES: Record<string, JsonSchema> = {
   presentationId: { type: "string" },
   revisionId: { type: "string" },
+  revisionIdNotShown: { type: "boolean" },
 };
 
 // --- Tools ------------------------------------------------------------------------
@@ -1592,6 +1662,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           title: { type: "string" },
           url: { type: "string" },
           slideObjectIds: { type: "array", items: { type: "string" } },
+          slideObjectIdsNotShown: { type: "integer" },
         },
         required: ["presentationId"],
       },
@@ -1606,16 +1677,27 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               );
             }),
         );
-        const id = text(presentation["presentationId"]) ?? "";
-        return compact({
-          presentationId: id,
-          revisionId: text(presentation["revisionId"]),
-          title: text(presentation["title"]),
-          url: id ? editUrl(id) : undefined,
-          slideObjectIds: asArray(presentation["slides"])
-            .map((slide) => text(asRecord(slide)["objectId"]))
-            .filter((value): value is string => value !== undefined),
-        });
+        const lookInDrive = "search Drive for the deck by its title";
+        const id = wholeId(presentation["presentationId"]);
+        if (id === undefined) {
+          throw appliedButUnreadable("create_presentation", "Google returned no usable id for the new deck", lookInDrive);
+        }
+        const revisionId = presentation["revisionId"];
+        const slideIds = asArray(presentation["slides"]).map((slide) => asRecord(slide)["objectId"]);
+        const shownIds = slideIds.map(wholeId).filter((value): value is string => value !== undefined);
+        return appliedDeliverable(
+          compact({
+            presentationId: id,
+            revisionId: wholeId(revisionId),
+            revisionIdNotShown: revisionId !== undefined && wholeId(revisionId) === undefined ? true : undefined,
+            title: label(text(presentation["title"]), MAX_TITLE_BYTES, "Drive shows the whole title"),
+            url: editUrl(id),
+            slideObjectIds: shownIds,
+            slideObjectIdsNotShown: shownIds.length < slideIds.length ? slideIds.length - shownIds.length : undefined,
+          }),
+          "create_presentation",
+          lookInDrive,
+        );
       },
     },
     {
@@ -1677,11 +1759,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             "Read the deck with get_presentation and look for the new slide before adding another.",
           );
         });
-        return compact({
-          presentationId: text(response["presentationId"]) ?? args["presentationId"],
-          revisionId: revisionAfter(response),
-          slideObjectId: text(asRecord(asRecord(asArray(response["replies"])[0])["createSlide"])["objectId"]) ?? "",
-        });
+        const reread = "read the deck with get_presentation to find the new slide";
+        const slideObjectId = wholeId(asRecord(asRecord(asArray(response["replies"])[0])["createSlide"])["objectId"]);
+        if (slideObjectId === undefined) {
+          throw appliedButUnreadable("create_slide", "Google returned no usable id for the new slide", reread);
+        }
+        return appliedDeliverable(
+          compact({ presentationId: args["presentationId"], ...revisionFields(response), slideObjectId }),
+          "create_slide",
+          reread,
+        );
       },
     },
     {
@@ -1763,12 +1850,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             occurrencesChanged: typeof changed === "number" ? changed : 0,
           };
         });
-        return compact({
-          presentationId: text(response["presentationId"]) ?? args["presentationId"],
-          revisionId: revisionAfter(response),
-          occurrencesChanged: counted.reduce((sum, entry) => sum + entry.occurrencesChanged, 0),
-          replacements: counted,
-        });
+        return appliedDeliverable(
+          compact({
+            presentationId: args["presentationId"],
+            ...revisionFields(response),
+            occurrencesChanged: counted.reduce((sum, entry) => sum + entry.occurrencesChanged, 0),
+            replacements: counted,
+          }),
+          "replace_all_text",
+          "read the deck with get_presentation to see the replaced text",
+        );
       },
     },
     {
@@ -1800,7 +1891,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         type: "object",
         properties: {
           ...WRITE_RESULT_PROPERTIES,
-          replies: { type: "array", items: { type: "object" } },
+          // Slides' own reply kinds pass through beside `cut`, the one key
+          // connecta adds: the paths a summarized reply left out.
+          replies: {
+            type: "array",
+            items: { type: "object", properties: { cut: { type: "array", items: { type: "string" } } } },
+          },
           repliesNotShown: { type: "integer" },
           note: { type: "string" },
         },
@@ -1827,24 +1923,25 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           requests,
           args["requiredRevisionId"],
         );
-        const header = compact({
-          presentationId: text(response["presentationId"]) ?? args["presentationId"],
-          revisionId: label(revisionAfter(response), MAX_NAME_BYTES, "get_presentation has the current one"),
-        });
+        const header = compact({ presentationId: args["presentationId"], ...revisionFields(response) });
         // One reply per request, in order; most are empty, the create replies
         // carry the new object ids. Bounded, because the write has applied
         // and its result must still reach the caller.
         const all = asArray(response["replies"]);
         const shown = boundedReplies(all, jsonBytes(header) + 512);
-        return compact({
-          ...header,
-          replies: shown.replies,
-          repliesNotShown: shown.notShown > 0 ? shown.notShown : undefined,
-          note:
-            shown.notShown > 0 || shown.replies.some((reply) => "cut" in reply)
-              ? `The write applied. ${shown.notShown > 0 ? `The last ${shown.notShown} of ${all.length} replies were too large to return` : "Large reply fields are named in cut"}; re-read with get_presentation or get_page for what it created.`
-              : undefined,
-        });
+        return appliedDeliverable(
+          compact({
+            ...header,
+            replies: shown.replies,
+            repliesNotShown: shown.notShown > 0 ? shown.notShown : undefined,
+            note:
+              shown.notShown > 0 || shown.replies.some((reply) => "cut" in reply)
+                ? `The write applied. ${shown.notShown > 0 ? `The last ${shown.notShown} of ${all.length} replies were too large to return` : "Large reply fields are named in cut"}; re-read with get_presentation or get_page for what it created.`
+                : undefined,
+          }),
+          "batch_update_presentation",
+          "re-read with get_presentation or get_page for what it changed",
+        );
       },
     },
   ];
@@ -1915,9 +2012,13 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   requests apply or none do. Each write returns the new \`revisionId\` for the
   next one. A \`conflict\` means the deck changed since that read: re-read it,
   rebuild the requests, and send them with the new \`revisionId\`. Its
-  replies keep every new object's id; a large reply's other fields are named
-  in \`cut\`, and replies past one result are counted in \`repliesNotShown\`.
-  The write applied either way: re-read for what it made.
+  replies keep every id at every depth — new objects', comments' and posts'
+  — whole; a large reply's other fields are named in \`cut\`, and replies
+  past one result are counted in \`repliesNotShown\`. The write applied
+  either way: re-read for what it made.
+- An id or revision too long to copy into a result is left out and flagged
+  (\`revisionIdNotShown\`), never cut. A failure that says the write
+  applied means Google answered 2xx: do not repeat it; re-read instead.
 - Nothing here shares, moves, or deletes a deck.
 ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
 }
