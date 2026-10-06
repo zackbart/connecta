@@ -129,7 +129,13 @@ deployment's own connectors still never learn their caller.
   name themselves precisely. A download or export can pass `{ maxBytes }` to
   read only a prefix: the body is streamed, the rest is cancelled unread, and
   the result says whether it was `truncated`, with its HTTP status and
-  `Content-Range`, so an empty file's 416 arrives as an empty result. Google's
+  `Content-Range`, so an empty file's 416 arrives as an empty result. A write
+  is never told to retry when it may have landed: one Google accepted whose
+  reply broke off, overflowed, or redirected, and one sent with no answer at
+  all, fail as non-retryable with words saying to re-read its target first —
+  the verdict core's `write_outcome_unknown` gives an exempt program write —
+  while a read stays retryable. A product can ask how far any failed request
+  got: before sending, awaiting a response, reading a reply, or refused. Google's
   refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or

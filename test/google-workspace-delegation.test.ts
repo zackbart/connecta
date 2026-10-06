@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { attachCaller } from "../src/connector-caller.js";
 import {
+  googleOutcomeOf,
   googleReasonsOf,
   googleWorkspaceClient,
   workspaceConnection,
@@ -1091,6 +1092,139 @@ describe("the shared client reads bytes and text for the products that need them
       await expect(client().json(write, context(), { revisionGuarded: true })).rejects.toMatchObject({
         code: "invalid_args",
       });
+    });
+  });
+
+  describe("how far a failed request got, and what that means for retrying it", () => {
+    /** A 200 whose body breaks off partway, as a dropped socket does. */
+    const brokenReply = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"id":'));
+            controller.error(new TypeError("other side closed"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    const write = { method: "POST" as const, path: "/files", body: { name: "Plan" } };
+    const read = { method: "GET" as const, path: "/files/f1" };
+    const failing = (promise: Promise<unknown>) => promise.then(() => expect.unreachable(), (error) => error);
+
+    it("before-send: nothing left, nothing happened", async () => {
+      const mapped = googleWorkspaceClient({
+        provider: "Google Drive",
+        api: "Google Drive API",
+        baseUrl: "https://www.googleapis.com/drive/v3",
+        scopes: ["https://www.googleapis.com/auth/drive"],
+        maxResponseBytes: 1024,
+        notFound: "ambiguous",
+        connection: workspaceConnection("drive", {
+          purpose: "Shared files",
+          serviceAccount: account(),
+          subject: () => "alice@org.example",
+        }),
+      });
+      const unadmitted = await failing(mapped.json(write, context()));
+      expect(unadmitted.code).toBe("auth_required");
+      expect(googleOutcomeOf(unadmitted)).toEqual({ dispatched: false, phase: "before-send" });
+
+      const streamed = await failing(
+        client().json({ method: "POST", path: "/files", rawBody: new ReadableStream() }, context()),
+      );
+      expect(googleOutcomeOf(streamed)).toEqual({ dispatched: false, phase: "before-send" });
+      expect(apiCalls).toEqual([]);
+    });
+
+    it("awaiting-response: a write that got no answer is not retried; a read is", async () => {
+      const dropped = () => {
+        throw new TypeError("fetch failed");
+      };
+      apiReplies.push(dropped, dropped);
+      const drive = client();
+
+      const lost = await failing(drive.json(write, context()));
+      expect(lost).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(lost.message).toContain("no answer came back, so it may or may not have been applied");
+      expect(googleOutcomeOf(lost)).toEqual({ dispatched: true, phase: "awaiting-response" });
+
+      const retryable = await failing(drive.json(read, context()));
+      expect(retryable).toMatchObject({ code: "unavailable", retryable: true });
+      expect(googleOutcomeOf(retryable)).toEqual({ dispatched: true, phase: "awaiting-response" });
+    });
+
+    it("reading-body: a 2xx whose body breaks off reads as probably applied for a write", async () => {
+      apiReplies.push(brokenReply, brokenReply, brokenReply);
+      const drive = client();
+
+      const accepted = await failing(drive.json(write, context()));
+      expect(accepted).toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+        message:
+          "Google Drive accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.",
+      });
+      expect(googleOutcomeOf(accepted)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+
+      // The same for a write through bytes(), whose read is not JSON.
+      const viaBytes = await failing(drive.bytes({ ...write, method: "PATCH" }, context()));
+      expect(viaBytes).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(googleOutcomeOf(viaBytes)).toMatchObject({ status: 200, phase: "reading-body" });
+
+      // A read broken off the same way is safe to read again.
+      const reread = await failing(drive.bytes(read, context()));
+      expect(reread).toMatchObject({ code: "unavailable", retryable: true });
+      expect(reread.message).toContain("reading again is safe");
+      expect(googleOutcomeOf(reread)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+    });
+
+    it("reading-body: an overflowing 2xx or a redirect after a write is never a retryable refusal", async () => {
+      apiReplies.push(
+        () => new Response(new Uint8Array(4096), { status: 200 }),
+        () => new Response(null, { status: 303, headers: { Location: "https://elsewhere.example/" } }),
+        () => new Response(new Uint8Array(4096), { status: 200 }),
+      );
+      const drive = client(1024);
+
+      const overflow = await failing(drive.json(write, context()));
+      expect(overflow).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(overflow.message).toContain("accepted the request but its reply could not be read");
+      expect(googleOutcomeOf(overflow)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+
+      const redirected = await failing(drive.json({ ...write, method: "DELETE" }, context()));
+      expect(redirected).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(redirected.message).toContain("probably applied");
+      expect(googleOutcomeOf(redirected)).toEqual({ dispatched: true, status: 303, phase: "reading-body" });
+
+      // A read that overflows keeps its own, unchanged refusal.
+      const big = await failing(drive.bytes(read, context()));
+      expect(big.message).toContain("1024-byte");
+      expect(googleOutcomeOf(big)).toEqual({ dispatched: true, status: 200, phase: "reading-body" });
+    });
+
+    it("refused: Google's error status is a refusal, nothing applied", async () => {
+      const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
+      apiReplies.push(
+        () => Response.json({ error: { code: 403, message: "No.", errors: [{ reason: "domainPolicy" }] } }, { status: 403 }),
+        rejected,
+        rejected,
+      );
+      const drive = client();
+      const policy = await failing(drive.json(write, context()));
+      expect(policy.code).toBe("connector_call_failed");
+      expect(googleOutcomeOf(policy)).toEqual({ dispatched: true, status: 403, phase: "refused" });
+      expect(googleReasonsOf(policy)).toEqual(["domainPolicy"]);
+
+      // Two 401s: the replay's refusal is the one reported.
+      const unauthorized = await failing(drive.json(write, context()));
+      expect(unauthorized.code).toBe("auth_required");
+      expect(googleOutcomeOf(unauthorized)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+    });
+
+    it("knows nothing of errors the client did not throw", () => {
+      expect(googleOutcomeOf(new Error("plain"))).toBeUndefined();
+      expect(googleOutcomeOf(undefined)).toBeUndefined();
+      expect(googleOutcomeOf("text")).toBeUndefined();
     });
   });
 

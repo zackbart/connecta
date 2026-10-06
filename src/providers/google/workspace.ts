@@ -272,6 +272,52 @@ export function googleReasonsOf(error: unknown): readonly string[] {
   return error instanceof ConnectorCallError ? googleReasons.get(error) ?? [] : [];
 }
 
+/**
+ * How far a failed request got, for a product that must decide whether its
+ * write may have landed:
+ *
+ * - `before-send`: nothing left connecta — no caller, no mapped account, a
+ *   refused token, a local refusal. Nothing happened downstream.
+ * - `awaiting-response`: the request was sent and no HTTP status came back.
+ *   Google may or may not have applied it.
+ * - `reading-body`: Google answered with a status that is not an error — a
+ *   2xx, or a redirect — and the reply could not be used. A write probably
+ *   applied.
+ * - `refused`: Google answered with an error status. Nothing applied.
+ */
+interface GoogleOutcome {
+  /** Whether the request left connecta for Google's API. */
+  readonly dispatched: boolean;
+  /** The HTTP status Google answered with, when one arrived. */
+  readonly status?: number;
+  readonly phase: "before-send" | "awaiting-response" | "reading-body" | "refused";
+}
+
+/** What one attempt saw, as it happened. */
+interface SendFacts {
+  dispatched: boolean;
+  status?: number;
+  /** Google answered with an error status, which the mapper classified. */
+  refused?: boolean;
+}
+
+const googleOutcomes = new WeakMap<object, GoogleOutcome>();
+
+function outcome<T>(error: T, facts: GoogleOutcome): T {
+  if (error !== null && typeof error === "object") googleOutcomes.set(error, Object.freeze({ ...facts }));
+  return error;
+}
+
+/**
+ * How far the request behind a failure from `json`, `bytes`, or `text` got —
+ * see {@link GoogleOutcome}. `undefined` for anything the client did not
+ * throw. Read it beside the error, the way `googleReasonsOf` is read; the
+ * error itself already carries the right retry verdict.
+ */
+export function googleOutcomeOf(error: unknown): GoogleOutcome | undefined {
+  return error !== null && typeof error === "object" ? googleOutcomes.get(error) : undefined;
+}
+
 function apiFailure(
   context: FailureContext,
   status: number,
@@ -572,14 +618,74 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
   // The transport is bound to one token, so the request that a 401 answers
   // names exactly the token to forget. Building one validates the base URL
   // and ceiling at construction, where a structural mistake belongs.
-  const transport = (token: string) =>
+  const transport = (token: string, facts: SendFacts = { dispatched: false }) =>
     guardedFetch({
       provider,
       baseUrl: options.baseUrl,
       maxResponseBytes: options.maxResponseBytes,
       authenticate: () => ({ Authorization: `Bearer ${token}` }),
+      // The one place a request leaves and an answer arrives, recorded as
+      // they happen so a failure can say how far the request got.
+      fetch: async (url, init) => {
+        facts.dispatched = true;
+        const response = await fetch(url, init);
+        facts.status = response.status;
+        return response;
+      },
     });
   transport("");
+
+  /**
+   * What a failure means for a request that may have changed something. A
+   * write Google accepted, or one that left with no answer, may have landed:
+   * telling the agent to retry it invites a duplicate, so it is reported as
+   * an uncertain outcome that is not retried — the same verdict core reaches
+   * for an exempt program write (`write_outcome_unknown`). A read is safe to
+   * repeat and keeps its retryable classification.
+   */
+  function settled(error: unknown, facts: SendFacts, method: string, ctx: ConnectorContext): unknown {
+    const write = method !== "GET";
+    const status = facts.status;
+    if (facts.refused) {
+      return outcome(error, { dispatched: true, phase: "refused", ...(status === undefined ? {} : { status }) });
+    }
+    if (!facts.dispatched) return outcome(error, { dispatched: false, phase: "before-send" });
+    // The caller's own cancellation is core's to classify, not this layer's.
+    if (ctx.signal?.aborted) {
+      return outcome(error, {
+        dispatched: true,
+        phase: status === undefined ? "awaiting-response" : "reading-body",
+        ...(status === undefined ? {} : { status }),
+      });
+    }
+    if (status === undefined) {
+      const mapped = write
+        ? new ConnectorCallError(
+            "connector_call_failed",
+            `${provider} was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.`,
+            { retryable: false, cause: error },
+          )
+        : error;
+      return outcome(mapped, { dispatched: true, phase: "awaiting-response" });
+    }
+    // Google answered with a status that is not an error — a 2xx whose body
+    // broke off, overflowed, or would not parse, or a redirect — and the
+    // reply could not be used.
+    const mapped = write
+      ? new ConnectorCallError(
+          "connector_call_failed",
+          `${provider} accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.`,
+          { retryable: false, cause: error },
+        )
+      : error instanceof ConnectorCallError
+        ? error
+        : new ConnectorCallError(
+            "unavailable",
+            `${provider}'s reply broke off while it was being read; reading again is safe.`,
+            { cause: error },
+          );
+    return outcome(mapped, { dispatched: true, status, phase: "reading-body" });
+  }
 
   async function call<T>(
     request: GuardedRequest,
@@ -592,20 +698,31 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     // survive being sent twice. A stream is consumed by the first send; it
     // is a provider's wiring mistake, refused before anything leaves.
     if (typeof ReadableStream !== "undefined" && request.rawBody instanceof ReadableStream) {
-      throw new TypeError(
-        `${provider}: a Workspace request body must be replayable — pass a string, Uint8Array, ArrayBuffer, Blob, FormData, or URLSearchParams, never a ReadableStream.`,
+      throw outcome(
+        new TypeError(
+          `${provider}: a Workspace request body must be replayable — pass a string, Uint8Array, ArrayBuffer, Blob, FormData, or URLSearchParams, never a ReadableStream.`,
+        ),
+        { dispatched: false, phase: "before-send" },
       );
     }
     const headed: GuardedRequest = { ...request, headers: { Accept: accept, ...request.headers } };
     for (let attempt = 0; ; attempt += 1) {
-      // Subject first: no caller, or no mapped account, fails before any
-      // token is minted or request sent.
-      const delegated = await tokenRequest(ctx);
-      const token = await delegatedToken(delegated, ctx);
+      const facts: SendFacts = { dispatched: false };
+      let delegated: DelegatedTokenRequest;
+      let token: string;
       try {
-        return await transport(token)(headed, ctx, async (response) => {
+        // Subject first: no caller, or no mapped account, fails before any
+        // token is minted or request sent.
+        delegated = await tokenRequest(ctx);
+        token = await delegatedToken(delegated, ctx);
+      } catch (error) {
+        throw outcome(error, { dispatched: false, phase: "before-send" });
+      }
+      try {
+        return await transport(token, facts)(headed, ctx, async (response) => {
           // A bounded read answers an empty file's 416 as an empty result.
           if (!response.ok && !(headed.prefixOnly === true && isEmptyRange(response))) {
+            facts.refused = true;
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
             const mapped = apiFailure(failure, response.status, response.headers, payload, requestOptions);
@@ -614,13 +731,14 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           return await read(response);
         });
       } catch (error) {
-        if (!(error instanceof TokenRejected)) throw error;
+        if (!(error instanceof TokenRejected)) throw settled(error, facts, headed.method, ctx);
         // Only the token this request carried; a newer one stays.
         await forgetDelegatedToken(delegated, token);
-        if (attempt > 0) throw error.failure;
+        if (attempt > 0) throw settled(error.failure, facts, headed.method, ctx);
       }
     }
   }
+
 
   return {
     json: (request, ctx, requestOptions) =>
