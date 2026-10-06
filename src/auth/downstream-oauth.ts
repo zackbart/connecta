@@ -1778,26 +1778,45 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // been saved from a downstream's say-so before the credential was read.
     // Binding it to any server is the shape of GHSA-6qxp-vccf-f47h, so it is
     // retired below like a credential bound elsewhere.
-    if (stored.issuer === ctx.issuer) {
+    if (stored.issuer === ctx.issuer && (key !== "oauth:client" || (await this.tokensBoundTo(ctx.issuer)))) {
       return stampedValue(stored.value, ctx.issuer);
     }
 
     if (this.signal?.aborted) throw this.signal.reason;
+    let published: string;
     try {
-      await this.resetAuthorization();
-    } finally {
-      // The issuer-aware flow may continue after the reset. Stamp any later
-      // writes into the replacement epoch; the connector's generation check
-      // still discards this connection attempt before caching it.
+      published = await this.retireGrant();
+    } catch (error) {
+      // The flow ends here; fence anything late into whatever is current.
       this.captureGeneration(await this.generation());
+      throw error;
     }
-    // The flow goes on to register a client and write a consent URL into the
-    // replacement epoch. The discovery it works from must sit there too: the
-    // callback checks the server it returns from against it, and without it
-    // the consent the flow writes could never complete.
+    // The flow goes on to register a client and write a verifier and consent
+    // URL. Every one of those writes — and the discovery it works from, which
+    // the callback checks the server it returns from against — belongs in the
+    // epoch this retirement published. If a concurrent reset has replaced it,
+    // the writes are refused there rather than landing in another flow's
+    // epoch: that flow's consent, or the grant it already completed, is not
+    // this one's to overwrite.
+    this.captureGeneration(published);
     const discovery = this.flowDiscovery;
     if (discovery !== undefined) await this.saveDiscoveryState(discovery);
     return undefined;
+  }
+
+  /**
+   * Whether the token set beside a bound client, if any, is bound to the same
+   * server. The SDK reads the client first and builds its consent URL from
+   * that copy, so a grant is retired whole on the client read: retiring only
+   * at the token read would leave a consent URL naming a client the
+   * replacement epoch does not hold.
+   */
+  private async tokensBoundTo(issuer: string): Promise<boolean> {
+    const tokens = await this.readStoredValue(
+      "oauth:tokens",
+      (raw) => JSON.parse(raw) as OAuthTokens,
+    );
+    return tokens === undefined || tokens.stored.issuer === issuer;
   }
 
   /**
@@ -2289,15 +2308,28 @@ export class KvOAuthProvider implements OAuthClientProvider {
     operatorDisconnected = false,
     preserveClient = false,
   ): Promise<void> {
-    const reset = this.performResetAuthorization(operatorDisconnected, preserveClient);
+    const reset = this.performResetAuthorization(operatorDisconnected, preserveClient)
+      .then(() => {});
     this.onReset?.(reset);
     return reset;
   }
 
+  /**
+   * Retire the grant a flow just read, and return the epoch this retirement
+   * published — not the current one, which a concurrent reset may already
+   * have replaced.
+   */
+  private retireGrant(): Promise<string> {
+    const published = this.performResetAuthorization(false, false);
+    if (this.onReset) this.onReset(published.then(() => {}));
+    return published;
+  }
+
+  /** The epoch it published. */
   private async performResetAuthorization(
     operatorDisconnected: boolean,
     preserveClient: boolean,
-  ): Promise<void> {
+  ): Promise<string> {
     const nonce = crypto.randomUUID();
     const previous = await this.generation();
     // Only an explicitly forced restart may carry a registration forward, and
@@ -2412,6 +2444,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // lineage without racing a manifest shrink/delete. The successor copies
     // this manifest before activation and then removes this retired copy.
     if (failure) throw failure.reason;
+    return active;
   }
 
   /**

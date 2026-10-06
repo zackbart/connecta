@@ -96,6 +96,72 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(values.filter((value) => /old-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   });
 
+  it.each(["pending consent", "completed callback"])(
+    "keeps a slower retirement's flow out of the epoch a later reset published (%s)",
+    async (stage) => {
+      // Flow A retires an unbound grant and stalls just after publishing its
+      // epoch. Flow B resets past it and starts — or finishes — its own
+      // consent. When A resumes, nothing it writes may land in B's epoch.
+      const backing = memoryStorage();
+      await backing.set("oauth:tokens", JSON.stringify({
+        access_token: "old", token_type: "Bearer", refresh_token: "old-refresh",
+      }));
+      const published = deferred<void>();
+      const resume = deferred<void>();
+      let holdA = true;
+      const storage: KVStorage = { ...backing,
+        async set(key, value, options) {
+          await backing.set(key, value, options);
+          if (holdA && key === "oauth:generation") {
+            holdA = false;
+            published.resolve();
+            await resume.promise;
+          }
+        },
+      };
+      const discovery = (server: string): OAuthDiscoveryState => ({ authorizationServerUrl: server });
+      const issuerA = "https://a.example";
+      const issuerB = "https://b.example";
+
+      const a = new KvOAuthProvider("svc", storage, REDIRECT);
+      await a.saveDiscoveryState(discovery(issuerA));
+      const retiring = a.tokens({ issuer: issuerA });
+      await published.promise;
+
+      const b = new KvOAuthProvider("svc", storage, REDIRECT);
+      await b.resetAuthorization();
+      const epochB = await b.generation();
+      b.captureGeneration(epochB);
+      await b.saveDiscoveryState(discovery(issuerB));
+      await b.saveClientInformation({ client_id: "b-client", redirect_uris: [REDIRECT] }, { issuer: issuerB });
+      await b.redirectToAuthorization(new URL(`${issuerB}/authorize?client_id=b-client`));
+      if (stage === "completed callback") {
+        await b.saveTokens({ access_token: "b-access", token_type: "Bearer", refresh_token: "b-refresh" }, { issuer: issuerB });
+      }
+
+      resume.resolve();
+      expect(await retiring).toBeUndefined();
+      // A's flow carries on as the SDK's would after the retirement.
+      await a.saveClientInformation({ client_id: "a-client", redirect_uris: [REDIRECT] }, { issuer: issuerA });
+      await a.saveCodeVerifier("a-verifier");
+      await a.redirectToAuthorization(new URL(`${issuerA}/authorize?client_id=a-client`));
+
+      const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+      expect(await reader.generation()).toBe(epochB);
+      const found = await reader.discoveryState();
+      expect(found).toEqual(discovery(issuerB));
+      expect(await reader.pendingAuthorizationUrl()).toBe(`${issuerB}/authorize?client_id=b-client`);
+      // The issuer-aware read B's next refresh makes, from the discovery it
+      // finds, keeps B's client and grant rather than retiring them.
+      const ctx = { issuer: required(found?.authorizationServerUrl) };
+      expect(await reader.clientInformation(ctx)).toMatchObject({ client_id: "b-client" });
+      if (stage === "completed callback") {
+        expect(await reader.tokens(ctx)).toMatchObject({ refresh_token: "b-refresh" });
+      }
+      expect(await reader.generation()).toBe(epochB);
+    },
+  );
+
   it("retains cleanup lineage when the generation write commits before rejecting", async () => {
     const backing = memoryStorage();
     let loseAnswer = false;
@@ -4109,8 +4175,10 @@ describe("OAuthRefreshCoordinator", () => {
     const writeEntered = deferred<void>();
     const writeRelease = deferred<void>();
     let pauseRead = false;
+    let tokenReads = 0;
     const storage: KVStorage = { ...backing,
       async get(key) {
+        if (key === `principal:${owner}:conn:svc:oauth:tokens`) tokenReads++;
         if (pauseRead && key === `principal:${owner}:conn:svc:oauth:generation`) {
           pauseRead = false;
           readEntered.resolve();
@@ -4208,6 +4276,13 @@ describe("OAuthRefreshCoordinator", () => {
       readRelease.resolve();
       if (phase === "before-flight") await entered.promise;
       if (phase !== "late-answer") await bothRefused.promise;
+      if (phase === "status" || phase === "authorization" || phase === "retained-view") {
+        // Each caller reads its tokens four times before it joins or starts a
+        // flight — the bearer header, the client read's check of the token set
+        // beside it, the SDK's issuer-aware read, and the coordinator's — so
+        // the second has joined the first's flight at eight. Release only then.
+        await vi.waitFor(() => expect(tokenReads).toBeGreaterThanOrEqual(8));
+      }
       if (phase === "aborted-persistence") await second;
       release.resolve();
       writeRelease.resolve();
@@ -5717,6 +5792,43 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     expect(after.state).not.toBe("auth_required");
   });
 
+  it("retires a bound client with the unbound token set beside it, so the consent names a client it can redeem", async () => {
+    // An older release bound the client, then failed reading the tokens. The
+    // SDK reads the client first and builds its consent URL from that copy,
+    // so the whole grant must be retired on that read: retiring at the token
+    // read would leave a URL naming a client no epoch holds.
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const storage = memoryStorage();
+    await legacyGrant(storage);
+    await storage.set("oauth:client", JSON.stringify({
+      connectaOAuthVersion: 2,
+      generation: "legacy",
+      issuer: trusted,
+      value: JSON.parse(required((await storage.get("oauth:client")) ?? undefined)),
+    }));
+
+    const c = connector();
+    const started = await c.startAuth!(scope(storage), { force: false });
+    const url = new URL(required(started.authorizationUrl));
+    expect(url.searchParams.get("client_id")).toBe("trusted-client");
+    const generation = await storage.get("oauth:generation");
+    expect(generation).toMatch(/^v2:/);
+    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:client", generation))) ?? undefined)))
+      .toMatchObject({ issuer: trusted, value: { client_id: "trusted-client" } });
+
+    const state = required(url.searchParams.get("state") ?? undefined);
+    const callback = scope(storage);
+    expect(await c.verifyState!(state, callback)).toBe(true);
+    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
+    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", generation))) ?? undefined)))
+      .toMatchObject({ issuer: trusted });
+    for (const { url: requested, text } of server.requests) {
+      expect(text, requested).not.toMatch(/legacy-(refresh|secret)/);
+    }
+  });
+
   it("retires a grant from before issuer binding even beside discovery naming the server that issued it", async () => {
     // No record can prove where an unstamped grant came from, so even one that
     // happens to be right buys it nothing: it is authorized once more.
@@ -7102,9 +7214,10 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     const storage = await seededStorage();
     const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
     // A follower's last token read comes from the coordinator itself, right
-    // before it joins the flight: the bearer header read, the SDK's issuer
-    // read, then the coordinator's. Hold the owner's token request until both
-    // followers have made all three, so none can arrive after the flight ends.
+    // before it joins the flight: the bearer header read, the client read's
+    // check of the token set beside it, the SDK's issuer read, then the
+    // coordinator's. Hold the owner's token request until both followers have
+    // made all four, so none can arrive after the flight ends.
     let tokenReads = 0;
     const originalGet = storage.get.bind(storage);
     storage.get = async (key) => {
@@ -7122,7 +7235,7 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       const scopes = Array.from({ length: 3 }, () => scope(storage));
       const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
       await gate.ready;
-      await vi.waitFor(() => expect(tokenReads).toBe(9));
+      await vi.waitFor(() => expect(tokenReads).toBe(12));
       // The join itself follows one more generation read: let it land.
       await new Promise((resolve) => setTimeout(resolve, 0));
       gate.release();

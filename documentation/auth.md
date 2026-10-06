@@ -481,22 +481,33 @@ approving it is that check, as the SDK says of its own.
 
 A grant written before issuer binding shipped in v0.9.0 carries no stamp, and
 is the one case the SDK's check cannot cover: it trusts whatever stamp the
-provider hands it. Nothing can stamp it after the fact. Those releases stored
-no discovery and nothing else that names the server a grant came from, and a
-discovery record beside such a grant proves nothing either: from v0.9.0 the
-flow saves discovery before it reads credentials, so a downstream's say-so can
-sit there unbound. Such a grant is therefore retired behind a new epoch on its
-first issuer-aware read, and nothing it holds is sent; the connection is
-authorized once more. Token attachment, which reads without an issuer, still
-sends the access token to the configured resource server, as it always did.
-v0.9.0 through v0.28.1 bound such a grant to whatever its first read
-discovered, and a grant they bound keeps that binding.
+provider hands it. Nothing can stamp it after the fact. Releases before v0.9.0
+stored nothing that names the server a grant came from, and no discovery at
+all — discovery was first persisted in v0.22.3. A discovery record beside such
+a grant proves nothing either: a flow saves discovery before it reads
+credentials, so a downstream's say-so can sit there unbound. Such a grant is
+therefore retired behind a new epoch on its first issuer-aware read — a
+refresh, or a consent — and nothing it holds is sent; the connection is
+authorized once more. Until that read, token attachment, which reads without
+an issuer, still sends the stored access token to the configured resource
+server, as it always did, so a connection whose access token is still accepted
+keeps listing and calling tools, and reports healthy, until that token expires
+or is refused. v0.9.0 through v0.28.1 bound such a grant to whatever its first
+issuer-aware read discovered, and a grant they bound keeps that binding.
+
+The SDK reads the client before the tokens and builds a consent URL from that
+copy, so a grant is retired whole: a bound client beside a token set bound to
+none, or to another server, is retired on the client read, and the flow
+registers a client the replacement epoch holds.
 
 A retirement lands mid-flow, after the flow saved its discovery into the epoch
 being retired. The flow carries on — registering a client, writing a verifier
-and a consent URL — into the replacement epoch, so its discovery is carried
-there too. The callback checks the server it returns from against that
-discovery, and Continue hands back a consent that can complete.
+and a consent URL — into the epoch that retirement published, so its discovery
+is carried there too. The callback checks the server it returns from against
+that discovery, and Continue hands back a consent that can complete. Every one
+of those writes is bound to that epoch, not to whichever is current: if a
+concurrent reset has replaced it, they are refused there, and another flow's
+consent or completed grant is never overwritten.
 
 ## Management permissions
 
