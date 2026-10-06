@@ -480,7 +480,7 @@ describe("writing drafts", () => {
     expect(mime.parts).toEqual([
       { type: 'text/plain; charset="UTF-8"', text: "Bonjour à tous,\nÀ mardi." },
     ]);
-    expect(result).toEqual({ draftId: "d1", messageId: "m1", threadId: "t1", sent: false });
+    expect(result).toEqual({ draftId: "d1", messageId: "m1", threadId: "t1", saved: true, sent: false });
   });
 
   it("adds an HTML alternative beside the plain text", async () => {
@@ -522,7 +522,7 @@ describe("writing drafts", () => {
     expect(mime.headers["References"]).toBe("<m0@mail.example> <m1@mail.example> <m2@mail.example>");
     expect(mime.headers["Subject"]).toBe("Re: Elders meeting");
     expect(mime.headers["To"]).toBe("Ann Elder <ann@church.example>");
-    expect(result).toEqual({ draftId: "d2", messageId: "m3", threadId: "t1", sent: false });
+    expect(result).toEqual({ draftId: "d2", messageId: "m3", threadId: "t1", saved: true, sent: false });
   });
 
   it("refuses header injection and malformed addresses before anything is sent", async () => {
@@ -590,7 +590,7 @@ describe("writing drafts", () => {
     expect(mime.headers["In-Reply-To"]).toBe("<m2@mail.example>");
     expect(mime.headers["References"]).toBe("<m1@mail.example> <m2@mail.example>");
     expect(mime.parts[0]!.text).toBe("Revised text.");
-    expect(result).toEqual({ draftId: "d1", messageId: "m6", threadId: "t1", sent: false });
+    expect(result).toEqual({ draftId: "d1", messageId: "m6", threadId: "t1", saved: true, sent: false });
   });
 
   it.each([
@@ -928,7 +928,9 @@ describe("every result is deliverable both ways it can be called", () => {
     expect(result.body).toMatch(/more characters truncated at connecta's 192 KiB per-result limit/);
     expect(result.attachments).toHaveLength(20);
     expect(result.attachmentsOmitted).toBe(280);
-    expect(result.labelIds).toHaveLength(20);
+    // Every fixture label id is far past any Gmail id: dropped and counted, never cut.
+    expect(result.labelIds).toEqual([]);
+    expect(result.labelIdsOmitted).toBe(200);
   });
 
   it("fits a fetched 1 MB stored body under the bridge", async () => {
@@ -998,7 +1000,10 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     expect(result.id).toBeUndefined();
     expect(result.threadId).toBeUndefined();
-    expect(result.attachments).toEqual([{ filename: "a.pdf", mimeType: "application/pdf", size: 9 }]);
+    expect(result.omittedIds).toEqual(["id", "threadId"]);
+    expect(result.attachments).toEqual([
+      { filename: "a.pdf", mimeType: "application/pdf", size: 9, omittedIds: ["attachmentId"] },
+    ]);
     expect(result.body).toBe("Hello");
   });
 
@@ -1105,5 +1110,146 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     await expect(
       call(connection(), "list_labels", { cursor: first.page.nextCursor }),
     ).rejects.toMatchObject({ code: "conflict" });
+  });
+});
+
+describe("round-6: measured budgets, said omissions, declared keys", () => {
+  const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+
+  /** Every key a result carries, declared somewhere in its output schema. */
+  function undeclared(value: unknown, schema: any, path = "$"): string[] {
+    if (Array.isArray(value)) {
+      return value.flatMap((item, index) => undeclared(item, schema?.items, `${path}[${index}]`));
+    }
+    if (value === null || typeof value !== "object") return [];
+    const properties = schema?.properties ?? {};
+    return Object.entries(value).flatMap(([key, item]) =>
+      key in properties ? undeclared(item, properties[key], `${path}.${key}`) : [`${path}.${key}`],
+    );
+  }
+
+  async function schemaOf(tool: string): Promise<unknown> {
+    const tools = await connection().listTools(context());
+    return tools.find((entry) => entry.name === tool)!.outputSchema;
+  }
+
+  it.each([
+    ["get_message", { messageId: "m1" }, (body: string) => ({ id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } })],
+    [
+      "get_draft",
+      { draftId: "d1" },
+      (body: string) => ({ id: "d1", message: { id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } } }),
+    ],
+  ] as const)("%s fits a body at the exact boundary, untruncated, and cuts one character past it", async (tool, args, reply) => {
+    // The largest plain body whose whole result fits, found by measuring the
+    // real result — the accounting the tool itself must get right.
+    const fetchWith = async (length: number) => {
+      // Three bytes a character, so the result budget binds before maxBodyChars.
+      route = () => ({ body: reply("界".repeat(length)) });
+      return await call(connection(), tool, { ...args, maxBodyChars: 100_000 });
+    };
+    let low = 50_000;
+    let high = 70_000;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      const result = await fetchWith(middle);
+      if (result.bodyTruncated === false) low = middle;
+      else high = middle - 1;
+    }
+    const exact = await fetchWith(low);
+    expect(exact.bodyTruncated).toBe(false);
+    expect(exact.body.length).toBe(low);
+    expect(size(exact)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    // At the boundary the result is within a few bytes of the budget: the
+    // body was not given up to an estimate.
+    expect(RESULT_BUDGET_BYTES - size(exact)).toBeLessThan(8);
+
+    const past = await fetchWith(low + 1);
+    expect(past.bodyTruncated).toBe(true);
+    expect(size(past)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+  }, 60_000);
+
+  it("counts label ids it leaves out, and never cuts one", async () => {
+    const labelIds = [...Array.from({ length: 21 }, (_, index) => `Label_${index}`), "L".repeat(500)];
+    route = () => ({ body: { id: "m1", labelIds, payload: { mimeType: "text/plain", body: { data: b64url("x") } } } });
+    const result = await call(connection(), "get_message", { messageId: "m1" });
+    expect(result.labelIds).toEqual(labelIds.slice(0, 20));
+    expect(result.labelIdsOmitted).toBe(2);
+    expect(JSON.stringify(result)).not.toContain("…");
+  });
+
+  it("leaves an unusable label out of list_labels and counts it", async () => {
+    route = () => ({
+      body: {
+        labels: [
+          { id: "INBOX", name: "INBOX", type: "system" },
+          { id: "L".repeat(500), name: "Too long", type: "user" },
+          { id: "Label_1", name: "Elders", type: "user" },
+        ],
+      },
+    });
+    const result = await call(connection(), "list_labels");
+    expect(result.labels.map((label: { id: string }) => label.id)).toEqual(["INBOX", "Label_1"]);
+    expect(result.labelsOmitted).toBe(1);
+  });
+
+  it("reports a saved draft as saved even when Gmail's id cannot be returned", async () => {
+    route = () => ({ body: { id: "D".repeat(5000), message: { id: "m1", threadId: "t1" } } });
+    const tooLong = await call(connection(), "create_draft", { body: "x" });
+    expect(tooLong).toMatchObject({ saved: true, sent: false, messageId: "m1", omittedIds: ["draftId"] });
+    expect(tooLong.draftId).toBeUndefined();
+    expect(tooLong.note).toContain("list_drafts");
+    expect(tooLong.note).toContain("do not create it again");
+
+    route = () => ({ body: { message: { id: "m2" } } });
+    const missing = await call(connection(), "create_draft", { body: "x" });
+    expect(missing).toMatchObject({ saved: true, sent: false, messageId: "m2" });
+    expect(missing.omittedIds).toBeUndefined();
+    expect(missing.note).toContain("list_drafts");
+  });
+
+  it("declares every key its results carry, omission fields included", async () => {
+    const message = {
+      id: "M".repeat(500),
+      threadId: "t1",
+      labelIds: Array.from({ length: 25 }, (_, index) => `Label_${index}`),
+      snippet: "Hi",
+      internalDate: "1790000000000",
+      payload: {
+        mimeType: "multipart/mixed",
+        headers: [{ name: "Subject", value: "S" }],
+        parts: [
+          { mimeType: "text/plain", body: { data: b64url("Body") } },
+          ...Array.from({ length: 22 }, (_, index) => ({
+            mimeType: "application/pdf",
+            filename: `${index}.pdf`,
+            body: { attachmentId: index === 0 ? "A".repeat(5000) : `a${index}`, size: 1 },
+          })),
+        ],
+      },
+    };
+    route = (request) => {
+      const path = request.url.pathname;
+      if (path.endsWith("/threads")) return { body: { threads: [{ id: "t1" }] } };
+      if (path.endsWith("/drafts") && request.method === "GET") return { body: { drafts: [{ id: "d1" }] } };
+      if (path.endsWith("/labels")) return { body: { labels: [{ id: "INBOX", name: "INBOX", type: "system" }, { id: "X".repeat(500), name: "x" }] } };
+      if (path.includes("/drafts/")) return { body: { id: "D".repeat(500), message } };
+      if (path.includes("/threads/")) return { body: { id: "t1", messages: [message] } };
+      if (request.method === "POST") return { body: { id: "D".repeat(500), message: { id: "m9" } } };
+      return { body: message };
+    };
+    const results: [string, Record<string, unknown>][] = [
+      ["search_threads", {}],
+      ["get_thread", { threadId: "t1" }],
+      ["get_message", { messageId: "m1" }],
+      ["list_labels", {}],
+      ["list_drafts", {}],
+      ["get_draft", { draftId: "d1" }],
+      ["create_draft", { body: "x" }],
+    ];
+    for (const [tool, args] of results) {
+      const result = await call(connection(), tool, args);
+      expect(undeclared(result, await schemaOf(tool)), tool).toEqual([]);
+    }
   });
 });

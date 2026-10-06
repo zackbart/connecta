@@ -10,7 +10,7 @@
     "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy.",
-    "./providers/gmail starts at 23,130 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing and an in-memory token cache, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy."
+    "./providers/gmail starts at 26,976 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -78,8 +78,8 @@
       "maxGzip": 78076
     },
     "./providers/gmail": {
-      "baselineGzip": 23130,
-      "maxGzip": 83130
+      "baselineGzip": 26976,
+      "maxGzip": 86976
     },
     "./ui": {
       "baselineGzip": 68983,

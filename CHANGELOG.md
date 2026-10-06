@@ -83,9 +83,13 @@ deployment's own connectors still never learn their caller.
   update would delete, and one nested deeper than it inspects). Every result
   is built to stay under 192 KiB of JSON, so it reaches a program through
   `execute_code`'s 256 KiB bridge as well as `call_tool` — the whole result,
-  wrapper and cursor included: `get_thread` and `list_labels` page by cursor
-  when a thread or label set is larger, every string field is bounded, an
-  identifier far past any Gmail id is dropped rather than cut, a body past
+  wrapper and cursor included, measured as sent rather than estimated:
+  `get_thread` and `list_labels` page by cursor when a thread or label set is
+  larger, every string field is bounded, an identifier far past any Gmail id
+  is dropped rather than cut and the drop is said — `omittedIds` names the
+  field, `labelIdsOmitted`, `labelsOmitted`, and `attachmentsOmitted` count
+  what a list left out — a saved draft whose id Gmail returned unusably still
+  reads `saved: true` with a note pointing to `list_drafts`, a body past
   the limit ends with a marker at any `maxBodyChars`, and an untouched
   `raw: true` message past it is refused with the way forward. Every cursor is
   bound to the tool and arguments that issued it, and a thread or label page

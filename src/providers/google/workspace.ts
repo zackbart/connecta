@@ -714,13 +714,18 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         : outcome(mapped, { dispatched: true, status, phase: "refused" });
     }
     if (!facts.dispatched) return outcome(error, { dispatched: false, phase: "before-send" });
-    // The caller's own cancellation is core's to classify, not this layer's.
+    // The caller's own cancellation is core's to classify, not this layer's —
+    // but what Google had already said by then is still what it said.
     if (ctx.signal?.aborted) {
-      return outcome(error, {
-        dispatched: true,
-        phase: status === undefined ? "awaiting-response" : "reading-body",
-        ...(status === undefined ? {} : { status }),
-      });
+      const phase: GoogleOutcome["phase"] =
+        status === undefined
+          ? "awaiting-response"
+          : status >= 500 && write && requestOptions.idempotent !== true
+            ? "server-error"
+            : status >= 400
+              ? "refused"
+              : "reading-body";
+      return outcome(error, { dispatched: true, phase, ...(status === undefined ? {} : { status }) });
     }
     if (status === undefined) {
       const mapped = write
@@ -800,10 +805,16 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
           return await read(response);
         });
       } catch (error) {
-        if (!(error instanceof TokenRejected)) throw settled(error, facts, headed.method, ctx, requestOptions);
+        // Every 401 Google sent earns the refresh and the one replay, whether
+        // its body was read or failed the transport's checks first: what the
+        // status said about the token does not depend on the body.
+        const unauthorized =
+          error instanceof TokenRejected || (facts.status === 401 && !ctx.signal?.aborted);
+        const failed = error instanceof TokenRejected ? error.failure : error;
+        if (!unauthorized) throw settled(failed, facts, headed.method, ctx, requestOptions);
         // Only the token this request carried; a newer one stays.
         await forgetDelegatedToken(delegated, token);
-        if (attempt > 0) throw settled(error.failure, facts, headed.method, ctx, requestOptions);
+        if (attempt > 0) throw settled(failed, facts, headed.method, ctx, requestOptions);
       }
     }
   }

@@ -290,6 +290,50 @@ async function readBody(
   return { text: format === "html" ? htmlToText(decoded) : decoded, bodyFormat: format };
 }
 
+
+/**
+ * Gmail's ids are short opaque tokens — message and thread ids are sixteen
+ * hex digits, label ids `INBOX` or `Label_123`, attachment ids a few hundred
+ * characters. One far past that is not an id this connection can use. It is
+ * dropped, never cut — a cut id names nothing — and the drop is said out loud:
+ * an object lists the fields it omitted in `omittedIds`, and a list counts
+ * what it left out, so a missing id is never mistaken for an absent one.
+ */
+const ID_BYTES = 256;
+const LABEL_ID_BYTES = 128;
+const ATTACHMENT_ID_BYTES = 1024;
+
+function idOf(value: unknown, maxBytes = ID_BYTES): string | undefined {
+  const id = text(value);
+  return id !== undefined && jsonBytes(id) <= maxBytes ? id : undefined;
+}
+
+/**
+ * The usable ids among `fields`, plus `omittedIds` naming each field Gmail
+ * sent an id for that was too long to return.
+ */
+function ids(fields: Record<string, [value: unknown, maxBytes?: number]>): JsonRecord {
+  const kept: JsonRecord = {};
+  const omitted: string[] = [];
+  for (const [name, [value, maxBytes]] of Object.entries(fields)) {
+    const id = idOf(value, maxBytes);
+    if (id !== undefined) kept[name] = id;
+    else if (text(value) !== undefined) omitted.push(name);
+  }
+  return omitted.length > 0 ? { ...kept, omittedIds: omitted } : kept;
+}
+
+/** At most this many label ids per message; the rest are counted. */
+const MAX_LISTED_LABELS = 20;
+
+/** Usable label ids, at most twenty, and how many were left out either way. */
+function labelsOf(labelIds: readonly string[]): { labelIds: string[]; labelIdsOmitted?: number } {
+  const usable = labelIds.filter((id) => idOf(id, LABEL_ID_BYTES) !== undefined);
+  const listed = usable.slice(0, MAX_LISTED_LABELS);
+  const omitted = labelIds.length - listed.length;
+  return omitted > 0 ? { labelIds: listed, labelIdsOmitted: omitted } : { labelIds: listed };
+}
+
 /** Attachment rows listed per message; the rest are counted, not listed. */
 const MAX_LISTED_ATTACHMENTS = 20;
 
@@ -301,25 +345,11 @@ function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: nu
         filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
         mimeType: clipped(text(part["mimeType"]), FIELD_BYTES),
         size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
-        attachmentId: idOf(asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES),
+        ...ids({ attachmentId: [asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES] }),
       }),
     ),
     omitted: Math.max(0, all.length - MAX_LISTED_ATTACHMENTS),
   };
-}
-
-/**
- * Gmail's ids are short opaque tokens — message and thread ids are sixteen
- * hex digits, attachment ids a few hundred characters. One far past that is
- * not an id this connection can use, and is dropped rather than cut: a cut id
- * names nothing, and an uncut one could fill the whole result.
- */
-const ID_BYTES = 256;
-const ATTACHMENT_ID_BYTES = 1024;
-
-function idOf(value: unknown, maxBytes = ID_BYTES): string | undefined {
-  const id = text(value);
-  return id !== undefined && jsonBytes(id) <= maxBytes ? id : undefined;
 }
 
 /**
@@ -329,9 +359,6 @@ function idOf(value: unknown, maxBytes = ID_BYTES): string | undefined {
  */
 const FIELD_BYTES = 512;
 const HEADER_BYTES = 4 * 1024;
-const MAX_LISTED_LABELS = 20;
-/** Gmail label ids are short (`INBOX`, `Label_123`); this bounds a stranger one. */
-const LABEL_ID_BYTES = 128;
 
 /** A string cut to `maxBytes` of JSON, ending in "…" when it was cut. */
 function clipped<T extends string | undefined>(value: T, maxBytes: number): T {
@@ -359,22 +386,29 @@ function labelIdsOf(message: JsonRecord): string[] {
   return asArray(message["labelIds"]).filter((id): id is string => typeof id === "string");
 }
 
+/**
+ * One message, projected and finished into the result it belongs to, with
+ * its body cut so that the finished result — measured as it will be sent, not
+ * estimated — fits `budget`. `finish` shapes the message into what the tool
+ * returns (a draft's wrapper, say); the identity for a bare message.
+ */
 async function projectMessage(
   client: GoogleWorkspaceClient,
   ctx: ConnectorContext,
   value: unknown,
   maxBodyChars: number,
   budget: number = RESULT_BUDGET_BYTES,
+  finish: (message: JsonRecord) => JsonRecord = (message) => message,
 ): Promise<JsonRecord> {
   const message = asRecord(value);
   const payload = asRecord(message["payload"]);
   const read = await readBody(client, ctx, idOf(message["id"]), payload, maxBodyChars);
   const attachments = attachmentsOf(payload);
   const headerOf = (name: string) => clipped(header(payload, name), HEADER_BYTES);
+  const { omittedIds, ...messageIds } = ids({ id: [message["id"]], threadId: [message["threadId"]] });
   const projected = compact({
-    id: idOf(message["id"]),
-    threadId: idOf(message["threadId"]),
-    labelIds: labelIdsOf(message).slice(0, MAX_LISTED_LABELS).map((id) => clipped(id, LABEL_ID_BYTES)),
+    ...messageIds,
+    ...labelsOf(labelIdsOf(message)),
     date: isoFromMillis(message["internalDate"]),
     from: headerOf("From"),
     to: headerOf("To"),
@@ -386,20 +420,36 @@ async function projectMessage(
     inReplyTo: headerOf("In-Reply-To"),
     snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), HEADER_BYTES) : undefined,
     body: "",
-    bodyTruncated: true,
+    bodyTruncated: false,
     bodyFormat: read.bodyFormat,
     attachments: attachments.listed.length > 0 ? attachments.listed : undefined,
     attachmentsOmitted: attachments.omitted > 0 ? attachments.omitted : undefined,
+    omittedIds,
   });
-  if (!("text" in read)) return { ...projected, body: read.body, bodyTruncated: read.bodyTruncated };
-  // Cap by the caller's characters, then by what the message may weigh in
-  // its result: `budget` is what is left once the result's own wrapper is
-  // counted, so a message is deliverable inside execute_code at any
-  // maxBodyChars.
+  if (!("text" in read)) return finish({ ...projected, body: read.body, bodyTruncated: read.bodyTruncated });
+  // Cap by the caller's characters, then by bytes: cut, measure the finished
+  // result, and cut again by exactly what it is over, until it fits. Every
+  // field is counted as sent — `false` is a byte longer than `true` — so a
+  // body at the exact boundary is not a byte over.
   const byCharacters = capped(read.text, maxBodyChars);
-  const body = clampText(byCharacters.body, Math.max(2, budget - jsonBytes(projected) + jsonBytes("")), resultLimitMarker);
-  return { ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body };
+  const build = (body: string) =>
+    finish({ ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body });
+  let body = byCharacters.body;
+  let result = build(body);
+  for (let round = 0; round < 8; round += 1) {
+    const over = jsonBytes(result) - budget;
+    if (over <= 0) return result;
+    const target = Math.max(2, jsonBytes(body) - over);
+    const shorter = clampText(byCharacters.body, target, resultLimitMarker);
+    if (shorter === body) break;
+    body = shorter;
+    result = build(body);
+  }
+  // Nothing left to cut: the metadata alone is past the budget, and the
+  // tool's final size check refuses it rather than sending it.
+  return result;
 }
+
 
 // --- Cursors -------------------------------------------------------------------------
 
@@ -541,14 +591,14 @@ function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecor
   }
   const snippet = text(listedSnippet) ?? text(messages[messages.length - 1]?.["snippet"]);
   return compact({
-    id: idOf(thread["id"]),
+    ...ids({ id: [thread["id"]] }),
     subject: clipped(header(first, "Subject"), FIELD_BYTES),
     from: clipped(header(first, "From"), FIELD_BYTES),
     lastFrom: messages.length > 1 ? clipped(header(last, "From"), FIELD_BYTES) : undefined,
     messageCount: messages.length,
     lastMessageAt: isoFromMillis(latest),
     unread: labels.has("UNREAD"),
-    labelIds: [...labels].slice(0, MAX_LISTED_LABELS).map((id) => clipped(id, LABEL_ID_BYTES)),
+    ...labelsOf([...labels]),
     snippet: snippet ? clipped(decodeEntities(snippet), FIELD_BYTES) : undefined,
   });
 }
@@ -558,9 +608,7 @@ function projectDraftSummary(value: unknown): JsonRecord {
   const message = asRecord(draft["message"]);
   const payload = asRecord(message["payload"]);
   return compact({
-    draftId: idOf(draft["id"]),
-    messageId: idOf(message["id"]),
-    threadId: idOf(message["threadId"]),
+    ...ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] }),
     subject: clipped(header(payload, "Subject"), FIELD_BYTES),
     to: clipped(header(payload, "To"), FIELD_BYTES),
     updatedAt: isoFromMillis(message["internalDate"]),
@@ -883,15 +931,25 @@ function oneLine(value: string | undefined): string | undefined {
   return value?.replace(/[\r\n]+\s*/g, " ").trim();
 }
 
-/** A draft's id, its message id, and the thread Gmail placed it in. */
+/**
+ * A draft's id, its message id, and the thread Gmail placed it in. Gmail
+ * answered 2xx, so the draft was saved whatever its answer looks like: an id
+ * it sent that cannot be returned, or none at all, still reads as saved —
+ * with `draftId` absent, `omittedIds` or `note` saying why, and where to find
+ * it — never as a failure that invites saving it again.
+ */
 function projectSavedDraft(value: unknown): JsonRecord {
   const draft = asRecord(value);
   const message = asRecord(draft["message"]);
+  const saved = ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] });
   return compact({
-    draftId: idOf(draft["id"]),
-    messageId: idOf(message["id"]),
-    threadId: idOf(message["threadId"]),
+    ...saved,
+    saved: true,
     sent: false,
+    note:
+      saved["draftId"] === undefined
+        ? "Gmail saved the draft but returned no id this connection can carry. Find it with list_drafts before changing it; do not create it again."
+        : undefined,
   });
 }
 
@@ -1017,6 +1075,9 @@ const PAGE_SCHEMA: JsonSchema = {
   required: ["hasMore", "nextCursor"],
 };
 
+/** Fields Gmail sent an id for that was too long to return; see `ids()`. */
+const OMITTED_IDS_SCHEMA: JsonSchema = { type: "array", items: { type: "string" } };
+
 const ATTACHMENT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -1024,6 +1085,7 @@ const ATTACHMENT_SCHEMA: JsonSchema = {
     mimeType: { type: "string" },
     size: { type: "integer" },
     attachmentId: { type: "string" },
+    omittedIds: OMITTED_IDS_SCHEMA,
   },
 };
 
@@ -1031,6 +1093,8 @@ const MESSAGE_PROPERTIES: Record<string, JsonSchema> = {
   id: { type: "string" },
   threadId: { type: "string" },
   labelIds: { type: "array", items: { type: "string" } },
+  labelIdsOmitted: { type: "integer" },
+  omittedIds: OMITTED_IDS_SCHEMA,
   date: { type: "string" },
   from: { type: "string" },
   to: { type: "string" },
@@ -1059,9 +1123,12 @@ const SAVED_DRAFT_SCHEMA: JsonSchema = {
     draftId: { type: "string" },
     messageId: { type: "string" },
     threadId: { type: "string" },
+    saved: { type: "boolean", const: true },
     sent: { type: "boolean", const: false },
+    omittedIds: OMITTED_IDS_SCHEMA,
+    note: { type: "string" },
   },
-  required: ["draftId", "sent"],
+  required: ["saved", "sent"],
 };
 
 // --- Tools ------------------------------------------------------------------------
@@ -1144,6 +1211,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
                 lastMessageAt: { type: "string" },
                 unread: { type: "boolean" },
                 labelIds: { type: "array", items: { type: "string" } },
+                labelIdsOmitted: { type: "integer" },
+                omittedIds: OMITTED_IDS_SCHEMA,
                 snippet: { type: "string" },
               },
             },
@@ -1338,6 +1407,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
           },
+          labelsOmitted: { type: "integer" },
           page: PAGE_SCHEMA,
         },
         required: ["labels", "page"],
@@ -1353,12 +1423,21 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // with no paging of its own, so connecta pages them, budgeting the
         // whole result: wrapper and longest cursor first, then rows.
         const labels: JsonRecord[] = [];
-        let bytes = jsonBytes({ labels: [], page: RESERVED_PAGE });
+        // A label whose id is too long to use is left out and counted, never
+        // returned with a cut id that would name nothing.
+        let omitted = 0;
+        let bytes = jsonBytes({ labels: [], labelsOmitted: all.length, page: RESERVED_PAGE });
         let next = start;
         while (next < all.length) {
           const label = asRecord(all[next]);
+          const id = idOf(label["id"], LABEL_ID_BYTES);
+          if (id === undefined) {
+            omitted += 1;
+            next += 1;
+            continue;
+          }
           const row = compact({
-            id: idOf(label["id"], LABEL_ID_BYTES),
+            id,
             name: clipped(text(label["name"]), FIELD_BYTES),
             type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
           });
@@ -1369,10 +1448,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           next += 1;
         }
         const hasMore = next < all.length;
-        return {
+        return compact({
           labels,
+          labelsOmitted: omitted > 0 ? omitted : undefined,
           page: { hasMore, nextCursor: hasMore ? await cursorAfter(ids, next, "list_labels", call) : null },
-        };
+        });
       },
     },
     {
@@ -1399,6 +1479,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
                 to: { type: "string" },
                 updatedAt: { type: "string" },
                 snippet: { type: "string" },
+                omittedIds: OMITTED_IDS_SCHEMA,
               },
             },
           },
@@ -1468,19 +1549,19 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
+        // The draft was read by the id the caller passed, so that is its id
+        // whatever Gmail echoed back.
         const draftId = idOf(draft["id"]) ?? args["draftId"];
-        // The wrapper adds the draft id and renames id to messageId; the
-        // message is projected into what is left.
-        const wrapper = jsonBytes({ draftId, messageId: "" }) - jsonBytes({ id: "" });
-        const { id, ...message } = await projectMessage(
+        // A draft's message id changes on every update; the draft id does not.
+        // The body is fitted against this finished shape, wrapper and all.
+        return await projectMessage(
           client,
           ctx,
           draft["message"],
           bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS),
-          RESULT_BUDGET_BYTES - wrapper,
+          RESULT_BUDGET_BYTES,
+          ({ id, ...message }) => compact({ draftId, messageId: id, ...message }),
         );
-        // A draft's message id changes on every update; the draft id does not.
-        return compact({ draftId, messageId: id, ...message });
       },
     },
     {

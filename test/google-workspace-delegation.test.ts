@@ -1307,6 +1307,71 @@ describe("the shared client reads bytes and text for the products that need them
       });
     });
 
+    it("refreshes and replays once on a 401 whose body is past the ceiling", async () => {
+      apiReplies.push(
+        () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
+        () => Response.json({ id: "f1" }),
+      );
+      await expect(client(1024).json(write, context())).resolves.toEqual({ id: "f1" });
+      expect(tokenCalls).toHaveLength(2);
+      expect(apiCalls.map((entry) => entry.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
+    });
+
+    it("answers auth_required, refused, when the replay's oversized 401 repeats", async () => {
+      const oversized401 = () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } });
+      apiReplies.push(oversized401, oversized401);
+      const failure = await failing(client(1024).json(write, context()));
+      expect(failure.code).toBe("auth_required");
+      expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+      expect(apiCalls).toHaveLength(2);
+    });
+
+    describe("a cancellation that lands after Google's status", () => {
+      /**
+       * A caller whose signal reads as aborted from the moment Google's
+       * answer arrives — between the status and the transport's checks of
+       * the body, where a real cancellation can land.
+       */
+      function cancelledOnAnswer(reply: () => Response) {
+        const controller = new AbortController();
+        let answered = false;
+        const signal = new Proxy(controller.signal, {
+          get(target, key) {
+            if (key === "aborted") return answered;
+            if (key === "reason") return new Error("caller left");
+            const value: unknown = Reflect.get(target, key, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        apiReplies.push(() => {
+          answered = true;
+          return reply();
+        });
+        return context(undefined, signal);
+      }
+      const oversized = (status: number) => () =>
+        new Response(new Uint8Array(4096), { status, headers: { "Content-Length": "4096" } });
+
+      it.each([
+        ["POST", 403, "refused"],
+        ["POST", 503, "server-error"],
+        ["GET", 503, "refused"],
+        ["POST", 200, "reading-body"],
+      ] as const)("%s → %i records %s", async (method, status, phase) => {
+        const ctx = cancelledOnAnswer(oversized(status));
+        const failure = await failing(client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx));
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase });
+      });
+
+      it("keeps an idempotent write's 5xx a refusal", async () => {
+        const ctx = cancelledOnAnswer(oversized(503));
+        const failure = await failing(
+          client(1024).json({ method: "PUT", path: "/files/f1", body: {} }, ctx, { idempotent: true }),
+        );
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 503, phase: "refused" });
+      });
+    });
+
     it("knows nothing of errors the client did not throw", () => {
       expect(googleOutcomeOf(new Error("plain"))).toBeUndefined();
       expect(googleOutcomeOf(undefined)).toBeUndefined();
