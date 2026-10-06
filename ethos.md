@@ -31,15 +31,16 @@ carries them.
 
 | Decision | Verdict | Why |
 | --- | --- | --- |
-| OpenAPI / GraphQL ingestion | refused | the disease is a document-authored tool nobody chose; hand-written literals, even through a shared factory, are still authorship |
-| Multi-tenancy / account model | refused | one deployment per tenant; inbound auth owns identity |
-| Approvals and pauses | removed | hosts approve per call, so under always-allow the resume prompt was a rubber stamp that cost a round trip and a replay ([#672](https://github.com/zackbart/connecta/issues/672), superseding [#565](https://github.com/zackbart/connecta/issues/565)) |
+| OpenAPI/GraphQL ingestion | refused | the disease is a document-authored tool nobody chose; hand-written literals, even through a shared factory, are still authorship |
+| Multi-tenancy/account model | refused | one deployment per tenant; inbound auth owns identity |
+| Approvals and pauses | removed | hosts approve per call; the always-allow resume prompt was a rubber stamp costing a round trip and replay ([#672](https://github.com/zackbart/connecta/issues/672), superseding [#565](https://github.com/zackbart/connecta/issues/565)) |
 | Approval exemptions | accepted | config-only, program-only, never read-only elsewhere ([#566](https://github.com/zackbart/connecta/issues/566)) |
 | Runtime connector registration | refused | config-as-code is the security model |
 | Optional deployment modules | accepted | typed slots select UI, activity, vault, and inbound auth; core keeps discovery, execution, invocation, and enforcement |
 | Artifacts module | accepted | a built-in connector for team-only sandboxed pages over stored JSON; immutable versions let writes skip approval. Supersedes [#287](https://github.com/zackbart/connecta/issues/287) |
-| Plugin lifecycle, provider registry, or marketplace | refused | modules are deployment code, not runtime installs; prebuilt connections are imports, discovered in docs ([#297](https://github.com/zackbart/connecta/issues/297)) |
+| Plugin lifecycle, provider registry, or marketplace | refused | modules are deployment code, not runtime installs; prebuilt connections are documented imports ([#297](https://github.com/zackbart/connecta/issues/297)) |
 | OAuth on `api()` | accepted | OAuth-only APIs; static grants reuse `remoteMcp()` machinery, core's callback route |
+| Delegated subjects | accepted | config maps callers to downstream accounts; deployment connectors stay caller-blind ([#678](https://github.com/zackbart/connecta/issues/678)) |
 | Connecta-issued access tokens | accepted | optional /auth/access-tokens preserves v0.23 secrets; config owns grants, interactive management needs explicit permission ([#619](https://github.com/zackbart/connecta/issues/619)) |
 | Expanded Notion page create/update options | refused | different workflows, not missing fields; use `api()` ([#408](https://github.com/zackbart/connecta/issues/408)) |
 | Resources, prompts, and downstream MCP Apps templates | refused | tools only; clients own presentation ([#266](https://github.com/zackbart/connecta/issues/266)) |
@@ -47,9 +48,9 @@ carries them.
 | Repository formatter | refused | style is authored, not enforced |
 | Host-side projection or paging of program results | refused | a program projects: heuristics drop fields invisibly, paging rewards unprojected returns ([#223](https://github.com/zackbart/connecta/issues/223)) |
 | Native Tasks for oversized results | refused | tasks solve duration, `get_result` solves size ([#176](https://github.com/zackbart/connecta/issues/176)) |
-| Widening the `Executor` result contract | refused | `{ result, error?, logs? }` is the `@cloudflare/codemode` parity guarantee ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Widening the `Executor` result contract | refused | `{result, error?, logs?}` is the `@cloudflare/codemode` parity guarantee ([#267](https://github.com/zackbart/connecta/issues/267)) |
 | Erasable TypeScript in `execute_code` | refused | a 24 MB core dependency, no measured agent benefit ([#419](https://github.com/zackbart/connecta/issues/419)) |
-| Guest-minted `resource` / `resource_link` blocks | refused | no program mints a URI a client may dereference ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| Guest-minted `resource`/`resource_link` blocks | refused | no program mints a URI a client may dereference ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Provenance tracking for emitted content | refused | everything a program emits is program output ([#267](https://github.com/zackbart/connecta/issues/267)) |
 | Result sampling on the catalog surface | refused | sampling is execution, not a catalog read ([#282](https://github.com/zackbart/connecta/issues/282)) |
 | Legacy embedded `UIResource` delivery | refused | superseded upstream, rendered by no client we face ([#266](https://github.com/zackbart/connecta/issues/266)) |
@@ -87,7 +88,7 @@ Tests beside subsystem documentation enforce these.
 - **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath; Effect is the one hard dependency, named by no published type.
 - **Human routes manage auth, never capability.** Visibility grants use, not administration. Auth mutations need separate config-derived permissions, denied by default; activity reads its own. Artifact viewing respects connector grants and cannot invoke tools.
 - **Omitted modules do no work.** Core imports no UI bundle, vault, activity, artifacts, or bearer implementation. OAuth callbacks work without UI.
-- **Status reads do not start authorization.** Only an explicit authorized action starts OAuth, never a page load.
+- **Status reads do not start authorization.** Only an explicit authorized action starts OAuth.
 - **Structural mistakes throw at construction.** Booting into the wrong shape is worse than not booting.
 
 Connecta simplifies [executor](https://github.com/UsefulSoftwareCo/executor).

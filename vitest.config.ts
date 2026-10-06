@@ -91,6 +91,8 @@ export const WORKERS_SUITES = [
   "test/planning-center-provider.test.ts",
   "test/overflow-provider.test.ts",
   "test/tithely-provider.test.ts",
+  "test/google-workspace-delegation.test.ts",
+  "test/gmail-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

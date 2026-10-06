@@ -21,6 +21,7 @@
     "src/providers/planning-center.ts",
     "src/providers/overflow.ts",
     "src/providers/tithely.ts",
+    "src/providers/gmail.ts",
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",

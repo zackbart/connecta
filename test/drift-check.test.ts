@@ -425,6 +425,115 @@ describe("maintainer drift check", () => {
     expect(`${broken.stdout}${broken.stderr}`).toContain("no longer embeds an OpenAPI definition");
   });
 
+  it("reads a Google Discovery document for a Workspace provider, scopes included", async () => {
+    // Workspace APIs publish Discovery, not OpenAPI. The checker re-keys its
+    // methods by full path, resolves its bare $refs into `schemas`, and also
+    // reports a touched method that stops accepting the provider's scopes.
+    const manifest = await committed("gmail") as Manifest & { scopes: string[] };
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-discovery-"));
+    temporary.push(directory);
+    await writeFile(
+      join(directory, "gmail-endpoints.json"),
+      JSON.stringify({
+        ...manifest,
+        endpoints: manifest.endpoints.map(({ method, path, specRevision }) => ({ method, path, specRevision })),
+      }),
+    );
+    const discovery = (revision: string, draftField = "string", dropScope?: string) => ({
+      kind: "discovery#restDescription",
+      discoveryVersion: "v1",
+      revision,
+      rootUrl: "https://gmail.googleapis.com/",
+      servicePath: "",
+      schemas: {
+        Draft: {
+          id: "Draft",
+          type: "object",
+          description: "prose that must not matter",
+          properties: { id: { type: draftField }, message: { $ref: "Message" } },
+        },
+        Message: {
+          id: "Message",
+          type: "object",
+          properties: { raw: { type: "string" }, payload: { $ref: "MessagePart" } },
+        },
+        MessagePart: {
+          id: "MessagePart",
+          type: "object",
+          properties: { parts: { type: "array", items: { $ref: "MessagePart" } } },
+        },
+      },
+      resources: {
+        users: {
+          resources: Object.fromEntries(
+            manifest.endpoints.map((endpoint, index) => [
+              `r${index}`,
+              {
+                methods: {
+                  call: {
+                    httpMethod: endpoint.method,
+                    path: endpoint.path.slice(1),
+                    flatPath: endpoint.path.slice(1),
+                    parameters: {
+                      userId: { type: "string", location: "path", required: true, enumDescriptions: ["prose"] },
+                    },
+                    response: { $ref: "Draft" },
+                    // Dropping leaves the draft write on full-mailbox access
+                    // alone, which no delegated grant here includes.
+                    scopes:
+                      dropScope !== undefined && endpoint.method === "POST"
+                        ? ["https://mail.google.com/"]
+                        : [...manifest.scopes, "https://mail.google.com/"],
+                  },
+                },
+              },
+            ]),
+          ),
+        },
+      },
+    });
+    const source = join(directory, "gmail-discovery.json");
+    const check = (extra: string[]) =>
+      spawnSync(
+        process.execPath,
+        [checker, "--specs", "--manifest-dir", directory, "--provider", "gmail", "--spec", `gmail=${source}`, ...extra],
+        { encoding: "utf8" },
+      );
+
+    await writeFile(source, JSON.stringify(discovery("20260101")));
+    expect(check(["--record"]).status).toBe(0);
+    const recorded = JSON.parse(await readFile(join(directory, "gmail-endpoints.json"), "utf8"));
+    expect(recorded.scopes).toEqual(manifest.scopes);
+    expect(recorded.endpoints.every((row: Endpoint) => row.specRevision === "20260101")).toBe(true);
+
+    // A new revision with the same contract, reworded prose, is quiet.
+    await writeFile(source, JSON.stringify(discovery("20260202")));
+    const quiet = check(["--json"]);
+    expect(quiet.status).toBe(0);
+    expect(findings(quiet.stdout, "gmail")).toEqual([]);
+
+    // A referenced schema changing moves every contract that reaches it.
+    await writeFile(source, JSON.stringify(discovery("20260303", "integer")));
+    const drifted = check(["--json"]);
+    expect(drifted.status).toBe(1);
+    expect(new Set(findings(drifted.stdout, "gmail").map((finding) => finding.kind))).toEqual(
+      new Set(["contract-changed"]),
+    );
+
+    // A touched method that stops accepting the provider's scopes is reported.
+    await writeFile(source, JSON.stringify(discovery("20260101", "string", "drop")));
+    const scoped = check(["--json"]);
+    expect(scoped.status).toBe(1);
+    expect(findings(scoped.stdout, "gmail")).toEqual([
+      expect.objectContaining({ kind: "scope-dropped", method: "POST", path: "/gmail/v1/users/{userId}/drafts" }),
+    ]);
+
+    await writeFile(source, JSON.stringify(specificationFor(manifest)));
+    const wrong = check([]);
+    expect(wrong.status).toBe(2);
+    expect(`${wrong.stdout}${wrong.stderr}`).toContain("not a Google Discovery document");
+  });
+
   it("has no credentialed hosted mode", () => {
     const result = spawnSync(process.execPath, [checker, "--hosted"], {
       encoding: "utf8",
@@ -792,7 +901,7 @@ describe("maintainer drift check", () => {
   });
 
   it("commits one well-formed row per touched endpoint", async () => {
-    for (const provider of ["cloudflare", "notion", "ccb"]) {
+    for (const provider of ["cloudflare", "notion", "ccb", "gmail"]) {
       const manifest = await committed(provider);
       expect(manifest.provider).toBe(provider);
       expect(manifest.specification.url).toMatch(/^https:\/\//);

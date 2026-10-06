@@ -386,6 +386,18 @@ view, the way the OAuth sealer rides beside it — readable only by in-repo
 code, set from the authorization and never from arguments
 (`test/identity-scope.test.ts`, `test/artifacts-connector.test.ts`).
 
+The same channel has exactly one other reader: maintained providers that act
+as the caller downstream. Google Workspace domain-wide delegation
+(`src/providers/google/`, first consumed by `./providers/gmail`) hands the
+admitted identity to a deployment-config `subject` function and mints a
+service-account token as whatever Workspace address it returns; no caller, or
+no address, fails `auth_required` before any request leaves. The provider
+never chooses the account and a deployment's own connector still cannot read
+the caller (ethos.md, config-mapped delegated subjects;
+`test/google-workspace-delegation.test.ts`). Its tokens live in a bounded
+module-level map, in memory only, and a mint in flight is shared only as a
+verdict: a joiner never inherits the owner's cancellation.
+
 ## Import-graph purity
 
 Nothing reachable from `src/index.ts` may import a `node:` builtin, so the same

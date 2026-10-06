@@ -275,6 +275,8 @@ try {
     "dist/providers/breeze.d.ts",
     "dist/providers/basecamp.js",
     "dist/providers/basecamp.d.ts",
+    "dist/providers/gmail.js",
+    "dist/providers/gmail.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -577,6 +579,27 @@ if (breezeConnection.id !== "church" || breezeConnection.kind !== "api") {
 if (!breezeConnection.staticTools?.length) {
   throw new Error("Breeze provider published no tools");
 }
+const gmailProvider = await import("@zackbart/connecta/providers/gmail");
+if (typeof gmailProvider.gmail !== "function") {
+  throw new Error("missing Gmail provider constructor");
+}
+const gmailConnection = gmailProvider.gmail("mail", {
+  purpose: "package smoke",
+  serviceAccount: {
+    clientEmail: "smoke@project.iam.gserviceaccount.com",
+    privateKey:
+      "-----BEGIN PRIVATE KEY-----" +
+      btoa(String.fromCharCode(48) + "k".repeat(95)) +
+      "-----END PRIVATE KEY-----",
+  },
+  subject: () => undefined,
+});
+if (gmailConnection.id !== "mail" || gmailConnection.kind !== "api") {
+  throw new Error("Gmail provider did not return an api() connector");
+}
+if (gmailConnection.staticTools?.some((tool) => /send/.test(tool.name))) {
+  throw new Error("Gmail provider published a send tool");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -629,6 +652,9 @@ for (const name of [
   "BREEZE_HOST_SUFFIX",
   "basecamp",
   "BASECAMP_MCP_ENDPOINT",
+  "gmail",
+  "GMAIL_API_BASE_URL",
+  "GMAIL_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

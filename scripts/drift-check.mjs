@@ -27,6 +27,18 @@
 // (`/<app>/v2/documentation`), and like a deprecation it is reported as a
 // transition, so a reviewed publication stops being news once recorded.
 //
+// Google Workspace products publish no OpenAPI document. Each publishes a
+// credential-free Discovery document instead
+// (`https://<api>.googleapis.com/$discovery/rest?version=<v>`), and a manifest
+// whose specification `format` is `google-discovery` is read through it: the
+// methods are re-keyed by HTTP method and full path, their `$ref`s pointed at
+// the document's `schemas`, and the result digested exactly like any other
+// provider's operations. Such a manifest also lists the `scopes` its provider
+// requests, and a touched method that no longer accepts any of them is a
+// finding of its own — under domain-wide delegation that is a call that will
+// start failing for every user at once. Adding a Workspace product is a
+// manifest and a `SPEC_PROVIDERS` entry, nothing more.
+//
 // Published specifications are drift evidence and nothing else. Nothing here
 // generates a tool, and no runtime module reads a spec — schema ingestion stays
 // refused (ethos.md).
@@ -60,6 +72,7 @@ const SPEC_PROVIDERS = [
   "overflow",
   "tithely",
   "ccb",
+  "gmail",
 ];
 /** Providers whose manifest names one specification per product and version. */
 const VERSIONED_SPEC_PROVIDERS = new Set(["planning-center"]);
@@ -403,10 +416,111 @@ async function loadSpecification(provider, manifest, options) {
       ),
     };
   }
+  const document = await loadJson(`${provider}'s published specification`, source);
   return {
     source,
-    document: await loadJson(`${provider}'s published specification`, source),
+    document:
+      manifest.specification.format === "google-discovery"
+        ? discoveryDocument(provider, document)
+        : document,
   };
+}
+
+/** Discovery's bare `$ref: "Draft"` as a pointer into the document's schemas. */
+function discoveryRefs(value) {
+  if (Array.isArray(value)) return value.map(discoveryRefs);
+  if (value === null || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    // Prose like `description`, which `inline` already drops wherever it sits.
+    if (key === "enumDescriptions") continue;
+    out[key] =
+      key === "$ref" && typeof item === "string" && !item.startsWith("#")
+        ? `#/schemas/${item}`
+        : discoveryRefs(item);
+  }
+  return out;
+}
+
+/**
+ * A Google Discovery document in the shape the comparison reads: `paths`
+ * keyed by `/<servicePath><flatPath>` and lower-case method, each operation's
+ * parameters sorted by name, its request and response as JSON content, and
+ * the document's `revision` as the version. The method's accepted OAuth scopes
+ * ride along as `x-scopes`, which the digest ignores like every extension and
+ * the scope check reads.
+ */
+function discoveryDocument(provider, discovery) {
+  if (
+    discovery === null ||
+    typeof discovery !== "object" ||
+    discovery.kind !== "discovery#restDescription" ||
+    typeof discovery.resources !== "object"
+  ) {
+    throw new UnavailableError(
+      `${provider}'s published specification is not a Google Discovery document`,
+    );
+  }
+  const servicePath = discovery.servicePath ?? "";
+  const paths = {};
+  const json = (ref) => ({
+    content: { "application/json": { schema: discoveryRefs({ $ref: ref }) } },
+  });
+  const visit = (resource) => {
+    for (const method of Object.values(resource.methods ?? {})) {
+      const path = `/${servicePath}${method.flatPath ?? method.path}`.replace(/\/{2,}/g, "/");
+      const verb = String(method.httpMethod).toLowerCase();
+      paths[path] ??= {};
+      if (paths[path][verb]) {
+        throw new UnavailableError(
+          `${provider}'s Discovery document defines ${verb.toUpperCase()} ${path} twice`,
+        );
+      }
+      paths[path][verb] = {
+        ...(method.deprecated === true ? { deprecated: true } : {}),
+        "x-scopes": Array.isArray(method.scopes) ? method.scopes : [],
+        parameters: Object.entries(method.parameters ?? {})
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([name, parameter]) => ({ name, ...discoveryRefs(parameter) })),
+        ...(method.request?.$ref ? { requestBody: json(method.request.$ref) } : {}),
+        responses: { 200: method.response?.$ref ? json(method.response.$ref) : {} },
+      };
+    }
+    for (const child of Object.values(resource.resources ?? {})) visit(child);
+  };
+  visit(discovery);
+  return {
+    openapi: "3.1.0",
+    info: { version: String(discovery.revision ?? "unknown") },
+    paths,
+    schemas: discoveryRefs(discovery.schemas ?? {}),
+  };
+}
+
+/**
+ * Under domain-wide delegation the provider's scopes are a grant an admin made
+ * once, so a touched method that stops accepting all of them fails for every
+ * user at once. The finding is the state, not a transition: unlike a
+ * deprecation, there is nothing to acknowledge — the provider has to change.
+ */
+function scopeFindings(manifest, document) {
+  if (!Array.isArray(manifest.scopes)) return [];
+  const findings = [];
+  for (const endpoint of manifest.endpoints) {
+    const operation = document.paths?.[endpoint.path]?.[endpoint.method.toLowerCase()];
+    if (!operation) continue;
+    const accepted = operation["x-scopes"] ?? [];
+    if (!manifest.scopes.some((scope) => accepted.includes(scope))) {
+      findings.push({
+        method: endpoint.method,
+        path: endpoint.path,
+        specRevision: endpoint.specRevision,
+        kind: "scope-dropped",
+        detail: `the method no longer accepts any scope the provider requests (${manifest.scopes.join(", ")})`,
+      });
+    }
+  }
+  return findings;
 }
 
 async function loadJson(label, source) {
@@ -547,7 +661,12 @@ function checkSpecProvider(provider, manifest, specification) {
     document: specification.document,
     revision,
   }));
-  return { provider, revision, findings, recorded };
+  return {
+    provider,
+    revision,
+    findings: [...findings, ...scopeFindings(manifest, specification.document)],
+    recorded,
+  };
 }
 
 /**

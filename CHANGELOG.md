@@ -47,6 +47,65 @@ more than 100 messages `400` (`-32600`) where it was accepted. Every client the
 SDK builds sends the header; a 2025-era client that sends neither the header
 nor the 2026-07-28 claim is served exactly as before (#687).
 
+This release adds org-wide Google Workspace access with no per-user consent
+step, and its first consumer: a draft-only Gmail connection. A Workspace super
+admin grants a service account domain-wide delegation once; the deployment maps
+each admitted identity to a Workspace address in config; and the provider mints
+a short-lived token as that user on every call. It is the second sanctioned use
+of the in-repo caller channel, recorded in `ethos.md` as config-mapped delegated
+subjects ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing
+breaks and nothing changes for a deployment that does not import
+`./providers/gmail`: the shared delegation layer has no export of its own, and a
+deployment's own connectors still never learn their caller.
+
+### Added
+
+- **Draft-only Gmail connection.** `@zackbart/connecta/providers/gmail`
+  exports `gmail(id, { purpose, serviceAccount, subject, title?,
+  instructions?, callAdmission?, maxResultBytes?, baseUrl? })`, plus
+  `GMAIL_SCOPES` and `GMAIL_API_BASE_URL`. Eight hand-written tools:
+  `search_threads` (Gmail search syntax, cursor-paged, each thread summarized),
+  `get_thread`, `get_message` (plain-text bodies decoded from their charset,
+  HTML converted only when no text part exists, capped by `maxBodyChars` with an
+  explicit marker, attachment metadata only), `list_labels`, `list_drafts`,
+  `get_draft`, `create_draft` (To/Cc/Bcc, RFC 2047-encoded headers, an optional
+  HTML alternative, and `replyToMessageId`, which sets the thread,
+  `In-Reply-To`, `References`, a `Re:` subject, and the recipient), and
+  `update_draft` (replaces the body, keeps the thread, reply headers, and any
+  header not restated). There is no send, delete, or label tool and no raw
+  hatch; `gmail.compose` technically permits sending, and the tool surface is
+  what forbids it. `create_draft` is an additive write and `update_draft` a
+  destructive one; neither is exempt from approval unless the deployment says
+  so in `execute.approval`. The transport is confined beneath `users/me`, so the
+  token's subject is the only mailbox a request can reach. Setup — Cloud
+  project, API, service account with no IAM roles, JSON key (and the
+  `iam.disableServiceAccountKeyCreation` override some organizations need), and
+  the Admin console's domain-wide delegation entry with exactly
+  `gmail.readonly` and `gmail.compose` — is documented on `gmail()` itself.
+- **Google Workspace domain-wide delegation, shared by every Workspace
+  provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
+  the downloaded JSON key's text, from deployment secrets rather than the vault,
+  because one key serves every Workspace connector; a malformed key throws at
+  construction and never appears in a message. `subject` is a function from the
+  admitted `AuthenticatedIdentity` to a Workspace address — sync or async, for a
+  directory lookup — or one fixed address for shared or scheduled use. No
+  admitted caller, or an `undefined` answer, fails `auth_required` before any
+  request leaves; arguments, headers, and programs cannot choose the subject.
+  The RS256 JWT-bearer assertion is signed with Web Crypto, so it runs unchanged
+  on Node and Workers with no new dependency. Access tokens are cached in memory
+  only — never in storage — per service account, subject, and scope set,
+  replaced a minute before expiry, minted once for concurrent callers, and
+  bounded at 512. Google's refusals map to what fixes them: `unauthorized_client`
+  names the client ID and the exact scopes to authorize, `invalid_grant` names an
+  unknown or suspended user, a deleted key, or clock skew, and a disabled API or
+  a missing scope says so.
+- **Google Discovery drift checks.** `npm run providers:check -- --provider
+  gmail` reads Gmail's credential-free Discovery document and digests the eight
+  methods the tools call like any other touched endpoint, and also reports a
+  touched method that stops accepting the provider's delegated scopes. A
+  manifest with `"format": "google-discovery"` and a `scopes` list is all a
+  further Workspace product needs.
+
 ### Changed
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
