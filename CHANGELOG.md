@@ -263,7 +263,8 @@ caller.
   the same responses in the same order (otherwise `conflict`), every
   projected text is bounded in bytes as well as characters and cut without
   splitting a surrogate pair, a large form pages its items under a cursor
-  bound to its revision, a response too large to read whole names the answers
+  bound to its revision — continuing inside a grid too large for one page, so
+  every question id is reachable — a response too large to read whole names the answers
   it left out in `omittedQuestionIds`, `raw: true` refuses a form too large
   for one result, and a batch reply too large to return whole drops question
   ids, then everything but counts, marked `truncated` and still reported as

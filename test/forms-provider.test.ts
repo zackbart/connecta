@@ -1121,6 +1121,17 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     };
   }
 
+  /** Item ids in page order, a grid continued across pages counted once. */
+  const itemIds = (pages: any[]) =>
+    pages.flatMap((page) => page.items.filter((item: any) => !item.questionsFrom).map((item: any) => item.itemId));
+  /** Every question id one item returned, across every page, in order. */
+  const rowsOf = (pages: any[], itemId: string) =>
+    pages.flatMap((page) =>
+      page.items
+        .filter((item: any) => item.itemId === itemId)
+        .flatMap((item: any) => item.questions.map((question: any) => question.questionId)),
+    );
+
   async function everyPage(name: string, args: Record<string, unknown>): Promise<any[]> {
     const connector = connection();
     const pages: any[] = [];
@@ -1140,21 +1151,32 @@ describe("worst-case results fit one host result (256 KiB)", () => {
   }
 
   // Each mid-page continuation re-reads Google's whole page, so the largest
-  // page's fixture stays under the listing cut to keep that re-reading cheap
-  // under workerd on a loaded machine; the default page covers the cut.
+  // page's fixture keeps most answers under the listing cut, to keep that
+  // re-reading cheap under workerd on a loaded machine, and makes the first
+  // answer of every response long enough to be cut.
   it.each([
     ["the default page", {}, 25, 30, 2_500],
     ["the largest page", { limit: 100 }, 100, 6, 1_500],
   ])("ends %s early and continues by cursor, losing and repeating nothing", { timeout: 30_000 }, async (_label, extra, count, questions, chars) => {
-    route = serve(paragraphForm(questions), responses(count, questions, long(chars)));
+    const rows = responses(count, questions, long(chars));
+    for (const row of rows) row.answers["q0"] = { questionId: "q0", textAnswers: { answers: [{ value: long(2_500) }] } };
+    route = serve(paragraphForm(questions), rows);
     const pages = await everyPage("list_responses", { formId: "big", ...extra });
     const seen = pages.flatMap((page) => page.responses.map((response: any) => response.responseId));
     expect(seen).toEqual(Array.from({ length: count }, (_, index) => `r${index}`));
     // Ended early: more pages than Google's one, each cut answer marked.
     expect(pages.length).toBeGreaterThan(1);
-    const answer = pages[0].responses[0].answers[0].values[0] as string;
-    if (chars > 2_000) expect(answer).toContain("more characters truncated; get_response reads it whole");
-    else expect(answer).toBe(long(chars));
+    for (const page of [pages[0], pages.at(-1)]) {
+      const [first, second] = page.responses[0].answers;
+      if (chars <= 2_000) {
+        expect(first.values[0]).toBe(`${long(2_000)}\n[… 500 more characters truncated; get_response reads it whole]`);
+        expect(second.values[0]).toBe(long(chars));
+      } else {
+        // Thirty long answers do not fit one page even at 2,000 characters,
+        // so this response is cut harder, and says so the same way.
+        expect(first.values[0]).toMatch(/^日+\n\[… \d+ more characters truncated; get_response reads it whole\]$/);
+      }
+    }
   });
 
   it("narrows one response too large for a page, naming the answers it left out", async () => {
@@ -1214,16 +1236,17 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     route = () => ({ body: form });
     const pages = await everyPage("get_form", { formId: "huge" });
     expect(pages.length).toBeGreaterThan(1);
-    expect(pages.flatMap((page) => page.items.map((item: any) => item.itemId))).toEqual([
-      ...Array.from({ length: 25 }, (_, index) => `i${index}`),
-      "grid",
-    ]);
+    expect(itemIds(pages)).toEqual([...Array.from({ length: 25 }, (_, index) => `i${index}`), "grid"]);
     expect(pages.every((page) => page.itemCount === 26)).toBe(true);
-    // everyPage ran each page, this trimmed grid's moreQuestions included,
+    // The grid continues across pages until every row is out, each once.
+    // everyPage ran each page — moreQuestions and questionsFrom included —
     // through schema validation and the undeclared-key walk.
-    const grid = pages.at(-1).items.at(-1);
-    expect(grid.questions.length + grid.moreQuestions).toBe(2_000);
-    expect(grid.questions.length).toBeGreaterThan(0);
+    expect(rowsOf(pages, "grid")).toEqual(Array.from({ length: 2_000 }, (_, index) => `row${index}`));
+    const parts = pages.flatMap((page) => page.items.filter((item: any) => item.itemId === "grid"));
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0].moreQuestions).toBe(2_000 - parts[0].questions.length);
+    expect(parts[1].questionsFrom).toBe(parts[0].questions.length);
+    expect(parts.at(-1).moreQuestions).toBeUndefined();
 
     // The same form whole is more than one result: raw refuses with guidance.
     const raw = await call(connection(), "get_form", { formId: "huge", raw: true }).catch((error) => error);
@@ -1238,6 +1261,49 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     await expect(
       call(connection(), "get_form", { formId: "other", cursor: first.page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("recovers every question id a truncated batch reply left out, through get_form's pages", { timeout: 30_000 }, async () => {
+    // Five grids of 2,000 rows: the batch reply names 10,000 question ids,
+    // more than one result carries, so it comes back without them.
+    const grids = Array.from({ length: 5 }, (_, grid) => ({
+      itemId: `grid${grid}`,
+      ids: Array.from({ length: 2_000 }, (_, row) => `question-${grid}-${row}-abcdefghij`),
+    }));
+    route = () => ({
+      body: {
+        writeControl: { requiredRevisionId: "00000021" },
+        replies: grids.map((grid) => ({ createItem: { itemId: grid.itemId, questionId: grid.ids } })),
+      },
+    });
+    const reply = await call(connection(), "batch_update_form", {
+      formId: "rows",
+      requiredRevisionId: "00000020",
+      requests: grids.map(() => ({ createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } } })),
+    });
+    expect(reply.truncated).toBe(true);
+    expect(reply.replies.map((entry: any) => entry.createdItemId)).toEqual(grids.map((grid) => grid.itemId));
+    expect(reply.note).toContain("get_form, following page.nextCursor");
+
+    // The form as Google then returns it; every row recovers, each once.
+    route = () => ({
+      body: {
+        formId: "rows",
+        revisionId: "00000021",
+        info: { title: "Rows" },
+        items: grids.map((grid) => ({
+          itemId: grid.itemId,
+          title: "Availability",
+          questionGroupItem: {
+            grid: { columns: { type: "CHECKBOX", options: [{ value: "Fri" }, { value: "Sat" }] } },
+            questions: grid.ids.map((questionId) => ({ questionId, rowQuestion: { title: "列".repeat(50) } })),
+          },
+        })),
+      },
+    });
+    const pages = await everyPage("get_form", { formId: "rows" });
+    for (const grid of grids) expect(rowsOf(pages, grid.itemId)).toEqual(grid.ids);
+    expect(itemIds(pages)).toEqual(grids.map((grid) => grid.itemId));
   });
 
   it("bounds escaped control characters and an oversized header, measuring the whole result", async () => {
@@ -1271,10 +1337,8 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     };
     route = () => ({ body: form });
     const pages = await everyPage("get_form", { formId: "escaped" });
-    expect(pages.flatMap((page) => page.items.map((item: any) => item.itemId))).toEqual([
-      ...Array.from({ length: 12 }, (_, index) => `i${index}`),
-      "grid",
-    ]);
+    expect(itemIds(pages)).toEqual([...Array.from({ length: 12 }, (_, index) => `i${index}`), "grid"]);
+    expect(rowsOf(pages, "grid")).toEqual(Array.from({ length: 1_000 }, (_, index) => `row${index}`));
     const header = pages[0];
     for (const field of ["title", "documentTitle", "description"]) {
       expect(jsonBytes(header[field])).toBeLessThanOrEqual(8 * 1024);

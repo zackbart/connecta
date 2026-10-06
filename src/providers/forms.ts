@@ -365,8 +365,9 @@ function projectForm(value: unknown): JsonRecord {
  * An item cut to `budget` bytes. Its own text and every option and label are
  * already bounded (an item without questions stays under ~120 KiB), so only a
  * grid's rows can outgrow a page; the rows that fit are kept and the rest
- * counted in `moreQuestions`, readable through `raw: true`. The caller still
- * measures what it returns.
+ * counted in `moreQuestions`, and the page's cursor continues inside this
+ * item from the first row it left out. The caller still measures what it
+ * returns.
  */
 function fitItem(item: JsonRecord, budget: number): JsonRecord {
   if (jsonBytes(item) <= budget) return item;
@@ -380,6 +381,23 @@ function fitItem(item: JsonRecord, budget: number): JsonRecord {
     used += size;
   }
   return { ...item, questions: kept, moreQuestions: questions.length - kept.length };
+}
+
+/**
+ * An item's questions from `from` on, for a page that continues inside it.
+ * Its description and options went out with its first part; the continuation
+ * carries what places the rows — its id, kind, and title — and where they
+ * start, in `questionsFrom`.
+ */
+function continuedItem(item: JsonRecord, from: number): JsonRecord {
+  if (from === 0) return item;
+  return compact({
+    itemId: item["itemId"],
+    kind: item["kind"],
+    title: item["title"],
+    questionsFrom: from,
+    questions: asArray(item["questions"]).slice(from),
+  });
 }
 
 // --- Reading responses ------------------------------------------------------------
@@ -538,7 +556,7 @@ function projectBatch(formId: string, value: unknown): JsonRecord {
   const whole = compact({ formId, revisionId, replies });
   if (jsonBytes(whole) <= RESULT_BUDGET_BYTES) return whole;
   const note =
-    "The batch applied. Its reply was too large to return whole; read the form with get_form for the created items' question ids.";
+    "The batch applied. Its reply was too large to return whole; read the created items' question ids with get_form, following page.nextCursor to the last page.";
   const idsOnly = compact({
     formId,
     revisionId,
@@ -730,6 +748,7 @@ const FORM_SCHEMA: JsonSchema = {
           gridType: { type: "string" },
           ...CHOICE_PROPERTIES,
           questions: { type: "array", items: QUESTION_SCHEMA },
+          questionsFrom: { type: "integer" },
           moreQuestions: { type: "integer" },
         },
       },
@@ -825,23 +844,40 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const all = asArray(items).map(asRecord);
         const revision = text(asRecord(form)["revisionId"]) ?? "";
         const digest = await digestOf(["get_form", formId]);
+        // A cursor names an item and, inside a grid too large for one page,
+        // the first of its questions not yet returned, so every question id
+        // is reachable by paging, however many rows one grid has.
         let start = 0;
+        let from = 0;
         if (typeof args["cursor"] === "string") {
-          const cursor = decodeCursor(args["cursor"], digest, ["d", "i", "r"], (c) => isIndex(c["i"]) && typeof c["r"] === "string", "with the same formId");
-          // Items are addressed by index, so a page of a changed form would
-          // skip or repeat items without saying so.
-          if (cursor["r"] !== revision || cursor["i"] > all.length) {
+          const cursor = decodeCursor(
+            args["cursor"],
+            digest,
+            ["d", "i", "q", "r"],
+            (c) => isIndex(c["i"]) && isIndex(c["q"]) && typeof c["r"] === "string",
+            "with the same formId",
+          );
+          // Items are addressed by index and rows by position, so a page of a
+          // changed form would skip or repeat them without saying so.
+          const at = all[cursor["i"]];
+          if (
+            cursor["r"] !== revision ||
+            cursor["i"] > all.length ||
+            (cursor["q"] > 0 && (at === undefined || cursor["q"] >= asArray(at["questions"]).length))
+          ) {
             throw new ConnectorCallError(
               "conflict",
               "The form changed after the page this cursor continues. Read get_form again from the start, without cursor.",
             );
           }
           start = cursor["i"];
+          from = cursor["q"];
         }
+        const piece = (index: number) => (index === start ? continuedItem(all[index]!, from) : all[index]!);
         const kept: JsonRecord[] = [];
         let used = jsonBytes({ ...header, items: [] }) + PAGE_RESERVE_BYTES;
         for (let index = start; index < all.length; index += 1) {
-          let item = all[index]!;
+          let item = piece(index);
           let size = jsonBytes(item) + 1;
           if (used + size > RESULT_BUDGET_BYTES) {
             if (kept.length > 0) break;
@@ -850,10 +886,20 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           }
           kept.push(item);
           used += size;
+          // A grid cut short ends the page: the cursor continues inside it.
+          if (item["moreQuestions"]) break;
         }
         const build = () => {
-          const next = start + kept.length;
-          const nextCursor = next < all.length ? encodeCursor({ d: digest, i: next, r: revision }) : null;
+          const lastIndex = start + kept.length - 1;
+          const last = kept[kept.length - 1];
+          let next: JsonRecord | undefined;
+          if (last?.["moreQuestions"]) {
+            const before = lastIndex === start ? from : 0;
+            next = { d: digest, i: lastIndex, q: before + asArray(last["questions"]).length, r: revision };
+          } else if (lastIndex + 1 < all.length) {
+            next = { d: digest, i: lastIndex + 1, q: 0, r: revision };
+          }
+          const nextCursor = next ? encodeCursor(next) : null;
           return { ...header, page: { hasMore: nextCursor !== null, nextCursor }, items: kept };
         };
         // The estimate above reserved room; the complete result, cursor and
@@ -864,10 +910,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           result = build();
         }
         if (jsonBytes(result) > RESULT_BUDGET_BYTES && kept.length === 1) {
-          kept[0] = fitItem(all[start]!, RESULT_BUDGET_BYTES - jsonBytes({ ...result, items: [] }) - 1);
+          // Measured with the longest cursor this page could carry.
+          const room = RESULT_BUDGET_BYTES - jsonBytes({ ...result, items: [] }) - 64;
+          kept[0] = fitItem(piece(start), room);
           result = build();
         }
-        if (jsonBytes(result) > RESULT_BUDGET_BYTES) {
+        // A page must move forward: a continued grid that cannot fit even one
+        // row would hand back the cursor it was given.
+        const first = kept[0];
+        const stalled = first?.["moreQuestions"] !== undefined && asArray(first["questions"]).length === 0;
+        if (jsonBytes(result) > RESULT_BUDGET_BYTES || stalled) {
           throw new ConnectorCallError(
             "connector_call_failed",
             `Item ${start} of this form cannot be projected inside one result (${RESULT_BUDGET_BYTES} bytes), even alone; open the form in Forms.`,
@@ -937,10 +989,14 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // say where to look first. The shared verdict (not retryable)
           // stands. No Forms write is sent as idempotent: a create, a batch,
           // and an info update are each not safe to send twice blind.
-          const phase = googleOutcomeOf(error)?.phase;
+          // Any phase that is neither "never sent" nor "explicitly refused"
+          // is uncertain, so a phase the shared layer adds later is too.
+          const outcome = googleOutcomeOf(error);
           if (
             error instanceof ConnectorCallError &&
-            (phase === "reading-body" || phase === "awaiting-response" || phase === "server-error")
+            outcome?.dispatched === true &&
+            outcome.phase !== "refused" &&
+            outcome.phase !== "before-send"
           ) {
             throw new ConnectorCallError(
               error.code,
@@ -1306,7 +1362,10 @@ Drive, or take its id from an edit URL (\`/forms/d/<formId>/edit\`). The
 - \`get_form\` lists items with their \`questions\`: one for a question,
   one per row for a grid, none for sections and media. Answers are keyed by
   those \`questionId\`s. A large form pages its items (\`itemCount\` is the
-  total); a cursor from a form that has since changed fails \`conflict\`.
+  total), and a grid too large for one page continues on the next: the item
+  repeats with \`questionsFrom\`, the index of its first row there, and
+  \`moreQuestions\` counts rows still to come. A cursor from a form that has
+  since changed fails \`conflict\`.
   Long text is cut with a marker; \`raw: true\` returns Google's whole Form
   resource, or refuses one too large for a result.
 - \`list_responses\` labels each answer with its question's title, in form

@@ -15,7 +15,7 @@
     "./providers/docs starts at 27,149 B gzip (#681): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. The cap uses the existing baseline + 60,000 B policy.",
-    "./providers/forms starts at 25,797 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."
+    "./providers/forms starts at 26,070 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -103,8 +103,8 @@
       "maxGzip": 89685
     },
     "./providers/forms": {
-      "baselineGzip": 25797,
-      "maxGzip": 85797
+      "baselineGzip": 26070,
+      "maxGzip": 86070
     },
     "./ui": {
       "baselineGzip": 68983,
