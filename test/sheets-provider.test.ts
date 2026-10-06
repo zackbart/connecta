@@ -30,7 +30,8 @@ interface ApiCall {
   body: any;
 }
 
-type Route = (call: ApiCall) => { status?: number; body?: unknown } | undefined;
+/** A JSON reply, or a hand-built Response (`raw`) for a reply that breaks. */
+type Route = (call: ApiCall) => { status?: number; body?: unknown; raw?: () => Response } | undefined;
 
 const calls: ApiCall[] = [];
 let tokenRequests = 0;
@@ -54,6 +55,7 @@ beforeEach(() => {
     };
     calls.push(call);
     const reply = route(call) ?? {};
+    if (reply.raw) return reply.raw();
     return Response.json(reply.body ?? {}, { status: reply.status ?? 200 });
   }) as unknown as typeof fetch;
 });
@@ -835,6 +837,70 @@ describe("the raw batchUpdate hatch", () => {
 });
 
 describe("errors (H11)", () => {
+  /** A 200 whose JSON body breaks off mid-stream. */
+  const brokenReply = () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"spreadsheetId":'));
+          controller.error(new TypeError("other side closed"));
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  /** A request that went out and got no answer at all. */
+  const noReply = () => {
+    throw new TypeError("fetch failed");
+  };
+  const writes: [string, Record<string, unknown>][] = [
+    ["update_values", { spreadsheetId: ID, range: "A1", values: [["x"]], valueInputOption: "RAW" }],
+    ["batch_update_values", { spreadsheetId: ID, data: [{ range: "A1", values: [["x"]] }], valueInputOption: "RAW" }],
+    ["append_values", { spreadsheetId: ID, range: "Log!A:C", values: [["x"]], valueInputOption: "RAW" }],
+    ["clear_values", { spreadsheetId: ID, ranges: ["A1"] }],
+    ["create_spreadsheet", { title: "Attendance" }],
+    ["add_sheet", { spreadsheetId: ID, title: "Q4" }],
+    ["batch_update_spreadsheet", { spreadsheetId: ID, requests: [{ deleteSheet: { sheetId: 7 } }] }],
+  ];
+
+  it.each(writes)("never tells %s to retry when its 2xx reply breaks mid-stream", async (name, args) => {
+    route = () => ({ raw: brokenReply });
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("the change probably applied");
+    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+    // One attempt: an accepted write is never replayed.
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each(writes)("never tells %s to retry when no reply comes back", async (name, args) => {
+    route = () => ({ raw: noReply });
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("may or may not have been applied");
+    expect(failure.message).not.toMatch(/nothing was (written|sent|applied)|safe to (retry|repeat)/i);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("tells an uncertain append to read the table, and an uncertain create to search Drive", async () => {
+    route = () => ({ raw: noReply });
+    const append = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    expect(append.message).toContain("Appending again would add the rows a second time");
+    expect(append.message).toContain("get_values");
+    route = () => ({ raw: brokenReply });
+    const create = await call(connection(), "create_spreadsheet", writes[4]![1]).catch((error) => error);
+    expect(create.message).toContain("Search Drive for this title before creating it again");
+  });
+
+  it("passes an explicit refusal of an append through unchanged, and a dropped read stays retryable", async () => {
+    route = () => ({ status: 400, body: { error: { code: 400, message: "Unable to parse range: Log!A:C", status: "INVALID_ARGUMENT" } } });
+    const refused = await call(connection(), "append_values", writes[2]![1]).catch((error) => error);
+    expect(refused.code).toBe("invalid_args");
+    expect(refused.message).not.toContain("Appending again");
+    route = () => ({ raw: noReply });
+    const read = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
+    expect(read).toMatchObject({ code: "unavailable", retryable: true });
+  });
+
   it("never calls a 404 absent: the spreadsheet may exist and not be shared", async () => {
     route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } } });
     const failure = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);

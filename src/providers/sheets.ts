@@ -34,6 +34,7 @@ import { apiConnector as api, defined, type ApiTool } from "../connectors/api-co
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, JsonSchema } from "../types.js";
 import {
+  googleOutcomeOf,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
@@ -365,6 +366,25 @@ function checkRequestKinds(requests: readonly unknown[]): void {
       );
     }
   });
+}
+
+/**
+ * A write whose outcome is unknown — Google took it and the reply broke off,
+ * or no reply came — told what to read before trying again, for the writes
+ * where the shared "re-read before repeating it" has nothing to re-read or
+ * where repeating does harm. Every other failure, and a refusal above all,
+ * passes through as the client mapped it.
+ */
+async function uncertainWrite<T>(advice: string, write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } catch (error) {
+    const phase = googleOutcomeOf(error)?.phase;
+    if (!(error instanceof ConnectorCallError) || (phase !== "reading-body" && phase !== "awaiting-response")) {
+      throw error;
+    }
+    throw new ConnectorCallError(error.code, `${error.message} ${advice}`, { retryable: false, cause: error });
+  }
 }
 
 // --- Schemas ----------------------------------------------------------------------
@@ -904,19 +924,24 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         checkWriteSize([args["values"]]);
         const response = asRecord(
-          await client.json(
-            {
-              method: "POST",
-              path: `${spreadsheetPath(args)}/values/${encodeURIComponent(String(args["range"]))}:append`,
-              query: {
-                valueInputOption: args["valueInputOption"],
-                // Pinned: OVERWRITE writes over whatever sits below the table.
-                insertDataOption: "INSERT_ROWS",
-                includeValuesInResponse: false,
+          // Appending is not idempotent: a second call after one that landed
+          // adds the rows twice.
+          await uncertainWrite(
+            "Appending again would add the rows a second time if the first append landed: read the table with get_values and append only what is missing.",
+            () => client.json(
+              {
+                method: "POST",
+                path: `${spreadsheetPath(args)}/values/${encodeURIComponent(String(args["range"]))}:append`,
+                query: {
+                  valueInputOption: args["valueInputOption"],
+                  // Pinned: OVERWRITE writes over whatever sits below the table.
+                  insertDataOption: "INSERT_ROWS",
+                  includeValuesInResponse: false,
+                },
+                body: { majorDimension: "ROWS", values: args["values"] },
               },
-              body: { majorDimension: "ROWS", values: args["values"] },
-            },
-            ctx,
+              ctx,
+            ),
           ),
         );
         return compact({
@@ -995,17 +1020,22 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         const titles: string[] | undefined = args["sheetTitles"];
         const spreadsheet = asRecord(
-          await client.json(
-            {
-              method: "POST",
-              path: "/spreadsheets",
-              query: { fields: "spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title)" },
-              body: compact({
-                properties: { title: args["title"] },
-                sheets: titles?.map((title) => ({ properties: { title } })),
-              }),
-            },
-            ctx,
+          // A spreadsheet that may exist has no id to re-read; only its title
+          // can find it, and Sheets cannot search.
+          await uncertainWrite(
+            "Search Drive for this title before creating it again, or a second spreadsheet results.",
+            () => client.json(
+              {
+                method: "POST",
+                path: "/spreadsheets",
+                query: { fields: "spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title)" },
+                body: compact({
+                  properties: { title: args["title"] },
+                  sheets: titles?.map((title) => ({ properties: { title } })),
+                }),
+              },
+              ctx,
+            ),
           ),
         );
         return compact({
