@@ -395,6 +395,7 @@ describe("public package boundary", () => {
       join(ROOT, "src", "providers", "docs.ts"),
       join(ROOT, "src", "providers", "sheets.ts"),
       join(ROOT, "src", "providers", "slides.ts"),
+      join(ROOT, "src", "providers", "forms.ts"),
       ...readdirSync(join(ROOT, "src", "providers", "google")).map((name) =>
         join(ROOT, "src", "providers", "google", name),
       ),

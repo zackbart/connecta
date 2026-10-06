@@ -168,6 +168,7 @@ import { drive } from "../src/providers/drive.js";
 import { docs } from "../src/providers/docs.js";
 import { sheets } from "../src/providers/sheets.js";
 import { slides } from "../src/providers/slides.js";
+import { forms } from "../src/providers/forms.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
 import { planningCenter } from "../src/providers/planning-center.js";
@@ -291,6 +292,9 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
   // The raw hatch keeps Google's own method name, batchUpdate, so an agent
   // that knows the Slides reference finds it by that name.
   slides: ["get", "list", "create", "replace", "batch"],
+  // No delete or submit verb; `batch` is Google's own batchUpdate, the one
+  // always-destructive hatch, named as the Forms reference names it.
+  forms: ["get", "list", "create", "update", "batch"],
 };
 
 /**
@@ -350,6 +354,7 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   docs: [],
   sheets: [],
   slides: [],
+  forms: [],
 };
 
 /**
@@ -370,7 +375,7 @@ const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
  * that names the scopes to authorize. What H12 still asks is one way to
  * authenticate — so neither a credential slot nor an OAuth grant.
  */
-const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive", "docs", "sheets", "slides"]);
+const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
 
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
@@ -534,6 +539,17 @@ const providers = await Promise.all([
     "slides",
     slides("decks", {
       purpose: "Sermon slides and staff meeting decks",
+      serviceAccount: {
+        clientEmail: "delegate@project.iam.gserviceaccount.com",
+        privateKey: await rsaPrivateKeyPem(),
+      },
+      subject: () => undefined,
+    }),
+  ),
+  surface(
+    "forms",
+    forms("forms", {
+      purpose: "Event registration forms and their responses",
       serviceAccount: {
         clientEmail: "delegate@project.iam.gserviceaccount.com",
         privateKey: await rsaPrivateKeyPem(),
