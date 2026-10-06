@@ -1706,6 +1706,57 @@ describe("Google's outcome for a write decides what it may say (shared update #3
   });
 });
 
+describe("a redirected or rate-limited write never claims an outcome (shared update #4)", () => {
+  const REDIRECT: Reply = { status: 302, headers: { Location: "https://elsewhere.example/upload" }, body: {} };
+  /** Each write, its arguments, and the read it names before a repeat, if any. */
+  const WRITES: [string, Record<string, unknown>, string | undefined][] = [
+    ["create_file", { name: "a.txt", content: "x" }, "search_files"],
+    ["create_folder", { name: "Elders" }, "search_files"],
+    ["copy_file", { fileId: "f1" }, "second copy"],
+    ["share_file", { fileId: "f1", type: "anyone", role: "reader" }, "list_permissions"],
+    ["update_file_content", { fileId: "f1", content: "x", mimeType: "text/plain" }, undefined],
+    ["update_file", { fileId: "f1", name: "b" }, undefined],
+    ["move_file", { fileId: "f1", folderId: "p2" }, undefined],
+    ["trash_file", { fileId: "f1" }, undefined],
+    ["restore_file", { fileId: "f1" }, undefined],
+    ["update_permission", { fileId: "f1", permissionId: "p1", role: "reader" }, undefined],
+    ["delete_permission", { fileId: "f1", permissionId: "p1" }, undefined],
+  ];
+
+  it("covers every write", async () => {
+    const tools = await connection().listTools(context());
+    const writes = tools.filter((tool) => !isExplicitlyReadOnly(tool)).map((tool) => tool.name).sort();
+    expect(WRITES.map(([name]) => name).sort()).toEqual(writes);
+  });
+
+  it.each(WRITES)("a 3xx to %s leaves its outcome unknown, never applied, and is not followed", async (name, args, check) => {
+    route = (request) => (request.method === "GET" ? { body: { id: "f1", parents: ["p1"] } } : REDIRECT);
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("unknown");
+    expect(failure.message).not.toMatch(/probably applied|nothing was (applied|changed)/i);
+    // The guard's word, said only after a recorded 2xx, never here.
+    expect(failure.message).not.toContain(`${name} applied`);
+    if (check) expect(failure.message).toContain(check);
+    else expect(failure.message).not.toMatch(/search_files|list_permissions|second copy/);
+    // Sent once, and never to the redirect's host.
+    expect(calls.filter((entry) => entry.method !== "GET")).toHaveLength(1);
+    expect(calls.every((entry) => entry.url.hostname === "www.googleapis.com")).toBe(true);
+  });
+
+  it("a 503 with a rate-limit reason to a write that adds stays an unknown outcome, not a rate limit", async () => {
+    route = () => GOOGLE_ERROR(503, "RATE_LIMIT_EXCEEDED", "Quota exceeded, or the backend fell over.");
+    for (const [name, args, check] of WRITES.filter(([, , advice]) => advice !== undefined)) {
+      calls.length = 0;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.code, name).not.toBe("rate_limited");
+      expect(failure.message, name).toContain(check!);
+      expect(calls, name).toHaveLength(1);
+    }
+  });
+});
+
 function indexOf(haystack: Uint8Array, needle: Uint8Array): number {
   outer: for (let index = 0; index <= haystack.length - needle.length; index += 1) {
     for (let offset = 0; offset < needle.length; offset += 1) {

@@ -783,24 +783,28 @@ async function readContent(
 
 /**
  * Run a write that adds something, saying what to check before repeating it
- * when it may have landed. The shared client already says so, and makes the
- * failure non-retryable, when the request was sent and no usable answer came
- * back (`awaiting-response`), Google answered it 5xx after receiving it
- * (`server-error`), or Google accepted it and the reply broke
- * (`reading-body`). A repeat of an additive write is not harmless — it makes a
- * second file, folder, copy, or share — so the message names the read that
- * tells. The code is kept, so core still reads the outcome as unknown; a
- * refusal, or a failure before anything was sent, passes through untouched.
+ * when it may have landed: whenever the request left connecta and Google did
+ * not refuse it. That is no answer (`awaiting-response`), an unfollowed
+ * redirect (`redirected`), a 5xx (`server-error`) — each of which leaves the
+ * outcome unknown — or a 2xx whose reply broke (`reading-body`), which
+ * probably applied. The shared client already says which, in its own words,
+ * and makes the failure non-retryable; this adds only the read that tells,
+ * because a repeat of an additive write is not harmless — it makes a second
+ * file, folder, copy, or share. The code is kept, so core still reads the
+ * outcome as unknown. A refusal, or a failure before anything was sent,
+ * passes through untouched.
  */
 async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
   try {
     return await work();
   } catch (error) {
-    const phase = googleOutcomeOf(error)?.phase;
+    const outcome = googleOutcomeOf(error);
     if (
       error instanceof ConnectorCallError &&
       error.code === "connector_call_failed" &&
-      (phase === "reading-body" || phase === "awaiting-response" || phase === "server-error")
+      outcome?.dispatched === true &&
+      outcome.phase !== "refused" &&
+      outcome.phase !== "before-send"
     ) {
       throw new ConnectorCallError(error.code, `${error.message} ${check}`, { retryable: false, cause: error });
     }
@@ -1786,8 +1790,13 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
  * shared budget, for a tool without one — is refused rather than delivered.
  * Each source is budgeted where it is built, so this should never fire; when
  * it does, the caller learns why instead of a result execute_code cannot
- * receive. A write that gets here has applied, so it says so and points at a
- * re-read rather than a repeat.
+ * receive.
+ *
+ * A write handler returns only from Google's recorded 2xx to its write — the
+ * shared client throws on every other status, a redirect included, and on a
+ * reply it could not read — so a write that gets here has applied, and only
+ * here does this connection say so, pointing at a re-read rather than a
+ * repeat.
  */
 function guarded(list: ApiTool[]): ApiTool[] {
   return list.map((tool) => ({

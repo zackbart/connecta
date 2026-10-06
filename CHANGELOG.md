@@ -155,9 +155,11 @@ a deployment's own connectors still never learn their caller.
   the link, up to writer or organizer, emailing no one unless
   `sendNotificationEmail`), `update_permission`, and `delete_permission`.
   A create, copy, or share that may have landed — sent with no answer,
-  answered 5xx, or accepted with a reply that broke — is never retryable and
-  names the read to check before repeating it, since a repeat makes a second
-  one. Writes that set fixed values (`update_file_content`, `update_file`,
+  answered with a redirect it never follows, answered 5xx (a rate-limit reason
+  on a 5xx included), or accepted with a reply that broke — is never
+  retryable and names the read to check before repeating it, since a repeat
+  makes a second one. Only a write Google answered 2xx is ever said to have
+  applied. Writes that set fixed values (`update_file_content`, `update_file`,
   `trash_file`, `restore_file`, `update_permission`) are sent as idempotent, so
   a 5xx to them stays a retryable outage.
   There is no permanent delete,
