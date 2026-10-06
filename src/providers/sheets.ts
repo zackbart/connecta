@@ -32,6 +32,7 @@
  */
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
+import { MAX_QUICKJS_HOST_RPC_BYTES } from "../executors/quickjs-protocol.js";
 import type { Connector, JsonSchema } from "../types.js";
 import {
   googleWorkspaceClient,
@@ -67,6 +68,18 @@ export type SheetsOptions = GoogleWorkspaceOptions;
 /** Cells per page of get_values: connecta's cap, since Sheets has no paging. */
 const DEFAULT_PAGE_CELLS = 2_000;
 const MAX_PAGE_CELLS = 10_000;
+/**
+ * Serialized bytes per page of get_values, beside the cell count: a page has
+ * to be deliverable, and cells say nothing about size — 60 cells of 5,000
+ * characters already outgrow the QuickJS executor's host bridge. The default
+ * is three quarters of that bridge's limit, leaving the rest for the page's
+ * own fields, so an execute_code program always receives a default page. A
+ * direct call_tool caller may ask for more, up to 4 MiB: base64 in the result
+ * stash makes that about 5.6 MiB, under the stash's default 8 MiB, so an
+ * oversized page still pages through get_result rather than being dropped.
+ */
+const DEFAULT_PAGE_BYTES = (MAX_QUICKJS_HOST_RPC_BYTES * 3) / 4;
+const MAX_PAGE_BYTES = 4 * 1024 * 1024;
 /**
  * Characters a read keeps per cell by default. A cell holds at most 50,000
  * (Sheets' own limit), so `maxCellChars` at that ceiling always reads one whole.
@@ -247,6 +260,17 @@ function cappedCell(value: unknown, max: number, cut: { cells: number }): unknow
   if (typeof value !== "string" || value.length <= max) return value;
   cut.cells += 1;
   return `${value.slice(0, max)}[… ${value.length - max} more characters truncated; read this cell alone with maxCellChars up to ${MAX_CELL_CHARS} for the rest]`;
+}
+
+/** Refuse a row no page of `budget` bytes can hold, rather than overrun the cap. */
+function rowTooLarge(range: string, row: number, bytes: number, budget: number): ConnectorCallError {
+  const raise = bytes <= MAX_PAGE_BYTES
+    ? `, or raise maxBytes to at least ${bytes} (above ${DEFAULT_PAGE_BYTES}, only for a direct call_tool read: execute_code cannot receive it)`
+    : "";
+  return new ConnectorCallError(
+    "invalid_args",
+    `Row ${row} of ${range} serializes to ${bytes} bytes, more than this page's maxBytes of ${budget}; narrow the range's columns or lower maxCellChars${raise}.`,
+  );
 }
 
 /** Refuse a row no page of `budget` cells can hold, rather than overrun the cap. */
@@ -564,6 +588,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             maximum: MAX_PAGE_CELLS,
             description: `Cells per page, 1 to ${MAX_PAGE_CELLS}; defaults to ${DEFAULT_PAGE_CELLS}. Connecta's cap: Sheets returns whole ranges, so this pages by whole rows.`,
           },
+          maxBytes: {
+            type: "integer",
+            minimum: 1_024,
+            maximum: MAX_PAGE_BYTES,
+            description: `Serialized bytes per page; defaults to ${DEFAULT_PAGE_BYTES}, what execute_code can receive. Raise it, to ${MAX_PAGE_BYTES}, only for a direct call_tool read.`,
+          },
           maxCellChars: {
             type: "integer",
             minimum: 1,
@@ -606,6 +636,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         const ranges: string[] = args["ranges"];
         const budget: number = args["maxCells"] ?? DEFAULT_PAGE_CELLS;
+        const byteBudget: number = args["maxBytes"] ?? DEFAULT_PAGE_BYTES;
         const cellChars: number = args["maxCellChars"] ?? DEFAULT_CELL_CHARS;
         const digest = await readDigest(args);
         const resume = typeof args["cursor"] === "string"
@@ -634,6 +665,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const valueRanges: JsonRecord[] = [];
         const cut = { cells: 0 };
         let cells = 0;
+        let bytes = 0;
+        const encoder = new TextEncoder();
         let next: ValuesCursor | undefined;
         const returned = asArray(response["valueRanges"]);
         for (let index = 0; index < returned.length && next === undefined; index += 1) {
@@ -646,14 +679,25 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           const echoed = text(valueRange["range"]) ?? sent[index]!;
           const kept: unknown[][] = [];
           for (const row of rows) {
-            // An empty row still costs one, so every page makes progress.
+            // An empty row still costs one, so every page makes progress, and
+            // a page is empty exactly while `cells` is 0.
             const width = Math.max(1, asArray(row).length);
             if (cells + width > budget) {
-              if (cells === 0) throw rowTooWide(echoed, dropped + kept.length + 1, width, budget);
+              if (cells === 0) throw rowTooWide(echoed, dropped + 1, width, budget);
+              break;
+            }
+            const rowCut = { cells: 0 };
+            const capped = asArray(row).map((cell) => cappedCell(cell, cellChars, rowCut));
+            // The row as it will be serialized, plus the comma between rows.
+            const size = encoder.encode(JSON.stringify(capped)).length + 1;
+            if (bytes + size > byteBudget) {
+              if (cells === 0) throw rowTooLarge(echoed, dropped + 1, size, byteBudget);
               break;
             }
             cells += width;
-            kept.push(asArray(row).map((cell) => cappedCell(cell, cellChars, cut)));
+            bytes += size;
+            cut.cells += rowCut.cells;
+            kept.push(capped);
           }
           if (kept.length < rows.length) {
             next = { d: digest, i: resume.i + index, s: before + kept.length };
@@ -676,7 +720,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             values: kept,
             rowCount: kept.length,
           }));
-          if (cells >= budget && index + 1 < returned.length) {
+          if ((cells >= budget || bytes >= byteBudget) && index + 1 < returned.length) {
             next = { d: digest, i: resume.i + index + 1, s: 0 };
           }
         }
@@ -1069,14 +1113,18 @@ say which.
 - A1 notation. Quote a sheet title with spaces or punctuation:
   \`'Q3 Budget'!A1:D20\`, doubling any \`'\` inside it. A bare title is the
   whole sheet; \`Sheet1!B:B\` a whole column; a named range works by name.
-- \`get_values\` pages by whole rows under \`maxCells\`: page with
-  \`page.nextCursor\` and the same spreadsheetId, ranges, and render options.
-  A range with explicit rows (\`A1:D500\`, \`B:D\`) resumes where it
-  stopped; a sheet title or named range is re-read and its earlier rows
-  skipped, so \`rowOffset\` says how far into Google's echoed range the page
-  starts. A row wider than \`maxCells\` is refused, not cut; narrow the
-  columns. A cell over ${DEFAULT_CELL_CHARS} characters ends with a truncation
-  marker; read it alone with \`maxCellChars\` for the rest. Reduce inside
+- \`get_values\` pages by whole rows under \`maxCells\` and \`maxBytes\`:
+  page with \`page.nextCursor\` and the same spreadsheetId, ranges, and
+  render options. A range with explicit rows (\`A1:D500\`, \`B:D\`) resumes
+  where it stopped; a sheet title or named range is re-read and its earlier
+  rows skipped, so \`rowOffset\` says how far into Google's echoed range the
+  page starts.
+- A row too wide or too large for one page is refused, not cut: narrow the
+  columns or lower \`maxCellChars\`. The default \`maxBytes\` is what
+  \`execute_code\` can receive; raise it only for a direct \`call_tool\`
+  read.
+- A cell over ${DEFAULT_CELL_CHARS} characters ends with a truncation marker;
+  read it alone with \`maxCellChars\` for the rest. Reduce inside
   \`execute_code\` before returning a large read.
 
 ## Writing

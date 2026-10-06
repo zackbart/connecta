@@ -217,9 +217,11 @@ still never learn their caller.
   always quoted, never cell values; `raw: true` for Google's untouched
   metadata) and `get_values` (one to twenty A1 ranges through
   `values:batchGet`, value and date render options, paged by whole rows under
-  `maxCells` — never more, a wider row is refused — with a cursor bound to the
-  call's spreadsheet, ranges, and render options that only ever continues the
-  caller's own ranges; cells over 5,000 characters cut with a marker, and
+  `maxCells` and `maxBytes` — never more, an oversized row is refused — with
+  the default byte budget sized to what `execute_code` can receive and at most
+  4 MiB for a direct `call_tool` read, which the result stash can still page,
+  and a cursor bound to the call's spreadsheet, ranges, and render options
+  that only ever continues the caller's own ranges; cells over 5,000 characters cut with a marker, and
   `maxCellChars` up to 50,000 to read one whole) are read-only;
   `create_spreadsheet`, `add_sheet`, and `append_values` (pinned to
   `INSERT_ROWS`, so nothing below the table is overwritten) are additive

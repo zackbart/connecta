@@ -5,7 +5,10 @@
 // test/google-workspace-delegation.test.ts; only the no-caller refusal is
 // repeated here, because it is this connector's own front door.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_QUICKJS_HOST_RPC_BYTES } from "../src/executors/quickjs-protocol.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { SHEETS_API_BASE_URL, SHEETS_SCOPES, sheets } from "../src/providers/sheets.js";
+import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import { silentLogger } from "./helpers.js";
@@ -403,6 +406,97 @@ describe("reading values (H9, H10)", () => {
     // Whatever row offset a cursor claims, only the caller's own range is read.
     await call(connection(), "get_values", { ...args, cursor: forge({ ...decoded, s: 2 }) });
     expect(calls[0]!.url.searchParams.getAll("ranges")).toEqual(["S!A3:A3"]);
+  });
+});
+
+describe("pages that can be delivered", () => {
+  const utf8 = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  /** Exactly what the QuickJS executor serializes to hand a host result to a program. */
+  const bridged = (value: unknown) => utf8({ ok: true, value });
+
+  /** A Big sheet of `count` rows, each `width` cells of 5,000 characters that need escaping. */
+  function bigSheet(count: number, width: number) {
+    const cell = (row: number) => `${row}é"`.padEnd(5_000, "é");
+    return (request: ApiCall) => {
+      const range = request.url.searchParams.get("ranges")!;
+      const start = Number(/^Big!A(\d+):/.exec(range)?.[1] ?? 1);
+      return {
+        body: {
+          valueRanges: [{
+            range: `Big!A${start}:Z${count}`,
+            values: Array.from({ length: count - start + 1 }, (_, index) =>
+              Array.from({ length: width }, () => cell(start + index))),
+          }],
+        },
+      };
+    };
+  }
+
+  it("keeps every default page under the execute_code host bridge, and pages through all of it", async () => {
+    // 3 × 5,000 two-byte characters is 30 KB a row: 40 rows overrun the bridge
+    // many times over, while 2,000 cells would have let them all through.
+    route = bigSheet(40, 3);
+    const connector = connection();
+    const args = { spreadsheetId: ID, ranges: ["Big!A1:Z40"] };
+    let cursor: string | undefined;
+    const seen: number[] = [];
+    for (let page = 0; page < 40; page += 1) {
+      const result = await call(connector, "get_values", cursor ? { ...args, cursor } : args);
+      expect(bridged(result)).toBeLessThanOrEqual(MAX_QUICKJS_HOST_RPC_BYTES);
+      for (const row of result.valueRanges[0].values) seen.push(Number(/^\d+/.exec(row[0])![0]));
+      if (!result.page.hasMore) break;
+      cursor = result.page.nextCursor;
+    }
+    expect(seen).toEqual(Array.from({ length: 40 }, (_, index) => index + 1));
+  });
+
+  it("refuses a single row too large for the page, naming every way out", async () => {
+    // Sixty 5,000-character cells: well inside maxCells, far past the bridge.
+    route = bigSheet(1, 60);
+    const failure = await call(connection(), "get_values", { spreadsheetId: ID, ranges: ["Big!A1:Z1"] }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    expect(failure.message).toMatch(/narrow the range's columns or lower maxCellChars, or raise maxBytes to at least \d+/);
+    expect(failure.message).toContain("execute_code cannot receive it");
+  });
+
+  /** call_tool exactly as an MCP client reaches it, over a default result stash. */
+  function metaTools() {
+    return createMetaTools(
+      new Registry([connection()], { storage: memoryStorage(), logger: silentLogger }),
+      "https://connecta.example",
+    );
+  }
+
+  const notice = (result: { content: { text: string }[] }) => JSON.parse(result.content[0]!.text.split("\n")[0]!);
+
+  it("never hands call_tool a page the result stash cannot page", async () => {
+    // A 10 MB row — 200 cells at Sheets' 50,000-character limit — fits under
+    // the 16 MiB response cap but not in the stash. It is refused, not dropped.
+    const huge = "x".repeat(50_000);
+    route = () => ({ body: { valueRanges: [{ range: "W!A1:GR1", values: [Array.from({ length: 200 }, () => huge)] }] } });
+    const refused = await metaTools().callTool({
+      address: "sheets.get_values",
+      args: { spreadsheetId: ID, ranges: ["W!A1:GR1"], maxCellChars: 50_000, maxBytes: 4 * 1024 * 1024 },
+    });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused)).toContain("invalid_args");
+    expect(JSON.stringify(refused)).toContain("narrow the range's columns");
+
+    // The largest page a caller may ask for still pages through get_result.
+    route = bigSheet(200, 3);
+    const mt = metaTools();
+    const paged = await mt.callTool({
+      address: "sheets.get_values",
+      args: { spreadsheetId: ID, ranges: ["Big!A1:Z200"], maxBytes: 4 * 1024 * 1024 },
+    });
+    expect(paged.isError).toBeFalsy();
+    const stashed = notice(paged);
+    expect(stashed.truncated).toBe(true);
+    expect(stashed.totalBytes).toBeGreaterThan(3 * 1024 * 1024);
+    expect(stashed.resultId).toEqual(expect.any(String));
+    expect(stashed.hint).not.toContain("Paging is unavailable");
+    const page = await mt.getResult({ id: stashed.resultId, offset: 0 });
+    expect(page.isError).toBeFalsy();
   });
 });
 
