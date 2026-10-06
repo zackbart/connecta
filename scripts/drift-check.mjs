@@ -73,6 +73,7 @@ const SPEC_PROVIDERS = [
   "tithely",
   "ccb",
   "gmail",
+  "drive",
 ];
 /** Providers whose manifest names one specification per product and version. */
 const VERSIONED_SPEC_PROVIDERS = new Set(["planning-center"]);

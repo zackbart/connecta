@@ -48,15 +48,16 @@ SDK builds sends the header; a 2025-era client that sends neither the header
 nor the 2026-07-28 claim is served exactly as before (#687).
 
 This release adds org-wide Google Workspace access with no per-user consent
-step, and its first consumer: a draft-only Gmail connection. A Workspace super
-admin grants a service account domain-wide delegation once; the deployment maps
-each admitted identity to a Workspace address in config; and the provider mints
-a short-lived token as that user on every call. It is the second sanctioned use
-of the in-repo caller channel, recorded in `ethos.md` as config-mapped delegated
-subjects ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing
-breaks and nothing changes for a deployment that does not import
-`./providers/gmail`: the shared delegation layer has no export of its own, and a
-deployment's own connectors still never learn their caller.
+step, and its first consumers: a draft-only Gmail connection and a Google
+Drive connection. A Workspace super admin grants a service account domain-wide
+delegation once; the deployment maps each admitted identity to a Workspace
+address in config; and the provider mints a short-lived token as that user on
+every call. It is the second sanctioned use of the in-repo caller channel,
+recorded in `ethos.md` as config-mapped delegated subjects
+([#678](https://github.com/zackbart/connecta/issues/678)). Nothing breaks and
+nothing changes for a deployment that imports neither `./providers/gmail` nor
+`./providers/drive`: the shared delegation layer has no export of its own, and
+a deployment's own connectors still never learn their caller.
 
 ### Added
 
@@ -105,6 +106,30 @@ deployment's own connectors still never learn their caller.
   `iam.disableServiceAccountKeyCreation` override some organizations need), and
   the Admin console's domain-wide delegation entry with exactly
   `gmail.readonly` and `gmail.compose` — is documented on `gmail()` itself.
+- **Google Drive connection.** `@zackbart/connecta/providers/drive` exports
+  `drive(id, options)` with the same Workspace delegation options, plus
+  `DRIVE_SCOPES` (exactly `https://www.googleapis.com/auth/drive`) and
+  `DRIVE_API_BASE_URL`. Seventeen hand-written tools, every one reaching shared
+  drives as well as My Drive. Reads: `search_files` (Drive query syntax, trash
+  left out unless asked, `user`/`drive`/`allDrives`/`domain` corpora, Drive's
+  own `incompleteSearch` surfaced), `list_folder_items`, `get_file`,
+  `get_file_content` (Docs exported as Markdown, Sheets as CSV of the first
+  sheet only, Slides as text, text files read by range up to `maxChars`,
+  binaries as base64 up to 1 MiB, and anything else — a larger binary, a
+  drawing, a form, a folder, a shortcut — as `format: "unavailable"` with a
+  note rather than an empty success), `list_permissions`, and
+  `list_shared_drives`. Additive writes: `create_folder`, `create_file` (text
+  or base64 content as one multipart upload, or an empty file; `convertTo`
+  imports it as a Google Doc, Sheet, or Slides file), `copy_file`, and
+  `restore_file`. Destructive writes: `update_file_content`, `update_file`
+  (rename, description), `move_file` (a move changes inherited sharing),
+  `trash_file`, `share_file` (user, group, domain, or anyone with the link, up
+  to writer or organizer, emailing no one unless `sendNotificationEmail`),
+  `update_permission`, and `delete_permission`. There is no permanent delete,
+  no empty-trash, no ownership transfer, and no raw hatch. A 404 says the file
+  may be missing or hidden from this account, because Drive does not say
+  which. Setup — the Google Drive API and the one scope on the delegation
+  entry — is documented on `drive()` itself.
 - **Google Workspace domain-wide delegation, shared by every Workspace
   provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
   the downloaded JSON key's text, from deployment secrets rather than the vault,

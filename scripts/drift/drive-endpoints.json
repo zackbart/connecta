@@ -1,0 +1,78 @@
+{
+  "provider": "drive",
+  "specification": {
+    "url": "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+    "format": "google-discovery"
+  },
+  "scopes": [
+    "https://www.googleapis.com/auth/drive"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/drive/v3/files",
+      "specRevision": "20261003",
+      "contract": "sha256:05bc880957d069cd17ea543fedd5819501498eab1cd7f25052c684ec4db5ec61"
+    },
+    {
+      "method": "POST",
+      "path": "/drive/v3/files",
+      "specRevision": "20261003",
+      "contract": "sha256:1fcd4857b3682850dba107f20376ff1803872dcf044c916b467df10b67e42344"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/{fileId}",
+      "specRevision": "20261003",
+      "contract": "sha256:a1f2d7709240d7ae4303a7b68588f172b45328e57fdd9f4a49130a16db75bbb8"
+    },
+    {
+      "method": "PATCH",
+      "path": "/drive/v3/files/{fileId}",
+      "specRevision": "20261003",
+      "contract": "sha256:613b9be208132083b92a5297ca9dfc4042bf0fff4e94a0c22b8f9bc7b76cfe47"
+    },
+    {
+      "method": "POST",
+      "path": "/drive/v3/files/{fileId}/copy",
+      "specRevision": "20261003",
+      "contract": "sha256:3a766ac7aede16a019d66a91a15b6aa8ccdbee583718a75eb5e4d7ef88c1110b"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/{fileId}/export",
+      "specRevision": "20261003",
+      "contract": "sha256:209c15e394de323210fd1ed9f6da6fc5962b0f8beb7c6dca3adc48cae2bf9383"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/{fileId}/permissions",
+      "specRevision": "20261003",
+      "contract": "sha256:adacf2992b76e75f683c390d81468176555e41bee2e85440ec9d7798566cc173"
+    },
+    {
+      "method": "POST",
+      "path": "/drive/v3/files/{fileId}/permissions",
+      "specRevision": "20261003",
+      "contract": "sha256:36db968c889ddad9dca7ca061ab6260e24463d7201fe5b8b1116c80c7d6e966e"
+    },
+    {
+      "method": "PATCH",
+      "path": "/drive/v3/files/{fileId}/permissions/{permissionId}",
+      "specRevision": "20261003",
+      "contract": "sha256:878ffdca8a190c3397ac608dfa487709002a5edd0fd534670bae9e3649405e56"
+    },
+    {
+      "method": "DELETE",
+      "path": "/drive/v3/files/{fileId}/permissions/{permissionId}",
+      "specRevision": "20261003",
+      "contract": "sha256:d888956d56090b61643a0ecf38947923cf449c9b7eeb4c60504ed877a9b3e5d6"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/drives",
+      "specRevision": "20261003",
+      "contract": "sha256:8cca942df8387499b4968cfd0aa6eac4b19cb90b7871db70febcd1ac5a246442"
+    }
+  ]
+}

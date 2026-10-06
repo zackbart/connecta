@@ -123,6 +123,10 @@
       "types": "./dist/providers/gmail.d.ts",
       "import": "./dist/providers/gmail.js"
     },
+    "./providers/drive": {
+      "types": "./dist/providers/drive.d.ts",
+      "import": "./dist/providers/drive.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"
