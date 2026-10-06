@@ -259,13 +259,16 @@ caller.
   changed since it was read; a stale revision fails `conflict`). Every result
   stays inside 192 KiB, under `execute_code`'s 256 KiB host-result bridge,
   measured whole, cursor included: a response page ends early and continues
-  after the last response it returned, by id (a cursor whose response was
-  deleted fails `conflict`), every projected text is bounded in bytes as well
-  as characters, a large form pages its
-  items under a cursor bound to its revision, a response too large to read
-  whole names the answers it left out in `omittedQuestionIds`, and `raw: true`
-  refuses a form too large for one result. `create_form` is additive; the
-  other two writes are destructive. There is no list, delete, share, publish, or watch tool: Drive
+  after the last response it returned, only while Google's page still holds
+  the same responses in the same order (otherwise `conflict`), every
+  projected text is bounded in bytes as well as characters and cut without
+  splitting a surrogate pair, a large form pages its items under a cursor
+  bound to its revision, a response too large to read whole names the answers
+  it left out in `omittedQuestionIds`, and `raw: true` refuses a form too
+  large for one result. `create_form` is additive; the other two writes are
+  destructive. A write Google may have applied without a readable reply is
+  reported as not retryable, and a create says to look in Drive before
+  creating again. There is no list, delete, share, publish, or watch tool: Drive
   lists forms, and this connection requests no Drive scope. A form is a Drive
   file, so a 404 is reported as unknown-or-not-visible, never as absence.
   Setup, with exactly `forms.body` and `forms.responses.readonly` for the

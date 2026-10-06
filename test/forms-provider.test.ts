@@ -385,6 +385,73 @@ describe("reading forms (H9)", () => {
   });
 });
 
+/** No lone surrogate anywhere: what String.prototype.isWellFormed checks. */
+function wellFormed(value: string): boolean {
+  return !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value);
+}
+
+describe("cuts never split a surrogate pair", () => {
+  // The emoji straddles each cut: its high surrogate is the last unit kept.
+  const straddle = (keep: number) => `${"a".repeat(keep - 1)}😀${"z".repeat(50)}`;
+
+  it("at the title, description, option, and row boundaries of a form", async () => {
+    route = () => ({
+      body: {
+        formId: "e",
+        info: { title: straddle(2_000), description: straddle(2_000) },
+        items: [
+          {
+            itemId: "i1",
+            title: straddle(2_000),
+            questionItem: {
+              question: { questionId: "q1", choiceQuestion: { type: "RADIO", options: [{ value: straddle(300) }] } },
+            },
+          },
+          {
+            itemId: "i2",
+            title: "Grid",
+            questionGroupItem: {
+              grid: { columns: { type: "RADIO", options: [{ value: "x" }] } },
+              questions: [{ questionId: "q2", rowQuestion: { title: straddle(300) } }],
+            },
+          },
+        ],
+      },
+    });
+    const result = await call(connection(), "get_form", { formId: "e" });
+    const cut = [
+      result.title,
+      result.description,
+      result.items[0].title,
+      result.items[0].questions[0].options[0],
+      result.items[1].questions[0].rowTitle,
+    ];
+    for (const value of cut) {
+      expect(value).toContain("more characters truncated");
+      expect(wellFormed(value)).toBe(true);
+    }
+    // The pair is dropped whole, and counted: 50 + the two units of the emoji.
+    expect(result.title).toMatch(/^a{1999}\n\[… 52 more characters truncated/);
+  });
+
+  it("at a listed answer's boundary", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith("/responses")
+        ? {
+            body: {
+              responses: [
+                { responseId: "r1", answers: { q1: { questionId: "q1", textAnswers: { answers: [{ value: straddle(2_000) }] } } } },
+              ],
+            },
+          }
+        : { body: FORM };
+    const result = await call(connection(), "list_responses", { formId: "form-1" });
+    const value = result.responses[0].answers[0].values[0];
+    expect(value).toMatch(/^a{1999}\n\[… 52 more characters truncated; get_response reads it whole\]$/);
+    expect(wellFormed(value)).toBe(true);
+  });
+});
+
 describe("reading responses (H9, H10)", () => {
   it("lists responses labeled by question title, in form order, with long answers cut", async () => {
     route = (request) =>
@@ -783,6 +850,72 @@ describe("writing forms", () => {
   });
 });
 
+describe("a write whose outcome is unknown is never told to retry", () => {
+  /** Google's API answers with `reply`; the token endpoint answers normally. */
+  function answer(reply: () => Promise<Response>) {
+    globalThis.fetch = vi.fn(async (input: unknown) =>
+      String(input) === TOKEN_URL ? Response.json({ access_token: "token", expires_in: 3599 }) : await reply(),
+    ) as unknown as typeof fetch;
+  }
+  /** A 200 whose JSON body breaks off mid-stream. */
+  const broken = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"formId":"new-1","replies":['));
+          controller.error(new TypeError("connection reset"));
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  /** Sent, and no response at all. */
+  const silent = async (): Promise<Response> => {
+    throw new TypeError("fetch failed");
+  };
+
+  const batch = {
+    formId: "form-1",
+    requests: [{ deleteItem: { location: { index: 0 } } }],
+    requiredRevisionId: "00000042",
+  };
+
+  it.each([
+    ["whose 2xx body breaks mid-stream", broken, "probably applied"],
+    ["that gets no response", silent, "may or may not have been applied"],
+  ])("reports an edit %s as uncertain, not retryable", async (_case, reply, says) => {
+    answer(reply);
+    for (const [name, args] of [
+      ["batch_update_form", batch],
+      ["update_form_info", { formId: "form-1", title: "New title" }],
+    ] as const) {
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message, name).toContain(says);
+      expect(failure.message, name).not.toMatch(/nothing was applied|safe to retry|retry it/i);
+    }
+  });
+
+  it.each([
+    ["whose 2xx body breaks mid-stream", broken, "probably applied"],
+    ["that gets no response", silent, "may or may not have been applied"],
+  ])("tells a create %s to look for the form before creating another", async (_case, reply, says) => {
+    answer(reply);
+    const failure = await call(connection(), "create_form", { title: "Volunteer roster", documentTitle: "Roster" }).catch(
+      (error) => error,
+    );
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain(says);
+    expect(failure.message).toContain('look for "Roster" in the user\'s Drive');
+  });
+
+  it("leaves a refused create as Google refused it", async () => {
+    route = () => ({ status: 400, body: { error: { code: 400, message: "Title too long.", status: "INVALID_ARGUMENT" } } });
+    const failure = await call(connection(), "create_form", { title: "x" }).catch((error) => error);
+    expect(failure.code).toBe("invalid_args");
+    expect(failure.message).not.toContain("look for");
+  });
+});
+
 describe("errors (H11)", () => {
   it("never calls a 404 absent: a form is a Drive file the user may not see", async () => {
     route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } } });
@@ -1088,7 +1221,7 @@ describe("worst-case results fit one host result (256 KiB)", () => {
   });
 });
 
-describe("list_responses resumes after the last response it returned, by id", () => {
+describe("list_responses resumes only on the page it was issued for", () => {
   /** Twelve long answers each: two responses fill a page, a third does not. */
   const form = {
     formId: "f",
@@ -1111,40 +1244,70 @@ describe("list_responses resumes after the last response it returned, by id", ()
   });
   const ids = (page: any) => page.responses.map((entry: any) => entry.responseId);
 
-  it.each([
-    ["a submission inserted before the anchor", ["new", "r0", "r1", "r2", "r3", "r4"], ["r2", "r3"], true],
-    ["a submission inserted after the anchor", ["r0", "r1", "new", "r2", "r3", "r4"], ["new", "r2"], true],
-    ["a shorter refetched page", ["r0", "r1", "r2"], ["r2"], false],
-  ])("neither repeats nor skips on %s", async (_case, refetched, expected, more) => {
-    let rows = ["r0", "r1", "r2", "r3", "r4"];
+  /** Rows the responses route serves, read afresh on every list call. */
+  let rows: string[] | (() => string[]) = [];
+  beforeEach(() => {
     route = (request) =>
-      request.url.pathname.endsWith("/responses") ? { body: { responses: rows.map(response) } } : { body: form };
+      request.url.pathname.endsWith("/responses")
+        ? { body: { responses: (typeof rows === "function" ? rows() : rows).map(response) } }
+        : { body: form };
+  });
+
+  it("continues strictly after the last response when the page is unchanged", async () => {
+    rows = ["r0", "r1", "r2", "r3", "r4"];
     const connector = connection();
     const first = await call(connector, "list_responses", { formId: "f" });
     expect(ids(first)).toEqual(["r0", "r1"]);
     expect(jsonBytes(first)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-
-    rows = refetched;
     calls.length = 0;
     const second = await call(connector, "list_responses", { formId: "f", cursor: first.page.nextCursor });
-    expect(ids(second)).toEqual(expected);
-    expect(second.page.hasMore).toBe(more);
+    expect(ids(second)).toEqual(["r2", "r3"]);
     // The same Google page, re-read at the same size, with no token.
     const list = calls.find((entry) => entry.url.pathname.endsWith("/responses"))!;
     expect(Object.fromEntries(list.url.searchParams)).toEqual({ pageSize: "25" });
+    const third = await call(connector, "list_responses", { formId: "f", cursor: second.page.nextCursor });
+    expect(ids(third)).toEqual(["r4"]);
+    expect(third.page).toEqual({ hasMore: false, nextCursor: null });
   });
 
-  it("refuses with restart guidance when the anchor is gone, rather than guessing", async () => {
-    let rows = ["r0", "r1", "r2", "r3", "r4"];
-    route = (request) =>
-      request.url.pathname.endsWith("/responses") ? { body: { responses: rows.map(response) } } : { body: form };
-    const first = await call(connection(), "list_responses", { formId: "f" });
-    rows = ["r0", "r2", "r3", "r4"];
-    const failure = await call(connection(), "list_responses", { formId: "f", cursor: first.page.nextCursor }).catch(
+  it.each([
+    // Google promises no stable order: the anchor alone would continue after
+    // r1 here and return r0 again while skipping r2.
+    ["reordered", ["r2", "r1", "r0", "r3", "r4"]],
+    ["a submission inserted before the anchor", ["new", "r0", "r1", "r2", "r3", "r4"]],
+    ["a submission inserted after the anchor", ["r0", "r1", "new", "r2", "r3", "r4"]],
+    ["shorter, the tail gone", ["r0", "r1", "r2"]],
+    ["the anchor deleted", ["r0", "r2", "r3", "r4"]],
+  ])("refuses a page that came back %s, with restart guidance", async (_case, refetched) => {
+    rows = ["r0", "r1", "r2", "r3", "r4"];
+    const connector = connection();
+    const first = await call(connector, "list_responses", { formId: "f" });
+    rows = refetched;
+    const failure = await call(connector, "list_responses", { formId: "f", cursor: first.page.nextCursor }).catch(
       (error) => error,
     );
-    expect(failure).toMatchObject({ code: "conflict" });
+    expect(failure).toMatchObject({ code: "conflict", retryable: false });
     expect(failure.message).toContain("Start again without cursor");
+    expect(failure.message).toContain("submittedAfter");
+  });
+
+  it("ends an order that alternates between reads with conflict, never a cycle", async () => {
+    let reads = 0;
+    rows = () => (reads++ % 2 === 0 ? ["r0", "r1", "r2", "r3", "r4"] : ["r1", "r0", "r3", "r2", "r4"]);
+    const connector = connection();
+    let cursor: string | undefined;
+    let failure: any;
+    for (let page = 0; page < 10 && failure === undefined; page += 1) {
+      try {
+        const result = await call(connector, "list_responses", { formId: "f", ...(cursor ? { cursor } : {}) });
+        cursor = result.page.nextCursor ?? undefined;
+        if (!cursor) break;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    expect(failure).toMatchObject({ code: "conflict" });
+    expect(reads).toBe(2);
   });
 
   it("moves to Google's next page once the anchored page is spent", async () => {

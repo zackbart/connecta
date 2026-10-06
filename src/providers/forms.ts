@@ -29,6 +29,7 @@ import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
 import {
+  googleOutcomeOf,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
@@ -122,7 +123,12 @@ function integer(value: unknown): number | undefined {
 /** Cut text at `max` characters and say so in the text itself. */
 function capped(value: string | undefined, max: number, remedy: string): string | undefined {
   if (value === undefined || value.length <= max) return value;
-  return `${value.slice(0, max)}\n[… ${value.length - max} more characters truncated; ${remedy}]`;
+  // Never split a surrogate pair: a lone high surrogate before the marker
+  // would make the text ill-formed.
+  let cut = value.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}\n[… ${value.length - cut.length} more characters truncated; ${remedy}]`;
 }
 
 /**
@@ -886,8 +892,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         required: ["formId"],
       },
       handler: async (args, ctx) => {
-        const form = asRecord(
-          await client.json(
+        let created: unknown;
+        try {
+          created = await client.json(
             {
               method: "POST",
               path: "/forms",
@@ -895,8 +902,22 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               body: { info: compact({ title: args["title"], documentTitle: args["documentTitle"] }) },
             },
             ctx,
-          ),
-        );
+          );
+        } catch (error) {
+          // Sent and not refused: the form may exist, and there is no form
+          // id to re-read. Another create would make a second one, so say
+          // where to look first. The shared verdict (not retryable) stands.
+          const phase = googleOutcomeOf(error)?.phase;
+          if (error instanceof ConnectorCallError && (phase === "reading-body" || phase === "awaiting-response")) {
+            throw new ConnectorCallError(
+              error.code,
+              `${error.message} create_form makes a new form on every call: look for "${args["documentTitle"] ?? args["title"]}" in the user's Drive, or ask them, before creating it again.`,
+              { retryable: false, cause: error },
+            );
+          }
+          throw error;
+        }
+        const form = asRecord(created);
         const formId = text(form["formId"]);
         const info = asRecord(form["info"]);
         return compact({
@@ -942,18 +963,21 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const digest = await digestOf(["list_responses", formId, args["submittedAfter"] ?? null]);
         // A cursor names Google's page (its token and size) and, when a page
         // ended early to stay inside its byte budget, the last response it
-        // returned. The next call re-reads that Google page and continues
-        // strictly after that response — by id, never by position, so a
-        // submission landing earlier on the page or a shorter page cannot make
-        // it repeat or skip anything. An anchor no longer there is refused.
+        // returned and a fingerprint of that Google page's ordered response
+        // ids. The next call re-reads the page and continues strictly after
+        // that response only if the page is exactly as it was: Google promises
+        // neither a stable order nor a snapshot, so a reordered, grown, or
+        // shrunk page could repeat, skip, or cycle, and is refused instead.
+        // Moving to Google's next page needs none of this: its token is Google's.
         const resume = typeof args["cursor"] === "string"
           ? decodeCursor(
               args["cursor"],
               digest,
-              ["d", "t", "a", "n"],
+              ["d", "t", "a", "h", "n"],
               (c) =>
                 (c["t"] === null || typeof c["t"] === "string") &&
-                (c["a"] === null || (typeof c["a"] === "string" && c["a"] !== "")) &&
+                ((c["a"] === null && c["h"] === null) ||
+                  (typeof c["a"] === "string" && c["a"] !== "" && typeof c["h"] === "string")) &&
                 isIndex(c["n"]) &&
                 c["n"] >= 1 &&
                 c["n"] <= MAX_PAGE_SIZE,
@@ -963,6 +987,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const token: string | null = resume?.["t"] ?? null;
         const size: number = resume?.["n"] ?? limit;
         const anchor: string | null = resume?.["a"] ?? null;
+        const fingerprint: string | null = resume?.["h"] ?? null;
         // The form labels the answers. Both reads are one person's view, so
         // either failing fails the call rather than returning bare ids.
         const [form, listing] = await Promise.all([
@@ -984,13 +1009,14 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const page = asRecord(listing);
         const rows = asArray(page["responses"]);
         const idOf = (row: unknown) => text(asRecord(row)["responseId"]);
+        const pageHash = await digestOf(["page", ...rows.map((row) => idOf(row) ?? null)]);
         let start = 0;
         if (anchor !== null) {
           const at = rows.findIndex((row) => idOf(row) === anchor);
-          if (at < 0) {
+          if (fingerprint !== pageHash || at < 0) {
             throw new ConnectorCallError(
               "conflict",
-              "The response this cursor continues after is no longer on its page: it was deleted, or the page changed. Start again without cursor, or pass the newest lastSubmittedTime already read as submittedAfter.",
+              "Google's page of responses changed since this cursor was issued (reordered, or responses added or removed), so continuing could repeat or skip some. Start again without cursor, or pass the newest lastSubmittedTime already read as submittedAfter.",
             );
           }
           start = at + 1;
@@ -1024,9 +1050,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
                 { retryable: false },
               );
             }
-            next = { d: digest, t: token, a: after, n: size };
+            next = { d: digest, t: token, a: after, h: pageHash, n: size };
           } else if (googleNext) {
-            next = { d: digest, t: googleNext, a: null, n: limit };
+            next = { d: digest, t: googleNext, a: null, h: null, n: limit };
           }
           const nextCursor = next ? encodeCursor(next) : null;
           return { formId, responses, page: { hasMore: nextCursor !== null, nextCursor } };
@@ -1252,9 +1278,9 @@ Drive, or take its id from an edit URL (\`/forms/d/<formId>/edit\`). The
   reads one whole. Page with \`page.nextCursor\` and the same
   \`submittedAfter\`. To read only new responses, pass the newest
   \`lastSubmittedTime\` already seen as \`submittedAfter\`. A cursor
-  continues after the last response it returned; if that response has
-  since been deleted, it fails \`conflict\` — start again, or use
-  \`submittedAfter\`.
+  continues after the last response it returned; if Google's page has
+  changed since (new, deleted, or reordered responses), it fails
+  \`conflict\` — start again, or use \`submittedAfter\`.
 - A response too large for one result comes back cut, with the answers left
   out named in \`omittedQuestionIds\`; pass them to \`get_response\` as
   \`questionIds\`.
