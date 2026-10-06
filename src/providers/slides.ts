@@ -151,6 +151,10 @@ const MAX_TITLE_BYTES = 4 * 1024;
 const MAX_ALT_TEXT_BYTES = 4 * 1024;
 /** A slide title in get_presentation, in characters, before maxCharsPerSlide. */
 const MAX_TITLE_CHARS = 500;
+/** The longest thumbnail link passed on; a real one is well under 2 KB. */
+const MAX_URL_BYTES = 16 * 1024;
+/** One batchUpdate reply kept whole up to this; a larger one is summarized. */
+const MAX_REPLY_BYTES = 2 * 1024;
 /** replace_all_text echoes each find this far, in order with its count. */
 const MAX_ECHO_CHARS = 100;
 
@@ -172,7 +176,8 @@ const ELEMENT_FIELDS =
   `sheetsChart(spreadsheetId),wordArt,table(rows,columns,tableRows(tableCells(${TEXT_ONLY}))),` +
   `shape(shapeType,placeholder(type,index,parentObjectId),${TEXT_ONLY})`;
 const LAYOUT_FIELDS =
-  "masters(objectId,masterProperties(displayName)),layouts(objectId,layoutProperties(name,displayName,masterObjectId))";
+  "masters(objectId,masterProperties(displayName)),layouts(objectId,layoutProperties(name,displayName,masterObjectId))," +
+  "notesMaster(objectId)";
 const PRESENTATION_FIELDS = [
   "presentationId",
   "title",
@@ -229,12 +234,16 @@ function editUrl(presentationId: string): string {
  * failing means a shape the building missed; it refuses, explicitly, rather
  * than hand back a result neither delivery route can carry.
  */
-function deliverable<T>(result: T, tool: string): T {
+function deliverable<T>(
+  result: T,
+  tool: string,
+  advice = "read a smaller part, or with raw: true, which pages in chunks",
+): T {
   const bytes = jsonBytes(result);
   if (bytes > RESULT_BUDGET_BYTES) {
     throw new ConnectorCallError(
       "connector_call_failed",
-      `${tool} built a result of ${bytes} bytes, more than one result can carry (${RESULT_BUDGET_BYTES}). Nothing was changed; read a smaller part, or with raw: true, which pages in chunks.`,
+      `${tool} built a result of ${bytes} bytes, more than one result can carry (${RESULT_BUDGET_BYTES}). It only read, so nothing was changed; ${advice}.`,
       { retryable: false },
     );
   }
@@ -349,7 +358,8 @@ function decodeCursor(
 /**
  * The deck state a cursor binds to: the revision when Slides gives one, which
  * it does to anyone who may edit. A viewer gets none, so a cursor binds to a
- * fingerprint of exactly what its paging depends on instead.
+ * SHA-256 of exactly what its paging depends on instead — content, never a
+ * length or a count standing in for it.
  */
 async function stateOf(revisionId: unknown, fingerprint: () => unknown): Promise<string> {
   if (typeof revisionId === "string" && revisionId !== "") return `r:${revisionId}`;
@@ -500,7 +510,9 @@ function readingOrder(elements: unknown): Leaf[] {
 
 /** What a projected page's cursor depends on when there is no revision. */
 function leafFingerprint(leaves: readonly Leaf[]): unknown {
-  return leaves.map((leaf) => [leaf.element["objectId"] ?? null, leaf.kind, leaf.text.length]);
+  // The text itself, not its length: a continuation resumes at a character
+  // offset, and an edit that keeps the length still moves what is there.
+  return leaves.map((leaf) => [leaf.element["objectId"] ?? null, leaf.kind, leaf.text]);
 }
 
 function placeholderOf(leaf: Leaf): JsonRecord {
@@ -951,9 +963,13 @@ function rawRows(items: readonly JsonRecord[], start: { i: number; o: number }, 
   return out;
 }
 
-/** What a raw get_page cursor depends on when there is no revision. */
+/**
+ * What a raw get_page cursor depends on when there is no revision: the exact
+ * JSON of every item, since a chunk resumes at an offset into that text, and
+ * an edit of equal size would otherwise stitch two versions into one.
+ */
 function rawFingerprint(items: readonly JsonRecord[]): unknown {
-  return items.map((item) => [item["objectId"] ?? null, jsonBytes(item)]);
+  return items.map((item) => JSON.stringify(item));
 }
 
 // --- Writing ----------------------------------------------------------------------
@@ -988,17 +1004,73 @@ async function batchUpdate(
 }
 
 /**
- * A create whose outcome Google left unknown — sent with no answer back, or
- * accepted with an answer that broke — keeps the shared verdict and adds what
- * to look for before creating again, since a second create makes a second
- * deck or slide. Any other failure passes through untouched.
+ * A create whose outcome Google left unknown — sent with no answer back, a
+ * server failure after it was sent, or accepted with an answer that broke —
+ * keeps the shared verdict and adds what to look for before creating again,
+ * since a second create makes a second deck or slide. Only a request that
+ * never left, or that Google explicitly refused, is known not to have
+ * applied, so every other dispatched outcome counts as unknown, whatever
+ * phase name the shared layer gives it. Any other failure passes through.
  */
 function afterUnknownCreate(error: unknown, lookFor: string): unknown {
-  const phase = googleOutcomeOf(error)?.phase;
-  if (!(error instanceof ConnectorCallError) || (phase !== "reading-body" && phase !== "awaiting-response")) {
+  const outcome = googleOutcomeOf(error);
+  if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
     return error;
   }
   return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, { retryable: error.retryable, cause: error });
+}
+
+/**
+ * One batchUpdate reply, small enough to return. Most are tiny — a new
+ * object's id, a count — and pass whole. One that is not keeps its numbers,
+ * booleans, and short strings (every id among them) and names the fields it
+ * left out in `cut`, so nothing is dropped without a word.
+ */
+function summarizeReply(reply: JsonRecord): JsonRecord {
+  if (jsonBytes(reply) <= MAX_REPLY_BYTES) return reply;
+  const kept: JsonRecord = {};
+  const cut: string[] = [];
+  for (const [kind, body] of Object.entries(reply)) {
+    const fields: JsonRecord = {};
+    for (const [field, value] of Object.entries(asRecord(body))) {
+      const small =
+        typeof value === "number" ||
+        typeof value === "boolean" ||
+        (typeof value === "string" && jsonBytes(value) <= MAX_NAME_BYTES);
+      if (small && jsonBytes(fields) + jsonBytes(value) < MAX_REPLY_BYTES / 2) fields[field] = value;
+      else cut.push(`${kind}.${field}`);
+    }
+    kept[kind] = fields;
+  }
+  const named = cut.slice(0, 10).map((path) => path.slice(0, 64));
+  const summary = { ...kept, cut: cut.length > named.length ? [...named, `(${cut.length - named.length} more)`] : named };
+  if (jsonBytes(summary) <= MAX_REPLY_BYTES) return summary;
+  // A reply of many kinds, which Slides does not send, still ends small and
+  // keeps the one thing a caller cannot recover by asking: what it created.
+  const ids: JsonRecord = {};
+  for (const [kind, body] of Object.entries(reply).slice(0, 8)) {
+    const objectId = asRecord(body)["objectId"];
+    if (typeof objectId === "string" && jsonBytes(objectId) <= MAX_NAME_BYTES / 2) ids[kind.slice(0, 64)] = { objectId };
+  }
+  return { ...ids, cut: ["(the rest of the reply)"] };
+}
+
+/**
+ * A batch's replies under one result's budget, in order, after `used` bytes.
+ * The write has applied by now, so whatever does not fit is counted and the
+ * result says to re-read, never that nothing changed.
+ */
+function boundedReplies(replies: readonly unknown[], used: number): { replies: JsonRecord[]; notShown: number } {
+  const out: JsonRecord[] = [];
+  let total = used + 2;
+  for (const reply of replies) {
+    const summary = summarizeReply(asRecord(reply));
+    const size = jsonBytes(summary) + 1;
+    if (total + size > RESULT_BUDGET_BYTES) break;
+    out.push(summary);
+    total += size;
+  }
+  return { replies: out, notShown: replies.length - out.length };
 }
 
 /** The revision a write left the deck at, for the next write to name. */
@@ -1188,6 +1260,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             properties: { width: DIMENSION_SCHEMA, height: DIMENSION_SCHEMA },
           },
           slideCount: { type: "integer" },
+          notesMasterId: { type: "string" },
           layouts: { type: "array", items: LAYOUT_ROW_SCHEMA },
           layoutsNotShown: { type: "integer" },
           layoutsCursor: { type: "string" },
@@ -1252,6 +1325,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           locale: text(presentation["locale"]),
           pageSize: width && height ? { width, height } : undefined,
           slideCount: all.length,
+          // The one page no slide, layout, or master links to; get_page reads it.
+          notesMasterId: text(asRecord(presentation["notesMaster"])["objectId"]),
           ...preview,
         });
         const issue = (i: number) => encodeCursor({ k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
@@ -1394,6 +1469,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         properties: {
           presentationId: { type: "string" },
           revisionId: { type: "string" },
+          notesMasterId: { type: "string" },
           total: { type: "integer" },
           layouts: { type: "array", items: LAYOUT_ROW_SCHEMA },
           page: PAGE_SCHEMA,
@@ -1415,6 +1491,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const header = compact({
           presentationId,
           revisionId: text(presentation["revisionId"]),
+          notesMasterId: text(asRecord(presentation["notesMaster"])["objectId"]),
           total: rows.length,
         });
         const room =
@@ -1467,11 +1544,25 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        return compact({
-          contentUrl: text(thumbnail["contentUrl"]) ?? "",
-          width: typeof thumbnail["width"] === "number" ? thumbnail["width"] : undefined,
-          height: typeof thumbnail["height"] === "number" ? thumbnail["height"] : undefined,
-        });
+        const contentUrl = text(thumbnail["contentUrl"]) ?? "";
+        // A link is whole or useless, so one too long to pass on is refused,
+        // never cut.
+        if (jsonBytes(contentUrl) > MAX_URL_BYTES) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Google returned a thumbnail link of ${jsonBytes(contentUrl)} bytes, longer than this connection passes on (${MAX_URL_BYTES}). It only read, so nothing was changed; open the slide in Slides instead.`,
+            { retryable: false },
+          );
+        }
+        return deliverable(
+          compact({
+            contentUrl,
+            width: typeof thumbnail["width"] === "number" ? thumbnail["width"] : undefined,
+            height: typeof thumbnail["height"] === "number" ? thumbnail["height"] : undefined,
+          }),
+          "get_slide_thumbnail",
+          "open the slide in Slides instead",
+        );
       },
     },
     {
@@ -1710,6 +1801,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         properties: {
           ...WRITE_RESULT_PROPERTIES,
           replies: { type: "array", items: { type: "object" } },
+          repliesNotShown: { type: "integer" },
+          note: { type: "string" },
         },
         required: ["presentationId", "replies"],
       },
@@ -1734,12 +1827,23 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           requests,
           args["requiredRevisionId"],
         );
-        return compact({
+        const header = compact({
           presentationId: text(response["presentationId"]) ?? args["presentationId"],
-          revisionId: revisionAfter(response),
-          // One per request, in order; most are empty, the create replies
-          // carry the new object ids.
-          replies: asArray(response["replies"]).map(asRecord),
+          revisionId: label(revisionAfter(response), MAX_NAME_BYTES, "get_presentation has the current one"),
+        });
+        // One reply per request, in order; most are empty, the create replies
+        // carry the new object ids. Bounded, because the write has applied
+        // and its result must still reach the caller.
+        const all = asArray(response["replies"]);
+        const shown = boundedReplies(all, jsonBytes(header) + 512);
+        return compact({
+          ...header,
+          replies: shown.replies,
+          repliesNotShown: shown.notShown > 0 ? shown.notShown : undefined,
+          note:
+            shown.notShown > 0 || shown.replies.some((reply) => "cut" in reply)
+              ? `The write applied. ${shown.notShown > 0 ? `The last ${shown.notShown} of ${all.length} replies were too large to return` : "Large reply fields are named in cut"}; re-read with get_presentation or get_page for what it created.`
+              : undefined,
         });
       },
     },
@@ -1783,7 +1887,8 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   list whole gives \`elementsNotShown\` and an \`elementsCursor\`.
 - \`get_page\` reads any page by objectId — a slide, a layout (its
   placeholders' types and indexes, for \`placeholderIdMappings\`), a master,
-  or a notes page (\`notesPageId\`) — listing every element, groups opened,
+  a notes page (\`notesPageId\`), or the notes master (\`notesMasterId\`) —
+  listing every element, groups opened,
   and continuing long text across pages from \`page.nextCursor\`.
 - \`list_layouts\` lists masters and their layouts; \`get_presentation\`
   previews them, and \`layoutsCursor\` continues where the preview stops.
@@ -1809,7 +1914,10 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   requires the \`revisionId\` from the read the requests were built on. All
   requests apply or none do. Each write returns the new \`revisionId\` for the
   next one. A \`conflict\` means the deck changed since that read: re-read it,
-  rebuild the requests, and send them with the new \`revisionId\`.
+  rebuild the requests, and send them with the new \`revisionId\`. Its
+  replies keep every new object's id; a large reply's other fields are named
+  in \`cut\`, and replies past one result are counted in \`repliesNotShown\`.
+  The write applied either way: re-read for what it made.
 - Nothing here shares, moves, or deletes a deck.
 ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
 }

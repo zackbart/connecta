@@ -297,8 +297,8 @@ caller.
   then left to right, rotated and nested groups composed — with table cells,
   alt text, linked charts' spreadsheet ids, speaker notes, and empty
   placeholders' ids for filling a new slide, under a field mask that leaves
-  styles behind, capped per slide), `get_page` (any slide, layout, master, or
-  notes page by objectId: every element in reading order with its group and
+  styles behind, capped per slide), `get_page` (any slide, layout, master,
+  notes page, or the notes master by objectId: every element in reading order with its group and
   placeholder type, index, and parent — what `placeholderIdMappings` needs —
   and text continued across pages), `list_layouts` (masters, each followed by
   its layouts), and `get_slide_thumbnail` (the short-lived link and size,
@@ -307,9 +307,11 @@ caller.
   replacements in one atomic batch, optionally at a required revision) and
   `batch_update_presentation` (1 to 100 raw Slides requests, each refused
   locally unless it is one known Request kind, always at a required
-  `revisionId`) are destructive. A write refused because the deck changed
-  since its revision is a `conflict`, and a create whose outcome is unknown
-  says what to look for before creating again.
+  `revisionId`, its replies bounded — every new object's id kept, large
+  fields named in `cut`, overflow counted, and the write reported as applied)
+  are destructive. A write refused because the deck changed since its
+  revision is a `conflict`, and a create whose outcome is unknown says what to
+  look for before creating again.
   Every read result is built under the shared Workspace result budget, so it
   is deliverable inside a program and directly alike, and nothing it cannot
   carry is lost: cut text carries the `get_page` cursor that continues it
@@ -318,7 +320,7 @@ caller.
   pages Slides' own JSON, sending an element too large for one result in
   chunks that concatenate and parse. Every cursor is bound to the deck, page,
   mode, and the revision it was read at — or, for a viewer Slides gives no
-  revision, a fingerprint of what its paging depends on — so a deck that
+  revision, a SHA-256 of the exact content its paging depends on — so a deck that
   changed between pages is a `conflict` to restart, never a skipped or
   repeated slide. Slides cannot list decks, and the guide says that is
   Drive's job. A 404 is reported as unknown-or-not-visible, because a deck is

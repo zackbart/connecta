@@ -603,6 +603,36 @@ describe("writes whose outcome is unknown", () => {
     }
   });
 
+  it.each([
+    ["create_presentation", { title: "Easter" }, "Search Drive for a deck with this title"],
+    ["create_slide", { presentationId: "deck1" }, "look for the new slide before adding another"],
+    ["replace_all_text", { presentationId: "deck1", replacements: [{ find: "a", replace: "aa" }] }, undefined],
+    ["batch_update_presentation", { presentationId: "deck1", requiredRevisionId: "rev-1", requests: [{ deleteObject: { objectId: "x" } }] }, undefined],
+  ])("%s treats a 5xx after sending as an unknown outcome, never retryable", async (name, args, advice) => {
+    // No Slides write is safe to send twice — a create makes another, and
+    // replacing "a" with "aa" again doubles it — so none is marked idempotent.
+    route = () => ({ status: 503, body: { error: { code: 503, message: "Backend Error", status: "UNAVAILABLE" } } });
+    const failure = await call(connection(), name, args).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("its outcome is unknown");
+    if (advice) expect(failure.message).toContain(advice);
+    else expect(failure.message).not.toMatch(/look for|Search Drive/);
+    expect(failure.message).not.toMatch(/nothing (was|is) (applied|changed)/i);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps a 5xx on a read retryable: reading again is safe", async () => {
+    route = () => ({ status: 503, body: { error: { code: 503, message: "Backend Error", status: "UNAVAILABLE" } } });
+    for (const [name, args] of [
+      ["get_presentation", { presentationId: "deck1" }],
+      ["get_page", { presentationId: "deck1", pageObjectId: "p" }],
+      ["list_layouts", { presentationId: "deck1" }],
+      ["get_slide_thumbnail", { presentationId: "deck1", slideObjectId: "p" }],
+    ] as const) {
+      await expect(call(connection(), name, args)).rejects.toMatchObject({ code: "unavailable", retryable: true });
+    }
+  });
+
   it("leaves a refusal of a create as Google stated it", async () => {
     route = () => ({ status: 400, body: { error: { code: 400, message: "Invalid layout.", status: "INVALID_ARGUMENT" } } });
     const failure = await call(connection(), "create_slide", { presentationId: "deck1", layout: "BIG_NUMBER" }).catch((error) => error);
@@ -867,7 +897,9 @@ describe("output schemas declare what the tools return (H8)", () => {
   });
 });
 
-describe("every result is deliverable, in a program and directly", () => {
+// The suites below walk megabytes of worst-case text to the end, so they
+// get room past the default timeout on a loaded runner.
+describe("every result is deliverable, in a program and directly", { timeout: 60_000 }, () => {
   /**
    * A program's host call carries at most 256 KiB of serialized JSON
    * (`MAX_HOST_RESULT_BYTES`); a direct call stashes more for get_result, up
@@ -995,7 +1027,7 @@ describe("every result is deliverable, in a program and directly", () => {
   });
 });
 
-describe("get_page and list_layouts: every page, element, and layout is reachable", () => {
+describe("get_page and list_layouts: every page, element, and layout is reachable", { timeout: 60_000 }, () => {
   const BRIDGE_BYTES = 256 * 1024;
   const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   /** Long text whose every position is distinct, with emoji to test surrogate-safe cuts. */
@@ -1304,5 +1336,123 @@ describe("get_page and list_layouts: every page, element, and layout is reachabl
       code: "connector_call_failed",
       message: expect.stringContaining("more than one result can carry"),
     });
+  });
+});
+
+describe("round three: content-bound cursors, the notes master, bounded replies and links", { timeout: 60_000 }, () => {
+  const BRIDGE_BYTES = 256 * 1024;
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const letters = (length: number, from = 0) =>
+    Array.from({ length }, (_, index) => String.fromCharCode(97 + ((index + from) % 26))).join("");
+
+  it("binds a viewer's text cursor to the text, so a same-length edit is a conflict", async () => {
+    // Ten characters inserted before the boundary and ten deleted after it:
+    // the length is unchanged, and continuing would repeat ten characters.
+    const before = letters(300_000);
+    const after = `INSERTED!!${before.slice(0, 250_000)}${before.slice(250_010)}`;
+    expect(after.length).toBe(before.length);
+    const page = (content: string) => ({
+      objectId: "p",
+      pageElements: [{ objectId: "essay", shape: { shapeType: "TEXT_BOX", text: textContent(content) } }],
+    });
+    const connector = connection();
+    route = () => ({ body: page(before) });
+    const first = await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p" });
+    expect(first.page.hasMore).toBe(true);
+    route = () => ({ body: page(after) });
+    await expect(
+      call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("binds a viewer's raw cursor to the exact JSON, so an equal-byte edit is a conflict", async () => {
+    // An emoji (four UTF-8 bytes) swapped for four ASCII letters: the same
+    // serialized size, and chunks stitched from both would parse to neither.
+    const content = (swap: string) => `${letters(200_000)}${swap}${letters(200_000, 3)}`;
+    const page = (swap: string) => ({
+      objectId: "p",
+      pageElements: [{ objectId: "essay", shape: { text: { textElements: [{ textRun: { content: content(swap) } }] } } }],
+    });
+    expect(bytes(page("😀"))).toBe(bytes(page("abcd")));
+    const connector = connection();
+    route = () => ({ body: page("😀") });
+    const first = await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", raw: true });
+    expect(first.page.hasMore).toBe(true);
+    route = () => ({ body: page("abcd") });
+    await expect(
+      call(connector, "get_page", { presentationId: "deck1", pageObjectId: "p", raw: true, cursor: first.page.nextCursor }),
+    ).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("names the notes master, in projected and raw reads alike, and get_page reads it", async () => {
+    const deck = { ...PRESENTATION, notesMaster: { objectId: "NM", pageType: "NOTES_MASTER", pageElements: [] } };
+    const notesMaster = {
+      objectId: "NM",
+      pageType: "NOTES_MASTER",
+      revisionId: "rev-1",
+      pageElements: [
+        { objectId: "NM_body", transform: at(0, 5000000), shape: { shapeType: "TEXT_BOX", placeholder: { type: "BODY", index: 1 } } },
+        { objectId: "NM_slide", transform: at(0, 0), image: { contentUrl: "x" } },
+      ],
+    };
+    route = (request) => ({ body: request.url.pathname.endsWith("/pages/NM") ? notesMaster : deck });
+    const connector = connection();
+    const projected = await call(connector, "get_presentation", { presentationId: "deck1" });
+    expect(calls[0]!.url.searchParams.get("fields")).toContain("notesMaster(objectId)");
+    expect(projected.notesMasterId).toBe("NM");
+    expect((await call(connector, "get_presentation", { presentationId: "deck1", raw: true })).notesMasterId).toBe("NM");
+    const listed = await call(connector, "list_layouts", { presentationId: "deck1" });
+    expect(listed.notesMasterId).toBe("NM");
+    const page = await call(connector, "get_page", { presentationId: "deck1", pageObjectId: projected.notesMasterId });
+    expect(page).toMatchObject({ pageObjectId: "NM", pageType: "NOTES_MASTER", elementCount: 2 });
+    expect(page.elements).toEqual([
+      { objectId: "NM_slide", kind: "image" },
+      { objectId: "NM_body", kind: "shape", placeholder: "BODY", placeholderIndex: 1 },
+    ]);
+  });
+
+  it("bounds a raw batch's replies, keeping every new id and naming what it cut, and never says nothing changed", async () => {
+    const replies = Array.from({ length: 100 }, (_, index) => ({
+      insertComment: { objectId: `c${index}`, content: "x".repeat(2_048), html: `<p>${"y".repeat(2_048)}</p>` },
+    }));
+    route = () => ({ body: { presentationId: "deck1", replies, writeControl: { requiredRevisionId: "rev-2" } } });
+    const result = await call(connection(), "batch_update_presentation", {
+      presentationId: "deck1",
+      requiredRevisionId: "rev-1",
+      requests: Array.from({ length: 100 }, () => ({ insertComment: {} })),
+    });
+    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
+    expect(result.revisionId).toBe("rev-2");
+    expect(result.replies).toHaveLength(100);
+    expect(result.replies[7]).toEqual({ insertComment: { objectId: "c7" }, cut: ["insertComment.content", "insertComment.html"] });
+    expect(result.note).toMatch(/^The write applied\./);
+    expect(JSON.stringify(result)).not.toMatch(/nothing (was|is) changed/i);
+  });
+
+  it("counts the replies that cannot fit and says the write applied", async () => {
+    const replies = Array.from({ length: 400 }, (_, index) => ({
+      createShape: Object.fromEntries([["objectId", `s${index}`], ...Array.from({ length: 30 }, (_, field) => [`f${field}`, "z".repeat(200)])]),
+    }));
+    route = () => ({ body: { presentationId: "deck1", replies } });
+    const result = await call(connection(), "batch_update_presentation", {
+      presentationId: "deck1",
+      requiredRevisionId: "rev-1",
+      requests: [{ createShape: {} }],
+    });
+    expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
+    expect(result.repliesNotShown).toBeGreaterThan(0);
+    expect(result.replies.length + result.repliesNotShown).toBe(400);
+    expect(result.replies[0].createShape.objectId).toBe("s0");
+    expect(result.note).toContain("The write applied");
+    expect(result.note).toContain("re-read with get_presentation or get_page");
+  });
+
+  it("refuses a thumbnail link too long to pass on, rather than returning or cutting it", async () => {
+    route = () => ({ body: { contentUrl: `https://lh7.googleusercontent.com/${"a".repeat(300_000)}`, width: 800, height: 450 } });
+    const failure = await call(connection(), "get_slide_thumbnail", { presentationId: "deck1", slideObjectId: "p" }).catch(
+      (error) => error,
+    );
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("open the slide in Slides instead");
   });
 });
