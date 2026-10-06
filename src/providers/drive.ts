@@ -34,7 +34,7 @@ import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 import {
-  googleReasonsOf,
+  googleOutcomeOf,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
@@ -519,25 +519,20 @@ function textBudget(maxChars: number): number {
 }
 
 /**
- * Whether a refused range read proves the file empty. The range always starts
- * at byte 0, which only a file with no bytes cannot satisfy, so Google's 416
- * here is a verified empty file, whatever the metadata said. Read from
- * Google's reason code until the shared client exposes the 416 itself and its
- * `Content-Range: bytes *\/0`, when this becomes a check of those.
- */
-function provesEmpty(error: unknown): boolean {
-  return googleReasonsOf(error).includes("requestedRangeNotSatisfiable");
-}
-
-/**
  * A media download of at most `limit` bytes, and whether the file had more.
  *
  * The limit is enforced on the response, never on the size metadata
  * reported: that is a separate read, and a file can grow, shrink, or empty
  * between the two. The range asks for one byte past the limit, so a file that
- * has more says so by sending it. A server that ignores the range sends the
- * whole body, which the transport bounds at its own ceiling and this cuts
- * before anything else reads it.
+ * has more says so by sending it, and the shared client's `maxBytes` reads the
+ * body only that far and cancels the rest unread — so a server that ignores
+ * the range, or a body past the client's own ceiling, costs no more than the
+ * limit either.
+ *
+ * The range is sent even when the metadata says the file is empty, since that
+ * may no longer be so. A range from byte 0 of a file with no bytes is answered
+ * 416 with `Content-Range: bytes *\/0`, which the client returns as an empty
+ * body: a verified empty file, not a failure. Any other 416 still fails.
  */
 async function download(
   client: GoogleWorkspaceClient,
@@ -545,25 +540,18 @@ async function download(
   path: string,
   limit: number,
 ): Promise<{ bytes: Uint8Array; more: boolean; contentType: string | undefined }> {
-  let read: { bytes: Uint8Array; contentType: string | undefined };
-  try {
-    read = await client.bytes(
-      {
-        method: "GET",
-        path,
-        query: { ...ALL_DRIVES, alt: "media" },
-        headers: { Range: `bytes=0-${limit}` },
-      },
-      ctx,
-    );
-  } catch (error) {
-    if (provesEmpty(error)) return { bytes: new Uint8Array(), more: false, contentType: undefined };
-    throw error;
-  }
-  const { bytes, contentType } = read;
-  return bytes.length > limit
-    ? { bytes: bytes.subarray(0, limit), more: true, contentType }
-    : { bytes, more: false, contentType };
+  const read = await client.bytes(
+    {
+      method: "GET",
+      path,
+      query: { ...ALL_DRIVES, alt: "media" },
+      headers: { Range: `bytes=0-${limit}` },
+    },
+    ctx,
+    "*/*",
+    { maxBytes: limit },
+  );
+  return { bytes: read.bytes.subarray(0, limit), more: read.truncated, contentType: read.contentType };
 }
 
 async function readContent(
@@ -653,6 +641,37 @@ async function readContent(
   if (read.more) return tooLarge(`more than ${limit} bytes`);
   return { ...base, format: "base64", content: base64(read.bytes), contentTruncated: false };
 }
+
+// --- Writes -----------------------------------------------------------------------
+
+/**
+ * Run a write that adds something, saying what to check before repeating it
+ * when it may have landed. The shared client already says so, and makes the
+ * failure non-retryable, when the request was sent and no usable answer came
+ * back (`awaiting-response`) or Google accepted it and the reply broke
+ * (`reading-body`). A repeat of an additive write is not harmless — it makes a
+ * second file, folder, copy, or share — so the message names the read that
+ * tells. The code is kept, so core still reads the outcome as unknown; a
+ * refusal, or a failure before anything was sent, passes through untouched.
+ */
+async function adding<T>(work: () => Promise<T>, check: string): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    const phase = googleOutcomeOf(error)?.phase;
+    if (
+      error instanceof ConnectorCallError &&
+      error.code === "connector_call_failed" &&
+      (phase === "reading-body" || phase === "awaiting-response")
+    ) {
+      throw new ConnectorCallError(error.code, `${error.message} ${check}`, { retryable: false, cause: error });
+    }
+    throw error;
+  }
+}
+
+const CHECK_CREATED =
+  "Find it with search_files or list_folder_items before creating it again: a second call makes a second one.";
 
 // --- Uploads ----------------------------------------------------------------------
 
@@ -1222,19 +1241,23 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
-          await client.json(
-            {
-              method: "POST",
-              path: "/files",
-              query: { ...ALL_DRIVES, fields: SUMMARY_FIELDS },
-              body: compact({
-                name: args["name"],
-                mimeType: FOLDER,
-                parents: args["parentId"] ? [args["parentId"]] : undefined,
-                description: args["description"],
-              }),
-            },
-            ctx,
+          await adding(
+            () =>
+              client.json(
+                {
+                  method: "POST",
+                  path: "/files",
+                  query: { ...ALL_DRIVES, fields: SUMMARY_FIELDS },
+                  body: compact({
+                    name: args["name"],
+                    mimeType: FOLDER,
+                    parents: args["parentId"] ? [args["parentId"]] : undefined,
+                    description: args["description"],
+                  }),
+                },
+                ctx,
+              ),
+            CHECK_CREATED,
           ),
         ),
     },
@@ -1277,23 +1300,31 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             throw new ConnectorCallError("invalid_args", "mimeType describes content; pass content or contentBase64 with it.");
           }
           return projectFile(
-            await client.json(
-              { method: "POST", path: "/files", query: { ...ALL_DRIVES, fields: SUMMARY_FIELDS }, body: metadata },
-              ctx,
+            await adding(
+              () =>
+                client.json(
+                  { method: "POST", path: "/files", query: { ...ALL_DRIVES, fields: SUMMARY_FIELDS }, body: metadata },
+                  ctx,
+                ),
+              CHECK_CREATED,
             ),
           );
         }
         const framed = multipart(metadata, content);
         return projectFile(
-          await upload.json(
-            {
-              method: "POST",
-              path: "/files",
-              query: { ...ALL_DRIVES, uploadType: "multipart", fields: SUMMARY_FIELDS },
-              headers: { "Content-Type": framed.contentType },
-              rawBody: framed.body as BodyInit,
-            },
-            ctx,
+          await adding(
+            () =>
+              upload.json(
+                {
+                  method: "POST",
+                  path: "/files",
+                  query: { ...ALL_DRIVES, uploadType: "multipart", fields: SUMMARY_FIELDS },
+                  headers: { "Content-Type": framed.contentType },
+                  rawBody: framed.body as BodyInit,
+                },
+                ctx,
+              ),
+            CHECK_CREATED,
           ),
         );
       },
@@ -1407,14 +1438,18 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
-          await client.json(
-            {
-              method: "POST",
-              path: `${filePath(args["fileId"])}/copy`,
-              query: { ...ALL_DRIVES, fields: SUMMARY_FIELDS },
-              body: compact({ name: args["name"], parents: args["parentId"] ? [args["parentId"]] : undefined }),
-            },
-            ctx,
+          await adding(
+            () =>
+              client.json(
+                {
+                  method: "POST",
+                  path: `${filePath(args["fileId"])}/copy`,
+                  query: { ...ALL_DRIVES, fields: SUMMARY_FIELDS },
+                  body: compact({ name: args["name"], parents: args["parentId"] ? [args["parentId"]] : undefined }),
+                },
+                ctx,
+              ),
+            "Look for the copy with search_files or list_folder_items before copying again: a second call makes a second copy.",
           ),
         ),
     },
@@ -1496,7 +1531,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         const notify = person ? args["sendNotificationEmail"] === true : undefined;
         if (args["emailMessage"] !== undefined && notify !== true) refuse("emailMessage needs sendNotificationEmail true.");
         return projectPermission(
-          await client.json(
+          await adding(() => client.json(
             {
               method: "POST",
               path: `${filePath(args["fileId"])}/permissions`,
@@ -1516,7 +1551,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
               }),
             },
             ctx,
-          ),
+          ), "Check list_permissions before sharing again: the share may already be in place, and its notification sent."),
         );
       },
     },

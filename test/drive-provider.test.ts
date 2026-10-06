@@ -45,6 +45,12 @@ interface Reply {
   /** Text or bytes body, sent as is with `contentType`. */
   payload?: string | Uint8Array;
   contentType?: string;
+  /** A streamed body, for reads that must stop early or replies that break. */
+  stream?: ReadableStream<Uint8Array>;
+  /** Response headers beyond the content type. */
+  headers?: Record<string, string>;
+  /** Send nothing back at all: the connection fails after the request left. */
+  network?: true;
 }
 
 type Route = (call: ApiCall) => Reply | undefined;
@@ -73,14 +79,14 @@ beforeEach(() => {
     };
     calls.push(call);
     const reply = route(call) ?? {};
+    if (reply.network) throw new TypeError("fetch failed: connection reset");
+    const headers = { "Content-Type": reply.contentType ?? "application/octet-stream", ...reply.headers };
+    if (reply.stream) return new Response(reply.stream, { status: reply.status ?? 200, headers });
     if (reply.payload !== undefined) {
-      return new Response(reply.payload, {
-        status: reply.status ?? 200,
-        headers: { "Content-Type": reply.contentType ?? "application/octet-stream" },
-      });
+      return new Response(reply.payload, { status: reply.status ?? 200, headers });
     }
     if (reply.status === 204) return new Response(null, { status: 204 });
-    return Response.json(reply.body ?? {}, { status: reply.status ?? 200 });
+    return Response.json(reply.body ?? {}, { status: reply.status ?? 200, ...(reply.headers ? { headers: reply.headers } : {}) });
   }) as unknown as typeof fetch;
 });
 
@@ -544,7 +550,68 @@ describe("reading content", () => {
   });
 
   /** Drive's answer to a range from byte 0 of a file with no bytes. */
-  const EMPTY_RANGE = GOOGLE_ERROR(416, "requestedRangeNotSatisfiable", "Request range not satisfiable");
+  const EMPTY_RANGE = {
+    ...GOOGLE_ERROR(416, "requestedRangeNotSatisfiable", "Request range not satisfiable"),
+    headers: { "Content-Range": "bytes */0" },
+  };
+
+  it("fails a 416 that does not say the file is empty", async () => {
+    const meta = metadata({ mimeType: "text/plain", size: "5" });
+    route = (request) =>
+      meta(request) ?? {
+        ...GOOGLE_ERROR(416, "requestedRangeNotSatisfiable", "Request range not satisfiable"),
+        headers: { "Content-Range": "bytes */9" },
+      };
+    await expect(call(connection(), "get_file_content", { fileId: "f1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
+  });
+
+  /**
+   * A body of `total` bytes of `fill`, produced only as it is read, that
+   * records how much was pulled and whether the reader gave up on the rest.
+   */
+  function lazyBody(total: number, fill: number) {
+    const CHUNK = 64 * 1024;
+    const seen = { pulled: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (seen.pulled >= total) return controller.close();
+        const size = Math.min(CHUNK, total - seen.pulled);
+        seen.pulled += size;
+        controller.enqueue(new Uint8Array(size).fill(fill));
+      },
+      cancel() {
+        seen.cancelled = true;
+      },
+      // No read-ahead: every chunk pulled is one the reader asked for.
+    }, { highWaterMark: 0 });
+    return { stream, seen, CHUNK };
+  }
+
+  it("reads a 17 MiB text body that ignored its range only to the cap, then cancels it", async () => {
+    // Past the client's 16 MiB ceiling: without a bound it would fail whole.
+    const total = 17 * 1024 * 1024;
+    const { stream, seen, CHUNK } = lazyBody(total, 0x61);
+    const meta = metadata({ mimeType: "text/plain", size: "5" });
+    route = (request) =>
+      meta(request) ?? { stream, contentType: "text/plain", headers: { "Content-Length": String(total) } };
+    const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 10 });
+    expect(result.contentTruncated).toBe(true);
+    expect(result.content.startsWith("aaaaaaaaaa\n[… truncated: 10 characters")).toBe(true);
+    expect(seen.cancelled).toBe(true);
+    expect(seen.pulled).toBeLessThanOrEqual(45 + CHUNK);
+  });
+
+  it("stops a binary that ignored its range at the cap, and cancels the rest unread", async () => {
+    const { stream, seen, CHUNK } = lazyBody(2 * 1024 * 1024, 7);
+    const meta = metadata({ mimeType: "application/pdf", size: "1" });
+    route = (request) => meta(request) ?? { stream, contentType: "application/pdf" };
+    const result = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(result.format).toBe("unavailable");
+    expect(seen.cancelled).toBe(true);
+    expect(seen.pulled).toBeLessThanOrEqual(147_456 + CHUNK);
+  });
 
   it.each([
     ["metadata said empty", { size: "0" }],
@@ -871,6 +938,53 @@ describe("writing files", () => {
     expect(calls[1]!.body).toEqual({ trashed: true });
     expect(await call(connection(), "restore_file", { fileId: "f1" })).toEqual({ id: "f1", trashed: false });
     expect(calls[2]!.body).toEqual({ trashed: false });
+  });
+});
+
+describe("a write that may have landed says what to check before repeating it", () => {
+  /** A 200 whose JSON breaks off mid-stream: Google accepted the write. */
+  const BROKEN_REPLY = (): Reply => ({
+    contentType: "application/json",
+    stream: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"id":"f'));
+        controller.error(new Error("connection reset mid-body"));
+      },
+    }),
+  });
+
+  it.each([
+    ["create_file with content", "create_file", { name: "a.txt", content: "x" }, "search_files"],
+    ["create_file without content", "create_file", { name: "Doc", convertTo: "document" }, "search_files"],
+    ["create_folder", "create_folder", { name: "Elders" }, "search_files"],
+    ["copy_file", "copy_file", { fileId: "f1" }, "second copy"],
+    ["share_file", "share_file", { fileId: "f1", type: "anyone", role: "reader" }, "list_permissions"],
+  ])("%s, when the reply breaks or never comes", async (_label, name, args, check) => {
+    for (const reply of [BROKEN_REPLY, (): Reply => ({ network: true })]) {
+      route = reply;
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain(check);
+      // Never told that nothing happened, or to simply retry.
+      expect(failure.message).not.toMatch(/nothing was (applied|changed)/i);
+    }
+    // One request per call: no write is sent twice.
+    expect(calls).toHaveLength(2);
+  });
+
+  it("leaves the shared advice alone for writes that are safe to re-read and repeat", async () => {
+    route = BROKEN_REPLY;
+    const failure = await call(connection(), "update_file", { fileId: "f1", name: "b" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("Re-read");
+    expect(failure.message).not.toContain("search_files");
+  });
+
+  it("adds nothing to a refusal: Google said no, and nothing was made", async () => {
+    route = () => GOOGLE_ERROR(400, "invalid", "Invalid parents field.");
+    const failure = await call(connection(), "create_folder", { name: "Elders", parentId: "nope" }).catch((error) => error);
+    expect(failure.code).toBe("invalid_args");
+    expect(failure.message).not.toContain("search_files");
   });
 });
 

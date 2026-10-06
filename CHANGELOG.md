@@ -120,7 +120,10 @@ a deployment's own connectors still never learn their caller.
   binary, a drawing, a form, a folder, a shortcut — as `format: "unavailable"`
   with a note rather than an empty success; the caps hold on the bytes the
   download returns, never on the size metadata reported, so a file that grew,
-  shrank, or emptied between the two reads is still read right, and Drive's
+  shrank, or emptied between the two reads is still read right — a download
+  is read only one byte past its cap and the rest of the stream cancelled
+  unread, even from a server that ignores the range, and a range answered
+  `416` with `Content-Range: bytes */0` is a verified empty file — and Drive's
   10 MB export limit is named from Google's own reason code),
   `list_permissions`, and `list_shared_drives`. Every read is built to stay
   under `maxBytes` of JSON, envelope and cursor included: 192 KiB by default,
@@ -140,6 +143,9 @@ a deployment's own connectors still never learn their caller.
   sharing), `trash_file`, `share_file` (user, group, domain, or anyone with
   the link, up to writer or organizer, emailing no one unless
   `sendNotificationEmail`), `update_permission`, and `delete_permission`.
+  A create, copy, or share that may have landed — sent with no answer, or
+  accepted with a reply that broke — is never retryable and names the read to
+  check before repeating it, since a repeat makes a second one.
   There is no permanent delete,
   no empty-trash, no ownership transfer, and no raw hatch. A 404 says the file
   may be missing or hidden from this account, because Drive does not say
