@@ -13,9 +13,14 @@
  * the context. No tool argument, header, or program can name the subject —
  * every product's base URL is confined beneath `users/me`, or its product's
  * equivalent, so the token's subject is the only account a request reaches.
- * A call with no admitted caller, or one the mapping answers `undefined` for,
- * fails `auth_required` before anything leaves the host. Catalogs need no
- * subject: tools are static.
+ * A call with no admitted caller, one an open deployment admitted without
+ * authentication (the mapping is never asked about it), or one the mapping
+ * answers `undefined` for, fails `auth_required` before anything leaves the
+ * host. Catalogs need no subject: tools are static.
+ *
+ * A product builds on three calls: `workspaceConnection(factory, options)` at
+ * construction, `googleWorkspaceClient({...})` once, and the client's `json`,
+ * `bytes`, or `text` per request. Nothing else here is the products' to touch.
  *
  * Setup, once per Workspace, shared by every product:
  *
@@ -62,19 +67,29 @@ export type { GoogleServiceAccount } from "./service-account.js";
 /**
  * Whose Workspace account a call acts as.
  *
- * A function receives the identity inbound auth admitted for this request and
- * returns that person's Workspace address, or `undefined` for a caller who has
- * none — that call then fails closed. It may be async, for a directory lookup
- * (a Clerk user id to an email, say); it is called on every tool call and
- * should cache what it fetches. A string is one fixed account for every
- * caller who can reach the connector, for a shared mailbox or scheduled work
- * with no caller; limit who reaches it with `identity.connectorAccess`.
+ * A function receives the identity an inbound auth provider authenticated for
+ * this request and returns that person's Workspace address, or `undefined`
+ * for a caller who has none — that call then fails closed. It is never called
+ * for an open deployment's anonymous requests, nor for a call no request
+ * admitted. It may be async, for a directory lookup (a Clerk user id to an
+ * email, say), and receives the call's cancellation signal for that; it runs
+ * once per tool call and should cache what it fetches. A string is one fixed
+ * account for every caller who can reach the connector, for a shared mailbox
+ * or scheduled work with no caller; limit who reaches it with
+ * `identity.connectorAccess`.
  */
 export type GoogleWorkspaceSubject =
   | string
   | ((
       identity: Readonly<AuthenticatedIdentity>,
+      context: GoogleSubjectContext,
     ) => string | undefined | Promise<string | undefined>);
+
+/** What a subject mapping is told about the call it resolves for. */
+export interface GoogleSubjectContext {
+  /** The call's cancellation, for an async directory lookup to honor. */
+  readonly signal?: AbortSignal;
+}
 
 /** Options every Workspace product provider shares. */
 export interface GoogleWorkspaceOptions {
@@ -150,13 +165,22 @@ async function subjectFor(
   if (!caller) {
     throw new ConnectorCallError(
       "auth_required",
-      `${provider} acts as the signed-in Workspace user, and this call has no admitted caller (an open deployment, a scheduled run, or a context no request admitted). Configure inbound auth, or a fixed subject for shared use.`,
+      `${provider} acts as the signed-in Workspace user, and this call has no admitted caller (a scheduled run, or a context no request admitted). Use a fixed subject for work with no caller.`,
+    );
+  }
+  // An open deployment admits every request as the anonymous actor. That is
+  // a caller, but not anyone, and the mapping never gets to decide otherwise.
+  if (!caller.authenticated) {
+    throw new ConnectorCallError(
+      "auth_required",
+      `${provider} acts as the signed-in Workspace user, and this deployment admitted the call without authentication. Configure inbound auth, or a fixed subject for shared use.`,
     );
   }
   let mapped: string | undefined;
   try {
-    mapped = await subject(caller.identity);
+    mapped = await subject(caller.identity, ctx.signal ? { signal: ctx.signal } : {});
   } catch (cause) {
+    if (ctx.signal?.aborted) throw ctx.signal.reason;
     throw new ConnectorCallError(
       "connector_call_failed",
       `The deployment's ${provider} subject mapping threw while resolving this caller's Workspace account.`,
@@ -320,14 +344,36 @@ export interface GoogleWorkspaceClientOptions {
   connection: WorkspaceConnection;
 }
 
-/** A product's request path to its API, as the calling user. */
+/** A non-JSON response body, read under the product's byte ceiling. */
+interface GoogleBytes {
+  bytes: Uint8Array;
+  /** The response's `Content-Type`, when it sent one. */
+  contentType: string | undefined;
+}
+
+/** A text response body, decoded in the charset its `Content-Type` names. */
+interface GoogleText {
+  text: string;
+  contentType: string | undefined;
+}
+
+/**
+ * A product's request path to its API, as the calling user. Every method
+ * resolves the subject once per call context, sends the cached or a freshly
+ * minted token, maps Google's failures by what the caller does next, and
+ * answers a 401 with one fresh token and one replay — safe for a write too,
+ * since a 401 is a refusal before the request did anything.
+ */
 export interface GoogleWorkspaceClient {
-  /**
-   * Send one JSON request and return the parsed body (`undefined` for an
-   * empty one). Failures arrive as typed `ConnectorCallError`s mapped by what
-   * the caller does next. A 401 earns one fresh token and one replay.
-   */
+  /** One JSON request; the parsed body, `undefined` for an empty one. */
   json(request: GuardedRequest, ctx: ConnectorContext): Promise<unknown>;
+  /**
+   * One request whose answer is not JSON — a download, an export — as bytes,
+   * bounded by `maxResponseBytes`. `accept` is sent as `Accept`.
+   */
+  bytes(request: GuardedRequest, ctx: ConnectorContext, accept?: string): Promise<GoogleBytes>;
+  /** As {@link bytes}, decoded as text in the response's declared charset. */
+  text(request: GuardedRequest, ctx: ConnectorContext, accept?: string): Promise<GoogleText>;
 }
 
 /** The token the API refused, carried out of the mapper for one replay. */
@@ -335,6 +381,19 @@ class TokenRejected extends Error {
   constructor(readonly failure: ConnectorCallError) {
     super(failure.message);
   }
+}
+
+/** The parts of a guarded response the client reads. */
+interface ReadableResponse {
+  readonly status: number;
+  readonly ok: boolean;
+  readonly headers: Headers;
+  bytes(): Promise<Uint8Array>;
+  jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
+}
+
+function charsetOf(contentType: string | undefined): string {
+  return /charset="?([^";\s]+)"?/i.exec(contentType ?? "")?.[1] ?? "utf-8";
 }
 
 /** Build the delegated, confined, Google-error-mapped transport for one product. */
@@ -358,45 +417,78 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     }
     return { account: connection.account, subject: await subject, scopes };
   };
-  const send = guardedFetch({
-    provider,
-    baseUrl: options.baseUrl,
-    headers: { Accept: "application/json" },
-    maxResponseBytes: options.maxResponseBytes,
-    // The subject is resolved here, per request, from config and the
-    // admitted caller; the token is the cached one or a fresh mint.
-    authenticate: async (ctx) => ({
-      Authorization: `Bearer ${await delegatedToken(await tokenRequest(ctx), ctx)}`,
-    }),
-  });
-  return {
-    async json(request, ctx) {
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          return await send(request, ctx, async (response) => {
+  // The transport is bound to one token, so the request that a 401 answers
+  // names exactly the token to forget. Building one validates the base URL
+  // and ceiling at construction, where a structural mistake belongs.
+  const transport = (token: string) =>
+    guardedFetch({
+      provider,
+      baseUrl: options.baseUrl,
+      maxResponseBytes: options.maxResponseBytes,
+      authenticate: () => ({ Authorization: `Bearer ${token}` }),
+    });
+  transport("");
+
+  async function call<T>(
+    request: GuardedRequest,
+    ctx: ConnectorContext,
+    accept: string,
+    read: (response: ReadableResponse) => Promise<T>,
+  ): Promise<T> {
+    const headed: GuardedRequest = { ...request, headers: { Accept: accept, ...request.headers } };
+    for (let attempt = 0; ; attempt += 1) {
+      // Subject first: no caller, or no mapped account, fails before any
+      // token is minted or request sent.
+      const delegated = await tokenRequest(ctx);
+      const token = await delegatedToken(delegated, ctx);
+      try {
+        return await transport(token)(headed, ctx, async (response) => {
+          if (!response.ok) {
             const parsed = await response.jsonResult();
             const payload = "value" in parsed ? parsed.value : undefined;
-            if (!response.ok) {
-              const mapped = apiFailure(failure, response.status, response.headers, payload);
-              throw response.status === 401 ? new TokenRejected(mapped) : mapped;
-            }
-            if (!("value" in parsed)) {
-              throw new ConnectorCallError(
-                "connector_call_failed",
-                `${provider} returned a successful response that is not JSON.`,
-                { retryable: false },
-              );
-            }
-            return parsed.value;
-          });
-        } catch (error) {
-          if (!(error instanceof TokenRejected)) throw error;
-          // A 401 is a refusal before the request did anything, so one replay
-          // with a fresh token is safe for a write too.
-          forgetDelegatedToken(await tokenRequest(ctx));
-          if (attempt > 0) throw error.failure;
-        }
+            const mapped = apiFailure(failure, response.status, response.headers, payload);
+            throw response.status === 401 ? new TokenRejected(mapped) : mapped;
+          }
+          return await read(response);
+        });
+      } catch (error) {
+        if (!(error instanceof TokenRejected)) throw error;
+        // Only the token this request carried; a newer one stays.
+        await forgetDelegatedToken(delegated, token);
+        if (attempt > 0) throw error.failure;
       }
-    },
+    }
+  }
+
+  return {
+    json: (request, ctx) =>
+      call(request, ctx, "application/json", async (response) => {
+        const parsed = await response.jsonResult();
+        if (!("value" in parsed)) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `${provider} returned a successful response that is not JSON.`,
+            { retryable: false },
+          );
+        }
+        return parsed.value;
+      }),
+    bytes: (request, ctx, accept = "*/*") =>
+      call(request, ctx, accept, async (response) => ({
+        bytes: await response.bytes(),
+        contentType: response.headers.get("content-type") ?? undefined,
+      })),
+    text: (request, ctx, accept = "text/plain, */*") =>
+      call(request, ctx, accept, async (response) => {
+        const contentType = response.headers.get("content-type") ?? undefined;
+        const bytes = await response.bytes();
+        let text: string;
+        try {
+          text = new TextDecoder(charsetOf(contentType)).decode(bytes);
+        } catch {
+          text = new TextDecoder().decode(bytes);
+        }
+        return { text, contentType };
+      }),
   };
 }

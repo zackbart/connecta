@@ -8,8 +8,11 @@
 // its refresh and dedupe, and the one rule the ethos row exists for — the
 // subject comes from deployment config applied to the admitted identity, and
 // from nothing a call, a header, or a program sends (#678).
+import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bearerToken } from "../src/auth/bearer.js";
 import { attachCaller } from "../src/connector-caller.js";
+import { googleWorkspaceClient, workspaceConnection } from "../src/providers/google/workspace.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -45,6 +48,32 @@ function pem(der: ArrayBuffer): string {
 const PRIVATE_KEY = pem(
   (await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer,
 );
+const DER_BASE64 = PRIVATE_KEY.replace(/-----[A-Z ]+-----|\s/g, "");
+
+/** A second, distinct RSA key, for rotation under one client email. */
+const ROTATED_KEY = pem(
+  (await crypto.subtle.exportKey(
+    "pkcs8",
+    ((await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"],
+    )) as CryptoKeyPair).privateKey,
+  )) as ArrayBuffer,
+);
+
+const EC_PRIVATE_KEY = pem(
+  (await crypto.subtle.exportKey(
+    "pkcs8",
+    ((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])) as CryptoKeyPair)
+      .privateKey,
+  )) as ArrayBuffer,
+);
+
+/** Arbitrary binary in PEM armor. */
+function armor(binary: string): string {
+  return `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`;
+}
 
 /** Each test gets its own service account, so the module-level cache is fresh. */
 let accounts = 0;
@@ -66,14 +95,18 @@ function identity(id: string): AuthenticatedIdentity {
   };
 }
 
-function context(caller?: AuthenticatedIdentity, signal?: AbortSignal): ConnectorContext {
+function context(
+  caller?: AuthenticatedIdentity,
+  signal?: AbortSignal,
+  authenticated = true,
+): ConnectorContext {
   const ctx: ConnectorContext = {
     storage: memoryStorage(),
     logger: silentLogger,
     baseUrl: "https://connecta.example",
     ...(signal ? { signal } : {}),
   };
-  return caller ? attachCaller(ctx, { identity: caller }) : ctx;
+  return caller ? attachCaller(ctx, { identity: caller, authenticated }) : ctx;
 }
 
 const DIRECTORY: Readonly<Record<string, string>> = {
@@ -104,6 +137,7 @@ interface ApiCall {
   url: string;
   method: string;
   authorization: string | null;
+  accept: string | null;
 }
 
 type Reply = () => Response | Promise<Response>;
@@ -153,6 +187,7 @@ beforeEach(() => {
       url,
       method: init.method ?? "GET",
       authorization: new Headers(init.headers).get("authorization"),
+      accept: new Headers(init.headers).get("accept"),
     });
     return await answer(apiReplies.shift() ?? (() => Response.json({ labels: [] })));
   }) as unknown as typeof fetch;
@@ -256,10 +291,29 @@ describe("construction refuses a structural mistake", () => {
       { serviceAccount: { clientEmail: "a@b.c", privateKey: `-----BEGIN PRIVATE KEY-----\n${btoa("x".repeat(100))}\n-----END PRIVATE KEY-----` } },
       /PKCS#8/,
     ],
+    [
+      "a PEM that only opens like PKCS#8",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: armor(`0${"k".repeat(95)}`) } },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "a truncated key",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: armor(atob(DER_BASE64).slice(0, 600)) } },
+      /PKCS#8 RSA/,
+    ],
+    [
+      "a well-formed key of another algorithm",
+      { serviceAccount: { clientEmail: "a@b.c", privateKey: EC_PRIVATE_KEY } },
+      /PKCS#8 RSA/,
+    ],
     ["no subject", { subject: undefined }, /subject/],
     ["a fixed subject that is not an address", { subject: "alice" }, /email address/],
   ])("%s", (_name, overrides, message) => {
     expect(build(overrides)).toThrow(message);
+  });
+
+  it("accepts a real RSA key", () => {
+    expect(build({})).not.toThrow();
   });
 
   it("never puts the key in a construction error", () => {
@@ -307,6 +361,44 @@ describe("whose account a call acts as", () => {
     });
     expect(tokenCalls).toEqual([]);
     expect(apiCalls).toEqual([]);
+  });
+
+  it("never asks the mapping about an unauthenticated caller", async () => {
+    // An open deployment admits everyone as the anonymous actor; a mapping
+    // that answers for anyone must still never be consulted for them.
+    const mapping = vi.fn(() => "alice@org.example");
+    const failure = await labels(
+      mailbox({ subject: mapping }),
+      context({ actor: { kind: "anonymous" }, interactive: false }, undefined, false),
+    ).catch((error) => error);
+    expect(failure).toMatchObject({ code: "auth_required", message: expect.stringContaining("without authentication") });
+    expect(mapping).not.toHaveBeenCalled();
+    expect(tokenCalls).toEqual([]);
+    // A fixed subject is the deployment's explicit choice and still works.
+    await labels(
+      mailbox({ subject: "shared-inbox@org.example" }),
+      context({ actor: { kind: "anonymous" }, interactive: false }, undefined, false),
+    );
+    expect(tokenCalls).toHaveLength(1);
+  });
+
+  it("hands an async mapping the call's signal, once per call", async () => {
+    const controller = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    const connector = mailbox({
+      subject: async (_who: AuthenticatedIdentity, { signal }: { signal?: AbortSignal }) => {
+        seen.push(signal);
+        return "alice@org.example";
+      },
+    });
+    apiReplies.push(
+      () => Response.json({ threads: [{ id: "t1" }, { id: "t2" }] }),
+      () => Response.json({ id: "t1", messages: [] }),
+      () => Response.json({ id: "t2", messages: [] }),
+    );
+    await connector.callTool("search_threads", {}, context(identity("alice"), controller.signal));
+    expect(apiCalls).toHaveLength(3);
+    expect(seen).toEqual([controller.signal]);
   });
 
   it("fails closed when the mapping has no account for this caller", async () => {
@@ -399,6 +491,37 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     expect(subjects).toEqual(["alice@org.example", "bob@org.example"]);
     expect(JSON.stringify(subjects)).not.toContain("ceo");
   });
+
+  const labelsOver = async (connecta: { fetch(request: Request): Promise<Response> }, token?: string) =>
+    readJsonRpc(
+      await connecta.fetch(
+        mcpRpc("tools/call", { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } }, token ? { token } : {}),
+      ),
+    );
+
+  it("refuses an open deployment's anonymous requests before the mapping runs", async () => {
+    const mapping = vi.fn(() => "alice@org.example");
+    const connecta = createTestConnecta({ connectors: [mailbox({ subject: mapping })], logger: silentLogger });
+    const result = await labelsOver(connecta);
+    expect(result.result.isError).toBe(true);
+    expect(JSON.stringify(result.result)).toContain("auth_required");
+    expect(mapping).not.toHaveBeenCalled();
+    expect(tokenCalls).toEqual([]);
+    expect(apiCalls).toEqual([]);
+  });
+
+  it("counts a bearer without a person behind it as authenticated", async () => {
+    const mapping = vi.fn((who: AuthenticatedIdentity) => (who.actor.kind === "bearer" ? "robot@org.example" : undefined));
+    const connecta = createTestConnecta({
+      connectors: [mailbox({ subject: mapping })],
+      auth: bearerToken("service-secret"),
+      logger: silentLogger,
+    });
+    const result = await labelsOver(connecta, "service-secret");
+    expect(result.result.isError).toBeFalsy();
+    expect(mapping).toHaveBeenCalledTimes(1);
+    expect(decodeSegment(tokenCalls[0]!.assertion.split(".")[1]!).sub).toBe("robot@org.example");
+  });
 });
 
 // --- Token cache --------------------------------------------------------------------
@@ -458,20 +581,79 @@ describe("the in-memory token cache", () => {
     ]);
   });
 
-  it("does not hand an owner's cancellation to a caller still waiting", async () => {
-    const first = deferred();
-    tokenReplies.push(first.reply);
-    const connector = mailbox();
+  it("lets a follower in another request mint again, never reading the owner's signal", async () => {
+    // On workerd an AbortSignal belongs to the request that made it, and
+    // reading it from another throws. Each "request" here runs in its own
+    // async context, and the owner's signal throws the same way when read
+    // from anywhere else — so a follower that so much as checks whether the
+    // owner was cancelled fails this test.
+    const requests = new AsyncLocalStorage<string>();
     const owner = new AbortController();
-    const owning = labels(connector, context(identity("alice"), owner.signal));
+    const ownersSignal = new Proxy(owner.signal, {
+      get(target, key) {
+        if ((key === "aborted" || key === "reason") && requests.getStore() !== "owner") {
+          throw new Error("Cannot perform I/O on behalf of a different request.");
+        }
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    tokenReplies.push(deferred().reply);
+    const connector = mailbox();
+    const owning = requests.run("owner", () => labels(connector, context(identity("alice"), ownersSignal)));
     await vi.waitFor(() => expect(tokenCalls).toHaveLength(1));
-    const joining = labels(connector, context(identity("alice")));
-    owner.abort(new Error("owner left"));
-    await expect(owning).rejects.toBeDefined();
-    await joining;
-    // The joiner asked Google itself rather than inheriting the abort.
+    const following = requests.run("follower", () => labels(connector, context(identity("alice"))));
+    requests.run("owner", () => owner.abort(new Error("owner left")));
+    // The owner failed for its own reason; reading its own signal was fine.
+    const ownerFailure = await owning.catch((error) => error);
+    expect(ownerFailure.cause?.message ?? ownerFailure.message).toBe("owner left");
+    await following;
+    // The follower heard "abandoned" and asked Google itself.
     expect(tokenCalls).toHaveLength(2);
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-2"]);
+  });
+
+  it("stops waiting on another caller's mint at its deadline", async () => {
+    tokenReplies.push(deferred().reply);
+    const connector = mailbox();
+    const short = context(identity("alice"));
+    short.timeoutMs = 50;
+    // The owner's request hangs and never settles its flight.
+    void labels(connector, short).catch(() => undefined);
+    await vi.waitFor(() => expect(tokenCalls).toHaveLength(1));
+    await labels(connector, context(identity("alice")));
+    expect(tokenCalls).toHaveLength(2);
+  });
+
+  it("forgets only the token a late 401 rejected, never a newer one", async () => {
+    let now = 1_800_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const late = deferred();
+    apiReplies.push(late.reply);
+    const connector = mailbox();
+    const first = labels(connector, context(identity("alice")));
+    await vi.waitFor(() => expect(apiCalls).toHaveLength(1));
+    // token-1 nears expiry while that request is out; the next call renews.
+    now += 3_545_000;
+    await labels(connector, context(identity("alice")));
+    late.release(Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));
+    await first;
+    // The 401 named token-1, which was already replaced: token-2 survives and
+    // carries the replay, and nothing mints a third.
+    expect(apiCalls.map((call) => call.authorization)).toEqual([
+      "Bearer token-1",
+      "Bearer token-2",
+      "Bearer token-2",
+    ]);
+    await labels(connector, context(identity("alice")));
+    expect(tokenCalls).toHaveLength(2);
+  });
+
+  it("keys the cache by the key itself, so a rotated key never reuses a token", async () => {
+    const owner = account();
+    await labels(mailbox({}, owner), context(identity("alice")));
+    await labels(mailbox({}, { ...owner, privateKey: ROTATED_KEY }), context(identity("alice")));
+    expect(tokenCalls).toHaveLength(2);
   });
 
   it("shares a refusal from Google with everyone waiting on it", async () => {
@@ -618,5 +800,74 @@ describe("API refusals map by Google's reason codes", () => {
   it("maps a bad argument to invalid_args and an outage to unavailable", async () => {
     expect((await apiFailure(400, { message: "Invalid query" })).code).toBe("invalid_args");
     expect((await apiFailure(500, { message: "Backend Error" })).code).toBe("unavailable");
+  });
+});
+
+// --- Non-JSON requests ----------------------------------------------------------------
+
+describe("the shared client reads bytes and text for the products that need them", () => {
+  // Drive's download and export are the first users; the client is built
+  // here exactly as a product provider builds it.
+  function client(maxResponseBytes = 1024) {
+    return googleWorkspaceClient({
+      provider: "Google Drive",
+      api: "Google Drive API",
+      baseUrl: "https://www.googleapis.com/drive/v3",
+      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+      maxResponseBytes,
+      notFound: "ambiguous",
+      connection: workspaceConnection("drive", {
+        purpose: "Shared files",
+        serviceAccount: account(),
+        subject: "alice@org.example",
+      }),
+    });
+  }
+
+  it("returns bytes with their content type, under the delegated token", async () => {
+    apiReplies.push(() => new Response(new Uint8Array([37, 80, 68, 70]), { headers: { "Content-Type": "application/pdf" } }));
+    const result = await client().bytes(
+      { method: "GET", path: "/files/f1", query: { alt: "media" } },
+      context(),
+      "application/pdf",
+    );
+    expect([...result.bytes]).toEqual([37, 80, 68, 70]);
+    expect(result.contentType).toBe("application/pdf");
+    expect(apiCalls[0]).toMatchObject({
+      url: "https://www.googleapis.com/drive/v3/files/f1?alt=media",
+      authorization: "Bearer token-1",
+      accept: "application/pdf",
+    });
+  });
+
+  it("decodes text in the charset the response declares", async () => {
+    apiReplies.push(
+      () => new Response(new Uint8Array([67, 97, 102, 0xe9]), { headers: { "Content-Type": "text/plain; charset=iso-8859-1" } }),
+    );
+    const result = await client().text({ method: "GET", path: "/files/f1/export", query: { mimeType: "text/plain" } }, context());
+    expect(result).toEqual({ text: "Café", contentType: "text/plain; charset=iso-8859-1" });
+  });
+
+  it("bounds the body by the product's ceiling", async () => {
+    apiReplies.push(() => new Response(new Uint8Array(2048)));
+    await expect(client(1024).bytes({ method: "GET", path: "/files/f1" }, context())).rejects.toMatchObject({
+      code: "connector_call_failed",
+      message: expect.stringContaining("1024-byte"),
+    });
+  });
+
+  it("maps Google's error body and replays a 401 like the JSON path", async () => {
+    apiReplies.push(
+      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+      () => new Response("ok", { headers: { "Content-Type": "text/plain" } }),
+      () => Response.json({ error: { code: 404, message: "File not found: f2." } }, { status: 404 }),
+    );
+    const drive = client();
+    expect((await drive.text({ method: "GET", path: "/files/f1" }, context())).text).toBe("ok");
+    expect(tokenCalls).toHaveLength(2);
+    // Drive's 404 can hide a permission gap, so it is not `not_found`.
+    await expect(drive.bytes({ method: "GET", path: "/files/f2" }, context())).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
   });
 });

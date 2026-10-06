@@ -402,6 +402,17 @@ function firstSentence(description: string): string {
   return (match ? match[0] : description).trim();
 }
 
+/** A freshly generated 2048-bit RSA key as the PKCS#8 PEM a JSON key carries. */
+async function rsaPrivateKeyPem(): Promise<string> {
+  const { privateKey } = (await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign"],
+  )) as CryptoKeyPair;
+  const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", privateKey)) as ArrayBuffer);
+  return `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
+}
+
 async function surface(
   name: string,
   connector: Connector,
@@ -460,8 +471,8 @@ const providers = await Promise.all([
       purpose: "Staff email triage and reply drafting",
       serviceAccount: {
         clientEmail: "delegate@project.iam.gserviceaccount.com",
-        // Structurally a PKCS#8 PEM; the catalog never signs anything.
-        privateKey: `-----BEGIN PRIVATE KEY-----\n${btoa(`0${"k".repeat(95)}`)}\n-----END PRIVATE KEY-----`,
+        // A real key, because construction checks it; the catalog signs nothing.
+        privateKey: await rsaPrivateKeyPem(),
       },
       subject: () => undefined,
     }),

@@ -583,13 +583,20 @@ const gmailProvider = await import("@zackbart/connecta/providers/gmail");
 if (typeof gmailProvider.gmail !== "function") {
   throw new Error("missing Gmail provider constructor");
 }
+// Construction checks the key, so the smoke brings a real one.
+const smokeKey = await crypto.subtle.generateKey(
+  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+  true,
+  ["sign"],
+);
+const smokeDer = new Uint8Array(await crypto.subtle.exportKey("pkcs8", smokeKey.privateKey));
 const gmailConnection = gmailProvider.gmail("mail", {
   purpose: "package smoke",
   serviceAccount: {
     clientEmail: "smoke@project.iam.gserviceaccount.com",
     privateKey:
       "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(48) + "k".repeat(95)) +
+      btoa(String.fromCharCode(...smokeDer)) +
       "-----END PRIVATE KEY-----",
   },
   subject: () => undefined,

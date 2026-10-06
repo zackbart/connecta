@@ -29,6 +29,12 @@
     },
     {
       "method": "GET",
+      "path": "/gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+      "specRevision": "20260928",
+      "contract": "sha256:235047e99780a97b82c425ce78d3ebb9d11d965f818d88f7999f7fb22cb8acce"
+    },
+    {
+      "method": "GET",
       "path": "/gmail/v1/users/{userId}/labels",
       "specRevision": "20260928",
       "contract": "sha256:2e75b578aec905fe0afa4878e45441d528b65996a0d0e56adc471a2f57e739e5"

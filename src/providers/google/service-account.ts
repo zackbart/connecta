@@ -27,7 +27,7 @@ import {
   retryAfterMs,
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, type ConnectorCallErrorCode } from "../../errors.js";
 import type { ConnectorContext } from "../../types.js";
 
 /** Google's OAuth 2.0 token endpoint, and the JWT audience it requires. */
@@ -73,7 +73,7 @@ export interface GoogleServiceAccount {
 export interface ServiceAccountKey {
   readonly clientEmail: string;
   readonly clientId: string | undefined;
-  /** PKCS#8 DER, decoded once at construction. */
+  /** PKCS#8 DER of an RSA key, decoded and checked once at construction. */
   readonly der: Uint8Array<ArrayBuffer>;
 }
 
@@ -103,13 +103,96 @@ function decodedKey(owner: string, pem: string): Uint8Array<ArrayBuffer> {
   for (let index = 0; index < binary.length; index += 1) {
     der[index] = binary.charCodeAt(index);
   }
-  // Every PKCS#8 structure opens with a DER SEQUENCE; anything else is a
-  // truncated paste or a different file, and is cheaper to refuse here than
-  // to discover on the first call.
-  if (der.length < 64 || der[0] !== 0x30) {
-    throw new Error(`${owner} serviceAccount.privateKey does not decode to a PKCS#8 key.`);
+  // A truncated paste, another file, or another algorithm is cheaper to refuse
+  // here than to discover on the first call — and a key that only fails at
+  // use can hide behind a token another key already minted.
+  const modulusBits = rsaPkcs8ModulusBits(der);
+  if (modulusBits === undefined) {
+    throw new Error(
+      `${owner} serviceAccount.privateKey does not decode to a PKCS#8 RSA private key; paste the private_key field of the service account's JSON key.`,
+    );
+  }
+  if (modulusBits < MIN_RSA_BITS) {
+    throw new Error(
+      `${owner} serviceAccount.privateKey is a ${modulusBits}-bit RSA key; Google signs service-account assertions with ${MIN_RSA_BITS}-bit keys or larger.`,
+    );
   }
   return der;
+}
+
+/** Google issues 2048-bit service-account keys; RS256 wants no less. */
+const MIN_RSA_BITS = 2048;
+/** rsaEncryption, 1.2.840.113549.1.1.1, as its DER content octets. */
+const RSA_ENCRYPTION_OID = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+
+interface Tlv {
+  tag: number;
+  start: number;
+  end: number;
+}
+
+/** One DER tag-length-value at `offset`, or undefined if it does not fit. */
+function tlv(der: Uint8Array, offset: number, limit = der.length): Tlv | undefined {
+  if (offset + 2 > limit) return undefined;
+  const tag = der[offset]!;
+  let length = der[offset + 1]!;
+  let start = offset + 2;
+  if (length & 0x80) {
+    const octets = length & 0x7f;
+    // Indefinite lengths are BER, not DER; four octets is 4 GiB.
+    if (octets === 0 || octets > 4 || start + octets > limit) return undefined;
+    length = 0;
+    for (let index = 0; index < octets; index += 1) length = length * 256 + der[start + index]!;
+    start += octets;
+  }
+  const end = start + length;
+  return end > limit ? undefined : { tag, start, end };
+}
+
+/**
+ * The modulus size of a PKCS#8 `PrivateKeyInfo` wrapping an RSA key, or
+ * undefined for anything else. Walks exactly the structure RFC 5208 and RFC
+ * 8017 define — version 0, the rsaEncryption algorithm identifier, and an
+ * octet string holding the nine integers of an `RSAPrivateKey` — so a
+ * well-formed key of another algorithm, a PKCS#1 body in PKCS#8 armor, and a
+ * truncated paste are all refused.
+ */
+function rsaPkcs8ModulusBits(der: Uint8Array): number | undefined {
+  const info = tlv(der, 0);
+  if (!info || info.tag !== 0x30 || info.end !== der.length) return undefined;
+  const version = tlv(der, info.start, info.end);
+  if (!version || version.tag !== 0x02 || version.end - version.start !== 1 || der[version.start] !== 0) {
+    return undefined;
+  }
+  const algorithm = tlv(der, version.end, info.end);
+  if (!algorithm || algorithm.tag !== 0x30) return undefined;
+  const oid = tlv(der, algorithm.start, algorithm.end);
+  if (
+    !oid ||
+    oid.tag !== 0x06 ||
+    oid.end - oid.start !== RSA_ENCRYPTION_OID.length ||
+    RSA_ENCRYPTION_OID.some((octet, index) => der[oid.start + index] !== octet)
+  ) {
+    return undefined;
+  }
+  const wrapped = tlv(der, algorithm.end, info.end);
+  if (!wrapped || wrapped.tag !== 0x04) return undefined;
+  const key = tlv(der, wrapped.start, wrapped.end);
+  if (!key || key.tag !== 0x30 || key.end !== wrapped.end) return undefined;
+  // version, n, e, d, p, q, dP, dQ, qInv
+  const integers: Tlv[] = [];
+  let at = key.start;
+  for (let index = 0; index < 9; index += 1) {
+    const integer = tlv(der, at, key.end);
+    if (!integer || integer.tag !== 0x02 || integer.end === integer.start) return undefined;
+    integers.push(integer);
+    at = integer.end;
+  }
+  const modulus = integers[1]!;
+  let first = modulus.start;
+  while (first < modulus.end - 1 && der[first] === 0) first += 1;
+  const leading = der[first]!;
+  return leading === 0 ? undefined : (modulus.end - first - 1) * 8 + (32 - Math.clz32(leading));
 }
 
 function field(record: Record<string, unknown>, name: string): string | undefined {
@@ -347,17 +430,17 @@ async function mint(
       const parsed = await response.jsonResult();
       const payload = "value" in parsed ? parsed.value : undefined;
       if (!response.ok) {
-        throw tokenFailure(account, scopes, response.status, response.headers, payload);
+        throw verdict(tokenFailure(account, scopes, response.status, response.headers, payload));
       }
       const body = asRecord(payload);
       const accessToken = body["access_token"];
       const expiresIn = Number(body["expires_in"] ?? ASSERTION_LIFETIME_SECONDS);
       if (typeof accessToken !== "string" || accessToken === "" || !Number.isFinite(expiresIn)) {
-        throw new ConnectorCallError(
+        throw verdict(new ConnectorCallError(
           "connector_call_failed",
           "Google's token endpoint answered without an access token.",
           { retryable: false },
-        );
+        ));
       }
       // Measured from before the request left, so a slow answer only ever
       // shortens the token's life here, never lengthens it.
@@ -368,10 +451,36 @@ async function mint(
 
 // --- Cache -----------------------------------------------------------------------
 
+/**
+ * What a mint in flight tells the callers waiting on it: plain data, settled
+ * by the owner inside its own request. A follower never reads the owner's
+ * signal, response, or error object — on Workers those belong to the owner's
+ * request, and touching them from another throws "Cannot perform I/O on behalf
+ * of a different request". Only a verdict from Google is shared; anything
+ * else, the owner's cancellation included, is `abandoned`, and the follower
+ * mints for itself.
+ */
+type FlightOutcome =
+  | { kind: "token"; minted: Minted }
+  | { kind: "refused"; code: ConnectorCallErrorCode; message: string; retryAfterMs: number | undefined }
+  | { kind: "abandoned" };
+
 interface Flight {
-  promise: Promise<Minted>;
-  /** The owner's cancellation, which a joiner does not inherit. */
-  signal: AbortSignal | undefined;
+  /** Never rejects; resolved by the owner, in the owner's request. */
+  outcome: Promise<FlightOutcome>;
+  /** Epoch ms after which no follower waits on this flight any longer. */
+  deadline: number;
+}
+
+/** The longest a follower waits on another caller's mint. */
+const FLIGHT_WAIT_MS = 30_000;
+
+/** Errors carrying Google's own answer, the only failures a flight shares. */
+const verdicts = new WeakSet<ConnectorCallError>();
+
+function verdict(error: ConnectorCallError): ConnectorCallError {
+  verdicts.add(error);
+  return error;
 }
 
 /** Module-level and in memory only: tokens never touch storage. */
@@ -385,9 +494,32 @@ export interface DelegatedTokenRequest {
   scopes: readonly string[];
 }
 
-function cacheKey({ account, subject, scopes }: DelegatedTokenRequest): string {
+/**
+ * The key's own identity, a SHA-256 of its DER. Part of every cache key, so a
+ * rotated key — or a replacement that would not sign — never answers with a
+ * token another key minted for the same service account.
+ */
+const keyIdentities = new WeakMap<ServiceAccountKey, Promise<string>>();
+
+function keyIdentity(account: ServiceAccountKey): Promise<string> {
+  let identity = keyIdentities.get(account);
+  if (!identity) {
+    identity = crypto.subtle.digest("SHA-256", account.der).then((digest) =>
+      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+    );
+    keyIdentities.set(account, identity);
+  }
+  return identity;
+}
+
+async function cacheKey({ account, subject, scopes }: DelegatedTokenRequest): Promise<string> {
   // Workspace addresses are case-insensitive; scope order is not a new grant.
-  return [account.clientEmail, subject.toLowerCase(), [...scopes].sort().join(" ")].join("\n");
+  return [
+    account.clientEmail,
+    await keyIdentity(account),
+    subject.toLowerCase(),
+    [...scopes].sort().join(" "),
+  ].join("\n");
 }
 
 function remember(key: string, minted: Minted): void {
@@ -400,23 +532,38 @@ function remember(key: string, minted: Minted): void {
   }
 }
 
-/** Wait for a promise no longer than this call's own cancellation. */
-function within<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", abort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", abort);
-        reject(error);
-      },
+/**
+ * Wait on another caller's flight under this caller's own terms: its own
+ * signal, its own timer to the flight's deadline, and a promise created here,
+ * so the continuation runs in this caller's request whichever request settles
+ * the flight. Rejects only with this caller's own abort reason.
+ */
+function follow(flight: Flight, signal: AbortSignal | undefined): Promise<FlightOutcome> {
+  return new Promise<FlightOutcome>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let done = false;
+    const finish = (outcome: FlightOutcome) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(outcome);
+    };
+    const onAbort = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    const timer = setTimeout(
+      () => finish({ kind: "abandoned" }),
+      Math.max(0, flight.deadline - Date.now()),
     );
+    signal?.addEventListener("abort", onAbort, { once: true });
+    void flight.outcome.then(finish);
   });
 }
 
@@ -425,47 +572,76 @@ function within<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promis
  * more than a minute left, otherwise one fresh mint shared by every concurrent
  * caller asking for the same key.
  *
- * A joiner waits under its own signal, never the owner's, and an owner that
- * was cancelled does not hand its cancellation on: the joiner mints for
- * itself. Only a verdict from Google — a token or a refusal — is shared.
+ * Followers share only a scalar outcome and a deadline. The owner records
+ * what happened inside its own request — a token, Google's refusal, or
+ * `abandoned` for anything else — and a follower that hears `abandoned`, or
+ * reaches the deadline first, mints for itself. A refusal is rebuilt for each
+ * follower from its code and message, never handed over as the owner's object.
  */
 export async function delegatedToken(
   request: DelegatedTokenRequest,
   ctx: ConnectorContext,
 ): Promise<string> {
-  const key = cacheKey(request);
+  const key = await cacheKey(request);
   for (;;) {
     const cached = tokens.get(key);
     if (cached && cached.expiresAt - REFRESH_MARGIN_MS > Date.now()) {
       return cached.accessToken;
     }
     const flight = flights.get(key);
-    if (flight) {
-      try {
-        return (await within(flight.promise, ctx.signal)).accessToken;
-      } catch (error) {
-        if (ctx.signal?.aborted || !flight.signal?.aborted) throw error;
-        // The owner left before Google answered; this caller asks itself.
-        if (flights.get(key) === flight) flights.delete(key);
-        continue;
+    if (flight && flight.deadline > Date.now()) {
+      const outcome = await follow(flight, ctx.signal);
+      if (outcome.kind === "token") return outcome.minted.accessToken;
+      if (outcome.kind === "refused") {
+        throw new ConnectorCallError(
+          outcome.code,
+          outcome.message,
+          outcome.retryAfterMs === undefined ? {} : { retryAfterMs: outcome.retryAfterMs },
+        );
       }
+      if (flights.get(key) === flight) flights.delete(key);
+      continue;
     }
+    let settle!: (outcome: FlightOutcome) => void;
     const own: Flight = {
-      promise: mint(request.account, request.subject, request.scopes, ctx),
-      signal: ctx.signal,
+      outcome: new Promise<FlightOutcome>((resolve) => {
+        settle = resolve;
+      }),
+      deadline: Date.now() + Math.min(ctx.timeoutMs ?? FLIGHT_WAIT_MS, FLIGHT_WAIT_MS),
     };
     flights.set(key, own);
     try {
-      const minted = await own.promise;
+      const minted = await mint(request.account, request.subject, request.scopes, ctx);
       remember(key, minted);
+      settle({ kind: "token", minted });
       return minted.accessToken;
+    } catch (error) {
+      settle(
+        error instanceof ConnectorCallError && verdicts.has(error)
+          ? {
+              kind: "refused",
+              code: error.code,
+              message: error.message,
+              retryAfterMs: error.retryAfterMs,
+            }
+          : { kind: "abandoned" },
+      );
+      throw error;
     } finally {
       if (flights.get(key) === own) flights.delete(key);
     }
   }
 }
 
-/** Drop a token the API has just rejected, so the next request mints anew. */
-export function forgetDelegatedToken(request: DelegatedTokenRequest): void {
-  tokens.delete(cacheKey(request));
+/**
+ * Drop a token the API has just rejected, so the next request mints anew —
+ * but only that token. A 401 that arrives after a newer token replaced it
+ * leaves the newer one alone.
+ */
+export async function forgetDelegatedToken(
+  request: DelegatedTokenRequest,
+  rejected: string,
+): Promise<void> {
+  const key = await cacheKey(request);
+  if (tokens.get(key)?.accessToken === rejected) tokens.delete(key);
 }

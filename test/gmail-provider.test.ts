@@ -523,26 +523,34 @@ describe("writing drafts", () => {
     expect(calls).toEqual([]);
   });
 
-  it("updates a draft's body, keeping its thread, reply headers, and unrestated headers", async () => {
+  /** An existing draft as Gmail's full format returns it. */
+  function existingDraft(headers: { name: string; value: string }[], parts?: unknown[]) {
+    return {
+      id: "d1",
+      message: {
+        id: "m5",
+        threadId: "t1",
+        payload: parts
+          ? { mimeType: "multipart/mixed", headers, parts }
+          : { mimeType: "text/plain", headers, body: { data: b64url("Old text") } },
+      },
+    };
+  }
+
+  it("updates a draft's body, keeping every header it promises to keep", async () => {
     route = (request) =>
       request.method === "GET"
         ? {
-            body: {
-              id: "d1",
-              message: {
-                id: "m5",
-                threadId: "t1",
-                payload: {
-                  headers: [
-                    { name: "To", value: '"Smith, Ann" <ann@church.example>, bo@church.example' },
-                    { name: "Cc", value: "elders@church.example" },
-                    { name: "Subject", value: "Re: Elders meeting" },
-                    { name: "In-Reply-To", value: "<m2@mail.example>" },
-                    { name: "References", value: "<m1@mail.example> <m2@mail.example>" },
-                  ],
-                },
-              },
-            },
+            body: existingDraft([
+              { name: "From", value: "Pastor Dan <dan@church.example>" },
+              { name: "To", value: '"Smith, Ann" <ann@church.example>, bo@church.example' },
+              { name: "Cc", value: "elders@church.example" },
+              { name: "Bcc", value: "secretary@church.example" },
+              { name: "Reply-To", value: "Church Office <office@church.example>" },
+              { name: "Subject", value: "Re: Elders meeting" },
+              { name: "In-Reply-To", value: "<m2@mail.example>" },
+              { name: "References", value: "<m1@mail.example> <m2@mail.example>" },
+            ]),
           }
         : { body: { id: "d1", message: { id: "m6", threadId: "t1" } } };
     const result = await call(connection(), "update_draft", { draftId: "d1", body: "Revised text.", cc: [] });
@@ -551,14 +559,177 @@ describe("writing drafts", () => {
       "GET /drafts/d1",
       "PUT /drafts/d1",
     ]);
+    expect(calls[0]!.url.searchParams.get("format")).toBe("full");
     expect(calls[1]!.body.message.threadId).toBe("t1");
     const mime = parseMime(calls[1]!.body.message.raw);
+    expect(mime.headers["From"]).toBe("Pastor Dan <dan@church.example>");
     expect(mime.headers["To"]).toBe('"Smith, Ann" <ann@church.example>, bo@church.example');
+    // Restated as empty: cleared.
     expect(mime.headers["Cc"]).toBeUndefined();
+    expect(mime.headers["Bcc"]).toBe("secretary@church.example");
+    expect(mime.headers["Reply-To"]).toBe("Church Office <office@church.example>");
     expect(mime.headers["Subject"]).toBe("Re: Elders meeting");
     expect(mime.headers["In-Reply-To"]).toBe("<m2@mail.example>");
     expect(mime.headers["References"]).toBe("<m1@mail.example> <m2@mail.example>");
     expect(mime.parts[0]!.text).toBe("Revised text.");
     expect(result).toEqual({ draftId: "d1", messageId: "m6", threadId: "t1", sent: false });
+  });
+
+  it.each([
+    [
+      "an attachment",
+      [
+        { mimeType: "text/plain", body: { data: b64url("See attached.") } },
+        { mimeType: "application/pdf", filename: "contract.pdf", body: { attachmentId: "a1", size: 9000 } },
+      ],
+      "contract.pdf",
+    ],
+    [
+      "an inline image",
+      [
+        {
+          mimeType: "multipart/related",
+          parts: [
+            { mimeType: "text/html", body: { data: b64url('<img src="cid:logo">') } },
+            { mimeType: "image/png", headers: [{ name: "Content-ID", value: "<logo>" }], body: { attachmentId: "a2" } },
+          ],
+        },
+      ],
+      "multipart/related",
+    ],
+    [
+      "a forwarded message",
+      [
+        { mimeType: "text/plain", body: { data: b64url("FYI") } },
+        { mimeType: "message/rfc822", body: { attachmentId: "a3" } },
+      ],
+      "message/rfc822",
+    ],
+  ])("refuses, unchanged, a draft carrying %s it could not rebuild", async (_kind, parts, named) => {
+    route = () => ({ body: existingDraft([{ name: "To", value: "ann@church.example" }], parts) });
+    const failure = await call(connection(), "update_draft", { draftId: "d1", body: "Revised." }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    expect(failure.message).toContain(named);
+    expect(failure.message).toContain("Nothing was changed");
+    expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+  });
+
+  it("splits address lists as RFC 5322 does: quoted commas, comments, and groups", async () => {
+    route = (request) =>
+      request.method === "GET"
+        ? {
+            body: {
+              id: "m2",
+              threadId: "t1",
+              payload: {
+                headers: [
+                  { name: "Message-ID", value: "<m2@mail.example>" },
+                  { name: "Subject", value: "Plans" },
+                  {
+                    name: "Reply-To",
+                    value: 'Alice <alice@example.com>, "Bob, Jr." <bob@example.com> (desk), Team: carol@example.com, dan@example.com;',
+                  },
+                  { name: "From", value: "someone-else@example.com" },
+                ],
+              },
+            },
+          }
+        : { body: { id: "d2", message: { id: "m3", threadId: "t1" } } };
+    await call(connection(), "create_draft", { replyToMessageId: "m2", body: "Count us in." });
+    const mime = parseMime(calls[1]!.body.message.raw);
+    expect(mime.headers["To"]).toBe(
+      'Alice <alice@example.com>, "Bob, Jr." <bob@example.com>, carol@example.com, dan@example.com',
+    );
+  });
+
+  it("refuses a reply whose sender header it cannot parse, unless to is given", async () => {
+    const replied = {
+      id: "m2",
+      threadId: "t1",
+      payload: {
+        headers: [
+          { name: "Message-ID", value: "<m2@mail.example>" },
+          { name: "From", value: '"Unclosed <ann@church.example>' },
+        ],
+      },
+    };
+    route = (request) =>
+      request.method === "GET" ? { body: replied } : { body: { id: "d2", message: { id: "m3", threadId: "t1" } } };
+    await expect(
+      call(connection(), "create_draft", { replyToMessageId: "m2", body: "Hi" }),
+    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("pass to explicitly") });
+    expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
+
+    calls.length = 0;
+    await call(connection(), "create_draft", { replyToMessageId: "m2", to: ["ann@church.example"], body: "Hi" });
+    expect(parseMime(calls[1]!.body.message.raw).headers["To"]).toBe("ann@church.example");
+  });
+});
+
+describe("a message's own body, apart from what it carries", () => {
+  it("never takes an attached email's text for the message body", async () => {
+    route = () => ({
+      body: {
+        id: "m7",
+        payload: {
+          mimeType: "multipart/mixed",
+          parts: [
+            { mimeType: "text/html", body: { data: b64url("<p>The <b>real</b> body</p>") } },
+            {
+              mimeType: "message/rfc822",
+              filename: "",
+              body: {},
+              parts: [{ mimeType: "text/plain", body: { data: b64url("The forwarded email's text") } }],
+            },
+            {
+              mimeType: "multipart/mixed",
+              headers: [{ name: "Content-Disposition", value: "attachment" }],
+              parts: [{ mimeType: "text/plain", body: { data: b64url("Inside a disposed attachment") } }],
+            },
+          ],
+        },
+      },
+    });
+    const result = await call(connection(), "get_message", { messageId: "m7" });
+    expect(result.bodyFormat).toBe("html");
+    expect(result.body).toBe("The real body");
+    expect(result.attachments).toEqual([
+      { filename: "", mimeType: "message/rfc822" },
+      { filename: "", mimeType: "multipart/mixed" },
+    ]);
+  });
+
+  it("fetches a body Gmail stored apart from the message", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith("/attachments/body-1")
+        ? { body: { size: 30, data: b64url("A long body stored separately") } }
+        : {
+            body: {
+              id: "m8",
+              payload: {
+                mimeType: "text/plain",
+                headers: [{ name: "Content-Type", value: 'text/plain; charset="UTF-8"' }],
+                body: { size: 30, attachmentId: "body-1" },
+              },
+            },
+          };
+    const result = await call(connection(), "get_message", { messageId: "m8" });
+    expect(path(1)).toBe("/messages/m8/attachments/body-1");
+    expect(result).toMatchObject({ body: "A long body stored separately", bodyFormat: "text", bodyTruncated: false });
+    expect(result.attachments).toBeUndefined();
+  });
+
+  it("says so, never returning a silent empty body, when a stored body is too large to read", async () => {
+    route = () => ({
+      body: {
+        id: "m9",
+        payload: { mimeType: "text/plain", body: { size: 5_000_000, attachmentId: "body-2" } },
+      },
+    });
+    const result = await call(connection(), "get_message", { messageId: "m9" });
+    expect(calls).toHaveLength(1);
+    expect(result.bodyFormat).toBe("unavailable");
+    expect(result.bodyTruncated).toBe(true);
+    expect(result.body).toContain("5000000 bytes");
   });
 });

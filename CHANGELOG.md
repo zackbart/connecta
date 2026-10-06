@@ -65,14 +65,20 @@ deployment's own connectors still never learn their caller.
   instructions?, callAdmission?, maxResultBytes?, baseUrl? })`, plus
   `GMAIL_SCOPES` and `GMAIL_API_BASE_URL`. Eight hand-written tools:
   `search_threads` (Gmail search syntax, cursor-paged, each thread summarized),
-  `get_thread`, `get_message` (plain-text bodies decoded from their charset,
-  HTML converted only when no text part exists, capped by `maxBodyChars` with an
-  explicit marker, attachment metadata only), `list_labels`, `list_drafts`,
-  `get_draft`, `create_draft` (To/Cc/Bcc, RFC 2047-encoded headers, an optional
-  HTML alternative, and `replyToMessageId`, which sets the thread,
-  `In-Reply-To`, `References`, a `Re:` subject, and the recipient), and
-  `update_draft` (replaces the body, keeps the thread, reply headers, and any
-  header not restated). There is no send, delete, or label tool and no raw
+  `get_thread`, `get_message` (the message's own body — never an attached or
+  forwarded email's — decoded from its charset, HTML converted only when no
+  text part exists, fetched from the attachments endpoint when Gmail stored it
+  apart, reported as `bodyFormat: "unavailable"` rather than empty when too
+  large to read, capped by `maxBodyChars` with an explicit marker, attachment
+  metadata only), `list_labels`, `list_drafts`, `get_draft`, `create_draft`
+  (To/Cc/Bcc, RFC 2047-encoded headers, an optional HTML alternative, and
+  `replyToMessageId`, which sets the thread, `In-Reply-To`, `References`, a
+  `Re:` subject, and every recipient of the replied message's Reply-To or
+  From, parsed as an RFC 5322 address list), and `update_draft` (replaces the
+  body; keeps From, To, Cc, Bcc, Reply-To, Subject, the thread, and the reply
+  headers unless restated, and no other header; refuses, unchanged, a draft
+  with attachments, inline images, or anything else Gmail's whole-message
+  update would delete). There is no send, delete, or label tool and no raw
   hatch; `gmail.compose` technically permits sending, and the tool surface is
   what forbids it. `create_draft` is an additive write and `update_draft` a
   destructive one; neither is exempt from approval unless the deployment says
@@ -85,22 +91,28 @@ deployment's own connectors still never learn their caller.
 - **Google Workspace domain-wide delegation, shared by every Workspace
   provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
   the downloaded JSON key's text, from deployment secrets rather than the vault,
-  because one key serves every Workspace connector; a malformed key throws at
-  construction and never appears in a message. `subject` is a function from the
-  admitted `AuthenticatedIdentity` to a Workspace address — sync or async, for a
-  directory lookup — or one fixed address for shared or scheduled use. No
-  admitted caller, or an `undefined` answer, fails `auth_required` before any
-  request leaves; arguments, headers, and programs cannot choose the subject.
-  The RS256 JWT-bearer assertion is signed with Web Crypto, so it runs unchanged
-  on Node and Workers with no new dependency. Access tokens are cached in memory
-  only — never in storage — per service account, subject, and scope set,
-  replaced a minute before expiry, minted once for concurrent callers, and
-  bounded at 512. Google's refusals map to what fixes them: `unauthorized_client`
+  because one key serves every Workspace connector; anything but a PKCS#8 RSA
+  key of at least 2048 bits throws at construction, and no key ever appears in
+  a message. `subject` is a function from the authenticated
+  `AuthenticatedIdentity` to a Workspace address — sync or async, for a
+  directory lookup, with the call's abort signal — or one fixed address for
+  shared or scheduled use. The function is never called for an open
+  deployment's anonymous requests or a call no request admitted; those, and an
+  `undefined` answer, fail `auth_required` before any request leaves.
+  Arguments, headers, and programs cannot choose the subject. The RS256
+  JWT-bearer assertion is signed with Web Crypto, so it runs unchanged on Node
+  and Workers with no new dependency. Access tokens are cached in memory only —
+  never in storage — per service account, key, subject, and scope set,
+  replaced a minute before expiry, and bounded at 512. Concurrent callers share
+  one mint through plain outcomes and a deadline, never another request's
+  signal, so a cancelled owner sends a waiting caller in another Worker request
+  to mint for itself. A 401 forgets only the token it rejected. Google's
+  refusals map to what fixes them: `unauthorized_client`
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or
   a missing scope says so.
 - **Google Discovery drift checks.** `npm run providers:check -- --provider
-  gmail` reads Gmail's credential-free Discovery document and digests the eight
+  gmail` reads Gmail's credential-free Discovery document and digests the nine
   methods the tools call like any other touched endpoint, and also reports a
   touched method that stops accepting the provider's delegated scopes. A
   manifest with `"format": "google-discovery"` and a `scopes` list is all a

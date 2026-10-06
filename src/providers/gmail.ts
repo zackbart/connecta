@@ -19,7 +19,7 @@
  * not offer.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/gmail-endpoints.json` records the eight methods the tools
+ * `scripts/drift/gmail-endpoints.json` records the nine methods the tools
  * call, and `npm run providers:check -- --provider gmail` reports a touched
  * contract that moved or a method that stopped accepting the scopes below.
  */
@@ -35,6 +35,7 @@ import {
 
 export type {
   GoogleServiceAccount,
+  GoogleSubjectContext,
   GoogleWorkspaceOptions,
   GoogleWorkspaceSubject,
 } from "./google/workspace.js";
@@ -164,10 +165,8 @@ function charsetOf(part: JsonRecord): string {
   return /charset="?([^";\s]+)"?/i.exec(type)?.[1] ?? "utf-8";
 }
 
-/** A part's body as text, in its declared charset where the runtime knows it. */
-function decodedBody(part: JsonRecord): string {
-  const data = text(asRecord(part["body"])["data"]);
-  if (!data) return "";
+/** Bytes as text, in the part's declared charset where the runtime knows it. */
+function decodeIn(part: JsonRecord, data: string): string {
   let bytes: Uint8Array;
   try {
     bytes = base64UrlBytes(data);
@@ -181,42 +180,112 @@ function decodedBody(part: JsonRecord): string {
   }
 }
 
-function isAttachment(part: JsonRecord): boolean {
-  return Boolean(text(part["filename"])) || Boolean(asRecord(part["body"])["attachmentId"]);
+function mimeOf(part: JsonRecord): string {
+  return String(part["mimeType"] ?? "").toLowerCase();
 }
 
-function parts(root: JsonRecord): JsonRecord[] {
-  const all: JsonRecord[] = [];
+/**
+ * Where the message's own content ends and something it carries begins: a
+ * named file, a part disposed as an attachment, or a whole forwarded message.
+ * Everything beneath such a part belongs to it — an attached email's text is
+ * not the message's body.
+ */
+function isAttachment(part: JsonRecord): boolean {
+  return (
+    Boolean(text(part["filename"])) ||
+    /^\s*attachment\b/i.test(header(part, "Content-Disposition") ?? "") ||
+    mimeOf(part) === "message/rfc822"
+  );
+}
+
+/**
+ * Walk a payload keeping ancestry: the message's own parts, in order, and the
+ * attachment roots, whose subtrees are never entered.
+ */
+function walk(root: JsonRecord): { own: JsonRecord[]; attachments: JsonRecord[] } {
+  const own: JsonRecord[] = [];
+  const attachments: JsonRecord[] = [];
   const visit = (part: JsonRecord, depth: number) => {
-    all.push(part);
+    if (isAttachment(part)) {
+      attachments.push(part);
+      return;
+    }
+    own.push(part);
     if (depth > 20) return;
     for (const child of asArray(part["parts"])) visit(asRecord(child), depth + 1);
   };
   visit(root, 0);
-  return all;
+  return { own, attachments };
 }
 
-/** The message's own text: the first plain part, else the first HTML part. */
-function bodyOf(payload: JsonRecord): { text: string; format: "text" | "html" | "none" } {
-  const inline = parts(payload).filter((part) => !isAttachment(part));
-  const plain = inline.find((part) => String(part["mimeType"] ?? "").toLowerCase() === "text/plain");
-  if (plain) return { text: decodedBody(plain), format: "text" };
-  const html = inline.find((part) => String(part["mimeType"] ?? "").toLowerCase() === "text/html");
-  if (html) return { text: htmlToText(decodedBody(html)), format: "html" };
-  return { text: "", format: "none" };
+/** Gmail stores a large body apart from the message, behind an attachment id. */
+const MAX_STORED_BODY_BYTES = 1024 * 1024;
+
+type BodyFormat = "text" | "html" | "none" | "unavailable";
+
+interface MessageBody {
+  body: string;
+  bodyTruncated: boolean;
+  bodyFormat: BodyFormat;
+}
+
+/**
+ * The message's own text: its first plain part, else its first HTML part as
+ * text. A body Gmail stored apart from the message is fetched from the
+ * attachments endpoint when it is small enough to read; otherwise the result
+ * says so in `bodyFormat` and in the text, never as a silent empty body.
+ */
+async function readBody(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  messageId: string | undefined,
+  payload: JsonRecord,
+  max: number,
+): Promise<MessageBody> {
+  const own = walk(payload).own;
+  const plain = own.find((part) => mimeOf(part) === "text/plain");
+  const chosen = plain ?? own.find((part) => mimeOf(part) === "text/html");
+  if (!chosen) return { body: "", bodyTruncated: false, bodyFormat: "none" };
+  const format: BodyFormat = plain ? "text" : "html";
+  const stored = asRecord(chosen["body"]);
+  let data = text(stored["data"]);
+  const attachmentId = text(stored["attachmentId"]);
+  if (!data && attachmentId) {
+    const size = typeof stored["size"] === "number" ? stored["size"] : undefined;
+    if (max === 0) {
+      return { body: "[… body not read; raise maxBodyChars to read it]", bodyTruncated: true, bodyFormat: format };
+    }
+    if (!messageId || size === undefined || size > MAX_STORED_BODY_BYTES) {
+      return {
+        body: `[Body of ${size ?? "unknown"} bytes is stored apart from the message and is larger than this connection reads (${MAX_STORED_BODY_BYTES} bytes); open it in Gmail.]`,
+        bodyTruncated: true,
+        bodyFormat: "unavailable",
+      };
+    }
+    const fetched = asRecord(
+      await client.json(
+        {
+          method: "GET",
+          path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        },
+        ctx,
+      ),
+    );
+    data = text(fetched["data"]);
+  }
+  const decoded = data ? decodeIn(chosen, data) : "";
+  return { ...capped(format === "html" ? htmlToText(decoded) : decoded, max), bodyFormat: format };
 }
 
 function attachmentsOf(payload: JsonRecord): JsonRecord[] {
-  return parts(payload)
-    .filter(isAttachment)
-    .map((part) =>
-      compact({
-        filename: text(part["filename"]) ?? "",
-        mimeType: text(part["mimeType"]),
-        size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
-        attachmentId: text(asRecord(part["body"])["attachmentId"]),
-      }),
-    );
+  return walk(payload).attachments.map((part) =>
+    compact({
+      filename: text(part["filename"]) ?? "",
+      mimeType: text(part["mimeType"]),
+      size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
+      attachmentId: text(asRecord(part["body"])["attachmentId"]),
+    }),
+  );
 }
 
 /** Cut a body at `max` characters and say so in the text itself. */
@@ -240,10 +309,15 @@ function labelIdsOf(message: JsonRecord): string[] {
   return asArray(message["labelIds"]).filter((id): id is string => typeof id === "string");
 }
 
-function projectMessage(value: unknown, maxBodyChars: number): JsonRecord {
+async function projectMessage(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  value: unknown,
+  maxBodyChars: number,
+): Promise<JsonRecord> {
   const message = asRecord(value);
   const payload = asRecord(message["payload"]);
-  const { text: body, format } = bodyOf(payload);
+  const body = await readBody(client, ctx, text(message["id"]), payload, maxBodyChars);
   const attachments = attachmentsOf(payload);
   return compact({
     id: text(message["id"]),
@@ -259,8 +333,7 @@ function projectMessage(value: unknown, maxBodyChars: number): JsonRecord {
     messageIdHeader: header(payload, "Message-ID"),
     inReplyTo: header(payload, "In-Reply-To"),
     snippet: text(message["snippet"]) ? decodeEntities(message["snippet"]) : undefined,
-    ...capped(body, maxBodyChars),
-    bodyFormat: format,
+    ...body,
     attachments: attachments.length > 0 ? attachments : undefined,
   });
 }
@@ -389,7 +462,9 @@ function formatAddress(field: string, raw: string): string {
       `${field} has an entry that is not an email address; use "name@example.com" or "Name <name@example.com>".`,
     );
   }
-  const name = named?.[1]?.trim().replace(/^"(.*)"$/, "$1").trim();
+  const display = named?.[1]?.trim() ?? "";
+  const quoted = /^"((?:[^"\\]|\\.)*)"$/.exec(display);
+  const name = (quoted ? quoted[1]!.replace(/\\(.)/g, "$1") : display).trim();
   if (!name) return address;
   if (!PRINTABLE_ASCII.test(name)) return `${encodedWords(name)} <${address}>`;
   return /^[A-Za-z0-9 !#$%&'*+\-/=?^_`{|}~]+$/.test(name)
@@ -410,10 +485,80 @@ function base64Lines(value: string): string {
   return (base64(new TextEncoder().encode(value)).match(/.{1,76}/g) ?? []).join("\r\n");
 }
 
+/**
+ * Split an address header into its mailboxes, as RFC 5322 reads it: commas
+ * inside a quoted display name, an angle address, or a comment do not
+ * separate, comments are dropped, and a group (`Team: a@x, b@y;`) contributes
+ * its members. Each mailbox is then checked; a header that does not parse is
+ * refused rather than guessed at, because a wrong split sends mail to the
+ * wrong people.
+ */
+function addressEntries(field: string, value: string | undefined): string[] {
+  if (!value) return [];
+  const entries: string[] = [];
+  let current = "";
+  let quoted = false;
+  let escaped = false;
+  let angle = 0;
+  let comment = 0;
+  let group = false;
+  const flush = () => {
+    const entry = current.replace(/\s+/g, " ").trim();
+    if (entry) entries.push(entry);
+    current = "";
+  };
+  for (const character of value) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+    } else if (quoted) {
+      if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      current += character;
+    } else if (comment > 0) {
+      if (character === "(") comment += 1;
+      else if (character === ")") comment -= 1;
+    } else if (character === '"') {
+      quoted = true;
+      current += character;
+    } else if (character === "(") {
+      comment = 1;
+    } else if (character === "<") {
+      angle += 1;
+      current += character;
+    } else if (character === ">") {
+      angle -= 1;
+      current += character;
+    } else if (angle === 0 && character === ":" && !group) {
+      // A group's display name names nobody; its members follow.
+      group = true;
+      current = "";
+    } else if (angle === 0 && character === ";" && group) {
+      group = false;
+      flush();
+    } else if (angle === 0 && character === ",") {
+      flush();
+    } else {
+      current += character;
+    }
+    if (angle < 0 || angle > 1) break;
+  }
+  if (quoted || escaped || angle !== 0 || comment !== 0 || group) {
+    throw new ConnectorCallError("invalid_args", `${field} is not a well-formed address list.`);
+  }
+  flush();
+  // Validate each one now, with this field's name, before anything is built.
+  for (const entry of entries) formatAddress(field, entry);
+  return entries;
+}
+
 interface Composition {
+  /** Only ever the draft's own existing sender, kept on update. */
+  from: readonly string[];
   to: readonly string[];
   cc: readonly string[];
   bcc: readonly string[];
+  replyTo: readonly string[];
   subject: string | undefined;
   body: string;
   htmlBody: string | undefined;
@@ -423,12 +568,20 @@ interface Composition {
 
 /**
  * One RFC 5322 message, base64url-encoded as Gmail's `raw` field wants it.
- * `From`, `Date`, and `Message-ID` are Gmail's to set: it fills `From` with
- * the mailbox's own address, so an agent cannot forge a sender either.
+ * `Date` and `Message-ID` are Gmail's to set, and so is `From` on a new draft:
+ * Gmail fills it with the mailbox's own address. An update keeps the `From`
+ * the draft already had — a send-as alias the user chose in Gmail — and no
+ * argument can set one, so an agent cannot forge a sender.
  */
 function buildRawMessage(message: Composition): string {
   const lines: string[] = [];
-  for (const [name, list] of [["To", message.to], ["Cc", message.cc], ["Bcc", message.bcc]] as const) {
+  for (const [name, list] of [
+    ["From", message.from],
+    ["To", message.to],
+    ["Cc", message.cc],
+    ["Bcc", message.bcc],
+    ["Reply-To", message.replyTo],
+  ] as const) {
     if (list.length === 0) continue;
     if (list.length > MAX_RECIPIENTS) {
       throw new ConnectorCallError("invalid_args", `${name} lists more than ${MAX_RECIPIENTS} recipients.`);
@@ -485,7 +638,16 @@ interface Threading {
   references: string | undefined;
   /** Defaults a reply takes from the message it answers. */
   subject?: string | undefined;
+  recipients?: () => string[];
+}
+
+/** What update_draft keeps from the draft it replaces, unless restated. */
+interface Kept extends Threading {
+  from?: string[];
   to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  replyTo?: string[];
 }
 
 /** Threading for a reply: the answered message's thread, ids, and sender. */
@@ -511,13 +673,19 @@ async function replyThreading(
   const id = messageIds(header(payload, "Message-ID"))[0];
   const chain = [...messageIds(header(payload, "References")), ...(id ? [id] : [])].slice(-MAX_REFERENCES);
   const subject = oneLine(header(payload, "Subject"));
-  const sender = header(payload, "Reply-To") ?? header(payload, "From");
+  const replyTo = header(payload, "Reply-To");
   return {
     threadId: text(message["threadId"]),
     inReplyTo: id,
     references: chain.length > 0 ? chain.join("\r\n ") : undefined,
     subject: subject === undefined ? undefined : /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-    ...(sender ? { to: [oneLine(sender)!] } : {}),
+    // Parsed only when the caller did not name recipients, so a sender header
+    // this connection cannot read never blocks a reply addressed explicitly.
+    recipients: () =>
+      addressEntries(
+        `The replied-to message's ${replyTo ? "Reply-To" : "From"} (pass to explicitly)`,
+        oneLine(replyTo ?? header(payload, "From")),
+      ),
   };
 }
 
@@ -542,12 +710,29 @@ function addressList(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.map(String) : undefined;
 }
 
-/** Split a stored address header back into entries, commas inside quotes kept. */
-function splitAddresses(value: string | undefined): string[] {
-  if (!value) return [];
-  return (value.match(/(?:"[^"]*"|[^,])+/g) ?? [])
-    .map((entry) => entry.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+/** The MIME types update_draft can rebuild: text, in any multipart shape. */
+const REBUILDABLE = new Set(["text/plain", "text/html", "multipart/alternative", "multipart/mixed"]);
+
+/**
+ * What in an existing draft update_draft could not carry over, by name.
+ * Gmail's update replaces the whole message, so anything the rebuilt message
+ * would not contain — an attachment, an inline image, a forwarded message, a
+ * calendar invitation — would be deleted for good. Such a draft is refused
+ * instead.
+ */
+function unrebuildable(payload: JsonRecord): string[] {
+  const found: string[] = [];
+  const visit = (part: JsonRecord, depth: number) => {
+    const mime = mimeOf(part);
+    if (isAttachment(part) || header(part, "Content-ID") || (mime && !REBUILDABLE.has(mime))) {
+      found.push(text(part["filename"]) ?? (mime || "an unnamed part"));
+      return;
+    }
+    if (depth > 20) return;
+    for (const child of asArray(part["parts"])) visit(asRecord(child), depth + 1);
+  };
+  visit(payload, 0);
+  return found;
 }
 
 // --- Schemas ----------------------------------------------------------------------
@@ -662,7 +847,7 @@ const MESSAGE_PROPERTIES: Record<string, JsonSchema> = {
   snippet: { type: "string" },
   body: { type: "string" },
   bodyTruncated: { type: "boolean" },
-  bodyFormat: { type: "string", enum: ["text", "html", "none"] },
+  bodyFormat: { type: "string", enum: ["text", "html", "none", "unavailable"] },
   attachments: { type: "array", items: ATTACHMENT_SCHEMA },
 };
 
@@ -696,7 +881,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
   const compose = async (
     args: JsonRecord,
     ctx: ConnectorContext,
-    kept: Threading & { cc?: string[]; bcc?: string[] },
+    kept: Kept,
   ) => {
     const reply = args["replyToMessageId"]
       ? await replyThreading(client, String(args["replyToMessageId"]), ctx)
@@ -704,9 +889,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     // What the caller states wins; then what the draft already had; then
     // what a reply defaults to. A new draft has nothing kept.
     const raw = buildRawMessage({
-      to: addressList(args["to"]) ?? (kept.to?.length ? kept.to : reply.to) ?? [],
+      from: kept.from ?? [],
+      to: addressList(args["to"]) ?? (kept.to?.length ? kept.to : reply.recipients?.()) ?? [],
       cc: addressList(args["cc"]) ?? kept.cc ?? [],
       bcc: addressList(args["bcc"]) ?? kept.bcc ?? [],
+      replyTo: kept.replyTo ?? [],
       subject: args["subject"] ?? kept.subject ?? reply.subject,
       body: String(args["body"] ?? ""),
       htmlBody: typeof args["htmlBody"] === "string" ? args["htmlBody"] : undefined,
@@ -832,7 +1019,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ),
         );
         const max = bodyChars(args, DEFAULT_THREAD_BODY_CHARS);
-        const messages = asArray(thread["messages"]).map((message) => projectMessage(message, max));
+        const messages = await mapLimited(asArray(thread["messages"]), SUMMARY_CONCURRENCY, (message) =>
+          projectMessage(client, ctx, message, max),
+        );
         return { id: text(thread["id"]) ?? args["threadId"], messageCount: messages.length, messages };
       },
     },
@@ -864,7 +1053,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         );
         return args["raw"] === true
           ? message
-          : projectMessage(message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
+          : await projectMessage(client, ctx, message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
       },
     },
     {
@@ -994,7 +1183,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             ctx,
           ),
         );
-        const { id, ...message } = projectMessage(draft["message"], bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
+        const { id, ...message } = await projectMessage(
+          client,
+          ctx,
+          draft["message"],
+          bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS),
+        );
         // A draft's message id changes on every update; the draft id does not.
         return compact({ draftId: text(draft["id"]) ?? args["draftId"], messageId: id, ...message });
       },
@@ -1035,7 +1229,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "update_draft",
       description:
-        "Replace a Gmail draft's body; recipients and subject change only where given, and its thread and reply headers are kept. Overwrites the old body. Never sends it.",
+        "Replace a Gmail draft's body, keeping its sender, recipients, subject, Reply-To, and thread unless restated. Refuses a draft with attachments. Never sends it.",
       // Destructive: Gmail replaces the draft's whole message, so the body it
       // held — possibly typed by the user — is gone. Still a draft, never sent.
       annotations: { readOnlyHint: false, destructiveHint: true },
@@ -1055,29 +1249,38 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       outputSchema: SAVED_DRAFT_SCHEMA,
       handler: async (args, ctx) => {
         const draftPath = `/drafts/${encodeURIComponent(args["draftId"])}`;
-        // Read before replacing: Gmail's update takes a whole message, so the
-        // thread, reply headers, and any header the caller did not restate
-        // would otherwise be dropped on the floor.
+        // Read the whole draft before replacing it: Gmail's update takes a
+        // whole message, so whatever the rebuilt one leaves out is deleted.
+        // Kept unless restated: From, To, Cc, Bcc, Reply-To, Subject, the
+        // thread, In-Reply-To, and References. Any other header is not.
         const existing = asRecord(
-          await client.json({ method: "GET", path: draftPath, query: { format: "metadata" } }, ctx),
+          await client.json({ method: "GET", path: draftPath, query: { format: "full" } }, ctx),
         );
         const message = asRecord(existing["message"]);
         const payload = asRecord(message["payload"]);
+        const lost = unrebuildable(payload);
+        if (lost.length > 0) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            `This draft carries content update_draft cannot rebuild (${lost.slice(0, 5).join(", ")}${lost.length > 5 ? ", …" : ""}), and Gmail's update replaces the whole message, so it would be deleted. Nothing was changed. Edit this draft in Gmail, or write a new one with create_draft.`,
+          );
+        }
+        const keep = (name: string, argument: string) =>
+          args[argument] === undefined
+            ? addressEntries(`The draft's ${name} (pass ${argument} explicitly)`, oneLine(header(payload, name)))
+            : undefined;
         const references = messageIds(header(payload, "References"));
+        const kept: Kept = {
+          threadId: text(message["threadId"]),
+          inReplyTo: messageIds(header(payload, "In-Reply-To"))[0],
+          references: references.length > 0 ? references.join("\r\n ") : undefined,
+          subject: oneLine(header(payload, "Subject")),
+          from: addressEntries("The draft's From", oneLine(header(payload, "From"))),
+          replyTo: addressEntries("The draft's Reply-To", oneLine(header(payload, "Reply-To"))),
+          ...defined({ to: keep("To", "to"), cc: keep("Cc", "cc"), bcc: keep("Bcc", "bcc") }),
+        };
         const draft = await client.json(
-          {
-            method: "PUT",
-            path: draftPath,
-            body: await compose(args, ctx, {
-              threadId: text(message["threadId"]),
-              inReplyTo: messageIds(header(payload, "In-Reply-To"))[0],
-              references: references.length > 0 ? references.join("\r\n ") : undefined,
-              subject: oneLine(header(payload, "Subject")),
-              to: splitAddresses(header(payload, "To")),
-              cc: splitAddresses(header(payload, "Cc")),
-              bcc: splitAddresses(header(payload, "Bcc")),
-            }),
-          },
+          { method: "PUT", path: draftPath, body: await compose(args, ctx, kept) },
           ctx,
         );
         return projectSavedDraft(draft);
@@ -1111,6 +1314,9 @@ to. No argument names a mailbox. A call with none mapped fails
   \`maxBodyChars\`; a cut body ends with a truncation marker. Reduce inside
   \`execute_code\` before returning a long thread.
 - Attachments are listed by name, type, and size only; none is downloaded.
+  An attached or forwarded email is an attachment, not the body.
+- \`bodyFormat: "unavailable"\` means Gmail stored the body apart from the
+  message and it is too large to read here; say so rather than summarizing.
 
 ## Drafting
 
@@ -1118,9 +1324,12 @@ to. No argument names a mailbox. A call with none mapped fails
   waiting in Drafts. There is no send, delete, or label tool.
 - To reply, pass \`replyToMessageId\`: the draft joins that thread with
   In-Reply-To and References set, and subject (Re: …) and \`to\` default
-  from that message. Keep the Re: subject or Gmail may start a new thread.
+  from that message's Reply-To, else its From. Keep the Re: subject or Gmail
+  may start a new thread.
 - \`update_draft\` replaces the body entirely; send the full new text.
-  Recipients and subject change only when given, and the thread is kept.
+  From, To, Cc, Bcc, Reply-To, Subject, the thread, and reply headers are
+  kept unless restated; no other header is. A draft with attachments or
+  inline images is refused, unchanged — Gmail's update would delete them.
 - Gmail sets From to the mailbox itself; there is no From argument.
 ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
 }
@@ -1146,7 +1355,9 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  *    ({@link GMAIL_SCOPES}):
  *    `https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.compose`.
  *    A new grant can take up to 24 hours to apply.
- * 6. Give the deployment the key as a secret and map callers to mailboxes:
+ * 6. Configure inbound auth: a `subject` function is never asked about an
+ *    open deployment's anonymous requests, which fail `auth_required`.
+ *    Then give the deployment the key as a secret and map callers to mailboxes:
  *
  * ```ts
  * gmail("mail", {

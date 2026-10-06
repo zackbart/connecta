@@ -755,10 +755,32 @@ describe("the caller a built-in connector sees", () => {
         principal: { namespace: "https://identity.test", id: "alice" },
         interactive: true,
       },
+      authenticated: true,
     });
     const pooled = await me("/mcp/team", "bob");
     expect(pooled).toMatchObject({ identity: { actor: { id: "bob" } }, pool: "team" });
     expect(JSON.stringify([direct, pooled])).not.toContain("mallory");
+  });
+
+  it("is marked unauthenticated when an open deployment admits the request", async () => {
+    const connecta = createTestConnecta({ connectors: [whoami()], logger: silentLogger });
+    const response = await connecta.fetch(
+      new Request(`${BASE}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "call_tool", arguments: { address: "who.me", args: { authenticated: true } } },
+        }),
+      }),
+    );
+    const body = await readJsonRpc(response);
+    expect(JSON.parse(body.result.content[0].text)).toEqual({
+      identity: { actor: { kind: "anonymous" }, interactive: false },
+      authenticated: false,
+    });
   });
 
   it("is absent from a context no request admitted", () => {
