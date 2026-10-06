@@ -483,12 +483,12 @@ describe("editing a document", () => {
   it("names the created document, unretryably, when Google refuses its initial text", async () => {
     route = (request) =>
       request.url.pathname.endsWith(":batchUpdate")
-        ? { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }
+        ? { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } }
         : { body: { documentId: "new-1", title: "Minutes" } };
     const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("Created document new-1");
-    expect(failure.message).toContain("append_text");
+    expect(failure.message).toContain("add the text with append_text on new-1");
   });
 
   it("appends at the end of the body or a tab, under a required revision", async () => {
@@ -711,30 +711,40 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
-  it("reports an edit's outcome as unknown when no answer came back", async () => {
-    route = () => ({ unreachable: true });
-    const failure = await call(connection(), "append_text", {
-      documentId: "doc-1",
-      text: "x",
-      requiredRevisionId: "rev-1",
-    }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("outcome of this edit is unknown");
-    expect(failure.message).toContain("same requiredRevisionId is safe");
-    expect(failure.message).not.toMatch(/nothing was applied/i);
+  it.each([
+    ["no answer came back", { unreachable: true }],
+    ["Google answered a 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
+    ["Google answered a 500", { status: 500, body: { error: { code: 500, message: "Internal error." } } }],
+  ])("reports every edit's outcome as unknown, unretryably, when %s", async (_kind, reply) => {
+    route = () => reply;
+    const edits: Record<string, Record<string, unknown>> = {
+      append_text: { documentId: "d", text: "x" },
+      insert_text: { documentId: "d", index: 1, text: "x" },
+      replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
+      batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
+    };
+    for (const [name, values] of Object.entries(edits)) {
+      const failure = await call(connection(), name, values).catch((error) => error);
+      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message, name).toContain("outcome of this edit is unknown");
+      expect(failure.message, name).not.toMatch(/nothing was applied/i);
+    }
 
-    // Without a revision there is no safe repeat to offer.
-    const bare = await call(connection(), "append_text", { documentId: "doc-1", text: "x" }).catch((error) => error);
+    // A revision makes the repeat safe to offer; without one there is none.
+    const guarded = await call(connection(), "append_text", { documentId: "d", text: "x", requiredRevisionId: "r" }).catch(
+      (error) => error,
+    );
+    expect(guarded.message).toContain("same requiredRevisionId is safe");
+    const bare = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
     expect(bare.message).toContain("can duplicate it");
     expect(bare.message).not.toContain("is safe");
   });
 
-  it("passes an edit's 5xx through as Google's refusal, as the shared client mapped it", async () => {
-    route = () => ({ status: 503, body: { error: { code: 503, message: "Backend unavailable." } } });
-    const failure = await call(connection(), "append_text", { documentId: "doc-1", text: "x", requiredRevisionId: "rev-1" }).catch(
-      (error) => error,
-    );
-    expect(failure).toMatchObject({ code: "unavailable" });
+  it("keeps a 4xx refusal as mapped: nothing applied, nothing uncertain", async () => {
+    route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
+    const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
+    expect(failure.code).toBe("connector_call_failed");
+    expect(failure.message).toContain("may lack access");
     expect(failure.message).not.toContain("outcome of this edit is unknown");
   });
 
@@ -769,10 +779,10 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       "add the text with append_text on new-1",
     ],
     [
-      "a 5xx refusal",
+      "a 5xx",
       { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } },
-      "Google refused its initial text",
-      "add the text with append_text on new-1",
+      "whether its initial text was written is unknown",
+      "only if it is missing",
     ],
   ])("after creating, advises on its initial text by outcome: %s", async (_kind, reply, says, advice) => {
     route = (request) =>
@@ -784,21 +794,16 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     expect(failure.message).toContain("Do not create it again");
   });
 
-  it("never invites a repeat create when no answer came back", async () => {
-    route = () => ({ unreachable: true });
+  it.each([
+    ["no answer came back", { unreachable: true }],
+    ["Google answered a 5xx", { status: 503, body: { error: { code: 503, message: "Backend unavailable." } } }],
+  ])("never invites a repeat create when %s: the document may exist", async (_kind, reply) => {
+    route = () => reply;
     const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("Whether the document was created is unknown");
-    expect(failure.message).toContain("Do not create it again");
+    expect(failure.message).toContain('Drive search for that title');
     expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
-  });
-
-  it("never invites a repeat create after a 5xx either: a server error can leave a document behind", async () => {
-    route = () => ({ status: 503, body: { error: { code: 503, message: "Backend unavailable." } } });
-    const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("answered HTTP 503 to the create");
-    expect(failure.message).toContain('Drive search for "Minutes"');
   });
 
   it("passes a 4xx create refusal through: nothing was created", async () => {

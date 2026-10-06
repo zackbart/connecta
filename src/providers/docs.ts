@@ -574,16 +574,21 @@ function uncertain(message: string, cause: unknown): ConnectorCallError {
  * the same outcome can arrive under several of.
  *
  * - `not-sent`: nothing left connecta. Nothing happened.
- * - `refused`: Google answered with an error status, 4xx or 5xx. Google
- *   reports nothing applied.
- * - `no-answer`: sent, and no status came back. It may or may not have landed.
+ * - `refused`: Google answered with a 4xx. Nothing applied.
+ * - `unknown`: sent, and either no status came back (`awaiting-response`) or
+ *   Google answered a 5xx (`server-error`), which can follow a write that
+ *   landed. It may or may not have applied.
  * - `probably-applied`: Google answered 2xx (or redirected) and the reply could
  *   not be used — it broke off, overflowed the ceiling, or would not parse.
  *
- * A failure the client did not classify is treated as `no-answer`, the
- * reading that never invites a duplicate.
+ * No Docs write is sent `idempotent`. A create or an insert sent twice is two;
+ * replaceAllText can match its own replacement; and a revision-guarded batch
+ * sent again after its first landed is refused as `conflict`, whose advice to
+ * reapply the change would then duplicate it. So a 5xx is never a refusal
+ * here. A failure the client did not classify is `unknown`, the reading that
+ * never invites a duplicate.
  */
-type WriteOutcome = "not-sent" | "refused" | "no-answer" | "probably-applied";
+type WriteOutcome = "not-sent" | "refused" | "unknown" | "probably-applied";
 
 function writeOutcome(error: unknown): WriteOutcome {
   switch (googleOutcomeOf(error)?.phase) {
@@ -593,8 +598,10 @@ function writeOutcome(error: unknown): WriteOutcome {
       return "refused";
     case "reading-body":
       return "probably-applied";
+    case "awaiting-response":
+    case "server-error":
     default:
-      return "no-answer";
+      return "unknown";
   }
 }
 
@@ -604,15 +611,10 @@ function detailOf(error: unknown): string {
 
 /** The words a write's uncertain outcomes are told in, per tool. */
 interface WriteWords {
-  /** Sent, and no answer came back. */
+  /** Sent, and no answer came back, or Google answered a 5xx. */
   unknown: (detail: string) => string;
   /** Google answered 2xx and the reply could not be used. */
   applied: string;
-  /**
-   * A 5xx refusal, for a write that is not safe to repeat on Google's word
-   * alone. Omitted, a 5xx passes through as the shared client mapped it.
-   */
-  serverError?: (detail: string, status: number) => string;
 }
 
 /**
@@ -635,10 +637,6 @@ async function sendWrite(
     // A cancelled call is the caller's own decision; its reason stays whole.
     if (ctx.signal?.aborted) throw error;
     const outcome = writeOutcome(error);
-    const status = googleOutcomeOf(error)?.status;
-    if (outcome === "refused" && words.serverError && status !== undefined && status >= 500) {
-      throw uncertain(words.serverError(detailOf(error), status), error);
-    }
     if (outcome === "not-sent" || outcome === "refused") throw error;
     throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)), error);
   }
@@ -657,8 +655,7 @@ async function sendWrite(
  * ABORTED on a 400 or 409) and answers a stale revision with `conflict`.
  * Nothing here infers one: a revision read afterwards would prove nothing,
  * since a collaborator may have edited in between. See {@link writeOutcome}
- * for what every other failure means; a 5xx is Google's refusal and passes
- * through as mapped, retryable with the same `requiredRevisionId`.
+ * for what every other failure means.
  */
 async function batchUpdate(
   client: GoogleWorkspaceClient,
@@ -1070,10 +1067,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             unknown: (detail) =>
               `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
             applied: createdButUnknown,
-            // Creating is not idempotent, and a server error can still leave
-            // a document behind, so not even a 5xx invites a second one.
-            serverError: (detail, status) =>
-              `Google Docs answered HTTP ${status} to the create: ${detail} It reports the create failed, but a server error can leave a document behind. Do not create it again until a Drive search for "${title}" shows it is missing.`,
           },
         );
         const documentId = text(created["documentId"]);
@@ -1343,7 +1336,8 @@ not exist or is not shared with this person; Google does not say which.
 - \`create_document\` makes a new document in My Drive's root. A failure
   after the document exists names its id; append the text there rather than
   creating another.
-- An edit sent with no answer back says its outcome is unknown: re-read
+- An edit sent with no answer back, or answered with a server error, says
+  its outcome is unknown: re-read
   before repeating it, or repeat it with the same \`requiredRevisionId\`,
   which Google refuses if the first attempt landed. One Google answered 2xx
   whose reply was unreadable says it was applied: do not repeat it.
