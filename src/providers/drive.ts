@@ -32,7 +32,9 @@
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
+import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 import {
+  googleReasonsOf,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
@@ -68,20 +70,34 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 const DEFAULT_CONTENT_CHARS = 20_000;
 const MAX_CONTENT_CHARS = 100_000;
-/**
- * A binary file is returned as base64 at or under this size, never above.
- * The default keeps the base64 (4/3 the bytes) inside the 256 KiB a single
- * host result may carry into execute_code; the maximum, an explicit opt-in,
- * is deliverable only through a direct call, whose oversized results are
- * stashed and paged with get_result.
- */
-const DEFAULT_BINARY_BYTES = 128 * 1024;
+/** A binary file is returned as base64 at or under this size, never above. */
 const BINARY_INLINE_BYTES = 1024 * 1024;
 /**
- * A listed file's name is cut here, so a default page of pathological names
- * still crosses into execute_code; get_file returns the whole name.
+ * Serialized bytes of a whole read result — rows or content, envelope and
+ * cursor included. Every read is built to stay under `maxBytes`, measured as
+ * the UTF-8 length of its JSON, the way both delivery routes measure it. The
+ * default is the shared Workspace budget, three quarters of the 256 KiB a
+ * host result may carry into execute_code, so a program always receives a
+ * default result. A direct call_tool caller may ask for up to 4 MiB, which the
+ * result stash (8 MiB by default) still pages through get_result; execute_code
+ * cannot receive that much.
  */
-const MAX_LISTED_NAME_CHARS = 1_000;
+const DEFAULT_RESULT_BYTES = RESULT_BUDGET_BYTES;
+const MIN_RESULT_BYTES = 16 * 1024;
+const MAX_RESULT_BYTES = 4 * 1024 * 1024;
+/**
+ * Strings Drive does not bound for us, cut in JSON bytes so one row or one
+ * file always fits under the smallest `maxBytes`: a name in a listing, a
+ * write result, or a content result; a name and description in get_file; and
+ * labels such as a display name. A cut name or description is flagged; a cut
+ * label ends with "…".
+ */
+const ROW_NAME_BYTES = 2 * 1024;
+const DETAIL_NAME_BYTES = 32 * 1024;
+const DETAIL_DESCRIPTION_BYTES = 64 * 1024;
+const LABEL_BYTES = 1024;
+/** Owners and parents listed per file; Drive returns one of each today. */
+const MAX_LISTED_IDS = 10;
 /** Upload ceiling for text, in characters; Drive's multipart limit is 5 MB. */
 const MAX_UPLOAD_CHARS = 1_000_000;
 /** Base64 characters for {@link BINARY_INLINE_BYTES} decoded bytes. */
@@ -154,35 +170,51 @@ function sizeOf(value: unknown): number | undefined {
 }
 
 function strings(value: unknown): string[] | undefined {
-  const list = asArray(value).filter((entry): entry is string => typeof entry === "string");
+  const list = asArray(value)
+    .filter((entry): entry is string => typeof entry === "string")
+    .slice(0, MAX_LISTED_IDS)
+    .map((entry) => label(entry)!);
   return list.length > 0 ? list : undefined;
+}
+
+/** A string Drive does not bound, cut to {@link LABEL_BYTES} with "…". */
+function label(value: unknown): string | undefined {
+  const value_ = text(value);
+  return value_ === undefined ? undefined : clampText(value_, LABEL_BYTES, () => "…");
+}
+
+/** A string cut to `bytes` of JSON, and whether it was. */
+function clamped(value: unknown, bytes: number): { value: string | undefined; truncated: true | undefined } {
+  if (typeof value !== "string") return { value: undefined, truncated: undefined };
+  const cut = clampText(value, bytes, () => "…");
+  return { value: cut, truncated: cut === value ? undefined : true };
 }
 
 // --- Projections ------------------------------------------------------------------
 
 /**
  * A file as an agent reads it. `fallbackId` is the id the call already named,
- * for a response that omits it.
+ * for a response that omits it; `nameBytes` bounds the name, flagged when cut.
  */
-function projectFile(value: unknown, fallbackId?: string): JsonRecord {
+function projectFile(value: unknown, fallbackId?: string, nameBytes = ROW_NAME_BYTES): JsonRecord {
   const file = asRecord(value);
   const shortcut = asRecord(file["shortcutDetails"]);
-  const owners = asArray(file["owners"])
-    .map((owner) => text(asRecord(owner)["emailAddress"]))
-    .filter((email): email is string => email !== undefined);
+  const owners = strings(asArray(file["owners"]).map((owner) => asRecord(owner)["emailAddress"]));
+  const name = clamped(file["name"], nameBytes);
   return compact({
-    id: text(file["id"]) ?? fallbackId,
-    name: typeof file["name"] === "string" ? file["name"] : undefined,
-    mimeType: text(file["mimeType"]),
+    id: label(file["id"]) ?? fallbackId,
+    name: name.value,
+    nameTruncated: name.truncated,
+    mimeType: label(file["mimeType"]),
     parents: strings(file["parents"]),
-    driveId: text(file["driveId"]),
+    driveId: label(file["driveId"]),
     size: sizeOf(file["size"]),
-    modifiedTime: text(file["modifiedTime"]),
-    owners: owners.length > 0 ? owners : undefined,
+    modifiedTime: label(file["modifiedTime"]),
+    owners,
     trashed: bool(file["trashed"]),
-    webViewLink: text(file["webViewLink"]),
-    shortcutTargetId: text(shortcut["targetId"]),
-    shortcutTargetMimeType: text(shortcut["targetMimeType"]),
+    webViewLink: label(file["webViewLink"]),
+    shortcutTargetId: label(shortcut["targetId"]),
+    shortcutTargetMimeType: label(shortcut["targetMimeType"]),
   });
 }
 
@@ -196,14 +228,6 @@ const CAPABILITIES = [
   "canAddChildren",
 ] as const;
 
-/** A listing row, its name cut at {@link MAX_LISTED_NAME_CHARS} and flagged. */
-function listed(file: JsonRecord): JsonRecord {
-  const name = file["name"];
-  if (typeof name !== "string") return file;
-  const { end, total } = codePointCut(name, MAX_LISTED_NAME_CHARS);
-  return total > MAX_LISTED_NAME_CHARS ? { ...file, name: `${name.slice(0, end)}…`, nameTruncated: true } : file;
-}
-
 function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
   const file = asRecord(value);
   const modifier = asRecord(file["lastModifyingUser"]);
@@ -211,11 +235,13 @@ function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
   const capabilities = compact(
     Object.fromEntries(CAPABILITIES.map((name) => [name, bool(granted[name])])),
   );
+  const description = clamped(file["description"], DETAIL_DESCRIPTION_BYTES);
   return compact({
-    ...projectFile(file, fallbackId),
-    description: text(file["description"]),
-    createdTime: text(file["createdTime"]),
-    modifiedBy: text(modifier["emailAddress"]) ?? text(modifier["displayName"]),
+    ...projectFile(file, fallbackId, DETAIL_NAME_BYTES),
+    description: description.value,
+    descriptionTruncated: description.truncated,
+    createdTime: label(file["createdTime"]),
+    modifiedBy: label(modifier["emailAddress"]) ?? label(modifier["displayName"]),
     shared: bool(file["shared"]),
     starred: bool(file["starred"]),
     capabilities: Object.keys(capabilities).length > 0 ? capabilities : undefined,
@@ -226,17 +252,17 @@ function projectPermission(value: unknown, fallbackId?: string): JsonRecord {
   const permission = asRecord(value);
   const details = asArray(permission["permissionDetails"]).map(asRecord);
   const inheritedFrom = details
-    .map((detail) => text(detail["inheritedFrom"]))
+    .map((detail) => label(detail["inheritedFrom"]))
     .find((id) => id !== undefined);
   return compact({
-    id: text(permission["id"]) ?? fallbackId,
-    type: text(permission["type"]),
-    role: text(permission["role"]),
-    emailAddress: text(permission["emailAddress"]),
-    domain: text(permission["domain"]),
-    displayName: text(permission["displayName"]),
+    id: label(permission["id"]) ?? fallbackId,
+    type: label(permission["type"]),
+    role: label(permission["role"]),
+    emailAddress: label(permission["emailAddress"]),
+    domain: label(permission["domain"]),
+    displayName: label(permission["displayName"]),
     allowFileDiscovery: bool(permission["allowFileDiscovery"]),
-    expirationTime: text(permission["expirationTime"]),
+    expirationTime: label(permission["expirationTime"]),
     // On a shared drive, a role granted by the drive or a parent folder.
     inherited: details.length > 0 ? details.some((detail) => detail["inherited"] === true) : undefined,
     // The folder or shared drive to change instead, since an inherited share
@@ -246,9 +272,105 @@ function projectPermission(value: unknown, fallbackId?: string): JsonRecord {
   });
 }
 
-function page(listing: JsonRecord): { hasMore: boolean; nextCursor: string | null } {
-  const next = text(listing["nextPageToken"]) ?? null;
-  return { hasMore: next !== null, nextCursor: next };
+// --- Pages ------------------------------------------------------------------------
+
+/**
+ * Where a listing resumes: Drive's page token for the page being read, the
+ * rows of it already returned, and the page size it was asked with. A result
+ * that would outgrow `maxBytes` stops mid-page, and Drive's own token can only
+ * resume after a whole page, so the cursor names both.
+ */
+interface Resume {
+  token: string | null;
+  skip: number;
+  size: number;
+}
+
+const encoder = new TextEncoder();
+
+function encodeCursor(resume: Resume): string {
+  return base64(encoder.encode(JSON.stringify([resume.token, resume.skip, resume.size])))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function decodeCursor(cursor: string): Resume {
+  try {
+    const base = cursor.replace(/-/g, "+").replace(/_/g, "/");
+    const json = new TextDecoder().decode(fromBase64(base + "=".repeat((4 - (base.length % 4)) % 4)));
+    const [token, skip, size] = JSON.parse(json) as unknown[];
+    if (
+      (token === null || (typeof token === "string" && token !== "")) &&
+      Number.isSafeInteger(skip) && (skip as number) >= 0 &&
+      Number.isSafeInteger(size) && (size as number) >= 1 && (size as number) <= MAX_PAGE_SIZE
+    ) {
+      return { token: token as string | null, skip: skip as number, size: size as number };
+    }
+  } catch {
+    // Reported below, as any other cursor this connection did not issue.
+  }
+  throw new ConnectorCallError(
+    "invalid_args",
+    "cursor is not a page.nextCursor this connection issued; pass it back unchanged, or omit it to start over.",
+  );
+}
+
+/** One page of rows as Drive returned it. */
+interface Fetched {
+  rows: JsonRecord[];
+  next: string | undefined;
+  /** Fields beside the rows, such as Drive's incompleteSearch. */
+  extra?: JsonRecord | undefined;
+}
+
+/**
+ * One page of a listing, as many rows as fit `maxBytes` with the whole
+ * result — envelope and cursor included — and a cursor that resumes at the
+ * first row left out, inside Drive's page or after it.
+ *
+ * Callers `await` it where they return it: a cursor refused before the first
+ * await rejects at once, and workerd reports a rejected promise an async
+ * handler merely returns as unhandled before the handler adopts it.
+ */
+async function pageOf(
+  key: string,
+  args: JsonRecord,
+  fetch: (token: string | undefined, size: number) => Promise<Fetched>,
+): Promise<JsonRecord> {
+  const maxBytes: number = args["maxBytes"] ?? DEFAULT_RESULT_BYTES;
+  const resume: Resume = typeof args["cursor"] === "string"
+    ? decodeCursor(args["cursor"])
+    : { token: null, skip: 0, size: args["limit"] ?? DEFAULT_PAGE_SIZE };
+  const fetched = await fetch(resume.token ?? undefined, resume.size);
+  const rows = fetched.rows.slice(resume.skip);
+  const build = (count: number): JsonRecord => {
+    const nextCursor = count < rows.length
+      ? encodeCursor({ ...resume, skip: resume.skip + count })
+      : fetched.next
+        ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size })
+        : null;
+    return { [key]: rows.slice(0, count), ...fetched.extra, page: { hasMore: nextCursor !== null, nextCursor } };
+  };
+  if (jsonBytes(build(rows.length)) <= maxBytes) return build(rows.length);
+  // The most rows that fit, by binary search; a result's size grows with them.
+  let low = 0;
+  let high = rows.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (jsonBytes(build(middle)) <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  if (low === 0) {
+    // Every row is bounded well under the smallest maxBytes; only a cursor
+    // stuck on a row that never fits could land here, and it must not loop.
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      `One ${key} row does not fit this result's maxBytes of ${maxBytes}; raise maxBytes.`,
+      { retryable: false },
+    );
+  }
+  return build(low);
 }
 
 // --- Content ----------------------------------------------------------------------
@@ -301,28 +423,38 @@ function codePointCut(value: string, max: number): { end: number; total: number 
 }
 
 /**
- * Cut text at `max` characters (code points) and say so in the text itself.
- * `partial` is a body read only in part, which is cut whatever its length:
- * there is more past it.
+ * Cut text to what both bounds allow and say so in the text itself: `max`
+ * characters (code points, so never inside a pair), and whatever `fits` — the
+ * whole result under `maxBytes` — admits, marker included. `partial` is a body
+ * read only in part, which is cut whatever its length: there is more past it.
  */
 function capped(
   body: string,
   max: number,
   partial: { size: number | undefined } | undefined,
+  fits: (content: string) => boolean,
 ): { content: string; contentTruncated: boolean } {
-  const { end, total } = codePointCut(body, max);
-  if (total <= max && !partial) return { content: body, contentTruncated: false };
-  const shown = body.slice(0, end);
-  const kept = Math.min(total, max);
+  const { total } = codePointCut(body, max);
+  if (total <= max && !partial && fits(body)) return { content: body, contentTruncated: false };
   const of = partial
     ? partial.size !== undefined && partial.size > 0
       ? `a ${partial.size}-byte file`
       : "a larger file"
     : `${total} characters`;
-  return {
-    content: `${shown}\n[… truncated: ${kept} characters of ${of} shown; raise maxChars (up to ${MAX_CONTENT_CHARS}) to read more]`,
-    contentTruncated: true,
-  };
+  const cut = (count: number, raise: string) =>
+    `${body.slice(0, codePointCut(body, count).end)}\n[… truncated: ${count} characters of ${of} shown; raise ${raise} to read more]`;
+  const byChars = cut(Math.min(total, max), `maxChars (up to ${MAX_CONTENT_CHARS})`);
+  if (fits(byChars)) return { content: byChars, contentTruncated: true };
+  // The bytes bind first: the most characters that fit, by binary search.
+  const raise = `maxBytes (up to ${MAX_RESULT_BYTES}, for a direct call_tool only)`;
+  let low = 0;
+  let high = Math.min(total, max);
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(cut(middle, raise))) low = middle;
+    else high = middle - 1;
+  }
+  return { content: cut(low, raise), contentTruncated: true };
 }
 
 function charsetOf(contentType: string | undefined): string {
@@ -387,32 +519,48 @@ function textBudget(maxChars: number): number {
 }
 
 /**
+ * Whether a refused range read proves the file empty. The range always starts
+ * at byte 0, which only a file with no bytes cannot satisfy, so Google's 416
+ * here is a verified empty file, whatever the metadata said. Read from
+ * Google's reason code until the shared client exposes the 416 itself and its
+ * `Content-Range: bytes *\/0`, when this becomes a check of those.
+ */
+function provesEmpty(error: unknown): boolean {
+  return googleReasonsOf(error).includes("requestedRangeNotSatisfiable");
+}
+
+/**
  * A media download of at most `limit` bytes, and whether the file had more.
  *
  * The limit is enforced on the response, never on the size metadata
- * reported: that is a separate read, and a file can change between the two.
- * The range asks for one byte past the limit, so a file that has more says so
- * by sending it. A server that ignores the range sends the whole body, which
- * the transport bounds at its own ceiling and this cuts before anything else
- * reads it. An empty file is fetched without a range, which Drive would answer
- * 416 for.
+ * reported: that is a separate read, and a file can grow, shrink, or empty
+ * between the two. The range asks for one byte past the limit, so a file that
+ * has more says so by sending it. A server that ignores the range sends the
+ * whole body, which the transport bounds at its own ceiling and this cuts
+ * before anything else reads it.
  */
 async function download(
   client: GoogleWorkspaceClient,
   ctx: ConnectorContext,
   path: string,
   limit: number,
-  reported: number | undefined,
 ): Promise<{ bytes: Uint8Array; more: boolean; contentType: string | undefined }> {
-  const { bytes, contentType } = await client.bytes(
-    {
-      method: "GET",
-      path,
-      query: { ...ALL_DRIVES, alt: "media" },
-      headers: { Range: reported === 0 ? undefined : `bytes=0-${limit}` },
-    },
-    ctx,
-  );
+  let read: { bytes: Uint8Array; contentType: string | undefined };
+  try {
+    read = await client.bytes(
+      {
+        method: "GET",
+        path,
+        query: { ...ALL_DRIVES, alt: "media" },
+        headers: { Range: `bytes=0-${limit}` },
+      },
+      ctx,
+    );
+  } catch (error) {
+    if (provesEmpty(error)) return { bytes: new Uint8Array(), more: false, contentType: undefined };
+    throw error;
+  }
+  const { bytes, contentType } = read;
   return bytes.length > limit
     ? { bytes: bytes.subarray(0, limit), more: true, contentType }
     : { bytes, more: false, contentType };
@@ -423,7 +571,7 @@ async function readContent(
   ctx: ConnectorContext,
   fileId: string,
   maxChars: number,
-  maxBinaryBytes: number,
+  maxBytes: number,
 ): Promise<JsonRecord> {
   const filePath = `/files/${encodeURIComponent(fileId)}`;
   const file = asRecord(
@@ -441,15 +589,19 @@ async function readContent(
   );
   const mimeType = String(file["mimeType"] ?? "application/octet-stream");
   const size = sizeOf(file["size"]);
+  const name = clamped(file["name"], ROW_NAME_BYTES);
   const base = compact({
-    id: text(file["id"]) ?? fileId,
-    name: typeof file["name"] === "string" ? file["name"] : undefined,
-    mimeType,
+    id: label(file["id"]) ?? fileId,
+    name: name.value,
+    nameTruncated: name.truncated,
+    mimeType: label(mimeType),
     size,
-    webViewLink: text(file["webViewLink"]),
+    webViewLink: label(file["webViewLink"]),
   });
   const refusal = unreadable(file);
   if (refusal) return { ...base, format: "unavailable", contentTruncated: false, note: refusal };
+  /** Whether the whole result, with this content, stays under maxBytes. */
+  const within = (result: JsonRecord) => (content: string) => jsonBytes({ ...result, content }) <= maxBytes;
 
   const exported = EXPORTS[mimeType];
   if (exported) {
@@ -460,37 +612,45 @@ async function readContent(
       ctx,
       exported.mimeType,
     );
-    return compact({
+    const result = compact({
       ...base,
       format: exported.format,
       exportedAs: exported.mimeType,
-      ...capped(body, maxChars, undefined),
+      content: "",
+      contentTruncated: false,
       note: exported.note,
     });
+    return { ...result, ...capped(body, maxChars, undefined, within(result)) };
   }
 
   if (isText(mimeType)) {
-    const read = await download(client, ctx, filePath, textBudget(maxChars), size);
+    const read = await download(client, ctx, filePath, textBudget(maxChars));
     let body = decodeIn(read.bytes, read.contentType);
     // A cut can land inside a character; drop the half, never show it.
     if (read.more) body = body.replace(/(?:\uFFFD|[\uD800-\uDBFF])$/, "");
-    return { ...base, format: "text", ...capped(body, maxChars, read.more ? { size } : undefined) };
+    const result = { ...base, format: "text", content: "", contentTruncated: false };
+    return { ...result, ...capped(body, maxChars, read.more ? { size } : undefined, within(result)) };
   }
 
+  // Base64 is four characters per three bytes and never escaped, so the file
+  // bytes that fit are known before anything is downloaded.
+  const envelope = jsonBytes({ ...base, format: "base64", content: "", contentTruncated: false });
+  const fitting = Math.floor(Math.max(0, maxBytes - envelope) / 4) * 3;
+  const limit = Math.min(BINARY_INLINE_BYTES, fitting);
   const tooLarge = (bytes: string) => ({
     ...base,
     format: "unavailable" as const,
     contentTruncated: false,
     note:
-      maxBinaryBytes < BINARY_INLINE_BYTES
-        ? `A binary file of ${bytes} is past this call's maxBinaryBytes (${maxBinaryBytes}); no content is returned. Raise it up to ${BINARY_INLINE_BYTES} in a direct call, or open webViewLink.`
+      limit < BINARY_INLINE_BYTES
+        ? `A binary file of ${bytes} does not fit this result's maxBytes (${maxBytes}), which holds ${limit} bytes of file; no content is returned. Raise maxBytes, up to ${MAX_RESULT_BYTES} for a direct call_tool only, to read up to ${BINARY_INLINE_BYTES} bytes, or open webViewLink.`
         : `A binary file of ${bytes} is past this connection's ${BINARY_INLINE_BYTES}-byte inline cap; no content is returned. Open webViewLink.`,
   });
   // Metadata that already says too large saves the download; metadata that
   // says small is not trusted, and the download is held to the cap itself.
-  if (size !== undefined && size > maxBinaryBytes) return tooLarge(`${size} bytes`);
-  const read = await download(client, ctx, filePath, maxBinaryBytes, size);
-  if (read.more) return tooLarge(`more than ${maxBinaryBytes} bytes`);
+  if (size !== undefined && size > limit) return tooLarge(`${size} bytes`);
+  const read = await download(client, ctx, filePath, limit);
+  if (read.more) return tooLarge(`more than ${limit} bytes`);
   return { ...base, format: "base64", content: base64(read.bytes), contentTruncated: false };
 }
 
@@ -584,8 +744,16 @@ const FILE_ID = idProperty("File or folder id, from search_files, list_folder_it
 const CURSOR_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
-  maxLength: 1024,
+  maxLength: 4096,
+  pattern: "^[A-Za-z0-9_-]+$",
   description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments.",
+};
+
+const MAX_BYTES_PROPERTY: JsonSchema = {
+  type: "integer",
+  minimum: MIN_RESULT_BYTES,
+  maximum: MAX_RESULT_BYTES,
+  description: `Serialized bytes of the whole result; defaults to ${DEFAULT_RESULT_BYTES}, what execute_code can receive. Raise it, to ${MAX_RESULT_BYTES}, only for a direct call_tool read.`,
 };
 
 const LIMIT_PROPERTY: JsonSchema = {
@@ -672,7 +840,7 @@ const FILE_PROPERTIES: Record<string, JsonSchema> = {
   webViewLink: { type: "string" },
   shortcutTargetId: { type: "string" },
   shortcutTargetMimeType: { type: "string" },
-  nameTruncated: { type: "boolean", description: "The name was cut for this listing; get_file returns all of it." },
+  nameTruncated: { type: "boolean", description: `The name was past ${ROW_NAME_BYTES} bytes and was cut here; get_file returns more.` },
 };
 
 // Nothing is required: Google's ProtoJSON omits an empty field, and a
@@ -683,7 +851,9 @@ const FILE_DETAIL_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     ...FILE_PROPERTIES,
+    nameTruncated: { type: "boolean", description: `The name was past ${DETAIL_NAME_BYTES} bytes and was cut.` },
     description: { type: "string" },
+    descriptionTruncated: { type: "boolean", description: `The description was past ${DETAIL_DESCRIPTION_BYTES} bytes and was cut.` },
     createdTime: { type: "string" },
     modifiedBy: { type: "string" },
     shared: { type: "boolean" },
@@ -733,32 +903,36 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
   const filePath = (id: string) => `/files/${encodeURIComponent(id)}`;
 
-  const list = async (
+  const list = (
     ctx: ConnectorContext,
+    args: JsonRecord,
     query: Record<string, string | number | boolean | undefined>,
-  ) => {
-    const listing = asRecord(
-      await client.json(
-        {
-          method: "GET",
-          path: "/files",
-          query: {
-            ...ALL_DRIVES,
-            includeItemsFromAllDrives: true,
-            fields: `nextPageToken,incompleteSearch,files(${SUMMARY_FIELDS})`,
-            ...query,
+  ) =>
+    pageOf("files", args, async (pageToken, pageSize) => {
+      const listing = asRecord(
+        await client.json(
+          {
+            method: "GET",
+            path: "/files",
+            query: {
+              ...ALL_DRIVES,
+              includeItemsFromAllDrives: true,
+              fields: `nextPageToken,incompleteSearch,files(${SUMMARY_FIELDS})`,
+              ...query,
+              pageSize,
+              pageToken,
+            },
           },
-        },
-        ctx,
-      ),
-    );
-    return compact({
-      files: asArray(listing["files"]).map((file) => listed(projectFile(file))),
-      // Drive's own truncation: it stopped before searching every corpus.
-      incompleteSearch: listing["incompleteSearch"] === true ? true : undefined,
-      page: page(listing),
+          ctx,
+        ),
+      );
+      return {
+        rows: asArray(listing["files"]).map((file) => projectFile(file)),
+        next: text(listing["nextPageToken"]),
+        // Drive's own truncation: it stopped before searching every corpus.
+        extra: listing["incompleteSearch"] === true ? { incompleteSearch: true } : undefined,
+      };
     });
-  };
 
   const patch = async (
     ctx: ConnectorContext,
@@ -804,6 +978,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           includeTrashed: INCLUDE_TRASHED,
           limit: LIMIT_PROPERTY,
           cursor: CURSOR_PROPERTY,
+          maxBytes: MAX_BYTES_PROPERTY,
         },
         [],
       ),
@@ -820,14 +995,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         const q = args["includeTrashed"] === true
           ? query
           : query ? `(${query}) and trashed = false` : "trashed = false";
-        return list(ctx, {
-          q,
-          corpora,
-          driveId: args["driveId"],
-          orderBy: args["orderBy"],
-          pageSize: args["limit"] ?? DEFAULT_PAGE_SIZE,
-          pageToken: args["cursor"],
-        });
+        return await list(ctx, args, { q, corpora, driveId: args["driveId"], orderBy: args["orderBy"] });
       },
     },
     {
@@ -842,6 +1010,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           includeTrashed: INCLUDE_TRASHED,
           limit: LIMIT_PROPERTY,
           cursor: CURSOR_PROPERTY,
+          maxBytes: MAX_BYTES_PROPERTY,
         },
         ["folderId"],
       ),
@@ -871,13 +1040,11 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           driveId = text(folder["driveId"]);
         }
         const q = `'${folderId}' in parents${args["includeTrashed"] === true ? "" : " and trashed = false"}`;
-        return list(ctx, {
+        return await list(ctx, args, {
           q,
           corpora: driveId ? "drive" : "user",
           driveId,
           orderBy: args["orderBy"] ?? "folder,name",
-          pageSize: args["limit"] ?? DEFAULT_PAGE_SIZE,
-          pageToken: args["cursor"],
         });
       },
     },
@@ -915,12 +1082,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             maximum: MAX_CONTENT_CHARS,
             description: `Characters (code points) of text kept, 1 to ${MAX_CONTENT_CHARS}; defaults to ${DEFAULT_CONTENT_CHARS}. Longer text ends with a truncation marker. Binaries ignore it.`,
           },
-          maxBinaryBytes: {
-            type: "integer",
-            minimum: 1,
-            maximum: BINARY_INLINE_BYTES,
-            description: `Largest binary returned as base64, up to ${BINARY_INLINE_BYTES} (connecta's cap); defaults to ${DEFAULT_BINARY_BYTES}. Past ~190000 only a direct call delivers it, not execute_code.`,
-          },
+          maxBytes: MAX_BYTES_PROPERTY,
         },
         ["fileId"],
       ),
@@ -929,6 +1091,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         properties: {
           id: { type: "string" },
           name: { type: "string" },
+          nameTruncated: { type: "boolean" },
           mimeType: { type: "string" },
           size: { type: "integer" },
           webViewLink: { type: "string" },
@@ -941,12 +1104,12 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         required: ["id", "format", "contentTruncated"],
       },
       handler: async (args, ctx) =>
-        readContent(
+        await readContent(
           client,
           ctx,
           String(args["fileId"]),
           typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_CONTENT_CHARS,
-          typeof args["maxBinaryBytes"] === "number" ? args["maxBinaryBytes"] : DEFAULT_BINARY_BYTES,
+          typeof args["maxBytes"] === "number" ? args["maxBytes"] : DEFAULT_RESULT_BYTES,
         ),
     },
     {
@@ -954,33 +1117,37 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       description:
         "List who a Drive file or folder is shared with: each permission's id, type, role, and address or domain. Use the ids with update_permission or delete_permission.",
       annotations: readOnly,
-      inputSchema: input({ fileId: FILE_ID, limit: LIMIT_PROPERTY, cursor: CURSOR_PROPERTY }, ["fileId"]),
+      inputSchema: input(
+        { fileId: FILE_ID, limit: LIMIT_PROPERTY, cursor: CURSOR_PROPERTY, maxBytes: MAX_BYTES_PROPERTY },
+        ["fileId"],
+      ),
       outputSchema: {
         type: "object",
         properties: { permissions: { type: "array", items: PERMISSION_SCHEMA }, page: PAGE_SCHEMA },
         required: ["permissions", "page"],
       },
-      handler: async (args, ctx) => {
-        const listing = asRecord(
-          await client.json(
-            {
-              method: "GET",
-              path: `${filePath(args["fileId"])}/permissions`,
-              query: {
-                ...ALL_DRIVES,
-                fields: `nextPageToken,permissions(${PERMISSION_FIELDS})`,
-                pageSize: args["limit"] ?? DEFAULT_PAGE_SIZE,
-                pageToken: args["cursor"],
+      handler: async (args, ctx) =>
+        await pageOf("permissions", args, async (pageToken, pageSize) => {
+          const listing = asRecord(
+            await client.json(
+              {
+                method: "GET",
+                path: `${filePath(args["fileId"])}/permissions`,
+                query: {
+                  ...ALL_DRIVES,
+                  fields: `nextPageToken,permissions(${PERMISSION_FIELDS})`,
+                  pageSize,
+                  pageToken,
+                },
               },
-            },
-            ctx,
-          ),
-        );
-        return {
-          permissions: asArray(listing["permissions"]).map((permission) => projectPermission(permission)),
-          page: page(listing),
-        };
-      },
+              ctx,
+            ),
+          );
+          return {
+            rows: asArray(listing["permissions"]).map((permission) => projectPermission(permission)),
+            next: text(listing["nextPageToken"]),
+          };
+        }),
     },
     {
       name: "list_shared_drives",
@@ -996,6 +1163,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           },
           limit: LIMIT_PROPERTY,
           cursor: CURSOR_PROPERTY,
+          maxBytes: MAX_BYTES_PROPERTY,
         },
         [],
       ),
@@ -1013,34 +1181,35 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         },
         required: ["drives", "page"],
       },
-      handler: async (args, ctx) => {
-        const listing = asRecord(
-          await client.json(
-            {
-              method: "GET",
-              path: "/drives",
-              query: {
-                q: args["query"],
-                fields: "nextPageToken,drives(id,name,hidden)",
-                pageSize: args["limit"] ?? DEFAULT_PAGE_SIZE,
-                pageToken: args["cursor"],
+      handler: async (args, ctx) =>
+        await pageOf("drives", args, async (pageToken, pageSize) => {
+          const listing = asRecord(
+            await client.json(
+              {
+                method: "GET",
+                path: "/drives",
+                query: {
+                  q: args["query"],
+                  fields: "nextPageToken,drives(id,name,hidden)",
+                  pageSize,
+                  pageToken,
+                },
               },
-            },
-            ctx,
-          ),
-        );
-        return {
-          drives: asArray(listing["drives"]).map((value) => {
-            const sharedDrive = asRecord(value);
-            return compact({
-              id: text(sharedDrive["id"]),
-              name: text(sharedDrive["name"]),
-              hidden: sharedDrive["hidden"] === true ? true : undefined,
-            });
-          }),
-          page: page(listing),
-        };
-      },
+              ctx,
+            ),
+          );
+          return {
+            rows: asArray(listing["drives"]).map((value) => {
+              const sharedDrive = asRecord(value);
+              return compact({
+                id: label(sharedDrive["id"]),
+                name: label(sharedDrive["name"]),
+                hidden: sharedDrive["hidden"] === true ? true : undefined,
+              });
+            }),
+            next: text(listing["nextPageToken"]),
+          };
+        }),
     },
     {
       name: "create_folder",
@@ -1433,7 +1602,9 @@ and one this person cannot see fail alike — Google does not distinguish them.
   true\` means Drive gave up before searching everything; narrow the query or
   the corpus. Shared drives: \`list_shared_drives\`, then \`corpora: "drive"\`
   with its \`driveId\`.
-- Page with \`page.nextCursor\` and the same arguments.
+- Page with \`page.nextCursor\` and the same arguments. A page can stop
+  short of \`limit\` to stay under \`maxBytes\`; the cursor resumes at the
+  first row left out.
 - Ids come from these reads or a Drive URL (\`/d/<id>/\`, \`/folders/<id>\`);
   never guess one.
 
@@ -1441,14 +1612,15 @@ and one this person cannot see fail alike — Google does not distinguish them.
 
 - \`get_file_content\` exports Docs as Markdown, Sheets as CSV of the
   **first sheet only**, and Slides as plain text; reads text files as text;
-  and returns other files as base64 up to \`maxBinaryBytes\` (128 KiB by
-  default, which fits a single result inside \`execute_code\`; up to 1 MiB in
-  a direct call only). Anything else — a
+  and returns other files as base64 when the encoded file fits the result. Anything else — a
   larger binary, a drawing, a form, a folder, a shortcut — comes back as
   \`format: "unavailable"\` with a \`note\`, never as an empty success.
 - Text is capped by \`maxChars\`; a cut ends with a truncation marker and
   \`contentTruncated: true\`. Drive exports at most 10 MB.
-- Reduce inside \`execute_code\` before returning a long document.
+- Every read stays under \`maxBytes\` of JSON. The default is what one result
+  can carry into \`execute_code\`, so a program always receives it. A larger
+  \`maxBytes\` (up to 4 MiB — a binary of up to 1 MiB) reaches only a direct
+  \`call_tool\`, which pages it with \`get_result\`.
 
 ## Writing
 

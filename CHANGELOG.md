@@ -115,17 +115,21 @@ a deployment's own connectors still never learn their caller.
   own `incompleteSearch` surfaced), `list_folder_items`, `get_file`,
   `get_file_content` (Docs exported as Markdown, Sheets as CSV of the first
   sheet only, Slides as text, text files read by range and cut at `maxChars`
-  code points, never inside a character, binaries as base64 up to
-  `maxBinaryBytes` — 128 KiB by default, so every default result fits the
-  256 KiB a host result may carry into `execute_code`, and up to 1 MiB on
-  request for a direct call — and anything else — a larger binary, a drawing,
-  a form, a folder, a shortcut — as `format: "unavailable"` with a note rather
-  than an empty success; both caps hold on the bytes the download returns,
-  never on the size metadata reported, so a file that grew between the two
-  reads is still cut, and Drive's 10 MB export limit is named from Google's
-  own reason code), `list_permissions`, and `list_shared_drives`. Listings cut
-  a name past 1,000 characters and flag it `nameTruncated`; `get_file` returns
-  it whole. Additive writes:
+  code points, never inside a character, binaries as base64 when the encoded
+  file fits the result and never past 1 MiB, and anything else — a larger
+  binary, a drawing, a form, a folder, a shortcut — as `format: "unavailable"`
+  with a note rather than an empty success; the caps hold on the bytes the
+  download returns, never on the size metadata reported, so a file that grew,
+  shrank, or emptied between the two reads is still read right, and Drive's
+  10 MB export limit is named from Google's own reason code),
+  `list_permissions`, and `list_shared_drives`. Every read is built to stay
+  under `maxBytes` of JSON, envelope and cursor included: 192 KiB by default,
+  which a program inside `execute_code` always receives, and up to 4 MiB for a
+  direct `call_tool` only. A listing that would outgrow it stops early with a
+  cursor that resumes at the first row left out; content is cut with a marker
+  naming the bound that cut it. Names are cut at 2 KiB in listings and content
+  results and 32 KiB in `get_file`, descriptions at 64 KiB, each flagged.
+  Additive writes:
   `create_folder` and `restore_file`. Destructive writes: `create_file` (text
   or base64 content as one multipart upload, or an empty file; `convertTo`
   imports it as a Google Doc, Sheet, or Slides file) and `copy_file`, because

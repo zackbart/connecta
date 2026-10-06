@@ -282,12 +282,8 @@ describe("whose Drive a call acts as", () => {
 describe("finding files (H9, H10)", () => {
   it("searches with Drive syntax, leaving trash out, and projects each file", async () => {
     route = () => ({ body: { files: [FILE], nextPageToken: "next-1", incompleteSearch: true, kind: "drive#fileList" } });
-    const result = await call(connection(), "search_files", {
-      query: "name contains 'budget'",
-      orderBy: "modifiedTime desc",
-      limit: 5,
-      cursor: "prev",
-    });
+    const args = { query: "name contains 'budget'", orderBy: "modifiedTime desc", limit: 5 };
+    const result = await call(connection(), "search_files", args);
     expect(line(0)).toBe("GET /files");
     const sent = query(0);
     expect(sent).toMatchObject({
@@ -295,10 +291,10 @@ describe("finding files (H9, H10)", () => {
       corpora: "user",
       orderBy: "modifiedTime desc",
       pageSize: "5",
-      pageToken: "prev",
       supportsAllDrives: "true",
       includeItemsFromAllDrives: "true",
     });
+    expect(sent["pageToken"]).toBeUndefined();
     expect(sent["fields"]).toMatch(/^nextPageToken,incompleteSearch,files\(id,name,mimeType,/);
     expect(result).toEqual({
       files: [
@@ -315,9 +311,20 @@ describe("finding files (H9, H10)", () => {
         },
       ],
       incompleteSearch: true,
-      page: { hasMore: true, nextCursor: "next-1" },
+      page: { hasMore: true, nextCursor: expect.stringMatching(/^[A-Za-z0-9_-]+$/) },
     });
     expect(JSON.stringify(result)).not.toContain("noise");
+
+    // The cursor carries Drive's next token and the page size it was read with.
+    await call(connection(), "search_files", { ...args, cursor: result.page.nextCursor });
+    expect(query(1)).toMatchObject({ pageToken: "next-1", pageSize: "5" });
+  });
+
+  it("refuses a cursor it did not issue, before any request", async () => {
+    for (const cursor of ["prev", "bm90LWpzb24", btoa(JSON.stringify(["t", -1, 5])).replace(/=+$/, "")]) {
+      await expect(call(connection(), "search_files", { cursor })).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toEqual([]);
   });
 
   it("ends paging with one branchable signal and searches everything by default", async () => {
@@ -405,7 +412,9 @@ describe("finding files (H9, H10)", () => {
     const drives = await call(connection(), "list_shared_drives", { query: "name contains 'Fin'" });
     expect(line(0)).toBe("GET /drives");
     expect(query(0)).toMatchObject({ q: "name contains 'Fin'", pageSize: "25" });
-    expect(drives).toEqual({ drives: [{ id: "sd-1", name: "Finance" }], page: { hasMore: true, nextCursor: "d2" } });
+    expect(drives).toMatchObject({ drives: [{ id: "sd-1", name: "Finance" }], page: { hasMore: true } });
+    await call(connection(), "list_shared_drives", { query: "name contains 'Fin'", cursor: drives.page.nextCursor });
+    expect(query(1)).toMatchObject({ pageToken: "d2", pageSize: "25" });
 
     calls.length = 0;
     route = () => ({
@@ -430,6 +439,8 @@ describe("finding files (H9, H10)", () => {
     });
   });
 });
+
+const serialized = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 describe("reading content", () => {
   function metadata(file: Record<string, unknown>): Route {
@@ -532,21 +543,64 @@ describe("reading content", () => {
     expect(result.content.startsWith(`${"x".repeat(10)}\n[… truncated: 10 characters of a 5-byte file`)).toBe(true);
   });
 
-  it("fetches an empty file without a range, which Drive would refuse", async () => {
-    const meta = metadata({ mimeType: "text/plain", size: "0" });
-    route = (request) => meta(request) ?? { payload: "", contentType: "text/plain" };
+  /** Drive's answer to a range from byte 0 of a file with no bytes. */
+  const EMPTY_RANGE = GOOGLE_ERROR(416, "requestedRangeNotSatisfiable", "Request range not satisfiable");
+
+  it.each([
+    ["metadata said empty", { size: "0" }],
+    ["the file emptied after its metadata said 500 bytes", { size: "500" }],
+    ["metadata gave no size", {}],
+  ])("reads a verified empty text file as empty when %s", async (_when, sized) => {
+    const meta = metadata({ mimeType: "text/plain", ...sized });
+    route = (request) => meta(request) ?? EMPTY_RANGE;
     const result = await call(connection(), "get_file_content", { fileId: "f1" });
-    expect(calls[1]!.headers.get("range")).toBeNull();
+    // The range is always sent: no metadata is trusted to skip it.
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-80004");
     expect(result).toMatchObject({ format: "text", content: "", contentTruncated: false });
   });
 
-  it("returns a small binary as base64, asking for one byte past the cap", async () => {
+  it("reads a verified empty binary as empty base64", async () => {
+    const meta = metadata({ mimeType: "application/pdf", size: "500" });
+    route = (request) => meta(request) ?? EMPTY_RANGE;
+    const result = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(result).toMatchObject({ format: "base64", content: "", contentTruncated: false });
+  });
+
+  it("still caps a file whose metadata said empty but which has grown", async () => {
+    const meta = metadata({ mimeType: "text/plain", size: "0" });
+    route = (request) => meta(request) ?? { payload: "y".repeat(100), contentType: "text/plain" };
+    const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 10 });
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-44");
+    expect(result.contentTruncated).toBe(true);
+  });
+
+  it("passes on any other refusal of a range read", async () => {
+    const meta = metadata({ mimeType: "text/plain", size: "5" });
+    route = (request) => meta(request) ?? GOOGLE_ERROR(403, "cannotDownloadAbusiveFile", "Flagged as abusive.");
+    await expect(call(connection(), "get_file_content", { fileId: "f1" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
+  });
+
+  /** The file bytes a default binary result holds, read off the range it asks for. */
+  async function defaultBinaryLimit(): Promise<number> {
+    const meta = metadata({ mimeType: "application/octet-stream" });
+    route = (request) => meta(request) ?? { payload: new Uint8Array(1) };
+    await call(connection(), "get_file_content", { fileId: "f1" });
+    const limit = Number(/^bytes=0-(\d+)$/.exec(calls[calls.length - 1]!.headers.get("range") ?? "")?.[1]);
+    calls.length = 0;
+    return limit;
+  }
+
+  it("returns a small binary as base64, asking for one byte past what fits", async () => {
     const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
     const meta = metadata({ mimeType: "application/pdf", size: "6" });
     route = (request) => meta(request) ?? { payload: bytes, contentType: "application/pdf" };
     const result = await call(connection(), "get_file_content", { fileId: "f1" });
-    // The 128 KiB default, plus one byte.
-    expect(calls[1]!.headers.get("range")).toBe("bytes=0-131072");
+    // Base64 of what fits 192 KiB beside the envelope: a little under 144 KiB.
+    const asked = Number(/^bytes=0-(\d+)$/.exec(calls[1]!.headers.get("range") ?? "")?.[1]);
+    expect(asked).toBeGreaterThan(140_000);
+    expect(asked).toBeLessThanOrEqual(147_456);
     expect(result).toMatchObject({ format: "base64", content: "JVBERgD/", contentTruncated: false });
   });
 
@@ -559,35 +613,47 @@ describe("reading content", () => {
     const meta = metadata({ mimeType: "application/pdf", size: "1" });
     route = (request) =>
       meta(request) ?? { status: honors ? 206 : 200, payload: honors ? ranged(request, body) : body, contentType: "application/pdf" };
-    for (const [args, limit] of [
-      [{}, 131072],
-      [{ maxBinaryBytes: 1024 * 1024 }, 1048576],
+    for (const [args, said] of [
+      [{}, "does not fit"],
+      [{ maxBytes: 4 * 1024 * 1024 }, "more than 1048576 bytes"],
     ] as const) {
       const result = await call(connection(), "get_file_content", { fileId: "f1", ...args });
       expect(result).toMatchObject({ format: "unavailable", contentTruncated: false });
       expect(result.content).toBeUndefined();
-      expect(result.note).toContain(`more than ${limit} bytes`);
+      expect(result.note).toContain(said);
     }
   });
 
-  it.each([
-    ["the default", {}, 128 * 1024],
-    ["an explicit maximum", { maxBinaryBytes: 1024 * 1024 }, 1024 * 1024],
-  ])("returns a binary of exactly %s", async (_which, args, limit) => {
-    const body = new Uint8Array(limit).fill(1);
+  it("returns a binary of exactly what fits by default, and refuses one byte more", async () => {
+    const limit = await defaultBinaryLimit();
     const meta = metadata({ mimeType: "application/octet-stream" });
-    route = (request) => meta(request) ?? { payload: ranged(request, body) };
-    const result = await call(connection(), "get_file_content", { fileId: "f1", ...args });
-    expect(result.format).toBe("base64");
-    expect(atob(result.content)).toHaveLength(limit);
+    route = (request) => meta(request) ?? { payload: ranged(request, new Uint8Array(limit).fill(1)) };
+    const fits = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(fits.format).toBe("base64");
+    expect(atob(fits.content)).toHaveLength(limit);
+    expect(serialized(fits)).toBeLessThanOrEqual(196_608);
+
+    route = (request) => meta(request) ?? { payload: ranged(request, new Uint8Array(limit + 1).fill(1)) };
+    const over = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(over.format).toBe("unavailable");
   });
 
-  it("says how to raise the default when a binary is past it", async () => {
+  it("returns 1 MiB, the connection's cap, only with maxBytes raised for a direct call", async () => {
+    const body = new Uint8Array(1024 * 1024).fill(1);
+    const meta = metadata({ mimeType: "application/octet-stream" });
+    route = (request) => meta(request) ?? { payload: ranged(request, body) };
+    const result = await call(connection(), "get_file_content", { fileId: "f1", maxBytes: 4 * 1024 * 1024 });
+    expect(result.format).toBe("base64");
+    expect(atob(result.content)).toHaveLength(1024 * 1024);
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-1048576");
+  });
+
+  it("says how to raise maxBytes when a binary is past the default", async () => {
     route = metadata({ mimeType: "application/pdf", size: String(200 * 1024) });
     const result = await call(connection(), "get_file_content", { fileId: "f1" });
     expect(calls).toHaveLength(1);
-    expect(result.note).toContain("maxBinaryBytes (131072)");
-    expect(result.note).toContain("direct call");
+    expect(result.note).toContain("maxBytes (196608)");
+    expect(result.note).toContain("direct call_tool only");
   });
 
   describe("never splits a character", () => {
@@ -628,7 +694,7 @@ describe("reading content", () => {
   });
 
   it.each([
-    ["a binary past the cap", { mimeType: "application/pdf", size: String(2 * 1024 * 1024) }, "maxBinaryBytes"],
+    ["a binary past the cap", { mimeType: "application/pdf", size: String(2 * 1024 * 1024) }, "maxBytes"],
     ["a folder", { mimeType: "application/vnd.google-apps.folder" }, "list_folder_items"],
     ["a drawing", { mimeType: "application/vnd.google-apps.drawing" }, "Drawings"],
     ["a form", { mimeType: "application/vnd.google-apps.form" }, "exports no text"],
@@ -1015,8 +1081,7 @@ describe("every default result crosses into execute_code", () => {
   // (MAX_QUICKJS_HOST_RPC_BYTES). Defaults must fit with room to spare on the
   // worst input Drive can send; explicit maxima may exceed it and are
   // documented as direct-call only, where get_result pages them.
-  const BRIDGE = 256 * 1024;
-  const serialized = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const BUDGET = 196_608;
   // Four UTF-8 bytes each, and a control character JSON escapes to six.
   const worst = (chars: number) => "\u{1F600}\u0001".repeat(Math.ceil(chars / 2)).slice(0, chars * 2);
   const longEmail = `${"a".repeat(64)}@${"b".repeat(250)}.example`;
@@ -1040,16 +1105,25 @@ describe("every default result crosses into execute_code", () => {
       const result = await call(connection(), name, args);
       expect(result.files).toHaveLength(25);
       expect(result.files[0].nameTruncated).toBe(true);
-      expect(serialized(result), name).toBeLessThan(BRIDGE * 0.75);
+      expect(serialized(result), name).toBeLessThanOrEqual(BUDGET);
     }
   });
 
-  it("returns a listed name whole from get_file", async () => {
-    const name = "n".repeat(1_500);
+  it("cuts a name to 2 KiB in a listing and 32 KiB in get_file, and flags each cut", async () => {
+    const name = "n".repeat(3_000);
     route = (request) => (request.url.pathname.endsWith("/files") ? { body: { files: [{ id: "f1", name }] } } : { body: { id: "f1", name } });
     const listedFile = (await call(connection(), "search_files")).files[0];
-    expect(listedFile).toEqual({ id: "f1", name: `${"n".repeat(1_000)}…`, nameTruncated: true });
-    expect((await call(connection(), "get_file", { fileId: "f1" })).name).toBe(name);
+    expect(listedFile.nameTruncated).toBe(true);
+    expect(listedFile.name.endsWith("…")).toBe(true);
+    expect(serialized(listedFile.name)).toBeLessThanOrEqual(2 * 1024);
+    expect(await call(connection(), "get_file", { fileId: "f1" })).toEqual({ id: "f1", name });
+
+    const huge = { id: "f1", name: worst(32_767), description: worst(40_000) };
+    route = () => ({ body: huge });
+    const detail = await call(connection(), "get_file", { fileId: "f1" });
+    expect(detail).toMatchObject({ nameTruncated: true, descriptionTruncated: true });
+    expect(serialized(detail)).toBeLessThanOrEqual(BUDGET);
+    expect(detail.name).toBe(detail.name.toWellFormed());
   });
 
   it("fits a default page of permissions and of shared drives", async () => {
@@ -1070,8 +1144,42 @@ describe("every default result crosses into execute_code", () => {
               })),
             },
           };
-    expect(serialized(await call(connection(), "list_permissions", { fileId: "f1" }))).toBeLessThan(BRIDGE * 0.75);
-    expect(serialized(await call(connection(), "list_shared_drives"))).toBeLessThan(BRIDGE * 0.75);
+    expect(serialized(await call(connection(), "list_permissions", { fileId: "f1" }))).toBeLessThanOrEqual(BUDGET);
+    expect(serialized(await call(connection(), "list_shared_drives"))).toBeLessThanOrEqual(BUDGET);
+  });
+
+  it("stops a page that would outgrow maxBytes, and resumes at the first row left out", async () => {
+    // A hundred rows of 1,000-character escaped names: about 600 KB in all.
+    const rows = Array.from({ length: 100 }, (_, index) => ({ ...worstFile(index), id: `r${index}`, name: worst(1_000) }));
+    route = (request) =>
+      request.url.searchParams.get("pageToken") === "second"
+        ? { body: { files: [{ id: "last" }] } }
+        : { body: { files: rows, nextPageToken: "second" } };
+    for (const maxBytes of [undefined, 16_384, 50_000]) {
+      calls.length = 0;
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let guard = 0; guard < 200; guard += 1) {
+        const result = await call(connection(), "search_files", {
+          limit: 100,
+          ...(maxBytes ? { maxBytes } : {}),
+          ...(cursor ? { cursor } : {}),
+        });
+        expect(serialized(result)).toBeLessThanOrEqual(maxBytes ?? BUDGET);
+        expect(result.files.length).toBeGreaterThan(0);
+        seen.push(...result.files.map((file: any) => file.id));
+        if (!result.page.hasMore) break;
+        cursor = result.page.nextCursor;
+      }
+      // Every row once, in order, then Drive's next page.
+      expect(seen).toEqual([...rows.map((row) => row.id), "last"]);
+      expect(calls.every((entry) => entry.url.searchParams.get("pageSize") === "100")).toBe(true);
+    }
+    // A direct call may take the whole page at once.
+    calls.length = 0;
+    const whole = await call(connection(), "search_files", { limit: 100, maxBytes: 4 * 1024 * 1024 });
+    expect(whole.files).toHaveLength(100);
+    expect(whole.page.hasMore).toBe(true);
   });
 
   it("fits default content, text and binary, at its largest", async () => {
@@ -1081,13 +1189,38 @@ describe("every default result crosses into execute_code", () => {
     route = (request) => textRoute(request) ?? { payload: worst(200_000), contentType: "text/plain" };
     const text = await call(connection(), "get_file_content", { fileId: "f1" });
     expect(text.contentTruncated).toBe(true);
-    expect(serialized(text)).toBeLessThan(BRIDGE * 0.75);
+    expect(serialized(text)).toBeLessThanOrEqual(BUDGET);
 
-    const binaryRoute = meta("application/pdf", String(128 * 1024));
-    route = (request) => binaryRoute(request) ?? { payload: new Uint8Array(128 * 1024).fill(255) };
+    const binaryRoute = meta("application/pdf", String(140 * 1024));
+    route = (request) => binaryRoute(request) ?? { payload: new Uint8Array(140 * 1024).fill(255) };
     const binary = await call(connection(), "get_file_content", { fileId: "f1" });
     expect(binary.format).toBe("base64");
-    expect(serialized(binary)).toBeLessThan(BRIDGE * 0.75);
+    expect(serialized(binary)).toBeLessThanOrEqual(BUDGET);
+  });
+
+  it("holds the whole content result, name and metadata included, to maxBytes", async () => {
+    // The longest name and the most text the schema allows, all escaped.
+    const meta = (mimeType: string) => (request: ApiCall) =>
+      request.url.searchParams.get("fields") ? { body: { id: "f1", name: worst(32_767), mimeType, size: "999999999" } } : undefined;
+    for (const mimeType of ["text/plain", "application/vnd.google-apps.document"]) {
+      const metaRoute = meta(mimeType);
+      route = (request) => metaRoute(request) ?? { payload: worst(250_000), contentType: "text/plain" };
+      for (const maxBytes of [undefined, 16_384, 100_000]) {
+        const result = await call(connection(), "get_file_content", {
+          fileId: "f1",
+          maxChars: 100_000,
+          ...(maxBytes ? { maxBytes } : {}),
+        });
+        expect(serialized(result), `${mimeType} ${maxBytes}`).toBeLessThanOrEqual(maxBytes ?? BUDGET);
+        expect(result).toMatchObject({ nameTruncated: true, contentTruncated: true });
+        expect(result.content).toContain("raise maxBytes");
+        expect(result.content).toBe(result.content.toWellFormed());
+      }
+      // Raised for a direct call, maxChars binds instead.
+      const direct = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 100_000, maxBytes: 4 * 1024 * 1024 });
+      expect(direct.content).toContain("raise maxChars");
+      expect(serialized(direct)).toBeLessThanOrEqual(4 * 1024 * 1024);
+    }
   });
 });
 
