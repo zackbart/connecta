@@ -94,6 +94,7 @@ export const WORKERS_SUITES = [
   "test/google-workspace-delegation.test.ts",
   "test/gmail-provider.test.ts",
   "test/drive-provider.test.ts",
+  "test/docs-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

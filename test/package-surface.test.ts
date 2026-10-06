@@ -392,6 +392,7 @@ describe("public package boundary", () => {
     for (const file of [
       join(ROOT, "src", "providers", "gmail.ts"),
       join(ROOT, "src", "providers", "drive.ts"),
+      join(ROOT, "src", "providers", "docs.ts"),
       ...readdirSync(join(ROOT, "src", "providers", "google")).map((name) =>
         join(ROOT, "src", "providers", "google", name),
       ),

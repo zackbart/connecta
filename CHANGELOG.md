@@ -48,19 +48,42 @@ SDK builds sends the header; a 2025-era client that sends neither the header
 nor the 2026-07-28 claim is served exactly as before (#687).
 
 This release adds org-wide Google Workspace access with no per-user consent
-step, and its first consumers: a draft-only Gmail connection and a Google
-Drive connection. A Workspace super admin grants a service account domain-wide
-delegation once; the deployment maps each admitted identity to a Workspace
-address in config; and the provider mints a short-lived token as that user on
-every call. It is the second sanctioned use of the in-repo caller channel,
-recorded in `ethos.md` as config-mapped delegated subjects
+step, and its first consumers: a draft-only Gmail connection, a Google Drive
+connection, and a Google Docs connection that reads and edits documents by id.
+A Workspace super admin grants a service account domain-wide delegation once;
+the deployment maps each admitted identity to a Workspace address in config;
+and the provider mints a short-lived token as that user on every call. It is
+the second sanctioned use of the in-repo caller channel, recorded in `ethos.md`
+as config-mapped delegated subjects
 ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing breaks and
-nothing changes for a deployment that imports neither `./providers/gmail` nor
-`./providers/drive`: the shared delegation layer has no export of its own, and
-a deployment's own connectors still never learn their caller.
+nothing changes for a deployment that imports none of `./providers/gmail`,
+`./providers/drive`, or `./providers/docs`: the shared delegation layer has no
+export of its own, and a deployment's own connectors still never learn their
+caller.
 
 ### Added
 
+- **Google Docs connection.** `@zackbart/connecta/providers/docs` exports
+  `docs(id, options)` with the same Workspace options as `gmail()`, plus
+  `DOCS_SCOPES` (exactly `documents`) and `DOCS_API_BASE_URL`
+  ([#681](https://github.com/zackbart/connecta/issues/681)). Six hand-written
+  tools: `get_document` (every tab, or one, rendered as markdown-ish text —
+  headings, lists, links, tables as pipe rows, footnotes — capped by `maxChars`
+  with an explicit marker, with `title`, `revisionId`, and on `withIndexes`
+  the UTF-16 start and end index of every paragraph, table, and table of
+  contents), `create_document` (title and an optional body; a body that fails
+  after the document exists names its id instead of inviting a duplicate),
+  `append_text` and `insert_text` (additive), `replace_all_text` (string or
+  RE2, by tab, reporting the count), and `batch_update_document`, a raw
+  `documents.batchUpdate` passthrough that is always destructive, takes 1–100
+  requests of known generally available kinds (contents unvalidated), and
+  requires `requiredRevisionId`. Every other edit takes it optionally; a refused edit against a document that has
+  moved on fails `conflict` with nothing applied. There is no search or list
+  tool: finding a document is Drive's job, and `documents` cannot list. A 404
+  stays `connector_call_failed`, because Google answers it for an id that is
+  unknown and for one not shared with the caller alike. Setup, including the
+  Admin console scope, is documented on `docs()`; drift is checked against the
+  Docs Discovery document.
 - **Draft-only Gmail connection.** `@zackbart/connecta/providers/gmail`
   exports `gmail(id, { purpose, serviceAccount, subject, title?,
   instructions?, callAdmission?, maxResultBytes?, baseUrl? })`, plus

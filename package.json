@@ -127,6 +127,10 @@
       "types": "./dist/providers/drive.d.ts",
       "import": "./dist/providers/drive.js"
     },
+    "./providers/docs": {
+      "types": "./dist/providers/docs.d.ts",
+      "import": "./dist/providers/docs.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"
