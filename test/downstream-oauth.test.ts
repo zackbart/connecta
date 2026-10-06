@@ -1711,6 +1711,28 @@ describe("KvOAuthProvider sealed state", () => {
     expect(await p.clientInformation(issuer)).toBeUndefined();
   });
 
+  it("carries a sealed registration again only after it earns a grant in its new epoch", async () => {
+    const storage = memoryStorage();
+    const p = new KvOAuthProvider(
+      "svc", storage, REDIRECT, undefined, true, sealerFor(), undefined,
+      "same-config",
+    );
+    await p.bumpGeneration();
+    await p.saveClientInformation(client, issuer);
+
+    await p.resetAuthorization(false, true);
+    // The carried mark lives inside the ciphertext, beside the binding.
+    const carriedGeneration = required((await storage.get("oauth:generation")) ?? undefined);
+    expect(isSealed(await storage.get(oauthValueStorageKey("oauth:client", carriedGeneration)))).toBe(true);
+    await p.saveTokens(tokens, issuer);
+    await p.resetAuthorization(false, true);
+    await expect(p.clientInformation(issuer)).resolves.toMatchObject(client);
+
+    // No grant in this epoch: the next restart leaves the registration behind.
+    await p.resetAuthorization(false, true);
+    expect(await p.clientInformation(issuer)).toBeUndefined();
+  });
+
   it("seals tokens, client registration, and the verifier; flow bookkeeping stays plaintext", async () => {
     const storage = memoryStorage();
     const p = sealedProvider(storage);
@@ -4761,7 +4783,8 @@ describe("remoteMcp() startAuth", () => {
         throw new Error("should not connect while a consent URL is pending");
       },
     });
-    const url = "https://auth.example/authorize?code_challenge=abc";
+    const url = "https://auth.example/authorize?client_id=client-1&code_challenge=abc";
+    await storeCurrentOAuthValue(storage, "oauth:client", { client_id: "client-1" });
     await storage.set(
       "oauth:pending",
       JSON.stringify({
@@ -4870,9 +4893,17 @@ describe("remoteMcp() continue and restart starts", () => {
     "https://downstream.example/.well-known/oauth-protected-resource";
   const MINUTE = 60 * 1000;
 
+  /**
+   * An authorization server that remembers the clients it registered, and
+   * answers `invalid_client` for any other — including one it was told to
+   * `forget`, the way a provider purges a registration. A known client's
+   * code or refresh token always redeems.
+   */
   function authorizationServer() {
-    const counts = { register: 0, fetches: 0 };
+    const counts = { register: 0, fetches: 0, token: 0 };
     let selectedIssuer = issuer;
+    let urlClients = false;
+    const known = new Set<string>();
     const fetchStub: FetchLike = async (input, init = {}) => {
       counts.fetches++;
       const url = new URL(input);
@@ -4888,17 +4919,29 @@ describe("remoteMcp() continue and restart starts", () => {
           response_types_supported: ["code"],
           code_challenge_methods_supported: ["S256"],
           token_endpoint_auth_methods_supported: ["none"],
+          ...(urlClients ? { client_id_metadata_document_supported: true } : {}),
         });
       }
       if (url.href === `${selectedIssuer}/register`) {
         counts.register++;
+        const clientId = `client-${counts.register}`;
+        known.add(clientId);
         return Response.json({
           ...(JSON.parse(String(init.body)) as object),
-          client_id: `client-${counts.register}`,
+          client_id: clientId,
         });
       }
       if (url.href === `${selectedIssuer}/token`) {
-        return Response.json({ error: "invalid_client" }, { status: 401 });
+        counts.token++;
+        const params = new URLSearchParams(String(init.body));
+        if (!known.has(params.get("client_id") ?? "")) {
+          return Response.json({ error: "invalid_client" }, { status: 401 });
+        }
+        return Response.json({
+          access_token: `access-${counts.token}`,
+          token_type: "Bearer",
+          refresh_token: `refresh-${counts.token}`,
+        });
       }
       if (url.href === mcpUrl) {
         return new Response(null, {
@@ -4910,7 +4953,13 @@ describe("remoteMcp() continue and restart starts", () => {
       }
       throw new Error(`Unexpected OAuth test request: ${url.href}`);
     };
-    return { fetchStub, counts, selectIssuer: (next: string) => { selectedIssuer = next; } };
+    return {
+      fetchStub,
+      counts,
+      selectIssuer: (next: string) => { selectedIssuer = next; },
+      forget: (clientId: string) => { known.delete(clientId); },
+      acceptUrlClients: (accept: boolean) => { urlClients = accept; },
+    };
   }
 
   async function withServer(
@@ -4944,6 +4993,21 @@ describe("remoteMcp() continue and restart starts", () => {
   });
   const clientOf = (url: string | undefined) =>
     new URL(required(url)).searchParams.get("client_id");
+  /** Complete consent for a start's URL through the connector's callback hooks. */
+  const consent = async (c: Connector, storage: KVStorage, url: string | undefined) => {
+    const state = required(new URL(required(url)).searchParams.get("state") ?? undefined);
+    const params = new URLSearchParams({ code: "consented", state });
+    const callback = scope(storage);
+    expect(await c.verifyState!(state, callback)).toBe(true);
+    await c.finishAuth!("consented", callback, params);
+  };
+  /** How many stored values, in any epoch, still name `clientId`. */
+  const valuesNaming = async (storage: KVStorage, clientId: string) => {
+    const values = await Promise.all(
+      (await storage.list!("")).map((key) => storage.get(key)),
+    );
+    return values.filter((value) => value?.includes(`"${clientId}"`) || value?.includes(`client_id=${clientId}&`)).length;
+  };
 
   it("continue reuses a recent pending URL without touching the network", async () => {
     await withServer(async (server) => {
@@ -5038,12 +5102,15 @@ describe("remoteMcp() continue and restart starts", () => {
       const storage = memoryStorage();
       const c = connector();
       await c.startAuth!(scope(storage), { force: true });
+      expect(await valuesNaming(storage, "client-1")).toBeGreaterThan(0);
       server.selectIssuer("https://new-auth.example");
 
       const second = await c.startAuth!(scope(storage), { force: true });
 
       expect(clientOf(second.authorizationUrl)).toBe("client-2");
       expect(server.counts.register).toBe(2);
+      // Issuer-mismatch recovery discarded the carried registration outright.
+      expect(await valuesNaming(storage, "client-1")).toBe(0);
     });
   });
 
@@ -5074,6 +5141,7 @@ describe("remoteMcp() continue and restart starts", () => {
       await c.startAuth!(scope(storage), { force: true });
       await c.startAuth!(scope(storage), { force: true });
       expect(server.counts.register).toBe(1);
+      server.forget("client-1");
 
       const callback = new KvOAuthProvider("svc", storage, `${BASE}/oauth/callback/svc`);
       await expect(auth(callback, {
@@ -5089,6 +5157,126 @@ describe("remoteMcp() continue and restart starts", () => {
     });
   });
 
+  it("keeps carrying a restarted registration once it has earned a grant", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
+
+      const first = await c.startAuth!(scope(storage), { force: true });
+      expect(clientOf(first.authorizationUrl)).toBe("client-1");
+      await consent(c, storage, first.authorizationUrl);
+      const second = await c.startAuth!(scope(storage), { force: true });
+
+      expect(clientOf(second.authorizationUrl)).toBe("client-1");
+      expect(server.counts.register).toBe(1);
+    });
+  });
+
+  it("registers again on a restart that follows a restart whose consent never returned", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
+      const restarted = await c.startAuth!(scope(storage), { force: true });
+      expect(clientOf(restarted.authorizationUrl)).toBe("client-1");
+      // The provider purged the registration. Its consent page refuses the
+      // unknown client and, per RFC 6749 section 4.1.2.1, never redirects back.
+      server.forget("client-1");
+
+      const again = await c.startAuth!(scope(storage), { force: true });
+
+      expect(clientOf(again.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
+      await consent(c, storage, again.authorizationUrl);
+    });
+  });
+
+  it("registers again within the same start when the provider refuses a reused client", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
+      const restarted = await c.startAuth!(scope(storage), { force: true });
+      await consent(c, storage, restarted.authorizationUrl);
+      server.forget("client-1");
+      const tokenRequests = server.counts.token;
+
+      const continued = await c.startAuth!(scope(storage), { force: false });
+
+      // The start's refresh carried the reused client, the provider answered
+      // invalid_client, and the same start registered and built a new URL.
+      expect(server.counts.token).toBe(tokenRequests + 1);
+      expect(continued.state).toBe("auth_required");
+      expect(clientOf(continued.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
+      expect(await valuesNaming(storage, "client-1")).toBe(0);
+    });
+  });
+
+  it("continue never hands back a URL whose client a callback saw refused", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await c.startAuth!(scope(storage), { force: true });
+      const restarted = await c.startAuth!(scope(storage), { force: true });
+      server.forget("client-1");
+      await expect(consent(c, storage, restarted.authorizationUrl)).rejects.toThrow();
+
+      const continued = await c.startAuth!(scope(storage), { force: false });
+
+      expect(continued.authorizationReused).toBeUndefined();
+      expect(clientOf(continued.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
+    });
+  });
+
+  it("re-selects a URL-based client from fresh metadata on every restart", async () => {
+    await withServer(async (server) => {
+      const clientMetadataUrl = "https://connecta.test/oauth-client.json";
+      const storage = memoryStorage();
+      const c = remoteMcp("svc", {
+        url: mcpUrl,
+        auth: { type: "oauth", clientMetadataUrl },
+        versionNegotiation: "legacy",
+      });
+      server.acceptUrlClients(true);
+      const first = await c.startAuth!(scope(storage), { force: true });
+      const second = await c.startAuth!(scope(storage), { force: true });
+      expect(clientOf(first.authorizationUrl)).toBe(clientMetadataUrl);
+      expect(clientOf(second.authorizationUrl)).toBe(clientMetadataUrl);
+      expect(server.counts.register).toBe(0);
+
+      // A carried URL client would outlive the server's support for it.
+      server.acceptUrlClients(false);
+      const third = await c.startAuth!(scope(storage), { force: true });
+
+      expect(clientOf(third.authorizationUrl)).toBe("client-1");
+      expect(server.counts.register).toBe(1);
+    });
+  });
+
+  it("never carries a registration whose client secret has expired", async () => {
+    await withServer(async (server) => {
+      const storage = memoryStorage();
+      const c = connector();
+      await c.startAuth!(scope(storage), { force: true });
+      const generation = required((await storage.get("oauth:generation")) ?? undefined);
+      const key = oauthValueStorageKey("oauth:client", generation);
+      const stored = JSON.parse(required((await storage.get(key)) ?? undefined)) as {
+        value: Record<string, unknown>;
+      };
+      stored.value.client_secret = "dcr-secret";
+      stored.value.client_secret_expires_at = Math.floor(Date.now() / 1000) - 1;
+      await storage.set(key, JSON.stringify(stored));
+
+      const restarted = await c.startAuth!(scope(storage), { force: true });
+
+      expect(clientOf(restarted.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
+    });
+  });
+
   it("continue on a disconnected connector still resets before starting", async () => {
     await withServer(async (server) => {
       const storage = memoryStorage();
@@ -5096,6 +5284,8 @@ describe("remoteMcp() continue and restart starts", () => {
       await c.startAuth!(scope(storage), { force: true });
       await c.disconnectAuth!(scope(storage));
       expect(await storage.get("oauth:generation")).toMatch(/^disconnected:/);
+      // Disconnect leaves no registration behind for a later start to find.
+      expect(await valuesNaming(storage, "client-1")).toBe(0);
 
       const continued = await c.startAuth!(scope(storage), { force: false });
 
@@ -5170,6 +5360,14 @@ describe("remoteMcp() continue and restart starts", () => {
       expect(alice).toBeTypeOf("string");
       expect(bobPrincipal).toBeTypeOf("string");
       expect(bobPrincipal).not.toBe(alice);
+
+      // A restart carries only the restarting principal's own registration.
+      const aliceRestart = await start("alice");
+      const bobRestart = await start("bob");
+      expect(aliceRestart.reused).toBe(false);
+      expect(clientOf(aliceRestart.authorizationUrl)).toBe("client-1");
+      expect(clientOf(bobRestart.authorizationUrl)).toBe("client-2");
+      expect(server.counts.register).toBe(2);
       await connecta.close();
     });
   });

@@ -22,6 +22,22 @@ All notable changes to this package are documented here.
   Restart, and Disconnect. `oauth` and `credential` are exclusive on one
   connector. See [downstream OAuth on `api()`](./documentation/auth.md#downstream-oauth-on-api).
 
+### Fixed
+
+- **A forced OAuth restart can no longer wedge on a purged client
+  registration** ([#611](https://github.com/zackbart/connecta/issues/611)).
+  Restart already carried an issuer-bound dynamic registration into the new
+  epoch; it carried it unconditionally, and a provider that had forgotten the
+  client refuses it at consent without ever redirecting back, so every later
+  Restart reused the same dead client and only Disconnect escaped. A carried
+  client is now carried again only once a grant in its epoch proves the
+  provider still knows it, so two restarts in a row with no consent between
+  them register at most once more. A URL-based client (`clientMetadataUrl`)
+  and a client whose secret has expired are never carried. Continue no longer
+  hands back a pending consent URL whose client a callback's `invalid_client`
+  has dropped; it starts a flow that registers instead. Static `api()` OAuth
+  clients are configuration and unaffected.
+
 ## 0.28.0 — 2026-10-04
 
 This minor release removes program pauses ([#672](https://github.com/zackbart/connecta/issues/672)).

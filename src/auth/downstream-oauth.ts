@@ -1072,12 +1072,20 @@ interface StoredOAuthValue<T> {
   /** Connector and redirect metadata under which a client was registered. */
   binding?: string;
   /**
+   * Set on a client registration a forced restart copied into this epoch.
+   * Absent on one the SDK registered or stamped here. Older readers ignore it.
+   */
+  carried?: true;
+  /**
    * Epoch milliseconds the value was written, where its age matters (the
    * pending authorization URL). Older readers ignore the field.
    */
   writtenAt?: number;
   value: T;
 }
+
+/** A value read from the active epoch, with the envelope fields beside it. */
+type OAuthValueRead<T> = Omit<StoredOAuthValue<T>, "connectaOAuthVersion">;
 
 interface LegacyStoredOAuthValue<T> {
   connectaOAuthVersion: 1;
@@ -1095,6 +1103,7 @@ function storedOAuthValue<T>(
     typeof candidate.generation === "string" &&
     (candidate.issuer === undefined || typeof candidate.issuer === "string") &&
     (candidate.binding === undefined || typeof candidate.binding === "string") &&
+    (candidate.carried === undefined || candidate.carried === true) &&
     "value" in candidate
   );
 }
@@ -1542,7 +1551,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     key: string,
     parseLegacy: (raw: string) => T,
   ): Promise<
-    | { value: T; generation: string; issuer?: string; binding?: string; writtenAt?: number }
+    | OAuthValueRead<T>
     | undefined
   > {
     const read = await this.readStoredValue(key, parseLegacy);
@@ -1562,13 +1571,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     parseLegacy: (raw: string) => T,
   ): Promise<
     | {
-        stored: {
-          value: T;
-          generation: string;
-          issuer?: string;
-          binding?: string;
-          writtenAt?: number;
-        };
+        stored: OAuthValueRead<T>;
         raw: string;
         plaintextCredential: boolean;
       }
@@ -1617,7 +1620,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     generation: string,
     parseLegacy: (raw: string) => T,
   ):
-    | { value: T; generation: string; issuer?: string; binding?: string; writtenAt?: number }
+    | OAuthValueRead<T>
     | undefined {
     if (storedOAuthValue<T>(parsed)) {
       return parsed.generation === generation
@@ -1626,6 +1629,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
             generation,
             ...(parsed.issuer !== undefined ? { issuer: parsed.issuer } : {}),
             ...(parsed.binding !== undefined ? { binding: parsed.binding } : {}),
+            ...(parsed.carried === true ? { carried: true as const } : {}),
             // Only a finite number is a time; anything else reads as untimed.
             ...(typeof parsed.writtenAt === "number" &&
             Number.isFinite(parsed.writtenAt)
@@ -2071,12 +2075,28 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * direction to tolerate clock skew between isolates. A URL with no write
    * time — stored by an earlier release, or under a pre-envelope generation —
    * is treated as stale, so the caller starts a fresh flow instead.
+   *
+   * The URL must also still name the epoch's client. A callback whose code
+   * exchange the server refused with `invalid_client` leaves the URL behind
+   * but drops the client; handing that URL back would send the operator to a
+   * consent the server has already refused, where a fresh flow registers.
    */
   async reusablePendingAuthorizationUrl(): Promise<string | undefined> {
     const pending = await this.readValue("oauth:pending", (raw) => raw);
-    if (pending?.writtenAt === undefined) return undefined;
-    return Math.abs(Date.now() - pending.writtenAt) <
-      PENDING_AUTHORIZATION_MAX_AGE_MS
+    if (
+      pending?.writtenAt === undefined ||
+      Math.abs(Date.now() - pending.writtenAt) >= PENDING_AUTHORIZATION_MAX_AGE_MS
+    ) {
+      return undefined;
+    }
+    let clientId: string | null;
+    try {
+      clientId = new URL(pending.value).searchParams.get("client_id");
+    } catch {
+      return undefined;
+    }
+    const client = await this.clientInformation();
+    return clientId !== null && client?.client_id === clientId
       ? pending.value
       : undefined;
   }
@@ -2157,27 +2177,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     const nonce = crypto.randomUUID();
     const previous = await this.generation();
-    // Only an explicitly forced restart may carry a registration forward.
-    // Discovery is never copied: the SDK must select the authorization server
-    // again, then its issuer-aware clientInformation hook checks the issuer.
-    const priorClient = preserveClient && !operatorDisconnected && this.clientBinding
-      ? await this.readValue(
-          "oauth:client",
-          (raw) => {
-            try {
-              return JSON.parse(raw) as OAuthClientInformationMixed;
-            } catch {
-              return {} as OAuthClientInformationMixed;
-            }
-          },
-        )
-      : undefined;
+    // Only an explicitly forced restart may carry a registration forward, and
+    // only one this connector registered: an operator disconnect, an issuer
+    // mismatch, and every unforced reset discard it. Discovery is never
+    // copied: the SDK must select the authorization server again, then its
+    // issuer-aware clientInformation hook checks the issuer.
     const reusableClient =
-      priorClient?.generation === previous &&
-      priorClient.issuer !== undefined &&
-      priorClient.binding === this.clientBinding &&
-      typeof priorClient.value?.client_id === "string"
-        ? priorClient
+      preserveClient && !operatorDisconnected && this.clientBinding
+        ? await this.carriableClient(previous)
         : undefined;
     const now = Date.now();
     const inherited = await this.cleanupBacklog(previous, now);
@@ -2233,16 +2240,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
     this.refreshCoordinator?.retire(previous);
 
     if (reusableClient && !this.signal?.aborted) {
-      // readValue opened the old physical key; writeValue seals the plaintext
+      // readValue opened the old physical key; the write seals the plaintext
       // under the new one. Copying ciphertext would fail its AAD check.
       this.captureGeneration(active);
-      await this.writeValue(
-        "oauth:client",
-        reusableClient.value,
-        (value) => JSON.stringify(value),
-        reusableClient.issuer,
-        undefined,
-        this.clientBinding,
+      await this.storeInGeneration("oauth:client", active, () =>
+        JSON.stringify({
+          connectaOAuthVersion: STORED_VALUE_VERSION,
+          generation: active,
+          issuer: reusableClient.issuer,
+          binding: reusableClient.binding,
+          carried: true,
+          value: reusableClient.value,
+        } satisfies StoredOAuthValue<OAuthClientInformationMixed>),
       );
     }
 
@@ -2280,6 +2289,62 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // lineage without racing a manifest shrink/delete. The successor copies
     // this manifest before activation and then removes this retired copy.
     if (failure) throw failure.reason;
+  }
+
+  /**
+   * The registration a forced restart may copy out of `previous`, or nothing.
+   *
+   * It must have been registered in that epoch for this authorization server
+   * (an issuer stamp) under this connector's exact configuration, redirect
+   * URI, and client metadata (the binding), and it is read through this
+   * owner's own storage, so another principal's partition is never a source.
+   * Three registrations are never carried:
+   *
+   * - A URL-based client (`clientMetadataUrl`). Nothing was registered, so
+   *   nothing is saved by copying it, and leaving it behind makes the SDK ask
+   *   the freshly discovered metadata whether the server still accepts one.
+   * - One whose `client_secret_expires_at` has passed (RFC 7591: zero means
+   *   never). The token endpoint would refuse it.
+   * - One a previous restart carried that has not since earned a grant. The
+   *   SDK builds a consent URL locally and sends nothing that could answer
+   *   `invalid_client`, and RFC 6749 section 4.1.2.1 forbids an authorization
+   *   server from redirecting a client it does not recognize, so a forgotten
+   *   registration never reaches the callback. Tokens in the epoch are the
+   *   only proof the server still knows the client. Without them the second
+   *   restart registers again, which bounds a forgotten registration to one
+   *   refused consent rather than a restart loop only a disconnect escapes.
+   */
+  private async carriableClient(
+    previous: string,
+  ): Promise<
+    | (OAuthValueRead<OAuthClientInformationMixed> & { issuer: string; binding: string })
+    | undefined
+  > {
+    const prior = await this.readValue("oauth:client", (raw) => {
+      try {
+        return JSON.parse(raw) as OAuthClientInformationMixed;
+      } catch {
+        return {} as OAuthClientInformationMixed;
+      }
+    });
+    const clientId: unknown = prior?.value?.client_id;
+    const expiresAt: unknown = prior?.value?.client_secret_expires_at;
+    if (
+      prior?.generation !== previous ||
+      prior.issuer === undefined ||
+      prior.binding === undefined ||
+      prior.binding !== this.clientBinding ||
+      typeof clientId !== "string" ||
+      clientId === this.clientMetadataUrl ||
+      (typeof expiresAt === "number" && expiresAt > 0 && expiresAt * 1000 <= Date.now())
+    ) {
+      return undefined;
+    }
+    const carriable = { ...prior, issuer: prior.issuer, binding: prior.binding };
+    if (!prior.carried) return carriable;
+    const earnedGrant =
+      (await this.storage.get(oauthValueStorageKey("oauth:tokens", previous))) !== null;
+    return earnedGrant ? carriable : undefined;
   }
 
   async invalidateCredentials(

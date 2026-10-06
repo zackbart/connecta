@@ -76,6 +76,8 @@ function fakeProvider() {
     refresh: "rotate" as "rotate" | "dead" | "outage",
     refreshGate: undefined as Promise<void> | undefined,
     apiRejects: false,
+    /** Refuse the client itself, as a provider that revoked it would. */
+    rejectClient: false,
   };
   const issue = (owner: string) => {
     minted += 1;
@@ -100,7 +102,10 @@ function fakeProvider() {
     if (url.href === TOKEN) {
       const params = new URLSearchParams(String(init.body));
       tokenRequests.push({ params, authorization: headers.get("authorization") });
-      if (headers.get("authorization") !== `Basic ${btoa("church-client:church-secret")}`) {
+      if (
+        control.rejectClient ||
+        headers.get("authorization") !== `Basic ${btoa("church-client:church-secret")}`
+      ) {
         return Response.json({ error: "invalid_client" }, { status: 401 });
       }
       if (params.get("grant_type") === "authorization_code") {
@@ -649,6 +654,27 @@ describe("api() oauth reset and disconnect", () => {
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
     expect(classified).toMatchObject({ code: "auth_required" });
     expect(provider.apiAuthorizations).toEqual([]);
+  });
+
+  it("a restart keeps the configured client and never registers one, even after invalid_client", async () => {
+    const { provider, connector, ctx, storage } = await connected();
+    const first = new URL((await connector.startAuth!(ctx(), { force: true })).authorizationUrl!);
+    const second = new URL((await connector.startAuth!(ctx(), { force: true })).authorizationUrl!);
+    expect(first.searchParams.get("client_id")).toBe("church-client");
+    expect(second.searchParams.get("client_id")).toBe("church-client");
+
+    provider.control.rejectClient = true;
+    const code = provider.consent(second.href);
+    const callback = ctx();
+    expect(await connector.verifyState!(second.searchParams.get("state"), callback)).toBe(true);
+    await expect(connector.finishAuth!(code, callback)).rejects.toThrow();
+    const third = new URL((await connector.startAuth!(ctx(), { force: true })).authorizationUrl!);
+
+    // The client is configuration: a refusal is the deployment's to fix, so
+    // nothing registers (the stub answers no registration endpoint) and no
+    // epoch ever stores a client to carry forward or discard.
+    expect(third.searchParams.get("client_id")).toBe("church-client");
+    expect((await storage.list!("")).filter((key) => key.includes("oauth:client"))).toEqual([]);
   });
 
   it("a PKCE-less callback from a retired flow is exchanged into an epoch no reader reads", async () => {

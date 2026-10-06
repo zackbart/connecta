@@ -328,8 +328,8 @@ The operator's `POST /ui/oauth/<id>` takes a `mode` query parameter:
 
 | Request | What it does |
 | --- | --- |
-| `POST /ui/oauth/<id>` or `?mode=restart` | `startAuth(ctx, { force: true })`: a new epoch, with tokens, the registered client, discovery, and any pending flow wiped, so the next flow registers a client again. |
-| `?mode=continue` | `startAuth(ctx, { force: false })`: hand back the pending authorization URL if it was written in the last ten minutes; otherwise start a flow in the current epoch, reusing the stored client registration. A disconnected connector still gets its new epoch first. |
+| `POST /ui/oauth/<id>` or `?mode=restart` | `startAuth(ctx, { force: true })`: a new epoch, with tokens, discovery, and any pending flow wiped. A dynamically registered client may be carried into it ([below](#human-authentication-management)); one that is not carried is registered again. |
+| `?mode=continue` | `startAuth(ctx, { force: false })`: hand back the pending authorization URL if it was written in the last ten minutes and still names the stored client; otherwise start a flow in the current epoch, reusing the stored client registration. A disconnected connector still gets its new epoch first. |
 | `DELETE /ui/oauth/<id>` | Disconnect: a disconnected epoch that passive reads never turn back into a consent flow. |
 
 Any other `mode`, or more than one, is a 400 before anything starts; the
@@ -594,9 +594,22 @@ the connector's URL, redirect URI, client metadata, auth scope, transport settin
 and owner partition still match. It drops the grant and one-shot flow state,
 selects the authorization server again, and re-seals the retained client under
 the replacement epoch key. A different issuer registers a new client. Disconnect
-and issuer-mismatch recovery discard it. The SDK has no client-validation
-exchange while constructing a fresh consent URL; a provider that revokes a
-retained client may refuse it only at consent or callback, after this request.
+and issuer-mismatch recovery discard it. A URL-based client is never carried:
+nothing was registered, and leaving it behind lets fresh metadata decide
+whether the server still accepts one. Neither is a client whose secret has
+expired.
+
+A carried client has to earn its next carry. Building a consent URL sends the
+provider nothing, so a restart cannot learn there that a provider has purged
+the client, and RFC 6749 forbids the provider from redirecting an unknown
+client back to the callback, so nothing arrives later either. Tokens in the
+epoch are the only proof the provider still knows it. A restart that follows
+a restart with no grant in between therefore registers again: a purged
+registration costs one refused consent, not a Restart that can never recover.
+A refusal connecta does hear is handled where it lands. A start whose refresh
+draws `invalid_client` drops the client and registers in that same start; a
+callback whose code exchange draws it drops the client, and Continue will not
+hand back the URL that named it.
 
 Credential and OAuth mutation require an admitted interactive human, connector
 visibility, the appropriate shared or personal permission, and an exact
@@ -638,6 +651,8 @@ existing dynamic registration flow. State validation, PKCE, issuer binding,
 encrypted token storage, refresh, and disconnect follow the same code paths.
 The metadata URL and scopes participate in the saved-client configuration
 binding, so restarting after either changes cannot reuse an old registration.
+A restart never carries the URL-based client itself, so a server that stops
+advertising support gets a registered client on the next restart.
 
 `scope` supplies space-separated default OAuth scopes through client metadata.
 A downstream challenge or protected-resource scope declaration takes precedence,
