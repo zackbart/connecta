@@ -1560,7 +1560,17 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           draft["message"],
           bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS),
           RESULT_BUDGET_BYTES,
-          ({ id, ...message }) => compact({ draftId, messageId: id, ...message }),
+          // Omissions name the public field: here the message's `id` is
+          // returned as `messageId`.
+          ({ id, omittedIds, ...message }) =>
+            compact({
+              draftId,
+              messageId: id,
+              ...message,
+              omittedIds: Array.isArray(omittedIds)
+                ? omittedIds.map((name: string) => (name === "id" ? "messageId" : name))
+                : undefined,
+            }),
         );
       },
     },

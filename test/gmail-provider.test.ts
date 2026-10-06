@@ -1123,9 +1123,18 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
     }
     if (value === null || typeof value !== "object") return [];
     const properties = schema?.properties ?? {};
-    return Object.entries(value).flatMap(([key, item]) =>
-      key in properties ? undeclared(item, properties[key], `${path}.${key}`) : [`${path}.${key}`],
-    );
+    // An omission names a field of the object it sits on, by its public name.
+    const omitted = Array.isArray((value as { omittedIds?: unknown }).omittedIds)
+      ? ((value as { omittedIds: string[] }).omittedIds)
+          .filter((name) => !(name in properties))
+          .map((name) => `${path}.omittedIds:${name}`)
+      : [];
+    return [
+      ...omitted,
+      ...Object.entries(value).flatMap(([key, item]) =>
+        key in properties ? undeclared(item, properties[key], `${path}.${key}`) : [`${path}.${key}`],
+      ),
+    ];
   }
 
   async function schemaOf(tool: string): Promise<unknown> {
@@ -1250,6 +1259,10 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
     for (const [tool, args] of results) {
       const result = await call(connection(), tool, args);
       expect(undeclared(result, await schemaOf(tool)), tool).toEqual([]);
+      // The fixture's oversized message id is reported under each tool's own
+      // name for it.
+      if (tool === "get_draft") expect(result.omittedIds).toEqual(["messageId"]);
+      if (tool === "get_message") expect(result.omittedIds).toEqual(["id"]);
     }
   });
 });

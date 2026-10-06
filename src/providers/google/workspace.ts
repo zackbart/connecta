@@ -808,6 +808,16 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       }
       try {
         return await transport(token, facts)(headed, ctx, async (response) => {
+          // Every 3xx — the ones the transport refuses and the 300, 304, 305,
+          // and 306 it lets through — is a redirect before it is anything
+          // else: no body or reason it carries makes it a refusal.
+          if (response.status >= 300 && response.status < 400) {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `${provider} answered HTTP ${response.status} with a redirect; this connection talks to exactly one origin and never forwards its credential to another.`,
+              { retryable: false },
+            );
+          }
           // A bounded read answers an empty file's 416 as an empty result.
           if (!response.ok && !(headed.prefixOnly === true && isEmptyRange(response))) {
             const parsed = await response.jsonResult();
@@ -827,13 +837,17 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         // Every 401 Google sent earns the refresh and the one replay, whether
         // its body was read or failed the transport's checks first: what the
         // status said about the token does not depend on the body.
-        const unauthorized =
-          error instanceof TokenRejected || (facts.status === 401 && !ctx.signal?.aborted);
+        // A caller that has left gets neither: the 401 it saw is reported as
+        // it was, and no new token is minted for a request nobody awaits.
         const failed = error instanceof TokenRejected ? error.failure : error;
+        const unauthorized =
+          !ctx.signal?.aborted && (error instanceof TokenRejected || facts.status === 401);
         if (!unauthorized) throw settled(failed, facts, headed.method, ctx, requestOptions);
         // Only the token this request carried; a newer one stays.
         await forgetDelegatedToken(delegated, token);
-        if (attempt > 0) throw settled(failed, facts, headed.method, ctx, requestOptions);
+        if (attempt > 0 || ctx.signal?.aborted) {
+          throw settled(failed, facts, headed.method, ctx, requestOptions);
+        }
       }
     }
   }

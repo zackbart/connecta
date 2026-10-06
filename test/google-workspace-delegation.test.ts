@@ -1330,6 +1330,46 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
       });
 
+      it.each(
+        WRITES.flatMap((method) => [300, 304, 305, 306].map((status) => [method, status] as const)),
+      )("%s → %i with a quota reason is still redirected, never a rate limit", async (method, status) => {
+        // 300, 304, 305, and 306 pass the transport's own redirect check, so
+        // they reach the mapper; a reason in the body must not turn them into
+        // a retryable refusal.
+        apiReplies.push(() =>
+          new Response(
+            status === 304
+              ? null
+              : JSON.stringify({ error: { code: status, message: "Slow down", errors: [{ reason: "rateLimitExceeded" }] } }),
+            { status, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(failure.message).toContain("whether the request was applied is unknown");
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+      });
+
+      it("classifies a 300 the same whether its body is readable or past the ceiling", async () => {
+        apiReplies.push(
+          () => Response.json({ error: { errors: [{ reason: "rateLimitExceeded" }] } }, { status: 300 }),
+          () => new Response(new Uint8Array(4096), { status: 300, headers: { "Content-Length": "4096" } }),
+        );
+        const drive = client(1024);
+        for (let index = 0; index < 2; index += 1) {
+          const failure = await failing(drive.json(write, context()));
+          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
+          expect(failure.retryable).toBe(false);
+        }
+      });
+
+      it("keeps a GET's 300 a non-retryable redirect", async () => {
+        apiReplies.push(() => new Response(null, { status: 300 }));
+        const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
+        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 300, phase: "redirected" });
+      });
+
       it("keeps a GET redirect's own refusal, phase redirected", async () => {
         apiReplies.push(() => new Response(null, { status: 302, headers: { Location: "https://elsewhere.example/" } }));
         const failure = await failing(client().json({ method: "GET", path: "/files/f1" }, context()));
@@ -1414,6 +1454,24 @@ describe("the shared client reads bytes and text for the products that need them
         const ctx = cancelledOnAnswer(oversized(status));
         const failure = await failing(client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx));
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase });
+      });
+
+      it("neither refreshes nor replays a 401 once the caller has left, and keeps the 401", async () => {
+        // The caller leaves while the 401's body is being read: whether the
+        // body read finishes (a TokenRejected) or fails (the transport's
+        // check), no new token is minted and the outcome is the 401 seen.
+        for (const reply of [
+          () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+          () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } }),
+        ]) {
+          tokenCalls.length = 0;
+          apiCalls.length = 0;
+          const ctx = cancelledOnAnswer(reply);
+          const failure = await failing(client(1024).json(write, ctx));
+          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 401, phase: "refused" });
+          expect(tokenCalls).toHaveLength(1);
+          expect(apiCalls).toHaveLength(1);
+        }
       });
 
       it("keeps an idempotent write's 5xx a refusal", async () => {
