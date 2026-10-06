@@ -6471,6 +6471,29 @@ describe("/oauth/callback/<id> route", () => {
     expect(finish).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
   });
 
+  it("refuses a callback any provider refused with final, interactive or not", async () => {
+    const finish = vi.fn(async () => {});
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      // A bearer's refused asserted principal (#679), and nothing interactive
+      // whose 403 would otherwise be the only explicit denial.
+      auth: { kind: "bearer",
+        authorize: (request) => request.headers.has("authorization")
+          ? { ok: false, final: true, response: new Response(null, { status: 403 }) }
+          : { ok: false, response: new Response(null, { status: 401 }) } },
+      connectors: [callbackConnector("svc", finish, async state => state === "verified-state")],
+    });
+    const refused = await connecta.fetch(new Request(
+      `${BASE}/oauth/callback/svc?code=abc&state=verified-state`,
+      { headers: { authorization: "Bearer agent-secret" } },
+    ));
+    expect(refused.status).toBe(400);
+    expect(finish).not.toHaveBeenCalled();
+    const browser = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
+    expect(browser.status).toBe(200);
+    expect(finish).toHaveBeenCalledTimes(1);
+  });
+
   it("every unverifiable callback failure is indistinguishable", async () => {
     const spy = vi.fn();
     const { connecta, storage } = makeConnecta(spy);

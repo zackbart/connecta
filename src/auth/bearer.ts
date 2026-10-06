@@ -38,7 +38,9 @@ export interface AssertedPrincipalOptions {
   /**
    * Deployment policy for which ids this secret may act for, e.g. one email
    * domain. Receives the id verbatim (surrounding whitespace aside); only a
-   * literal `true` admits, and a throw refuses.
+   * literal `true` admits, and a throw refuses. An id containing a comma is
+   * refused before this runs, because a comma is how HTTP joins a repeated
+   * header.
    */
   accept(id: string): boolean | Promise<boolean>;
 }
@@ -181,6 +183,10 @@ export function bearerToken(
       if (raw === null || raw.trim() === "") {
         return assertionRefused("asserted principal required");
       }
+      // Fetch joins a repeated header with ", ". Trimming would turn
+      // `alice` plus an empty second value into the different id `alice,`,
+      // so any comma is refused before trimming; no id may contain one.
+      if (raw.includes(",")) return assertionRefused("asserted principal refused");
       const principal = { namespace, id: raw.trim() };
       if (!validIdentityReference(principal)) {
         return assertionRefused("asserted principal refused");

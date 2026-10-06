@@ -64,6 +64,17 @@ nothing changes for a deployment that imports none of `./providers/gmail`,
 no export of its own, and a deployment's own connectors still never learn their
 caller.
 
+This release lets a trusted agent platform act for its users. A static bearer
+secret can now carry the end user each request is for, so one Eve agent gets
+per-user views, personal connectors, result paging, and activity without any
+user ever signing in. It is opt-in per `bearerToken`: a bearer without
+`assertedPrincipal` behaves exactly as before, and nothing else needs
+configuring. One change reaches every deployment's auth walk, though only
+providers that use it notice: an inbound-auth refusal marked `final` now ends
+the walk on `/mcp` and on every human route, where the latter used to skip
+non-interactive providers entirely. No shipped provider other than an asserting
+bearer marks its refusals, so existing deployments see no difference.
+
 ### Added
 
 - **Google Docs connection.** `@zackbart/connecta/providers/docs` exports
@@ -394,7 +405,9 @@ caller.
 - **`final` on inbound-auth refusals.** An `InboundAuth` provider may mark a
   refusal `final: true` when it recognized the credential and refuses the
   request anyway; the server then returns that response instead of asking the
-  next provider. Unmarked refusals keep falling through.
+  next provider, on `/mcp` and on the operator, credential, access-token, and
+  OAuth-callback routes alike. Unmarked refusals keep falling through.
+
 ### Changed
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**

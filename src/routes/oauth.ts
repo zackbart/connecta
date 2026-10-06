@@ -189,12 +189,13 @@ async function finishOAuthCallback(
     // A browser returning from consent normally has no MCP Authorization
     // header. An interactive bearer provider therefore answers 401 here; state
     // and the saved state-to-principal handoff still prove ownership below.
-    // Rejecting 401 would break that callback. A 403 is an explicit denial.
+    // Rejecting 401 would break that callback. A 403 is an explicit denial,
+    // and a final refusal from any provider is one whatever its status.
     const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
     if (browserIdentity.ok) {
       try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
       if (!mayManageConnector(browserIdentity, connector) || (expectedPrincipalKey && browserIdentity.principalKey !== expectedPrincipalKey)) return refused();
-    } else if (browserIdentity.response.status === 403 && opts.auth.some(provider => provider.interactiveOperator)) {
+    } else if (browserIdentity.final === true || (browserIdentity.response.status === 403 && opts.auth.some(provider => provider.interactiveOperator))) {
       return refused();
     }
     // CSRF / login-fixation guard: this route is intentionally public, so verify

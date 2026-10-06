@@ -9,7 +9,10 @@ returns either `{ ok: true, userId?, subjectId?, principal? }` or a refusal
 carrying its own `Response`, so the provider owns its challenge. A refusal is
 normally a non-match and the next provider gets its turn; one marked
 `final: true` is a credential the provider recognized and refuses anyway, and
-it ends the walk. Connecta
+it ends the walk. That holds on every route that walks providers: `/mcp`, the
+artifact pages, and the human routes for operators, credentials, access tokens,
+and OAuth callbacks, which consult each non-interactive provider for its final
+refusal before any interactive one may admit. Connecta
 issues managed client tokens only when the optional `accessTokens` module is configured.
 
 The bearer adapter challenges with `WWW-Authenticate: Bearer` and deliberately
@@ -265,8 +268,9 @@ A missing or blank header is a 403 `asserted principal required`. An id that is
 not a valid identity reference (1–256 printable, non-space ASCII), or that
 `accept` declines, throws on, or answers with anything but a literal `true`, is
 a 403 `asserted principal refused`. Both are `final`, so no later provider is
-asked: a Cloudflare Access identity riding the same request cannot admit what
-the assertion could not, and the secret is never admitted as the bare service.
+asked, on `/mcp` or on any human route: a Cloudflare Access identity riding the
+same request cannot admit what the assertion could not, not even to mint an
+access token, and the secret is never admitted as the bare service.
 `accept` may be async.
 
 An admitted request carries `principal: { namespace, id }`, and the same id is
@@ -290,7 +294,9 @@ and `alice@example.com` would be two people with two sets of personal state.
 Send canonical ids and have `accept` refuse anything else, as the lowercase-only
 pattern above does; a mixed-case address then fails loudly instead of quietly
 splitting someone's history. A header sent twice arrives joined by a comma and a
-space, which no valid id contains.
+space, and trimming `alice` plus an empty repeat would leave the different id
+`alice,`, so any comma is refused before trimming. Ids containing commas are
+therefore unsupported; no email or directory id a platform would send needs one.
 
 The asserted principal is its own. Unless the namespace and id equal what an
 interactive provider derives, the same person signed in through Clerk is a

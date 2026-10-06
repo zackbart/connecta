@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { bearerToken, type AssertedPrincipalOptions } from "../src/auth/bearer.js";
 import { callerOf } from "../src/connector-caller.js";
+import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
+import { authorizeUiIdentity } from "../src/routes/shared.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthResult, Connector, InboundAuth } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { readJsonRpc } from "./fixtures/http.js";
@@ -103,11 +106,28 @@ describe("bearerToken asserted principal", () => {
         BASE,
       ))).toEqual({ status: 403, final: true, body: { error: "asserted principal refused" } });
     }
-    const duplicated = new Headers({ authorization: `Bearer ${SECRET}` });
-    duplicated.append(HEADER, "alice@example.com");
-    duplicated.append(HEADER, "bob@example.com");
-    expect(await refusal(auth.authorize(
-      new Request(`${BASE}/mcp`, { method: "POST", headers: duplicated }),
+    // Fetch joins repeats with ", ". An empty repeat would otherwise trim to
+    // `alice@example.com,`, a different id a loose accept might admit.
+    const loose = bearerToken(SECRET, {
+      assertedPrincipal: { ...assertion, accept: (id) => id.startsWith("alice@") },
+    });
+    for (const values of [
+      ["alice@example.com", "bob@example.com"],
+      ["alice@example.com", ""],
+      ["", "alice@example.com"],
+      ["", ""],
+    ]) {
+      const duplicated = new Headers({ authorization: `Bearer ${SECRET}` });
+      for (const value of values) duplicated.append(HEADER, value);
+      for (const provider of [auth, loose]) {
+        expect(await refusal(provider.authorize(
+          new Request(`${BASE}/mcp`, { method: "POST", headers: duplicated }),
+          BASE,
+        ))).toEqual({ status: 403, final: true, body: { error: "asserted principal refused" } });
+      }
+    }
+    expect(await refusal(loose.authorize(
+      req({ authorization: `Bearer ${SECRET}`, [HEADER]: "alice@example.com," }),
       BASE,
     ))).toMatchObject({ status: 403, final: true });
   });
@@ -325,5 +345,75 @@ describe("an asserted principal through a deployment", () => {
       identity: { principal: { id: "alice@example.com" } },
     });
     await connecta.close();
+  });
+});
+
+describe("a final refusal on human routes", () => {
+  // Stands in for Cloudflare Access: an interactive provider that admits on
+  // the edge's identity whatever the Authorization header says.
+  const accessAdmin: InboundAuth = {
+    kind: "edge-access",
+    interactiveOperator: true,
+    activityActorNamespace: "edge-access",
+    authorize: () => ({ ok: true, userId: "admin", subjectId: "admin" }),
+  };
+
+  function deploy(auth: InboundAuth[]) {
+    return createTestConnecta({
+      connectors: [],
+      auth,
+      accessTokens: accessTokens(memoryStorage()),
+      identity: { accessTokenManagement: () => true },
+      logger: silentLogger,
+    });
+  }
+
+  const mint = (headers: Record<string, string>) =>
+    new Request(`${BASE}/ui/access-tokens`, {
+      method: "POST",
+      headers: { Origin: BASE, "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ name: "minted" }),
+    });
+
+  it("stops a refused assertion before an interactive provider can mint a token", async () => {
+    const connecta = deploy([bearerToken(SECRET, { assertedPrincipal: assertion }), accessAdmin]);
+    try {
+      const refused = await connecta.fetch(mint({
+        authorization: `Bearer ${SECRET}`,
+        [HEADER]: "mallory@evil.test",
+      }));
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({ error: "asserted principal refused" });
+      // The same edge identity without the asserting secret is still admitted.
+      expect((await connecta.fetch(mint({}))).status).toBe(201);
+    } finally {
+      await connecta.close();
+    }
+  });
+
+  it("stops at an interactive provider's own final refusal", async () => {
+    const banned: InboundAuth = {
+      kind: "directory",
+      interactiveOperator: true,
+      authorize: (request) => request.headers.has("x-banned")
+        ? { ok: false, final: true, response: Response.json({ error: "suspended" }, { status: 403 }) }
+        : { ok: false, response: new Response(null, { status: 401 }) },
+    };
+    const result = await authorizeUiIdentity(
+      new Request(`${BASE}/ui/data`, { headers: { "x-banned": "1" } }),
+      BASE,
+      [banned, accessAdmin],
+      "test",
+    );
+    expect(result).toMatchObject({ ok: false, final: true });
+    const connecta = deploy([banned, accessAdmin]);
+    try {
+      const refused = await connecta.fetch(mint({ "x-banned": "1" }));
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({ error: "suspended" });
+      expect((await connecta.fetch(mint({}))).status).toBe(201);
+    } finally {
+      await connecta.close();
+    }
   });
 });
