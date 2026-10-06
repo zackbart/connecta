@@ -176,6 +176,9 @@ export function bearerToken(
     kind: "bearer",
     // Activity attributes each call to the asserted user, in this namespace.
     activityActorNamespace: namespace,
+    // A refused assertion must also stop human routes, which skip other
+    // non-interactive providers.
+    finalRefusals: true,
     async authorize(request): Promise<AuthResult> {
       // Without the secret the header means nothing and is never read.
       if (!matches(request)) return unauthorized();

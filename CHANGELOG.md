@@ -69,11 +69,13 @@ secret can now carry the end user each request is for, so one Eve agent gets
 per-user views, personal connectors, result paging, and activity without any
 user ever signing in. It is opt-in per `bearerToken`: a bearer without
 `assertedPrincipal` behaves exactly as before, and nothing else needs
-configuring. One change reaches every deployment's auth walk, though only
-providers that use it notice: an inbound-auth refusal marked `final` now ends
-the walk on `/mcp` and on every human route, where the latter used to skip
-non-interactive providers entirely. No shipped provider other than an asserting
-bearer marks its refusals, so existing deployments see no difference.
+configuring. Inbound auth gains two optional members that only an asserting
+bearer uses among shipped providers: a refusal marked `final` ends the
+provider walk, and a non-interactive provider that declares `finalRefusals`
+is consulted on human routes for that refusal alone. Every other
+non-interactive provider is still skipped there, so a deployment without an
+asserting bearer sees the same human-route behavior and storage reads as
+before.
 
 ### Added
 
@@ -405,8 +407,11 @@ bearer marks its refusals, so existing deployments see no difference.
 - **`final` on inbound-auth refusals.** An `InboundAuth` provider may mark a
   refusal `final: true` when it recognized the credential and refuses the
   request anyway; the server then returns that response instead of asking the
-  next provider, on `/mcp` and on the operator, credential, access-token, and
-  OAuth-callback routes alike. Unmarked refusals keep falling through.
+  next provider. Unmarked refusals keep falling through. Human routes admit
+  only interactive providers; a non-interactive provider that declares
+  `finalRefusals: true` is consulted there for its final refusal alone, so an
+  asserting bearer's refusal cannot be bypassed by, say, Cloudflare Access
+  minting an access token for the same request.
 
 ### Changed
 

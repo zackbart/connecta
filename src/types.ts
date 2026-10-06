@@ -673,6 +673,13 @@ export interface InboundAuth {
   /** This provider may admit a human identity to operator mutation routes. */
   interactiveOperator?: true;
   /**
+   * This non-interactive provider may refuse a credential it recognizes with
+   * `final`. Human routes then consult it for that refusal alone — anything
+   * else it answers there is ignored, so the marker can only refuse. Without
+   * it a non-interactive provider is skipped on human routes entirely.
+   */
+  finalRefusals?: true;
+  /**
    * Stable, non-secret namespace of the identity directory behind
    * `activityActorLabel`. Stored with new activity actors so two providers with
    * the same `kind` never receive each other's ids. Legacy actors without a

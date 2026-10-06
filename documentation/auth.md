@@ -9,10 +9,13 @@ returns either `{ ok: true, userId?, subjectId?, principal? }` or a refusal
 carrying its own `Response`, so the provider owns its challenge. A refusal is
 normally a non-match and the next provider gets its turn; one marked
 `final: true` is a credential the provider recognized and refuses anyway, and
-it ends the walk. That holds on every route that walks providers: `/mcp`, the
-artifact pages, and the human routes for operators, credentials, access tokens,
-and OAuth callbacks, which consult each non-interactive provider for its final
-refusal before any interactive one may admit. Connecta
+it ends the walk on `/mcp` and the artifact pages. The human routes for
+operators, credentials, access tokens, and OAuth callbacks admit only
+interactive providers and skip the rest unasked, so a slow or failing machine
+credential costs them nothing. A non-interactive provider that sets
+`finalRefusals: true` is the exception: those routes consult it, in order, for
+its `final` refusal alone, and ignore anything else it answers. An asserting
+bearer sets it; nothing else shipped does. Connecta
 issues managed client tokens only when the optional `accessTokens` module is configured.
 
 The bearer adapter challenges with `WWW-Authenticate: Bearer` and deliberately

@@ -283,13 +283,14 @@ export async function authorize(
 }
 
 /**
- * An interactive human for operator, token, and OAuth routes. The walk visits
- * every configured provider in order, as `authorize` does, because a `final`
- * refusal from any of them — a bearer whose asserted principal was refused,
- * say — ends it here too; skipping non-interactive providers would let a
- * later interactive one admit the very request that refusal answered. Only an
- * interactive provider can admit, so the others are consulted for their
- * terminal refusals alone.
+ * An interactive human for operator, token, and OAuth routes. Only an
+ * interactive provider can admit here. A non-interactive one is consulted only
+ * when it declares `finalRefusals` — a bearer with an asserted principal — and
+ * then only for that `final` refusal, which ends the walk as it does in
+ * `authorize`; otherwise a later interactive provider could admit the very
+ * request the refusal answered. Every other non-interactive provider is
+ * skipped unasked, so its latency, storage reads, and failures stay off human
+ * routes.
  */
 export async function authorizeUiIdentity(
   request: Request,
@@ -305,6 +306,7 @@ export async function authorizeUiIdentity(
   let lastResponse: Response | undefined;
   for (const provider of auth) {
     if (!provider.interactiveOperator) {
+      if (provider.finalRefusals !== true) continue;
       const result = await provider.authorize(request, baseUrl, runtimeContext);
       if (!result.ok && result.final === true) {
         return { ok: false, response: result.response, final: true };

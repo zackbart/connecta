@@ -391,6 +391,36 @@ describe("a final refusal on human routes", () => {
     }
   });
 
+  it("leaves other non-interactive providers unasked, so one that throws breaks nothing", async () => {
+    let asked = 0;
+    const legacy: InboundAuth = {
+      kind: "legacy-machine",
+      authorize: () => {
+        asked++;
+        throw new Error("directory unreachable");
+      },
+    };
+    // Undeclared, even a final refusal is not consulted on human routes.
+    const undeclared: InboundAuth = {
+      kind: "machine",
+      authorize: () => {
+        asked++;
+        return { ok: false, final: true, response: new Response(null, { status: 403 }) };
+      },
+    };
+    const connecta = deploy([legacy, undeclared, accessAdmin]);
+    try {
+      const listed = await connecta.fetch(new Request(`${BASE}/ui/access-tokens`, {
+        headers: { Origin: BASE },
+      }));
+      expect(listed.status).toBe(200);
+      expect((await connecta.fetch(mint({}))).status).toBe(201);
+      expect(asked).toBe(0);
+    } finally {
+      await connecta.close();
+    }
+  });
+
   it("stops at an interactive provider's own final refusal", async () => {
     const banned: InboundAuth = {
       kind: "directory",
