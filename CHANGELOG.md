@@ -114,18 +114,29 @@ a deployment's own connectors still never learn their caller.
   left out unless asked, `user`/`drive`/`allDrives`/`domain` corpora, Drive's
   own `incompleteSearch` surfaced), `list_folder_items`, `get_file`,
   `get_file_content` (Docs exported as Markdown, Sheets as CSV of the first
-  sheet only, Slides as text, text files read by range up to `maxChars`,
-  binaries as base64 up to 1 MiB, and anything else — a larger binary, a
-  drawing, a form, a folder, a shortcut — as `format: "unavailable"` with a
-  note rather than an empty success), `list_permissions`, and
-  `list_shared_drives`. Additive writes: `create_folder`, `create_file` (text
+  sheet only, Slides as text, text files read by range and cut at `maxChars`
+  code points, never inside a character, binaries as base64 up to
+  `maxBinaryBytes` — 128 KiB by default, so every default result fits the
+  256 KiB a host result may carry into `execute_code`, and up to 1 MiB on
+  request for a direct call — and anything else — a larger binary, a drawing,
+  a form, a folder, a shortcut — as `format: "unavailable"` with a note rather
+  than an empty success; both caps hold on the bytes the download returns,
+  never on the size metadata reported, so a file that grew between the two
+  reads is still cut, and Drive's 10 MB export limit is named from Google's
+  own reason code), `list_permissions`, and `list_shared_drives`. Listings cut
+  a name past 1,000 characters and flag it `nameTruncated`; `get_file` returns
+  it whole. Additive writes:
+  `create_folder` and `restore_file`. Destructive writes: `create_file` (text
   or base64 content as one multipart upload, or an empty file; `convertTo`
-  imports it as a Google Doc, Sheet, or Slides file), `copy_file`, and
-  `restore_file`. Destructive writes: `update_file_content`, `update_file`
-  (rename, description), `move_file` (a move changes inherited sharing),
-  `trash_file`, `share_file` (user, group, domain, or anyone with the link, up
-  to writer or organizer, emailing no one unless `sendNotificationEmail`),
-  `update_permission`, and `delete_permission`. There is no permanent delete,
+  imports it as a Google Doc, Sheet, or Slides file) and `copy_file`, because
+  a new file takes its folder's sharing and so discloses its content to
+  everyone a shared destination reaches — a deployment that accepts that can
+  still exempt either in `execute.approval` — and `update_file_content`,
+  `update_file` (rename, description), `move_file` (a move changes inherited
+  sharing), `trash_file`, `share_file` (user, group, domain, or anyone with
+  the link, up to writer or organizer, emailing no one unless
+  `sendNotificationEmail`), `update_permission`, and `delete_permission`.
+  There is no permanent delete,
   no empty-trash, no ownership transfer, and no raw hatch. A 404 says the file
   may be missing or hidden from this account, because Drive does not say
   which. Setup — the Google Drive API and the one scope on the delegation

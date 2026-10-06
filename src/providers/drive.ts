@@ -68,8 +68,20 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 const DEFAULT_CONTENT_CHARS = 20_000;
 const MAX_CONTENT_CHARS = 100_000;
-/** A binary file is returned as base64 at or under this size, never above. */
+/**
+ * A binary file is returned as base64 at or under this size, never above.
+ * The default keeps the base64 (4/3 the bytes) inside the 256 KiB a single
+ * host result may carry into execute_code; the maximum, an explicit opt-in,
+ * is deliverable only through a direct call, whose oversized results are
+ * stashed and paged with get_result.
+ */
+const DEFAULT_BINARY_BYTES = 128 * 1024;
 const BINARY_INLINE_BYTES = 1024 * 1024;
+/**
+ * A listed file's name is cut here, so a default page of pathological names
+ * still crosses into execute_code; get_file returns the whole name.
+ */
+const MAX_LISTED_NAME_CHARS = 1_000;
 /** Upload ceiling for text, in characters; Drive's multipart limit is 5 MB. */
 const MAX_UPLOAD_CHARS = 1_000_000;
 /** Base64 characters for {@link BINARY_INLINE_BYTES} decoded bytes. */
@@ -184,6 +196,14 @@ const CAPABILITIES = [
   "canAddChildren",
 ] as const;
 
+/** A listing row, its name cut at {@link MAX_LISTED_NAME_CHARS} and flagged. */
+function listed(file: JsonRecord): JsonRecord {
+  const name = file["name"];
+  if (typeof name !== "string") return file;
+  const { end, total } = codePointCut(name, MAX_LISTED_NAME_CHARS);
+  return total > MAX_LISTED_NAME_CHARS ? { ...file, name: `${name.slice(0, end)}…`, nameTruncated: true } : file;
+}
+
 function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
   const file = asRecord(value);
   const modifier = asRecord(file["lastModifyingUser"]);
@@ -257,19 +277,65 @@ function isText(mimeType: string): boolean {
   );
 }
 
-/** Cut text at `max` characters and say so in the text itself. */
+/** Whether the UTF-16 unit at `index` opens a surrogate pair that is whole. */
+function pairAt(value: string, index: number): boolean {
+  const unit = value.charCodeAt(index);
+  return unit >= 0xd800 && unit <= 0xdbff && (value.charCodeAt(index + 1) & 0xfc00) === 0xdc00;
+}
+
+/**
+ * The string index just past the first `max` characters, counted as code
+ * points — so a cut never splits a surrogate pair — and how many characters
+ * the whole string holds.
+ */
+function codePointCut(value: string, max: number): { end: number; total: number } {
+  let index = 0;
+  let total = 0;
+  let end = value.length;
+  while (index < value.length) {
+    if (total === max) end = index;
+    index += pairAt(value, index) ? 2 : 1;
+    total += 1;
+  }
+  return { end: total > max ? end : value.length, total };
+}
+
+/**
+ * Cut text at `max` characters (code points) and say so in the text itself.
+ * `partial` is a body read only in part, which is cut whatever its length:
+ * there is more past it.
+ */
 function capped(
   body: string,
   max: number,
-  partial: { size: number } | undefined,
+  partial: { size: number | undefined } | undefined,
 ): { content: string; contentTruncated: boolean } {
-  if (body.length <= max && !partial) return { content: body, contentTruncated: false };
-  const shown = body.slice(0, max);
-  const of = partial ? `a ${partial.size}-byte file` : `${body.length} characters`;
+  const { end, total } = codePointCut(body, max);
+  if (total <= max && !partial) return { content: body, contentTruncated: false };
+  const shown = body.slice(0, end);
+  const kept = Math.min(total, max);
+  const of = partial
+    ? partial.size !== undefined && partial.size > 0
+      ? `a ${partial.size}-byte file`
+      : "a larger file"
+    : `${total} characters`;
   return {
-    content: `${shown}\n[… truncated: ${shown.length} characters of ${of} shown; raise maxChars (up to ${MAX_CONTENT_CHARS}) to read more]`,
+    content: `${shown}\n[… truncated: ${kept} characters of ${of} shown; raise maxChars (up to ${MAX_CONTENT_CHARS}) to read more]`,
     contentTruncated: true,
   };
+}
+
+function charsetOf(contentType: string | undefined): string {
+  return /charset="?([^";\s]+)"?/i.exec(contentType ?? "")?.[1] ?? "utf-8";
+}
+
+/** Bytes as text in the charset the response declared, where the runtime knows it. */
+function decodeIn(bytes: Uint8Array, contentType: string | undefined): string {
+  try {
+    return new TextDecoder(charsetOf(contentType)).decode(bytes);
+  } catch {
+    return new TextDecoder().decode(bytes);
+  }
 }
 
 function base64(bytes: Uint8Array): string {
@@ -313,11 +379,43 @@ function unreadable(file: JsonRecord): string | undefined {
 }
 
 /**
- * The bytes a text read spends: enough for `maxChars` of UTF-8 at four bytes
- * each, so a large file is read by range and never whole.
+ * The bytes a text read keeps: enough for `maxChars` of UTF-8 at four bytes
+ * each and one more character, so a body this long is always cut.
  */
 function textBudget(maxChars: number): number {
   return maxChars * 4 + 4;
+}
+
+/**
+ * A media download of at most `limit` bytes, and whether the file had more.
+ *
+ * The limit is enforced on the response, never on the size metadata
+ * reported: that is a separate read, and a file can change between the two.
+ * The range asks for one byte past the limit, so a file that has more says so
+ * by sending it. A server that ignores the range sends the whole body, which
+ * the transport bounds at its own ceiling and this cuts before anything else
+ * reads it. An empty file is fetched without a range, which Drive would answer
+ * 416 for.
+ */
+async function download(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  path: string,
+  limit: number,
+  reported: number | undefined,
+): Promise<{ bytes: Uint8Array; more: boolean; contentType: string | undefined }> {
+  const { bytes, contentType } = await client.bytes(
+    {
+      method: "GET",
+      path,
+      query: { ...ALL_DRIVES, alt: "media" },
+      headers: { Range: reported === 0 ? undefined : `bytes=0-${limit}` },
+    },
+    ctx,
+  );
+  return bytes.length > limit
+    ? { bytes: bytes.subarray(0, limit), more: true, contentType }
+    : { bytes, more: false, contentType };
 }
 
 async function readContent(
@@ -325,6 +423,7 @@ async function readContent(
   ctx: ConnectorContext,
   fileId: string,
   maxChars: number,
+  maxBinaryBytes: number,
 ): Promise<JsonRecord> {
   const filePath = `/files/${encodeURIComponent(fileId)}`;
   const file = asRecord(
@@ -354,26 +453,13 @@ async function readContent(
 
   const exported = EXPORTS[mimeType];
   if (exported) {
-    let body: string;
-    try {
-      ({ text: body } = await client.text(
-        { method: "GET", path: `${filePath}/export`, query: { mimeType: exported.mimeType } },
-        ctx,
-        exported.mimeType,
-      ));
-    } catch (error) {
-      // A 403 here arrives without Google's reason. The file is readable and
-      // downloadable — the metadata read just said so — which leaves the
-      // export limit as the likely cause, though Google does not say.
-      if (error instanceof ConnectorCallError && error.code === "connector_call_failed") {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          `${error.message} Drive exports at most 10 MB of converted content, and a larger file cannot be exported through the API at all; if this file is large, that is the likely cause. Open webViewLink instead.`,
-          { retryable: false, cause: error },
-        );
-      }
-      throw error;
-    }
+    // Past Drive's 10 MB export limit, the shared client names Google's
+    // exportSizeLimitExceeded itself; nothing here guesses at a 403.
+    const { text: body } = await client.text(
+      { method: "GET", path: `${filePath}/export`, query: { mimeType: exported.mimeType } },
+      ctx,
+      exported.mimeType,
+    );
     return compact({
       ...base,
       format: exported.format,
@@ -384,36 +470,28 @@ async function readContent(
   }
 
   if (isText(mimeType)) {
-    const budget = textBudget(maxChars);
-    const partial = size === undefined || size > budget;
-    const { text: body } = await client.text(
-      {
-        method: "GET",
-        path: filePath,
-        query: { ...ALL_DRIVES, alt: "media" },
-        headers: { Range: partial ? `bytes=0-${budget - 1}` : undefined },
-      },
-      ctx,
-    );
-    // A range can end inside a multi-byte character; drop the half.
-    const whole = partial ? body.replace(/�$/, "") : body;
-    const cut = partial && size !== undefined && size > budget;
-    return { ...base, format: "text", ...capped(whole, maxChars, cut ? { size } : undefined) };
+    const read = await download(client, ctx, filePath, textBudget(maxChars), size);
+    let body = decodeIn(read.bytes, read.contentType);
+    // A cut can land inside a character; drop the half, never show it.
+    if (read.more) body = body.replace(/(?:\uFFFD|[\uD800-\uDBFF])$/, "");
+    return { ...base, format: "text", ...capped(body, maxChars, read.more ? { size } : undefined) };
   }
 
-  if (size === undefined || size > BINARY_INLINE_BYTES) {
-    return {
-      ...base,
-      format: "unavailable",
-      contentTruncated: false,
-      note: `A binary file of ${size ?? "unknown"} bytes is past this connection's ${BINARY_INLINE_BYTES}-byte inline cap; nothing was downloaded. Open webViewLink.`,
-    };
-  }
-  const { bytes } = await client.bytes(
-    { method: "GET", path: filePath, query: { ...ALL_DRIVES, alt: "media" } },
-    ctx,
-  );
-  return { ...base, format: "base64", content: base64(bytes), contentTruncated: false };
+  const tooLarge = (bytes: string) => ({
+    ...base,
+    format: "unavailable" as const,
+    contentTruncated: false,
+    note:
+      maxBinaryBytes < BINARY_INLINE_BYTES
+        ? `A binary file of ${bytes} is past this call's maxBinaryBytes (${maxBinaryBytes}); no content is returned. Raise it up to ${BINARY_INLINE_BYTES} in a direct call, or open webViewLink.`
+        : `A binary file of ${bytes} is past this connection's ${BINARY_INLINE_BYTES}-byte inline cap; no content is returned. Open webViewLink.`,
+  });
+  // Metadata that already says too large saves the download; metadata that
+  // says small is not trusted, and the download is held to the cap itself.
+  if (size !== undefined && size > maxBinaryBytes) return tooLarge(`${size} bytes`);
+  const read = await download(client, ctx, filePath, maxBinaryBytes, size);
+  if (read.more) return tooLarge(`more than ${maxBinaryBytes} bytes`);
+  return { ...base, format: "base64", content: base64(read.bytes), contentTruncated: false };
 }
 
 // --- Uploads ----------------------------------------------------------------------
@@ -594,6 +672,7 @@ const FILE_PROPERTIES: Record<string, JsonSchema> = {
   webViewLink: { type: "string" },
   shortcutTargetId: { type: "string" },
   shortcutTargetMimeType: { type: "string" },
+  nameTruncated: { type: "boolean", description: "The name was cut for this listing; get_file returns all of it." },
 };
 
 // Nothing is required: Google's ProtoJSON omits an empty field, and a
@@ -647,7 +726,8 @@ const PERMISSION_SCHEMA: JsonSchema = {
 
 function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
-  // Additive: creates something new and changes nothing that existed.
+  // Additive: creates something new that discloses nothing, and changes
+  // nothing that existed.
   const additive = { readOnlyHint: false, destructiveHint: false } as const;
   // Overwrites, moves, trashes, or changes who can see a file.
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
@@ -673,7 +753,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       ),
     );
     return compact({
-      files: asArray(listing["files"]).map((file) => projectFile(file)),
+      files: asArray(listing["files"]).map((file) => listed(projectFile(file))),
       // Drive's own truncation: it stopped before searching every corpus.
       incompleteSearch: listing["incompleteSearch"] === true ? true : undefined,
       page: page(listing),
@@ -833,7 +913,13 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             type: "integer",
             minimum: 1,
             maximum: MAX_CONTENT_CHARS,
-            description: `Characters of text kept, 1 to ${MAX_CONTENT_CHARS}; defaults to ${DEFAULT_CONTENT_CHARS}. Longer text ends with a truncation marker. Binaries ignore it.`,
+            description: `Characters (code points) of text kept, 1 to ${MAX_CONTENT_CHARS}; defaults to ${DEFAULT_CONTENT_CHARS}. Longer text ends with a truncation marker. Binaries ignore it.`,
+          },
+          maxBinaryBytes: {
+            type: "integer",
+            minimum: 1,
+            maximum: BINARY_INLINE_BYTES,
+            description: `Largest binary returned as base64, up to ${BINARY_INLINE_BYTES} (connecta's cap); defaults to ${DEFAULT_BINARY_BYTES}. Past ~190000 only a direct call delivers it, not execute_code.`,
           },
         },
         ["fileId"],
@@ -860,6 +946,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           ctx,
           String(args["fileId"]),
           typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_CONTENT_CHARS,
+          typeof args["maxBinaryBytes"] === "number" ? args["maxBinaryBytes"] : DEFAULT_BINARY_BYTES,
         ),
     },
     {
@@ -985,8 +1072,11 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     {
       name: "create_file",
       description:
-        "Create a new Drive file from text or base64 content, or an empty one; convertTo makes it a Google Doc, Sheet, or Slides file. Never replaces an existing file.",
-      annotations: additive,
+        "Create a Drive file from text or base64 content, or an empty one; convertTo makes a Google Doc, Sheet, or Slides file. Whoever can see its folder can see it.",
+      // Destructive though nothing is overwritten: a new file takes its
+      // folder's sharing, so content written into a shared folder is
+      // disclosed to everyone it is shared with, at once.
+      annotations: destructive,
       inputSchema: input(
         {
           name: NAME_PROPERTY,
@@ -1132,8 +1222,11 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     {
       name: "copy_file",
       description:
-        "Copy a Drive file into a new file, optionally renamed or in another folder. Drive copies no folders; the copy's sharing comes from its folder.",
-      annotations: additive,
+        "Copy a Drive file into a new file, optionally renamed or in another folder. The copy is shared like its folder, not like the original; no folders.",
+      // Destructive though nothing is overwritten: the copy takes its
+      // destination folder's sharing, so a private file copied into a shared
+      // folder is disclosed — the same exposure move_file carries.
+      annotations: destructive,
       inputSchema: input(
         {
           fileId: FILE_ID,
@@ -1348,7 +1441,9 @@ and one this person cannot see fail alike — Google does not distinguish them.
 
 - \`get_file_content\` exports Docs as Markdown, Sheets as CSV of the
   **first sheet only**, and Slides as plain text; reads text files as text;
-  and returns other files as base64 only up to 1 MiB. Anything else — a
+  and returns other files as base64 up to \`maxBinaryBytes\` (128 KiB by
+  default, which fits a single result inside \`execute_code\`; up to 1 MiB in
+  a direct call only). Anything else — a
   larger binary, a drawing, a form, a folder, a shortcut — comes back as
   \`format: "unavailable"\` with a \`note\`, never as an empty success.
 - Text is capped by \`maxChars\`; a cut ends with a truncation marker and
@@ -1357,9 +1452,13 @@ and one this person cannot see fail alike — Google does not distinguish them.
 
 ## Writing
 
-- \`create_file\`, \`create_folder\`, \`copy_file\`, and \`restore_file\`
-  add without losing anything. \`convertTo\` imports content as a Google Doc,
-  Sheet, or Slides file.
+- \`create_folder\` and \`restore_file\` add without losing or exposing
+  anything.
+- A new file takes its folder's sharing, not its source's: \`create_file\`
+  and \`copy_file\` into a shared folder disclose that content to everyone
+  the folder is shared with, so both are approved like any destructive write.
+  Check the destination with \`list_permissions\` first. \`convertTo\`
+  imports content as a Google Doc, Sheet, or Slides file.
 - \`update_file_content\` replaces the whole content; send all of it.
   \`update_file\` renames; \`move_file\` changes the folder and with it who
   inherits access.

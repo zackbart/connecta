@@ -5,6 +5,7 @@
 // what this suite adds is that Drive's two transports act as the same account.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachCaller } from "../src/connector-caller.js";
+import { googleReasonsOf } from "../src/providers/google/workspace.js";
 import { DRIVE_API_BASE_URL, DRIVE_SCOPES, drive } from "../src/providers/drive.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
@@ -201,10 +202,14 @@ describe("drive() identity and surface (H1, H14)", () => {
       "search_files",
     ]);
     for (const name of reads) expect(byName[name]!.annotations).toEqual({ readOnlyHint: true });
-    for (const name of ["create_folder", "create_file", "copy_file", "restore_file"]) {
+    for (const name of ["create_folder", "restore_file"]) {
       expect(byName[name]!.annotations, name).toEqual({ readOnlyHint: false, destructiveHint: false });
     }
+    // A new file takes its folder's sharing, so creating or copying one into
+    // a shared folder discloses it: approved like move_file, never additive.
     for (const name of [
+      "create_file",
+      "copy_file",
       "update_file_content",
       "update_file",
       "move_file",
@@ -470,46 +475,160 @@ describe("reading content", () => {
     );
   });
 
-  it("says what an export refusal likely means rather than blaming access alone", async () => {
+  it("names Drive's export limit from Google's reason, never from a guess", async () => {
     const meta = metadata({ mimeType: "application/vnd.google-apps.document", capabilities: { canDownload: true } });
     route = (request) =>
       meta(request) ?? GOOGLE_ERROR(403, "exportSizeLimitExceeded", "This file is too large to be exported.");
     const failure = await call(connection(), "get_file_content", { fileId: "f1" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("10 MB");
+    expect(failure.message).toContain("larger than Google will export");
+    expect(googleReasonsOf(failure)).toContain("exportSizeLimitExceeded");
+
+    // Any other refusal of the same export is passed on as it was mapped,
+    // with no export-limit story attached.
+    calls.length = 0;
+    route = (request) => meta(request) ?? GOOGLE_ERROR(403, "domainPolicy", "Blocked by policy.");
+    const policy = await call(connection(), "get_file_content", { fileId: "f1" }).catch((error) => error);
+    expect(policy.message).toContain("domain policy");
+    expect(policy.message).not.toContain("export");
   });
 
-  it("reads a small text file whole, with no range", async () => {
+  /** The body a range-honoring server sends for this request's Range header. */
+  function ranged(request: ApiCall, body: Uint8Array): Uint8Array {
+    const range = /^bytes=0-(\d+)$/.exec(request.headers.get("range") ?? "");
+    return range ? body.subarray(0, Number(range[1]) + 1) : body;
+  }
+
+  it("reads a small text file whole, asking for one byte past what it keeps", async () => {
     const meta = metadata({ mimeType: "application/json", size: "17" });
     route = (request) => meta(request) ?? { payload: '{"ok":true,"n":1}', contentType: "application/json" };
     const result = await call(connection(), "get_file_content", { fileId: "f1" });
     expect(line(1)).toBe("GET /files/f1");
     expect(query(1)).toMatchObject({ alt: "media" });
-    expect(calls[1]!.headers.get("range")).toBeNull();
+    // 20,000 characters at four bytes each, plus one character, plus one byte.
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-80004");
     expect(result).toMatchObject({ format: "text", content: '{"ok":true,"n":1}', contentTruncated: false, size: 17 });
   });
 
   it("reads only a range of a large text file and marks the cut", async () => {
+    const body = new TextEncoder().encode("abcdefghij".repeat(10));
     const meta = metadata({ mimeType: "text/plain", size: "5000000" });
-    route = (request) => meta(request) ?? { status: 206, payload: "abcdefghij…partial", contentType: "text/plain" };
+    route = (request) => meta(request) ?? { status: 206, payload: ranged(request, body), contentType: "text/plain" };
     const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 10 });
-    expect(calls[1]!.headers.get("range")).toBe("bytes=0-43");
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-44");
     expect(result.contentTruncated).toBe(true);
     expect(result.content).toBe(
       "abcdefghij\n[… truncated: 10 characters of a 5000000-byte file shown; raise maxChars (up to 100000) to read more]",
     );
   });
 
-  it("returns a small binary as base64", async () => {
+  it("cuts a text file that grew past its metadata, even from a server that ignores the range", async () => {
+    // Metadata is a separate read; the file can change before the download.
+    const meta = metadata({ mimeType: "text/plain", size: "5" });
+    route = (request) => meta(request) ?? { payload: "x".repeat(100_000), contentType: "text/plain" };
+    const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 10 });
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-44");
+    expect(result.contentTruncated).toBe(true);
+    expect(result.content.startsWith(`${"x".repeat(10)}\n[… truncated: 10 characters of a 5-byte file`)).toBe(true);
+  });
+
+  it("fetches an empty file without a range, which Drive would refuse", async () => {
+    const meta = metadata({ mimeType: "text/plain", size: "0" });
+    route = (request) => meta(request) ?? { payload: "", contentType: "text/plain" };
+    const result = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(calls[1]!.headers.get("range")).toBeNull();
+    expect(result).toMatchObject({ format: "text", content: "", contentTruncated: false });
+  });
+
+  it("returns a small binary as base64, asking for one byte past the cap", async () => {
     const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
     const meta = metadata({ mimeType: "application/pdf", size: "6" });
     route = (request) => meta(request) ?? { payload: bytes, contentType: "application/pdf" };
     const result = await call(connection(), "get_file_content", { fileId: "f1" });
+    // The 128 KiB default, plus one byte.
+    expect(calls[1]!.headers.get("range")).toBe("bytes=0-131072");
     expect(result).toMatchObject({ format: "base64", content: "JVBERgD/", contentTruncated: false });
   });
 
   it.each([
-    ["a binary past the inline cap", { mimeType: "application/pdf", size: String(2 * 1024 * 1024) }, "inline cap"],
+    ["honors", true],
+    ["ignores", false],
+  ])("holds a binary to the cap when metadata understated it and the server %s the range", async (_how, honors) => {
+    // Metadata said one byte; the download is 2 MiB.
+    const body = new Uint8Array(2 * 1024 * 1024).fill(7);
+    const meta = metadata({ mimeType: "application/pdf", size: "1" });
+    route = (request) =>
+      meta(request) ?? { status: honors ? 206 : 200, payload: honors ? ranged(request, body) : body, contentType: "application/pdf" };
+    for (const [args, limit] of [
+      [{}, 131072],
+      [{ maxBinaryBytes: 1024 * 1024 }, 1048576],
+    ] as const) {
+      const result = await call(connection(), "get_file_content", { fileId: "f1", ...args });
+      expect(result).toMatchObject({ format: "unavailable", contentTruncated: false });
+      expect(result.content).toBeUndefined();
+      expect(result.note).toContain(`more than ${limit} bytes`);
+    }
+  });
+
+  it.each([
+    ["the default", {}, 128 * 1024],
+    ["an explicit maximum", { maxBinaryBytes: 1024 * 1024 }, 1024 * 1024],
+  ])("returns a binary of exactly %s", async (_which, args, limit) => {
+    const body = new Uint8Array(limit).fill(1);
+    const meta = metadata({ mimeType: "application/octet-stream" });
+    route = (request) => meta(request) ?? { payload: ranged(request, body) };
+    const result = await call(connection(), "get_file_content", { fileId: "f1", ...args });
+    expect(result.format).toBe("base64");
+    expect(atob(result.content)).toHaveLength(limit);
+  });
+
+  it("says how to raise the default when a binary is past it", async () => {
+    route = metadata({ mimeType: "application/pdf", size: String(200 * 1024) });
+    const result = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(calls).toHaveLength(1);
+    expect(result.note).toContain("maxBinaryBytes (131072)");
+    expect(result.note).toContain("direct call");
+  });
+
+  describe("never splits a character", () => {
+    const smile = "\u{1F600}";
+
+    it("counts characters as code points when it cuts an export", async () => {
+      const meta = metadata({ mimeType: "application/vnd.google-apps.presentation" });
+      route = (request) => meta(request) ?? { payload: `${smile}x${smile}`, contentType: "text/plain; charset=utf-8" };
+      const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 1 });
+      expect(result.content).toBe(
+        `${smile}\n[… truncated: 1 characters of 3 characters shown; raise maxChars (up to 100000) to read more]`,
+      );
+      expect(result.content).toBe(result.content.toWellFormed());
+
+      calls.length = 0;
+      const whole = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 3 });
+      expect(whole).toMatchObject({ content: `${smile}x${smile}`, contentTruncated: false });
+    });
+
+    it.each([
+      ["honors", true],
+      ["ignores", false],
+    ])("drops a character a byte range cut in half, when the server %s the range", async (_how, honors) => {
+      // Three four-byte characters; one character's budget is 8 bytes, and
+      // the range asks for 9, which ends inside the third.
+      const body = new TextEncoder().encode(smile.repeat(3));
+      const meta = metadata({ mimeType: "text/plain", size: "12" });
+      route = (request) =>
+        meta(request) ?? { status: honors ? 206 : 200, payload: honors ? ranged(request, body) : body, contentType: "text/plain" };
+      const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 1 });
+      expect(calls[1]!.headers.get("range")).toBe("bytes=0-8");
+      expect(result.content).toBe(
+        `${smile}\n[… truncated: 1 characters of a 12-byte file shown; raise maxChars (up to 100000) to read more]`,
+      );
+      expect(result.content).toBe(result.content.toWellFormed());
+      expect(result.content).not.toContain("\uFFFD");
+    });
+  });
+
+  it.each([
+    ["a binary past the cap", { mimeType: "application/pdf", size: String(2 * 1024 * 1024) }, "maxBinaryBytes"],
     ["a folder", { mimeType: "application/vnd.google-apps.folder" }, "list_folder_items"],
     ["a drawing", { mimeType: "application/vnd.google-apps.drawing" }, "Drawings"],
     ["a form", { mimeType: "application/vnd.google-apps.form" }, "exports no text"],
@@ -888,6 +1007,87 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     expect(await call(connection(), "update_permission", { fileId: "f1", permissionId: "p1", role: "reader" })).toEqual({
       id: "p1",
     });
+  });
+});
+
+describe("every default result crosses into execute_code", () => {
+  // A host result reaches a QuickJS program only under 256 KiB serialized
+  // (MAX_QUICKJS_HOST_RPC_BYTES). Defaults must fit with room to spare on the
+  // worst input Drive can send; explicit maxima may exceed it and are
+  // documented as direct-call only, where get_result pages them.
+  const BRIDGE = 256 * 1024;
+  const serialized = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  // Four UTF-8 bytes each, and a control character JSON escapes to six.
+  const worst = (chars: number) => "\u{1F600}\u0001".repeat(Math.ceil(chars / 2)).slice(0, chars * 2);
+  const longEmail = `${"a".repeat(64)}@${"b".repeat(250)}.example`;
+  const worstFile = (index: number) => ({
+    id: `f${index}`.padEnd(44, "x"),
+    name: worst(32_767),
+    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    parents: ["p".repeat(44)],
+    driveId: "d".repeat(44),
+    size: "9007199254740991",
+    modifiedTime: "2026-09-30T12:00:00.000Z",
+    webViewLink: `https://drive.google.com/file/d/${"x".repeat(44)}/view?usp=drivesdk`,
+    trashed: false,
+    owners: [{ emailAddress: longEmail }],
+    shortcutDetails: { targetId: "t".repeat(44), targetMimeType: "application/vnd.google-apps.spreadsheet" },
+  });
+
+  it("fits a default search or folder page of the longest names Drive allows", async () => {
+    route = () => ({ body: { files: Array.from({ length: 25 }, (_, index) => worstFile(index)), nextPageToken: "n".repeat(1024) } });
+    for (const [name, args] of [["search_files", {}], ["list_folder_items", { folderId: "root" }]] as const) {
+      const result = await call(connection(), name, args);
+      expect(result.files).toHaveLength(25);
+      expect(result.files[0].nameTruncated).toBe(true);
+      expect(serialized(result), name).toBeLessThan(BRIDGE * 0.75);
+    }
+  });
+
+  it("returns a listed name whole from get_file", async () => {
+    const name = "n".repeat(1_500);
+    route = (request) => (request.url.pathname.endsWith("/files") ? { body: { files: [{ id: "f1", name }] } } : { body: { id: "f1", name } });
+    const listedFile = (await call(connection(), "search_files")).files[0];
+    expect(listedFile).toEqual({ id: "f1", name: `${"n".repeat(1_000)}…`, nameTruncated: true });
+    expect((await call(connection(), "get_file", { fileId: "f1" })).name).toBe(name);
+  });
+
+  it("fits a default page of permissions and of shared drives", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith("/drives")
+        ? { body: { drives: Array.from({ length: 25 }, (_, index) => ({ id: `d${index}`, name: worst(1_000) })) } }
+        : {
+            body: {
+              permissions: Array.from({ length: 25 }, (_, index) => ({
+                id: `p${index}`.padEnd(30, "0"),
+                type: "user",
+                role: "fileOrganizer",
+                emailAddress: longEmail,
+                domain: "b".repeat(253),
+                displayName: worst(1_000),
+                expirationTime: "2027-01-01T00:00:00.000Z",
+                permissionDetails: [{ inherited: true, inheritedFrom: "f".repeat(44) }],
+              })),
+            },
+          };
+    expect(serialized(await call(connection(), "list_permissions", { fileId: "f1" }))).toBeLessThan(BRIDGE * 0.75);
+    expect(serialized(await call(connection(), "list_shared_drives"))).toBeLessThan(BRIDGE * 0.75);
+  });
+
+  it("fits default content, text and binary, at its largest", async () => {
+    const meta = (mimeType: string, size: string) => (request: ApiCall) =>
+      request.url.searchParams.get("fields") ? { body: { id: "f1", name: worst(500), mimeType, size } } : undefined;
+    const textRoute = meta("text/plain", "999999999");
+    route = (request) => textRoute(request) ?? { payload: worst(200_000), contentType: "text/plain" };
+    const text = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(text.contentTruncated).toBe(true);
+    expect(serialized(text)).toBeLessThan(BRIDGE * 0.75);
+
+    const binaryRoute = meta("application/pdf", String(128 * 1024));
+    route = (request) => binaryRoute(request) ?? { payload: new Uint8Array(128 * 1024).fill(255) };
+    const binary = await call(connection(), "get_file_content", { fileId: "f1" });
+    expect(binary.format).toBe("base64");
+    expect(serialized(binary)).toBeLessThan(BRIDGE * 0.75);
   });
 });
 
