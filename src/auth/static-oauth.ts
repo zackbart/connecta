@@ -324,6 +324,11 @@ class StaticOAuthProvider extends KvOAuthProvider {
     // Configuration is the discovery; there is nothing to remember.
   }
 
+  /** Configuration names the server; nothing a response says can move it. */
+  protected override async recordedIssuer(): Promise<string> {
+    return this.settings.identity;
+  }
+
   /** No RFC 8707 `resource` parameter: a plain REST API names no resource. */
   async validateResourceURL(): Promise<URL | undefined> {
     return undefined;

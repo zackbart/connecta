@@ -479,6 +479,19 @@ binding is the one that retires the grant. A new consent still goes wherever
 the downstream points: the human who reads the authorization URL before
 approving it is that check, as the SDK says of its own.
 
+A grant written before issuer binding carries no stamp, and is the one case
+the SDK's check cannot cover: it trusts whatever stamp the provider hands it.
+Such a grant is bound on its first issuer-aware read, but only to the issuer in
+discovery state an older release kept from the original consent. Discovery
+this release writes is marked `discoveredAfterBinding` — a fresh discovery
+records whatever the downstream named, so it is evidence of nothing — and the
+record that counts is the one the flow found when it started, before it could
+discover afresh and save over it. With no such record, or one naming another
+server, the grant is retired behind a new epoch and nothing it holds is sent;
+the connection is authorized once more. Releases before this one bound such a
+grant to whatever its first read discovered, and a grant they bound keeps that
+binding.
+
 ## Management permissions
 
 Visibility alone grants no authentication-management permission. Two independent

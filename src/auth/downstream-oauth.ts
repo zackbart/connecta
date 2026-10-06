@@ -231,6 +231,25 @@ function stampedValue<T>(value: T, issuer: string): T {
     : value;
 }
 
+/**
+ * The issuer a discovery record kept from an older release names. A record
+ * this release wrote carries `discoveredAfterBinding` and names nothing here.
+ */
+function recordedIssuerOf(
+  read: OAuthValueRead<OAuthDiscoveryState> | undefined,
+): string | undefined {
+  if (!read || read.discoveredAfterBinding) return undefined;
+  const state = read.value as Partial<OAuthDiscoveryState> | null;
+  if (!state || typeof state !== "object") return undefined;
+  const issuer = state.authorizationServerMetadata?.issuer ?? state.authorizationServerUrl;
+  return typeof issuer === "string" && issuer !== "" ? issuer : undefined;
+}
+
+/** Issuers compared as RFC 8414 discovery may spell them, one trailing slash aside. */
+function sameIssuer(a: string, b: string): boolean {
+  return a === b || a.replace(/\/$/, "") === b.replace(/\/$/, "");
+}
+
 /** The `grant_type` of a token request, or undefined for any other request. */
 function tokenGrantType(init: RequestInit | undefined): string | undefined {
   if ((init?.method ?? "GET").toUpperCase() !== "POST") return undefined;
@@ -413,30 +432,24 @@ function sdkTokenFailure(
 }
 
 /**
- * Rebuild a failed code exchange (or any token request but a refresh, which
- * `refreshResponseOutcome` classifies) before the SDK parses it. A code
- * outside the registered set becomes `invalid_request` and a body with no code
- * becomes `server_error`, the two classes the SDK already gave them. A token
- * response, and a 2xx body that is no OAuth error, pass through untouched.
+ * Rebuild a code exchange's answer (or any token request's but a refresh,
+ * which `refreshResponseOutcome` classifies) before the SDK parses it, unless
+ * it is a token response the SDK accepts. Whatever fails that check is a
+ * failure, and the SDK puts a failure's body in its error message whole — a
+ * 200 whose `error` is `null`, a number, or an object included. A code outside
+ * the registered set becomes `invalid_request`, and a body without a string
+ * code becomes `server_error`, the classes the SDK already gave them.
  */
 async function sdkSafeTokenResponse(response: Response): Promise<Response> {
   let parsed: unknown;
   try {
     parsed = await readRefreshResponse(response);
-  } catch (error) {
-    if (error instanceof OversizedRefreshResponse) {
-      return sdkTokenFailure(response, "server_error");
-    }
-    // Not JSON: a failure has only its status to go on.
-    return response.ok ? response : sdkTokenFailure(response, "server_error");
+  } catch {
+    // Not JSON, or too large to be a token response: only the status is left.
+    return sdkTokenFailure(response, "server_error");
   }
-  const code = oauthErrorCode(parsed);
-  if (response.ok) {
-    return code === undefined || sdkAcceptsOAuthTokens(parsed)
-      ? response
-      : sdkTokenFailure(response, code);
-  }
-  return sdkTokenFailure(response, code ?? "server_error");
+  if (response.ok && sdkAcceptsOAuthTokens(parsed)) return response;
+  return sdkTokenFailure(response, oauthErrorCode(parsed) ?? "server_error");
 }
 
 type RefreshResponseOutcome =
@@ -1155,6 +1168,13 @@ interface StoredOAuthValue<T> {
    * pending authorization URL). Older readers ignore the field.
    */
   writtenAt?: number;
+  /**
+   * Set on discovery state a release that stamps credentials wrote. Such a
+   * record may name whatever server a fresh discovery found, so it vouches for
+   * no credential written without a stamp; only a record an older release
+   * kept from the original consent does. Older readers ignore the field.
+   */
+  discoveredAfterBinding?: true;
   value: T;
 }
 
@@ -1290,6 +1310,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     | undefined;
   /** How the last refresh this provider took part in failed, if it did. */
   private refreshFailure: RefreshFailure | undefined;
+  /**
+   * The issuer an older release recorded, as this flow's first discovery read
+   * found it; null when it found nothing that old, undefined before the read.
+   */
+  private recordedIssuerAtStart: string | null | undefined;
   /** Tokens this request's issuer-aware auth flow decided to refresh. */
   private refreshBasis:
     | {
@@ -1490,6 +1515,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     writtenAt?: number,
     binding?: string,
     commitAcceptedRefresh = false,
+    discoveredAfterBinding = false,
   ): Promise<void> {
     const generation = await this.writeGeneration();
     await this.storeInGeneration(key, generation, () => {
@@ -1499,9 +1525,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
         ...(issuer !== undefined ? { issuer } : {}),
         ...(binding !== undefined ? { binding } : {}),
         ...(writtenAt !== undefined ? { writtenAt } : {}),
+        ...(discoveredAfterBinding ? { discoveredAfterBinding: true as const } : {}),
         value,
       };
-      return isModernGeneration(generation) || issuer !== undefined
+      // The marker needs an envelope to live in, even in the legacy epoch.
+      return isModernGeneration(generation) || issuer !== undefined || discoveredAfterBinding
         ? JSON.stringify(stored)
         : serializeLegacy(value);
     }, undefined, commitAcceptedRefresh);
@@ -1731,6 +1759,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
             ...(parsed.issuer !== undefined ? { issuer: parsed.issuer } : {}),
             ...(parsed.binding !== undefined ? { binding: parsed.binding } : {}),
             ...(parsed.carried === true ? { carried: true as const } : {}),
+            // Any value marks it: a record that cannot prove it is old is not.
+            ...(parsed.discoveredAfterBinding !== undefined
+              ? { discoveredAfterBinding: true as const }
+              : {}),
             // Only a finite number is a time; anything else reads as untimed.
             ...(typeof parsed.writtenAt === "number" &&
             Number.isFinite(parsed.writtenAt)
@@ -1751,11 +1783,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * Read credentials only for the authorization server that issued them.
    *
-   * Values written before issuer binding are bound on their first read with a
-   * validated SDK issuer, preserving an existing grant across this upgrade.
-   * A later issuer change is different: publish a new generation before
-   * returning no credentials, so every isolate drops the old registration and
-   * token set and the SDK starts authorization from scratch.
+   * Values written before issuer binding are bound on their first read, but
+   * only to the issuer an older release recorded beside them at consent:
+   * that preserves an existing grant across the upgrade without letting a
+   * downstream name its owner. Anything else — a stamp naming another
+   * server, or an unstamped value nothing vouches for — publishes a new
+   * generation before returning no credentials, so every isolate drops the
+   * old registration and token set and the SDK starts authorization from
+   * scratch.
    */
   private async readIssuerBoundValue<T>(
     key: "oauth:client" | "oauth:tokens",
@@ -1772,16 +1807,25 @@ export class KvOAuthProvider implements OAuthClientProvider {
       if (!ctx) return stored.value;
     }
     if (stored.issuer === undefined) {
-      // Binding is a migration of the value just read, never a new grant.
-      // A rotation or revocation that replaced it must win this race.
-      await this.storeInGeneration(key, stored.generation, () => JSON.stringify({
-        connectaOAuthVersion: STORED_VALUE_VERSION,
-        ...stored,
-        issuer: ctx.issuer,
-      } satisfies StoredOAuthValue<T>), read.raw);
+      // A credential written before binding names no server, and the one
+      // this flow discovered is the downstream's say-so: binding to it is the
+      // shape of GHSA-6qxp-vccf-f47h. Only an issuer an older release recorded
+      // at consent may claim it. Without one, the grant is retired below and
+      // nothing it holds is sent anywhere.
+      const recorded = await this.recordedIssuer();
+      if (recorded !== undefined && sameIssuer(recorded, ctx.issuer)) {
+        // Binding is a migration of the value just read, never a new grant.
+        // A rotation or revocation that replaced it must win this race.
+        await this.storeInGeneration(key, stored.generation, () => JSON.stringify({
+          connectaOAuthVersion: STORED_VALUE_VERSION,
+          ...stored,
+          issuer: ctx.issuer,
+        } satisfies StoredOAuthValue<T>), read.raw);
+        return stampedValue(stored.value, ctx.issuer);
+      }
+    } else if (stored.issuer === ctx.issuer) {
       return stampedValue(stored.value, ctx.issuer);
     }
-    if (stored.issuer === ctx.issuer) return stampedValue(stored.value, ctx.issuer);
 
     if (this.signal?.aborted) throw this.signal.reason;
     try {
@@ -1986,12 +2030,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    return (
-      await this.readValue(
-        "oauth:discovery",
-        (raw) => JSON.parse(raw) as OAuthDiscoveryState,
-      )
-    )?.value;
+    const read = await this.readDiscovery();
+    // The SDK reads this first in every flow, before it may discover afresh
+    // and save over it, so this is what the flow found when it began.
+    if (this.recordedIssuerAtStart === undefined) {
+      this.recordedIssuerAtStart = recordedIssuerOf(read) ?? null;
+    }
+    return read?.value;
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
@@ -1999,7 +2044,32 @@ export class KvOAuthProvider implements OAuthClientProvider {
       "oauth:discovery",
       state,
       (value) => JSON.stringify(value),
+      undefined,
+      undefined,
+      undefined,
+      false,
+      true,
     );
+  }
+
+  private readDiscovery(): Promise<OAuthValueRead<OAuthDiscoveryState> | undefined> {
+    return this.readValue(
+      "oauth:discovery",
+      (raw) => JSON.parse(raw) as OAuthDiscoveryState,
+    );
+  }
+
+  /**
+   * The authorization server an unstamped credential is known to belong to:
+   * the one an older release recorded beside it at consent, or undefined when
+   * nothing that old survives. A record this release wrote is no evidence —
+   * fresh discovery writes whatever the downstream names.
+   */
+  protected async recordedIssuer(): Promise<string | undefined> {
+    if (this.recordedIssuerAtStart !== undefined) {
+      return this.recordedIssuerAtStart ?? undefined;
+    }
+    return recordedIssuerOf(await this.readDiscovery());
   }
 
   async tokens(

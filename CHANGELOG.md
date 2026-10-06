@@ -10,19 +10,31 @@ lockstep, because client and server each pin the same exact
 `@modelcontextprotocol/client` 2.0.0 is affected by
 [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h), an
 OAuth client that could send stored credentials to an authorization server the
-MCP server chose; `npm run check:security` failed on it. Connecta's own issuer
-binding already kept a `remoteMcp()` grant away from a server the downstream
-switches to, and tests now prove it end to end. Nothing in configuration
-changes. What a deployment may notice: a refresh whose rotated tokens cannot
-be stored now fails as a retryable outage instead of `auth_required`; `/mcp`
-bodies stay bounded by the host, not by the 4 MiB default the server SDK
-adopted. Two inbound refusals arrive with the server SDK and are kept, because
-the protocol requires them: a client that claims 2026-07-28 in its request body
-but sends no `MCP-Protocol-Version` header is answered `400` with
-`HeaderMismatch` (`-32020`) where it was served before, and a JSON-RPC batch of
-more than 100 messages is answered `400` (`-32600`) where it was accepted.
-Every client the SDK builds sends the header; a 2025-era client that sends
-neither the header nor the 2026-07-28 claim is served exactly as before (#687).
+MCP server chose; `npm run check:security` failed on it. Connecta's issuer
+binding kept every grant written since binding arrived away from a server the
+downstream switches to, but not a grant from before it: such a grant carries no
+issuer, and connecta bound it on first read to whichever server that read's
+discovery named — the downstream's choice when discovery was not cached. Such a
+grant now binds only to the issuer an older release recorded beside it at
+consent, and is otherwise retired with nothing it holds sent anywhere. **Some
+existing `remoteMcp()` connections authorized before issuer binding will need
+to be authorized once more** — those not used since issuer binding arrived
+(any use since then bound them) whose consent left no discovery record. Their
+next use answers `auth_required`, and Connect or `authorize_connector` repairs
+them. A grant an earlier release bound on first use was bound to whichever
+issuer that use discovered; it keeps that binding. A grant that may have met an untrusted
+downstream before this release should have its tokens revoked and any client
+secret rotated at the provider. Nothing in configuration changes. What else a
+deployment may notice: a refresh whose rotated tokens cannot be stored now
+fails as a retryable outage instead of `auth_required`, and `/mcp` bodies stay
+bounded by the host, not by the 4 MiB default the server SDK adopted. Two
+inbound refusals arrive with the server SDK and are kept: a client that claims
+2026-07-28 in its request body but sends no `MCP-Protocol-Version` header is
+answered `400` with `HeaderMismatch` (`-32020`), as that revision requires,
+where it was served before; and the SDK's own cap answers a JSON-RPC batch of
+more than 100 messages `400` (`-32600`) where it was accepted. Every client the
+SDK builds sends the header; a 2025-era client that sends neither the header
+nor the 2026-07-28 claim is served exactly as before (#687).
 
 ### Changed
 
@@ -38,8 +50,8 @@ neither the header nor the 2026-07-28 claim is served exactly as before (#687).
   in the legacy handshake, so connecta's workaround for
   [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
   is gone; the handshake teardown sweeps prove no rejection escapes under
-  workerd without it. Bundles grow by about 5.1 KB gzip at the root and the
-  Worker example and about 2.4 KB for each hosted-MCP provider, within every cap.
+  workerd without it. Bundles grow by about 5.4 KB gzip at the root and the
+  Worker example and about 2.6 KB for each hosted-MCP provider, within every cap.
 - **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
   transport requires the header on every POST and has the server reject a
   request without it, so an intermediary routing on the header and the server
@@ -52,24 +64,41 @@ neither the header nor the 2026-07-28 claim is served exactly as before (#687).
   connecta: the spec's allowance to assume `2025-03-26` covers only clients
   older than 2025-06-18, which send no 2026-07-28 claim and are still served
   on the legacy leg.
-- **A JSON-RPC batch holds at most 100 messages.** Batching left the protocol
-  in 2025-06-18, so only a 2025-03-26 client sends one; server 2.1.0 answers a
-  longer batch `400` with `-32600` and dispatches none of it. The cap is a
-  constant in the SDK. A client that batches more must split the batch.
+- **A JSON-RPC batch holds at most 100 messages.** The cap is the server
+  SDK's, not the protocol's: batching left the protocol in 2025-06-18, which
+  sets no size for the 2025-03-26 clients that may still send one. Server 2.1.0
+  answers a longer batch `400` with `-32600` and dispatches none of it; the cap
+  is a constant with no option, and connecta keeps it rather than reimplement
+  the SDK's body handling. A client that batches more must split the batch.
 
 ### Fixed
 
+- **A grant from before issuer binding is not bound to whoever is named.** A
+  token set or client registration written before issuer binding carries no
+  stamp, and connecta bound it on first read to the issuer that read's
+  discovery found. With discovery not cached, that was the server a
+  compromised downstream named, and the refresh token and client secret went
+  to its token endpoint. Such a grant now binds only to the issuer in discovery
+  an older release kept from the original consent — the only record no
+  downstream can have written — and is otherwise retired behind a new epoch
+  before anything it holds is sent. Discovery this release writes is marked,
+  so a fresh discovery saved by another request never stands in for that
+  record. The SDK's own SEP-2352 check does not cover this state, as its
+  advisory says: it trusts whatever stamp the provider hands back.
 - **No token endpoint's text reaches the host's console.** From client 2.1.0
   the SDK writes a failed refresh or code exchange's `error_description`, or
   the raw body of a non-OAuth answer, to `console.warn`, below any logger a
   deployment configures. A token endpoint that echoes the form it refused
   would put the refresh token, client secret, or authorization code there.
   Every token-endpoint failure now reaches the SDK rebuilt: its OAuth `error`
-  code, a fixed description, the status, and `Retry-After`. A code outside the
-  registered set becomes `invalid_request`, and a body with no code
+  code, a fixed description, the status, and `Retry-After`. That includes a
+  2xx code-exchange answer that is no token response the SDK accepts, such as
+  one whose `error` is `null`, a number, or an object, which the SDK otherwise
+  quotes whole in the error the connector rejects with. A code outside the
+  registered set becomes `invalid_request`, and a body without a string code
   `server_error`, the classes the SDK already gave them, so refresh verdicts and
-  callback outcomes are unchanged. A grant stored before issuer binding is also
-  handed back stamped, so the SDK no longer warns about it on every read.
+  callback outcomes are unchanged. A bound grant is also handed back stamped,
+  so the SDK no longer warns about a migrated one on every read.
 - **A rotation that cannot be stored is a retryable outage, not consent.**
   When the authorization server honored a refresh but its new tokens could not
   be written, the SDK used to swallow the failure and start authorization, so
