@@ -86,7 +86,11 @@ function b64url(value: string, charset: "utf-8" | "latin1" = "utf-8"): string {
   const bytes = charset === "utf-8"
     ? new TextEncoder().encode(value)
     : Uint8Array.from(value, (character) => character.charCodeAt(0));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function decodeRaw(raw: string): string {
@@ -323,6 +327,7 @@ describe("reading mail (H9, H10)", () => {
           ],
         },
       ],
+      page: { hasMore: false, nextCursor: null },
     });
     expect(JSON.stringify(result)).not.toContain("X-Noise");
   });
@@ -363,7 +368,7 @@ describe("reading mail (H9, H10)", () => {
     expect(result).toEqual(MESSAGE);
   });
 
-  it("lists labels unpaged as id, name, and type", async () => {
+  it("lists labels as id, name, and type, in one page when they fit", async () => {
     route = () => ({
       body: {
         labels: [
@@ -379,6 +384,7 @@ describe("reading mail (H9, H10)", () => {
         { id: "INBOX", name: "INBOX", type: "system" },
         { id: "Label_7", name: "Elders", type: "user" },
       ],
+      page: { hasMore: false, nextCursor: null },
     });
   });
 
@@ -781,5 +787,176 @@ describe("a message's own body, apart from what it carries", () => {
     expect(result.bodyFormat).toBe("unavailable");
     expect(result.bodyTruncated).toBe(true);
     expect(result.body).toContain("5000000 bytes");
+  });
+});
+
+// --- Worst-case result sizes ---------------------------------------------------------
+
+describe("every result is deliverable both ways it can be called", () => {
+  // Inside execute_code the QuickJS bridge refuses one host result over
+  // 256 KiB (MAX_HOST_RESULT_BYTES, src/executors/quickjs-runtime.ts); through
+  // call_tool anything up to the stash (8 MiB by default) pages. A result
+  // under the bridge clears both, so that is the bound asserted here, against
+  // the most expensive strings JSON can carry: control characters (six bytes
+  // escaped), lone surrogates (six), emoji (four per two units), CJK (three),
+  // quotes and backslashes (two).
+  const BRIDGE_LIMIT = 256 * 1024;
+  const NASTY = '\u0001界😀\ud800"\\';
+  const nasty = (length: number) => NASTY.repeat(Math.ceil(length / NASTY.length)).slice(0, length);
+  const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const headers = (length: number) =>
+    ["From", "To", "Cc", "Bcc", "Reply-To", "Subject", "Message-ID", "In-Reply-To"].map((name) => ({
+      name,
+      value: nasty(length),
+    }));
+  const labels = Array.from({ length: 200 }, (_, index) => `Label_${index}_${nasty(300)}`);
+
+  function hugeMessage(
+    id: string,
+    bodyChars: number,
+    { attachments = 300, headerChars = 10_000, labelCount = 200, filenameChars = 2000 } = {},
+  ) {
+    return {
+      id,
+      threadId: "t-huge",
+      labelIds: labels.slice(0, labelCount),
+      snippet: nasty(5000),
+      internalDate: "1790000000000",
+      payload: {
+        mimeType: "multipart/mixed",
+        headers: headers(headerChars),
+        parts: [
+          { mimeType: "text/plain", body: { data: b64url(nasty(bodyChars)) } },
+          ...Array.from({ length: attachments }, (_, index) => ({
+            mimeType: "application/pdf",
+            filename: `${index}-${nasty(filenameChars)}.pdf`,
+            body: { attachmentId: `att-${index}-${"A".repeat(400)}`, size: 1000 },
+          })),
+        ],
+      },
+    };
+  }
+
+  it("keeps a full search page of the worst summaries under the bridge", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith("/threads")
+        ? {
+            body: {
+              threads: Array.from({ length: 25 }, (_, index) => ({ id: `t${index}`, snippet: nasty(5000) })),
+              nextPageToken: "next",
+            },
+          }
+        : {
+            body: {
+              id: "t",
+              messages: Array.from({ length: 3 }, (_, index) => ({
+                id: `m${index}`,
+                labelIds: labels,
+                internalDate: "1790000000000",
+                payload: { headers: headers(20_000) },
+              })),
+            },
+          };
+    const result = await call(connection(), "search_threads", { limit: 25 });
+    expect(result.threads).toHaveLength(25);
+    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+  });
+
+  it("keeps a full drafts page of the worst summaries under the bridge", async () => {
+    route = (request) =>
+      request.url.pathname.endsWith("/drafts")
+        ? { body: { drafts: Array.from({ length: 25 }, (_, index) => ({ id: `d${index}` })) } }
+        : { body: { id: "d", message: { id: "m", snippet: nasty(5000), payload: { headers: headers(20_000) } } } };
+    const result = await call(connection(), "list_drafts", { limit: 25 });
+    expect(result.drafts).toHaveLength(25);
+    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+  });
+
+  it.each([
+    ["the default body cap", undefined],
+    ["the largest explicit body cap", 100_000],
+  ])("pages a 40-message worst-case thread under %s, every page under the bridge", async (_cap, maxBodyChars) => {
+    // Sized to stay inside the connector's 16 MB response ceiling, which a
+    // thread this hostile would otherwise hit first.
+    const messages = Array.from({ length: 40 }, (_, index) =>
+      hugeMessage(`m${index}`, 12_000, { attachments: 10, headerChars: 2000, labelCount: 30, filenameChars: 300 }),
+    );
+    route = () => ({ body: { id: "t-huge", messages } });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const result = await call(connection(), "get_thread", {
+        threadId: "t-huge",
+        ...(maxBodyChars === undefined ? {} : { maxBodyChars }),
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+      expect(result.messages.length).toBeGreaterThan(0);
+      expect(result.messageCount).toBe(40);
+      seen.push(...result.messages.map((message: { id: string }) => message.id));
+      cursor = result.page.nextCursor ?? undefined;
+      expect(result.page.hasMore).toBe(cursor !== undefined);
+      pages += 1;
+    } while (cursor !== undefined && pages < 200);
+    // Every message exactly once, in order, however many pages it took.
+    expect(seen).toEqual(messages.map((message) => message.id));
+    expect(pages).toBeGreaterThan(1);
+  }, 60_000);
+
+  it("caps one worst-case message, at the largest body cap, under the bridge and says where it cut", async () => {
+    route = () => ({ body: hugeMessage("m1", 200_000) });
+    const result = await call(connection(), "get_message", { messageId: "m1", maxBodyChars: 100_000 });
+    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+    expect(result.bodyTruncated).toBe(true);
+    expect(result.body).toMatch(/more characters truncated at connecta's 192 KiB per-result limit/);
+    expect(result.attachments).toHaveLength(50);
+    expect(result.attachmentsOmitted).toBe(250);
+    expect(result.labelIds).toHaveLength(20);
+  });
+
+  it("fits a fetched 1 MB stored body under the bridge", async () => {
+    route = (request) =>
+      request.url.pathname.includes("/attachments/")
+        ? { body: { size: 1_000_000, data: b64url(nasty(400_000)) } }
+        : {
+            body: {
+              id: "m2",
+              payload: { mimeType: "text/plain", headers: headers(10_000), body: { size: 1_000_000, attachmentId: "big" } },
+            },
+          };
+    const result = await call(connection(), "get_message", { messageId: "m2", maxBodyChars: 100_000 });
+    expect(path(1)).toBe("/messages/m2/attachments/big");
+    expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+    expect(result.bodyTruncated).toBe(true);
+  });
+
+  it("pages 10,000 worst-case labels under the bridge, each label once", async () => {
+    const all = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `Label_${index}`,
+      name: nasty(225),
+      type: "user",
+    }));
+    route = () => ({ body: { labels: all } });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const result = await call(connection(), "list_labels", cursor === undefined ? {} : { cursor });
+      expect(size(result)).toBeLessThan(BRIDGE_LIMIT);
+      seen.push(...result.labels.map((label: { id: string }) => label.id));
+      cursor = result.page.nextCursor ?? undefined;
+      pages += 1;
+    } while (cursor !== undefined && pages < 1000);
+    expect(seen).toEqual(all.map((label) => label.id));
+    expect(pages).toBeGreaterThan(1);
+  }, 60_000);
+
+  it("refuses a raw message past the limit, with the way forward, and returns a small one", async () => {
+    route = () => ({ body: hugeMessage("m3", 200_000) });
+    const failure = await call(connection(), "get_message", { messageId: "m3", raw: true }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args", message: expect.stringContaining("Read it without raw") });
+    route = () => ({ body: MESSAGE });
+    await expect(call(connection(), "get_message", { messageId: "m2", raw: true })).resolves.toEqual(MESSAGE);
   });
 });

@@ -80,8 +80,13 @@ deployment's own connectors still never learn their caller.
   body; keeps From, To, Cc, Bcc, Reply-To, Subject, the thread, and the reply
   headers unless restated, and no other header; refuses, unchanged, a draft
   with attachments, inline images, or anything else Gmail's whole-message
-  update would delete, and one nested deeper than it inspects). There is no
-  send, delete, or label tool and no raw
+  update would delete, and one nested deeper than it inspects). Every result
+  is built to stay under 192 KiB of JSON, so it reaches a program through
+  `execute_code`'s 256 KiB bridge as well as `call_tool`: `get_thread` and
+  `list_labels` page by cursor when a thread or label set is larger, every
+  string field is bounded, a body past the limit ends with a marker at any
+  `maxBodyChars`, and an untouched `raw: true` message past it is refused
+  with the way forward. There is no send, delete, or label tool and no raw
   hatch; `gmail.compose` technically permits sending, and the tool surface is
   what forbids it. `create_draft` is an additive write and `update_draft` a
   destructive one; neither is exempt from approval unless the deployment says
@@ -114,7 +119,9 @@ deployment's own connectors still never learn their caller.
   request once, so a streamed request body is refused up front. A write that
   names the revision it was made against passes `{ revisionGuarded: true }`,
   and a stale revision — FAILED_PRECONDITION or ABORTED on HTTP 400 or 409 —
-  then arrives as `conflict` with fixed words to re-read and retry; otherwise
+  then arrives as `conflict` with fixed words to re-read and retry, unless
+  Google names a more specific reason — a disabled API, a quota, a missing
+  scope, or a precise permission refusal — which always decides first; otherwise
   a refused precondition is reported neutrally in Google's own words. A
   product can read Google's reason codes for any mapped failure — sanitized
   tokens only, never its prose — and `exportSizeLimitExceeded`,

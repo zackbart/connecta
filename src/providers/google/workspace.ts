@@ -299,21 +299,18 @@ function classifyApiFailure(
   const detail = message ? `${provider}: ${message}` : `${provider} returned HTTP ${status}.`;
   const reasons = reasonsOf(error);
   const precondition = PRECONDITION_REASONS.some((reason) => reasons.has(reason));
-  // A write that named the revision it was made against hears "the item moved
-  // on" as a refused precondition or an abort. Fixed words, so no provider
-  // ever matches on Google's prose or on this file's.
-  if (
-    options.revisionGuarded === true &&
-    (status === 400 || status === 409) &&
-    (precondition || ABORTED_REASONS.some((reason) => reasons.has(reason)))
-  ) {
+  // Order matters. Google's own specific reasons decide first, whatever the
+  // status and whatever the request asked for: a guarded write refused
+  // because the API is off, or because of a quota, must not read as "re-read
+  // and retry". Only a refused precondition or an abort with nothing more
+  // specific to say is left for the revision guard, then for the status.
+  if (status === 401) {
     return new ConnectorCallError(
-      "conflict",
-      `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
+      "auth_required",
+      `${detail} Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.`,
     );
   }
-  // The API is off in the service account's project. Keyed on Google's own
-  // reason, whatever status carries it.
+  // The API is off in the service account's project.
   if (reasons.has("accessNotConfigured") || reasons.has("SERVICE_DISABLED")) {
     return new ConnectorCallError(
       "connector_call_failed",
@@ -334,41 +331,48 @@ function classifyApiFailure(
       wait === undefined ? {} : { retryAfterMs: wait },
     );
   }
-  if (status === 401) {
+  if (reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
     return new ConnectorCallError(
       "auth_required",
-      `${detail} Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.`,
+      `${detail} The delegated token lacks a scope this call needs. The Admin console's domain-wide delegation entry must list exactly: ${scopes.join(",")}.`,
+    );
+  }
+  // Where Google names the refusal precisely, so does the message.
+  if (reasons.has("exportSizeLimitExceeded")) {
+    return new ConnectorCallError(
+      "connector_call_failed",
+      `${detail} The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.`,
+      { retryable: false },
+    );
+  }
+  if (reasons.has("domainPolicy")) {
+    return new ConnectorCallError(
+      "connector_call_failed",
+      `${detail} A Workspace domain policy forbids this action for this account; only a Workspace administrator can change that.`,
+      { retryable: false },
+    );
+  }
+  if (reasons.has("insufficientFilePermissions") || reasons.has("forbidden")) {
+    return new ConnectorCallError(
+      "connector_call_failed",
+      `${detail} This account does not have the permission on this item that the action needs — it may be shared view-only, or not shared with this user. Its owner can grant more.`,
+      { retryable: false },
+    );
+  }
+  // A write that named the revision it was made against hears "the item moved
+  // on" as a refused precondition or an abort. Fixed words, so no provider
+  // ever matches on Google's prose or on this file's.
+  if (
+    options.revisionGuarded === true &&
+    (status === 400 || status === 409) &&
+    (precondition || ABORTED_REASONS.some((reason) => reasons.has(reason)))
+  ) {
+    return new ConnectorCallError(
+      "conflict",
+      `${provider} refused the write because the item changed after the revision it named. Re-read it for the current revision, reapply the change, and retry.`,
     );
   }
   if (status === 403) {
-    if (reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
-      return new ConnectorCallError(
-        "auth_required",
-        `${detail} The delegated token lacks a scope this call needs. The Admin console's domain-wide delegation entry must list exactly: ${scopes.join(",")}.`,
-      );
-    }
-    // Where Google names the refusal precisely, so does the message.
-    if (reasons.has("exportSizeLimitExceeded")) {
-      return new ConnectorCallError(
-        "connector_call_failed",
-        `${detail} The item is larger than Google will export in this format. Download the original file instead, or export a smaller part.`,
-        { retryable: false },
-      );
-    }
-    if (reasons.has("domainPolicy")) {
-      return new ConnectorCallError(
-        "connector_call_failed",
-        `${detail} A Workspace domain policy forbids this action for this account; only a Workspace administrator can change that.`,
-        { retryable: false },
-      );
-    }
-    if (reasons.has("insufficientFilePermissions") || reasons.has("forbidden")) {
-      return new ConnectorCallError(
-        "connector_call_failed",
-        `${detail} This account does not have the permission on this item that the action needs — it may be shared view-only, or not shared with this user. Its owner can grant more.`,
-        { retryable: false },
-      );
-    }
     return new ConnectorCallError(
       "connector_call_failed",
       `${detail} Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which.`,

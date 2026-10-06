@@ -32,6 +32,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
+import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 
 export type {
   GoogleServiceAccount,
@@ -252,7 +253,7 @@ async function readBody(
   messageId: string | undefined,
   payload: JsonRecord,
   max: number,
-): Promise<MessageBody> {
+): Promise<MessageBody | { text: string; bodyFormat: "text" | "html" }> {
   const own = walk(payload).own;
   const plain = own.find((part) => mimeOf(part) === "text/plain");
   const chosen = plain ?? own.find((part) => mimeOf(part) === "text/html");
@@ -285,18 +286,42 @@ async function readBody(
     data = text(fetched["data"]);
   }
   const decoded = data ? decodeIn(chosen, data) : "";
-  return { ...capped(format === "html" ? htmlToText(decoded) : decoded, max), bodyFormat: format };
+  // Uncut: the caller caps it, by characters and by the result's bytes.
+  return { text: format === "html" ? htmlToText(decoded) : decoded, bodyFormat: format };
 }
 
-function attachmentsOf(payload: JsonRecord): JsonRecord[] {
-  return walk(payload).attachments.map((part) =>
-    compact({
-      filename: text(part["filename"]) ?? "",
-      mimeType: text(part["mimeType"]),
-      size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
-      attachmentId: text(asRecord(part["body"])["attachmentId"]),
-    }),
-  );
+/** Attachment rows listed per message; the rest are counted, not listed. */
+const MAX_LISTED_ATTACHMENTS = 50;
+
+function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: number } {
+  const all = walk(payload).attachments;
+  return {
+    listed: all.slice(0, MAX_LISTED_ATTACHMENTS).map((part) =>
+      compact({
+        filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
+        mimeType: clipped(text(part["mimeType"]), FIELD_BYTES),
+        size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
+        attachmentId: text(asRecord(part["body"])["attachmentId"]),
+      }),
+    ),
+    omitted: Math.max(0, all.length - MAX_LISTED_ATTACHMENTS),
+  };
+}
+
+/**
+ * Per-field byte bounds, so every result is bounded by construction: a page
+ * of 25 summaries, or one message beside its body, stays under
+ * `RESULT_BUDGET_BYTES` however long and however encoded Google's strings are.
+ */
+const FIELD_BYTES = 512;
+const HEADER_BYTES = 4 * 1024;
+const MAX_LISTED_LABELS = 20;
+/** Gmail label ids are short (`INBOX`, `Label_123`); this bounds a stranger one. */
+const LABEL_ID_BYTES = 128;
+
+/** A string cut to `maxBytes` of JSON, ending in "…" when it was cut. */
+function clipped<T extends string | undefined>(value: T, maxBytes: number): T {
+  return (value === undefined ? value : clampText(value, maxBytes, () => "…")) as T;
 }
 
 /** Cut a body at `max` characters and say so in the text itself. */
@@ -328,25 +353,42 @@ async function projectMessage(
 ): Promise<JsonRecord> {
   const message = asRecord(value);
   const payload = asRecord(message["payload"]);
-  const body = await readBody(client, ctx, text(message["id"]), payload, maxBodyChars);
+  const read = await readBody(client, ctx, text(message["id"]), payload, maxBodyChars);
   const attachments = attachmentsOf(payload);
-  return compact({
+  const headerOf = (name: string) => clipped(header(payload, name), HEADER_BYTES);
+  const projected = compact({
     id: text(message["id"]),
     threadId: text(message["threadId"]),
-    labelIds: labelIdsOf(message),
+    labelIds: labelIdsOf(message).slice(0, MAX_LISTED_LABELS).map((id) => clipped(id, LABEL_ID_BYTES)),
     date: isoFromMillis(message["internalDate"]),
-    from: header(payload, "From"),
-    to: header(payload, "To"),
-    cc: header(payload, "Cc"),
-    bcc: header(payload, "Bcc"),
-    replyTo: header(payload, "Reply-To"),
-    subject: header(payload, "Subject"),
-    messageIdHeader: header(payload, "Message-ID"),
-    inReplyTo: header(payload, "In-Reply-To"),
-    snippet: text(message["snippet"]) ? decodeEntities(message["snippet"]) : undefined,
-    ...body,
-    attachments: attachments.length > 0 ? attachments : undefined,
+    from: headerOf("From"),
+    to: headerOf("To"),
+    cc: headerOf("Cc"),
+    bcc: headerOf("Bcc"),
+    replyTo: headerOf("Reply-To"),
+    subject: headerOf("Subject"),
+    messageIdHeader: headerOf("Message-ID"),
+    inReplyTo: headerOf("In-Reply-To"),
+    snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), HEADER_BYTES) : undefined,
+    body: "",
+    bodyTruncated: true,
+    bodyFormat: read.bodyFormat,
+    attachments: attachments.listed.length > 0 ? attachments.listed : undefined,
+    attachmentsOmitted: attachments.omitted > 0 ? attachments.omitted : undefined,
   });
+  if (!("text" in read)) return { ...projected, body: read.body, bodyTruncated: read.bodyTruncated };
+  // Cap by the caller's characters, then by what the whole result may weigh:
+  // a body never takes the message past `RESULT_BUDGET_BYTES`, so a single
+  // message is deliverable inside execute_code at any maxBodyChars.
+  const byCharacters = capped(read.text, maxBodyChars);
+  const room = RESULT_BUDGET_BYTES - jsonBytes(projected) + jsonBytes("");
+  const body = clampText(
+    byCharacters.body,
+    room,
+    (dropped) =>
+      `\n[… ${dropped} more characters truncated at connecta's ${RESULT_BUDGET_BYTES / 1024} KiB per-result limit; read the rest in Gmail]`,
+  );
+  return { ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body };
 }
 
 function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecord {
@@ -364,14 +406,14 @@ function projectThreadSummary(value: unknown, listedSnippet: unknown): JsonRecor
   const snippet = text(listedSnippet) ?? text(messages[messages.length - 1]?.["snippet"]);
   return compact({
     id: text(thread["id"]),
-    subject: header(first, "Subject"),
-    from: header(first, "From"),
-    lastFrom: messages.length > 1 ? header(last, "From") : undefined,
+    subject: clipped(header(first, "Subject"), FIELD_BYTES),
+    from: clipped(header(first, "From"), FIELD_BYTES),
+    lastFrom: messages.length > 1 ? clipped(header(last, "From"), FIELD_BYTES) : undefined,
     messageCount: messages.length,
     lastMessageAt: isoFromMillis(latest),
     unread: labels.has("UNREAD"),
-    labelIds: [...labels],
-    snippet: snippet ? decodeEntities(snippet) : undefined,
+    labelIds: [...labels].slice(0, MAX_LISTED_LABELS).map((id) => clipped(id, LABEL_ID_BYTES)),
+    snippet: snippet ? clipped(decodeEntities(snippet), FIELD_BYTES) : undefined,
   });
 }
 
@@ -383,10 +425,10 @@ function projectDraftSummary(value: unknown): JsonRecord {
     draftId: text(draft["id"]),
     messageId: text(message["id"]),
     threadId: text(message["threadId"]),
-    subject: header(payload, "Subject"),
-    to: header(payload, "To"),
+    subject: clipped(header(payload, "Subject"), FIELD_BYTES),
+    to: clipped(header(payload, "To"), FIELD_BYTES),
     updatedAt: isoFromMillis(message["internalDate"]),
-    snippet: text(message["snippet"]) ? decodeEntities(message["snippet"]) : undefined,
+    snippet: text(message["snippet"]) ? clipped(decodeEntities(message["snippet"]), FIELD_BYTES) : undefined,
   });
 }
 
@@ -789,7 +831,7 @@ function bodyCharsProperty(fallback: number): JsonSchema {
     type: "integer",
     minimum: 0,
     maximum: MAX_BODY_CHARS,
-    description: `Characters of body text kept per message, 0 to ${MAX_BODY_CHARS}; defaults to ${fallback}. Longer bodies end with a truncation marker.`,
+    description: `Characters of body text kept per message, 0 to ${MAX_BODY_CHARS}; defaults to ${fallback}. Longer bodies end with a truncation marker, as does any body past connecta's ${RESULT_BUDGET_BYTES / 1024} KiB result limit.`,
   };
 }
 
@@ -866,6 +908,7 @@ const MESSAGE_PROPERTIES: Record<string, JsonSchema> = {
   bodyTruncated: { type: "boolean" },
   bodyFormat: { type: "string", enum: ["text", "html", "none", "unavailable"] },
   attachments: { type: "array", items: ATTACHMENT_SCHEMA },
+  attachmentsOmitted: { type: "integer" },
 };
 
 const MESSAGE_SCHEMA: JsonSchema = { type: "object", properties: MESSAGE_PROPERTIES };
@@ -1006,12 +1049,17 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "get_thread",
       description:
-        "Get every message in one Gmail thread, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment names. Never downloads attachments.",
+        "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment names. A long thread pages by cursor.",
       annotations: readOnly,
       inputSchema: input(
         {
           threadId: idProperty("Thread id from search_threads or a message's threadId."),
           maxBodyChars: bodyCharsProperty(DEFAULT_THREAD_BODY_CHARS),
+          cursor: {
+            type: "string",
+            pattern: "^[0-9]{1,6}$",
+            description: `Opaque page.nextCursor from the previous page of this thread. A page ends before ${RESULT_BUDGET_BYTES / 1024} KiB, connecta's result limit.`,
+          },
         },
         ["threadId"],
       ),
@@ -1021,8 +1069,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           id: { type: "string" },
           messageCount: { type: "integer" },
           messages: { type: "array", items: MESSAGE_SCHEMA },
+          page: PAGE_SCHEMA,
         },
-        required: ["id", "messages"],
+        required: ["id", "messages", "page"],
       },
       handler: async (args, ctx) => {
         const thread = asRecord(
@@ -1036,10 +1085,35 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           ),
         );
         const max = bodyChars(args, DEFAULT_THREAD_BODY_CHARS);
-        const messages = await mapLimited(asArray(thread["messages"]), SUMMARY_CONCURRENCY, (message) =>
-          projectMessage(client, ctx, message, max),
-        );
-        return { id: text(thread["id"]) ?? args["threadId"], messageCount: messages.length, messages };
+        const all = asArray(thread["messages"]);
+        const start = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
+        if (start > all.length) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            "That cursor is past the end of this thread; it may have lost messages. Read it again without a cursor.",
+          );
+        }
+        // Messages until the next would take the page past the result
+        // budget. A message alone always fits (its body is capped to), so a
+        // page holds at least one and the cursor always moves.
+        const messages: JsonRecord[] = [];
+        let bytes = 0;
+        let next = start;
+        while (next < all.length) {
+          const projected = await projectMessage(client, ctx, all[next], max);
+          const size = jsonBytes(projected) + 1;
+          if (messages.length > 0 && bytes + size > RESULT_BUDGET_BYTES) break;
+          messages.push(projected);
+          bytes += size;
+          next += 1;
+        }
+        const hasMore = next < all.length;
+        return {
+          id: text(thread["id"]) ?? args["threadId"],
+          messageCount: all.length,
+          messages,
+          page: { hasMore, nextCursor: hasMore ? String(next) : null },
+        };
       },
     },
     {
@@ -1053,7 +1127,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           maxBodyChars: bodyCharsProperty(DEFAULT_MESSAGE_BODY_CHARS),
           raw: {
             type: "boolean",
-            description: "Return Gmail's untouched message resource (every header, base64url part bodies) instead of the projection.",
+            description: "Return Gmail's untouched message resource (every header, base64url part bodies) instead of the projection. Refused past connecta's 192 KiB result limit.",
           },
         },
         ["messageId"],
@@ -1068,17 +1142,36 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           },
           ctx,
         );
-        return args["raw"] === true
-          ? message
-          : await projectMessage(client, ctx, message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
+        if (args["raw"] !== true) {
+          return await projectMessage(client, ctx, message, bodyChars(args, DEFAULT_MESSAGE_BODY_CHARS));
+        }
+        // Untouched means uncuttable: a raw resource past the result budget
+        // could not reach a program, so it is refused rather than half-sent.
+        const size = jsonBytes(message);
+        if (size > RESULT_BUDGET_BYTES) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            `This message's untouched resource is ${size} bytes, past connecta's ${RESULT_BUDGET_BYTES / 1024} KiB result limit. Read it without raw; the projection caps its body and lists its attachments.`,
+          );
+        }
+        return message;
       },
     },
     {
       name: "list_labels",
       description:
-        "List the user's Gmail labels, system and user-created, with the ids messages carry. Not paged; no message counts. Search by name with label: in search_threads.",
+        "List the user's Gmail labels, system and user-created, with the ids messages carry; no message counts. Search by name with label: in search_threads.",
       annotations: readOnly,
-      inputSchema: input({}, []),
+      inputSchema: input(
+        {
+          cursor: {
+            type: "string",
+            pattern: "^[0-9]{1,6}$",
+            description: "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so a mailbox with thousands still fits one result.",
+          },
+        },
+        [],
+      ),
       outputSchema: {
         type: "object",
         properties: {
@@ -1093,21 +1186,34 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               },
             },
           },
+          page: PAGE_SCHEMA,
         },
-        required: ["labels"],
+        required: ["labels", "page"],
       },
-      handler: async (_args, ctx) => {
+      handler: async (args, ctx) => {
         const listing = asRecord(await client.json({ method: "GET", path: "/labels" }, ctx));
-        return {
-          labels: asArray(listing["labels"]).map((value) => {
-            const label = asRecord(value);
-            return compact({
-              id: text(label["id"]),
-              name: text(label["name"]),
-              type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
-            });
-          }),
-        };
+        const all = asArray(listing["labels"]);
+        const start = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
+        // A mailbox may hold 10,000 labels; Gmail sends them in one answer
+        // with no paging of its own, so connecta pages them by result size.
+        const labels: JsonRecord[] = [];
+        let bytes = 0;
+        let next = start;
+        while (next < all.length) {
+          const label = asRecord(all[next]);
+          const row = compact({
+            id: text(label["id"]),
+            name: clipped(text(label["name"]), FIELD_BYTES),
+            type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
+          });
+          const size = jsonBytes(row) + 1;
+          if (labels.length > 0 && bytes + size > RESULT_BUDGET_BYTES) break;
+          labels.push(row);
+          bytes += size;
+          next += 1;
+        }
+        const hasMore = next < all.length;
+        return { labels, page: { hasMore, nextCursor: hasMore ? String(next) : null } };
       },
     },
     {
@@ -1327,9 +1433,11 @@ to. No argument names a mailbox. A call with none mapped fails
 - \`search_threads\` takes Gmail search syntax; reuse the person's own
   phrasing (\`from:\`, \`subject:\`, \`newer_than:7d\`, \`is:unread\`,
   \`label:\`). Page with \`page.nextCursor\` and the same query.
-- \`get_thread\` returns every message with bodies capped by
-  \`maxBodyChars\`; a cut body ends with a truncation marker. Reduce inside
+- \`get_thread\` returns messages oldest first with bodies capped by
+  \`maxBodyChars\`; a cut body ends with a truncation marker. A long thread
+  pages: follow \`page.nextCursor\` until \`hasMore\` is false. Reduce inside
   \`execute_code\` before returning a long thread.
+- Every result stays under 192 KiB; \`list_labels\` pages the same way.
 - Attachments are listed by name, type, and size only; none is downloaded.
   An attached or forwarded email is an attachment, not the body.
 - \`bodyFormat: "unavailable"\` means Gmail stored the body apart from the

@@ -1042,6 +1042,42 @@ describe("the shared client reads bytes and text for the products that need them
       await expect(drive.json(write, context(), {})).rejects.toMatchObject({ code: "connector_call_failed" });
     });
 
+    // Google's specific reason outranks the guard: a guarded write refused
+    // because the API is off, a quota ran out, or a policy forbids it must
+    // say so, never "re-read and retry".
+    it.each([
+      ["SERVICE_DISABLED", 400, "FAILED_PRECONDITION", "connector_call_failed", "is not enabled"],
+      ["accessNotConfigured", 400, "FAILED_PRECONDITION", "connector_call_failed", "is not enabled"],
+      ["rateLimitExceeded", 409, "ABORTED", "rate_limited", "wait before retrying"],
+      ["userRateLimitExceeded", 400, "FAILED_PRECONDITION", "rate_limited", "wait before retrying"],
+      ["RATE_LIMIT_EXCEEDED", 409, "ABORTED", "rate_limited", "wait before retrying"],
+      ["ACCESS_TOKEN_SCOPE_INSUFFICIENT", 400, "FAILED_PRECONDITION", "auth_required", "lacks a scope"],
+      ["insufficientPermissions", 409, "ABORTED", "auth_required", "lacks a scope"],
+      ["exportSizeLimitExceeded", 400, "FAILED_PRECONDITION", "connector_call_failed", "larger than Google will export"],
+      ["domainPolicy", 409, "ABORTED", "connector_call_failed", "domain policy forbids"],
+      ["insufficientFilePermissions", 400, "FAILED_PRECONDITION", "connector_call_failed", "does not have the permission"],
+      ["forbidden", 409, "ABORTED", "connector_call_failed", "does not have the permission"],
+    ])("lets %s outrank the guard on HTTP %i %s", async (reason, status, canonical, code, words) => {
+      apiReplies.push(() =>
+        Response.json(
+          {
+            error: {
+              code: status,
+              message: "Refused.",
+              status: canonical,
+              details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason }],
+            },
+          },
+          { status },
+        ),
+      );
+      const failure: any = await client()
+        .json(write, context(), { revisionGuarded: true })
+        .catch((error) => error);
+      expect(failure).toMatchObject({ code });
+      expect(failure.message).toContain(words);
+    });
+
     it("does not turn an unrelated refusal into a conflict", async () => {
       apiReplies.push(() =>
         Response.json({ error: { code: 400, message: "Invalid requests[0]", status: "INVALID_ARGUMENT" } }, { status: 400 }),
