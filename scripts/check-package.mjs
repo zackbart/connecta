@@ -283,6 +283,8 @@ try {
     "dist/providers/docs.d.ts",
     "dist/providers/sheets.js",
     "dist/providers/sheets.d.ts",
+    "dist/providers/slides.js",
+    "dist/providers/slides.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -673,6 +675,27 @@ if (sheetsConnection.id !== "sheets" || sheetsConnection.kind !== "api") {
 if (!sheetsConnection.staticTools?.length) {
   throw new Error("Google Sheets provider published no tools");
 }
+const slidesProvider = await import("@zackbart/connecta/providers/slides");
+if (typeof slidesProvider.slides !== "function") {
+  throw new Error("missing Google Slides provider constructor");
+}
+const slidesConnection = slidesProvider.slides("decks", {
+  purpose: "package smoke",
+  serviceAccount: {
+    clientEmail: "smoke@project.iam.gserviceaccount.com",
+    privateKey:
+      "-----BEGIN PRIVATE KEY-----" +
+      btoa(String.fromCharCode(...smokeDer)) +
+      "-----END PRIVATE KEY-----",
+  },
+  subject: () => undefined,
+});
+if (slidesConnection.id !== "decks" || slidesConnection.kind !== "api") {
+  throw new Error("Google Slides provider did not return an api() connector");
+}
+if (!slidesConnection.staticTools?.length) {
+  throw new Error("Google Slides provider published no tools");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -737,6 +760,9 @@ for (const name of [
   "sheets",
   "SHEETS_API_BASE_URL",
   "SHEETS_SCOPES",
+  "slides",
+  "SLIDES_API_BASE_URL",
+  "SLIDES_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

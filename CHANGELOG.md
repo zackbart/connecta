@@ -49,17 +49,19 @@ nor the 2026-07-28 claim is served exactly as before (#687).
 
 This release adds org-wide Google Workspace access with no per-user consent
 step, and its first consumers: a draft-only Gmail connection, a Google Drive
-connection, a Google Docs connection that reads and edits documents by id, and
-a Google Sheets connection. A Workspace super admin grants a service account
-domain-wide delegation once; the deployment maps each admitted identity to a
-Workspace address in config; and the provider mints a short-lived token as that
-user on every call. It is the second sanctioned use of the in-repo caller
-channel, recorded in `ethos.md` as config-mapped delegated subjects
-([#678](https://github.com/zackbart/connecta/issues/678)). Nothing breaks and
-nothing changes for a deployment that imports none of `./providers/gmail`,
-`./providers/drive`, `./providers/docs`, or `./providers/sheets`: the shared
-delegation layer has no export of its own, and a deployment's own connectors
-still never learn their caller.
+connection, a Google Docs connection that reads and edits documents by id, a
+Google Sheets connection, and a Google Slides connection
+([#683](https://github.com/zackbart/connecta/issues/683)). A Workspace super
+admin grants a service account domain-wide delegation once; the deployment maps
+each admitted identity to a Workspace address in config; and the provider mints
+a short-lived token as that user on every call. It is the second sanctioned use
+of the in-repo caller channel, recorded in `ethos.md` as config-mapped delegated
+subjects ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing
+breaks and nothing changes for a deployment that imports none of
+`./providers/gmail`, `./providers/drive`, `./providers/docs`,
+`./providers/sheets`, or `./providers/slides`: the shared delegation layer has
+no export of its own, and a deployment's own connectors still never learn their
+caller.
 
 ### Added
 
@@ -286,6 +288,25 @@ still never learn their caller.
   names the client ID and the exact scopes to authorize, `invalid_grant` names an
   unknown or suspended user, a deleted key, or clock skew, and a disabled API or
   a missing scope says so.
+- **Google Slides connection.** `@zackbart/connecta/providers/slides` exports
+  `slides(id, options)` with the same Workspace delegation options as `gmail()`,
+  plus `SLIDES_SCOPES` and `SLIDES_API_BASE_URL`. It requests exactly
+  `https://www.googleapis.com/auth/presentations`. Six hand-written tools:
+  `get_presentation` (title, page size, `revisionId`, layouts, and each
+  slide's text in reading order — top to bottom, then left to right, groups
+  opened — with table cells, alt text, and speaker notes, under a field mask
+  that leaves styles behind; cursor-paged by slide and capped per slide with
+  explicit markers; `raw: true` for the untouched deck) and
+  `get_slide_thumbnail` (the short-lived link and size, never the image) are
+  reads; `create_presentation` and `create_slide` (a predefined or the deck's
+  own layout, at an index or the end) are additive writes; `replace_all_text`
+  (literal, case-sensitive by default, several replacements in one atomic
+  batch, optionally at a required revision) and `batch_update_presentation`
+  (1 to 100 raw Slides requests, each refused locally unless it is one known
+  Request kind, always at a required `revisionId`) are destructive.
+  Slides cannot list decks, and the guide says that is Drive's job. A 404 is
+  reported as unknown-or-not-visible, because a deck is a Drive file. Setup is
+  documented on `slides()`.
 - **Google Discovery drift checks.** `npm run providers:check -- --provider
   gmail` reads Gmail's credential-free Discovery document and digests the nine
   methods the tools call like any other touched endpoint, and also reports a

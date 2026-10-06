@@ -13,7 +13,8 @@
     "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/drive starts at 28,955 B gzip (#680): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with two confined transports (API and upload host) and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/docs starts at 27,149 B gzip (#681): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
-    "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."
+    "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+    "./providers/slides starts at 22,148 B gzip (#683): the same class as ./providers/gmail — a hand-written api() surface on the shared Workspace delegation layer, smaller because it builds no MIME. The cap uses the existing baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -95,6 +96,10 @@
     "./providers/sheets": {
       "baselineGzip": 26026,
       "maxGzip": 86026
+    },
+    "./providers/slides": {
+      "baselineGzip": 22148,
+      "maxGzip": 82148
     },
     "./ui": {
       "baselineGzip": 68983,

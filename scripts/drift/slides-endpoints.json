@@ -1,0 +1,36 @@
+{
+  "provider": "slides",
+  "specification": {
+    "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
+    "format": "google-discovery"
+  },
+  "scopes": [
+    "https://www.googleapis.com/auth/presentations"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/presentations/{presentationsId}",
+      "specRevision": "20260930",
+      "contract": "sha256:8a81f8bae848361b08d6789c56ffefcdfddb7da566a8bbb31c672ad958bd8d04"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}/thumbnail",
+      "specRevision": "20260930",
+      "contract": "sha256:860a4e43c44543d26ba7ab0f5c8a93c0bf23869f599ab92a5ea9986d4a4a4b9c"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/presentations",
+      "specRevision": "20260930",
+      "contract": "sha256:6df5af1d78f892c0e2476529237bd22535607759e67bfa2b94d66ea4e3f41456"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/presentations/{presentationId}:batchUpdate",
+      "specRevision": "20260930",
+      "contract": "sha256:4722cd566efd79e2844347a8ee7203445fa146124ce0c01164a29349e8effc0d"
+    }
+  ]
+}

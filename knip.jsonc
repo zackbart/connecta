@@ -25,6 +25,7 @@
     "src/providers/drive.ts",
     "src/providers/docs.ts",
     "src/providers/sheets.ts",
+    "src/providers/slides.ts",
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",
