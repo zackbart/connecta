@@ -95,6 +95,10 @@
       "types": "./dist/providers/vercel.d.ts",
       "import": "./dist/providers/vercel.js"
     },
+    "./providers/ccb": {
+      "types": "./dist/providers/ccb.d.ts",
+      "import": "./dist/providers/ccb.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"

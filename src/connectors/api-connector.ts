@@ -92,6 +92,15 @@ export interface ApiOAuthConfig {
    */
   authorizationParams?: Record<string, string>;
   /**
+   * Headers added to every token-endpoint request — the code exchange and
+   * each refresh — for a provider whose token endpoint demands its own
+   * framing, such as Church Community Builder's
+   * `Accept: application/vnd.ccbchurch.v2+json`. They replace the grant's
+   * defaults of the same name; `Authorization`, `Content-Type`,
+   * `Content-Length`, `Cookie`, and `Host` stay the grant's.
+   */
+  tokenRequestHeaders?: Record<string, string>;
+  /**
    * The exact origins `ctx.oauth.fetch` sends the access token to, such as
    * `"https://api.ccbchurch.com"`. A request anywhere else is refused before
    * it is sent, so an untrusted URL in a response cannot carry the token off.

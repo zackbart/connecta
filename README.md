@@ -68,7 +68,8 @@ Fifty issues in, one small object out. Your context window notices.
   RevenueCat, Stripe, and Vercel: known endpoints, auth defaults, and vetted
   read/write classifications, imported one at a time. Cloudflare, Notion, and
   Vercel each let the deployment choose their hand-written API interface or
-  official hosted MCP.
+  official hosted MCP. Church Community Builder (Pushpay ChMS) is a
+  hand-written REST connection over its OAuth grant.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.
 - **Teach undeclared result shapes by using them.** Successful read-only calls

@@ -31,7 +31,7 @@ const repositoryRoot = resolvePath(
 const defaultManifestDirectory = resolvePath(repositoryRoot, "scripts/drift");
 
 /** Hand-written HTTP providers: a published specification, read as evidence. */
-const SPEC_PROVIDERS = ["cloudflare", "notion", "vercel"];
+const SPEC_PROVIDERS = ["cloudflare", "notion", "vercel", "ccb"];
 /** Hosted MCP providers with official public documentation we can read. */
 const DOCS_PROVIDERS = [
   "cloudflare",

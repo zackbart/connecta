@@ -4,7 +4,8 @@
     "Caps: every entry gets baseline + 60,000 B. The conversion-era allowances are retired: the root's flat 386,000 B cap covered a rewrite that is finished, and the +160 KB held for HttpApi in ./ui, ./activity and the Worker example was never spent, because P1-S18 measured HttpApi and did not use it.",
     "A cap moves only in a change that says why. Raising one to make a check pass is the failure this file exists to catch.",
     "./artifacts is measured where it was introduced (#562): the store, the hand-written HTML tokenizer, the Markdown renderer, and validation, with no Effect and no dependency. The connector, guide, and page routes that follow it spend from the same baseline + 60,000 B allowance.",
-    "./auth/access-tokens starts at 4,222 B gzip in #619. Its legacy record verifier and operator lifecycle use no runtime dependency; the cap uses the existing baseline + 60,000 B policy."
+    "./auth/access-tokens starts at 4,222 B gzip in #619. Its legacy record verifier and operator lifecycle use no runtime dependency; the cap uses the existing baseline + 60,000 B policy.",
+    "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -50,6 +51,10 @@
     "./providers/vercel": {
       "baselineGzip": 143649,
       "maxGzip": 203649
+    },
+    "./providers/ccb": {
+      "baselineGzip": 120479,
+      "maxGzip": 180479
     },
     "./ui": {
       "baselineGzip": 68983,

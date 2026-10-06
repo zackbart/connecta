@@ -643,7 +643,7 @@ describe("maintainer drift check", () => {
   });
 
   it("commits one well-formed row per touched endpoint", async () => {
-    for (const provider of ["cloudflare", "notion"]) {
+    for (const provider of ["cloudflare", "notion", "ccb"]) {
       const manifest = await committed(provider);
       expect(manifest.provider).toBe(provider);
       expect(manifest.specification.url).toMatch(/^https:\/\//);

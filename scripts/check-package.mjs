@@ -263,6 +263,8 @@ try {
     "dist/providers/cloudflare.d.ts",
     "dist/providers/vercel.js",
     "dist/providers/vercel.d.ts",
+    "dist/providers/ccb.js",
+    "dist/providers/ccb.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -473,6 +475,23 @@ if (vercelConnection.id !== "hosting" || vercelConnection.kind !== "api") {
 if (!vercelConnection.staticTools?.length) {
   throw new Error("Vercel provider published no tools");
 }
+const ccbProvider = await import("@zackbart/connecta/providers/ccb");
+if (typeof ccbProvider.ccb !== "function") {
+  throw new Error("missing CCB provider constructor");
+}
+const ccbConnection = ccbProvider.ccb("church", {
+  purpose: "package smoke",
+  environment: "sandbox",
+  mode: "system",
+  clientId: "smoke-client",
+  clientSecret: "smoke-secret",
+});
+if (ccbConnection.id !== "church" || ccbConnection.kind !== "api") {
+  throw new Error("CCB provider did not return an api() connector");
+}
+if (!ccbConnection.staticTools?.length || typeof ccbConnection.startAuth !== "function") {
+  throw new Error("CCB provider published no tools or no OAuth grant");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -511,6 +530,9 @@ for (const name of [
   "CLOUDFLARE_DNS_RECORD_TYPES",
   "vercel",
   "VERCEL_API_BASE_URL",
+  "ccb",
+  "CCB_ENVIRONMENTS",
+  "CCB_READ_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

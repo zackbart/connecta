@@ -329,6 +329,17 @@ describe("public package boundary", () => {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
   });
+
+  it("keeps the CCB provider dependency-free and out of the root entry", () => {
+    // Its OAuth grant is core's `api()` machinery, not an OAuth client library.
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "ccb.ts"),
+      "utf8",
+    );
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
+  });
 });
 
 // Effect is the core's implementation and must never become its API: a

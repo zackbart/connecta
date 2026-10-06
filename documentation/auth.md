@@ -699,7 +699,9 @@ HTTPS (HTTP only on loopback), no credentials, no fragment. PKCE with S256 is
 on unless `pkce: false`, which drops the challenge from the consent URL and
 the verifier from the exchange, for a server that refuses them.
 `authorizationParams` adds provider parameters but cannot restate the grant's
-own. `tokenEndpointAuthMethod` defaults to `client_secret_basic` with a secret
+own, and `tokenRequestHeaders` adds headers to the code exchange and every
+refresh — CCB's token endpoint wants its own `Accept` media type — but cannot
+set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`. `tokenEndpointAuthMethod` defaults to `client_secret_basic` with a secret
 and `none` without; the mismatched pairings refuse to boot. A static server has
 no advertised issuer, so no RFC 9207 `iss` is demanded and no RFC 8707
 `resource` is sent. The grant is bound to the token endpoint instead:

@@ -161,6 +161,7 @@ import {
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
   compactDiscoverySchema,
 } from "../src/catalog.js";
+import { ccb } from "../src/providers/ccb.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
 import { vercel } from "../src/providers/vercel.js";
@@ -235,6 +236,7 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
     "cancel",
     "vercel",
   ],
+  ccb: ["list", "get", "ccb"],
 };
 
 /**
@@ -284,7 +286,17 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   ],
   notion: [],
   vercel: [],
+  ccb: [],
 };
+
+/**
+ * Providers whose auth is `api()`'s downstream OAuth grant rather than an
+ * operator credential slot. H12's "one credential, one cheap test" has no slot
+ * to test there: the grant is exercised by the consent flow itself, and a dead
+ * one fails at use as `auth_required`. What H12 still asks is that the
+ * connection declare exactly one way to authenticate.
+ */
+const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
 
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
@@ -357,6 +369,17 @@ const providers = await Promise.all([
   surface(
     "vercel",
     vercel("vc", { purpose: "Production web applications" }),
+  ),
+  surface(
+    "ccb",
+    ccb("church", {
+      purpose: "Pastoral care and group shepherding",
+      environment: "production",
+      mode: "system",
+      access: "read-write",
+      clientId: "client",
+      clientSecret: "secret",
+    }),
   ),
 ]);
 
@@ -459,6 +482,11 @@ describe.each(providers)(
     });
 
     it("declares an operator credential and a test for it (H12)", () => {
+      if (OAUTH_PROVIDERS.has(name)) {
+        expect(connector.credential).toBeUndefined();
+        expect(connector.startAuth).toBeInstanceOf(Function);
+        return;
+      }
       expect(connector.credential).toBeDefined();
       expect(
         connector.testCredential ?? connector.testCredentials,

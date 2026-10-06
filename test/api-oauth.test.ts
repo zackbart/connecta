@@ -198,6 +198,9 @@ describe("api() oauth construction", () => {
     ["no api origin", { apiOrigins: [] }, /apiOrigins must name at least one origin/],
     ["an api origin with a path", { apiOrigins: [`${API}/v2`] }, /exact origins/],
     ["a malformed scope", { scope: "a  b" }, /scope must contain space-separated scope tokens/],
+    ["a token header the grant owns", { tokenRequestHeaders: { Authorization: "Basic x" } }, /may not set "Authorization"/],
+    ["a token header with an invalid name", { tokenRequestHeaders: { "Bad Name": "x" } }, /invalid header name/],
+    ["a multi-line token header", { tokenRequestHeaders: { Accept: "a\r\nX-Injected: 1" } }, /single-line string/],
   ])("refuses %s", (_label, oauth, message) => {
     expect(build(oauth)).toThrow(message);
   });
@@ -384,6 +387,37 @@ describe("api() oauth callback exchange", () => {
     } finally {
       await connecta.close();
     }
+  });
+
+  it("lays configured headers over every token request, and only those", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const accept = "application/vnd.ccbchurch.v2+json";
+    const connector = api("ccb", {
+      oauth: { ...OAUTH, tokenRequestHeaders: { Accept: accept } },
+      tools: [{
+        name: "whoami",
+        description: "Read the signed-in individual",
+        annotations: { readOnlyHint: true },
+        async handler(_args, ctx) {
+          return (await ctx.oauth!.fetch(`${API}/me`)).status;
+        },
+      }],
+    });
+    const registry = makeRegistry([connector]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    const seen: Array<{ url: string; accept: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+      seen.push({ url: String(input), accept: new Headers(init.headers).get("accept") });
+      return provider.fetchStub(input, init);
+    }));
+    await authorize(connector, ctx, provider);
+    provider.expireAccess();
+    expect(await connector.callTool("whoami", {}, ctx())).toBe(200);
+    const token = seen.filter((request) => request.url === TOKEN);
+    expect(token.map((request) => request.accept)).toEqual([accept, accept]);
+    // The API requests are the handler's own; the grant adds nothing to them.
+    expect(seen.filter((request) => request.url !== TOKEN).every((request) => request.accept === null)).toBe(true);
   });
 
   it("uses a client_secret_post client", async () => {

@@ -85,6 +85,7 @@ export const WORKERS_SUITES = [
   "test/url-safety.test.ts",
   "test/validate.test.ts",
   "test/vercel-provider.test.ts",
+  "test/ccb-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

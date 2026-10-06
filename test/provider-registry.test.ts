@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
 import { createConnecta } from "../src/index.js";
+import { ccb } from "../src/providers/ccb.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { linear } from "../src/providers/linear.js";
 import { mixpanel } from "../src/providers/mixpanel.js";
@@ -144,6 +145,20 @@ const providers: ProviderCase[] = [
       vercel("vercel_prod", { purpose: "Production applications", teamId: "team_prod", callAdmission: budget }),
       vercel("vercel_preview", { purpose: "Preview applications", teamId: "team_preview", callAdmission: budget }),
     ], true),
+  },
+  {
+    name: "ccb",
+    ids: ["ccb_church", "ccb_sandbox"] as const,
+    toolName: "list_individuals",
+    secondToolName: "list_groups",
+    descriptionMarks: ["Production church data, church-wide", "Sandbox church data, acting as each signed-in person"],
+    admissionIds: ["ccb_church", "ccb_sandbox"],
+    meteredId: "ccb_church",
+    staticCatalog: true,
+    factory: (storage: KVStorage) => deployment(storage, [
+      ccb("ccb_church", { purpose: "Pastoral care for the main campus", environment: "production", mode: "system", clientId: "prod-client", clientSecret: "prod-secret" }),
+      ccb("ccb_sandbox", { purpose: "Rehearsing group changes", environment: "sandbox", mode: "identity", access: "read-write", clientId: "sandbox-client", clientSecret: "sandbox-secret" }),
+    ]),
   },
 ];
 

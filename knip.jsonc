@@ -15,6 +15,7 @@
     "src/providers/revenuecat.ts",
     "src/providers/stripe.ts",
     "src/providers/vercel.ts",
+    "src/providers/ccb.ts",
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",

@@ -56,6 +56,18 @@ const RESERVED_AUTHORIZATION_PARAMS: ReadonlySet<string> = new Set([
   "resource",
 ]);
 
+/** Token-request headers the grant owns: client authentication and framing. */
+const RESERVED_TOKEN_HEADERS: ReadonlySet<string> = new Set([
+  "authorization",
+  "content-type",
+  "content-length",
+  "cookie",
+  "host",
+]);
+
+/** An RFC 9110 field-name token. */
+const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 const CLIENT_AUTHENTICATION: ReadonlySet<string> = new Set([
   "client_secret_basic",
   "client_secret_post",
@@ -102,6 +114,7 @@ interface StaticOAuthSettings {
   scope?: string;
   pkce: boolean;
   authorizationParams: ReadonlyArray<readonly [string, string]>;
+  tokenRequestHeaders: ReadonlyArray<readonly [string, string]>;
   apiOrigins: ReadonlySet<string>;
   /** Where the SDK's `serverUrl` points: the first API origin. */
   serverUrl: URL;
@@ -174,6 +187,26 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     }
     authorizationParams.push([name, value]);
   }
+  const tokenRequestHeaders: Array<readonly [string, string]> = [];
+  for (const [name, value] of Object.entries(config.tokenRequestHeaders ?? {})) {
+    if (!HEADER_NAME.test(name)) {
+      throw new Error(
+        `[connecta] connector "${id}" oauth.tokenRequestHeaders has an invalid header name.`,
+      );
+    }
+    if (RESERVED_TOKEN_HEADERS.has(name.toLowerCase())) {
+      throw new Error(
+        `[connecta] connector "${id}" oauth.tokenRequestHeaders may not set ` +
+          `"${name}"; the token request owns it.`,
+      );
+    }
+    if (typeof value !== "string" || value.includes("\r") || value.includes("\n") || value.includes("\0")) {
+      throw new Error(
+        `[connecta] connector "${id}" oauth.tokenRequestHeaders.${name} must be a single-line string.`,
+      );
+    }
+    tokenRequestHeaders.push([name, value]);
+  }
   const origins = Array.isArray(config.apiOrigins) ? config.apiOrigins : [];
   if (origins.length === 0) {
     throw new Error(
@@ -201,6 +234,7 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     ...(config.scope !== undefined ? { scope: config.scope } : {}),
     pkce: config.pkce ?? true,
     authorizationParams,
+    tokenRequestHeaders,
     apiOrigins,
     serverUrl: new URL(origins[0]!),
     identity: tokenEndpoint.href,
@@ -342,6 +376,25 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings);
 
   /**
+   * The global `fetch`, read per request, with the configured token-request
+   * headers laid over the SDK's own. With discovery and registration answered
+   * from configuration the token endpoint is the only URL the SDK fetches here;
+   * the check keeps the headers on it even if that ever changes.
+   */
+  const tokenEndpointFetch = (input: string | URL, init: RequestInit = {}) => {
+    const url = new URL(input);
+    if (
+      settings.tokenRequestHeaders.length === 0 ||
+      `${url.origin}${url.pathname}` !== settings.identity
+    ) {
+      return fetch(input, init);
+    }
+    const headers = new Headers(init.headers);
+    for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
+    return fetch(input, { ...init, headers });
+  };
+
+  /**
    * The SDK's `auth()` over this provider. The token endpoint is fetched
    * through the refresh coordinator — rotation, coalescing, and dead-versus-
    * outage verdicts — above a fetch that refuses every redirect, as the
@@ -357,7 +410,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       ...exchange,
       fetchFn: coordinatorFor(ctx).coordinatedFetch(
         provider,
-        redirectSafeFetch(id, "none"),
+        redirectSafeFetch(id, "none", tokenEndpointFetch),
         ctx.signal,
       ),
     });

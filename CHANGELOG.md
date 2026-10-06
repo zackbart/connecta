@@ -9,7 +9,7 @@ All notable changes to this package are documented here.
 - **Downstream OAuth on `api()` connectors.** A hand-written connector can
   declare `oauth: { authorizationEndpoint, tokenEndpoint, clientId,
   clientSecret?, tokenEndpointAuthMethod?, scope?, pkce?, authorizationParams?,
-  apiOrigins }` for a REST API that accepts only the authorization code grant,
+  tokenRequestHeaders?, apiOrigins }` for a REST API that accepts only the authorization code grant,
   such as Church Community Builder. Nothing is discovered or registered: the
   endpoints and the provider-issued client are configuration, and the client
   secret comes from the deployment's environment and is never stored. Handlers
@@ -21,6 +21,24 @@ All notable changes to this package are documented here.
   `/oauth/callback/<id>`, `authorize_connector`, and operator Connect,
   Restart, and Disconnect. `oauth` and `credential` are exclusive on one
   connector. See [downstream OAuth on `api()`](./documentation/auth.md#downstream-oauth-on-api).
+- **Church Community Builder (Pushpay ChMS) connection.**
+  `@zackbart/connecta/providers/ccb` exports `ccb(id, { purpose, environment,
+  mode, clientId, clientSecret, access?, scopes?, subdomain? })`, a
+  hand-written v2 REST connection over `api()`'s OAuth grant. `environment`
+  (`production` or `sandbox`) and `mode` (`system`, one church-wide grant an
+  administrator approves; `identity`, each person signing in as themselves
+  with a personal grant) are required, because CCB credentials do not cross
+  environments and the two modes reach different data. Twenty-four named reads
+  cover people and families, groups and participants, events and attendance,
+  forms and responses, processes and queues, scheduling, notes, and giving
+  metrics and pledges, with projections that drop allergies, giving
+  identifiers, and prayer requests unless `raw: true`. `ccb_api_get` and
+  `ccb_api_search` reach every GET and advanced search read-only, and
+  `ccb_api_mutate` ships only when a write scope is requested. A default
+  60-per-minute admission window per endpoint transcribes CCB's documented
+  limit, and `npm run providers:check -- --provider ccb` compares the 41
+  touched endpoints with Pushpay's published OpenAPI document. Clients are
+  issued by hand through Pushpay's API access request form.
 
 ### Fixed
 
