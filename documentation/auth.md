@@ -457,6 +457,19 @@ name, because the Workers-safe core has no DNS. A public name that resolves to
 a private address, or rebinds to one after the check, is out of scope; a host
 that must stop that runs connecta behind an egress policy that does.
 
+The authorization server a downstream names decides where consent goes,
+never where an existing grant goes. Tokens and a registered client are stored
+bound to the issuer that granted them. While discovery is cached, a refresh
+returns to that issuer whatever the downstream now advertises. When fresh
+discovery names a different one, the bound grant is retired behind a new epoch
+before anything it holds is sent, and the next `authorize_connector` consents
+at the server now named. That is the shape of
+[GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h),
+which the SDK has also refused on its own since client 2.2.0; connecta's
+binding is the one that retires the grant. A new consent still goes wherever
+the downstream points: the human who reads the authorization URL before
+approving it is that check, as the SDK says of its own.
+
 ## Management permissions
 
 Visibility alone grants no authentication-management permission. Two independent

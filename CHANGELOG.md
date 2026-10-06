@@ -2,6 +2,52 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This change moves both MCP edges from 2.0.0 to 2.3.1, pinned exactly and in
+lockstep, because client and server each pin the same exact
+`@modelcontextprotocol/core` and moving one alone would install two.
+`@modelcontextprotocol/client` 2.0.0 is affected by
+[GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h), an
+OAuth client that could send stored credentials to an authorization server the
+MCP server chose; `npm run check:security` failed on it. Connecta's own issuer
+binding already kept a `remoteMcp()` grant away from a server the downstream
+switches to, and tests now prove it end to end. Nothing in configuration
+changes. Two things a deployment may notice: a refresh whose rotated tokens
+cannot be stored now fails as that storage error instead of reporting
+`auth_required`, and `/mcp` bodies are still bounded by the host, not by the
+4 MiB default the server SDK adopted in 2.1.0 (#687).
+
+### Changed
+
+- **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
+  The SDK now binds stored credentials to the issuing authorization server
+  itself, follows HTTP redirects only within an origin for both transports and
+  OAuth requests, and propagates a `saveTokens` failure after a successful
+  refresh. Connecta's redirect handling already refused anything else, so no
+  redirect a downstream sends is treated differently. The server SDK's new
+  4 MiB request-body default is overridden on both protocol legs, so
+  `listen()`'s `maxBodyBytes` (10 MiB by default) and the Workers platform
+  limit remain the bound they were. The SDK now owns the closed-transport race
+  in the legacy handshake, so connecta's workaround for
+  [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
+  is gone; the handshake teardown sweeps prove no rejection escapes under
+  workerd without it. Bundles grow by about 4.8 KB gzip at the root and the
+  Worker example and about 2 KB for each hosted-MCP provider, within every cap.
+
+### Fixed
+
+- **A rotation that cannot be stored is not reported as needing consent.**
+  When the authorization server honored a refresh but its new tokens could not
+  be written, the SDK used to swallow the failure and start authorization, so
+  a passive call answered `auth_required` for a grant that was still good. It
+  now fails with the storage error, writes no consent URL, and leaves the
+  stored grant as it was.
+- **A token endpoint cannot stamp its own issuer.** A refresh answer carrying
+  `issuer` had that field kept when connecta persisted a rotation for a
+  cancelled caller with no issuer to stamp. Only the client binds a grant, so
+  the field is dropped, as the SDK drops it.
+
 ## 0.28.1 — 2026-10-05
 
 This patch adds six maintained connections for church operations and the

@@ -1217,19 +1217,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           inputRequired: { autoFulfill: false },
         },
       );
-      // @modelcontextprotocol/client 2.0.0 can attempt the legacy initialized
-      // notification after we close its transport. Its rejected Promise is
-      // unhandled under workerd even though connect() has a caller. This
-      // connection is already abandoned, so skip only that final handshake
-      // notification after our abort. Remove when the SDK owns this race:
-      // https://github.com/modelcontextprotocol/typescript-sdk/issues/2864
-      const notify = c.notification.bind(c);
-      c.notification = (message, options) => {
-        if (handshakeAbort.signal.aborted && message.method === "notifications/initialized") {
-          return Promise.resolve();
-        }
-        return notify(message, options);
-      };
       const t = buildTransport(ctx, provider, credentialFramed);
       if (!owned()) {
         detach(closeConnection(null, t, ctx.logger));

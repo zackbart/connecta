@@ -2624,6 +2624,33 @@ describe("OAuthRefreshCoordinator", () => {
     expect(await repointed.tokens({ issuer: "https://new-as.example" })).toBeUndefined();
   });
 
+  it("never keeps an issuer the token endpoint wrote into its own answer", async () => {
+    // Only the client stamps `issuer`. A recovered rotation with no issuer of
+    // its own to stamp must not carry one the answering server chose.
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const controller = new AbortController();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
+    await coordinator.coordinatedFetch(owner, async () => Response.json({
+      access_token: "new",
+      token_type: "Bearer",
+      refresh_token: "refresh-new",
+      issuer: "https://elsewhere.example",
+    }), controller.signal)("https://old-as.example/token", refreshInit("refresh-old"));
+    const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
+    controller.abort(new Error("owner cancelled"));
+    await vi.waitFor(() => expect(committing).toHaveBeenCalledTimes(1));
+    await committing.mock.results[0]!.value;
+
+    const reader = new KvOAuthProvider("svc", storage, REDIRECT, new OAuthRefreshCoordinator());
+    const stored = await reader.tokens();
+    expect(stored).toMatchObject({ refresh_token: "refresh-new" });
+    expect(stored).not.toHaveProperty("issuer");
+    expect(await storage.get("oauth:tokens")).not.toContain("elsewhere");
+  });
+
   it("removes a cancelled owner's accepted rotation when disconnect fences its pending storage write", async () => {
     const backing = memoryStorage();
     const writing = deferred<void>();
@@ -5402,6 +5429,152 @@ describe("remoteMcp() continue and restart starts", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// GHSA-6qxp-vccf-f47h: a downstream names the authorization server, so a
+// compromised one can name its own. A grant belongs to the server that issued
+// it; nothing it holds may reach any other.
+// ---------------------------------------------------------------------------
+describe("remoteMcp() and an authorization server the downstream switches to", () => {
+  const mcpUrl = "https://downstream.example/mcp";
+  const resourceMetadataUrl =
+    "https://downstream.example/.well-known/oauth-protected-resource";
+  const rotatedMetadataUrl =
+    "https://downstream.example/.well-known/oauth-protected-resource/rotated";
+  const trusted = "https://auth.example";
+  const foreign = "https://foreign-auth.example";
+
+  function downstream() {
+    let advertised = trusted;
+    let issued = 0;
+    const requests: { url: string; text: string }[] = [];
+    const fetchStub: FetchLike = async (input, init = {}) => {
+      const url = new URL(input);
+      const headers = [...new Headers(init.headers).entries()].flat().join(" ");
+      requests.push({ url: url.href, text: `${headers} ${String(init.body ?? "")}` });
+      if (url.href === resourceMetadataUrl || url.href === rotatedMetadataUrl) {
+        return Response.json({ resource: mcpUrl, authorization_servers: [advertised] });
+      }
+      for (const [server, name] of [[trusted, "trusted"], [foreign, "foreign"]] as const) {
+        if (url.href === `${server}/.well-known/oauth-authorization-server`) {
+          return Response.json({
+            issuer: server,
+            authorization_endpoint: `${server}/authorize`,
+            token_endpoint: `${server}/token`,
+            registration_endpoint: `${server}/register`,
+            response_types_supported: ["code"],
+            code_challenge_methods_supported: ["S256"],
+            token_endpoint_auth_methods_supported: ["client_secret_post"],
+          });
+        }
+        if (url.href === `${server}/register`) {
+          return Response.json({
+            ...(JSON.parse(String(init.body)) as object),
+            client_id: `${name}-client`,
+            client_secret: `${name}-secret`,
+          });
+        }
+        if (url.href === `${server}/token`) {
+          issued++;
+          return Response.json({
+            access_token: `${name}-access-${issued}`,
+            token_type: "Bearer",
+            refresh_token: `${name}-refresh-${issued}`,
+          });
+        }
+      }
+      // The resource server refuses every token, so each call asks the
+      // authorization server it currently advertises to recover the grant.
+      // Once it names a foreign one, its challenge points at fresh metadata
+      // too, as a compromised downstream's would.
+      if (url.href === mcpUrl) {
+        const metadata = advertised === trusted ? resourceMetadataUrl : rotatedMetadataUrl;
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${metadata}"` },
+        });
+      }
+      throw new Error(`Unexpected OAuth test request: ${url.href}`);
+    };
+    return {
+      fetchStub,
+      requests,
+      advertise: (server: string) => { advertised = server; },
+    };
+  }
+
+  const scope = (storage: KVStorage): ConnectorContext => ({
+    ...ctx(storage),
+    requestScope: {},
+  });
+  const connector = () =>
+    remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+
+  /** Consent at the trusted server, leaving a refresh token and a client secret it issued. */
+  async function authorized(storage: KVStorage, c: Connector) {
+    const started = await c.startAuth!(scope(storage), { force: true });
+    expect(new URL(required(started.authorizationUrl)).origin).toBe(trusted);
+    const state = required(new URL(required(started.authorizationUrl)).searchParams.get("state") ?? undefined);
+    const callback = scope(storage);
+    expect(await c.verifyState!(state, callback)).toBe(true);
+    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
+  }
+
+  it("keeps refreshing at the issuing server while discovery is cached, consulting nothing the downstream names", async () => {
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+
+    const storage = memoryStorage();
+    const c = connector();
+    await authorized(storage, c);
+    server.requests.length = 0;
+    server.advertise(foreign);
+
+    await c.listTools(scope(storage)).catch(() => {});
+
+    // The refused token sent the grant back to the server that issued it —
+    // what a vulnerable client sends to whoever is named, and the control that
+    // keeps the next test from passing for want of a refresh.
+    const refresh = server.requests.find(({ url }) => url === `${trusted}/token`);
+    expect(refresh?.text).toMatch(/refresh_token=trusted-refresh-\d/);
+    expect(refresh?.text).toContain("client_secret=trusted-secret");
+    expect(server.requests.filter(({ url }) => new URL(url).origin === foreign)).toEqual([]);
+  });
+
+  it("sends nothing the issuing server gave it to a server fresh discovery names, and retires the grant", async () => {
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+
+    const storage = memoryStorage();
+    const c = connector();
+    await authorized(storage, c);
+    const generation = await storage.get("oauth:generation");
+    // Discovery is not cached — state written before it was, or dropped the
+    // way the SDK advises a host to pick up a changed `authorization_servers`
+    // list — so the next 401 asks the downstream again, and the downstream
+    // now names its own server.
+    await storage.delete(oauthValueStorageKey("oauth:discovery", generation));
+    server.requests.length = 0;
+    server.advertise(foreign);
+
+    const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
+
+    const toForeign = server.requests.filter(({ url }) => new URL(url).origin === foreign);
+    expect(toForeign.length).toBeGreaterThan(0);
+    for (const { url, text } of toForeign) {
+      expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
+    }
+    expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
+    expect(classifyCallError(error).code).toBe("auth_required");
+    // The grant is retired behind a new epoch rather than kept for the day
+    // the downstream names its issuer again.
+    expect(await storage.get("oauth:generation")).not.toBe(generation);
+    const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
+    expect(stored.filter((value) => /trusted-(refresh|secret)/.test(value ?? ""))).toEqual([]);
+  });
+});
+
 describe("remoteMcp() finishAuth", () => {
   it("drives transport.finishAuth, clears pending, and reconnects next use", async () => {
     const storage = memoryStorage();
@@ -6453,6 +6626,53 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       }
     },
   );
+
+  it("reports a redeemed rotation it could not store as the storage failure, not as consent", async () => {
+    // Through @modelcontextprotocol/client 2.0.0, `auth()` swallowed a
+    // `saveTokens` failure and fell through to a fresh authorization, which a
+    // passive call reported as auth_required: a grant the server had just
+    // honored, sent to consent. From 2.1.0 the failure propagates.
+    const seeded = await seededStorage();
+    const storageFailure = new Error("token storage unavailable");
+    const storage: KVStorage = {
+      ...seeded,
+      get: (key) => seeded.get(key),
+      list: (prefix) => seeded.list!(prefix),
+      delete: (key) => seeded.delete(key),
+      set: async (key, value, options) => {
+        if (key === "oauth:tokens" && value.includes("access-new")) throw storageFailure;
+        await seeded.set(key, value, options);
+      },
+    };
+    const server = downstream({
+      current: () =>
+        Response.json({
+          access_token: "access-new",
+          token_type: "Bearer",
+          refresh_token: "refresh-new",
+        }),
+    });
+    const c = connector();
+    vi.stubGlobal("fetch", server.fetchStub);
+    try {
+      const passive = scope(storage);
+      const { error, classified } = await failureOf(c.listTools(passive));
+      expect(error).toBe(storageFailure);
+      expect(classified).toMatchObject({
+        code: "connector_call_failed",
+        message: "token storage unavailable",
+      });
+      expect(server.counts.token).toBe(1);
+      expect(server.counts.register).toBe(0);
+      const reader = new KvOAuthProvider("svc", seeded, REDIRECT);
+      expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+      // Nothing was written over the grant it had.
+      expect(await reader.tokens()).toMatchObject({ refresh_token: "refresh-old" });
+      await c.closeScope?.(passive);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
   it.each([
     [

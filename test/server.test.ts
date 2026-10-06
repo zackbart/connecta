@@ -398,6 +398,65 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
+  it("leaves the inbound body bound to the host on both protocol legs", async () => {
+    // @modelcontextprotocol/server 2.1.0 started refusing bodies over 4 MiB
+    // with its own 413. Connecta's bound belongs to the host — `listen()`'s
+    // `maxBodyBytes`, the Workers platform — so a body the host admitted must
+    // reach the meta-tools. JSON whitespace pads past the SDK default without
+    // changing what the request says.
+    const padding = " ".repeat(5 * 1024 * 1024);
+    const c = makeDeployment();
+
+    const legacy = await c.fetch(new Request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "skills", arguments: {} },
+      })}${padding}`,
+    }));
+    expect(legacy.status).toBe(200);
+    const legacyBody = await readJsonRpc(legacy);
+    expect(legacyBody.error, JSON.stringify(legacyBody)).toBeUndefined();
+    expect(legacyBody.result.isError).toBeFalsy();
+
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${BASE}/mcp`),
+      {
+        fetch: (async (url: string | URL, init?: RequestInit) => {
+          const padded =
+            typeof init?.body === "string" && init.body.includes('"tools/call"')
+              ? { ...init, body: `${init.body}${padding}` }
+              : init;
+          return c.fetch(new Request(url, padded));
+        }) as typeof fetch,
+        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+      },
+    );
+    const client = new Client(
+      { name: "modern-probe", version: "0.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(transport);
+    try {
+      expect(client.getProtocolEra()).toBe("modern");
+      const skills = (await client.callTool({
+        name: "skills",
+        arguments: {},
+      })) as { isError?: boolean; content: { type: string }[] };
+      expect(skills.isError).toBeFalsy();
+      expect(skills.content[0]?.type).toBe("text");
+    } finally {
+      await client.close();
+    }
+  });
+
   it("lists and fetches the usage skill", async () => {
     const c = makeDeployment();
     const listed = await mcpRpc(

@@ -396,14 +396,16 @@ type RefreshResponseOutcome =
  * later `saveTokens` to arrive on a request that may already be cancelled.
  *
  * A failure also decides what the SDK gets to parse. Pinned against
- * `@modelcontextprotocol/client` 2.0.0, `dist/index.mjs`: `authInternal()`
+ * `@modelcontextprotocol/client` 2.3.1, `src/client/auth.ts`: `authInternal()`
  * swallows a refresh failure that is not an `OAuthError`, or is `server_error`,
  * and falls through to `startAuthorization` (`state()`, `saveCodeVerifier()`,
  * `redirectToAuthorization()`); it rethrows every other `OAuthError`, and
  * `auth()` retries once after `invalidateCredentials()` only for
- * `invalid_grant` (tokens) and `invalid_client`/`unauthorized_client` (client
- * and tokens). `executeTokenRequest()` turns a 2xx body carrying `error` into
- * an `OAuthError` with that code. So a dead grant the SDK would rethrow
+ * `invalid_grant` and `invalid_dpop_proof` (tokens) and
+ * `invalid_client`/`unauthorized_client` (client and tokens). A `saveTokens`
+ * failure after a successful refresh propagates instead of falling through,
+ * as it has since 2.1.0. `executeTokenRequest()` turns a 2xx body carrying
+ * `error` into an `OAuthError` with that code. So a dead grant the SDK would rethrow
  * (`bad_refresh_token`, `invalid_scope`, …) reaches it as `invalid_grant`, and
  * an outage whose body names any code but `server_error` reaches it as
  * `server_error` — a 5xx `invalid_grant` must not make the SDK drop a grant
@@ -455,7 +457,12 @@ async function refreshResponseOutcome(
       forSdk: response,
     };
   }
-  if (sdkAcceptsOAuthTokens(parsed)) return { tokens: parsed as OAuthTokens };
+  if (sdkAcceptsOAuthTokens(parsed)) {
+    // An `issuer` names the server a grant is bound to, and only the client
+    // stamps it — never the server answering, as the SDK's own parse agrees.
+    const { issuer: _ignored, ...tokens } = parsed as OAuthTokens;
+    return { tokens };
+  }
   if (oauthErrorCode(parsed) !== undefined) {
     return {
       failure: new Error("OAuth refresh was refused by the authorization server."),
@@ -1965,7 +1972,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     flight: OAuthRefreshFlight,
     issuer?: string,
   ): Promise<void> {
-    const stamped: OAuthTokens & { issuer?: string } =
+    const stamped: OAuthTokens =
       issuer !== undefined ? { ...tokens, issuer } : tokens;
     await this.persistAcceptedTokens(
       stamped,
