@@ -9,7 +9,7 @@
  * alone keep this provider Workers-clean. `test/package-surface.test.ts` pins
  * it: no `cloudflare` package in any dependency field, every import relative.
  */
-import { api, defined, type ApiTool } from "../connectors/api.js";
+import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";
 import {
   remoteMcp,
   withCredentialDefaults,

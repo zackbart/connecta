@@ -305,7 +305,9 @@ or epoch does not open. Anything that fails to open — a tampered value, a
 rotated key — reads as absent: the connector reports `auth_required` and logs a
 warning. The flow bookkeeping stays plaintext: `state`, the pending URL,
 discovery metadata, and the generation. The callback route reads `state`
-directly, and none of it authenticates anything by itself.
+directly, and none of it authenticates anything by itself. An
+[`api()` OAuth connector](#downstream-oauth-on-api) seals its tokens and
+verifier the same way and stores no client at all.
 
 Plaintext left by an older release is read, then sealed where it lies through
 the same generation fence as any write, so an upgrade keeps the grant. Sealing
@@ -641,3 +643,98 @@ binding, so restarting after either changes cannot reuse an old registration.
 A downstream challenge or protected-resource scope declaration takes precedence,
 and the SDK adds `offline_access` when advertised for refresh-token grants.
 Omitting both settings preserves the existing discovery and registration flow.
+
+## Downstream OAuth on `api()`
+
+Some APIs a deployment needs have no MCP server and take nothing but OAuth.
+Church Community Builder's REST API accepts only a three-legged grant, issues
+its clients by hand, and publishes no metadata to discover. `api()` takes a
+static authorization-code configuration for that shape:
+
+```ts
+api("church", {
+  authScope: "personal",
+  oauth: {
+    authorizationEndpoint: "https://login.example.com/oauth/authorize",
+    tokenEndpoint: "https://api.example.com/oauth/token",
+    clientId: env.CHURCH_CLIENT_ID,
+    clientSecret: env.CHURCH_CLIENT_SECRET,
+    scope: "people:read",
+    apiOrigins: ["https://api.example.com"],
+  },
+  tools: [{
+    name: "get_person",
+    description: "Read one person",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    handler: async ({ id }, ctx) => {
+      const response = await ctx.oauth!.fetch(
+        `https://api.example.com/people/${encodeURIComponent(id)}`,
+      );
+      return response.json();
+    },
+  }],
+});
+```
+
+Nothing is discovered, registered, or learned. Every URL is configuration, so
+the rule for [URLs a downstream advertises](#urls-a-downstream-advertises)
+has nothing to check, and the endpoints are checked once, at construction:
+HTTPS (HTTP only on loopback), no credentials, no fragment. PKCE with S256 is
+on unless `pkce: false`, which drops the challenge from the consent URL and
+the verifier from the exchange, for a server that refuses them.
+`authorizationParams` adds provider parameters but cannot restate the grant's
+own. `tokenEndpointAuthMethod` defaults to `client_secret_basic` with a secret
+and `none` without; the mismatched pairings refuse to boot. A static server has
+no advertised issuer, so no RFC 9207 `iss` is demanded and no RFC 8707
+`resource` is sent. The grant is bound to the token endpoint instead:
+repointing it fences the old tokens behind a new epoch rather than sending
+them to the new server.
+
+**The client lives in deployment configuration, not a vault slot.** It is the
+deployment's identity at the provider — one per deployment, like Clerk's
+`secretKey` — while a vault slot belongs to an owner: on a personal connector
+every human would paste the deployment's secret into their own partition.
+Configuration also keeps it out of storage altogether. It is never written,
+sealed or otherwise, so a leaked store holds no client secret, Disconnect has
+nothing of it to delete, and Restart has no registration to carry forward.
+Read it from the environment or a Worker secret; an empty string, the usual
+unset variable, refuses to boot without quoting it.
+
+Handlers never see the grant. `ctx.oauth.fetch(url, init)` sends the calling
+owner's access token as `Authorization: Bearer` and does four things a
+hand-rolled header would not:
+
+- **It sends the token to `apiOrigins` and nowhere else.** A request to any
+  other origin is refused before it leaves, so an untrusted URL in a response
+  — a pagination link, a webhook target — cannot carry the token off.
+  Redirects come back unfollowed, and a handler cannot set `Authorization`
+  itself.
+- **A 401 earns exactly one recovery.** If another request has already
+  rotated a token in, that token is used; otherwise one refresh runs through
+  the same coordinator as `remoteMcp()`, coalesced across requests, with the
+  rotating refresh token persisted even if its owner is cancelled after the
+  answer arrives. The request is then replayed once, which is why a stream
+  body is refused.
+- **Failures land in the existing classes.** No grant, a second 401, or a
+  [dead refresh](#refresh-failures), whose refused tokens are deleted on the
+  spot, is `auth_required` and routes the agent to `authorize_connector`. An
+  authorization-server outage is a retryable `unavailable` that keeps the
+  grant. A second 401 is latched for the rest of the request scope, so a
+  program's next fifty calls do not spend fifty refreshes on it.
+- **It reads and writes nothing a handler can name.** Storage, sealing, and the
+  owner partition are the registry's, exactly as for `remoteMcp()`.
+
+Everything else is the `remoteMcp()` grant, unchanged: the epoch fence and its
+cleanup lineage, sealing under the vault key, shared and personal ownership,
+the callback route and its state and principal checks, `authorize_connector`,
+and the operator's Connect, Restart, and Disconnect. Status reports a stored
+grant as healthy without asking the downstream — failing at use is enough —
+and never starts authorization. One difference is deliberate: the first start
+publishes a modern epoch at once. The legacy generation exists so a grant from
+before epochs survives an upgrade, and an `api()` grant has no such past.
+
+`oauth` and `credential` are exclusive on one connector, so `auth_required`
+names one recovery. A provider that offers both a personal access token and
+OAuth, as Planning Center does, lets the deployment choose which to pass;
+handlers branch on whether `ctx.oauth` is present.

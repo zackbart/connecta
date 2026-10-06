@@ -21,8 +21,10 @@ health, and the per-connector call limiters. It is built once and lives as long
 as the isolate — on Workers a lazy module-scope singleton, which is why both
 deployment shapes construct it outside the request handler.
 
-An OAuth `remoteMcp()` connector also owns a runtime-local refresh completion
-gate (`src/auth/downstream-oauth.ts`). It coordinates credential mutation across
+An OAuth connector — `remoteMcp()`, or `api()` with a static grant
+(`src/auth/static-oauth.ts`, the same provider with its discovery and client
+answered from config) — also owns a runtime-local refresh completion gate
+(`src/auth/downstream-oauth.ts`). It coordinates credential mutation across
 concurrent request scopes while sharing no client, transport, or response, and
 never lets a follower cancel the owner. The subtle part is that a valid token
 response consumes the refresh token whether or not the owner survives to save it,
@@ -627,7 +629,7 @@ src/
   skills.ts           MCP instructions, the usage skill, connector guides
   catalog-drift.ts    vetted manifests and the counts a refresh produces
   activity.ts         optional history factory and best-effort recorder
-  auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth
+  auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
   executors/          the QuickJS pool and child (Node only)
   node.ts             listen() + fileStorage re-export (Node only)
 ```

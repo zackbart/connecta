@@ -2,6 +2,26 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Added
+
+- **Downstream OAuth on `api()` connectors.** A hand-written connector can
+  declare `oauth: { authorizationEndpoint, tokenEndpoint, clientId,
+  clientSecret?, tokenEndpointAuthMethod?, scope?, pkce?, authorizationParams?,
+  apiOrigins }` for a REST API that accepts only the authorization code grant,
+  such as Church Community Builder. Nothing is discovered or registered: the
+  endpoints and the provider-issued client are configuration, and the client
+  secret comes from the deployment's environment and is never stored. Handlers
+  call `ctx.oauth.fetch(url, init)`, which sends the calling owner's token as a
+  bearer to a declared origin only, answers a 401 with one coordinated refresh
+  and one replay, and otherwise fails `auth_required`. The grant is the
+  `remoteMcp()` grant underneath — the same sealed epochs, shared and personal
+  ownership, rotating-refresh coordination, dead-versus-outage verdicts,
+  `/oauth/callback/<id>`, `authorize_connector`, and operator Connect,
+  Restart, and Disconnect. `oauth` and `credential` are exclusive on one
+  connector. See [downstream OAuth on `api()`](./documentation/auth.md#downstream-oauth-on-api).
+
 ## 0.28.0 — 2026-10-04
 
 This minor release removes program pauses ([#672](https://github.com/zackbart/connecta/issues/672)).

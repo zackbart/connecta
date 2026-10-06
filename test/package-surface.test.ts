@@ -120,7 +120,10 @@ describe("public package boundary", () => {
   it("ships only generic connector factories and their shared machinery", () => {
     // guarded-fetch.ts is transport, not a third authoring path: it knows no
     // provider, and a provider-named file here would still be a failure.
+    // api-connector.ts is api() itself without its OAuth grant, split so the
+    // artifacts module and providers do not carry machinery they never use.
     expect(readdirSync(join(ROOT, "src", "connectors")).sort()).toEqual([
+      "api-connector.ts",
       "api.ts",
       "guarded-fetch.ts",
       "remote-mcp.ts",

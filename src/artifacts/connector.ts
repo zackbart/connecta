@@ -7,7 +7,7 @@
 // Who made each version comes from the caller core attached to the context,
 // never from arguments.
 
-import { api } from "../connectors/api.js";
+import { apiConnector as api } from "../connectors/api-connector.js";
 import { callerOf } from "../connector-caller.js";
 import { ConnectorCallError } from "../errors.js";
 import { resolveTheme, type ResolvedTheme } from "../branding.js";

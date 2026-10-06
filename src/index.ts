@@ -1099,7 +1099,14 @@ export type {
   RemoteMcpAuth,
   RemoteMcpRedirectPolicy,
 } from "./connectors/remote-mcp.js";
-export type { ApiOptions, ApiTool } from "./connectors/api.js";
+export type {
+  ApiHandlerContext,
+  ApiOAuthAccess,
+  ApiOAuthClientAuthentication,
+  ApiOAuthConfig,
+  ApiOptions,
+  ApiTool,
+} from "./connectors/api.js";
 export type {
   CatalogDriftCounts,
   CatalogDriftReport,

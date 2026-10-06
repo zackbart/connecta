@@ -11,9 +11,39 @@ import type {
 } from "@modelcontextprotocol/client";
 import { retryAfterMs } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
+import {
+  attachOAuthPartition,
+  oauthPartitionFor,
+  retainOAuthPartition,
+} from "../oauth-partition.js";
+import { inheritOAuthSealer } from "../oauth-sealing.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
-import type { KVStorage } from "../types.js";
+import type { ConnectorContext, KVStorage } from "../types.js";
+
+/** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
+const OAUTH_SCOPE = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;
+
+/** Refuse, at construction, a configured scope no authorization server could parse. */
+export function assertOAuthScope(connectorId: string, scope: string | undefined): void {
+  if (scope !== undefined && !OAUTH_SCOPE.test(scope)) {
+    throw new Error(`[connecta] connector "${connectorId}" OAuth scope must contain space-separated scope tokens.`);
+  }
+}
+
+/**
+ * The context an explicit authorization start runs under: allowed to begin
+ * consent, with a request scope of its own, carrying the registry's sealer and
+ * owner partition across the copy. Only `startAuth` builds one; status reads
+ * and calls never do, which is what keeps them from starting authorization.
+ */
+export function authorizingContext(ctx: ConnectorContext): ConnectorContext {
+  return attachOAuthPartition(inheritOAuthSealer(ctx, {
+    ...ctx,
+    requestScope: ctx.requestScope ?? ctx,
+    allowAuthorization: true,
+  }), oauthPartitionFor(ctx));
+}
 
 /** A 256-bit random opaque value, hex-encoded — used for the OAuth `state`. */
 function randomState(): string {
@@ -30,7 +60,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-const LEGACY_GENERATION = "legacy";
+export const LEGACY_GENERATION = "legacy";
 const ACTIVE_GENERATION_PREFIX = "v2:";
 const RESETTING_GENERATION_PREFIX = "reset:";
 const DISCONNECTED_GENERATION_PREFIX = "disconnected:";
@@ -1011,6 +1041,28 @@ export class OAuthRefreshCoordinator {
     if (!flight) return;
     this.settle(generation, flight, { status: "retired" });
   }
+}
+
+/**
+ * One refresh coordinator per owner partition, for one connector runtime.
+ * Long-lived enough for distinct request scopes to join one token redemption;
+ * it owns no client, transport, or request state. Production contexts carry a
+ * stable registry partition; hand-written contexts coordinate by their shared
+ * storage object instead.
+ */
+export function refreshCoordinatorsByPartition(): (
+  ctx: ConnectorContext,
+) => OAuthRefreshCoordinator {
+  const coordinators = new WeakMap<object, OAuthRefreshCoordinator>();
+  return (ctx) => {
+    const partition = oauthPartitionFor(ctx) ?? ctx.storage;
+    let coordinator = coordinators.get(partition);
+    if (!coordinator) {
+      coordinator = new OAuthRefreshCoordinator(() => retainOAuthPartition(partition));
+      coordinators.set(partition, coordinator);
+    }
+    return coordinator;
+  };
 }
 
 interface StoredOAuthValue<T> {
