@@ -1494,6 +1494,9 @@ function tools(
         raw: RAW,
       }, ["individualId"]),
       outputSchema: listOutput("assignments", ASSIGNMENT_SCHEMA),
+      // The spec declares start_date and end_date as this GET's request body
+      // (getIndividualAssignments), which fetch cannot send; they ride the
+      // query, as list_scheduling_categories' body fields do.
       handler: (args, ctx) =>
         list(`/individuals/${id(args["individualId"])}/assignments`, args, ctx, "assignments", projectAssignment, {
           start_date: args["startDate"],

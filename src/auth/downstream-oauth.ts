@@ -785,6 +785,9 @@ export class OAuthRefreshCoordinator {
         // An owner that has already left never publishes a flight, and never
         // reaches the token endpoint.
         if (requestSignal?.aborted) throw aborted(requestSignal);
+        // The authorization server this redemption answers to, fixed now: a
+        // recovery save outlives the SDK flow that would have stamped it.
+        const issuer = provider.refreshIssuer(generation);
         const flight: OAuthRefreshFlight = {
           outcome: Deferred.makeUnsafe(),
           stopObservingOwnerAbort: () => {},
@@ -794,7 +797,8 @@ export class OAuthRefreshCoordinator {
           recoveryPending: false,
           settled: false,
           releasePartition: this.retainWork(),
-          persist: (tokens) => provider.saveAcceptedRefreshTokens(tokens, generation, flight),
+          persist: (tokens) =>
+            provider.saveAcceptedRefreshTokens(tokens, generation, flight, issuer),
         };
         this.flights.set(generation, flight);
         this.advanceStateRevision();
@@ -1223,6 +1227,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
         refreshToken?: string;
         generation: string;
         successIdentity?: object;
+        /** The issuer the read was bound to, which a refresh answers to. */
+        issuer: string;
       }
     | undefined;
 
@@ -1357,6 +1363,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (owned) {
       this.refreshCoordinator?.fail(owned.generation, owned.flight, error);
     }
+  }
+
+  /** @internal The issuer this flow's issuer-aware read bound its refresh to. */
+  refreshIssuer(generation: string): string | undefined {
+    const basis = this.refreshBasis;
+    return basis?.generation === generation ? basis.issuer : undefined;
   }
 
   /** True when another request saved a refresh result after this flow's read. */
@@ -1918,6 +1930,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       this.refreshBasis = {
         accessToken: tokens.access_token,
         generation: refreshGeneration,
+        issuer: ctx.issuer,
         ...(tokens.refresh_token !== undefined
           ? { refreshToken: tokens.refresh_token }
           : {}),
@@ -1939,13 +1952,26 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  /** @internal Commit an already redeemed rotation even after its request leaves. */
+  /**
+   * @internal Commit an already redeemed rotation even after its request
+   * leaves. A token response names no issuer, so the one the refreshed grant
+   * was bound to is stamped here as the SDK's own save would: an unbound
+   * rotation would read as legacy state and bind to whichever authorization
+   * server the connector names next.
+   */
   async saveAcceptedRefreshTokens(
     tokens: OAuthTokens,
     generation: string,
     flight: OAuthRefreshFlight,
+    issuer?: string,
   ): Promise<void> {
-    await this.persistAcceptedTokens(tokens, undefined, { generation, flight });
+    const stamped: OAuthTokens & { issuer?: string } =
+      issuer !== undefined ? { ...tokens, issuer } : tokens;
+    await this.persistAcceptedTokens(
+      stamped,
+      issuer !== undefined ? { issuer } : undefined,
+      { generation, flight },
+    );
   }
 
   private persistAcceptedTokens(

@@ -189,7 +189,7 @@ describe("OAuth callback page", () => {
     };
   }
 
-  it("withholds a failed exchange's error from the page and logs it instead", async () => {
+  it("withholds a failed exchange's error from the page and the log alike", async () => {
     const secret = "token endpoint said: client_secret=cs_live_leaked is invalid";
     const warn = vi.fn();
     const connecta = createTestConnecta({
@@ -214,7 +214,10 @@ describe("OAuth callback page", () => {
     expect(body).not.toContain("cs_live_leaked");
     expect(body).not.toContain("token endpoint said");
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0]?.[0])).toContain("authorization code exchange threw");
+    // The log names the failure in fixed text; the thrown message, which can
+    // quote a token endpoint's body, reaches neither surface.
+    expect(String(warn.mock.calls[0]?.[0])).toContain("authorization code exchange failed");
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("cs_live_leaked");
   });
 
   it("names a provider error by reason and never repeats the parameter", async () => {

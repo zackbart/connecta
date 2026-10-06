@@ -13,12 +13,13 @@ OAuth, so `api()` connectors can now declare a static OAuth 2.0
 authorization-code grant that reuses the `remoteMcp()` machinery. Each
 connection is a new opt-in provider subpath and the OAuth grant is opt-in per
 connector: existing imports, connector declarations, credentials, and
-deployment behavior do not change. The one fix a deployment may notice is that
-a forced OAuth restart no longer reuses a client registration the provider has
-deleted ([#611](https://github.com/zackbart/connecta/issues/611)). Internally,
-the guarded transport can repeat a query key for an array value, and `api()`'s
-builder moved into its own module so OAuth stays out of bundles that never use
-it.
+deployment behavior do not change. Two fixes a deployment may notice: a forced
+OAuth restart no longer reuses a client registration the provider has deleted
+([#611](https://github.com/zackbart/connecta/issues/611)), and a failed OAuth
+code exchange is now logged as fixed text rather than the provider's message.
+Internally, the guarded transport can repeat a query key for an array value,
+and `api()`'s builder moved into its own module so OAuth stays out of bundles
+that never use it.
 
 ### Added
 
@@ -160,6 +161,19 @@ it.
   hands back a pending consent URL whose client a callback's `invalid_client`
   has dropped; it starts a flow that registers instead. Static `api()` OAuth
   clients are configuration and unaffected.
+- **A refresh rotation saved after its request was cancelled keeps its
+  issuer.** When the token endpoint answered after the owning request left,
+  connecta persisted the rotated tokens itself but unbound, and the next
+  issuer-aware read adopted them for whichever authorization server the
+  connector named by then — so a connector repointed at another server would
+  send the rotated refresh token there. The recovery save now stamps the issuer
+  the refresh answered to, as the SDK's own save does, and a repointed connector
+  fences the grant instead.
+- **A failed OAuth code exchange no longer writes the provider's message to the
+  operator log.** The SDK quotes a token endpoint's `error_description` or raw
+  body, and a provider that echoes a `client_secret_post` request put the client
+  secret, code, and verifier in the log. The callback now logs fixed text and,
+  when the error carries one, a standard OAuth error code from an allowlist.
 
 ## 0.28.0 — 2026-10-04
 

@@ -373,6 +373,29 @@ describe("named reads (H9, H10)", () => {
     expect(url().searchParams.get("limit")).toBe("26");
   });
 
+  it("reads an offsetless ISO date-time as UTC whatever the runtime's timezone", async () => {
+    // Node re-reads TZ on change; workerd is UTC and has no process.env to set.
+    const env = typeof process === "undefined" ? undefined : process.env;
+    const previous = env?.["TZ"];
+    if (env) env["TZ"] = "America/New_York";
+    try {
+      queue({ body: { status: "success", type: "List", data: [] } });
+      await call(connection(), "list_charges", {
+        organizationId: "org_1",
+        createdAfter: "2026-01-01T00:00:00",
+        createdBefore: "2026-01-01T05:30:00.250+05:30",
+      });
+      expect(url().searchParams.get("created_after")).toBe(String(Date.UTC(2026, 0, 1) / 1000));
+      // An explicit offset is honored, not replaced.
+      expect(url().searchParams.get("created_before")).toBe(String(Date.UTC(2026, 0, 1) / 1000));
+    } finally {
+      if (env) {
+        if (previous === undefined) delete env["TZ"];
+        else env["TZ"] = previous;
+      }
+    }
+  });
+
   it("refuses calls that can only fail before any request", async () => {
     await expect(call(connection(), "list_charges", {})).rejects.toMatchObject({ code: "invalid_args" });
     await expect(call(connection(), "list_recurring_charges", {})).rejects.toMatchObject({ code: "invalid_args" });

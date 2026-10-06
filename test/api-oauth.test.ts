@@ -444,6 +444,56 @@ describe("api() oauth callback exchange", () => {
     await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
     expect((await connector.status!(registry.contextFor("ccb", BASE))).state).toBe("ok");
   });
+
+  it.each([
+    ["an OAuth error whose description echoes the request", "json", "invalid_grant"],
+    ["a non-JSON body echoing the request", "text", "server_error"],
+    ["an unrecognized error code carrying the request", "code", undefined],
+  ] as const)("logs %s as fixed text and a known OAuth code, never the client secret", async (_name, shape, logged) => {
+    const provider = fakeProvider();
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      if (String(input) !== TOKEN) return provider.fetchStub(input, init);
+      // A provider echoing the form it received, secret first.
+      const form = new URLSearchParams(String(init.body));
+      expect(form.get("client_secret")).toBe("church-secret");
+      const echoed = `client_secret=${form.get("client_secret")}&code=${form.get("code")}`;
+      if (shape === "text") return new Response(`bad request: ${echoed}`, { status: 400 });
+      return Response.json(
+        shape === "json"
+          ? { error: "invalid_grant", error_description: `rejected ${echoed}` }
+          : { error: `bad_${echoed}` },
+        { status: 400 },
+      );
+    });
+    const warn = vi.fn();
+    const connecta = createTestConnecta({
+      connectors: [api("ccb", { oauth: { ...OAUTH, tokenEndpointAuthMethod: "client_secret_post" }, tools: [] })],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: { debug() {}, info() {}, warn, error() {} },
+    });
+    try {
+      const connector = connecta.registry.getConnector("ccb")!;
+      const started = await connector.startAuth!(connecta.registry.contextFor("ccb", BASE));
+      const authorizationUrl = new URL(started.authorizationUrl!);
+      const code = provider.consent(authorizationUrl.href);
+      const state = authorizationUrl.searchParams.get("state")!;
+      warn.mockClear();
+      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`));
+      expect(callback.status).toBe(500);
+      expect(await callback.text()).not.toContain("church-secret");
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]![0]);
+      expect(line).toContain("authorization code exchange failed");
+      expect(line).not.toContain("church-secret");
+      expect(line).not.toContain("client_secret");
+      expect(line).not.toContain(code);
+      if (logged) expect(line).toContain(`OAuth error ${logged}`);
+      else expect(line).not.toContain("OAuth error");
+    } finally {
+      await connecta.close();
+    }
+  });
 });
 
 describe("api() oauth refresh", () => {
@@ -549,6 +599,56 @@ describe("api() oauth refresh", () => {
     // The rest of that request does not spend another refresh on it.
     await failure(connector.callTool("whoami", {}, scope));
     expect(provider.apiAuthorizations).toHaveLength(2);
+  });
+
+  it("keeps a rotation saved after its request was cancelled bound to the token endpoint that issued it", async () => {
+    const OLD_TOKEN = "https://old-auth.test/oauth/token";
+    const NEW_TOKEN = "https://new-auth.test/oauth/token";
+    const provider = fakeProvider();
+    const sentToNew: URLSearchParams[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url === NEW_TOKEN) {
+        sentToNew.push(new URLSearchParams(String(init.body)));
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      return provider.fetchStub(url === OLD_TOKEN ? TOKEN : input, init);
+    }));
+    const storage = memoryStorage();
+    const before = ccb({ oauth: { ...OAUTH, tokenEndpoint: OLD_TOKEN } });
+    const first = makeRegistry([before], { storage });
+    await authorize(before, () => first.contextFor("ccb", BASE), provider);
+
+    // The owner leaves after the token endpoint redeemed refresh-alice-1 but
+    // before the SDK's own saveTokens: cancellation recovery saves the rotation.
+    provider.expireAccess();
+    const gate = deferred<void>();
+    provider.control.refreshGate = gate.promise;
+    const controller = new AbortController();
+    const call = failure(before.callTool(
+      "whoami", {}, first.contextFor("ccb", BASE, {}, { signal: controller.signal }),
+    ));
+    await vi.waitFor(() => {
+      expect(provider.tokenRequests.some((r) => r.params.get("grant_type") === "refresh_token")).toBe(true);
+    });
+    controller.abort(new Error("owner cancelled"));
+    await call;
+    gate.resolve();
+    await vi.waitFor(async () => {
+      const generation = await storage.get("conn:ccb:oauth:generation");
+      const stored = await storage.get(`conn:ccb:${oauthValueStorageKey("oauth:tokens", generation)}`);
+      expect(stored).toContain("refresh-alice-2");
+    });
+
+    // Redeployed against another authorization server: the rotation belongs
+    // to the old one, so the replacement fences it rather than adopting it.
+    provider.expireAccess();
+    const after = ccb({ oauth: { ...OAUTH, tokenEndpoint: NEW_TOKEN } });
+    const second = makeRegistry([after], { storage });
+    const { classified } = await failure(after.callTool("whoami", {}, second.contextFor("ccb", BASE)));
+    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(sentToNew).toEqual([]);
+    expect(provider.apiAuthorizations).not.toContain("Bearer access-alice-2");
   });
 });
 

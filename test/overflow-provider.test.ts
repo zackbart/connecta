@@ -240,6 +240,22 @@ describe("overflow() construction", () => {
     expect(connection({ callAdmission: custom }).callAdmission).toBe(custom);
   });
 
+  it("states each write's money unit as Overflow's request schemas define it", async () => {
+    // CreateSubscriptionRequest and UpdateSubscriptionRequest define `amount`
+    // in dollars; AuthorizePaymentRequest takes `amountInCents`. A blanket
+    // "cents" would turn a $50 recurring gift into $5,000.
+    const flat = (text: string) => text.replace(/\s+/g, " ");
+    const content = flat(guide(connection()).content);
+    expect(content).toContain("Recurring-gift `amount` is dollars");
+    expect(content).toContain("a $50.00 monthly gift is `amount: 50`");
+    expect(content).toContain("`POST /payments/authorize` takes `amountInCents`");
+    expect(content).not.toMatch(/read as cents|amounts are cents/);
+    const mutate = (await connection().listTools(context())).find((tool) => tool.name === "overflow_api_mutate")!;
+    const body = flat(String((mutate.inputSchema!.properties as Record<string, { description?: string }>)["body"]!.description));
+    expect(body).not.toContain("amounts in cents");
+    expect(body).toContain("subscription `amount` is dollars");
+  });
+
   it("appends nonprofit instructions to the maintained guide", () => {
     const content = guide(connection({ instructions: "Tithes live under the General campaign." })).content;
     expect(content).toContain("## Nonprofit instructions");

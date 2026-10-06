@@ -1834,14 +1834,19 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     {
       name: "add_plan_item",
       description:
-        "Add an item — a song, header, media, or other element — to a plan's order of service. item_type cannot be changed afterwards.",
+        "Add an item — a song, header, or other element — to a plan's order of service. A songId makes a song item; media_ids, set through pco_api_mutate, make a media item.",
       annotations: ADDITIVE,
       inputSchema: input(
         {
           serviceTypeId: SERVICE_TYPE_ID,
           planId: PLAN_ID,
           title: { type: "string", minLength: 1, description: "Item title; for a song, usually the song title." },
-          itemType: { type: "string", enum: ["song", "header", "media", "item"], description: "Defaults to item." },
+          itemType: {
+            type: "string",
+            enum: ["item", "header"],
+            description:
+              "header for a section header, fixed at creation; item (the default) for anything else. Song and media types follow from what is attached, never this.",
+          },
           songId: idProperty("Song id from list_songs, for a song item."),
           arrangementId: idProperty("Arrangement id from list_song_arrangements."),
           keyId: idProperty("Key id from list_song_arrangements keys[].id."),
@@ -1862,7 +1867,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
                 path: `/services/v2/service_types/${segment(args["serviceTypeId"])}/plans/${segment(args["planId"])}/items`,
                 body: writeDocument("Item", {
                   title: args["title"],
-                  item_type: args["itemType"],
+                  // Planning Center assigns only `header`; omitting it is `item`.
+                  item_type: args["itemType"] === "header" ? "header" : undefined,
                   song_id: args["songId"],
                   arrangement_id: args["arrangementId"],
                   key_id: args["keyId"],

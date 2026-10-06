@@ -4,9 +4,9 @@ import { renderFixPrompt, type FixPromptSpec } from "./fix-prompt.js";
  * Every way `/oauth/callback/<id>` can end, as a closed set. The route is
  * public and its inputs are attacker-influenced — the provider's `error`
  * parameter, and whatever a failed code exchange threw — so the page names a
- * reason from this list and never repeats either. The raw exchange error goes
- * to the operator log, which is where the rest of the callback's diagnostics
- * already live.
+ * reason from this list and never repeats either. The operator log names an
+ * exchange failure too, in fixed text with at most a known OAuth error code:
+ * the raw error can quote a token endpoint's echo of the client secret.
  *
  * `invalid_callback` is deliberately one reason, not four. An unknown id, a
  * connector without OAuth, a missing or mismatched state, and a verifier that

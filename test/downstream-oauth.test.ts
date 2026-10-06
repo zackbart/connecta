@@ -2595,6 +2595,35 @@ describe("OAuthRefreshCoordinator", () => {
     }
   });
 
+  it("stamps a cancelled owner's recovered rotation with the issuer its refresh answered to", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const controller = new AbortController();
+    const issuer = { issuer: "https://old-as.example" };
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" }, issuer);
+    // The SDK's issuer-aware read that decides to refresh.
+    expect(await owner.tokens(issuer)).toMatchObject({ refresh_token: "refresh-old" });
+    await coordinator.coordinatedFetch(owner, async () => Response.json({
+      access_token: "new", token_type: "Bearer", refresh_token: "refresh-new",
+    }), controller.signal)("https://old-as.example/token", refreshInit("refresh-old"));
+    // The owner leaves before the SDK's saveTokens: recovery persists alone.
+    const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
+    controller.abort(new Error("owner cancelled"));
+    await vi.waitFor(() => expect(committing).toHaveBeenCalledTimes(1));
+    await committing.mock.results[0]!.value;
+
+    const stored = JSON.parse((await storage.get("oauth:tokens"))!);
+    expect(stored).toMatchObject({
+      issuer: issuer.issuer,
+      value: { refresh_token: "refresh-new", issuer: issuer.issuer },
+    });
+    // A server the connector names later cannot adopt it as unbound state.
+    const repointed = new KvOAuthProvider("svc", storage, REDIRECT, new OAuthRefreshCoordinator());
+    expect(await repointed.tokens({ issuer: "https://new-as.example" })).toBeUndefined();
+  });
+
   it("removes a cancelled owner's accepted rotation when disconnect fences its pending storage write", async () => {
     const backing = memoryStorage();
     const writing = deferred<void>();

@@ -1117,7 +1117,9 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           query: RAW_QUERY_PROPERTY,
           body: {
             type: ["object", "array"],
-            description: "JSON body exactly as Overflow documents it; amounts in cents. Omit when the endpoint takes none.",
+            description:
+              "JSON body exactly as Overflow documents it. Units differ: subscription `amount` is dollars, " +
+              "/payments/authorize takes `amountInCents`, /contributions `amount` states none. Omit when the endpoint takes none.",
           },
         },
         ["method", "path"],
@@ -1732,9 +1734,14 @@ Nonprofit purpose: ${purpose}
 
 ## Money, units, and status
 
-- Fields named \`…InCents\` are cents. Contribution and recurring-gift
-  \`amount\` carry no unit in Overflow's schema; its examples read as cents
-  (5000 = $50.00). Check one known gift before reporting totals.
+Overflow does not use one money unit, so read the unit per field:
+
+- Fields named \`…InCents\` are cents: deposits and their line items and
+  totals, refunds, chargebacks, and the authorize body.
+- Recurring-gift \`amount\` is dollars: Overflow's create and update bodies
+  say so, and its subscription reads carry the same field.
+- Contribution \`amount\` states no unit in Overflow's schema. Check one known
+  gift before reporting totals.
 - \`status\` is per asset type. A gift is final at \`PAID_OUT\` (cash),
   \`CONFIRMED\` (manual cash, crypto), \`CONTRIBUTION_RECEIVED\` or \`BILLED\`
   (stock), and \`CONTRIBUTION_RECEIVED\` (DAF). \`statusBucket\` filters by
@@ -1763,11 +1770,14 @@ Every Overflow write moves money or changes a donor record, so none has a
 named tool. Each is one approval-gated \`overflow_api_mutate\` call with
 Overflow's documented body:
 
-- \`POST /contributions\` charges a saved payment method;
-  \`POST /payments/authorize\` authorizes a new one.
+- \`POST /contributions\` charges a saved payment method. Its \`amount\`
+  states no unit; confirm it against a known gift of the same donor before
+  charging. \`POST /payments/authorize\` takes \`amountInCents\` and
+  authorizes a new method (\`0\` only saves it).
 - \`POST /contributions/{id}/initiate-refund\` (under $1,000 only).
 - \`POST\` / \`PATCH\` / \`DELETE /subscriptions/{donorId}[/{subscriptionId}]\`
-  creates, changes, or cancels a recurring gift; cancel takes a
+  creates, changes, or cancels a recurring gift. Its \`amount\` is dollars,
+  not cents: a $50.00 monthly gift is \`amount: 50\`. Cancel takes a
   \`cancellationReason\` body.
 - \`POST /donors\`, \`PATCH /donors/{id}\`.
 
@@ -1886,9 +1896,10 @@ export function overflow(id: string, options: OverflowOptions): Connector {
     callAdmission: options.callAdmission ?? OVERFLOW_ADMISSION,
     usageGuide: {
       content: usageGuide(purpose, environment, options.instructions),
-      summary: `Overflow ${label}: cents and final statuses, deposit reconciliation, donor-PII care, and writes via mutate.`,
+      summary: `Overflow ${label}: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.`,
       // Required because correct use depends on facts no schema carries:
-      // which statuses are final per asset type, that amounts are cents, and
+      // which statuses are final per asset type, which money unit each field
+      // and write body uses (cents, dollars, or unstated), and
       // that every write is a mutate-hatch call whose body comes from
       // Overflow's reference.
       required: true,

@@ -612,13 +612,19 @@ async function listPage(
   return { rows, page: { hasMore, nextCursor } };
 }
 
-/** Unix seconds from an integer or an ISO 8601 date/date-time. */
+/** An ISO 8601 date-time with no `Z` or offset, which `Date.parse` reads as local time. */
+const OFFSETLESS_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+
+/**
+ * Unix seconds from an integer or an ISO 8601 date/date-time. A date-time
+ * without an offset is UTC, as the schema promises, not the runtime's zone.
+ */
 function unixSeconds(value: unknown, name: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "number") return value;
   const raw = String(value).trim();
   if (/^\d+$/.test(raw)) return Number(raw);
-  const parsed = Date.parse(raw);
+  const parsed = Date.parse(OFFSETLESS_DATE_TIME.test(raw) ? `${raw}Z` : raw);
   if (!Number.isFinite(parsed)) {
     throw new ConnectorCallError(
       "invalid_args",

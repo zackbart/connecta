@@ -589,6 +589,22 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
     expect(scheduled).toMatchObject({ id: "pp2", status: "U", team_id: "3" });
   });
 
+  it("assigns only a header's item_type; song and media items come from what is attached", async () => {
+    // Services 2018-11-01: "The only value that you can pass is `header`. If
+    // no value is passed then `item` will be used."
+    const tools = await connection().listTools(context());
+    const itemType = (tools.find((tool) => tool.name === "add_plan_item")!.inputSchema!.properties as Record<string, { enum?: unknown[] }>)["itemType"]!;
+    expect(itemType.enum).toEqual(["item", "header"]);
+    const item = (id: string, attributes: Record<string, unknown>) => ({ status: 201, body: { data: { type: "Item", id, attributes } } });
+    queue(item("i1", { item_type: "header", title: "Welcome" }), item("i2", { item_type: "song", title: "Amazing Grace" }), item("i3", { item_type: "item", title: "Prayer" }));
+    await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Welcome", itemType: "header" });
+    await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Amazing Grace", songId: "5", arrangementId: "6" });
+    await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Prayer", itemType: "item" });
+    expect(calls[0]!.body).toEqual({ data: { type: "Item", attributes: { title: "Welcome", item_type: "header" } } });
+    expect(calls[1]!.body).toEqual({ data: { type: "Item", attributes: { title: "Amazing Grace", song_id: "5", arrangement_id: "6" } } });
+    expect(calls[2]!.body).toEqual({ data: { type: "Item", attributes: { title: "Prayer" } } });
+  });
+
   it("resolves group membership names through the included person", async () => {
     queue({
       body: {

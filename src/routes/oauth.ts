@@ -132,6 +132,32 @@ export function routeOAuthCallback(
   );
 }
 
+/**
+ * RFC 6749's error codes (sections 4.1.2.1 and 5.2) and RFC 8707's
+ * `invalid_target`. Only a code on this list is logged: the `code` an OAuth
+ * error carries is the provider's own text.
+ */
+const TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "invalid_scope",
+  "invalid_target",
+  "access_denied",
+  "server_error",
+  "temporarily_unavailable",
+]);
+
+/** ` with OAuth error <code>` for a known code; nothing for anything else. */
+function exchangeErrorCode(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && TOKEN_ERROR_CODES.has(code)
+    ? ` with OAuth error ${code}`
+    : "";
+}
+
 async function finishOAuthCallback(
   context: RouteContext,
 ): Promise<Response> {
@@ -226,11 +252,13 @@ async function finishOAuthCallback(
       await callbackRegistry!.invalidateStored(id);
       return html("connected", opts, connector);
     } catch (err) {
-      // The page names the reason and nothing else; what the exchange threw can
-      // quote a token endpoint's body, so it goes only to the operator log.
+      // Neither the page nor the log repeats what the exchange threw: the SDK
+      // quotes the token endpoint's error_description or raw body, and a
+      // provider echoing a client_secret_post request puts the secret there.
       opts.logger.warn(
         `[connecta] OAuth callback for connector ${loggableValue(id)} failed ` +
-          `with 500: the authorization code exchange threw ${loggableValue(msg(err))}.`,
+          `with 500: the authorization code exchange failed${exchangeErrorCode(err)}. ` +
+          "Check the connector's client configuration and re-run authorization.",
       );
       return html("exchange_failed", opts, connector);
     }
