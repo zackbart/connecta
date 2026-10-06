@@ -131,6 +131,10 @@
       "types": "./dist/providers/docs.d.ts",
       "import": "./dist/providers/docs.js"
     },
+    "./providers/sheets": {
+      "types": "./dist/providers/sheets.d.ts",
+      "import": "./dist/providers/sheets.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"

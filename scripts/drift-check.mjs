@@ -75,6 +75,7 @@ const SPEC_PROVIDERS = [
   "gmail",
   "drive",
   "docs",
+  "sheets",
 ];
 /** Providers whose manifest names one specification per product and version. */
 const VERSIONED_SPEC_PROVIDERS = new Set(["planning-center"]);
