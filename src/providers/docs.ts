@@ -178,6 +178,46 @@ function integer(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 
+/**
+ * Ids Google sends back are copied into results only if a tool could take
+ * them as input again — the same pattern and length the input schemas
+ * enforce. Anything else is dropped whole and named in the result's
+ * `dropped`, never cut: a shortened id addresses something else.
+ */
+const ID_RULES = {
+  documentId: { pattern: /^[A-Za-z0-9_-]+$/, max: 256 },
+  revisionId: { pattern: /^\S+$/, max: 512 },
+  tabId: { pattern: /^[A-Za-z0-9._-]+$/, max: 128 },
+} as const;
+
+function keptId(
+  value: unknown,
+  kind: keyof typeof ID_RULES,
+  name: string,
+  dropped: string[],
+): string | undefined {
+  const id = text(value);
+  if (id === undefined) return undefined;
+  const rule = ID_RULES[kind];
+  if (id.length <= rule.max && rule.pattern.test(id)) return id;
+  dropped.push(name);
+  return undefined;
+}
+
+/** Titles are prose: cut to this many JSON bytes with a marker, never dropped. */
+const TITLE_BYTES = 4 * 1024;
+
+function boundedTitle(value: unknown): string | undefined {
+  const title = text(value);
+  return title === undefined
+    ? undefined
+    : clampText(title, TITLE_BYTES, (more) => `… [${more} more characters]`);
+}
+
+function droppedField(dropped: string[]): string[] | undefined {
+  return dropped.length > 0 ? [...new Set(dropped)].slice(0, 20) : undefined;
+}
+
 function documentUrl(documentId: string): string {
   return `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
 }
@@ -529,12 +569,13 @@ function findRawTab(tabs: unknown, tabId: string, depth = 0): JsonRecord | undef
  */
 function rawDocument(document: JsonRecord, documentId: string, tabId: string | undefined): JsonRecord {
   const resource = tabId === undefined ? document : { ...document, tabs: [findRawTab(document["tabs"], tabId)] };
-  const id = text(document["documentId"]) ?? documentId;
+  const dropped: string[] = [];
   const result = compact({
-    documentId: id,
-    title: text(document["title"]),
-    revisionId: text(document["revisionId"]),
-    url: documentUrl(id),
+    documentId,
+    title: boundedTitle(document["title"]),
+    revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
+    url: documentUrl(documentId),
+    dropped: droppedField(dropped),
     raw: resource,
   });
   const bytes = jsonBytes(result);
@@ -559,9 +600,9 @@ function batchPath(documentId: string): string {
   return `/documents/${encodeURIComponent(documentId)}:batchUpdate`;
 }
 
-/** The revision a batchUpdate left the document at, when Google reports it. */
-function revisionAfter(reply: JsonRecord): string | undefined {
-  return text(asRecord(reply["writeControl"])["requiredRevisionId"]);
+/** The revision a batchUpdate left the document at, when Google reports a usable one. */
+function revisionAfter(reply: JsonRecord, dropped: string[]): string | undefined {
+  return keptId(asRecord(reply["writeControl"])["requiredRevisionId"], "revisionId", "revisionId", dropped);
 }
 
 function uncertain(message: string, cause: unknown): ConnectorCallError {
@@ -573,33 +614,39 @@ function uncertain(message: string, cause: unknown): ConnectorCallError {
  * saw the request get (`googleOutcomeOf`) — never from an error code, which
  * the same outcome can arrive under several of.
  *
- * - `not-sent`: nothing left connecta. Nothing happened.
+ * - `not-sent` (`before-send`): nothing left connecta. Nothing happened.
  * - `refused`: Google answered with a 4xx. Nothing applied.
- * - `unknown`: sent, and either no status came back (`awaiting-response`) or
- *   Google answered a 5xx (`server-error`), which can follow a write that
- *   landed. It may or may not have applied.
- * - `probably-applied`: Google answered 2xx (or redirected) and the reply could
- *   not be used — it broke off, overflowed the ceiling, or would not parse.
+ * - `unknown`: sent, and no status came back (`awaiting-response`), Google
+ *   answered a 5xx (`server-error`, whatever reason it carries), or Google
+ *   redirected (`redirected`, never followed). It may or may not have applied.
+ * - `probably-applied` (`reading-body`): Google answered 2xx and the reply
+ *   could not be used — it broke off, overflowed the ceiling, or would not
+ *   parse.
  *
- * No Docs write is sent `idempotent`. A create or an insert sent twice is two;
- * replaceAllText can match its own replacement; and a revision-guarded batch
- * sent again after its first landed is refused as `conflict`, whose advice to
- * reapply the change would then duplicate it. So a 5xx is never a refusal
- * here. A failure the client did not classify is `unknown`, the reading that
- * never invites a duplicate.
+ * "Nothing applied" is claimed only for an observed 4xx: `refused` can also
+ * carry a 5xx on an idempotent write, and no Docs write is sent `idempotent`
+ * — a create or an insert sent twice is two; replaceAllText can match its own
+ * replacement; and a revision-guarded batch sent again after its first landed
+ * is refused as `conflict`, whose advice to reapply the change would then
+ * duplicate it. A failure the client did not classify is `unknown`, the
+ * reading that never invites a duplicate.
  */
 type WriteOutcome = "not-sent" | "refused" | "unknown" | "probably-applied";
 
 function writeOutcome(error: unknown): WriteOutcome {
-  switch (googleOutcomeOf(error)?.phase) {
+  const outcome = googleOutcomeOf(error);
+  switch (outcome?.phase) {
     case "before-send":
       return "not-sent";
-    case "refused":
-      return "refused";
+    case "refused": {
+      const status = outcome.status;
+      return status !== undefined && status >= 400 && status < 500 ? "refused" : "unknown";
+    }
     case "reading-body":
       return "probably-applied";
     case "awaiting-response":
     case "server-error":
+    case "redirected":
     default:
       return "unknown";
   }
@@ -689,19 +736,21 @@ async function batchUpdate(
   );
 }
 
-/** Bytes of one projected reply string: an id or a short value, never prose. */
-const REPLY_STRING_BYTES = 512;
+/** Characters of one projected reply string: an id or a short value, never prose. */
+const REPLY_STRING_CHARS = 512;
 
 /**
  * One batchUpdate reply kept to what a later request needs: its kind, and
- * the ids and counts beneath it to two levels, strings clamped. Most replies
- * are `{}` or one id; this only bites on the rare kind that echoes more.
+ * the ids and counts beneath it to two levels. A string too long to be an id
+ * is dropped whole, never cut into a different one; `repliesTruncated` says
+ * the replies were projected. Most replies are `{}` or one id; this only
+ * bites on the rare kind that echoes more.
  */
 function projectReply(value: JsonRecord, depth = 0): JsonRecord {
   const kept: JsonRecord = {};
   for (const [key, entry] of Object.entries(value)) {
     if (typeof entry === "string") {
-      kept[key] = clampText(entry, REPLY_STRING_BYTES, (dropped) => `… [${dropped} more characters]`);
+      if (entry.length <= REPLY_STRING_CHARS) kept[key] = entry;
     } else if (typeof entry === "number" || typeof entry === "boolean") {
       kept[key] = entry;
     } else if (entry && typeof entry === "object" && !Array.isArray(entry) && depth < 2) {
@@ -727,19 +776,23 @@ function boundedReplies(saved: JsonRecord, replies: JsonRecord[]): JsonRecord {
   if (jsonBytes({ ...slim, notice: notice(replies.length) }) <= RESULT_BUDGET_BYTES) {
     return { ...slim, notice: notice(replies.length) };
   }
-  const kept: JsonRecord[] = [];
-  let bytes = jsonBytes({ ...slim, replies: [], notice: notice(replies.length) });
-  for (const reply of projected) {
-    const size = jsonBytes(reply) + 1;
-    if (bytes + size > RESULT_BUDGET_BYTES) break;
-    bytes += size;
-    kept.push(reply);
-  }
-  return { ...slim, replies: kept, notice: notice(kept.length) };
+  // The longest prefix whose complete result — its own notice included —
+  // fits. JSON adds each element's bytes plus one comma between elements,
+  // so a candidate's size is exact without re-serializing it.
+  const sizes = projected.map((reply) => jsonBytes(reply));
+  const sizeWith = (count: number) =>
+    jsonBytes({ ...slim, replies: [], notice: notice(count) }) +
+    sizes.slice(0, count).reduce((sum, size) => sum + size, 0) +
+    Math.max(0, count - 1);
+  let count = 0;
+  while (count < projected.length && sizeWith(count + 1) <= RESULT_BUDGET_BYTES) count += 1;
+  return { ...slim, replies: projected.slice(0, count), notice: notice(count) };
 }
 
+/** An edit's result: the document it addressed, and the revision it left, if usable. */
 function savedEdit(documentId: string, reply: JsonRecord): JsonRecord {
-  return compact({ documentId, revisionId: revisionAfter(reply) });
+  const dropped: string[] = [];
+  return compact({ documentId, revisionId: revisionAfter(reply, dropped), dropped: droppedField(dropped) });
 }
 
 // --- Schemas -----------------------------------------------------------------------
@@ -829,11 +882,16 @@ const PAGE_SCHEMA: JsonSchema = {
   required: ["hasMore", "nextCursor"],
 };
 
+/** Names of ids Google sent that were dropped rather than cut; see `keptId`. */
+const DROPPED_OUTPUT: JsonSchema = { type: "array", items: { type: "string" } };
+
 const EDIT_OUTPUT: JsonSchema = {
   type: "object",
   properties: {
     documentId: { type: "string" },
     revisionId: { type: "string" },
+    dropped: DROPPED_OUTPUT,
+    notice: { type: "string" },
   },
   required: ["documentId"],
 };
@@ -870,7 +928,55 @@ const TAB_OUTPUT: JsonSchema = {
 
 // --- Tools -------------------------------------------------------------------------
 
+/**
+ * Connecta's ceiling on a rendered or raw read: inside the 8 MiB stash a
+ * direct call pages from, with room for its envelope.
+ */
+const MAX_READ_RESULT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The one check every result passes on its way out, whatever built it. The
+ * tools bound what they copy, so this is a backstop, not a plan. A read
+ * stopped here refuses with its way out; a write was already applied, so it
+ * is acknowledged with only its smallest facts and told not to repeat.
+ */
+function delivered(name: string, args: JsonRecord, result: unknown): unknown {
+  const read = name === "get_document";
+  // A default read must also cross the execute_code bridge; an explicit
+  // maxChars or raw read is for a direct call, which the stash pages.
+  const explicit = read && (args["maxChars"] !== undefined || args["raw"] === true);
+  const limit = explicit ? MAX_READ_RESULT_BYTES : RESULT_BUDGET_BYTES;
+  const bytes = jsonBytes(result);
+  if (bytes <= limit) return result;
+  if (read) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `This document's result is ${bytes} bytes, past connecta's ${limit}-byte ceiling for it. Pass tabId for one tab, or a smaller maxChars.`,
+    );
+  }
+  const full = asRecord(result);
+  const small: JsonRecord = {};
+  for (const key of ["documentId", "url", "occurrencesChanged", "replyCount"]) {
+    const value = full[key];
+    if (typeof value === "number" || (typeof value === "string" && value.length <= 1024)) small[key] = value;
+  }
+  if (name === "batch_update_document") {
+    small["replies"] = [];
+    small["repliesTruncated"] = true;
+  }
+  small["notice"] = `Google Docs applied this ${name === "create_document" ? "create" : "edit"}, but its full result (${bytes} bytes) is too large to return. Do not repeat it; re-read the document with get_document.`;
+  return small;
+}
+
 function tools(client: GoogleWorkspaceClient): ApiTool[] {
+  return toolDefinitions(client).map((tool) => ({
+    ...tool,
+    handler: async (args: JsonRecord, ctx: Parameters<ApiTool["handler"]>[1]) =>
+      delivered(tool.name, args, await tool.handler(args, ctx)),
+  }));
+}
+
+function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
   const revision = (args: JsonRecord): string | undefined =>
     typeof args["requiredRevisionId"] === "string" ? args["requiredRevisionId"] : undefined;
 
@@ -922,6 +1028,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           url: { type: "string" },
           tabs: { type: "array", items: TAB_OUTPUT },
           page: PAGE_SCHEMA,
+          dropped: DROPPED_OUTPUT,
           raw: RAW_OUTPUT,
         },
         required: ["documentId"],
@@ -955,7 +1062,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           tabs = tabs.filter((tab) => tab.tabId === wanted);
           if (tabs.length === 0) {
             const known = flattenTabs(document)
-              .map((tab) => tab.tabId)
+              .map((tab) => keptId(tab.tabId, "tabId", "tabId", []))
               .filter((id) => id !== undefined);
             throw new ConnectorCallError(
               "not_found",
@@ -972,7 +1079,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         let ordinal = 0;
         let pageBytes = 0;
         let next: number | undefined;
-        const rendered = tabs.map((tab) => {
+        const dropped: string[] = [];
+        const rendered = tabs.map((tab, index) => {
           const rows: IndexRow[] | undefined = withIndexes ? [] : undefined;
           const sources: TabSources = {
             lists: asRecord(tab.documentTab["lists"]),
@@ -999,9 +1107,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             }
           }
           return compact({
-            tabId: tab.tabId,
-            title: tab.title,
-            parentTabId: tab.parentTabId,
+            tabId: keptId(tab.tabId, "tabId", `tabs[${index}].tabId`, dropped),
+            title: boundedTitle(tab.title),
+            parentTabId: keptId(tab.parentTabId, "tabId", `tabs[${index}].parentTabId`, dropped),
             nestingLevel: tab.nestingLevel,
             endIndex: endIndexOf(tab.documentTab["body"]),
             ...cut,
@@ -1010,10 +1118,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           });
         });
         return compact({
-          documentId: text(document["documentId"]) ?? documentId,
-          title: text(document["title"]),
-          revisionId: text(document["revisionId"]),
-          url: documentUrl(text(document["documentId"]) ?? documentId),
+          documentId,
+          title: boundedTitle(document["title"]),
+          revisionId: keptId(document["revisionId"], "revisionId", "revisionId", dropped),
+          url: documentUrl(documentId),
+          dropped: droppedField(dropped),
           tabs: rendered,
           page: withIndexes
             ? { hasMore: next !== undefined, nextCursor: next === undefined ? null : `e:${next}` }
@@ -1049,6 +1158,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           title: { type: "string" },
           revisionId: { type: "string" },
           url: { type: "string" },
+          dropped: DROPPED_OUTPUT,
+          notice: { type: "string" },
         },
         required: ["documentId", "url"],
       },
@@ -1069,9 +1180,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             applied: createdButUnknown,
           },
         );
-        const documentId = text(created["documentId"]);
+        const dropped: string[] = [];
+        // An id that could not be passed back is no id at all.
+        const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
         if (!documentId) throw uncertain(createdButUnknown, undefined);
-        let revisionId = text(created["revisionId"]);
+        let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
         if (typeof args["text"] === "string") {
           try {
             const reply = await batchUpdate(
@@ -1081,7 +1194,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               [{ insertText: { text: args["text"], endOfSegmentLocation: {} } }],
               undefined,
             );
-            revisionId = revisionAfter(reply) ?? revisionId;
+            revisionId = revisionAfter(reply, dropped) ?? revisionId;
           } catch (cause) {
             // The document exists now. A retry of this call would make a
             // second one, so the failure names it and is not retryable. Only
@@ -1099,9 +1212,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         return compact({
           documentId,
-          title: text(created["title"]) ?? args["title"],
+          // The title this call sent, not Google's echo of it.
+          title,
           revisionId,
           url: documentUrl(documentId),
+          dropped: droppedField(dropped),
         });
       },
     },
@@ -1205,6 +1320,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           documentId: { type: "string" },
           occurrencesChanged: { type: "integer" },
           revisionId: { type: "string" },
+          dropped: DROPPED_OUTPUT,
+          notice: { type: "string" },
         },
         required: ["documentId", "occurrencesChanged"],
       },
@@ -1269,6 +1386,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           documentId: { type: "string" },
           revisionId: { type: "string" },
           replies: { type: "array", items: { type: "object" } },
+          dropped: DROPPED_OUTPUT,
           replyCount: { type: "integer" },
           repliesTruncated: { type: "boolean" },
           notice: { type: "string" },

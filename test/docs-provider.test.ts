@@ -67,6 +67,9 @@ beforeEach(() => {
       });
       return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (reply.status !== undefined && reply.status >= 300 && reply.status < 400) {
+      return new Response(null, { status: reply.status, headers: { location: "https://elsewhere.example/" } });
+    }
     if (reply.raw !== undefined) {
       return new Response(reply.raw, { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
     }
@@ -1199,5 +1202,133 @@ describe("every inline element renders as something, or is named (H9)", () => {
     const preview: string = result.tabs[0].elements[0].text;
     expect(preview).toBe(`${"a".repeat(79)}…`);
     expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(preview)).toBe(false);
+  });
+});
+
+describe("round-3 review: outcomes by observed status, bounded copies, one final guard", () => {
+  const BUDGET = 192 * 1024;
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const EDITS: Record<string, Record<string, unknown>> = {
+    append_text: { documentId: "d", text: "x" },
+    insert_text: { documentId: "d", index: 1, text: "x" },
+    replace_all_text: { documentId: "d", find: "a", replaceWith: "b" },
+    batch_update_document: { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
+  };
+  const RATE_LIMITED_503 = {
+    status: 503,
+    body: { error: { code: 503, message: "Quota exceeded.", status: "UNAVAILABLE", details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } },
+  };
+
+  const SURPRISES: [string, { status: number; body?: unknown }][] = [
+    ["a 503 carrying a rate-limit reason", RATE_LIMITED_503],
+    ...[301, 302, 303, 307, 308].map((status): [string, { status: number }] => [`a ${status} redirect`, { status }]),
+  ];
+
+  it.each(SURPRISES)("never calls a write refused or applied after %s", async (_kind, reply) => {
+    route = () => reply;
+    for (const [name, values] of Object.entries(EDITS)) {
+      const failure = await call(connection(), name, values).catch((error) => error);
+      expect(failure, name).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message, name).toContain("outcome of this edit is unknown");
+      expect(failure.message, name).not.toMatch(/so it was applied|nothing was applied/i);
+    }
+    const create = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
+    expect(create).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(create.message).toContain("Whether the document was created is unknown");
+    expect(create.message).not.toContain("HTTP 2xx");
+
+    route = (request) =>
+      request.url.pathname.endsWith(":batchUpdate") ? reply : { body: { documentId: "new-1", title: "Minutes" } };
+    const text = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
+    expect(text.message).toContain("whether its initial text was written is unknown");
+    expect(text.message).toContain("only if it is missing");
+    expect(text.message).not.toContain("add the text with append_text on new-1");
+  });
+
+  it("keeps a 429 on a write a rate limit: a 4xx refusal, nothing applied", async () => {
+    route = () => ({ status: 429, body: { error: { code: 429, message: "Slow down.", status: "RESOURCE_EXHAUSTED" } } });
+    for (const [name, values] of Object.entries(EDITS)) {
+      const failure = await call(connection(), name, values).catch((error) => error);
+      expect(failure.code, name).toBe("rate_limited");
+      expect(failure.message, name).not.toContain("outcome of this edit is unknown");
+    }
+  });
+
+  it("drops, never cuts, a 9 MiB revisionId or a malformed id, on all six tools", async () => {
+    const huge = "r".repeat(9 * 1024 * 1024);
+    route = (request) =>
+      request.url.pathname.endsWith(":batchUpdate")
+        ? { body: { documentId: "d", replies: [{ replaceAllText: { occurrencesChanged: 1 } }], writeControl: { requiredRevisionId: huge } } }
+        : request.method === "POST"
+          ? { body: { documentId: "new-1", title: huge, revisionId: huge } }
+          : {
+              body: {
+                documentId: "d",
+                title: "T".repeat(3 * 1024 * 1024),
+                revisionId: huge,
+                tabs: [{ tabProperties: { tabId: "t 0 has spaces", title: "題".repeat(5_000), parentTabId: "p".repeat(200) }, documentTab: {} }],
+              },
+            };
+    for (const [name, values] of Object.entries({ ...EDITS, create_document: { title: "Minutes", text: "x" } })) {
+      const result = await call(connection(), name, values);
+      expect(bytes(result), name).toBeLessThan(BUDGET);
+      expect(result.revisionId, name).toBeUndefined();
+      expect(result.dropped, name).toEqual(["revisionId"]);
+    }
+    const read = await call(connection(), "get_document", { documentId: "d" });
+    expect(bytes(read)).toBeLessThan(BUDGET);
+    expect(read.revisionId).toBeUndefined();
+    expect(read.dropped).toEqual(["tabs[0].tabId", "tabs[0].parentTabId", "revisionId"]);
+    expect(read.title.length).toBeLessThan(5_000);
+    expect(read.title).toMatch(/more characters\]$/);
+    expect(read.tabs[0].tabId).toBeUndefined();
+
+    // A created document whose id could not be passed back has no usable id.
+    route = () => ({ body: { documentId: "x".repeat(300) } });
+    const create = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
+    expect(create.message).toContain("created the document (HTTP 2xx)");
+    expect(bytes(create.message)).toBeLessThan(2_000);
+  });
+
+  it("measures the reply notice it returns, at every size around the boundary", async () => {
+    // One reply nearly the whole budget, then 99 small ones: the cut lands
+    // between "1 of 100" and more, where the notice's own length decides.
+    const big = (keys: number, tail: number) => ({
+      createNamedRange: Object.fromEntries([
+        ...Array.from({ length: keys }, (_, key) => [`k${key}`, "n".repeat(500)]),
+        ["tail", "t".repeat(tail)],
+      ]),
+    });
+    const shown = new Set<number>();
+    for (const [keys, step] of [[380, 37], [385, 1]] as const) {
+      for (let tail = 0; tail <= 512; tail += step) {
+        route = () => ({
+          body: {
+            documentId: "d",
+            replies: [big(keys, tail), ...Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }))],
+          },
+        });
+        const result = await call(connection(), "batch_update_document", { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" });
+        expect(bytes(result), `keys ${keys}, tail ${tail}`).toBeLessThanOrEqual(BUDGET);
+        expect(result.notice).toContain(`${result.replies.length} of 100 replies`);
+        shown.add(result.replies.length);
+      }
+    }
+    // The sweep crossed the boundaries it was built for.
+    expect(shown.has(1)).toBe(true);
+    expect([...shown].some((count) => count > 1)).toBe(true);
+  });
+
+  it("refuses a default read past the bridge budget, and lets an explicit one through", async () => {
+    const tabs = Array.from({ length: 2_000 }, (_, index) => ({
+      tabProperties: { tabId: `t.${index}`, title: "題".repeat(100) },
+      documentTab: { body: { content: [] } },
+    }));
+    route = () => ({ body: { documentId: "d", tabs } });
+    const failure = await call(connection(), "get_document", { documentId: "d" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    expect(failure.message).toContain("Pass tabId");
+    const explicit = await call(connection(), "get_document", { documentId: "d", maxChars: 100 });
+    expect(explicit.tabs).toHaveLength(2_000);
   });
 });
