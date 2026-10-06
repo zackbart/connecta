@@ -820,7 +820,10 @@ describe("api() oauth reset and disconnect", () => {
     expect((await storage.list!("")).filter((key) => key.includes("oauth:client"))).toEqual([]);
   });
 
-  it("a PKCE-less callback from a retired flow is exchanged into an epoch no reader reads", async () => {
+  it("a PKCE-less callback from a retired flow fails without redeeming its code", async () => {
+    // The callback is bound to the epoch its consent was written in. A
+    // restart superseded it, so the exchange fails cleanly, before the code
+    // is sent anywhere, and asks to try again.
     const provider = fakeProvider();
     install(provider);
     const connector = api("ccb", { oauth: { ...OAUTH, pkce: false }, tools: [] });
@@ -831,8 +834,9 @@ describe("api() oauth reset and disconnect", () => {
     const callback = ctx();
     expect(await connector.verifyState!(first.searchParams.get("state"), callback)).toBe(true);
     await connector.startAuth!(ctx(), { force: true });
-    await connector.finishAuth!(code, callback);
-    expect(provider.tokenRequests.at(-1)!.params.get("grant_type")).toBe("authorization_code");
+    const exchanges = provider.tokenRequests.length;
+    await expect(connector.finishAuth!(code, callback)).rejects.toThrow(/authorization changed .* try again/);
+    expect(provider.tokenRequests.length).toBe(exchanges);
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
 

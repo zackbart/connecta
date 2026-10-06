@@ -485,29 +485,46 @@ provider hands it. Nothing can stamp it after the fact. Releases before v0.9.0
 stored nothing that names the server a grant came from, and no discovery at
 all — discovery was first persisted in v0.22.3. A discovery record beside such
 a grant proves nothing either: a flow saves discovery before it reads
-credentials, so a downstream's say-so can sit there unbound. Such a grant is
-therefore retired behind a new epoch on its first issuer-aware read — a
-refresh, or a consent — and nothing it holds is sent; the connection is
-authorized once more. Until that read, token attachment, which reads without
-an issuer, still sends the stored access token to the configured resource
-server, as it always did, so a connection whose access token is still accepted
-keeps listing and calling tools, and reports healthy, until that token expires
-or is refused. v0.9.0 through v0.28.1 bound such a grant to whatever its first
-issuer-aware read discovered, and a grant they bound keeps that binding.
+credentials, so a downstream's say-so can sit there unbound.
 
-The SDK reads the client before the tokens and builds a consent URL from that
-copy, so a grant is retired whole: a bound client beside a token set bound to
-none, or to another server, is retired on the client read, and the flow
-registers a client the replacement epoch holds.
+### Deciding a grant at flow entry
 
-A retirement lands mid-flow, after the flow saved its discovery into the epoch
-being retired. The flow carries on — registering a client, writing a verifier
-and a consent URL — into the epoch that retirement published, so its discovery
-is carried there too. The callback checks the server it returns from against
-that discovery, and Continue hands back a consent that can complete. Every one
-of those writes is bound to that epoch, not to whichever is current: if a
-concurrent reset has replaced it, they are refused there, and another flow's
-consent or completed grant is never overwritten.
+Every OAuth run happens inside the SDK — a 401's refresh or consent, a
+step-up, a code exchange — and the SDK calls the provider's hooks in an order
+connecta does not choose: it takes the client before the tokens, builds its
+consent URL from that copy, and writes discovery before either. A grant
+retired from inside those hooks left the flow holding a client its new epoch
+did not, or, when another reset had overtaken it, writing into that reset's
+epoch. So nothing is retired from inside the SDK. The grant is decided once,
+when a flow begins — each `remoteMcp()` connect attempt, inside which every
+401 and step-up runs, and each `api()` call or start — before the SDK is handed
+the provider:
+
+- A grant is kept when every credential in it carries a stamp, the stamps
+  agree, and they name the server the epoch's discovery names, if it kept one.
+  With discovery cached the SDK uses it, so the flow cannot meet another
+  server.
+- Anything else is retired behind a new epoch before anything it holds is
+  sent: a grant from before issuer binding, stamps that disagree with each
+  other, or stamps that disagree with the epoch's discovery.
+- A stamped grant whose epoch kept no discovery (one from before v0.22.3 not
+  refreshed since, or a forced restart's carried client) is kept; the SDK
+  discovers afresh. If it finds another server, the issuer-bound reads hand
+  that server nothing, and the SDK registers and consents within the same
+  epoch. Whatever mixed grant that leaves is retired by the next flow's entry.
+
+The flow is then bound to the epoch that decision leaves: every read and
+write it makes names that epoch and never follows the live one. A callback is
+bound to the epoch its consent was written in, which its state check
+captured, and decides nothing about the grant there. A flow whose epoch a
+later reset has replaced fails with a retryable `unavailable` — "authorization
+changed while this request was in flight; try again" — having sent nothing,
+retired nothing, and returned no consent URL; a callback in that position
+fails before its code is redeemed.
+
+So a grant from before v0.9.0 is retired on first use, and the connection is
+authorized once more. v0.9.0 through v0.28.1 bound such a grant to whatever its
+first issuer-aware read discovered, and a grant they bound keeps that binding.
 
 ## Management permissions
 

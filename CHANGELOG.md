@@ -18,20 +18,24 @@ server that read's discovery named — the downstream's choice when discovery
 was not cached. Nothing a release before v0.9.0 stored names the issuer — they
 kept no discovery at all, which was first persisted in v0.22.3 — and a
 discovery record a later release saved may hold a downstream's say-so, so no
-record can vouch for such a grant. It is now retired on its first
-issuer-aware read, a refresh or a consent, with nothing it holds sent
-anywhere. **Every `remoteMcp()` connection authorized on v0.8.1 or earlier and
-not refreshed since is authorized once more.** Until it next needs a refresh,
-an access token the downstream still accepts keeps working — listing, calls,
-and status stay healthy — and only when that token expires or is refused does
-the connection answer `auth_required`, which Connect or `authorize_connector`
-repairs. A grant v0.9.0 through v0.28.1 bound on its first issuer-aware read
-was bound to whichever issuer that read discovered, and keeps that binding. Any grant that may
-have met an untrusted downstream on an earlier release should have its tokens
-revoked and any client secret rotated at the provider, as the advisory itself
-advises. Nothing in configuration changes. What else a
-deployment may notice: a refresh whose rotated tokens cannot be stored now
-fails as a retryable outage instead of `auth_required`, and `/mcp` bodies stay
+record can vouch for such a grant. Every grant is now decided once, when a
+flow begins and before the SDK runs, and such a grant is retired there with
+nothing it holds sent anywhere. **Every `remoteMcp()` connection authorized on
+v0.8.1 or earlier and not used since is authorized once more:** its first use
+answers `auth_required`, which Connect or `authorize_connector` repairs. A
+grant v0.9.0 through v0.28.1 bound on its first issuer-aware read was bound to
+whichever issuer that read discovered, and keeps that binding; one whose
+stamps disagree with each other, or with the server its own epoch's discovery
+names, is retired the same way. Any grant that may have met an untrusted
+downstream on an earlier release should have its tokens revoked and any client
+secret rotated at the provider, as the advisory itself advises. Nothing in
+configuration changes. What else a deployment may notice: an OAuth flow that a
+concurrent restart or disconnect overtakes now fails with a retryable
+`unavailable` — "authorization changed while this request was in flight; try
+again" — rather than reading on into the newer authorization; a callback in
+that position fails before its code is redeemed. A refresh whose rotated
+tokens cannot be stored fails as a retryable outage instead of
+`auth_required`, and `/mcp` bodies stay
 bounded by the host, not by the 4 MiB default the server SDK adopted. Two
 inbound refusals arrive with the server SDK and are kept: a client that claims
 2026-07-28 in its request body but sends no `MCP-Protocol-Version` header is
@@ -55,8 +59,8 @@ nor the 2026-07-28 claim is served exactly as before (#687).
   in the legacy handshake, so connecta's workaround for
   [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
   is gone; the handshake teardown sweeps prove no rejection escapes under
-  workerd without it. Bundles grow by about 5.2 KB gzip at the root and the
-  Worker example and about 2.5 KB for each hosted-MCP provider, within every cap.
+  workerd without it. Bundles grow by about 5.6 KB gzip at the root and the
+  Worker example and about 2.8 KB for each hosted-MCP provider, within every cap.
 - **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
   transport requires the header on every POST and has the server reject a
   request without it, so an intermediary routing on the header and the server
@@ -86,26 +90,28 @@ nor the 2026-07-28 claim is served exactly as before (#687).
   to its token endpoint. No stored record proves where such a grant came from:
   v0.8.1 kept no discovery at all, and from v0.22.3, which first persisted
   discovery, a flow saves it before it reads credentials, so a record beside an
-  unbound grant may be the downstream's. Such a grant is now retired behind a new epoch on its first
-  issuer-aware read before anything it holds is sent; the access token still
-  reaches the configured resource server, as it always did. The SDK's own
-  SEP-2352 check does not cover this state, as its advisory says: it trusts
-  whatever stamp the provider hands back.
-- **A consent started over a retired grant completes.** Retirement lands
-  mid-flow, after the flow saved its discovery into the epoch being retired,
-  and the flow goes on to register a client and write a consent URL into the
-  replacement epoch. Without discovery there, the callback failed its
-  authorization-server check, and Continue handed back the same broken URL
-  until a forced restart. The flow's discovery is now carried into the
-  replacement epoch, so the consent completes and Continue reuses a URL that
-  works. A grant is also retired whole on the client read, where the SDK
-  takes the client its consent URL names: a bound client beside a token set
-  bound to none no longer leaves a URL naming a client no epoch holds. And
-  every write the flow makes after retiring is bound to the epoch that
-  retirement published, so a slower retirement that a concurrent reset has
-  overtaken writes nothing into the newer epoch, whose consent or completed
-  grant it would otherwise break. This applies equally to a grant retired
-  because its stamp names another server.
+  unbound grant may be the downstream's. Such a grant is now retired before
+  anything it holds is sent. The SDK's own SEP-2352 check does not cover this
+  state, as its advisory says: it trusts whatever stamp the provider hands
+  back.
+- **A grant is decided once, before the SDK runs, and a flow keeps to its own
+  epoch.** Retiring a grant from inside the SDK's provider hooks could not be
+  made safe: the SDK takes the client before the tokens and builds its consent
+  URL from that copy, and writes discovery before either, so a grant retired
+  mid-flow left a consent URL naming a client the new epoch did not hold, or a
+  callback with no discovery to check its server against; and a retirement a
+  concurrent reset had overtaken followed the live generation into that
+  reset's epoch, overwriting its pending consent or retiring the grant it had
+  just completed. Each `remoteMcp()` connect attempt — inside which every 401
+  and step-up runs — and each `api()` call or start now reads the grant once
+  and retires it there if any credential is unstamped, the stamps disagree, or
+  they disagree with the server the epoch's discovery names. The flow is then
+  bound to the resulting epoch: its reads and writes never follow the live
+  generation, and a flow whose epoch was overtaken fails cleanly, sends
+  nothing, retires nothing, and returns no consent URL. A read for a server the
+  stamps do not name hands it nothing and changes nothing; the SDK registers
+  and consents within the same epoch, and the next flow's entry retires any
+  mixed grant that leaves.
 - **No token endpoint's text reaches the host's console.** From client 2.1.0
   the SDK writes a failed refresh or code exchange's `error_description`, or
   the raw body of a non-OAuth answer, to `console.warn`, below any logger a

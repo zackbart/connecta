@@ -1285,13 +1285,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** How the last refresh this provider took part in failed, if it did. */
   private refreshFailure: RefreshFailure | undefined;
   /**
-   * The discovery state this flow is working from, as it read or saved it. A
-   * retirement mid-flow carries it into the replacement epoch, so everything
-   * the flow writes after — client, verifier, consent URL — sits beside the
-   * discovery that produced it, and the callback can check the server it
-   * returns from.
+   * Set once a flow has begun (`beginFlow`, `bindFlow`). From then on every
+   * read and write the flow makes is bound to `capturedGeneration`: a
+   * superseded epoch is never followed to the live one, and the flow fails.
    */
-  private flowDiscovery: OAuthDiscoveryState | undefined;
+  private flowBound = false;
   /** Tokens this request's issuer-aware auth flow decided to refresh. */
   private refreshBasis:
     | {
@@ -1527,9 +1525,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (
       (!commitAcceptedRefresh && this.signal?.aborted) ||
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
-      generation.startsWith(DISCONNECTED_GENERATION_PREFIX) ||
-      (await this.generation()) !== generation
+      generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
     ) {
+      return;
+    }
+    if ((await this.generation()) !== generation) {
+      // A flow bound to a superseded epoch fails there: it must not hand back
+      // a consent URL it could not store. A late commit of an accepted
+      // rotation stays silent, as it always was.
+      if (this.flowBound && !commitAcceptedRefresh && generation === this.capturedGeneration) {
+        throw this.flowSuperseded();
+      }
       return;
     }
     const physicalKey = oauthValueStorageKey(key, generation);
@@ -1680,10 +1686,41 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
     | undefined
   > {
-    const generation = await this.generation();
-    const physicalKey = oauthValueStorageKey(key, generation);
-    const raw = await this.storage.get(physicalKey);
+    let generation: string;
+    let raw: string | null;
+    if (this.flowBound && this.capturedGeneration !== null) {
+      // The flow's own epoch, read beside the live one: a flow whose epoch a
+      // later reset replaced must not read on into the newer epoch.
+      generation = this.capturedGeneration;
+      const [live, value] = await Promise.all([
+        this.generation(),
+        this.storage.get(oauthValueStorageKey(key, generation)),
+      ]);
+      if (live !== generation) throw this.flowSuperseded();
+      raw = value;
+    } else {
+      generation = await this.generation();
+      raw = await this.storage.get(oauthValueStorageKey(key, generation));
+    }
     if (raw === null) return undefined;
+    return this.openStoredValue(key, generation, raw, parseLegacy);
+  }
+
+  /** Decode one physical value: unseal it, then read its envelope or legacy form. */
+  private async openStoredValue<T>(
+    key: string,
+    generation: string,
+    raw: string,
+    parseLegacy: (raw: string) => T,
+  ): Promise<
+    | {
+        stored: OAuthValueRead<T>;
+        raw: string;
+        plaintextCredential: boolean;
+      }
+    | undefined
+  > {
+    const physicalKey = oauthValueStorageKey(key, generation);
     if (
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
       generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
@@ -1753,10 +1790,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * Read credentials only for the authorization server that issued them.
    *
-   * A value bound to another server, or written before issuer binding and so
-   * bound to none, publishes a new generation before returning no
-   * credentials, so every isolate drops the old registration and token set
-   * and the SDK starts authorization from scratch in the new epoch.
+   * Nothing is retired here. `beginFlow` decided, before the SDK ran, whether
+   * the grant in the flow's epoch belongs to the server it will use; a value
+   * bound to any other server is simply not this flow's, and the SDK goes on
+   * to register and consent within the same epoch.
    */
   private async readIssuerBoundValue<T>(
     key: "oauth:client" | "oauth:tokens",
@@ -1772,51 +1809,109 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
       if (!ctx) return stored.value;
     }
-    // A credential written before issuer binding (v0.8.x and earlier) names no
-    // server, and nothing those releases stored names one either: they kept
-    // no discovery, and a discovery record a later release kept may have
-    // been saved from a downstream's say-so before the credential was read.
-    // Binding it to any server is the shape of GHSA-6qxp-vccf-f47h, so it is
-    // retired below like a credential bound elsewhere.
-    if (stored.issuer === ctx.issuer && (key !== "oauth:client" || (await this.tokensBoundTo(ctx.issuer)))) {
-      return stampedValue(stored.value, ctx.issuer);
-    }
-
-    if (this.signal?.aborted) throw this.signal.reason;
-    let published: string;
-    try {
-      published = await this.retireGrant();
-    } catch (error) {
-      // The flow ends here; fence anything late into whatever is current.
-      this.captureGeneration(await this.generation());
-      throw error;
-    }
-    // The flow goes on to register a client and write a verifier and consent
-    // URL. Every one of those writes — and the discovery it works from, which
-    // the callback checks the server it returns from against — belongs in the
-    // epoch this retirement published. If a concurrent reset has replaced it,
-    // the writes are refused there rather than landing in another flow's
-    // epoch: that flow's consent, or the grant it already completed, is not
-    // this one's to overwrite.
-    this.captureGeneration(published);
-    const discovery = this.flowDiscovery;
-    if (discovery !== undefined) await this.saveDiscoveryState(discovery);
-    return undefined;
+    // Unstamped, or stamped for another server: never this flow's to send.
+    return stored.issuer === ctx.issuer
+      ? stampedValue(stored.value, ctx.issuer)
+      : undefined;
   }
 
   /**
-   * Whether the token set beside a bound client, if any, is bound to the same
-   * server. The SDK reads the client first and builds its consent URL from
-   * that copy, so a grant is retired whole on the client read: retiring only
-   * at the token read would leave a consent URL naming a client the
-   * replacement epoch does not hold.
+   * Begin an issuer-aware flow — a connect, whose 401 may refresh or start
+   * consent, or an `api()` call or start — before the SDK is handed this
+   * provider. The grant in the live epoch is decided here, once:
+   *
+   * - A grant is kept when every credential in it carries a stamp, the stamps
+   *   agree, and they name the server the epoch's discovery names, if it kept
+   *   one. With discovery cached the SDK uses it, so the flow cannot meet
+   *   another server; without it (a grant from before v0.22.3 not refreshed
+   *   since, or a forced restart's carried client) the SDK discovers afresh,
+   *   and a server other than the stamp's is handed nothing by the
+   *   issuer-bound reads below. The SDK then registers and consents within
+   *   the same epoch, and the mixed grant that leaves is retired by the next
+   *   flow's entry.
+   * - Anything else — a value written before issuer binding (v0.8.1 and
+   *   earlier), or stamps that disagree with each other or with the epoch's
+   *   discovery — is retired before anything it holds is sent.
+   *
+   * Every read and write of the flow is then bound to the resulting epoch;
+   * once a later reset supersedes it the flow fails, and is retried afresh.
+   * Returns that epoch.
    */
-  private async tokensBoundTo(issuer: string): Promise<boolean> {
-    const tokens = await this.readStoredValue(
-      "oauth:tokens",
-      (raw) => JSON.parse(raw) as OAuthTokens,
+  async beginFlow(): Promise<string> {
+    this.flowBound = false;
+    const generation = await this.generation();
+    let epoch = generation;
+    if (
+      !generation.startsWith(RESETTING_GENERATION_PREFIX) &&
+      !generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
+    ) {
+      const json = (raw: string) => JSON.parse(raw) as unknown;
+      const [client, tokens, issuer] = await Promise.all([
+        this.readStoredValueIn("oauth:client", generation, json),
+        this.readStoredValueIn("oauth:tokens", generation, json),
+        this.recordedIssuer(generation),
+      ]);
+      // Every stored credential must carry a stamp, the stamps must agree, and
+      // they must name the server the epoch's discovery names, if it kept one.
+      const stamps = [client, tokens]
+        .filter((read) => read !== undefined)
+        .map((read) => read.stored.issuer);
+      const keep = stamps.every(
+        (stamp) => stamp !== undefined && stamp === stamps[0] && (issuer === undefined || stamp === issuer),
+      );
+      if (!keep) {
+        if (this.signal?.aborted) throw this.signal.reason;
+        epoch = await this.retireGrant();
+      }
+    }
+    this.captureGeneration(epoch);
+    this.flowBound = true;
+    return epoch;
+  }
+
+  /**
+   * Bind a flow that already has its epoch — a callback, whose state check
+   * captured the epoch its consent was written in — without deciding
+   * anything about the grant there. An epoch a later reset already replaced
+   * fails here, before the SDK can send the code anywhere.
+   */
+  async bindFlow(): Promise<void> {
+    const captured = this.capturedGeneration ?? (await this.generation());
+    if ((await this.generation()) !== captured) throw this.flowSuperseded();
+    this.captureGeneration(captured);
+    this.flowBound = true;
+  }
+
+  /** The issuer the epoch's own discovery names, as the SDK would derive it. */
+  protected async recordedIssuer(generation: string): Promise<string | undefined> {
+    const read = await this.readStoredValueIn(
+      "oauth:discovery",
+      generation,
+      (raw) => JSON.parse(raw) as OAuthDiscoveryState,
     );
-    return tokens === undefined || tokens.stored.issuer === issuer;
+    const state = read?.stored.value as Partial<OAuthDiscoveryState> | undefined;
+    if (!state || typeof state !== "object" || !state.authorizationServerUrl) return undefined;
+    const issuer = state.authorizationServerMetadata?.issuer ?? String(state.authorizationServerUrl);
+    return typeof issuer === "string" && issuer !== "" ? issuer : undefined;
+  }
+
+  /** A stored value in a named epoch, outside any flow's binding. */
+  private async readStoredValueIn<T>(
+    key: string,
+    generation: string,
+    parseLegacy: (raw: string) => T,
+  ) {
+    const raw = await this.storage.get(oauthValueStorageKey(key, generation));
+    if (raw === null) return undefined;
+    return this.openStoredValue(key, generation, raw, parseLegacy);
+  }
+
+  /** The fixed, retryable failure of a flow a later reset superseded. */
+  private flowSuperseded(): ConnectorCallError {
+    return new ConnectorCallError(
+      "unavailable",
+      `Connector "${this.connectorId}" authorization changed while this request was in flight; try again.`,
+    );
   }
 
   /**
@@ -2010,18 +2105,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    const state = (
+    return (
       await this.readValue(
         "oauth:discovery",
         (raw) => JSON.parse(raw) as OAuthDiscoveryState,
       )
     )?.value;
-    this.flowDiscovery = state;
-    return state;
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-    this.flowDiscovery = state;
     await this.writeValue(
       "oauth:discovery",
       state,

@@ -1196,12 +1196,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // abandon that attempt while its transport still holds the provider;
       // the replacement must never mutate the abandoned provider's epoch.
       const provider = isOauth ? newProvider(ctx) : null;
-      const genAtStart = provider ? yield* promised(() => provider.generation()) : "";
+      // Every OAuth run of this attempt — a 401's refresh or consent, a
+      // step-up — happens inside the SDK, so the grant is decided here, before
+      // the SDK is handed the provider, and the attempt is bound to the epoch
+      // that decision leaves. Nothing is retired from inside the SDK's flow.
+      const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
       if (!owned()) return yield* Effect.fail(scopeEndedError());
       if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
         return yield* Effect.fail(operatorDisconnectedError());
       }
-      provider?.captureGeneration(genAtStart);
       // SDK v2 selects its validator by runtime export condition: AJV on
       // Node and @cfworker/json-schema under workerd. The Workers-safe path
       // no longer needs Connecta-specific wiring.
@@ -1618,6 +1621,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // A transport an attempt built belongs to that attempt's lease; one built
       // here for the exchange alone belongs to this call, which closes it.
       const leased = state.transport;
+      // The exchange reads and writes only the epoch its consent was written
+      // in; it decides nothing about the grant there.
+      await provider.bindFlow();
       const t = (leased ??
         buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
       try {

@@ -356,11 +356,18 @@ describe("operator data routes", () => {
     }
   });
 
-  it("drains an issuer-mismatch reset before returning a timeout", async () => {
+  it("drains a retirement at flow entry before returning a timeout", async () => {
+    // A grant from before issuer binding is retired when the flow begins,
+    // before the SDK runs. A start that times out meanwhile must still wait
+    // for that reset to land, not abandon it half-published.
     const inner = memoryStorage();
+    await inner.set("conn:oauth:oauth:client", JSON.stringify({ client_id: "legacy-client" }));
+    await inner.set("conn:oauth:oauth:tokens", JSON.stringify({
+      access_token: "legacy-access", token_type: "Bearer", refresh_token: "legacy-refresh",
+    }));
     const mcpUrl = "https://downstream.example/mcp";
     const metadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
-    let issuer = "https://auth-a.example";
+    const issuer = "https://auth-a.example";
     let registrations = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -395,7 +402,7 @@ describe("operator data routes", () => {
     }));
     let generationWrites = 0;
     let entered!: () => void;
-    const reachedMismatchReset = new Promise<void>((resolve) => { entered = resolve; });
+    const reachedEntryReset = new Promise<void>((resolve) => { entered = resolve; });
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     const storage: KVStorage = {
@@ -404,7 +411,7 @@ describe("operator data routes", () => {
       compareAndSet: (key, expected, next, options) =>
         inner.compareAndSet!(key, expected, next, options),
       async set(key, value, options) {
-        if (key === "conn:oauth:oauth:generation" && ++generationWrites === 3) {
+        if (key === "conn:oauth:oauth:generation" && ++generationWrites === 1) {
           entered();
           await blocked;
         }
@@ -418,21 +425,19 @@ describe("operator data routes", () => {
         })],
         auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
       });
-      expect((await credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" })).status).toBe(200);
-      expect(registrations).toBe(1);
-      issuer = "https://auth-b.example";
       vi.useFakeTimers();
-      const restarted = credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      const continued = credentialRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
       let answered = false;
-      void restarted.then(() => { answered = true; }, () => { answered = true; });
-      await reachedMismatchReset;
+      void continued.then(() => { answered = true; }, () => { answered = true; });
+      await reachedEntryReset;
       await vi.advanceTimersByTimeAsync(30_000);
       expect(answered).toBe(false);
       release();
-      expect((await restarted).status).toBe(504);
+      expect((await continued).status).toBe(504);
       vi.useRealTimers();
+      expect(await inner.get("conn:oauth:oauth:tokens")).toBeNull();
 
-      const next = await credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      const next = await credentialRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
       expect(next.status).toBe(200);
       const nextGeneration = await storage.get("conn:oauth:oauth:generation");
       await settle(2);

@@ -75,8 +75,8 @@ async function storeCurrentOAuthValue(
 // KvOAuthProvider unit behavior (no authorization server involved).
 // ---------------------------------------------------------------------------
 describe("KvOAuthProvider over memoryStorage", () => {
-  it("retires a credential written before issuer binding on its first issuer-aware read", async () => {
-    // v0.8.x stored no issuer and nothing that names one, so no read can
+  it("retires a credential written before issuer binding when a flow begins", async () => {
+    // v0.8.x stored no issuer and nothing that names one, so nothing can
     // tell which server the grant belongs to. It is never bound to any.
     const storage = memoryStorage();
     const old = { access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" };
@@ -84,83 +84,23 @@ describe("KvOAuthProvider over memoryStorage", () => {
     await storage.set("oauth:tokens", JSON.stringify(old));
     const issuer = { issuer: "https://synthetic.test" };
 
-    // Token attachment has no issuer context: the configured resource server
-    // may still be sent the access token, as it always was.
-    expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toEqual(old);
+    // An issuer-aware read retires nothing and sends nothing: it simply
+    // hands an unstamped value to no one.
+    const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+    expect(await reader.tokens(issuer)).toBeUndefined();
+    expect(await reader.clientInformation(issuer)).toBeUndefined();
+    expect(await reader.generation()).toBe("legacy");
 
+    // The decision is the flow's entry, before the SDK is handed anything.
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    expect(await p.tokens(issuer)).toBeUndefined();
-    expect(await p.generation()).toMatch(/^v2:/);
+    const epoch = await p.beginFlow();
+    expect(epoch).toMatch(/^v2:/);
+    expect(await p.generation()).toBe(epoch);
+    expect(await p.tokens()).toBeUndefined();
     expect(await p.clientInformation(issuer)).toBeUndefined();
     const values = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
     expect(values.filter((value) => /old-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   });
-
-  it.each(["pending consent", "completed callback"])(
-    "keeps a slower retirement's flow out of the epoch a later reset published (%s)",
-    async (stage) => {
-      // Flow A retires an unbound grant and stalls just after publishing its
-      // epoch. Flow B resets past it and starts — or finishes — its own
-      // consent. When A resumes, nothing it writes may land in B's epoch.
-      const backing = memoryStorage();
-      await backing.set("oauth:tokens", JSON.stringify({
-        access_token: "old", token_type: "Bearer", refresh_token: "old-refresh",
-      }));
-      const published = deferred<void>();
-      const resume = deferred<void>();
-      let holdA = true;
-      const storage: KVStorage = { ...backing,
-        async set(key, value, options) {
-          await backing.set(key, value, options);
-          if (holdA && key === "oauth:generation") {
-            holdA = false;
-            published.resolve();
-            await resume.promise;
-          }
-        },
-      };
-      const discovery = (server: string): OAuthDiscoveryState => ({ authorizationServerUrl: server });
-      const issuerA = "https://a.example";
-      const issuerB = "https://b.example";
-
-      const a = new KvOAuthProvider("svc", storage, REDIRECT);
-      await a.saveDiscoveryState(discovery(issuerA));
-      const retiring = a.tokens({ issuer: issuerA });
-      await published.promise;
-
-      const b = new KvOAuthProvider("svc", storage, REDIRECT);
-      await b.resetAuthorization();
-      const epochB = await b.generation();
-      b.captureGeneration(epochB);
-      await b.saveDiscoveryState(discovery(issuerB));
-      await b.saveClientInformation({ client_id: "b-client", redirect_uris: [REDIRECT] }, { issuer: issuerB });
-      await b.redirectToAuthorization(new URL(`${issuerB}/authorize?client_id=b-client`));
-      if (stage === "completed callback") {
-        await b.saveTokens({ access_token: "b-access", token_type: "Bearer", refresh_token: "b-refresh" }, { issuer: issuerB });
-      }
-
-      resume.resolve();
-      expect(await retiring).toBeUndefined();
-      // A's flow carries on as the SDK's would after the retirement.
-      await a.saveClientInformation({ client_id: "a-client", redirect_uris: [REDIRECT] }, { issuer: issuerA });
-      await a.saveCodeVerifier("a-verifier");
-      await a.redirectToAuthorization(new URL(`${issuerA}/authorize?client_id=a-client`));
-
-      const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-      expect(await reader.generation()).toBe(epochB);
-      const found = await reader.discoveryState();
-      expect(found).toEqual(discovery(issuerB));
-      expect(await reader.pendingAuthorizationUrl()).toBe(`${issuerB}/authorize?client_id=b-client`);
-      // The issuer-aware read B's next refresh makes, from the discovery it
-      // finds, keeps B's client and grant rather than retiring them.
-      const ctx = { issuer: required(found?.authorizationServerUrl) };
-      expect(await reader.clientInformation(ctx)).toMatchObject({ client_id: "b-client" });
-      if (stage === "completed callback") {
-        expect(await reader.tokens(ctx)).toMatchObject({ refresh_token: "b-refresh" });
-      }
-      expect(await reader.generation()).toBe(epochB);
-    },
-  );
 
   it("retains cleanup lineage when the generation write commits before rejecting", async () => {
     const backing = memoryStorage();
@@ -402,7 +342,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     });
   });
 
-  it("invalidates the credential generation when validated discovery changes issuer", async () => {
+  it("hands a grant to no other server, and retires it once its epoch's discovery names one", async () => {
     const storage = memoryStorage();
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
     const original = { issuer: "https://auth-a.example" };
@@ -416,22 +356,22 @@ describe("KvOAuthProvider over memoryStorage", () => {
       original,
     );
 
+    // A read for another server gets nothing, and changes nothing.
     expect(await p.clientInformation(replacement)).toBeUndefined();
-    expect(await p.generation()).toMatch(/^v2:/);
-    expect(await p.tokens()).toBeUndefined();
+    expect(await p.tokens(replacement)).toBeUndefined();
+    expect(await p.generation()).toBe("legacy");
+    expect(await p.tokens(original)).toMatchObject({ access_token: "token-a" });
+
+    // Discovery naming another server is a grant this epoch cannot keep.
+    await p.saveDiscoveryState({ authorizationServerUrl: replacement.issuer });
+    const flow = new KvOAuthProvider("svc", storage, REDIRECT);
+    expect(await flow.beginFlow()).toMatch(/^v2:/);
+    expect(await flow.tokens()).toBeUndefined();
     expect(await storage.get("oauth:client")).toBeNull();
     expect(await storage.get("oauth:tokens")).toBeNull();
-
-    await p.saveTokens(
-      { access_token: "token-b", token_type: "Bearer" },
-      replacement,
-    );
-    expect(await p.tokens(replacement)).toMatchObject({
-      access_token: "token-b",
-    });
   });
 
-  it("retires a v1 credential envelope on its first issuer-aware read", async () => {
+  it("retires a v1 credential envelope when a flow begins", async () => {
     const storage = memoryStorage();
     await storage.set(
       "oauth:client",
@@ -446,11 +386,11 @@ describe("KvOAuthProvider over memoryStorage", () => {
     );
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
 
+    expect(await p.beginFlow()).toMatch(/^v2:/);
     await expect(
       p.clientInformation({ issuer: "https://auth.example" }),
     ).resolves.toBeUndefined();
     expect(await storage.get("oauth:client")).toBeNull();
-    expect(await p.generation()).toMatch(/^v2:/);
   });
 
   it("round-trips the PKCE code verifier and throws when missing", async () => {
@@ -4278,9 +4218,9 @@ describe("OAuthRefreshCoordinator", () => {
       if (phase !== "late-answer") await bothRefused.promise;
       if (phase === "status" || phase === "authorization" || phase === "retained-view") {
         // Each caller reads its tokens four times before it joins or starts a
-        // flight — the bearer header, the client read's check of the token set
-        // beside it, the SDK's issuer-aware read, and the coordinator's — so
-        // the second has joined the first's flight at eight. Release only then.
+        // flight — its flow's entry decision, the bearer header, the SDK's
+        // issuer-aware read, and the coordinator's — so the second has joined
+        // the first's flight at eight. Release only then.
         await vi.waitFor(() => expect(tokenReads).toBeGreaterThanOrEqual(8));
       }
       if (phase === "aborted-persistence") await second;
@@ -5631,7 +5571,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     expect(server.requests.filter(({ url }) => new URL(url).origin === foreign)).toEqual([]);
   });
 
-  it("sends nothing the issuing server gave it to a server fresh discovery names, and retires the grant", async () => {
+  it("sends nothing the issuing server gave it to a server fresh discovery names, and retires what that leaves at the next flow's entry", async () => {
     const server = downstream();
     vi.stubGlobal("fetch", server.fetchStub);
     onTestFinished(() => { vi.unstubAllGlobals(); });
@@ -5657,9 +5597,22 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     }
     expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
     expect(classifyCallError(error).code).toBe("auth_required");
-    // The grant is retired behind a new epoch rather than kept for the day
-    // the downstream names its issuer again.
+    // Nothing was retired inside the SDK's flow: it found nothing for the
+    // foreign server and went on within the same epoch.
+    expect(await storage.get("oauth:generation")).toBe(generation);
+
+    // The epoch now holds the foreign server's discovery beside a grant the
+    // trusted server stamped. The next flow's entry retires it before
+    // anything is sent.
+    server.requests.length = 0;
+    const again = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
+    expect(classifyCallError(again).code).toBe("auth_required");
     expect(await storage.get("oauth:generation")).not.toBe(generation);
+    for (const { url, text } of server.requests) {
+      if (new URL(url).origin !== new URL(mcpUrl).origin) {
+        expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
+      }
+    }
     const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
     expect(stored.filter((value) => /trusted-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   });
@@ -5828,6 +5781,114 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       expect(text, requested).not.toMatch(/legacy-(refresh|secret)/);
     }
   });
+
+  it("starts a consent that completes over an unbound token set with no client beside it", async () => {
+    // Nothing is stored to check at the client read, so only an entry
+    // decision catches this grant: retiring at the token read would follow
+    // the SDK's registration and leave a URL naming a client it deleted.
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const storage = memoryStorage();
+    await storage.set("oauth:tokens", JSON.stringify({
+      access_token: "legacy-access", token_type: "Bearer", refresh_token: "legacy-refresh",
+    }));
+
+    const c = connector();
+    const started = await c.startAuth!(scope(storage), { force: false });
+    const url = new URL(required(started.authorizationUrl));
+    const generation = await storage.get("oauth:generation");
+    expect(generation).toMatch(/^v2:/);
+    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:client", generation))) ?? undefined)))
+      .toMatchObject({ value: { client_id: url.searchParams.get("client_id") } });
+
+    const state = required(url.searchParams.get("state") ?? undefined);
+    const callback = scope(storage);
+    expect(await c.verifyState!(state, callback)).toBe(true);
+    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
+    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", generation))) ?? undefined)))
+      .toMatchObject({ issuer: trusted, value: { refresh_token: expect.stringMatching(/^trusted-refresh-/) } });
+    for (const { url: requested, text } of server.requests) {
+      expect(text, requested).not.toMatch(/legacy-refresh/);
+    }
+  });
+
+  it.each(["pending consent", "completed callback"])(
+    "fails a start a later reset overtook, leaving that reset's %s intact",
+    async (stage) => {
+      // Flow A begins over an unbound grant, retires it, and stalls just
+      // after publishing its epoch. Flow B restarts past it at another server
+      // and starts — or completes — its consent. A resumes inside the SDK:
+      // every read and write it makes is bound to its own epoch, so it fails
+      // cleanly instead of reading, overwriting, or retiring B's.
+      const server = downstream();
+      vi.stubGlobal("fetch", server.fetchStub);
+      onTestFinished(() => { vi.unstubAllGlobals(); });
+      const backing = memoryStorage();
+      await legacyGrant(backing);
+      const published = deferred<void>();
+      const resume = deferred<void>();
+      let holdA = true;
+      const storage: KVStorage = { ...backing,
+        async set(key, value, options) {
+          await backing.set(key, value, options);
+          if (holdA && key === "oauth:generation") {
+            holdA = false;
+            published.resolve();
+            await resume.promise;
+          }
+        },
+      };
+      const c = connector();
+
+      const startA = c.startAuth!(scope(storage), { force: false });
+      await published.promise;
+
+      server.advertise(foreign);
+      const startB = await c.startAuth!(scope(storage), { force: true });
+      const urlB = new URL(required(startB.authorizationUrl));
+      expect(urlB.origin).toBe(foreign);
+      const epochB = await storage.get("oauth:generation");
+      if (stage === "completed callback") {
+        const stateB = required(urlB.searchParams.get("state") ?? undefined);
+        const callbackB = scope(storage);
+        expect(await c.verifyState!(stateB, callbackB)).toBe(true);
+        await c.finishAuth!("consented", callbackB, new URLSearchParams({ code: "consented", state: stateB }));
+      }
+
+      resume.resolve();
+      const resultA = await startA;
+      expect(resultA.state).toBe("error");
+      expect(resultA.authorizationUrl).toBeUndefined();
+      expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
+
+      // B's epoch is still the live one, and nothing of A's landed in it.
+      expect(await storage.get("oauth:generation")).toBe(epochB);
+      const discoveryB = JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:discovery", epochB))) ?? undefined));
+      expect(discoveryB.value.authorizationServerUrl).toBe(foreign);
+      if (stage === "pending consent") {
+        // Continue hands back B's consent, and it completes.
+        const continued = await c.startAuth!(scope(storage), { force: false });
+        expect(continued).toMatchObject({ authorizationUrl: urlB.href, authorizationReused: true });
+        const stateB = required(urlB.searchParams.get("state") ?? undefined);
+        const callbackB = scope(storage);
+        expect(await c.verifyState!(stateB, callbackB)).toBe(true);
+        await c.finishAuth!("consented", callbackB, new URLSearchParams({ code: "consented", state: stateB }));
+      }
+      expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", epochB))) ?? undefined)))
+        .toMatchObject({ issuer: foreign, value: { refresh_token: expect.stringMatching(/^foreign-refresh-/) } });
+
+      // B's grant survives its next issuer-aware flow: it refreshes at B's
+      // server, in B's epoch, and is not retired.
+      server.requests.length = 0;
+      await c.listTools(scope(storage)).catch(() => {});
+      expect(server.requests.some(({ url }) => url === `${foreign}/token`)).toBe(true);
+      expect(await storage.get("oauth:generation")).toBe(epochB);
+      for (const { url, text } of server.requests) {
+        expect(text, url).not.toMatch(/legacy-(refresh|secret)/);
+      }
+    },
+  );
 
   it("retires a grant from before issuer binding even beside discovery naming the server that issued it", async () => {
     // No record can prove where an unstamped grant came from, so even one that
@@ -7214,10 +7275,10 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     const storage = await seededStorage();
     const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
     // A follower's last token read comes from the coordinator itself, right
-    // before it joins the flight: the bearer header read, the client read's
-    // check of the token set beside it, the SDK's issuer read, then the
-    // coordinator's. Hold the owner's token request until both followers have
-    // made all four, so none can arrive after the flight ends.
+    // before it joins the flight: its flow's entry decision, the bearer header
+    // read, the SDK's issuer read, then the coordinator's. Hold the owner's
+    // token request until both followers have made all four, so none can
+    // arrive after the flight ends.
     let tokenReads = 0;
     const originalGet = storage.get.bind(storage);
     storage.get = async (key) => {
