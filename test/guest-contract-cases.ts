@@ -1086,47 +1086,70 @@ export const CONTRACT_CASES: ContractCase[] = [
       });
     },
   },
-  {
-    clauses: "L4",
-    name: "the host-call budget stops the twenty-first call",
+  ...["call", "search", "describe"].map((operation): ContractCase => ({
+    clauses: "L4, E1, M4",
+    name: `a catch-and-continue ${operation} loop ends at the first budget refusal`,
     code: `async () => {
-      let succeeded = 0;
-      let failure = "none";
-      let failureCode = "none";
-      let failureRetryable = true;
-      for (let index = 0; index < 22; index += 1) {
+      await connecta.emit({ type: "text", text: "discard me" });
+      const failures = [];
+      for (let index = 0; index < 213; index += 1) {
         try {
-          await connecta.call("reader.read", { value: String(index) });
-          succeeded += 1;
+          ${operation === "call"
+            ? 'await connecta.call("remote.echo", { text: index < 2 ? "ok" : index, options: { uppercase: false } });'
+            : operation === "search"
+              ? 'await connecta.search({ connector: "reader" });'
+              : 'await connecta.describe({ address: "reader.read" });'}
         } catch (err) {
-          failure = err.message;
-          failureCode = err.code;
-          failureRetryable = err.retryable;
-          break;
+          failures.push(err.message);
+          await connecta.emit({ type: "text", text: "caught a refusal" });
         }
       }
-      const [spent] = await Promise.allSettled([
-        connecta.call("reader.read", { value: "after" })
-      ]);
-      return {
-        succeeded: succeeded,
-        failure: failure,
-        failureCode: failureCode,
-        failureRetryable: failureRetryable,
-        spentCode: spent.reason.code,
-        spentRetryable: spent.reason.retryable
-      };
+      return failures;
+    }`,
+    follows: 'async () => await connecta.call("reader.read", { value: "fresh run" })',
+    check(outcome, state, follow) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value).toMatchObject({
+        error: {
+          code: "budget_exceeded",
+          message: "execute_code host-call budget exceeded (20 calls maximum)",
+          retryable: false,
+        },
+        hostCalls: {
+          attempted: 21, admitted: 20,
+          succeeded: operation === "call" ? 2 : 20,
+          failed: operation === "call" ? 19 : 1,
+        },
+        emittedDiscarded: operation === "call" ? 19 : 1,
+      });
+      expect(outcome.value).not.toHaveProperty("result");
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.text.split("host-call budget exceeded")).toHaveLength(2);
+      expect(follow?.isError).toBe(false);
+      expect(follow?.result).toEqual({ echo: "fresh run" });
+      expect(state.calls["reader.read"]).toBe(1);
+      expect(state.calls["remote.echo"] ?? 0).toBe(operation === "call" ? 2 : 0);
+    },
+  })),
+  {
+    clauses: "L4, S7",
+    name: "a parallel burst ends without delivering catchable budget refusals",
+    code: `async () => {
+      const calls = [];
+      for (let index = 0; index < 213; index += 1) {
+        calls.push(connecta.call("reader.read", { value: "burst" }).catch(() => {}));
+      }
+      await Promise.allSettled(calls);
+      return "must not be returned";
     }`,
     check(outcome, state) {
-      const result = record(outcome);
-      expect(result.succeeded).toBe(20);
-      expect(String(result.failure)).toContain("budget");
-      expect(result.failureCode).toBe("budget_exceeded");
-      expect(result.failureRetryable).toBe(false);
-      expect(state.calls["reader.read"]).toBe(20);
-      // Promise rejection retains the same typed error after the budget is spent.
-      expect(result.spentCode).toBe("budget_exceeded");
-      expect(result.spentRetryable).toBe(false);
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value).toMatchObject({
+        error: { code: "budget_exceeded", retryable: false },
+        hostCalls: { attempted: 21, admitted: 20 },
+      });
+      expect(outcome.value).not.toHaveProperty("result");
+      expect(state.calls["reader.read"] ?? 0).toBeLessThanOrEqual(20);
     },
   },
   {

@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { Cause, Duration, Effect, Exit, type Scope } from "effect";
+import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import { advertisedSchema } from "./advertised-schema.js";
@@ -435,6 +435,8 @@ interface SandboxLimits {
   /** Per-connector deadline for in-program catalog probes. Default 30_000. */
   probeTimeoutMs?: number | undefined;
   onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
+  /** Terminal host refusal, never delivered as a guest rejection. */
+  onHostCallBudgetExceeded?: ((failure: InvocationFailure) => void) | undefined;
   diagnostics?: ExecuteDiagnostics | undefined;
   /**
    * Where `connecta.emit` collects. The handler that will deliver the
@@ -452,6 +454,22 @@ interface SandboxLimits {
   exemptWrites?: ExemptWrites | undefined;
 }
 
+/** Numeric accounting only; no addresses, arguments, or results. */
+class HostCallBudgetExceeded extends InvocationFailure {
+  constructor(readonly hostCalls: {
+    attempted: number;
+    admitted: number;
+    succeeded: number;
+    failed: number;
+  }, maxHostCalls: number) {
+    super({
+      code: "budget_exceeded",
+      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+      retryable: false,
+    });
+  }
+}
+
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
 
 /**
@@ -461,8 +479,8 @@ type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
  * edge the executor awaits, and behind it one host call is one fiber: spend
  * the budget, do the operation, and turn a typed failure into the frame the
  * prelude rebuilds inside the guest. Nothing is shared between those fibers
- * but the budget counters and this request's catalog, so a call the program
- * never awaits cannot disturb the others.
+ * but the budget counters and this request's catalog. Budget exhaustion ends
+ * the whole run, including calls the program never awaits.
  */
 function sandboxProvider(
   registry: RegistryView,
@@ -493,19 +511,12 @@ function sandboxProvider(
   );
   const failureSecret = guestFailureSecret();
   const { signal, diagnostics, exemptWrites } = limits;
-  let hostCalls = 0;
-  // L4/M7: discovery and invocation spend the same budget, on entry; emit
-  // does not.
-  const spendHostCall = Effect.suspend(() =>
-    ++hostCalls > maxHostCalls
-      ? Effect.fail(
-          guestFailure(
-            "budget_exceeded",
-            `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
-          ),
-        )
-      : Effect.void,
-  );
+  const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
+  let budgetFailure: HostCallBudgetExceeded | undefined;
+  // A rejected bridge promise is catchable in both sandboxes. End the host
+  // run instead and leave that bridge pending: an awaiting guest cannot catch
+  // the refusal and loop. Later calls, including emit, lose host access too.
+  const stopped = new Promise<never>(() => {});
   const approval = limits.approval ?? NO_EXEMPTIONS;
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
@@ -557,7 +568,6 @@ function sandboxProvider(
   // cancelled attempt in activity like any other outcome.
   const call = (address: unknown, args: unknown) =>
     Effect.gen(function* () {
-      yield* spendHostCall;
       // An exempt write settles here — unknown if the call never returned an
       // outcome.
       const sending: { settle?: SettleWrite } = {};
@@ -601,17 +611,15 @@ function sandboxProvider(
             ? guestFailure(err.code, err.message)
             : err,
       });
-      return spendHostCall.pipe(
-        Effect.andThen(
-          !signal
-            ? reading
-            : signal.aborted
-              ? Effect.fail(cancelled())
-              : Effect.raceAllFirst([
-                  reading,
-                  fromSignal(signal).pipe(Effect.mapError(cancelled)),
-                ]),
-        ),
+      return (!signal
+        ? reading
+        : signal.aborted
+          ? Effect.fail(cancelled())
+          : Effect.raceAllFirst([
+              reading,
+              fromSignal(signal).pipe(Effect.mapError(cancelled)),
+            ])
+      ).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() =>
             diagnostics?.recordCatalog(
@@ -688,9 +696,9 @@ function sandboxProvider(
         return result;
       }),
   };
-  // Every failure leaves through the same frame, so the prelude can rebuild
-  // a typed error however the host call failed — refused, over budget, or
-  // cancelled. Anything that is not an InvocationFailure crosses unchanged.
+  // Recoverable failures leave through the same frame, so the prelude can
+  // rebuild a typed error. Terminal host-budget exhaustion bypasses it.
+  // Anything that is not an InvocationFailure crosses unchanged.
   const framed = (err: unknown): Effect.Effect<never, unknown> =>
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
@@ -707,8 +715,30 @@ function sandboxProvider(
       Object.entries(operations).map(([name, operation]) => [
         name,
         (...args: unknown[]) => {
+          if (budgetFailure) return stopped;
+          // L4/M7: spend on entry, before even invalid arguments are checked;
+          // emit has a separate budget and never spends this one.
+          const counted = name !== "emit";
+          if (counted && ++hostCalls.attempted > maxHostCalls) {
+            hostCalls.failed++;
+            budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
+            exemptWrites?.close();
+            limits.onHostCallBudgetExceeded?.(budgetFailure);
+            return stopped;
+          }
+          if (counted) hostCalls.admitted++;
           const settled = runEdge(
             Effect.suspend(() => operation(...args)).pipe(Effect.catch(framed)),
+          ).then(
+            (value) => {
+              if (counted) hostCalls.succeeded++;
+              return budgetFailure ? stopped : value;
+            },
+            (err: unknown) => {
+              if (counted) hostCalls.failed++;
+              if (budgetFailure) return stopped;
+              throw err;
+            },
           );
           // The executor owns this promise, and a program may abandon a call
           // that the run's end then cancels before anyone has awaited it.
@@ -749,6 +779,7 @@ function awaitExecutor<A>(
   options: {
     late?: (value: A) => void;
     watchdog?: { ms: number; logger: Logger };
+    terminal?: Effect.Effect<never, unknown>;
   } = {},
 ): Effect.Effect<A, unknown> {
   const contenders: Array<Effect.Effect<A, unknown>> = [
@@ -785,6 +816,7 @@ function awaitExecutor<A>(
       ),
     ),
   ];
+  if (options.terminal) contenders.push(options.terminal);
   const { watchdog } = options;
   if (watchdog) {
     contenders.push(
@@ -928,6 +960,9 @@ export function createExecuteTool(
       );
       const invocationFailures: InvocationFailure[] = [];
       const exemptWrites = new ExemptWrites();
+      const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
+      let budgetFailure: InvocationFailure | undefined;
+      let executorLogs: unknown;
       // The run's scope holds its signal and its lease. However the run
       // ends — a result, a thrown executor, the watchdog, cancellation —
       // closing it releases the lease and then aborts the signal, so
@@ -965,6 +1000,10 @@ export function createExecuteTool(
         }, Effect.sync(() =>
           sandboxProvider(registry, baseUrl, activity, {
             signal,
+            onHostCallBudgetExceeded: (failure) => {
+              budgetFailure = failure;
+              Deferred.doneUnsafe(terminal, Effect.fail(failure));
+            },
             onInvocationFailure: (failure) => {
               invocationFailures.push(failure);
               if (invocationFailures.length > 64) invocationFailures.shift();
@@ -997,19 +1036,55 @@ export function createExecuteTool(
         return yield* timed((elapsed) => {
           if (diagnostics) diagnostics.executorWallMs = elapsed;
         }, awaitExecutor(
-          () =>
-            admitted
-              ? admitted.execute(program, [provider])
-              : executor.execute(program, [provider]),
+          () => (admitted
+            ? admitted.execute(program, [provider])
+            : executor.execute(program, [provider])
+          ).then(
+            (outcome) => {
+              executorLogs = outcome?.logs;
+              return outcome;
+            },
+            (err: unknown) => {
+              if (err !== null && typeof err === "object" && "logs" in err) {
+                executorLogs = err.logs;
+              }
+              throw err;
+            },
+          ),
           signal,
-          { watchdog },
+          { watchdog, terminal: Deferred.await(terminal) },
         ).pipe(Effect.ensuring(Effect.suspend(() => {
           exemptWrites.close();
           return exemptWrites.drain();
         }))));
       });
       const reported = { emitted, diagnostics, invocationFailures };
-      return Effect.map(Effect.exit(Effect.scoped(run)), (exit) => {
+      const exited = Effect.exit(Effect.scoped(run)).pipe(Effect.flatMap((exit) =>
+        // Releasing a QuickJS lease ends its child and rejects execute() with
+        // the retained log prefix. Give that report one timer turn, just as
+        // cancellation does in awaitExecutor; never wait on a Worker isolate.
+        budgetFailure
+          ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit))
+          : Effect.succeed(exit),
+      ));
+      return Effect.map(exited, (exit) => {
+        // A synchronous fire-and-forget burst can also settle its executor in
+        // this turn. The host's terminal refusal always wins over that value.
+        if (budgetFailure instanceof HostCallBudgetExceeded) {
+          const failed = failureResponse(budgetFailure.details.message, {
+            code: budgetFailure.details,
+            logs: executeLogs(executorLogs),
+            emitted,
+            diagnostics,
+          });
+          const finished = exemptWrites.finish(failed);
+          const result = jsonResult({
+            ...finished.structuredContent,
+            hostCalls: { ...budgetFailure.hostCalls },
+          });
+          result.isError = true;
+          return result;
+        }
         if (Exit.isFailure(exit)) {
           return exemptWrites.finish(
             failedRun(Cause.squash(exit.cause), logger, reported),

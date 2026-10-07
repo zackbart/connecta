@@ -479,6 +479,12 @@ before.
   (Method not found), without acquiring a request-admission permit or opening
   an SSE stream. Authentication and SDK protocol/header validation still run.
   Legacy listens remain unsupported (#704).
+- End `execute_code` at the first host call beyond its budget with one typed
+  `budget_exceeded` error, even when the program catches and ignores failures.
+  The host suspends the refusing bridge call, closes further host access, and
+  releases the sandbox lease. The failure reports payload-free attempted,
+  admitted, succeeded, and failed host-call counts (#704).
+
 - **A grant from before issuer binding is retired, not bound to whoever is
   named.** A token set or client registration v0.8.1 or earlier wrote carries
   no stamp, and connecta bound it on first read to the issuer that read's

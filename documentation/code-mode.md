@@ -362,7 +362,7 @@ clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
 ## Errors
 
 **E1.** There are three error channels. Connecta failures are typed whether
-caught or uncaught.
+caught or uncaught. Host-call budget exhaustion is terminal to the guest (`L4`).
 
 | Channel | Shape | Typed? |
 | --- | --- | --- |
@@ -379,7 +379,7 @@ classification and fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
 `retryable`, and `retryAfterMs`, because a clipped recovery address or argument
 describes a different call. This covers `call`, `search`, `describe`, `emit`, and
-the host-call budget. Program-authored errors stay untyped, and code must never
+write and emitted-output budgets. Program-authored errors stay untyped, and code must never
 parse error prose. An `unavailable` classification may add `details.host`, an
 HTTP(S) origin of at most 253 UTF-8 bytes, and `details.code`, a validated
 network errno, undici transport code, or `timeout` of at most 32 bytes; neither
@@ -512,7 +512,9 @@ truncation marker. Logs survive program failure through either a returned error
 result or a thrown error carrying `logs: string[]`. QuickJS streams captured
 entries to its parent and preserves the received prefix on cancellation,
 shutdown, deadline termination, child crashes, and IPC failures (`X4`). How a
-non-string argument renders is not contract (`X4`).
+non-string argument renders is not contract (`X4`). At terminal host-call
+budget exhaustion, QuickJS returns its streamed prefix; a Dynamic Worker
+has no host log stream and cannot supply logs from its suspended guest (`L4`).
 
 **R6.** Nothing else is added to a normal program result. `diagnostics: true`
 adds one request-local, payload-free `diagnostics` block; a program that emitted
@@ -656,13 +658,24 @@ because connecta enforces them above the sandbox:
 | Result | 24,000 serialized characters |
 | Logs presented to the model | 4,000 characters |
 
-Every `call` attempt spends one host call on entry, before address resolution,
-catalog lookup, safety checks, validation, or dispatch, so unknown addresses,
-unknown tools, catalog failures, and other pre-dispatch refusals cost what a
-successful call costs; catching a refusal does not refund it. `search` and
-`describe` likewise spend on entry. Exhausting the budget fails that call with
-non-retryable `budget_exceeded` (`E2`) and a message naming the budget. No
-connector is reached, and the budget does not refill inside one execution.
+Every `call`, `search`, and `describe` spends one host call on entry, before
+resolution, validation, or dispatch. Local refusals count; catching one refunds
+nothing. The first call beyond the budget ends the host run with one
+non-retryable `budget_exceeded` (`E2`). Its bridge promise stays pending so guest
+`try/catch` cannot swallow it; later host access, including `emit`, stops, and
+pending bridge replies are withheld. No connector is reached for the refusal,
+no partial result is returned, accepted emits are discarded (`M4`), and the
+executor lease is released. QuickJS terminates its child; Dynamic Workers lack
+a host termination API, so an awaiting guest stays suspended until its isolate
+ends (`X3`). Dispatched exempt writes drain under `W9`; unknown write outcomes
+retain precedence. This keeps the upstream `Executor` shape.
+
+The failure adds payload-free `hostCalls: { attempted, admitted, succeeded,
+failed }` without diagnostics. `attempted` includes the first refusal, normally
+21; `admitted` counts the 20 calls past the gate, including local refusals.
+`succeeded` and `failed` count settled host operations at response time, with
+the budget refusal counted as failed. In-flight operations may be in neither
+count. `emit` is excluded; later attempts are ignored; no budget refills.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
@@ -900,7 +913,7 @@ passing one table is also the check on the executor duties above, with
 | `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5`, `S6` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
-| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, budget, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.test.ts` (oversized messages, private transport, forged frames) |
+| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.test.ts` (oversized messages, private transport, forged frames) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/program-writes.test.ts` (the refusal's `nextAction`, nothing sent, a caught refusal) |
@@ -915,7 +928,7 @@ passing one table is also the check on the executor duties above, with
 | `Y4` | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue) |
 | `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease) |
 | `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
-| `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets) |
+| `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops on both executors) |
 | `L5`, `L7`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue) |
 | `L6`, `X10` | `test/quickjs-executor.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.test.ts` (outer reply serialization failure settles the call) |
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/d1-activity-example.test.ts` (historical pause and approval rows still render and round-trip) |
