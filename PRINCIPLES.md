@@ -19,7 +19,8 @@ records the work still needed; a goal is not a claim that it has shipped.
    identities, pools, and grants. The operator UI shows configuration and
    manages auth material, never capability.
 5. **One core, two runtimes.** A Web-API core runs on Node and Cloudflare
-   Workers. The target is one storage shape per platform, SQLite and D1.
+   Workers, with one storage shape per platform: one D1 database on Workers,
+   one SQLite file on Node.
    Effect stays inside; the published edge speaks Promises.
 6. **Agent-maintained.** Rules that matter are tests. Docs state contracts
    and point at code. Everything else is a decision record a PR may supersede

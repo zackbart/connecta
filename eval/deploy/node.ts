@@ -22,7 +22,8 @@ import {
 } from "@zackbart/connecta/artifacts";
 import { bearerToken } from "@zackbart/connecta/auth/bearer";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
-import { fileStorage, listen } from "@zackbart/connecta/node";
+import { listen } from "@zackbart/connecta/node";
+import { sqliteStorage } from "@zackbart/connecta/sqlite";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 import { operatorUi } from "@zackbart/connecta/ui";
 import type { ArtifactSnapshot, ConnectorSpec } from "../fakes/world.js";
@@ -133,7 +134,7 @@ export async function startNodeDeployment(
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const token = randomBytes(18).toString("base64url");
-  const storage = fileStorage(join(dir, "state.json"));
+  const storage = sqliteStorage(join(dir, "connecta.sqlite"));
   const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
   const artifactStore = artifactOptions ? kvArtifactStore(storage) : undefined;

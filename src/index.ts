@@ -259,7 +259,12 @@ export interface ConnectaConfig {
   identity?: ConnectaIdentityConfig;
   /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
   pools?: Record<string, ConnectaPoolConfig>;
-  /** KVStorage impl. Defaults to memoryStorage(). */
+  /**
+   * The deployment's one store: `d1Storage(env.CONNECTA_DB)` from
+   * `@zackbart/connecta/d1` on Workers, `sqliteStorage(path)` from
+   * `@zackbart/connecta/sqlite` on Node. Defaults to memoryStorage(), which
+   * forgets everything on restart.
+   */
   storage?: KVStorage;
   /**
    * Public base URL. Defaults to the request origin per-request. Configuring an
@@ -873,6 +878,26 @@ function warnInsecureConfig(
   }
 }
 
+/**
+ * Refuse storage without the atomic claim and enumeration every subsystem now
+ * relies on, at construction rather than at the first OAuth callback (INV-11).
+ * The likeliest cause is a 0.28 deployment still passing its Workers KV
+ * adapter, which could never offer either guarantee.
+ */
+function assertStorage(storage: KVStorage | undefined): void {
+  if (storage === undefined) return;
+  const missing = (["get", "set", "delete", "list", "compareAndSet"] as const)
+    .filter((method) => typeof (storage as Partial<KVStorage> | null)?.[method] !== "function");
+  if (missing.length === 0) return;
+  throw new Error(
+    `ConnectaConfig.storage must implement ${missing.join(" and ")}. ` +
+      "Use d1Storage(env.CONNECTA_DB) from @zackbart/connecta/d1 on Workers, " +
+      "sqliteStorage(path) from @zackbart/connecta/sqlite on Node, or " +
+      "memoryStorage() in tests. Workers KV is not supported: it is eventually " +
+      "consistent and cannot compare-and-set.",
+  );
+}
+
 export function createConnecta(config: ConnectaConfig): Connecta {
   assertKnownConfig(config);
   if (!config.executor) {
@@ -884,6 +909,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     );
   }
   assertExecutor(config.executor);
+  assertStorage(config.storage);
   const storage = config.storage ?? memoryStorage();
   const logger = resolveLogger(config.logger);
   const credentialVault = config.vault;

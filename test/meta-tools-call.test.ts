@@ -2072,30 +2072,47 @@ describe("bounded result stash", () => {
       .not.toHaveProperty("resultId");
   });
 
-  it("deletes expired backing entries before reusing their capacity", async () => {
+  it("bounds the stash across registries sharing one store, as isolates do", async () => {
+    // Two registries over one store stand in for two Worker isolates (or two
+    // Node processes) over one D1 database or SQLite file: the ledger, not
+    // either runtime's memory, decides.
+    const storage = memoryStorage();
+    const isolate = () => new Registry([capped("large", 100)], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1 },
+      storage,
+    });
+    const first = notice(await createMetaTools(isolate(), BASE).callTool({ address: "large.big" }));
+    expect(first).toHaveProperty("resultId");
+    const second = notice(await createMetaTools(isolate(), BASE).callTool({ address: "large.big" }));
+    expect(second).not.toHaveProperty("resultId");
+    expect(second.hint).toContain("Paging is unavailable");
+  });
+
+  it("reuses an expired entry's capacity once its TTL has passed", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
-    const values = new Map<string, string>();
+    const storage = memoryStorage();
     const root = new Registry([capped("large", 100)], {
       logger: silentLogger,
       results: { maxStashEntries: 1 },
       persistToolCatalog: false,
-      storage: {
-        async get(key) { return values.get(key) ?? null; },
-        async set(key, value) { values.set(key, value); },
-        async delete(key) { values.delete(key); },
-      },
+      storage,
     });
     try {
       const first = notice(await createMetaTools(root, BASE).callTool({ address: "large.big" }));
+      expect(first).toHaveProperty("resultId");
       now.mockReturnValue(10_000 + 16 * 60_000);
       const second = notice(await createMetaTools(root, BASE).callTool({ address: "large.big" }));
       expect(second).toHaveProperty("resultId");
-      expect(values.has(`results:result:${first.resultId}`)).toBe(false);
-      expect(values.size).toBe(1);
+      expect(await storage.get(`results:result:${first.resultId}`)).toBeNull();
+      const ledger = JSON.parse(await storage.get("result-stash:v1:ledger") ?? "null");
+      expect(ledger.entries).toEqual([
+        [`results:result:${second.resultId}`, expect.any(Number), expect.any(Number)],
+      ]);
     } finally { now.mockRestore(); }
   });
 
-  it("keeps a failed write charged until backing cleanup succeeds", async () => {
+  it("releases a failed write's charge only after deleting what it may have written", async () => {
     const storage = memoryStorage();
     let failWrite = true;
     let failDelete = true;
@@ -2114,12 +2131,19 @@ describe("bounded result stash", () => {
       },
     });
     const call = () => createMetaTools(root, BASE).callTool({ address: "large.big" });
+    // The write persisted, then failed, and its cleanup failed too: the
+    // charge stays booked, so the bound still covers the orphaned bytes.
     expect(notice(await call())).not.toHaveProperty("resultId");
+    expect(await storage.list("results:result:")).toHaveLength(1);
     expect(notice(await call())).not.toHaveProperty("resultId");
-    expect(await storage.list!("results:result:")).toHaveLength(1);
+    // With deletion working, a failed write cleans up and frees its charge.
     failDelete = false;
+    failWrite = true;
+    await storage.delete("result-stash:v1:ledger");
+    for (const key of await storage.list("results:")) await storage.delete(key);
+    expect(notice(await call())).not.toHaveProperty("resultId");
+    expect(await storage.list("results:result:")).toEqual([]);
     expect(notice(await call())).toHaveProperty("resultId");
-    expect(await storage.list!("results:result:")).toHaveLength(1);
   });
 
   it("pages a large stored result without encoding the full text again", async () => {

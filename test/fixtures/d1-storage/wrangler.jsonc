@@ -1,4 +1,4 @@
-// Local-only fixture for test/d1-storage-example.node.test.ts. getPlatformProxy
+// Local-only fixture for test/d1-storage.node.test.ts. getPlatformProxy
 // reads this binding and serves it from an in-memory local D1; nothing here
 // names a real database or deploys anywhere.
 {
@@ -6,7 +6,7 @@
   "compatibility_date": "2025-01-01",
   "d1_databases": [
     {
-      "binding": "STORAGE_DB",
+      "binding": "CONNECTA_DB",
       "database_name": "connecta-storage-fixture",
       "database_id": "00000000-0000-4000-8000-000000000000"
     }

@@ -3,8 +3,7 @@
 node_modules
 .git
 .env
-.connecta-state.json
-.connecta-activity.jsonl
+.connecta.sqlite*
 *.log
 Dockerfile
 docker-compose.yml

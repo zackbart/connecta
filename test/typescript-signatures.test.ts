@@ -89,7 +89,7 @@ function expectBalanced(text: string): void {
 
 function notionContext(): ConnectorContext {
   return {
-    storage: { get: async () => null, set: async () => {}, delete: async () => {} },
+    storage: { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [], compareAndSet: async () => false },
     logger: silentLogger,
     baseUrl: BASE,
     credential: {

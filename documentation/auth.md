@@ -61,9 +61,9 @@ permitted token manager can list, rename, or revoke deployment tokens. Static
 and managed bearers manage neither tokens nor connection credentials; operators
 need an interactive provider.
 
-Storage must implement `list`. Verification, rename, and revoke work without
-`compareAndSet`; **new issuance requires atomic `compareAndSet`**, because
-counting records before writing admits too many concurrent creates. Active
+Issuance claims capacity with `compareAndSet`, because counting records before
+writing admits too many concurrent creates; every supported store provides
+it. Active
 capacity defaults to 100, configurable with
 `accessTokens(storage, { maxActive: 200 })` up to 1,000, counted by a durable
 reservation before a secret is written. A failure before lookup publication
@@ -74,9 +74,9 @@ instances must create no tokens: they ignore reservations.
 
 Secrets carry 256 random bits; only SHA-256 digests persist. Creation returns
 the secret once, list and rename never. Revocation removes the lookup before
-updating metadata and authorization caches no token, so a strongly consistent
-store revokes on the next authorization; an eventually consistent one keeps its
-propagation delay, and admitted requests are not recalled. Management writes
+updating metadata and authorization caches no token, so revocation takes
+effect on the next authorization (D1 and SQLite are strongly consistent);
+admitted requests are not recalled. Management writes
 require an exact same-origin Origin; responses are private and non-cacheable.
 
 ## Origins
@@ -424,8 +424,8 @@ Cleanup work is bounded regardless of prior restarts:
 | Lineage capacity | At most 5,000 epochs: last-day retirements plus unswept ones. Refuse an overflowing restart before moving the fence. This allows over 4,000 daily restarts beyond the old 1,000 limit. A connector at that old wall can restart immediately after upgrade; old entries drain 16 per restart a day later. Rollback ignores times and can restart unless lineage exceeds its old 1,000 cap. |
 | Delete concurrency | Six at a time, the Workers connection limit. Catalog chunks delete concurrently under the registry's chunk I/O bound. |
 
-This assumes no request holds a retired epoch for a day, including OAuth flows,
-refreshes, and Workers KV readers seeing a generation stale by a minute or more.
+This assumes no request holds a retired epoch for a day, including OAuth flows
+and refreshes.
 If violated, a writer dying between write and cleanup can leave untracked
 residue, but it is never readable.
 
@@ -540,13 +540,9 @@ client copy. Retiring inside hooks could retain an old client or cross a reset.
   discovers afresh; a different server found there is handed nothing.
 
 Retirement touches only the inspected epoch, checking before mutation and
-activating its successor with compare-and-set when available. If another reset
-replaced it, abandon the flow without touching anything. This guarantee requires
-CAS. Workers KV has none; rechecking just before writing narrows but does not
-close the race. Minute-or-more stale reads widen it. Retirement can replace a
-completed restart's epoch, requiring another consent and orphaning its records.
-Later Disconnect leaves those records stored;
-nothing is sent. Orphan tracking is [#697](https://github.com/zackbart/connecta/issues/697).
+activating its successor with compare-and-set. If another reset replaced it,
+abandon the flow without touching anything. Records a superseded flow leaves
+behind are tracked in [#697](https://github.com/zackbart/connecta/issues/697).
 
 Bind every flow read and write to its resulting epoch, never the live one.
 Clean up and report writes overtaken after their epoch check as failed. Starts
@@ -793,9 +789,8 @@ shared `credentialAdministration` permission. Connecta saves that principal agai
 callback checks state, identity, and permission before consuming the handoff and exchanging the code. Reissue
 pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
 
-`compareAndSet` atomically claims link nonces and callback handoffs, with one concurrent winner. Without CAS,
-read/write or read/delete windows allow multiple winners; eventual consistency can expose consumed values
-until deletion or nonce markers propagate. Such stores cannot guarantee one-shot completion.
+`compareAndSet` atomically claims link nonces and callback handoffs, with one concurrent winner, so each
+completes once.
 [Meta-tools](./meta-tools.md#authorization-recovery) describes recovery.
 
 ## URL-based downstream OAuth clients

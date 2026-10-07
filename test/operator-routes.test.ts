@@ -305,6 +305,7 @@ describe("operator data routes", () => {
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     let stall = true;
     const storage: KVStorage = {
+      list: (prefix) => inner.list(prefix),
       get: (key) => inner.get(key),
       delete: (key) => inner.delete(key),
       compareAndSet: (key, expected, next, options) =>
@@ -399,6 +400,7 @@ describe("operator data routes", () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     const storage: KVStorage = {
+      list: (prefix) => inner.list(prefix),
       get: (key) => inner.get(key),
       delete: (key) => inner.delete(key),
       // The entry retirement activates its epoch with a compare-and-set.

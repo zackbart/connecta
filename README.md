@@ -97,8 +97,9 @@ Fifty issues in, one small object out. Your context window notices.
   is. Config — and only config — can exempt a cheap, reversible write from
   asking, per tool or per connector, and then a program may make it.
 - **Run it on Node or Cloudflare Workers.** The core is shared; each deployment
-  supplies its platform's executor and storage. The Node template also runs
-  unchanged in Docker.
+  supplies its platform's executor and one store: a D1 database on Workers
+  (`@zackbart/connecta/d1`), a SQLite file on Node (`@zackbart/connecta/sqlite`).
+  The Node template also runs unchanged in Docker.
 
 Deployments explicitly compose optional features: `operatorUi()` from
 `@zackbart/connecta/ui`, `encryptedCredentialVault()` from `/credentials`,
@@ -153,6 +154,6 @@ Upgrading from v0.23 does not require rotating managed `cta_…` tokens. Import
 `accessTokens: true` with `accessTokens: accessTokens(storage)`, and keep the
 same persistent storage namespace and identity/tool/pool grant rules. Enable
 `identity.accessTokenManagement` only for the interactive operators who should
-manage tokens. New issuance needs storage with atomic `compareAndSet`; older
-storage adapters can still verify existing tokens. See the package's
-`documentation/auth.md` for the migration and storage requirements.
+manage tokens. Records written by v0.23 and later move with the store: a 0.28
+JSON state file migrates with `connecta migrate-state`, and a D1 table is
+read as is. See the package's `documentation/auth.md` for the migration.

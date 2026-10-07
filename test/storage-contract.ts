@@ -2,28 +2,16 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { KVStorage } from "../src/index.js";
 
 /**
- * Shared compare-and-set cases for every `KVStorage` that declares the
- * capability. Not a suite: each adapter's own suite calls this inside its
- * `describe`, so the same contract runs against memory, namespaced, file, and
- * the Worker example's D1 adapter.
+ * Shared compare-and-set cases for every `KVStorage`. Not a suite: each
+ * adapter's own suite calls this inside its `describe`, so the same contract
+ * runs against memory, namespaced, SQLite, and D1 storage.
  *
  * Expiry is driven by faking `Date` alone. Every adapter computes expiry from
  * `Date.now()` in the calling process, and leaving real timers alone keeps a
- * file store's heartbeat and a local D1 proxy's I/O untouched.
+ * local D1 proxy's I/O untouched.
  */
-export type CasStorage = KVStorage &
-  Required<Pick<KVStorage, "compareAndSet">>;
-
-/** Assert at runtime that `storage` declares the capability, and say so in its type. */
-export function requireCas<T extends KVStorage>(storage: T): T & CasStorage {
-  if (typeof storage.compareAndSet !== "function") {
-    throw new Error("Expected storage to declare compareAndSet");
-  }
-  return storage as T & CasStorage;
-}
-
 export function compareAndSetContract(
-  open: () => CasStorage | Promise<CasStorage>,
+  open: () => KVStorage | Promise<KVStorage>,
 ): void {
   const start = Date.parse("2026-01-01T00:00:00.000Z");
   const fakeClock = () => {
@@ -77,7 +65,7 @@ export function compareAndSetContract(
     expect(await storage.get("lease")).toBe("held");
     expect(await storage.compareAndSet("lease", "held", null)).toBe(true);
     expect(await storage.get("lease")).toBeNull();
-    if (storage.list) expect(await storage.list("lease")).toEqual([]);
+    expect(await storage.list("lease")).toEqual([]);
     expect(await storage.compareAndSet("lease", null, "again")).toBe(true);
     expect(await storage.get("lease")).toBe("again");
   });
@@ -109,7 +97,7 @@ export function compareAndSetContract(
     expect(await storage.compareAndSet("lease", null, "thief")).toBe(false);
     advance(2_000);
     expect(await storage.get("lease")).toBeNull();
-    if (storage.list) expect(await storage.list("lease")).toEqual([]);
+    expect(await storage.list("lease")).toEqual([]);
     expect(await storage.compareAndSet("lease", null, "next")).toBe(true);
   });
 

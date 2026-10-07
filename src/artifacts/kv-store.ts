@@ -1,19 +1,14 @@
 // The reference ArtifactStore over KVStorage.
 //
-// Layout, under one prefix (default `artifact:`):
-//
-//   head:<id>                          the one mutable record per artifact
-//   ver:<id>:<stream>:<n, 10 digits>   every version but each stream's latest
-//   blob:<sha256>                      bodies, unless a blob store holds them
-//   run:<id>:<startedAt ms>:<runId>    refresh run history, newest 50
-//
-// The head is the only key ever compared-and-set, and a write commits by
+// The layout is `artifactKeys` in src/storage/keys.ts, under one prefix
+// (default `artifact:`). The head is the only key ever compared-and-set, and a write commits by
 // swapping it. Everything else is written before that swap and is either
 // content-addressed (bodies) or immutable once the head that describes it
 // exists (versions), so a plain `set` of the same key twice writes the same
 // bytes twice.
 
 import type { KVStorage } from "../types.js";
+import { ARTIFACT_PREFIX, artifactKeys } from "../storage/keys.js";
 import {
   ARTIFACT_RUNS_RETAINED,
   type ArtifactBlobStore,
@@ -39,38 +34,36 @@ const VERSION_DIGITS = 10;
 const pad = (n: number, digits: number) => String(n).padStart(digits, "0");
 
 /**
- * An artifact store over `KVStorage`. The storage must provide `compareAndSet`
- * — a write commits by swapping one head record, and a read followed by a
- * write cannot stand in for that — and `list`, which history and the library
- * page through. Cloudflare Workers KV has neither guarantee and is refused
+ * An artifact store over `KVStorage`. A write commits by swapping one head
+ * record with `compareAndSet`, and history and the library page through
+ * `list`. Every supported adapter provides both; anything else is refused
  * here, at construction, rather than losing a write later.
  */
 export function kvArtifactStore(
   kv: KVStorage,
   options: KvArtifactStoreOptions = {},
 ): ArtifactStore {
-  const { compareAndSet, list } = kv;
-  if (typeof compareAndSet !== "function" || typeof list !== "function") {
+  if (typeof kv?.compareAndSet !== "function" || typeof kv.list !== "function") {
     throw new TypeError(
       "kvArtifactStore needs storage with compareAndSet and list: every " +
-        "artifact write commits by compare-and-set, and Cloudflare Workers KV " +
-        "cannot offer one. Use the Worker example's D1 store (d1Storage), " +
-        "fileStorage from @zackbart/connecta/node, or memoryStorage in tests.",
+        "artifact write commits by compare-and-set. Use d1Storage, " +
+        "sqliteStorage, or memoryStorage in tests.",
     );
   }
-  const cas = compareAndSet.bind(kv);
-  const keys = list.bind(kv);
-  const prefix = options.prefix ?? "artifact:";
+  const cas = kv.compareAndSet.bind(kv);
+  const keys = kv.list.bind(kv);
+  const prefix = options.prefix ?? ARTIFACT_PREFIX;
   if (typeof prefix !== "string") {
     throw new TypeError("kvArtifactStore: prefix must be a string");
   }
   const blobs = options.blobs;
-  const headKey = (id: string) => `${prefix}head:${id}`;
+  const layout = artifactKeys.under(prefix);
+  const headKey = layout.head;
   const versionPrefix = (id: string, stream: ArtifactStream) =>
-    `${prefix}ver:${id}:${stream}:`;
-  const runPrefix = (id: string) => `${prefix}run:${id}:`;
-  const blobKey = (key: string) => `${prefix}blob:${key}`;
-  const scanKey = `${prefix}refresh:scan-cursor`;
+    layout.versionPrefix(id, stream);
+  const runPrefix = layout.runPrefix;
+  const blobKey = layout.blob;
+  const scanKey = layout.scanCursor;
 
   const readJson = async <T>(key: string): Promise<T | null> => {
     const text = await kv.get(key);
@@ -89,7 +82,7 @@ export function kvArtifactStore(
     },
 
     async heads({ after, limit }) {
-      const base = `${prefix}head:`;
+      const base = layout.head("");
       const ids = (await keys(base))
         .map((key) => key.slice(base.length))
         .filter((id) => after === undefined || id > after);

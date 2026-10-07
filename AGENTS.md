@@ -53,8 +53,11 @@ to pass or be intentionally skipped.
 - `src/connectors/` owns `remoteMcp()` and `api()`; `src/providers/` owns
   maintained integrations. `src/auth/` owns auth adapters and downstream OAuth.
 - `src/runtime/` is the Effect core. Only `src/runtime/run.ts` starts fibers.
-- `src/node.ts`, `src/storage/file.ts`, and `src/executors/quickjs*` are
+- `src/node.ts`, `src/sqlite.ts`, and `src/executors/quickjs*` are
   Node-only. They must remain unreachable from `src/index.ts`.
+- Storage is one SQL key-value store (`src/storage/sql.ts`) with two drivers:
+  `/d1` on Workers, `/sqlite` on Node. Every key is built in
+  `src/storage/keys.ts`; add a family there, never an ad-hoc key.
 - UI, activity, vault, artifacts, and inbound auth implementations use explicit
   subpaths and typed configuration slots, outside the root import graph.
 - `src/operator-ui/` owns the operator UI. Capability changes remain in code.
@@ -65,9 +68,6 @@ modules use explicit subpaths and optional peers. Effect is a core dependency.
 `/worker` and `/quickjs` brand executor lifecycles; custom sandboxes opt in with
 `customExecutor(executor, { lifecycle: "self-managed" })` and own cleanup.
 `test/package-surface.node.test.ts` and the package smoke guard published boundaries.
-Current Worker storage adapters live in `examples/worker/`; Phase 1 item 3
-replaces them with an importable D1 adapter and replaces Node file storage
-with SQLite. Do not describe that migration as complete.
 
 ## Deployment shapes
 

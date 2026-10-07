@@ -6,7 +6,7 @@
   "compatibility_date": "2025-01-01",
   "d1_databases": [
     {
-      "binding": "STORAGE_DB",
+      "binding": "CONNECTA_DB",
       "database_name": "connecta-artifacts-fixture",
       "database_id": "00000000-0000-4000-8000-000000000001"
     }

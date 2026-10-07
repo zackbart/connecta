@@ -18,22 +18,22 @@ import { operatorUi } from "@zackbart/connecta/ui";
  *   CONNECTA_TOKEN           required inbound bearer token
  *   PORT                     listen port (default 8787)
  *   PUBLIC_URL               public origin; downstream OAuth calls back to it
- *   CONNECTA_STATE_FILE      fileStorage path (the container points it at /data)
+ *   CONNECTA_DATABASE        the one SQLite file (the container points it at /data)
  *   CLERK_PUBLISHABLE_KEY    operator sign-in, once the Clerk block is on
  *   CLERK_SECRET_KEY         operator sign-in, once the Clerk block is on
  *   CONNECTA_CREDENTIAL_KEY  vault key, once the credentials block is on
- *   CONNECTA_ACTIVITY_FILE   activity log, once the activity block is on
  */
 import { api, createConnecta } from "@zackbart/connecta";
-import { fileStorage, listen } from "@zackbart/connecta/node";
+import { listen } from "@zackbart/connecta/node";
+import { openSqlite, sqliteStorage } from "@zackbart/connecta/sqlite";
+// Payload-free activity history, in the same SQLite file.
+// import { sqliteActivityStore } from "@zackbart/connecta/sqlite";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 // import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 // import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
 // Operator sign-in. Needs `npm install @clerk/backend` — it is an optional
 // peer, so it does not install with Connecta.
 // import { clerkAuth } from "@zackbart/connecta/auth/clerk";
-// Payload-free activity history, kept beside the state file.
-// import { fileActivityStore } from "./file-activity.js";
 
 const token = process.env.CONNECTA_TOKEN;
 if (!token) {
@@ -43,11 +43,13 @@ if (!token) {
 }
 const port = Number(process.env.PORT ?? 8787);
 // Empty is unset: an untouched `.env` passes through Compose as "", and an
-// empty state path or public origin is worse than the local default.
-const stateFile = process.env.CONNECTA_STATE_FILE || "./.connecta-state.json";
+// empty database path or public origin is worse than the local default.
+const database = openSqlite(process.env.CONNECTA_DATABASE || "./.connecta.sqlite");
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
-const storage = fileStorage(stateFile);
-// Optional artifact pages and refresh jobs use the same CAS-capable state file:
+// Every piece of state — OAuth grants, sealed credentials, catalogs, paging,
+// access tokens, artifacts — lives in this one file.
+const storage = sqliteStorage(database);
+// Optional artifact pages and refresh jobs use the same storage:
 // const artifactModule = artifacts({ store: kvArtifactStore(storage) });
 
 // Operator sign-in. A bearer token is a client key: it may call tools and read
@@ -98,7 +100,7 @@ const connecta = createConnecta({
   // Required: model-written programs run in a bounded QuickJS child.
   executor: quickJsExecutor(),
   // Credential vault. A connector that declares a `credential` slot becomes
-  // editable inside its connection on /, and its value is encrypted in the state file
+  // editable inside its connection on /, and its value is encrypted in the database
   // with this key — so keep the key out of that file and out of source:
   //   node -e "console.log(crypto.randomBytes(32).toString('base64'))"
   // Rotating a credential takes effect on the next call; no restart.
@@ -106,11 +108,10 @@ const connecta = createConnecta({
   // Payload-free activity history at /activity: who called what, when, how
   // long it took, and whether it worked. Never arguments, results, generated
   // code, or raw error messages. Commented because retention is yours to
-  // choose — see src/file-activity.ts.
+  // choose: 90 days by default, or `sqliteActivityStore(database,
+  // { retentionDays })`.
   // activity: activityHistory({
-  //   store: fileActivityStore(
-  //     process.env.CONNECTA_ACTIVITY_FILE || "./.connecta-activity.jsonl",
-  //   ),
+  //   store: sqliteActivityStore(database),
   //   deploymentId: "production",
   // }),
   // The operator UI at /. Its branding is code, like everything else here:

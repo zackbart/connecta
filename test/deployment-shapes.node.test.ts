@@ -93,7 +93,7 @@ describe("deployment shapes", () => {
   it("configures the container's origin, state, and health from the source", () => {
     const source = read("src", "index.ts");
     expect(source).toContain("process.env.PUBLIC_URL");
-    expect(source).toContain("process.env.CONNECTA_STATE_FILE");
+    expect(source).toContain("process.env.CONNECTA_DATABASE");
     expect(read("Dockerfile")).toContain("HEALTHCHECK");
     // State belongs on the mounted volume, owned by the non-root user.
     expect(read("Dockerfile")).toContain("chown -R node:node /data");
@@ -108,7 +108,7 @@ describe("deployment shapes", () => {
     const source = read("src", "index.ts");
     for (const fragment of [
       '// import { clerkAuth } from "@zackbart/connecta/auth/clerk";',
-      '// import { fileActivityStore } from "./file-activity.js";',
+      '// import { sqliteActivityStore } from "@zackbart/connecta/sqlite";',
       "// clerkAuth({",
       "// vault: encryptedCredentialVault(storage, process.env.CONNECTA_CREDENTIAL_KEY!),",
       "ui: operatorUi(),",
@@ -116,28 +116,23 @@ describe("deployment shapes", () => {
     ]) {
       expect(source).toContain(fragment);
     }
-    // The activity store itself is compiled, not commented: check:examples
-    // typechecks it, so the only thing an operator uncomments is the wiring.
-    expect(read("src", "file-activity.ts")).toContain(
-      "export function fileActivityStore(",
-    );
+    // Activity shares the one SQLite file the storage opens.
+    expect(source).toContain("//   store: sqliteActivityStore(database),");
     const env = read(".env.example");
     for (const variable of [
       "CLERK_PUBLISHABLE_KEY",
       "CLERK_SECRET_KEY",
       "CONNECTA_CREDENTIAL_KEY",
-      "CONNECTA_ACTIVITY_FILE",
+      "CONNECTA_DATABASE",
     ]) {
       expect(env).toContain(variable);
       // Compose passes every one through, or uncommenting a block would work
       // from source and silently do nothing in the container.
       expect(read("docker-compose.yml")).toContain(variable);
     }
-    // Activity history belongs on the volume beside the state file.
-    expect(read("Dockerfile")).toContain(
-      "ENV CONNECTA_ACTIVITY_FILE=/data/connecta-activity.jsonl",
-    );
-    expect(read(".gitignore")).toContain(".connecta-activity.jsonl");
+    // The database belongs on the volume.
+    expect(read("Dockerfile")).toContain("ENV CONNECTA_DATABASE=/data/connecta.sqlite");
+    expect(read(".gitignore")).toContain(".connecta.sqlite*");
     expect(read("README.md")).toContain("## Select optional modules");
     // A vault is not a page: the operator UI lists connector slots, and neither
     // shape's shipped connectors need one. Both carry the slot's shape in
@@ -162,11 +157,16 @@ describe("deployment shapes", () => {
     );
     expect(worker).toContain("ui: operatorUi(),");
     expect(worker).toContain("// activity: activityHistory({");
-    expect(worker).toContain('// import { d1ActivityStore } from "./d1-activity.js";');
-    // The commented binding is what makes the commented wiring resolvable.
-    expect(
-      readFileSync(join(ROOT, "examples", "worker", "wrangler.jsonc"), "utf8"),
-    ).toContain('//     "binding": "ACTIVITY_DB",');
+    expect(worker).toContain('// import { d1ActivityStore } from "@zackbart/connecta/d1";');
+    expect(worker).toContain("//   store: d1ActivityStore(env.CONNECTA_DB),");
+    // One D1 database, one Worker Loader, and nothing else: no KV, no
+    // second database.
+    const wrangler = readFileSync(join(ROOT, "examples", "worker", "wrangler.jsonc"), "utf8")
+      .split("\n").filter((line) => !line.trimStart().startsWith("//")).join("\n");
+    expect(wrangler).not.toContain("kv_namespaces");
+    expect(wrangler.match(/"binding":/g)).toHaveLength(2);
+    expect(wrangler).toContain('"binding": "CONNECTA_DB"');
+    expect(wrangler).toContain('"binding": "LOADER"');
     expect(worker).toContain('//   credential: { label: "API token" },');
     const workerReadme = readFileSync(
       join(ROOT, "examples", "worker", "README.md"),
@@ -174,7 +174,7 @@ describe("deployment shapes", () => {
     );
     expect(workerReadme).toContain("## Select optional modules");
     // The walkthrough may not end on a check that fails as deployed: this
-    // example has no credential slot and its activity store waits on D1.
+    // example has no credential slot and its activity store is commented.
     expect(workerReadme).toContain(
       "Connections",
     );

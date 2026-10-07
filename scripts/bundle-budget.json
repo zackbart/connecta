@@ -16,7 +16,8 @@
     "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. The cap uses the existing baseline + 60,000 B policy. Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; the cap stays at 89,685 B, set from the 29,685 B first measurement.",
     "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
-    "./worker starts at 35500 B gzip (#704): bounded admission plus request-owned loader/RPC handle disposal around the optional upstream DynamicWorkerExecutor. The peer stays external; the cap uses the existing baseline + 60,000 B policy."
+    "./worker starts at 35500 B gzip (#704): bounded admission plus request-owned loader/RPC handle disposal around the optional upstream DynamicWorkerExecutor. The peer stays external; the cap uses the existing baseline + 60,000 B policy.",
+    "./d1 starts at 2,542 B gzip (#705): the shared SQL key-value and activity store (src/storage/sql.ts) behind a structural D1 driver, with no Effect, no MCP SDK, and no dependency. The cap uses the existing baseline + 60,000 B policy. ./sqlite is its Node-only twin over node:sqlite and is reported, not capped."
   ],
   "entries": {
     ".": {
@@ -114,6 +115,10 @@
     "./credentials": {
       "baselineGzip": 1459,
       "maxGzip": 61459
+    },
+    "./d1": {
+      "baselineGzip": 2542,
+      "maxGzip": 62542
     },
     "./activity": {
       "baselineGzip": 35698,

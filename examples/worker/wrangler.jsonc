@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "observability": { "enabled": true },
 
-  // Uncomment with artifacts and D1 in src/index.ts. Every hourly tick runs
+  // Uncomment with artifacts in src/index.ts. Every hourly tick runs
   // at most 10 due pages; each page's own daily/weekly schedule lives in data.
   // "triggers": { "crons": ["0 * * * *"] },
 
@@ -26,34 +26,15 @@
     }
   },
 
-  // Create with `wrangler kv namespace create CONNECTA_KV` and paste the id.
-  "kv_namespaces": [
-    { "binding": "CONNECTA_KV", "id": "replace-with-kv-namespace-id" }
+  // The one database. Create with `wrangler d1 create connecta` and paste
+  // the id. connecta creates its tables on first use; nothing to apply.
+  "d1_databases": [
+    {
+      "binding": "CONNECTA_DB",
+      "database_name": "connecta",
+      "database_id": "replace-with-d1-database-id"
+    }
   ],
-
-  // D1 databases, off by default so this example deploys without one.
-  // Uncomment the array and keep the entries you use.
-  //
-  // ACTIVITY_DB: activity history. Create with `wrangler d1 create
-  // connecta-activity`, paste the id, apply the schema in README.md, then
-  // uncomment the matching lines in src/index.ts.
-  //
-  // STORAGE_DB: strongly consistent storage with compare-and-set, in place of
-  // CONNECTA_KV. Create with `wrangler d1 create connecta-storage`, paste the
-  // id, apply the schema in README.md § "Strongly consistent storage", then
-  // pass `d1Storage(env.STORAGE_DB)` as `storage` in src/index.ts.
-  // "d1_databases": [
-  //   {
-  //     "binding": "ACTIVITY_DB",
-  //     "database_name": "connecta-activity",
-  //     "database_id": "replace-with-d1-database-id"
-  //   },
-  //   {
-  //     "binding": "STORAGE_DB",
-  //     "database_name": "connecta-storage",
-  //     "database_id": "replace-with-d1-database-id"
-  //   }
-  // ],
 
   // Required by execute_code; Dynamic Workers use the Workers Paid plan.
   "worker_loaders": [{ "binding": "LOADER" }]

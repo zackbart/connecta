@@ -8,7 +8,7 @@ This repository is deployment configuration, not a copy of Connecta itself.
   exempts; every other write is its own `call_destructive_tool` call, which
   the MCP host asks about.
 - Keep credentials in environment variables or an external secret store.
-  Never commit `.env`, `.connecta-state.json`, `.connecta-activity.jsonl`,
+  Never commit `.env`, `.connecta.sqlite` (and its `-wal`/`-shm` files),
   tokens, or credential values.
 - Add application logic only inside deliberate `api()` connector handlers.
   Do not copy or modify Connecta package internals here.
@@ -20,7 +20,8 @@ This repository is deployment configuration, not a copy of Connecta itself.
   `credentialAdministration` or `personalConnection` permissions; visibility
   alone never grants it. Clerk supplies human identity; `cta_` access tokens cover machine clients.
   The static bearer adapter retires in Phase 3.
-  `src/file-activity.ts` remains the deployment-owned history store.
+  All state, activity included, lives in the one SQLite file `CONNECTA_DATABASE`
+  names, through `@zackbart/connecta/sqlite`.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand

@@ -51,7 +51,7 @@
     // ones knip cannot see. Delete that script and it needs the exemption back.
     // `wrangler` — the deployment CLI and the schema provider for
     // examples/worker/wrangler.jsonc — is in the same position:
-    // test/d1-storage-example.node.test.ts imports it, and losing that import
+    // test/d1-storage.node.test.ts imports it, and losing that import
     // brings its exemption back.
   ]
 }

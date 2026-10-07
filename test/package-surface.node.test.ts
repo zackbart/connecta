@@ -71,7 +71,8 @@ describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.publishConfig?.access).toBe("public");
-    expect(packageJson.engines?.node).toBe(">=22.0.0");
+    // node:sqlite, behind ./sqlite, is unflagged from Node 22.13.
+    expect(packageJson.engines?.node).toBe(">=22.13.0");
     expect(packageJson.files).toEqual(
       expect.arrayContaining([
         "bin",
@@ -114,6 +115,8 @@ describe("public package boundary", () => {
         "./ui", "./credentials", "./activity", "./auth/bearer", "./artifacts", "./auth/access-tokens",
         "./package.json",
         "./node",
+        "./sqlite",
+        "./d1",
         "./json-schema",
         "./quickjs",
         "./worker",
@@ -138,17 +141,25 @@ describe("public package boundary", () => {
     ]);
   });
 
-  it("keeps platform storage implementations in examples", () => {
+  it("ships one SQL store with two drivers and no other storage backend", () => {
+    // The shared core, the key families, and the in-memory default. The two
+    // drivers are the /d1 and /sqlite subpaths; no KV or file store remains.
     expect(readdirSync(join(ROOT, "src", "storage")).sort()).toEqual([
-      "file.ts",
+      "keys.ts",
       "memory.ts",
+      "sql.ts",
+    ]);
+    expect(packageJson.exports?.["./d1"]).toEqual({ types: "./dist/d1.d.ts", import: "./dist/d1.js" });
+    expect(packageJson.exports?.["./sqlite"]).toEqual({ types: "./dist/sqlite.d.ts", import: "./dist/sqlite.js" });
+    expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual([
+      "index.ts",
+      "r2-artifact-blobs.ts",
     ]);
   });
 
   // The rule is about the exports map, not the tarball: `examples/worker`
-  // ships — Cloudflare KV and D1 adapters included — because it is the Workers
-  // starting template a consumer copies, and nothing under examples/ is
-  // importable from the package. Phase 1 item 3 will change this boundary.
+  // ships because it is the Workers starting template a consumer copies, and
+  // nothing under examples/ is importable from the package.
   it("keeps the shipped example adapters out of the importable surface", () => {
     expect(packageJson.files).toContain("examples/worker");
     // `./package.json` is the manifest itself — a data file, not a code path

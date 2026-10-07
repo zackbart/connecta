@@ -93,10 +93,7 @@ describe("the advertised surface", () => {
   ];
 
   it("advertises exactly seven tools, whatever the storage", async () => {
-    // Storage with or without compareAndSet: nothing about the surface
-    // depends on it.
-    const { compareAndSet: _cas, ...plain } = memoryStorage();
-    for (const storage of [memoryStorage(), plain]) {
+    for (const storage of [memoryStorage()]) {
       const body = await readJsonRpc(await mcpRpc(
         makeDeployment({ ...deploymentConfig, storage }),
         "tools/list",

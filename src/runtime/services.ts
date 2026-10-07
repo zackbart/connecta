@@ -34,8 +34,7 @@ import { type EdgeRuntime, makeEdgeRuntime } from "./run.js";
 
 /**
  * The deployment's KVStorage: `config.storage`, or the memoryStorage() that
- * stands in for it. `compareAndSet` is present exactly when the adapter
- * implements it, so a caller that needs atomicity checks for it here.
+ * stands in for it. Every adapter implements `list` and `compareAndSet`.
  */
 export class Storage extends Context.Service<Storage, KVStorage>()(
   "connecta/Storage",

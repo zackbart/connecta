@@ -98,13 +98,23 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
 
   it("INV-12: never reaches node-only modules or optional auth adapters", () => {
     const nodeAdapter = join(SRC, "node.ts");
-    const fileStorage = join(SRC, "storage", "file.ts");
+    const sqliteStorage = join(SRC, "sqlite.ts");
+    const d1Storage = join(SRC, "d1.ts");
+    const sqlStorage = join(SRC, "storage", "sql.ts");
     const quickJsExecutor = join(SRC, "executors", "quickjs.ts");
     const quickJsChild = join(SRC, "executors", "quickjs-child.ts");
     const workerExecutor = join(SRC, "worker.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
-    expect(graph.has(fileStorage)).toBe(false);
+    // Storage adapters are subpaths: SQLite is Node-only, and neither the D1
+    // adapter nor the SQL core it shares rides the root entry.
+    expect(graph.has(sqliteStorage)).toBe(false);
+    expect(graph.has(d1Storage)).toBe(false);
+    expect(graph.has(sqlStorage)).toBe(false);
+    // The D1 subpath must stay loadable on Workers.
+    for (const file of importGraph(d1Storage)) {
+      expect(/from\s+["']node:/.test(readFileSync(file, "utf8")), `${file} via /d1`).toBe(false);
+    }
     expect(graph.has(quickJsExecutor)).toBe(false);
     expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(workerExecutor)).toBe(false);

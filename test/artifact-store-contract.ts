@@ -10,7 +10,7 @@ import {
 /**
  * Shared cases every `ArtifactStore` must pass. Not a suite: each adapter's
  * own suite calls this inside its `describe`, so the same contract runs
- * against memory, the Node file store, and the Worker example's D1 (and D1 +
+ * against memory, the SQLite store, and the Worker example's D1 (and D1 +
  * R2) stores.
  */
 

@@ -7,16 +7,14 @@ import type {
 import { routeAccessTokens } from "./routes/access-tokens.js";
 import type { AccessTokensModule } from "./module-contracts.js";
 import { validIdentityReference } from "./identity.js";
+import { accessTokenKeys } from "./storage/keys.js";
 
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
 const TOKEN_VALUE_RE = /^cta_[A-Za-z0-9_-]{43}$/;
-const RECORD_PREFIX = "access-token:v1:record:";
-const LOOKUP_PREFIX = "access-token:v1:lookup:";
 const MAX_NAME_CHARACTERS = 80;
 const DEFAULT_MAX_ACTIVE = 100;
 const MAX_CONFIGURED_ACTIVE = 1_000;
-const ACTIVE_KEY = "access-token:v1:active";
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const encoder = new TextEncoder();
 
@@ -51,13 +49,9 @@ export interface CreatedAccessToken {
   accessToken: AccessTokenMetadata;
 }
 
-function recordKey(id: string): string {
-  return `${RECORD_PREFIX}${id}`;
-}
-
-function lookupKey(hash: string): string {
-  return `${LOOKUP_PREFIX}${hash}`;
-}
+const recordKey = accessTokenKeys.record;
+const lookupKey = accessTokenKeys.lookup;
+const ACTIVE_KEY = accessTokenKeys.active;
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -173,9 +167,12 @@ export class AccessTokenManager {
     private readonly storage: KVStorage,
     options: { maxActive?: number } = {},
   ) {
-    if (!storage.list) {
+    // Issuance claims capacity by compare-and-set and listing enumerates
+    // records; refuse a store without either here, not at the first create.
+    if (typeof storage?.list !== "function" || typeof storage.compareAndSet !== "function") {
       throw new Error(
-        "accessTokens requires a storage adapter that implements list(prefix)",
+        "accessTokens requires storage that implements list and compareAndSet " +
+          "(d1Storage, sqliteStorage, or memoryStorage)",
       );
     }
     const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
@@ -212,7 +209,7 @@ export class AccessTokenManager {
   }
 
   async list(): Promise<AccessTokenMetadata[]> {
-    const keys = await this.storage.list!(RECORD_PREFIX);
+    const keys = await this.storage.list(accessTokenKeys.recordPrefix);
     const records = await Promise.all(
       keys.map(async (key) => {
         const raw = await this.storage.get(key);
@@ -230,9 +227,6 @@ export class AccessTokenManager {
     createdBy: string | IdentityReference,
   ): Promise<CreatedAccessToken> {
     const normalizedName = normalizeName(name);
-    if (!this.storage.compareAndSet) {
-      throw new Error("Creating access tokens requires atomic compareAndSet storage");
-    }
     if (typeof createdBy !== "string" && !validIdentityReference(createdBy)) {
       throw new Error("Invalid token owner");
     }
@@ -297,7 +291,7 @@ export class AccessTokenManager {
     const updated = await this.updateRecord(id, current => current.revokedAt ? current : {
       ...current, revokedAt: new Date().toISOString(), revokedBy,
     });
-    if (this.storage.compareAndSet) await this.updateActive(id, false);
+    await this.updateActive(id, false);
     return updated ? metadata(updated) : null;
   }
 
@@ -312,23 +306,15 @@ export class AccessTokenManager {
       const record = parseRecord(raw);
       if (record.id !== id) throw new Error("Stored access token id mismatch");
       const next = update(record);
-      if (this.storage.compareAndSet) {
-        // A rename racing revocation must retain revokedAt, including when
-        // an in-flight create has not yet published its lookup.
-        if (!await this.storage.compareAndSet(recordKey(id), raw, JSON.stringify(next))) continue;
-      } else {
-        // Legacy adapters cannot create, so no late lookup writer exists.
-        // Revocation's deleted lookup still refuses a stale metadata write.
-        await this.storage.set(recordKey(id), JSON.stringify(next));
-      }
+      // A rename racing revocation must retain revokedAt, including when
+      // an in-flight create has not yet published its lookup.
+      if (!await this.storage.compareAndSet(recordKey(id), raw, JSON.stringify(next))) continue;
       return next;
     }
     throw new Error("Access token metadata is busy; retry the operation");
   }
 
   private async updateActive(id: string, adding: boolean): Promise<void> {
-    const cas = this.storage.compareAndSet;
-    if (!cas) throw new Error("Creating access tokens requires atomic compareAndSet storage");
     for (let attempt = 0; attempt < 32; attempt++) {
       const raw = await this.storage.get(ACTIVE_KEY);
       const ids: unknown = raw === null
@@ -339,7 +325,7 @@ export class AccessTokenManager {
       }
       if (adding && ids.length >= this.maxActive) throw new Error(`This deployment already has the maximum of ${this.maxActive} active access tokens`);
       const next = adding ? [...ids, id] : ids.filter(value => value !== id);
-      if (await cas.call(this.storage, ACTIVE_KEY, raw, JSON.stringify(next))) return;
+      if (await this.storage.compareAndSet(ACTIVE_KEY, raw, JSON.stringify(next))) return;
     }
     throw new Error("Access token capacity is busy; retry the operation");
   }
