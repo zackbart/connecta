@@ -64,6 +64,7 @@ export const WORKERS_SUITES = [
   "test/credentials.test.ts",
   "test/d1-activity-example.test.ts",
   "test/downstream-oauth.test.ts",
+  "test/oauth-callback-fencing.test.ts",
   "test/errors.test.ts",
   "test/executor-admission.test.ts",
   "test/execute.test.ts",

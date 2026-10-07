@@ -41,9 +41,11 @@ configuration changes. What else a deployment may notice: an OAuth flow that a
 concurrent restart or disconnect overtakes now fails with a retryable
 `unavailable` — "authorization changed while this request was in flight; try
 again" — rather than reading on into the newer authorization; a callback
-whose epoch was already replaced when it began fails before its code is
-redeemed (one replaced mid-callback is
-[#697](https://github.com/zackbart/connecta/issues/697)). A refresh whose rotated
+whose epoch is replaced at any point before its code would be sent fails that
+way without sending it. A callback now claims its state when its exchange
+begins, so of two carrying one state at most one redeems the code on a store
+with `compareAndSet`, and a callback is not retried by reloading it: Continue
+starts a fresh consent instead (#697). A refresh whose rotated
 tokens cannot be stored fails as a retryable outage instead of
 `auth_required`, and `/mcp` bodies stay
 bounded by the host, not by the 4 MiB default the server SDK adopted. Two
@@ -559,15 +561,40 @@ using `quickJsExecutor()` need no configuration change.
   retires a grant a later restart completed. On a store without one, such as
   Workers KV, a recheck just before the write narrows that race without
   closing it: a stale retirement can still replace a restart's completed
-  epoch, costing that grant one more consent and orphaning its records, which
-  a later Disconnect leaves stored. Nothing is sent anywhere by it; see
-  [#697](https://github.com/zackbart/connecta/issues/697). A write a reset overtakes after its epoch
+  epoch, costing that grant one more consent. Nothing is sent anywhere by it,
+  and the replaced epoch is not orphaned: once its write lands, a retirement
+  that finds the epoch it retired already cleaned up by another reset lists
+  the cleanup manifests and records every epoch its lineage does not name, so
+  the next Disconnect or Restart deletes it (#697). A write a reset overtakes after its epoch
   check is cleaned up and reported as failed, so a start never hands out
   another flow's consent URL and a callback never reports a grant it could not
   store. A read for a server the
   stamps do not name hands it nothing and changes nothing; the SDK registers
   and consents within the same epoch, and the next flow's entry retires any
   mixed grant that leaves.
+- **A callback's code leaves only while its epoch and state are still its
+  own.** The SDK reads discovery, the client, and the PKCE verifier before it
+  sends a code, and each bound read checked the live epoch beside its value:
+  a restart published after that check but before the value returned went
+  unnoticed, and the old code, verifier, and client secret were redeemed at
+  the original token endpoint for a grant no epoch would hold. And two
+  callbacks carrying one state — a browser delivering it twice — could both
+  redeem: the loser, refused with `invalid_grant`, had the SDK invalidate the
+  tokens the winner had just stored. Every `remoteMcp()` and `api()` code
+  exchange now crosses a fence on the token request itself, after every read
+  it depends on: it reads the epoch once more, failing with the retryable
+  supersession and sending nothing, and claims the exact state its check
+  matched. With `compareAndSet` the claim is atomic and one callback redeems
+  the code; the rest fail with a fixed `connector_call_failed` and send
+  nothing. A store without it re-reads and deletes the state, which stops a
+  late duplicate but not two that read it together. The SDK's one retry after
+  a refused code is answered with that refusal instead of sending the code
+  again, and its invalidation now deletes only the client and tokens the
+  exchange began with or wrote itself: conditionally with `compareAndSet`, and
+  without it a client while unchanged and tokens not at all. A claimed state
+  is spent even when the exchange fails, so Continue no longer hands back its
+  consent URL. A callback's exchange now always runs on a transport of its
+  own, over the provider that verified the state (#697).
 - **No token endpoint's text reaches the host's console.** From client 2.1.0
   the SDK writes a failed refresh or code exchange's `error_description`, or
   the raw body of a non-OAuth answer, to `console.warn`, below any logger a

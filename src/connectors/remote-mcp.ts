@@ -1677,14 +1677,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // verifyState ran on this request-scoped provider first and captured the
       // pending flow's generation. If force reset races the exchange, any late
       // token write remains tagged with that older generation and is unreadable.
-      // A transport an attempt built belongs to that attempt's lease; one built
-      // here for the exchange alone belongs to this call, which closes it.
-      const leased = state.transport;
       // The exchange reads and writes only the epoch its consent was written
       // in; it decides nothing about the grant there.
       await provider.bindFlow();
-      const t = (leased ??
-        buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
+      // Always a transport of the exchange's own, over the provider that
+      // verified the state: that provider holds the callback's claim, and the
+      // fence before the token request is its to cross. A connection this
+      // scope opened earlier speaks for its connect attempt, not this callback.
+      // This call closes the transport.
+      const t = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
       try {
         if (callbackParams !== undefined) {
           await t.finishAuth(callbackParams);
@@ -1697,7 +1698,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       } finally {
         // This exchange-only transport has no lease in the request scope.
         // It must close even when redemption or pending-state cleanup fails.
-        if (!leased) detach(closeConnection(null, t, ctx.logger));
+        detach(closeConnection(null, t, ctx.logger));
       }
     },
   };

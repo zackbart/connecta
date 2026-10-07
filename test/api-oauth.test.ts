@@ -908,6 +908,31 @@ describe("api() oauth reset and disconnect", () => {
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
 
+  it("redeems a PKCE-less code once when the same callback arrives twice", async () => {
+    // No verifier read stands between the two: the state claim at the
+    // exchange is the only thing that keeps the second from redeeming the
+    // code and, refused, invalidating the grant the first just stored.
+    const provider = fakeProvider();
+    install(provider);
+    const connector = api("ccb", { oauth: { ...OAUTH, pkce: false }, tools: [] });
+    const registry = makeRegistry([connector]);
+    const ctx = () => registry.contextFor("ccb", BASE);
+    const url = new URL((await connector.startAuth!(ctx())).authorizationUrl!);
+    const code = provider.consent(url.href);
+    const callbacks = [ctx(), ctx()];
+    for (const callback of callbacks) {
+      expect(await connector.verifyState!(url.searchParams.get("state"), callback)).toBe(true);
+    }
+
+    const outcomes = await Promise.allSettled(
+      callbacks.map((callback) => connector.finishAuth!(code, callback)),
+    );
+
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(provider.tokenRequests.filter(({ params }) => params.get("code") === code)).toHaveLength(1);
+    expect((await connector.status!(ctx())).state).toBe("ok");
+  });
+
   it("a callback from a flow a restart retired cannot land its tokens", async () => {
     const provider = fakeProvider();
     install(provider);
