@@ -8,7 +8,10 @@ import { SLIDES_API_BASE_URL, SLIDES_SCOPES, slides } from "../src/providers/sli
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import { validateToolInput } from "../src/validate.js";
-import { silentLogger } from "./helpers.js";
+import { compactDiscoverySchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../src/catalog.js";
+import { buildSandboxProviders } from "../src/execute.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { makeRegistry, required, silentLogger } from "./helpers.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide, JsonSchema } from "../src/types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -2210,8 +2213,9 @@ describe("comments: writes (#696)", () => {
       ["create_comment", { presentationId: "deck1", objectId: "p", content: "" }],
       ["create_comment_reply", { presentationId: "deck1", commentId: "c1" }],
       ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "DELETED" }],
-      // Exactly one change, and a reassignment carries text: the schema says so.
+      // Runtime validation keeps the alternatives out of discovery's schema.
       ["update_comment_thread", { presentationId: "deck1", commentId: "c1" }],
+      ["update_comment_thread", { presentationId: "deck1", commentId: "c1", content: "x" }],
       ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "RESOLVED", assigneeEmail: "a@b.example" }],
       ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "RESOLVED", assigneeEmail: "a@b.example", content: "x" }],
       ["update_comment_thread", { presentationId: "deck1", commentId: "c1", assigneeEmail: "a@b.example" }],
@@ -2224,8 +2228,59 @@ describe("comments: writes (#696)", () => {
     expect(tokenCalls).toBe(0);
   });
 
-  it("encodes exactly one thread change, and text on a reassignment, in the input schema itself", async () => {
+  it("keeps the complete thread-update input inside the discovery rendering budget (H7)", async () => {
     const tool = (await connection().listTools(context())).find((entry) => entry.name === "update_comment_thread")!;
+    const rendered = compactDiscoverySchema(tool.inputSchema!);
+    for (const parameter of ["presentationId", "commentId", "status", "assigneeEmail", "content"]) {
+      expect(rendered.text).toContain(parameter);
+    }
+    expect(rendered.text).toContain('"RESOLVED" | "OPEN"');
+    expect(rendered.text).toContain("content?: string /* length >= 1; length <= 2048 */");
+    expect(rendered.truncated).toBe(false);
+    expect(new TextEncoder().encode(rendered.text).length).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES);
+  });
+
+  it("discovers thread-update parameters, enum values, and bounds through search_tools and connecta.search (H7)", async () => {
+    const connector = connection();
+    const registry = makeRegistry([connector]);
+    const args = { connector: "decks", query: "update_comment_thread", includeSchemas: "typescript" as const };
+    const searched = await createMetaTools(registry, "https://connecta.example").searchTools(args);
+    const grouped = JSON.parse(required(searched.content[0]).text) as {
+      connectors: { tools: { name: string; signature: string; inputSchemaTruncated?: boolean }[] }[];
+    };
+    const topLevel = required(grouped.connectors.flatMap((entry) => entry.tools).find((tool) => tool.name === "update_comment_thread"));
+    const providers = await buildSandboxProviders(registry, "https://connecta.example", silentLogger);
+    const program = await required(required(providers.find((provider) => provider.name === "connecta")).fns.search)(args) as {
+      tools: { name: string; signature: string; inputSchemaTruncated?: boolean }[];
+    };
+    const inProgram = required(program.tools.find((tool) => tool.name === "update_comment_thread"));
+    const tool = required((await connector.listTools(context())).find((entry) => entry.name === "update_comment_thread"));
+    const rendered = typescriptSignature(tool.inputSchema!, tool.outputSchema, { observed: false, description: false });
+    for (const discovered of [topLevel, inProgram]) {
+      expect(discovered.signature).toBe(rendered.text);
+      const input = discovered.signature.slice("(args: ".length, discovered.signature.indexOf(") => Promise<"));
+      for (const parameter of [
+        "presentationId: string /* length >= 1; length <= 256;",
+        "commentId: string /* length >= 1; length <= 1024;",
+        'status?: "RESOLVED" | "OPEN"',
+        "assigneeEmail?: string /* length >= 3; length <= 320;",
+        "content?: string /* length >= 1; length <= 2048 */",
+      ]) {
+        expect(input).toContain(parameter);
+      }
+      expect(new TextEncoder().encode(input).length).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES);
+      expect(discovered.inputSchemaTruncated).toBeUndefined();
+    }
+    expect(rendered.inputTruncated).toBe(false);
+    expect(rendered.outputTruncated).toBe(false);
+    expect(calls).toEqual([]);
+    expect(tokenCalls).toBe(0);
+  });
+
+  it("declares thread-update fields and describes runtime alternatives", async () => {
+    const tool = (await connection().listTools(context())).find((entry) => entry.name === "update_comment_thread")!;
+    expect(tool.description).toContain("Pass exactly one of status or assigneeEmail");
+    expect(tool.description).toContain("reassignment requires content");
     const check = (args: Record<string, unknown>) =>
       validateToolInput(tool.inputSchema!, { presentationId: "deck1", commentId: "c1", ...args }, {
         address: "decks.update_comment_thread",
@@ -2235,7 +2290,7 @@ describe("comments: writes (#696)", () => {
     expect(check({ status: "RESOLVED" })).toBeUndefined();
     expect(check({ status: "OPEN", content: "Not yet" })).toBeUndefined();
     expect(check({ assigneeEmail: "a@b.example", content: "Yours" })).toBeUndefined();
-    for (const args of [{}, { content: "x" }, { assigneeEmail: "a@b.example" }, { status: "RESOLVED", assigneeEmail: "a@b.example" }, { status: "OPEN", assigneeEmail: "a@b.example", content: "x" }]) {
+    for (const args of [{ status: "DELETED" }, { assigneeEmail: "a@b.example", content: "" }, { status: "OPEN", extra: true }]) {
       expect(check(args), JSON.stringify(args)).toBeDefined();
     }
   });

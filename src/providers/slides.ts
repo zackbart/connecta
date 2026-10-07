@@ -2747,33 +2747,27 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "update_comment_thread",
       description:
-        "Resolve, reopen, or reassign a comment thread with a post; a reassignment needs a note. Replaces its status or assignee; Slides notifies an assignee.",
+        "Resolve, reopen, or reassign a comment thread with a post. Pass exactly one of status or assigneeEmail; reassignment requires content. Replaces its status or assignee; Slides notifies an assignee.",
       // Destructive: the thread's status or assignee is replaced. The post
       // that records it cannot be deleted afterwards.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
-        ...input(
-          {
-            presentationId: PRESENTATION_ID,
-            commentId: COMMENT_ID,
-            status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
-            assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; needs content." },
-            content: commentContentProperty(`Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`),
-          },
-          ["presentationId", "commentId"],
-        ),
-        // Exactly one change per post: Slides refuses an assignee on a post
-        // that resolves or reopens, and a post with neither changes nothing.
-        // A reassignment is an ordinary post, which Slides requires to have
-        // text; only RESOLVE and REOPEN may go without.
-        oneOf: [
-          { required: ["status"], not: { required: ["assigneeEmail"] } },
-          { required: ["assigneeEmail", "content"], not: { required: ["status"] } },
-        ],
-      },
+      // Keep the field schema flat: discovery renders oneOf before properties,
+      // losing these fields for required-only branches. The handler enforces
+      // exactly one change and text on reassignment before dispatch instead.
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          commentId: COMMENT_ID,
+          status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
+          assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; needs content." },
+          content: commentContentProperty(`Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`),
+        },
+        ["presentationId", "commentId"],
+      ),
       outputSchema: REPLY_RESULT_SCHEMA,
       handler: async (args, ctx) => {
-        // The schema refuses these first; the handler holds the same line.
+        // Exactly one change per post. Slides requires text on reassignment;
+        // only RESOLVE and REOPEN may go without.
         if ((args["status"] === undefined) === (args["assigneeEmail"] === undefined)) {
           throw new ConnectorCallError("invalid_args", "Pass exactly one of status and assigneeEmail. Nothing was sent.");
         }
