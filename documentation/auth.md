@@ -141,8 +141,7 @@ scope.
 
 ### Team read sets
 
-`connectorAccess` gives Engineering and Marketing different views of one
-deployment. Keep membership in deployment code and review the exact addresses:
+Keep team membership in deployment code and review exact addresses:
 
 ```ts
 const engineering = new Set(["engineer-id"]);
@@ -165,43 +164,34 @@ createConnecta({
 });
 ```
 
-Here Engineering sees every `issues` tool and only `campaigns.list`;
-Marketing sees every `campaigns` tool and only `issues.search`. Neither sees
-`billing`. Someone in both groups gets both connectors in full because grants
-are additive. An unknown or unprincipalled identity gets an empty view. The
-example assumes the two exact tools have been reviewed as read-only; the names
-themselves carry no safety meaning. The guarded grants also check the current
-loaded annotations before discovery or use. Use a stable authenticated
-principal or subject for membership, never a request header or tool argument —
-an [asserted principal](#a-trusted-agent-acting-for-its-users) arrives in a
-header, but inbound auth has already vouched for it by then. A pool can
-narrow any of these views on its endpoint, but cannot make plain `/mcp` narrower.
+Engineering sees all `issues` tools and only `campaigns.list`; Marketing sees all
+`campaigns` tools and only `issues.search`. Neither sees `billing`; both memberships
+grant both connectors in full. Unknown or unprincipalled identities get `[]`.
+Use a stable authenticated principal or subject, never request headers or tool
+arguments. An [asserted principal](#a-trusted-agent-acting-for-its-users) is
+already vouched for by inbound auth. Pools narrow their endpoint, not plain `/mcp`.
 
-New tool names are excluded until added to a reviewed list. A removed or
-renamed name is unreachable and warned when the scoped view reads its catalog.
-For a guarded grant, missing, false, or contradictory read-only annotations
-also remove that tool from discovery and every invocation path, including
-`call_destructive_tool` and approval-exempt programs. An unrestricted exact
-string grant has the earlier behavior: a tool that changes from read to write
-stays granted, though `call_tool` refuses it and the write paths take over.
-Schema changes alone revoke neither. Review schemas, annotations, and
-downstream behavior before changing lists or upgrading a maintained provider:
-a remote catalog can drift without an upgrade, a valid stale cache may keep its
-old classification until refresh, and a downstream can keep a read-only
-annotation while changing what it does. For `api()` tools the author owns
-declaration and handler. Connecta enforces the loaded declaration, not a
-promise of no side effects; a restricted downstream credential helps but does
-not replace per-identity grants.
+| Catalog change | Guarded exact grant | Unrestricted exact string grant |
+| --- | --- | --- |
+| New name | Excluded until reviewed and added | Excluded until reviewed and added |
+| Removed or renamed name | Unreachable; warned when the scoped view reads the catalog | Same |
+| Missing, false, or contradictory read-only annotations | Removed from discovery and every invocation path, including `call_destructive_tool` and approval-exempt programs | Still granted; `call_tool` refuses writes and write paths take over |
+| Schema change alone | Does not revoke | Does not revoke |
 
-When the resolver returns `[]`, discovery and the connection UI show no
-connectors. An address-only grant, or a guarded one whose tool loses
-qualification, can leave a connector visible without that tool, which stays
-unreachable. A failed remote catalog load is an error, not an empty catalog; a
-valid stale one may be served within its stale window. Personal OAuth
-ownership and credential administration stay separate from visibility, and a
-granted write in a program still follows the approval rules.
-`test/identity-scope.test.ts` exercises each boundary, the unrestricted exact
-grant included.
+The example assumes both exact tools were reviewed as read-only; names imply no safety.
+Review schemas, annotations, and downstream behavior
+before changing lists or upgrading providers. Remote catalogs can drift without
+upgrades; valid stale caches retain classification until refresh; downstreams
+can change behavior while keeping read-only annotations. For `api()`, the author
+owns declarations and handlers. Connecta enforces loaded declarations, not
+absence of side effects. Restricted downstream credentials do not replace grants.
+
+`[]` hides all connectors from discovery and the connection UI. Address-only or
+disqualified guarded grants can leave a connector visible with its tool unreachable.
+Failed remote loads are errors, not empty catalogs; valid stale catalogs may be
+served within their stale window. Personal OAuth ownership and credential
+administration are separate from visibility; program writes still follow approval
+rules. `test/identity-scope.test.ts` exercises these boundaries.
 
 ## A trusted agent acting for its users
 
@@ -341,33 +331,17 @@ createConnecta({
 });
 ```
 
-Pools are meaningless without configured `auth`: an open deployment builds one
-anonymous, non-interactive identity, so grants like these evaluate false and
-every pool path 404s. The rules, each of which is a test:
+Without configured `auth`, an open deployment has one anonymous, non-interactive
+identity; grants like these return false and every pool path 404s.
 
-- **A pool narrows; it never widens.** The view on `/mcp/<pool>` is the pool
-  intersected with the identity's own `connectorAccess`. Plain `/mcp` is
-  unchanged. The security boundary is still the resolver; the pool decides which
-  part of it a given client sees.
-- **Grant defaults to deny.** A pool with no `grant` serves nobody. Only a
-  literal `true` admits; any other return, a throw, and an undeclared name give
-  one 404, identical in status, body, and headers and reached only after auth,
-  so names are not anonymously enumerable and a valid credential cannot tell
-  the cases apart by content. Timing is not hidden — a declared name awaits its
-  grant — and we accept that oracle: names grant no access, and no fixed delay
-  could hide unbounded grant I/O. Keep grants pure and fast, and pool names
-  unsecret. The operator log carries the refusal reason.
-- **Structural mistakes throw at construction**: a malformed name, an unknown
-  option or connector, an empty pool, or an address an `api()` connector's
-  static catalog lacks. Remote catalogs load lazily and are checked at load.
-- **OAuth discovery follows the path.** On Clerk, the 401 challenge for
-  `/mcp/<pool>` names `/.well-known/oauth-protected-resource/mcp/<pool>`, whose
-  `resource` is the pool URL, so RFC 9728 clients see a match. Cloudflare
-  Managed OAuth is application-level and needs nothing.
-- **Drift never widens.** There is no wildcard; every tool grant is an exact
-  name. One missing from the live catalog is unreachable, warned once while it
-  sits in a 1,024-entry FIFO so caller-derived text cannot grow warning state
-  without bound.
+| Rule | Contract |
+| --- | --- |
+| Scope | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` is unchanged; the resolver remains the security boundary. |
+| Grant | Defaults to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
+| Timing | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason. |
+| Construction | Malformed names, unknown options or connectors, empty pools, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
+| Discovery | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup. |
+| Drift | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO. |
 
 ## Shared and personal auth
 
@@ -435,83 +409,54 @@ healthy. A URL stored without a write time is stale. Continue trusts the stored
 registration's `redirect_uris`; after changing `publicUrl`, Restart registers for
 the current callback URL.
 
-A restart cannot know which retired epochs a late write reached, so before
-activating the new epoch it publishes under it a **cleanup lineage**: the
-retired epochs, as the plain list of names every release reads, beside when
-each retired. A published lineage is never rewritten — a stale writer whose
-cleanup fails appends to the live one, which a rewrite could drop — so an
-epoch leaves it only by being left out of its successor's.
+Before activating a new epoch, restart publishes its cleanup lineage: a plain
+list of retired epoch names readable by every release, plus retirement times. Published lineages
+are never rewritten; stale writers append failed cleanups to the live lineage.
+An epoch leaves only when omitted from a successor's lineage.
 
-A restart does the same storage work however many came before it. After the
-fence it deletes the epoch it retired — six values, then its lineage records —
-and, since a manifest outlives its values only when their deletion failed,
-re-cleans any of the eight most recently retired epochs (`RETRY_PROBES`) that
-still have one, so a Disconnect or Restart that reported a failed cleanup
-deletes the old grant when retried. Before publishing, it sweeps up to 16 epochs
-retired over `CLEANUP_GRACE_MS` (24 hours) ago, oldest first, leaving out only
-those fully deleted; a failed sweep carries forward and never fails the restart.
-Any other epoch inside its grace is not deleted again: a late write into it is
-unreadable behind the fence, and the late writer deletes it itself. If that
-fails, the writer records the epoch as retired at that moment (appending it, or
-moving only its time), and a restart that swept it re-reads the lineage before
-publishing and keeps it, to sweep once the grace passes. Two such writers racing
-can lose one time update, leaving the earlier time; a missing time reads as the
-reading restart's moment, which only lengthens a grace.
+Cleanup work is bounded regardless of prior restarts:
 
-**The assumption:** no request holds a retired epoch for a day. The writers
-that can land late — OAuth flows, refreshes, and readers whose Workers KV
-replica serves the old generation for a minute or more — never run that long.
-If it fails, only a writer dying between its write and its own cleanup leaves
-residue no restart tracks, and that residue is never readable.
+| Step | Bound and behavior |
+| --- | --- |
+| After fencing | Delete the retired epoch's six values, then its lineage records. Manifests outlive values only after failed deletion. Retry any of the eight most recent retired epochs (`RETRY_PROBES`) still having a manifest, so retrying a failed Disconnect or Restart deletes the grant. |
+| Before publishing | Sweep up to 16 epochs older than `CLEANUP_GRACE_MS` (24 hours), oldest first. Omit only fully deleted epochs; carry failed sweeps forward without failing restart. |
+| Within grace | Do not re-delete other epochs. Late writes are unreadable behind the fence and their writers delete them. On failure, a writer records retirement now, appending the epoch or changing only its time. A restart that swept it re-reads lineage before publishing, retaining it for a later sweep after grace. Racing writers may lose one time update, leaving the earlier time; missing times mean the reading restart's time, only lengthening grace. |
+| Lineage capacity | At most 5,000 epochs: last-day retirements plus unswept ones. Refuse an overflowing restart before moving the fence. This allows over 4,000 daily restarts beyond the old 1,000 limit. A connector at that old wall can restart immediately after upgrade; old entries drain 16 per restart a day later. Rollback ignores times and can restart unless lineage exceeds its old 1,000 cap. |
+| Delete concurrency | Six at a time, the Workers connection limit. Catalog chunks delete concurrently under the registry's chunk I/O bound. |
 
-The lineage holds at most 5,000 epochs: those retired within the last day plus
-any the sweep has not reached. A restart that would exceed it is refused before
-the fence moves — over 4,000 restarts of one connector in a day beyond the
-1,000 an earlier release allowed. A connector at that 1,000 wall restarts again
-the day it upgrades, its old entries draining 16 per restart a day later. An
-older release ignores the times, so a rollback still restarts unless a lineage
-outgrew its 1,000 cap. Deletes run six at a time, the Workers limit on
-simultaneous connections; catalog invalidation deletes its chunks concurrently
-under the registry's chunk I/O bound.
+This assumes no request holds a retired epoch for a day, including OAuth flows,
+refreshes, and Workers KV readers seeing a generation stale by a minute or more.
+If violated, a writer dying between write and cleanup can leave untracked
+residue, but it is never readable.
 
 ## Refresh failures
 
-A failed refresh is decided from the token endpoint's answer, not the SDK's
-reading of it. A **dead grant** — any 4xx but 408, 425, and 429, or a 2xx
-carrying an OAuth `error` (GitHub answers `200 {"error":"bad_refresh_token"}`) —
-ends as `auth_required`, the refused tokens deleted on the spot so no request or
-isolate resends them and the next `authorize_connector` goes straight to
-consent. An **outage** — a 5xx, 408, 425, 429, a network failure, or a 2xx that
-is no token response — ends as retryable `unavailable` (`rate_limited` for a
-429), with `retryAfterMs` when the server sent `Retry-After`, keeping the grant
-and writing no consent URL on a passive call. Every request joined on one
-in-flight refresh gets its verdict, even if the sender is cancelled after the
-answer: refused tokens are deleted before anyone waiting is released, so a
-newcomer joins the refusal instead of resending the dead token.
+Refresh classification uses the token endpoint's answer, not the SDK's parsing:
 
-The SDK needs this help: a refresh failure it cannot parse, or `server_error`,
-falls through to authorization, reporting a healthy grant as needing consent,
-and any other OAuth error is rethrown untouched, reporting a dead grant as an
-outage and resending it. So the coordinator hands the SDK an answer it
-classifies correctly and the provider hooks finish the job (pinned beside
-`refreshResponseOutcome`). An explicit authorization during an outage still
-goes to consent, as asked.
+| Answer | Outcome |
+| --- | --- |
+| Dead grant: 4xx except 408, 425, 429; or 2xx with OAuth `error` | `auth_required`. Delete refused tokens before releasing refresh waiters, preventing requests or isolates from resending them; the next `authorize_connector` goes straight to consent. |
+| Outage: 5xx, 408, 425, 429, network failure, or 2xx without a token response | Retryable `unavailable`, or `rate_limited` for 429, with `retryAfterMs` from `Retry-After` when present. Keep the grant; passive calls write no consent URL. |
+| Valid refresh that cannot be stored | Retryable `unavailable` with fixed text; leave the stored grant untouched. |
 
-That answer, like a failed code exchange's, is rebuilt from the OAuth `error`
-code alone with fixed text: the SDK writes a failure's description to the
-console, below any configured logger, where an endpoint echoing the form it
-refused would put the refresh token, client secret, or code. A refresh honored
-but not storable is neither verdict: a retryable `unavailable` in fixed text,
-the stored grant untouched, since a store's error can quote what it refused.
+All in-flight joiners get the same verdict even if the sender is cancelled after
+the answer; newcomers join a refusal instead of resending its token. The
+SDK parse failures and `server_error` otherwise fall through to consent; other
+OAuth errors rethrow as outages, resending dead grants. The coordinator adapts
+the answer for SDK classification and provider hooks finish the work, pinned
+beside `refreshResponseOutcome`. Explicit authorization during
+an outage still goes to consent.
+
+Refresh and failed code-exchange answers are rebuilt from the OAuth `error`
+code alone with fixed text. The SDK logs descriptions below the configured
+logger; downstream descriptions and storage errors can quote tokens, client
+secrets, or codes and must not reach that output.
 
 ## URLs a downstream advertises
 
-A `remoteMcp()` OAuth connector learns most URLs it fetches from the downstream:
-the `resource_metadata` in its 401, that metadata's `authorization_servers`,
-and the token and registration endpoints the authorization server publishes.
-Connecta fetches them server-side, so a compromised downstream could aim a Node
-or Docker host at its own network — cloud metadata at `169.254.169.254`, an
-admin panel on the LAN. Config is the security model, so the rule splits on it:
+`remoteMcp()` learns server-side fetch URLs from a 401's `resource_metadata`,
+its `authorization_servers`, and advertised token and registration endpoints.
+To prevent a downstream from targeting the host's private network:
 
 - A URL on the connector's configured origin is trusted; the operator wrote it.
 - Any other URL must be `https` and must not name a private host: `localhost`
@@ -534,39 +479,31 @@ The check is syntactic: it reads the host after the WHATWG URL parser folds
 Workers-safe core has no DNS. A public name resolving or rebinding to a private
 address is out of scope; a host that must stop that needs an egress policy.
 
-The authorization server a downstream names decides where consent goes, never
-where an existing grant goes. Tokens and a registered client are stored bound to
-the issuer that granted them, and with discovery cached a refresh returns to
-that issuer whatever the downstream now advertises. When fresh discovery names
-another, the issuer-bound reads hand it nothing the grant holds, and the SDK
-registers and consents there within the same epoch; the mixed grant this leaves
-— the old server's tokens beside the new server's client or discovery — is
-retired at the next flow's entry, before anything is sent (see [deciding a grant
-at flow entry](#deciding-a-grant-at-flow-entry)). That is the shape of
-[GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h), which
-the SDK has also refused itself since client 2.2.0. A new consent still goes
-wherever the downstream points: the human who reads the authorization URL before
-approving it is that check, as the SDK says of its own.
+Downstream advertisements choose consent destinations, never destinations for
+existing grants. Tokens and registered clients bind to their issuing server;
+cached discovery sends refresh there despite changed advertisements. Fresh
+discovery naming another issuer receives no existing credentials and registers
+and consents in the same epoch. This can leave old tokens beside new client or
+discovery state; the next flow retires that mixed grant before sending anything
+(see [deciding a grant at flow entry](#deciding-a-grant-at-flow-entry)). The SDK
+also refuses [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h)
+since client 2.2.0. New consent still follows the downstream's URL; the human
+must read it before approving.
 
-A grant from before issuer binding (v0.9.0) carries no stamp, the one case the
-SDK's check cannot cover, since it trusts whatever stamp the provider hands it.
-Nothing can stamp it after the fact: those releases stored nothing naming the
-grant's server, and no discovery at all (first persisted in v0.22.3), and a
-discovery record beside it proves nothing — a flow saves discovery before
-reading credentials, so a downstream's say-so can sit there. Such a grant is
-retired on first use and authorized once more; v0.9.0 through v0.28.1 bound it
-to whatever its first issuer-aware read discovered, and that binding stands.
+Pre-v0.9.0 grants have no issuer stamp and retire on first use for new consent.
+The SDK cannot protect these unstamped grants because it trusts the provider-supplied issuer stamp.
+They cannot be stamped retroactively: those releases recorded no grant server
+or discovery (first persisted in v0.22.3), and adjacent discovery proves nothing
+because flows save it before reading credentials. Bindings made by v0.9.0
+through v0.28.1 to the first issuer-aware read's discovered issuer still stand.
 
 ### Deciding a grant at flow entry
 
-Every OAuth run — a 401's refresh or consent, a step-up, a code exchange —
-happens inside the SDK, which calls the provider's hooks in an order connecta
-does not choose: client before tokens, its consent URL built from that copy,
-discovery written before either. Retiring a grant inside those hooks left a
-flow holding a client its new epoch did not, or writing into the epoch of a
-reset that had overtaken it. So the grant is decided once, before the SDK is
-handed the provider, when a flow begins — each `remoteMcp()` connect attempt,
-inside which every 401 and step-up runs, and each `api()` call or start:
+Decide the grant once before handing the provider to the SDK: at each
+`remoteMcp()` connect attempt, containing all its 401s and step-ups, and each
+`api()` call or start. SDK hook order is not controlled by connecta: discovery
+writes precede credentials, and client reads precede tokens; consent uses that
+client copy. Retiring inside hooks could retain an old client or cross a reset.
 
 - It is kept when every credential carries a stamp, the stamps agree, and they
   name the server the epoch's discovery names, if any; with discovery cached,
@@ -578,30 +515,24 @@ inside which every 401 and step-up runs, and each `api()` call or start:
   refreshed since, or a forced restart's carried client) is kept and the SDK
   discovers afresh; a different server found there is handed nothing.
 
-The retirement acts only on the epoch the decision inspected, checking before
-it touches anything and activating the new epoch with a compare-and-set where
-the store offers one; if another reset replaced that epoch — a restart that
-completed its own consent — the flow is abandoned with nothing touched. That
-guarantee needs the compare-and-set. Workers KV has none, so the retirement
-rechecks just before its write, which narrows the race without closing it,
-and KV's stale reads, a minute or more, widen it: a retirement can still land
-after a restart completes and replace its epoch, making that grant
-unreachable (one more consent) and orphaning its records, which a later
-Disconnect leaves stored. Nothing is sent anywhere; tracking the orphans is
-[#697](https://github.com/zackbart/connecta/issues/697).
+Retirement touches only the inspected epoch, checking before mutation and
+activating its successor with compare-and-set when available. If another reset
+replaced it, abandon the flow without touching anything. This guarantee requires
+CAS. Workers KV has none; rechecking just before writing narrows but does not
+close the race. Minute-or-more stale reads widen it. Retirement can replace a
+completed restart's epoch, requiring another consent and orphaning its records.
+Later Disconnect leaves those records stored;
+nothing is sent. Orphan tracking is [#697](https://github.com/zackbart/connecta/issues/697).
 
-The flow is then bound to the resulting epoch: every read and write names it,
-never the live one. A write a reset overtakes after its epoch check is cleaned
-up and reported as failed, so a start never reads back another flow's consent
-URL (it reads from the epoch its connect attempt began in) and a callback
-never reports a grant it could not store. A callback is bound to the epoch its
-state check captured and decides nothing about the grant there. A flow whose
-epoch a later reset replaced fails with a retryable `unavailable` —
-"authorization changed while this request was in flight; try again" —
-retiring nothing and returning no consent URL. A callback whose epoch was
-already replaced as it began fails before redeeming its code; one replaced
-while it reads its verifier can still redeem at the original, trusted token
-endpoint before the token write notices, and fencing that exchange is
+Bind every flow read and write to its resulting epoch, never the live one.
+Clean up and report writes overtaken after their epoch check as failed. Starts
+read only their connect attempt's consent URL; callbacks never report unstored
+grants, bind to the state check's captured epoch, and decide nothing about its
+grant. A flow overtaken by reset retires nothing, returns no consent URL, and
+fails retryable `unavailable`: "authorization changed while this request was in
+flight; try again". A callback already overtaken at entry fails before redeeming
+its code. Reset during verifier reads may still permit exchange at the original
+trusted endpoint before token-write fencing; exchange fencing is
 [#697](https://github.com/zackbart/connecta/issues/697).
 
 ## Management permissions
@@ -866,9 +797,8 @@ keeps the existing discovery and registration flow.
 
 ## Downstream OAuth on `api()`
 
-Some APIs have no MCP server and take nothing but OAuth — Church Community
-Builder accepts only a three-legged grant, issues clients by hand, and
-publishes no metadata. `api()` takes a static authorization-code configuration:
+`api()` takes a static authorization-code configuration for APIs without MCP
+or OAuth discovery, such as Church Community Builder's manually issued clients:
 
 ```ts
 api("church", {
@@ -892,58 +822,37 @@ api("church", {
 });
 ```
 
-Nothing is discovered, registered, or learned. Every URL is configuration, so
-the rule for [URLs a downstream advertises](#urls-a-downstream-advertises) has
-nothing to check; the endpoints are checked once at construction: HTTPS (HTTP
-only on loopback), no credentials, no fragment. PKCE with S256 is on unless
-`pkce: false` drops challenge and verifier for a server that refuses them.
-`authorizationParams` adds provider parameters but cannot restate the grant's
-own, and `tokenRequestHeaders` adds headers to the code exchange and every
-refresh — CCB's token endpoint wants its own `Accept` media type — but cannot
-set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`. `tokenEndpointAuthMethod` defaults to `client_secret_basic` with a secret
-and `none` without; the mismatched pairings refuse to boot. A static server has
-no advertised issuer, so no RFC 9207 `iss` is demanded and no RFC 8707
-`resource` is sent. The grant is bound to the token endpoint instead:
-repointing it fences the old tokens behind a new epoch rather than sending
-them to the new server.
+No discovery or registration occurs; all URLs are configuration, so the
+[advertised-URL rule](#urls-a-downstream-advertises) does not apply.
 
-**The client lives in deployment configuration, not a vault slot.** It is the
-deployment's identity at the provider, one per deployment like Clerk's
-`secretKey`, while a vault slot belongs to an owner — on a personal connector
-every human would paste the deployment's secret into their own partition. It
-is never written, sealed or otherwise, so a leaked store holds no client
-secret, Disconnect has nothing of it to delete, and Restart nothing to carry.
-Read it from the environment or a Worker secret; an empty string, the usual
-unset variable, refuses to boot without quoting it.
+| Option or binding | Contract |
+| --- | --- |
+| Endpoints | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment. |
+| `pkce` | S256 by default; `false` omits challenge and verifier. |
+| `authorizationParams` | Adds provider parameters; cannot restate the grant's own. |
+| `tokenRequestHeaders` | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`. |
+| `tokenEndpointAuthMethod` | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction. |
+| Issuer/resource | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; changing it fences old tokens behind a new epoch. |
+| Client | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values. |
 
 Handlers never see the grant. `ctx.oauth.fetch(url, init)` sends the calling
-owner's access token as `Authorization: Bearer` and does four things a
-hand-rolled header would not:
+owner's access token as `Authorization: Bearer` with these rules:
 
-- **It sends the token to `apiOrigins` and nowhere else.** Any other origin is
-  refused before the request leaves, so an untrusted URL in a response — a
-  pagination link, a webhook target — cannot carry the token off. Redirects
-  come back unfollowed, and a handler cannot set `Authorization` itself.
-- **A 401 earns exactly one recovery**: a token another request already
-  rotated in, or else one refresh through `remoteMcp()`'s coordinator,
-  coalesced across requests and persisting the rotated refresh token even if
-  its owner is cancelled after the answer. The request is replayed once, which
-  is why a stream body is refused.
-- **Failures land in the existing classes.** No grant, a second 401, or a
-  [dead refresh](#refresh-failures) is `auth_required`, routing the agent to
-  `authorize_connector`; an authorization-server outage is a retryable
-  `unavailable` that keeps the grant. A second 401 is latched for the request
-  scope, so a program's next fifty calls do not spend fifty refreshes on it.
-- **It reads and writes nothing a handler can name.** Storage, sealing, and the
-  owner partition are the registry's, exactly as for `remoteMcp()`.
+- Only `apiOrigins` receive tokens; refuse other origins before sending, including
+  untrusted response URLs. Return redirects unfollowed; handlers cannot set `Authorization`.
+- On 401, recover exactly once using an already rotated token or one coalesced
+  refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
+  owner is cancelled after the answer. Replay once; stream bodies are refused.
+- No grant, a second 401, or a [dead refresh](#refresh-failures) means
+  `auth_required`, directing `authorize_connector`. Outages mean retryable
+  `unavailable` and keep the grant. Latch second 401s for the request scope,
+  preventing repeated refreshes by later program calls.
+- Handlers can name no storage, sealing, or owner partition; the registry owns them.
 
-Everything else is the `remoteMcp()` grant: the epoch fence and its cleanup
-lineage, vault sealing, shared and personal ownership, the callback's state and
-principal checks, `authorize_connector`, and Connect, Restart, and Disconnect.
-Status reports a stored grant healthy without asking the downstream — failing
-at use is enough — and never starts authorization. One deliberate difference:
-the first start publishes a modern epoch at once, since the legacy generation
-exists for grants from before epochs and an `api()` grant has none. `oauth` and
-`credential` are exclusive on one connector, so `auth_required` names one
-recovery; where a provider offers both, as Planning Center does, the deployment
-chooses and handlers branch on whether `ctx.oauth` is present.
+Epoch fencing and cleanup lineage, vault sealing, shared/personal ownership,
+callback state/principal checks, `authorize_connector`, Connect, Restart, and
+Disconnect match `remoteMcp()`. Status calls report stored grants healthy without
+downstream probes and never start authorization. The first start immediately
+publishes a modern epoch; `api()` has no pre-epoch legacy grants. `oauth` and
+`credential` are exclusive per connector, giving `auth_required` one recovery.
+For providers offering both, deployment config chooses; handlers check `ctx.oauth`.
