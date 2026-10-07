@@ -1,5 +1,7 @@
 import {
+  classifyInboundRequest,
   createMcpHandler,
+  isJSONRPCErrorResponse,
   isLegacyRequest,
   McpServer,
   WebStandardStreamableHTTPServerTransport,
@@ -40,6 +42,46 @@ import {
  * option must be finite.
  */
 const SDK_BODY_BOUND = { maxRequestBodySize: Number.MAX_SAFE_INTEGER };
+
+async function isModernListen(request: Request, signal: AbortSignal): Promise<boolean> {
+  const reader = request.clone().body?.getReader();
+  if (!reader) return false;
+  const onAbort = () => {
+    void reader.cancel(signal.reason).catch(() => {});
+    void request.body?.cancel(signal.reason).catch(() => {});
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+  try {
+    const decoder = new TextDecoder();
+    let text = "";
+    let bytes = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > SDK_BODY_BOUND.maxRequestBodySize) return false;
+      text += decoder.decode(value, { stream: true });
+    }
+    if (signal.aborted) return false;
+    const protocolVersion = request.headers.get("MCP-Protocol-Version");
+    const method = request.headers.get("Mcp-Method");
+    const route = classifyInboundRequest({
+      httpMethod: request.method,
+      ...(protocolVersion !== null ? { protocolVersionHeader: protocolVersion } : {}),
+      ...(method !== null ? { mcpMethodHeader: method } : {}),
+      body: JSON.parse(text + decoder.decode()),
+    });
+    return route.kind === "modern" && route.messageKind === "request" &&
+      route.message.method === "subscriptions/listen";
+  } catch {
+    // Leave unreadable, malformed, and legacy bodies to the normal SDK path.
+    return false;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+}
 
 export const MCP_CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -393,14 +435,25 @@ function serveMcp(
     // user-land legacy branch with the same transport setting while the modern
     // branch uses the fetch-native handler.
     if (!(await isLegacyRequest(request, undefined, SDK_BODY_BOUND))) {
-      return createMcpHandler(createServer, {
+      const response = await createMcpHandler(createServer, {
         ...SDK_BODY_BOUND,
         legacy: "reject",
-        // The SDK refuses listens with -32603 before opening an SSE stream.
-        // A fresh handler has no publisher; do not hold admission for a listen.
+        // Keep the SDK's validation and prevent it from opening an SSE stream.
+        // Its capacity error below becomes our permanent unsupported method.
         maxSubscriptions: 0,
         onerror: (error) => opts.logger.error("[connecta] MCP handler error", error),
       }).fetch(request);
+      if (request.headers.get("Mcp-Method") === "subscriptions/listen" && response.status === 200) {
+        const body = await response.clone().json();
+        if (isJSONRPCErrorResponse(body) && body.error.code === -32603 && body.error.message === "Subscription limit reached") {
+          return new Response(JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32601, message: "Method not found: subscriptions/listen" },
+          }), { status: 404, headers: response.headers });
+        }
+      }
+      return response;
     }
 
     // Fresh server + transport per legacy request, stateless and JSON-shaped.
@@ -518,9 +571,25 @@ export function createMcpRoute(
         request.signal.removeEventListener("abort", onCallerAbort);
         if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       }));
-      const admission = yield* Effect.result(
-        admitted(opts.requestAdmission, request.signal),
-      );
+      // Only a body-confirmed modern listen may skip admission. Trusting the
+      // method header alone would let a legacy tools/call bypass the pool.
+      const startedAt = Date.now();
+      const maxDurationMs = opts.requestAdmission.maxDurationMs;
+      let listen = false;
+      if (request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen") {
+        const classify = Effect.promise(() => isModernListen(request, localAbort.signal));
+        const prepared = maxDurationMs === undefined
+          ? Option.some(yield* classify)
+          : yield* classify.pipe(Effect.timeoutOption(Duration.millis(maxDurationMs)));
+        if (Option.isNone(prepared)) {
+          localAbort.abort(new Error("MCP request lifetime exceeded."));
+          return cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
+        }
+        listen = prepared.value;
+      }
+      const admission = listen
+        ? Result.succeed(undefined)
+        : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
       if (Result.isFailure(admission)) {
         const error = admission.failure;
         if (!(error instanceof ExecutorAdmissionError)) {
@@ -534,9 +603,11 @@ export function createMcpRoute(
         }
         return cors(requestAdmissionFailure(error));
       }
-      const remainingMs = admission.success.remainingMs();
+      const remainingMs = admission.success
+        ? admission.success.remainingMs()
+        : maxDurationMs === undefined ? undefined : maxDurationMs - (Date.now() - startedAt);
       if (remainingMs !== undefined && remainingMs <= 0) {
-        admission.success.release();
+        admission.success?.release();
         return cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
       }
       if (remainingMs !== undefined) {
@@ -545,7 +616,7 @@ export function createMcpRoute(
         }, remainingMs);
       }
       const localRequest = new Request(request, { signal: localAbort.signal });
-      if (admission.success.waitMs > 0) {
+      if (admission.success && admission.success.waitMs > 0) {
         opts.logger.debug("[connecta] MCP request admitted after queue wait", {
           waitMs: admission.success.waitMs,
           active: opts.requestAdmission.activeCount,
