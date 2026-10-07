@@ -16,10 +16,11 @@
 //
 // Core sets it from the authorization that admitted the request, on the scoped
 // registry view that request receives, and `api()` hands handlers that same
-// context object; no argument, header, or program can name it. A context no
-// request admitted — a scheduled artifact refresh, an operator probe — has no
-// caller, and a delegated provider fails closed on it, as it does on the
-// anonymous caller an open deployment admits.
+// context object; no argument or program can name it, and a header only
+// through an inbound-auth provider configured to read one (a bearer's asserted
+// principal). A context no request admitted — a scheduled artifact refresh, an
+// operator probe — has no caller, and a delegated provider fails closed on it,
+// as it does on the anonymous caller an open deployment admits.
 
 import type { AuthenticatedIdentity, ConnectorContext } from "./types.js";
 

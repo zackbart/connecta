@@ -82,9 +82,11 @@ An admitted non-preflight `/mcp` request then takes five steps in
    until the response *body* completes, the caller leaves, or its configured
    lifetime ends, not until the handler returns.
 2. **Authorize.** Each `InboundAuth` provider's `authorize` in order, bearer
-   before interactive. First `ok` admits; if all fail, the last provider's
-   challenge is returned. No providers means open — development only, and it
-   warns at construction.
+   before interactive. First `ok` admits; a `final` refusal — a recognized
+   credential refused on its merits, such as a bearer's unaccepted
+   [asserted principal](./auth.md#a-trusted-agent-acting-for-its-users) — ends
+   the walk; if all fail, the last provider's challenge is returned. No
+   providers means open — development only, and it warns at construction.
 3. **Narrow to the pool.** On `/mcp/<pool>`, look the name up, run its grant
    against the identity, then `intersectAccess` the pool with the identity's own
    access. A pool can never widen a view; anything else is a 404 naming no pool.

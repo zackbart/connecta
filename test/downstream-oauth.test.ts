@@ -15,6 +15,7 @@ import {
   OAuthRefreshCoordinator,
   oauthValueStorageKey,
 } from "../src/auth/downstream-oauth.js";
+import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { classifyCallError, ConnectorCallError } from "../src/errors.js";
@@ -6469,6 +6470,77 @@ describe("/oauth/callback/<id> route", () => {
     const invalid = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=wrong`));
     expect(invalid.status).toBe(400);
     expect(finish).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+  });
+
+  it("refuses a callback any provider refused with final, interactive or not", async () => {
+    const finish = vi.fn(async () => {});
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      // A bearer's refused asserted principal (#679), and nothing interactive
+      // whose 403 would otherwise be the only explicit denial.
+      auth: { kind: "bearer", finalRefusals: true,
+        authorize: (request) => request.headers.has("authorization")
+          ? { ok: false, final: true, response: new Response(null, { status: 403 }) }
+          : { ok: false, response: new Response(null, { status: 401 }) } },
+      connectors: [callbackConnector("svc", finish, async state => state === "verified-state")],
+    });
+    const refused = await connecta.fetch(new Request(
+      `${BASE}/oauth/callback/svc?code=abc&state=verified-state`,
+      { headers: { authorization: "Bearer agent-secret" } },
+    ));
+    expect(refused.status).toBe(400);
+    expect(finish).not.toHaveBeenCalled();
+    const browser = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
+    expect(browser.status).toBe(200);
+    expect(finish).toHaveBeenCalledTimes(1);
+  });
+
+  // Human routes skip non-interactive providers unless they declare
+  // finalRefusals, so a managed access token is never looked up here: a bogus
+  // `cta_` token would otherwise add a read only where the connector exists.
+  it("a bogus managed token adds no storage reads to a configured or unknown callback", async () => {
+    const reads: string[] = [];
+    const inner = memoryStorage();
+    const counting: KVStorage = {
+      get: async (k) => {
+        reads.push(k);
+        return inner.get(k);
+      },
+      set: (k, v, o) => inner.set(k, v, o),
+      delete: (k) => inner.delete(k),
+      list: (prefix) => inner.list!(prefix),
+    };
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      storage: counting,
+      logger: silentLogger,
+      accessTokens: accessTokens(counting),
+      connectors: [
+        remoteMcp("svc", {
+          url: "https://unused.example/mcp",
+          auth: { type: "oauth" },
+          _transportFactory: () => ({ async close() {} }) as unknown as Transport,
+        }),
+      ],
+    });
+    await counting.set(STATE_KEY, "the-real-state");
+    const readsFor = async (id: string, token?: string) => {
+      reads.length = 0;
+      const res = await connecta.fetch(new Request(
+        `${BASE}/oauth/callback/${id}?code=abc&state=attacker-state`,
+        token ? { headers: { authorization: `Bearer ${token}` } } : {},
+      ));
+      expect(res.status).toBe(400);
+      return [...reads];
+    };
+    const bogus = `cta_${"A".repeat(43)}`;
+    const configured = await readsFor("svc", bogus);
+    const unknown = await readsFor("absent", bogus);
+    expect(configured).toEqual(await readsFor("svc"));
+    expect(unknown).toEqual(await readsFor("absent"));
+    expect(configured.length).toBe(unknown.length);
+    expect([...configured, ...unknown].some((key) => key.includes("access-token"))).toBe(false);
+    await connecta.close();
   });
 
   it("every unverifiable callback failure is indistinguishable", async () => {

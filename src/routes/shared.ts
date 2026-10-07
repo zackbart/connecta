@@ -163,7 +163,7 @@ export async function authorize(
       /** Backward-compatible name used by operator views. */
       uiAdminEligible?: boolean;
     }
-  | { ok: false; response: Response }
+  | { ok: false; response: Response; final?: true }
 > {
   if (auth.length === 0) {
     const actor = { kind: "anonymous" } as const;
@@ -261,6 +261,11 @@ export async function authorize(
         ...(operator ? { uiAdminEligible: true } : {}),
       };
     }
+    // A recognized credential refused on its merits is the answer; asking the
+    // next provider could admit the same request as someone else.
+    if (result.final === true) {
+      return { ok: false, response: result.response, final: true };
+    }
     lastResponse = result.response;
   }
   return {
@@ -277,6 +282,16 @@ export async function authorize(
   };
 }
 
+/**
+ * An interactive human for operator, token, and OAuth routes. Only an
+ * interactive provider can admit here. A non-interactive one is consulted only
+ * when it declares `finalRefusals` — a bearer with an asserted principal — and
+ * then only for that `final` refusal, which ends the walk as it does in
+ * `authorize`; otherwise a later interactive provider could admit the very
+ * request the refusal answered. Every other non-interactive provider is
+ * skipped unasked, so its latency, storage reads, and failures stay off human
+ * routes.
+ */
 export async function authorizeUiIdentity(
   request: Request,
   baseUrl: string,
@@ -286,20 +301,18 @@ export async function authorizeUiIdentity(
   identityConfig?: ConnectaIdentityConfig,
 ): Promise<
   | Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>
-  | { ok: false; response: Response }
+  | { ok: false; response: Response; final?: true }
 > {
-  const providers = auth.filter((candidate) => candidate.interactiveOperator);
-  if (providers.length === 0) {
-    return {
-      ok: false,
-      response: privateJson(
-        { error: `${purpose} requires interactive user authentication` },
-        { status: 403 },
-      ),
-    };
-  }
   let lastResponse: Response | undefined;
-  for (const provider of providers) {
+  for (const provider of auth) {
+    if (!provider.interactiveOperator) {
+      if (provider.finalRefusals !== true) continue;
+      const result = await provider.authorize(request, baseUrl, runtimeContext);
+      if (!result.ok && result.final === true) {
+        return { ok: false, response: result.response, final: true };
+      }
+      continue;
+    }
     const authz = await authorize(
       request,
       baseUrl,
@@ -308,6 +321,7 @@ export async function authorizeUiIdentity(
       identityConfig,
     );
     if (!authz.ok) {
+      if (authz.final === true) return authz;
       lastResponse = authz.response;
       continue;
     }

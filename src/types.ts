@@ -511,7 +511,16 @@ export type AuthResult =
       /** Human owner represented by a non-interactive access credential. */
       principal?: IdentityReference;
     }
-  | { ok: false; response: Response };
+  | {
+      ok: false;
+      response: Response;
+      /**
+       * The provider recognized the credential and refuses the request
+       * anyway, so no later provider is consulted. Omit it for a non-match,
+       * which lets another configured provider admit the request.
+       */
+      final?: true;
+    };
 
 /** Stable identity inside one configured authentication directory. */
 export interface IdentityReference {
@@ -663,6 +672,13 @@ export interface InboundAuth {
   kind: string;
   /** This provider may admit a human identity to operator mutation routes. */
   interactiveOperator?: true;
+  /**
+   * This non-interactive provider may refuse a credential it recognizes with
+   * `final`. Human routes then consult it for that refusal alone — anything
+   * else it answers there is ignored, so the marker can only refuse. Without
+   * it a non-interactive provider is skipped on human routes entirely.
+   */
+  finalRefusals?: true;
   /**
    * Stable, non-secret namespace of the identity directory behind
    * `activityActorLabel`. Stored with new activity actors so two providers with
