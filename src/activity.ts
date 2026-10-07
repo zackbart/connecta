@@ -1,6 +1,6 @@
 import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
-import { boundedEchoText } from "./errors.js";
+import { boundedEchoText, classificationCode, type ClassificationCode } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { CatalogDriftCounts, Logger } from "./types.js";
 
@@ -225,9 +225,14 @@ export type ActivityEventInput = Pick<
   | "outcome"
   | "durationMs"
   | "attempts"
-  | "errorCode"
   | "friction"
->;
+> & {
+  /**
+   * A code connecta assigns. Rows written by older deployments may hold
+   * others, so the stored event keeps `string`; a new row never does.
+   */
+  errorCode?: ClassificationCode;
+};
 
 /**
  * Best-effort by design: activity storage can never change a tool result.
@@ -241,7 +246,10 @@ export function recordToolActivity(
   if (!context) return;
   // A caller-supplied class wins because it knows something the code table
   // cannot: friction that belongs to a call which did not fail.
-  const friction = input.friction ?? agentFrictionForCode(input.errorCode);
+  // Checked here as well as by type: a handler can put any string in a
+  // `ConnectorCallError`'s code, and a downstream's own code is not recorded.
+  const errorCode = classificationCode(input.errorCode);
+  const friction = input.friction ?? agentFrictionForCode(errorCode);
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
@@ -255,7 +263,7 @@ export function recordToolActivity(
     outcome: input.outcome,
     durationMs: Math.max(0, Math.trunc(input.durationMs)),
     attempts: Math.max(1, Math.trunc(input.attempts)),
-    ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+    ...(errorCode ? { errorCode } : {}),
     ...(friction ? { friction } : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,

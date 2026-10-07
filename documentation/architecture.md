@@ -279,11 +279,14 @@ Operators read logs, status messages, and activity, and none of them carries
 any error's text, allowed or not (INV-6). `src/operator-record.ts` builds every
 failure record from an explicit list of fields, each checked against a constant
 table or grammar (connector, catalog-listed tool, step, origin, HTTP status,
-class, code, retryability, errno, counts), and `logFailure` refuses a record it
-did not build. Provenance is by identity, never by shape: an error's class is
-read from its prototype chain, never its `name`; a tool is named only from the
-catalog entry a call resolved to; and a status message survives only on a status
-object connecta created, so a plugin `status()` contributes its state alone.
+class, code, retryability, errno, counts), and `logFailure` writes a fixed
+`<rejected>` for a record it did not build, never throwing. Provenance is by
+identity, never by shape: an error's class is read from its prototype chain,
+never its `name`; a classification only from one connecta registered; a tool
+only from the catalog entry a call resolved to, and only if it fits MCP's
+tool-name grammar (else `<withheld>`, in activity rows too); and a status
+message only from the snapshot connecta took of a status it created, so a
+plugin `status()` or a decorator contributes its state alone.
 `test/operator-record-sources.node.test.ts` is a secondary lint over every other
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
 the next one.

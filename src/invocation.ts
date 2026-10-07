@@ -14,15 +14,23 @@ import {
 } from "./catalog-service.js";
 import {
   boundedEchoText,
+  classificationCode,
   classifyCallError,
   ConnectorCallError,
   echoedCallArgs,
   framingError,
   type AuthRecoveryMode,
   type CallErrorDetails,
+  type ClassificationCode,
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
-import { carryFailureFacts, failureRecord, logFailure } from "./operator-record.js";
+import {
+  carryFailureFacts,
+  classifiedFailure,
+  failureRecord,
+  logFailure,
+  recordedToolName,
+} from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
@@ -332,12 +340,16 @@ export class InvocationService {
       });
       const record = (
         outcome: "success" | "error" | "timeout" | "cancelled",
-        classification: { errorCode?: string; friction?: AgentFriction } = {},
+        classification: { errorCode?: ClassificationCode; friction?: AgentFriction } = {},
       ) => {
         const identity = activityTarget
           ? {
               connectorId: activityTarget.connector.id,
-              toolName: activityTarget.toolName,
+              // A resolved tool's name is the downstream's choice, recorded
+              // only when it fits the tool-name grammar (INV-6).
+              toolName: resolved
+                ? recordedToolName(resolved.definition)
+                : activityTarget.toolName,
             }
           : attempted;
         if (!identity) return;
@@ -455,7 +467,10 @@ export class InvocationService {
               source: context.source,
               attempts,
               durationMs: Date.now() - started,
-            }, error),
+              // Every refusal reaching `failed` is one connecta built: a
+              // thrown value's classification, a framing refusal, or a
+              // cancellation. Nothing else is read as a classification.
+            }, classifiedFailure(error)),
           );
         }
         record(
@@ -464,7 +479,7 @@ export class InvocationService {
             : details.code === "cancelled"
               ? "cancelled"
               : "error",
-          { errorCode: details.code },
+          defined({ errorCode: classificationCode(details.code) }),
         );
         return outcome();
       };

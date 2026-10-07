@@ -16,7 +16,7 @@ describe("WithheldTextError", () => {
   ] as const)("classifies %j as the original would have been", (text, code, retryable) => {
     const original = new Error(text);
     const withheld = new WithheldTextError("connecta's words", original);
-    for (const fallback of ["connector_call_failed", "catalog_lookup_failed"]) {
+    for (const fallback of ["connector_call_failed", "catalog_lookup_failed"] as const) {
       expect(classifyCallError(withheld, fallback)).toEqual({
         code: code === "fallback" ? fallback : code,
         message: "connecta's words",
@@ -272,7 +272,7 @@ describe("framingError", () => {
       "ambiguous_tool_alias",
       "destructive_tool_requires_approval",
       "result_processing_failed",
-    ]) {
+    ] as const) {
       expect(
         framingError(code, `Unknown address "temporary-503-service.read"`),
       ).toEqual({

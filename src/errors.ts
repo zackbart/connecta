@@ -1,6 +1,8 @@
 // Typed failure contract for connector tool calls. Web-API only — no node:
 // imports here.
 
+import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
+
 /**
  * Machine-readable classification of a failed connector tool call.
  *
@@ -33,6 +35,48 @@ export type ConnectorCallErrorCode =
   | "conflict"
   | "input_required_unsupported"
   | "connector_call_failed";
+
+/**
+ * Every classification code connecta assigns: a connector's typed codes, the
+ * executor's admission codes, and the refusals connecta frames itself.
+ * Operator records and activity rows carry a code only when it is one of
+ * these (INV-6), so a code forwarded from a downstream is never recorded.
+ * Adding a member fails typecheck until {@link CLASSIFICATION_CODE_TABLE}
+ * lists it.
+ */
+export type ClassificationCode =
+  | ConnectorCallErrorCode
+  | ExecutorAdmissionErrorCode
+  | "cancelled"
+  | "unknown_address"
+  | "unknown_tool"
+  | "ambiguous_tool_alias"
+  | "catalog_lookup_failed"
+  | "result_too_large"
+  | "destructive_tool_requires_approval"
+  | "write_outcome_unknown"
+  | "result_processing_failed"
+  | "budget_exceeded"
+  | "executor_failed";
+
+const CLASSIFICATION_CODE_TABLE = {
+  timeout: true, auth_required: true, rate_limited: true, unavailable: true,
+  invalid_args: true, not_found: true, conflict: true,
+  input_required_unsupported: true, connector_call_failed: true,
+  executor_overloaded: true, executor_cancelled: true, executor_closed: true,
+  cancelled: true, unknown_address: true, unknown_tool: true,
+  ambiguous_tool_alias: true, catalog_lookup_failed: true,
+  result_too_large: true, destructive_tool_requires_approval: true,
+  write_outcome_unknown: true, result_processing_failed: true,
+  budget_exceeded: true, executor_failed: true,
+} as const satisfies Record<ClassificationCode, true>;
+
+/** `value` when it is a code connecta assigns, else undefined. */
+export function classificationCode(value: unknown): ClassificationCode | undefined {
+  return typeof value === "string" && Object.hasOwn(CLASSIFICATION_CODE_TABLE, value)
+    ? value as ClassificationCode
+    : undefined;
+}
 
 /** One bounded, payload-free explanation of an input-schema mismatch. */
 export interface ArgumentValidationIssue {
@@ -482,7 +526,7 @@ const NEVER_RETRYABLE_FRAMING = new Set([
  * Details for a failure connecta itself framed — an address it could not
  * resolve, a tool it refuses to run — rather than one a connector threw.
  */
-export function framingError(code: string, message: string): CallErrorDetails {
+export function framingError(code: ClassificationCode, message: string): CallErrorDetails {
   return {
     code,
     message,
@@ -508,7 +552,7 @@ function messageLooksRetryable(message: string): boolean {
  */
 export function classifyCallError(
   err: unknown,
-  fallbackCode = "connector_call_failed",
+  fallbackCode: ClassificationCode = "connector_call_failed",
 ): CallErrorDetails {
   if (err instanceof ConnectorCallError) {
     return {

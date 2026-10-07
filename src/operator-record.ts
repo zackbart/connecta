@@ -1,6 +1,15 @@
 // What an operator may read about a failure: log records and status text.
 // Web-API only — no node: imports here.
 //
+// Threat model. Text a downstream server or HTTP API authored, and anything
+// derived from it, never reaches an operator sink: logs, activity rows, and
+// status, health, and UI data. Every typed field connecta records is checked
+// against a closed set or a grammar. Operator-authored code (custom
+// connectors, plugin `status()`, decorators) is trusted to follow the
+// contract, and connecta still checks the typed fields it records from it;
+// deliberately adversarial operator code is out of scope. A catalog-listed
+// tool name that fits MCP's tool-name grammar may be logged.
+//
 // INV-6 says logs carry no arguments, results, code, or raw downstream error
 // text. Filtering errors where they arise kept missing sources: a validator's
 // diagnostic, a stream's TypeError, a JSON-RPC error the agent may see. So the
@@ -21,7 +30,13 @@
 // downstream's own answer to a call may reach the agent that made it (see
 // documentation/architecture.md, "Errors and records").
 
-import { ConnectorCallError, NETWORK_ERROR_CODES, WithheldTextError } from "./errors.js";
+import {
+  classificationCode,
+  ConnectorCallError,
+  NETWORK_ERROR_CODES,
+  WithheldTextError,
+  type CallErrorDetails,
+} from "./errors.js";
 import type { ConnectorStatus, Logger } from "./types.js";
 
 /** Where in connecta's work a failure happened. Closed, so it carries no prose. */
@@ -38,16 +53,6 @@ type FailureStep =
 const STEPS: ReadonlySet<string> = new Set<FailureStep>([
   "MCP handshake", "tools/list", "tools/call", "OAuth discovery",
   "OAuth client registration", "OAuth token request", "OAuth flow", "handler",
-]);
-
-/** Classification codes connecta assigns. Anything else is left out. */
-const CODES: ReadonlySet<string> = new Set([
-  "timeout", "auth_required", "rate_limited", "unavailable", "invalid_args",
-  "not_found", "conflict", "input_required_unsupported", "connector_call_failed",
-  "cancelled", "unknown_address", "unknown_tool", "result_too_large",
-  "destructive_tool_requires_approval", "write_outcome_unknown",
-  "result_processing_failed", "budget_exceeded", "executor_failed",
-  "executor_overloaded", "executor_cancelled", "executor_closed",
 ]);
 
 /**
@@ -68,6 +73,8 @@ const SOURCES: ReadonlySet<string> = new Set([
   "call_tool", "call_destructive_tool", "batch_call", "execute_code", "resume_execution",
 ]);
 
+const MODES: ReadonlySet<string> = new Set(["continue", "restart"]);
+
 const STATUS_STATES: ReadonlySet<string> = new Set(["ok", "auth_required", "error"]);
 /** A status state, or `failed` for a status that could not be read at all. */
 const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
@@ -82,6 +89,13 @@ const LABEL_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
 
 /** What stands in for a name connecta could not vouch for. */
 const UNLISTED_TOOL = "<unlisted>";
+/**
+ * A catalog entry whose name breaks MCP's tool-name grammar. MCP does not
+ * require that grammar and real servers ship spaced or non-ASCII names, so
+ * the catalog keeps such a tool callable (src/connector-access.ts); only its
+ * name stays out of records.
+ */
+const WITHHELD_TOOL = "<withheld>";
 const UNKNOWN_CONNECTOR = "<unknown>";
 
 // ---------------------------------------------------------------------------
@@ -245,6 +259,8 @@ export interface FailureSubject {
   userId?: string;
   /** A status state, for a status record. */
   state?: ConnectorStatus["state"] | "failed";
+  /** Whether an OAuth start continued or restarted authorization. */
+  mode?: "continue" | "restart";
   attempts?: number;
   durationMs?: number;
 }
@@ -259,6 +275,7 @@ export interface FailureRecord {
   readonly source?: string;
   readonly userId?: string;
   readonly state?: string;
+  readonly mode?: string;
   readonly attempts?: number;
   readonly durationMs?: number;
   readonly step?: string;
@@ -287,12 +304,20 @@ function connectorId(value: unknown): string | undefined {
   return typeof value === "string" && CONNECTOR_ID_RE.test(value) ? value : UNKNOWN_CONNECTOR;
 }
 
+/**
+ * How an operator record names a catalog entry: its name when it fits MCP's
+ * tool-name grammar, else `<withheld>`. Activity rows use it too.
+ */
+export function recordedToolName(entry: { readonly name: string }): string {
+  return typeof entry.name === "string" && TOOL_NAME_RE.test(entry.name) ? entry.name : WITHHELD_TOOL;
+}
+
 function checkedSubject(subject: FailureSubject): object {
   const tool = subject.tool;
   return {
     ...defined("connector", connectorId(subject.connector)),
     ...("tool" in subject
-      ? { tool: tool && typeof tool.name === "string" && TOOL_NAME_RE.test(tool.name) ? tool.name : UNLISTED_TOOL }
+      ? { tool: tool === null || typeof tool !== "object" ? UNLISTED_TOOL : recordedToolName(tool) }
       : {}),
     ...defined("source", member(subject.source, SOURCES)),
     ...defined(
@@ -300,9 +325,23 @@ function checkedSubject(subject: FailureSubject): object {
       typeof subject.userId === "string" && USER_ID_RE.test(subject.userId) ? subject.userId : undefined,
     ),
     ...defined("state", member(subject.state, STATES)),
+    ...defined("mode", member(subject.mode, MODES)),
     ...defined("attempts", count(subject.attempts, 1_000)),
     ...defined("durationMs", count(subject.durationMs, 86_400_000)),
   };
+}
+
+/**
+ * Classifications connecta computed (`CallErrorDetails` it built), by
+ * identity. A plain object is read as one only when registered here: a thrown
+ * object shaped like a classification is just a thrown object.
+ */
+const classifications = new WeakSet<object>();
+
+/** Vouch for `details` as a classification connecta itself computed. */
+export function classifiedFailure<T extends CallErrorDetails>(details: T): T {
+  classifications.add(details);
+  return details;
 }
 
 /** The typed classification `failure` carries. */
@@ -311,15 +350,14 @@ function classification(failure: unknown): object {
   if (failure instanceof ConnectorCallError) typed = failure;
   else if (failure instanceof WithheldTextError) {
     typed = { retryable: failure.retryable, ...(failure.timeout ? { code: "timeout" } : {}) };
-  } else if (failure !== null && typeof failure === "object" && !(failure instanceof Error)) {
-    // A classified `CallErrorDetails` object.
+  } else if (failure !== null && typeof failure === "object" && classifications.has(failure)) {
     typed = failure as typeof typed;
   }
   const details = typed?.details !== null && typeof typed?.details === "object"
     ? (typed.details as { host?: unknown; code?: unknown })
     : undefined;
   return {
-    ...defined("code", member(typed?.code, CODES)),
+    ...defined("code", classificationCode(typed?.code)),
     ...defined("retryable", typeof typed?.retryable === "boolean" ? typed.retryable : undefined),
     ...defined("origin", origin(details?.host)),
     ...defined("errno", member(details?.code, NETWORK_ERROR_CODES)),
@@ -330,7 +368,8 @@ function classification(failure: unknown): object {
  * The record of a failure: the subject's listed fields, each checked; the
  * facts attached to the failure; its class label; and the typed
  * classification it carries (a `ConnectorCallError`'s code, retryability,
- * origin, and errno, or a classified `CallErrorDetails` object's). Never its
+ * origin, and errno, or those of a `CallErrorDetails` registered with
+ * `classifiedFailure`). Never its
  * text, and nothing else from `subject`.
  */
 export function failureRecord(subject: FailureSubject, failure?: unknown): FailureRecord {
@@ -373,12 +412,18 @@ export type FailureEvent =
   | "OAuth callback handoff could not be consumed; no authorization code was exchanged"
   | "MCP handler error"
   | "operator status"
+  | "result paging unavailable"
   | "request failed"
   | "Clerk email lookup failed; denying";
 
+/** What is logged in place of a record `failureRecord` did not build. */
+const REJECTED_RECORD = Object.freeze({ record: "<rejected>" });
+
 /**
  * Log one failure as `[connecta] <event>` and its record. A record
- * `failureRecord` did not build is refused, whatever its shape.
+ * `failureRecord` did not build is replaced, whatever its shape, by a fixed
+ * `{ record: "<rejected>" }`. Never throws: it runs on failure paths, and a
+ * logger that throws is contained here.
  */
 export function logFailure(
   logger: Pick<Logger, "info" | "warn" | "error">,
@@ -386,10 +431,11 @@ export function logFailure(
   record: FailureRecord,
   level: "info" | "warn" | "error" = "warn",
 ): void {
-  if (!built.has(record)) {
-    throw new TypeError("logFailure takes only a record built by failureRecord");
+  try {
+    logger[level](`[connecta] ${event}`, built.has(record) ? record : REJECTED_RECORD);
+  } catch {
+    // A failing logger cannot add a failure of its own.
   }
-  logger[level](`[connecta] ${event}`, record);
 }
 
 /**
@@ -414,37 +460,59 @@ export function describeFailure(connectorId: string, failure: unknown): string {
 // ---------------------------------------------------------------------------
 // Status provenance
 
-/** Status objects whose message connecta wrote, and the failure behind each. */
-const ownStatuses = new WeakMap<object, { failure?: unknown }>();
+/**
+ * Status objects connecta wrote: the state and message it approved, as
+ * snapshots taken when it wrote them, and the failure behind an error status.
+ * The object itself stays mutable, so nothing is ever read back from it.
+ */
+interface OwnStatus {
+  readonly state: ConnectorStatus["state"];
+  readonly message?: string;
+  readonly failure?: unknown;
+}
+
+const ownStatuses = new WeakMap<object, OwnStatus>();
+
+function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
+  return {
+    state: member(status.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error",
+    ...(typeof status.message === "string" ? { message: status.message } : {}),
+    ...(failure === undefined ? {} : { failure }),
+  };
+}
 
 /** A status whose message connecta wrote, such as an auth_required notice. */
 export function ownStatus<T extends ConnectorStatus>(status: T): T {
-  ownStatuses.set(status, {});
+  ownStatuses.set(status, snapshot(status));
   return status;
 }
 
 /** An error status described from `failure`'s record, remembering the failure. */
 export function failureStatus(connectorId: string, failure: unknown): ConnectorStatus {
   const status: ConnectorStatus = { state: "error", message: describeFailure(connectorId, failure) };
-  ownStatuses.set(status, { failure });
+  ownStatuses.set(status, snapshot(status, failure));
   return status;
 }
 
 /**
- * `status` rebuilt from its typed state. Its message survives only when
- * connecta wrote it (`ownStatus`, `failureStatus`): a plugin `status()` seam
- * returns its author's text, which can quote a downstream, and connecta
- * cannot vouch for it whatever it looks like.
+ * `status` rebuilt from what connecta approved. A status connecta wrote
+ * (`ownStatus`, `failureStatus`) is rebuilt from the snapshot taken then,
+ * whatever has since been assigned to it. Any other status contributes its
+ * typed state alone: a plugin `status()` seam returns its author's text,
+ * which can quote a downstream, and connecta cannot vouch for it whatever it
+ * looks like.
  */
 export function boundedStatus(status: ConnectorStatus): ConnectorStatus {
   const own = status !== null && typeof status === "object" ? ownStatuses.get(status) : undefined;
-  const state = member(status?.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error";
-  const rebuilt: ConnectorStatus = {
-    state,
-    ...(own && typeof status.message === "string" ? { message: status.message } : {}),
-  };
-  if (own) ownStatuses.set(rebuilt, own);
-  return rebuilt;
+  if (own) {
+    const rebuilt: ConnectorStatus = {
+      state: own.state,
+      ...(own.message === undefined ? {} : { message: own.message }),
+    };
+    ownStatuses.set(rebuilt, own);
+    return rebuilt;
+  }
+  return { state: member(status?.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error" };
 }
 
 /** The failure connecta saw behind a status it described, if any. */

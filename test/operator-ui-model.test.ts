@@ -4,7 +4,7 @@ import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
-import type { Connector, ToolDef } from "../src/types.js";
+import type { Connector, ConnectorStatus, ToolDef } from "../src/types.js";
 import { uiProblemFor, uiToolSafety } from "../src/ui.js";
 import type { UiConnector, UiData, UiProblem } from "../src/operator-ui/model.js";
 import {
@@ -343,6 +343,11 @@ describe("operator action notices", () => {
         oauthConnector("oauthnourl", {
           startAuth: async () => ({ state: "auth_required", message: LEAK }),
         }),
+        // A plugin's state is checked against the closed set before it is
+        // recorded, never copied.
+        oauthConnector("oauthbadstate", {
+          startAuth: async () => ({ state: SECRET } as unknown as ConnectorStatus),
+        }),
         // A successful start's message is informational, and is dropped.
         oauthConnector("oauthok", {
           startAuth: async () => ({
@@ -384,6 +389,7 @@ describe("operator action notices", () => {
         502,
         { error: "OAuth authorization requires consent but no safe URL is available" },
       ],
+      ["/ui/oauth/oauthbadstate", "POST", 502, { error: "OAuth authorization could not start" }],
       ["/ui/oauth/oauthok", "POST", 302, null],
       ["/ui/credentials/rejected/test", "POST", 200, { ok: false }],
       ["/ui/credentials/thrown/test", "POST", 200, { ok: false }],
@@ -406,6 +412,7 @@ describe("operator action notices", () => {
       ["[connecta] OAuth disconnect failed", { connector: "oauththrows", errorClass: "Error" }],
       ["[connecta] OAuth start failed", { connector: "oautherror", mode: "restart", state: "error" }],
       ["[connecta] OAuth start failed", { connector: "oauthnourl", mode: "restart", state: "auth_required" }],
+      ["[connecta] OAuth start failed", { connector: "oauthbadstate", mode: "restart" }],
       ["[connecta] credential test failed", { connector: "rejected" }],
       ["[connecta] credential test threw", { connector: "thrown", errorClass: "Error" }],
     ]));

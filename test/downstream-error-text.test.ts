@@ -254,7 +254,7 @@ describe("a refused client registration", () => {
         body: required(served[0]),
         submittedMetadata: { redirect_uris: [REDIRECT] },
       });
-      for (const fallback of ["connector_call_failed", "catalog_lookup_failed"]) {
+      for (const fallback of ["connector_call_failed", "catalog_lookup_failed"] as const) {
         const before = classifyCallError(original, fallback);
         const after = classifyCallError(error, fallback);
         expect({ code: after.code, retryable: after.retryable }).toEqual({

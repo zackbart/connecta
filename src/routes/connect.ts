@@ -107,8 +107,13 @@ async function connect(context: RouteContext): Promise<Response> {
     if (status.state === "ok") return withSessionCookies(new Response("This connector is already connected.", { headers: { "Cache-Control": "no-store" } }), authz.sessionCookies);
     if (status.state !== "auth_required" || !status.authorizationUrl) {
       // The start's message can be a downstream's refusal, which an agent
-      // may read but a log may not (INV-6): the record keeps the state only.
-      opts.logger.warn("[connecta] OAuth start failed", { connector: id, mode: handoff.force ? "restart" : "continue", state: status.state });
+      // may read but a log may not (INV-6): the record keeps the checked
+      // state only, since a plugin's `startAuth` returns whatever it likes.
+      logFailure(opts.logger, "OAuth start failed", failureRecord({
+        connector: id,
+        mode: handoff.force ? "restart" : "continue",
+        state: status.state,
+      }));
       return refuse(status.state === "auth_required" ? "OAuth authorization requires consent but no safe URL is available" : "OAuth authorization could not start", 502);
     }
     const target = new URL(status.authorizationUrl);

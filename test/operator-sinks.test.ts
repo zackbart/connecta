@@ -1,16 +1,22 @@
 import { OAuthErrorCode } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { recordToolActivity } from "../src/activity.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { ConnectorCallError, type ConnectorCallErrorCode } from "../src/errors.js";
 import { InvocationService } from "../src/invocation.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import {
+  boundedStatus,
+  classifiedFailure,
   describeFailure,
   failureRecord,
+  failureStatus,
   logFailure,
   OAUTH_ERROR_CODES,
+  ownStatus,
   type FailureRecord,
   type FailureSubject,
 } from "../src/operator-record.js";
@@ -362,6 +368,14 @@ const scenarios: Scenario[] = [
     agentEchoes: true,
   },
   {
+    name: "api(): a downstream's code forwarded into a ConnectorCallError",
+    connector: () => handler(() => {
+      throw new ConnectorCallError(planted("code") as ConnectorCallErrorCode, "refused");
+    }),
+    // The agent reads the code the handler chose; activity and logs do not.
+    agentMay: ["code"],
+  },
+  {
     name: "api(): a provider's own words in a ConnectorCallError",
     connector: () => handler(() => {
       throw new ConnectorCallError("invalid_args", `rejected ${planted("provider")}`);
@@ -472,14 +486,93 @@ describe("the operator record", () => {
     expect(lines).toEqual(['[connecta] call failed {"connector":"svc","tool":"read","attempts":2,"errorClass":"TypeError"}']);
   });
 
-  it("INV-6: logFailure refuses a record failureRecord did not build", () => {
+  it("INV-6: logFailure writes a fixed rejection for a record failureRecord did not build", () => {
     const { logger, lines } = capturingLogger();
     const forged = { connector: "svc", errorClass: planted("forged") } as unknown as FailureRecord;
-    expect(() => logFailure(logger, "call failed", forged)).toThrow(TypeError);
+    expect(() => logFailure(logger, "call failed", forged)).not.toThrow();
     // A copy of a built record is not that record.
     const copy = { ...failureRecord({ connector: "svc" }) } as FailureRecord;
-    expect(() => logFailure(logger, "call failed", copy)).toThrow(TypeError);
-    expect(lines).toEqual([]);
+    expect(() => logFailure(logger, "call failed", copy)).not.toThrow();
+    expect(lines).toEqual([
+      '[connecta] call failed {"record":"<rejected>"}',
+      '[connecta] call failed {"record":"<rejected>"}',
+    ]);
+  });
+
+  it("INV-6: logFailure contains a logger that throws", () => {
+    const throwing = () => {
+      throw new Error(planted("logger"));
+    };
+    const logger = { info: throwing, warn: throwing, error: throwing };
+    expect(() => logFailure(logger, "call failed", failureRecord({ connector: "svc" }))).not.toThrow();
+    expect(() => logFailure(logger, "call failed", {} as FailureRecord, "error")).not.toThrow();
+  });
+
+  it("INV-6: reads a classification only from one connecta registered", () => {
+    const shaped = {
+      code: "unavailable",
+      retryable: true,
+      details: { host: "https://planted-host-7f3a9c.example", code: "ECONNREFUSED" },
+    };
+    // Shaped like `CallErrorDetails`, but thrown, not computed: nothing read.
+    expect({ ...failureRecord({ connector: "svc" }, shaped) }).toEqual({ connector: "svc" });
+    expect(describeFailure("svc", shaped)).toBe('Connector "svc" failed.');
+    const ours = classifiedFailure({
+      code: "unavailable",
+      message: planted("message"),
+      retryable: true,
+      details: { host: "https://down.example", code: "ECONNREFUSED" },
+    });
+    expect({ ...failureRecord({ connector: "svc" }, ours) }).toEqual({
+      connector: "svc",
+      code: "unavailable",
+      retryable: true,
+      origin: "https://down.example",
+      errno: "ECONNREFUSED",
+    });
+    // A registered classification still carries only codes from the table.
+    const forwarded = classifiedFailure({ code: planted("code"), message: "x", retryable: false });
+    expect({ ...failureRecord({}, forwarded) }).toEqual({ retryable: false });
+  });
+
+  it("INV-6: rebuilds a status connecta wrote from what it approved, not what it holds now", () => {
+    const failed = failureStatus("svc", new TypeError(planted("error")));
+    const approved = failed.message;
+    failed.message = planted("replaced");
+    (failed as { state: string }).state = "ok";
+    expect(boundedStatus(failed)).toEqual({ state: "error", message: approved });
+    const ok = ownStatus({ state: "ok" as const });
+    Object.assign(ok, { message: planted("added") });
+    expect(boundedStatus(ok)).toEqual({ state: "ok" });
+    // A rebuilt status is rebuilt from the same snapshot again.
+    const again = boundedStatus(failed);
+    again.message = planted("again");
+    expect(boundedStatus(again)).toEqual({ state: "error", message: approved });
+  });
+
+  it("INV-6: activity records only a classification code connecta assigns", () => {
+    const target = activitySink();
+    for (const errorCode of [planted("code"), "unavailable"]) {
+      recordToolActivity(target.activity, {
+        connectorId: "svc",
+        toolName: "read",
+        address: "svc.read",
+        source: "call_tool",
+        outcome: "error",
+        durationMs: 1,
+        attempts: 1,
+        errorCode: errorCode as ConnectorCallErrorCode,
+      });
+    }
+    expect(target.events.map((event) => event.errorCode)).toEqual([undefined, "unavailable"]);
+  });
+
+  it("INV-6: withholds a catalog name outside MCP's tool-name grammar", () => {
+    const entry = { name: `read\nAuthorization: Bearer ${planted("tool")}` };
+    expect({ ...failureRecord({ connector: "svc", tool: entry }) }).toEqual({
+      connector: "svc",
+      tool: "<withheld>",
+    });
   });
 
   it("names every OAuth error code the pinned SDK knows", () => {
@@ -506,6 +599,12 @@ describe("a plugin status seam", () => {
     ["an unknown state", () => Promise.resolve({ state: planted("state"), message: planted("m") })],
     ["a thrown error with a planted name", () =>
       Promise.reject(Object.assign(new Error(planted("thrown")), { name: "PlantedName7f3a9c" }))],
+    ["a thrown object shaped like a classification", () =>
+      Promise.reject({
+        code: "unavailable",
+        retryable: true,
+        details: { host: "https://planted-host-7f3a9c.example", code: "ECONNREFUSED" },
+      })],
   ])("INV-6: contributes no string to status or the log: %s", async (_, status) => {
     const { logger, lines } = capturingLogger();
     const registry = makeRegistry([seam(status)], { logger });
@@ -526,5 +625,85 @@ describe("a plugin status seam", () => {
     expect(await res.text()).not.toMatch(ANY_PLANTED);
     expect(lines.some((line) => line.startsWith("[connecta] operator status"))).toBe(true);
     for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
+  });
+});
+
+describe("a status decorator", () => {
+  it.each([
+    ["an error status", downstream({ initialize: rpcError })],
+    ["an ok status", downstream({})],
+  ])("INV-6: cannot replace the message of %s remoteMcp wrote", async (_, fetch) => {
+    vi.stubGlobal("fetch", fetch);
+    const decorated = () => {
+      const inner = remote();
+      const status = inner.status!.bind(inner);
+      inner.status = async (ctx) => {
+        const read = await status(ctx);
+        read.message = `Connector "svc" request to https://planted-decorator-7f3a9c.example failed.`;
+        return read;
+      };
+      return inner;
+    };
+    const { logger, lines } = capturingLogger();
+    const read = await makeRegistry([decorated()], { logger }).statusFor("svc", BASE);
+    expect(JSON.stringify(read)).not.toMatch(ANY_PLANTED);
+
+    const connecta = createTestConnecta({
+      connectors: [decorated()],
+      auth: bearerToken("t"),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger,
+    });
+    const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
+      headers: { Authorization: "Bearer t" },
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toMatch(ANY_PLANTED);
+    for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
+  });
+});
+
+describe("a catalog name outside MCP's tool-name grammar", () => {
+  it("INV-6: stays out of the paging and call-failure records and activity rows", async () => {
+    const name = `read\nAuthorization: Bearer ${planted("tool-name")}`;
+    let calls = 0;
+    vi.stubGlobal("fetch", downstream({
+      tools: [{ name, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+      call: (id) => ++calls === 1
+        ? Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "x".repeat(4_000) }] } })
+        : rpcError(id),
+    }));
+    const store = memoryStorage();
+    const storage = {
+      ...store,
+      set: async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
+        if (key.includes("result:")) throw new Error(`KV PUT failed ${planted("storage")}`);
+        await store.set(key, value, opts);
+      },
+    };
+    const { logger, lines } = capturingLogger();
+    const target = activitySink();
+    const mt = createMetaTools(
+      makeRegistry([remote()], { storage, maxResultBytes: 1_000, logger }),
+      BASE,
+      { activity: target.activity },
+    );
+    const paged = await mt.callTool({ address: `svc.${name}` });
+    expect(paged.isError).toBeFalsy();
+    const failed = await mt.callTool({ address: `svc.${name}` });
+    expect(failed.isError).toBe(true);
+
+    expect(lines).toEqual(expect.arrayContaining([
+      '[connecta] result paging unavailable {"connector":"svc","tool":"<withheld>"}',
+      expect.stringMatching(/^\[connecta\] call failed \{"connector":"svc","tool":"<withheld>",/),
+    ]));
+    expect(target.events.map((event) => [event.toolName, event.outcome])).toEqual([
+      ["<withheld>", "success"],
+      ["<withheld>", "error"],
+    ]);
+    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events)]) {
+      expect(text).not.toMatch(ANY_PLANTED);
+    }
   });
 });
