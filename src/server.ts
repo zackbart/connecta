@@ -126,6 +126,9 @@ export function createFetchHandler(
       const connect = yield* routeConnect(context);
       if (connect) return connect;
 
+      const oauthCallback = yield* routeOAuthCallback(context);
+      if (oauthCallback) return oauthCallback;
+
       if (request.method === "OPTIONS") {
         const preflight = yield* routeMcp.handle(context);
         if (preflight) return preflight;
@@ -144,9 +147,6 @@ export function createFetchHandler(
       }
 
       if (path === "/health") return yield* Effect.promise(health);
-
-      const oauthCallback = yield* routeOAuthCallback(context);
-      if (oauthCallback) return oauthCallback;
 
       const mcp = yield* routeMcp.handle(context);
       if (mcp) return mcp;

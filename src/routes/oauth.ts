@@ -128,6 +128,10 @@ export function routeOAuthCallback(
   context: RouteContext,
 ): Effect.Effect<Response | null> {
   if (!context.path.startsWith("/oauth/callback/")) return Effect.succeed(null);
+  // Downstream OAuth uses query-mode redirects; form_post is not supported.
+  if (context.request.method !== "GET") return Effect.succeed(new Response(null, {
+    status: 405, headers: { Allow: "GET" },
+  }));
   return Effect.uninterruptible(
     Effect.promise(() => finishOAuthCallback(context)),
   );
@@ -237,7 +241,7 @@ async function finishOAuthCallback(
     }
     {
       try {
-        await opts.registry.clearOAuthHandoff(id, state);
+        if (!await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)) return refused();
       } catch (err) {
         opts.logger.warn(
           `[connecta] refused an OAuth callback for connector ` +

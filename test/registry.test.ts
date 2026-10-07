@@ -69,6 +69,19 @@ describe("Registry construction", () => {
 });
 
 describe("personal OAuth handoffs", () => {
+  it.each([true, false])("consumes only the expected principal once with CAS=%s", async atomic => {
+    const storage = memoryStorage();
+    if (!atomic) delete storage.compareAndSet;
+    const registry = new Registry([calcConnector], { storage, logger: silentLogger });
+    await registry.storeOAuthHandoff("calc", "state", "alice");
+    expect(await registry.consumeOAuthHandoff("calc", null, "alice")).toBe(false);
+    expect(await registry.consumeOAuthHandoff("calc", "state", "bob")).toBe(false);
+    expect((await registry.oauthCallbackView("calc", "state"))?.principalKey).toBe("alice");
+    expect(await registry.consumeOAuthHandoff("calc", "state", "alice")).toBe(true);
+    expect(await registry.consumeOAuthHandoff("calc", "state", "alice")).toBe(false);
+    expect(await registry.oauthCallbackView("calc", "state")).toBeNull();
+  });
+
   it("refuses concurrent reuse of one state by different owners", async () => {
     const backing = memoryStorage();
     let reads = 0;

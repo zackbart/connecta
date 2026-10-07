@@ -69,8 +69,22 @@ export async function verifyOAuthHandoff(
       h.origin !== new URL(baseUrl).origin || !Number.isSafeInteger(h.expiresAt) ||
       h.expiresAt <= Date.now() || h.expiresAt > Date.now() + HANDOFF_TTL_MS ||
       typeof h.nonce !== "string" || !h.nonce || typeof h.force !== "boolean") return null;
+    if (await opts.registry.contextFor(connectorId, baseUrl).storage.get(`oauth:connect-used:${h.nonce}`)) return null;
     return h;
   } catch {
     return null;
   }
+}
+
+/** Claim only after browser identity and permissions pass, before starting OAuth. */
+export async function consumeOAuthConnectLink(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
+  if (handoff.expiresAt <= Date.now()) return false;
+  const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+  const key = `oauth:connect-used:${handoff.nonce}`;
+  const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
+  if (storage.compareAndSet) return storage.compareAndSet(key, null, "used", expiry);
+  // Without CAS, simultaneous visits or stale reads can both pass this check.
+  if (await storage.get(key)) return false;
+  await storage.set(key, "used", expiry);
+  return true;
 }

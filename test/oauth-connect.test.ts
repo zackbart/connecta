@@ -82,6 +82,57 @@ for (const provider of ["clerk", "access"] as const) {
         expect((await flow.callback("alice")).status).toBe(400);
       });
 
+      it("allows only GET for connection starts and callbacks", async () => {
+        const flow = setup(provider, scope);
+        const { authorizationUrl } = await flow.authorize();
+        for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+          const response = await flow.app.fetch(new Request(authorizationUrl, { method, headers: flow.headers("alice") }), undefined, flow.runtime("alice"));
+          expect(response.status).toBe(405);
+          expect(response.headers.get("Allow")).toBe("GET");
+        }
+        expect(flow.startAuth).not.toHaveBeenCalled();
+        const started = await flow.browser(authorizationUrl, "alice");
+        const state = new URL(started.headers.get("Location")!).searchParams.get("state")!;
+        for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+          const response = await flow.app.fetch(new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, { method, headers: flow.headers("alice") }), undefined, flow.runtime("alice"));
+          expect(response.status).toBe(405);
+          expect(response.headers.get("Allow")).toBe("GET");
+        }
+        expect(flow.finishAuth).not.toHaveBeenCalled();
+        expect((await flow.callback("alice")).status).toBe(200);
+      });
+
+      it("claims one callback when state verification completes concurrently", async () => {
+        const flow = setup(provider, scope);
+        const { authorizationUrl } = await flow.authorize();
+        await flow.browser(authorizationUrl, "alice");
+        const connector = flow.app.registry.getConnector("service")!;
+        const verify = connector.verifyState!;
+        let arrivals = 0;
+        let release!: () => void;
+        const bothVerified = new Promise<void>(resolve => { release = resolve; });
+        connector.verifyState = async (state, ctx) => {
+          const matched = await verify(state, ctx);
+          if (++arrivals === 2) release();
+          await bothVerified;
+          return matched;
+        };
+        const responses = await Promise.all([flow.callback("alice"), flow.callback("alice")]);
+        expect(responses.map(response => response.status).sort()).toEqual([200, 400]);
+        expect(flow.finishAuth).toHaveBeenCalledOnce();
+      });
+
+      it("uses a restart link only once, including before completion", async () => {
+        const flow = setup(provider, scope);
+        const { authorizationUrl } = await flow.authorize("alice", true);
+        const responses = await Promise.all([flow.browser(authorizationUrl, "alice"), flow.browser(authorizationUrl, "alice")]);
+        expect(responses.map(response => response.status).sort()).toEqual([302, 400]);
+        expect(flow.startAuth).toHaveBeenCalledOnce();
+        expect((await flow.callback("alice")).status).toBe(200);
+        expect((await flow.browser(authorizationUrl, "alice")).status).toBe(400);
+        expect(flow.startAuth).toHaveBeenCalledOnce();
+      });
+
       it("keeps status reads passive and replaces a connector's consent URL", async () => {
         const flow = setup(provider, scope);
         const response = await flow.app.fetch(new Request(`${BASE}/ui/connectors/service`, { headers: flow.headers("alice") }), undefined, flow.runtime("alice"));
@@ -189,4 +240,85 @@ it("refuses browser OAuth when no inbound provider is configured", async () => {
   const response = await app.fetch(new Request(`${BASE}/connect/service?h=anything`));
   expect(response.status).toBe(403);
   expect(await response.text()).toContain("An interactive provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.");
+});
+
+describe("OAuth identity and signature boundaries", () => {
+  it.each(["personal", "shared"] as const)("refuses Access service identities for %s starts and callbacks", async scope => {
+    const flow = setup("access", scope);
+    const { authorizationUrl } = await flow.authorize();
+    const pending = await flow.authorize();
+    const begun = await flow.browser(pending.authorizationUrl, "alice");
+    const state = new URL(begun.headers.get("Location")!).searchParams.get("state")!;
+    for (const identity of [undefined, { common_name: "service" }, { user_uuid: "alice", service_token_id: "service", service_token_status: true }]) {
+      const runtime = { waitUntil() {}, access: { aud: "test-app", getIdentity: async () => identity } };
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+        const headers = { "CF-Access-Client-Id": "service", "CF-Access-Client-Secret": "secret" };
+        expect((await flow.app.fetch(new Request(authorizationUrl, { method, headers }), undefined, runtime)).status).toBe(method === "GET" ? 403 : 405);
+        expect((await flow.app.fetch(new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, { method, headers }), undefined, runtime)).status).toBe(method === "GET" ? 400 : 405);
+        expect(flow.finishAuth).not.toHaveBeenCalled();
+      }
+    }
+    expect((await flow.callback("alice")).status).toBe(200);
+  });
+
+  it.each([
+    ["clerk", "personal"], ["clerk", "shared"], ["access", "personal"], ["access", "shared"],
+  ] as const)("keeps principal-bound cta tokens out of %s %s browser consent", async (provider, authScope) => {
+    const { AccessTokenManager } = await import("../src/access-tokens.js");
+    const storage = memoryStorage();
+    const manager = new AccessTokenManager(storage);
+    const { token } = await manager.create("machine", { namespace: provider === "clerk" ? "https://clerk.example.test" : "cloudflare-access", id: "alice" });
+    let state = "";
+    const startAuth = vi.fn(async (ctx) => {
+      state = crypto.randomUUID();
+      await ctx.storage.set("state", state);
+      return { state: "auth_required" as const, authorizationUrl: `${AS}?state=${state}` };
+    });
+    const finishAuth = vi.fn(async () => {});
+    const connector: Connector = {
+      id: "service", authScope, listTools: async () => [], callTool: async () => null,
+      startAuth, verifyState: async (candidate, ctx) => candidate === await ctx.storage.get("state"), finishAuth,
+    };
+    const humanAuth = provider === "clerk" ? fakeClerkAuth({ token: "alice", userId: "alice" }) : cloudflareAccessAuth();
+    const runtime = (human = false) => provider === "access" ? { waitUntil() {}, access: { aud: "test-app", getIdentity: async () => human ? { user_uuid: "alice" } : undefined } } : undefined;
+    const app = createTestConnecta({ connectors: [connector], auth: [manager.auth, humanAuth], storage, publicUrl: BASE, vault: encryptedCredentialVault(storage, CREDENTIAL_KEY), logger: "silent" });
+    deployments.push(app);
+    const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token }));
+    expect(JSON.parse(rpc.result.content[0].text).recovery).toBe("unavailable");
+    const humanRpc = await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "alice" }), undefined, runtime(true)));
+    const link = JSON.parse(humanRpc.result.content[0].text).authorizationUrl;
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+      const response = await app.fetch(new Request(link, { method, headers: { Authorization: `Bearer ${token}` } }), undefined, runtime());
+      expect(response.status).toBe(method === "GET" ? provider === "clerk" ? 200 : 403 : 405);
+    }
+    expect(startAuth).not.toHaveBeenCalled();
+    expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }), undefined, runtime(true))).status).toBe(302);
+    const callback = `${BASE}/oauth/callback/service?code=code&state=${state}`;
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+      const response = await app.fetch(new Request(callback, { method, headers: { Authorization: `Bearer ${token}` } }), undefined, runtime());
+      expect(response.status).toBe(method === "GET" ? 400 : 405);
+    }
+    expect(finishAuth).not.toHaveBeenCalled();
+    expect((await app.fetch(new Request(callback, { headers: { Cookie: "__session=alice" } }), undefined, runtime(true))).status).toBe(200);
+  });
+
+  it("binds signatures to payload bytes, deployment origin, and vault key", async () => {
+    const flow = setup("clerk", "personal");
+    const { authorizationUrl } = await flow.authorize();
+    const original = new URL(authorizationUrl);
+    const [payload, signature] = original.searchParams.get("h")!.split(".");
+    const metadata = JSON.parse(atob(payload!));
+    const altered = new URL(original);
+    altered.searchParams.set("h", `${btoa(JSON.stringify({ ...metadata, principal: "bob" }))}.${signature}`);
+    expect((await flow.browser(altered.href, "alice")).status).toBe(400);
+    const crossOrigin = new URL(original);
+    crossOrigin.hostname = "another-deployment.test";
+    const withoutFixedOrigin = createTestConnecta({ connectors: [flow.app.registry.getConnector("service")!], auth: fakeClerkAuth({ token: "alice", userId: "alice" }), vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY), logger: "silent" });
+    deployments.push(withoutFixedOrigin);
+    expect((await withoutFixedOrigin.fetch(new Request(crossOrigin, { headers: { Cookie: "__session=alice" } }))).status).toBe(400);
+    const wrongKey = createTestConnecta({ connectors: [flow.app.registry.getConnector("service")!], auth: fakeClerkAuth({ token: "alice", userId: "alice" }), publicUrl: BASE, vault: encryptedCredentialVault(memoryStorage(), btoa(String.fromCharCode(...new Uint8Array(32).fill(93)))), logger: "silent" });
+    deployments.push(wrongKey);
+    expect((await wrongKey.fetch(new Request(original, { headers: { Cookie: "__session=alice" } }))).status).toBe(400);
+    expect(flow.startAuth).not.toHaveBeenCalled();
+  });
 });

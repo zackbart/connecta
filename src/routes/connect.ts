@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { escapeHtml, renderPage } from "../branding.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
-import { oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
+import { consumeOAuthConnectLink, oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
 import { runEdge, withDeadlineEffect } from "../runtime/run.js";
 import {
   authorizeUiIdentity, mayManageConnector, privateJson, validateAuthPermissions, msg, withSessionCookies,
@@ -57,7 +57,7 @@ export function routeConnect(context: RouteContext): Effect.Effect<Response | nu
 async function connect(context: RouteContext): Promise<Response> {
   const { opts, request, baseUrl, runtimeContext } = context;
   const refuse = (error: string, status = 403) => privateJson({ error }, { status });
-  if (request.method !== "GET") return refuse("method not allowed", 405);
+  if (request.method !== "GET") return privateJson({ error: "method not allowed" }, { status: 405, headers: { Allow: "GET" } });
   const unavailable = oauthConnectUnavailable(opts);
   if (unavailable) return refuse(unavailable);
   const id = context.path.slice("/connect/".length);
@@ -83,6 +83,7 @@ async function connect(context: RouteContext): Promise<Response> {
   let ctx = registry.contextFor(id, baseUrl, scope);
   const timeoutError = new Error("OAuth authorization start timed out");
   try {
+    if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
     const status = await runEdge(withDeadlineEffect(signal => Effect.tryPromise({
       try: async () => {
         ctx = registry.contextFor(id, baseUrl, scope, { signal });

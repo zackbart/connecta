@@ -18,6 +18,68 @@ const TOKEN = "https://api.provider.test/oauth/token";
 const API = "https://api.provider.test";
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
+describe("OAuth handoff lifetime", () => {
+  it.each(["personal", "shared"] as const)("does not reapply a completed restart link for %s", async authScope => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ authScope });
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, auth: callbackAuth, vault: new CredentialVault(storage, SEAL_KEY), logger: "silent" });
+    try {
+      const issued = await app.fetch(new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }));
+      const { authorizationUrl } = await issued.json() as { authorizationUrl: string };
+      const started = await app.fetch(new Request(authorizationUrl));
+      expect(started.status).toBe(302);
+      const consent = started.headers.get("Location")!;
+      const state = new URL(consent).searchParams.get("state")!;
+      const target = await app.registry.oauthCallbackView("ccb", state);
+      const code = provider.consent(consent);
+      const result = await app.fetch(new Request(`${BASE}/oauth/callback/ccb?state=${state}&code=${code}`));
+      expect(result.status).toBe(200);
+      expect((await connector.status!(target!.registry.contextFor("ccb", BASE))).state).toBe("ok");
+      const replay = await app.fetch(new Request(authorizationUrl));
+      expect(replay.status).toBe(400);
+      expect((await connector.status!(target!.registry.contextFor("ccb", BASE))).state).toBe("ok");
+    } finally { await app.close(); }
+  });
+
+  it.each(["personal", "shared"] as const)("consumes a %s callback handoff atomically", async authScope => {
+    const provider = fakeProvider();
+    let exchanges = 0;
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init: RequestInit = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === TOKEN) {
+        exchanges++;
+      }
+      return provider.fetchStub(input, init);
+    });
+    const connector = ccb({ authScope });
+    const originalVerify = connector.verifyState!;
+    let verifications = 0;
+    let releaseVerify!: () => void;
+    const verifyGate = new Promise<void>(resolve => { releaseVerify = resolve; });
+    connector.verifyState = async (state, ctx) => {
+      const matched = await originalVerify(state, ctx);
+      if (++verifications === 2) releaseVerify();
+      await verifyGate;
+      return matched;
+    };
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, auth: callbackAuth, vault: new CredentialVault(storage, SEAL_KEY), logger: "silent" });
+    try {
+      const issued = await app.fetch(new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }));
+      const { authorizationUrl } = await issued.json() as { authorizationUrl: string };
+      const begun = await app.fetch(new Request(authorizationUrl));
+      const consent = begun.headers.get("Location")!;
+      const state = new URL(consent).searchParams.get("state")!;
+      const codes = [provider.consent(consent), provider.consent(consent)];
+      const results = await Promise.all(codes.map(code => app.fetch(new Request(`${BASE}/oauth/callback/ccb?state=${state}&code=${code}`))));
+      expect(results.map(response => response.status).sort()).toEqual([200, 400]);
+      expect(exchanges).toBe(1);
+    } finally { await app.close(); }
+  });
+});
+
 const OAUTH: ApiOAuthConfig = {
   authorizationEndpoint: AUTHORIZE,
   tokenEndpoint: TOKEN,

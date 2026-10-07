@@ -60,11 +60,11 @@ top to bottom.
 | 0 | HTTPS upgrade | 308 to an HTTPS `publicUrl`, with path and query *assigned* onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS. |
 | 0 | Cloudflare Access (Worker, when enabled) | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`. |
 | 1 | Mounted UI routes | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes. |
+| 1 | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI. |
 | 2 | MCP preflight | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth. |
 | 2 | Other `OPTIONS` | Auth metadata first, otherwise compatibility CORS preflight. |
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
 | 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata, with drift as stable short hashes. |
-| 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state and personal-ownership checked, independent of the UI. |
 | 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 

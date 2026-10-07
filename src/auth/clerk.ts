@@ -633,8 +633,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
     async authorize(request, baseUrl): Promise<AuthResult> {
       const tokenPresent = Boolean(request.headers.get("authorization"));
-      const browserOAuthRoute = request.method === "GET" &&
-        /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
+      const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
       let userId: string | undefined;
       let sessionCookies: string[] | undefined;
       try {

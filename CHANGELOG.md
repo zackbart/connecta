@@ -9,6 +9,8 @@ Connecta verifies the initiating user's Clerk or Cloudflare Access browser
 identity before starting downstream OAuth and again on completion, as required
 by MCP 2026-07-28 URL elicitation. OAuth browser connections require an
 interactive provider and a signing credential vault; reissue pending consent links.
+Connection links are single-use, browser OAuth routes accept only GET, and
+callback handoffs are consumed atomically where the store supports it.
 
 This change moves both MCP edges from 2.0.0 to 2.3.1, pinned exactly and in
 lockstep, because client and server each pin the same exact

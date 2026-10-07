@@ -791,80 +791,57 @@ instead of a base64 stack on every route.
 
 ## Human authentication management
 
-A verified browser's `/connect` visit gives the start and its state handoff 30 seconds;
-the request's abort signal and that deadline reach downstream OAuth fetches,
-discovery and registration included, and on expiry the route returns `504`
-`OAuth authorization start timed out` once an already-started reset finishes.
-Storage has no cancellation contract, so its generation write drains before a
-response, or it could publish an old epoch over a newer flow; catalog
-invalidation and scope close also finish outside the deadline. Those waits can
-stretch the click past 30 seconds — the bound is on downstream work, where a
-hung authorization server was the failure. The provider checks its signal
-before writing and removes a cancelled write that lands late. Disconnect
-commits through even if the browser leaves.
+A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
+and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth
+authorization start timed out`. Storage generation writes, catalog invalidation, and scope close drain before
+responding because storage has no cancellation contract. They can extend that wait. The provider checks
+cancellation before writing and removes late cancelled writes. Disconnect commits even if the browser leaves.
 
-Restart keeps a dynamically registered client only when its stored issuer and
-the connector's URL, redirect URI, client metadata, auth scope, transport
-settings, and owner partition still match, dropping the grant and one-shot flow
-state, selecting the authorization server again, and re-sealing the client
-under the new epoch's key. A different issuer registers anew; Disconnect and
-issuer-mismatch recovery discard it. Never carried: a URL-based client —
-nothing was registered, so fresh metadata decides whether the server still
-accepts one — or a client whose secret has expired.
+Restart carries a dynamically registered client only when its stored issuer, connector URL, redirect URI,
+client metadata, auth scope, transport settings, and owner partition still match. It drops the grant and flow
+state, selects the server again, and re-seals the client under the new epoch. A different issuer registers
+anew; Disconnect and issuer-mismatch recovery discard it. URL-based clients and clients with expired secrets
+are never carried.
 
-A carried client has to earn its next carry. Building a consent URL sends the
-provider nothing, so a restart cannot learn there that a provider purged the
-client, and RFC 6749 forbids redirecting an unknown client back to the callback,
-so nothing arrives later either; tokens in the epoch are the only proof it is
-still known. A restart following a restart with no grant between therefore
-registers again: a purged registration costs one refused consent, not a Restart
-that can never recover. A refusal connecta does hear is handled where it lands:
-a start whose refresh draws `invalid_client` drops the client and registers in
-that start, and a callback whose exchange draws it drops the client, so Continue
-won't return its URL.
+A carried client needs a completed grant before another carry. Building a consent URL cannot detect a purged
+registration, and RFC 6749 forbids redirecting an unknown client to the callback. Restarting again without an
+intervening grant therefore registers anew. A start whose refresh returns `invalid_client` drops the client
+and registers in that start; a callback exchange with that error drops the client so Continue cannot return
+its URL.
 
-Credential and OAuth mutation require an admitted interactive human, connector
-visibility, the shared or personal permission, and an exact same-origin
-`Origin` for browser requests; an MCP bearer never becomes a browser management
-credential. `authorize_connector` splits on what it would change: a static
-credential slot mutates nothing, so visibility is enough — with
-`ui: operatorUi()` and a vault it returns a secret-free `operator_config`
-handoff naming the fields and operator URL, without either `unavailable`, since
-connecta links to no missing page. Only the downstream-OAuth branch consults
-the management permissions, answering `unavailable` to an identity without them.
+Credential and OAuth mutation require interactive identity, connector visibility, management permission, and
+an exact same-origin `Origin` for browser mutations. A static credential `authorize_connector` call needs
+visibility only: with `ui: operatorUi()` and a vault it returns a secret-free `operator_config` handoff;
+without either it returns `unavailable`. The OAuth branch also checks management permission and returns
+`unavailable` when refused.
 
-Core owns `/connect/<connector>` and the OAuth callback, so both work without
-the optional UI. Interactive browser authentication must be Clerk or Cloudflare
-Access. A machine bearer or `cta_` token cannot complete this flow. Deployments
-without an interactive provider refuse connection at runtime with
-`An interactive provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.`
-This leaves deployments used only by machines free to start and serve their
-configured credentials.
+Core owns `/connect/<connector>` and the callback without the optional UI. Both require Clerk sessions or
+Cloudflare Access users; MCP OAuth tokens, machine bearers, `cta_` tokens, and Access service identities
+cannot authenticate them. Without an interactive provider, connection fails at runtime with `An interactive
+provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.` Machine-only deployments can
+still serve configured credentials. Both routes accept only GET, otherwise returning 405 with `Allow: GET`;
+`form_post` is unsupported. Clerk's session-only policy applies regardless of method.
 
-The handoff expires after fifteen minutes and carries the connector, the
-personal owner or `shared`, the initiating principal, the deployment origin,
-and a nonce. The credential vault derives a separate HMAC key with HKDF from
-its encryption key. Without a signing vault, connecta refuses to issue or accept
-links. Configure `vault: encryptedCredentialVault(storage, key)`; custom vaults
-must implement `signOAuthHandoff` and `verifyOAuthHandoff` with a secret key.
-The link grants no browser identity and starts no downstream flow on its own.
+The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
+and restart mode. Configure `vault: encryptedCredentialVault(storage, key)`, which derives its HMAC key with
+HKDF. Custom vaults need `signOAuthHandoff` and `verifyOAuthHandoff`; without a signing vault, links cannot be
+issued or accepted. A link grants no identity. After identity and permissions pass, its nonce is consumed
+before OAuth starts, even while consent is pending. Failed starts need new links; nonce markers expire with
+their links.
 
-Clerk browsers sign in through the configured hosted sign-in page or a local
-Clerk sign-in page and return to the same link. If the session cookie expires
-during consent, Clerk's handshake refreshes it and returns to the callback before
-connecta verifies identity or exchanges the code. Cloudflare Access enforces login
-at the edge and supplies its trusted Worker identity. Protect `/connect/*` and
-`/oauth/callback/*` with the same Access application as the MCP endpoint.
+Clerk sign-in returns to the same link. Expired session cookies use Clerk's handshake to refresh before
+identity checks or code exchange; responses preserve session cookies. Access supplies trusted Worker identity
+at the edge. Protect `/connect/*` and `/oauth/callback/*` with the MCP endpoint's Access application.
 
-The browser must match the initiating principal for shared and personal links.
-It must also retain the connector's management permission: `personalConnection`
-for personal connectors or `credentialAdministration` for shared connectors.
-Connecta records this principal against the downstream state for both scopes.
-The callback requires the same verified interactive identity and permission,
-checks the downstream state before exchanging a code, and consumes the saved
-handoff. After upgrading, request a new `/connect` link for pending consent. A callback
-without a saved initiating user cannot complete.
-[Meta-tools](./meta-tools.md#authorization-recovery) has the recovery shapes.
+For both connector scopes, the browser must match the initiating principal and retain `personalConnection` or
+shared `credentialAdministration` permission. Connecta saves that principal against downstream state. The
+callback checks state, identity, and permission before consuming the handoff and exchanging the code. Reissue
+pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
+
+`compareAndSet` atomically claims link nonces and callback handoffs, with one concurrent winner. Without CAS,
+read/write or read/delete windows allow multiple winners; eventual consistency can expose consumed values
+until deletion or nonce markers propagate. Such stores cannot guarantee one-shot completion.
+[Meta-tools](./meta-tools.md#authorization-recovery) describes recovery.
 
 ## URL-based downstream OAuth clients
 

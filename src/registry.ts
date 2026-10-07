@@ -655,14 +655,21 @@ export class Registry implements RegistryView {
     };
   }
 
-  async clearOAuthHandoff(
+  async consumeOAuthHandoff(
     connectorId: string,
     state: string | null,
-  ): Promise<void> {
-    if (!state) return;
-    await this.opts.storage.delete(
-      this.oauthHandoffKey(connectorId, await sha256Hex(state)),
-    );
+    principalKey: string,
+  ): Promise<boolean> {
+    if (!state) return false;
+    const key = this.oauthHandoffKey(connectorId, await sha256Hex(state));
+    if (this.opts.storage.compareAndSet) {
+      return this.opts.storage.compareAndSet(key, principalKey, null);
+    }
+    // Without CAS, concurrent readers can both pass before either deletes.
+    // Eventually consistent stores can also read the handoff after deletion.
+    if (await this.opts.storage.get(key) !== principalKey) return false;
+    await this.opts.storage.delete(key);
+    return true;
   }
 
   /**
