@@ -303,6 +303,9 @@ function serveMcp(
   const servers: McpServer[] = [];
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
+      // A request-local server cannot publish catalog changes. Set this before
+      // tool registration, whose SDK default otherwise advertises listChanged.
+      capabilities: { tools: { listChanged: false } },
       instructions: CONNECTA_INSTRUCTIONS,
       cacheHints: {
         "tools/list": {
@@ -393,6 +396,9 @@ function serveMcp(
       return createMcpHandler(createServer, {
         ...SDK_BODY_BOUND,
         legacy: "reject",
+        // The SDK refuses listens with -32603 before opening an SSE stream.
+        // A fresh handler has no publisher; do not hold admission for a listen.
+        maxSubscriptions: 0,
         onerror: (error) => opts.logger.error("[connecta] MCP handler error", error),
       }).fetch(request);
     }
