@@ -574,6 +574,7 @@ export class InvocationService {
               target.toolName,
               args ?? {},
               connectorContext,
+              { definition: target.definition },
             );
           };
           // The permit belongs to this scope, so success, failure, and the

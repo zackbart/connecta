@@ -766,9 +766,8 @@ describe("tool metadata across a paginated catalog", () => {
     const context = { ...ctx(), requestScope: {} };
     await connector.listTools(context);
 
-    // `execution.taskSupport` lives only on the SDK's own tool shape — a
-    // ToolDef does not carry it. The request-scoped definition map therefore
-    // retains the raw listing rather than the mapped public catalog.
+    // Direct connector calls without a catalog option still use the complete
+    // request-scoped definition map, including execution requirements.
     await expect(connector.callTool("gated", {}, context)).rejects.toThrow(
       /task-based execution/i,
     );
