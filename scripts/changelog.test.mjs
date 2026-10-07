@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertSuiteCollection } from "./check-node-suites.mjs";
-import { GUARDS, relatedInputs } from "./check-fast.mjs";
+import { GUARDS, failureOutput, relatedInputs } from "./check-fast.mjs";
 
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "connecta-changelog-"));
@@ -243,4 +243,11 @@ test("check:fast defers inputs that would make Vitest rerun every suite", () => 
   const { related, deferred } = relatedInputs({ changed, suites: [] });
   assert.deepEqual(deferred, ["package.json", "vitest.config.ts", "templates/node/package.json"]);
   assert.deepEqual(related, [...GUARDS, "src/package.json.ts"].sort());
+});
+
+test("check:fast keeps a failing Vitest run's summary and bounds other output", () => {
+  const vitest = ["✓ passing suite", "", "⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", " FAIL test/a.test.ts > breaks", " Test Files  1 failed"].join("\n");
+  assert.equal(failureOutput(vitest), ["⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", " FAIL test/a.test.ts > breaks", " Test Files  1 failed"].join("\n"));
+  const long = Array.from({ length: 250 }, (_, index) => `line ${index}`).join("\n");
+  assert.deepEqual(failureOutput(`${long}\n`).split("\n"), Array.from({ length: 200 }, (_, index) => `line ${index + 50}`));
 });

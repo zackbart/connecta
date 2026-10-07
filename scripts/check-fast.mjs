@@ -66,6 +66,14 @@ function suiteSources() {
   return suites;
 }
 
+// A failing Vitest run prints every passing suite first; keep its failure
+// summary. Other steps keep their last lines.
+export function failureOutput(output) {
+  const summary = output.indexOf("Failed Tests");
+  const lines = output.slice(summary === -1 ? 0 : output.lastIndexOf("\n", summary) + 1).trimEnd().split("\n");
+  return lines.slice(-200).join("\n");
+}
+
 // Run steps concurrently and buffer their output, so a failure prints whole.
 function run(name, command, args) {
   const started = performance.now();
@@ -101,7 +109,7 @@ async function main() {
   ]);
   for (const result of results) {
     console.log(`${result.ok ? "ok  " : "FAIL"} ${result.name} ${result.seconds}s`);
-    if (!result.ok) console.log(result.output.trimEnd().replace(/^/gm, "  "));
+    if (!result.ok) console.log(failureOutput(result.output).replace(/^/gm, "  "));
     else if (result.name.startsWith("vitest")) {
       for (const line of result.output.split("\n").filter((line) => /^\s*(Test Files|Tests) /.test(line))) console.log(`  ${line.trim()}`);
     }
