@@ -1735,6 +1735,7 @@ describe("clerk metadata routes (no network)", () => {
         clerkAuth({
           publishableKey: pk,
           secretKey: "sk_test_fake",
+          allowedOAuthClientIds: ["client_connecta"],
           publicUrl: BASE,
         }),
       ],

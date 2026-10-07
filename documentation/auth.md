@@ -34,7 +34,7 @@ import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 createConnecta({
   storage,
   accessTokens: accessTokens(storage),
-  auth: clerkAuth({ publishableKey, secretKey }),
+  auth: clerkAuth({ publishableKey, secretKey, allowedOAuthClientIds }),
   ui: operatorUi(),
   identity: {
     connectorAccess, // Keep the existing principal and token-id grant rules.
@@ -222,7 +222,7 @@ createConnecta({
         accept: (id) => /^[a-z0-9._%+-]+@example\.com$/.test(id),
       },
     }),
-    clerkAuth({ publishableKey, secretKey }),
+    clerkAuth({ publishableKey, secretKey, allowedOAuthClientIds }),
   ],
   identity: { connectorAccess },
   connectors, executor,
@@ -324,7 +324,7 @@ that sees one tool, both over the same credentials and catalog cache.
 createConnecta({
   auth: [
     bearerToken(botSecret, { subjectId: "calendar-bot" }),
-    clerkAuth({ publishableKey, secretKey }),
+    clerkAuth({ publishableKey, secretKey, allowedOAuthClientIds }),
   ],
   pools: {
     support: {
@@ -702,6 +702,53 @@ otherwise, and a static connecta bearer is not a standalone edge credential
 because Cloudflare rejects the request before connecta sees it. Custom public
 webhooks live outside connecta and need their own Access routing policy. The
 [Worker example](../examples/worker/) carries the whole deployment shape.
+
+## Clerk OAuth tokens and operator sessions
+
+On `/mcp` and `/mcp/<pool>`, `clerkAuth` accepts only Clerk OAuth access
+tokens. A JWT's `aud` or `resource` claim, when present, must contain the
+canonical resource URL published in that endpoint's protected-resource
+metadata. If both claims are present, both must match. A token for `/mcp`
+does not authorize `/mcp/support`, or the reverse. Configure `publicUrl` when
+requests reach the deployment through an internal origin.
+
+Clerk's JWT and opaque OAuth tokens are verified by `@clerk/backend`. In
+3.12.0, the authenticated OAuth object exposes `clientId` and `scopes`, but
+neither audience nor resource. Connecta reads JWT binding claims from the exact
+token the SDK verified. Opaque verification returns no binding to check, and
+Clerk's documented OAuth configuration provides no RFC 8707 resource setting.
+See [Clerk OAuth verification](https://clerk.com/docs/guides/configure/auth-strategies/oauth/verify-oauth-tokens)
+and [OAuth configuration](https://clerk.com/docs/guides/configure/auth-strategies/oauth/how-clerk-implements-oauth).
+
+Every Clerk deployment must now explicitly configure `allowedOAuthClientIds`:
+
+```ts
+clerkAuth({
+  publishableKey,
+  secretKey,
+  publicUrl: "https://connecta.example.com",
+  allowedOAuthClientIds: ["your-connecta-client-id"],
+});
+```
+
+Use exact client IDs from Clerk's OAuth applications, dedicated to this
+deployment. An audience-less JWT or an opaque token must name one of those
+clients. An allowlisted client never overrides a present, mismatched binding.
+This fallback binds admission to the configured clients, not to an RFC 8707
+resource indicator. Do not share these clients with other resource servers.
+The list applies to all pools; pool and identity grants still decide access.
+Dynamically registered clients need their IDs added before they can use
+unbound tokens. Built-in Clerk profile scopes do not identify an MCP resource,
+and `scopes` remains metadata, not an admission rule.
+
+Use `allowedOAuthClientIds: []` to accept only resource-bound OAuth JWTs, or
+when Clerk provides operator sign-in and another adapter provides MCP auth.
+Omitting the option throws at construction with configuration instructions.
+Clerk session tokens authenticate operator routes and downstream OAuth browser
+callbacks only; they never authenticate MCP requests. Operator sessions retain
+the deployment-origin `azp` check. Rejected MCP tokens still receive a `401`
+Bearer challenge with the endpoint's `resource_metadata` URL, as required by
+[MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#token-handling).
 
 ## Clerk configuration is checked at construction
 

@@ -81,9 +81,14 @@ npm install @clerk/backend
 
 Set `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, enable the corresponding
 `clerkAuth` import and auth entry in `src/index.ts`, and set `PUBLIC_URL`.
-Enable Dynamic Client Registration on the Clerk instance if MCP clients should
-sign in with OAuth. Connecta no longer issues named client access tokens; keep
-the configured bearer only for clients that need it.
+Set `allowedOAuthClientIds` to the exact IDs of OAuth clients dedicated to this
+deployment. Tokens with an audience/resource claim must match the canonical
+MCP endpoint URL. Use `[]` to require resource-bound JWTs or to use Clerk only
+for operator sign-in. If Dynamic Client Registration is enabled, add each
+client's ID before admitting unbound OAuth tokens. Clerk session tokens work
+only on operator routes. [Inbound auth](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#clerk-oauth-tokens-and-operator-sessions)
+explains the Clerk token formats and configuration. Keep the configured bearer
+only for clients that need it.
 
 Set the code-owned identity resolvers deliberately. `connectorAccess` governs
 use; `credentialAdministration` permits shared-auth changes, and

@@ -119,6 +119,10 @@ configured bearer adapter. Connecta owns no accounts or groups and issues no
 client access tokens. Shared-credential administration and personal connection
 setup require separate explicit permissions, both denied by default. See
 [inbound auth](./documentation/auth.md#principals-visibility-and-operators).
+Clerk deployments explicitly configure dedicated `allowedOAuthClientIds` for
+unbound OAuth tokens, or `[]` to require resource-bound JWTs. Clerk session
+tokens authenticate operator routes only; [Clerk auth](./documentation/auth.md#clerk-oauth-tokens-and-operator-sessions)
+describes endpoint audience validation and the configuration migration.
 
 Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
 service. Those are decisions, and the [ethos](./ethos.md) records each one

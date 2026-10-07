@@ -416,6 +416,12 @@ before.
 ### Changed
 
 - Contributors: CI runs Chromium only for relevant PR paths and always on `main` and publish, with a versioned browser cache and bounded installation retries; local `check` still runs the full suite (#705).
+- Harden Clerk OAuth audience/resource validation on `/mcp` and pool endpoints.
+  A present JWT binding must match that endpoint's canonical resource URL.
+  Clerk deployments must configure `allowedOAuthClientIds` with client IDs
+  dedicated to the deployment for tokens without a binding, or `[]` to require
+  resource-bound JWTs. Clerk browser session tokens now authenticate operator
+  routes only. The MCP `401` protected-resource metadata challenge is unchanged.
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server

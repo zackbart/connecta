@@ -13,6 +13,10 @@ vi.mock("@clerk/backend", () => ({
 }));
 
 import { clerkAuth } from "../src/auth/clerk.js";
+import { createTestConnecta } from "./helpers.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { api } from "../src/connectors/api.js";
+import { signJwt } from "@clerk/backend/jwt";
 
 const BASE = "https://connecta.test";
 const domain = "clerk.example.com$";
@@ -47,6 +51,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
       publicUrl: BASE,
       signInUrl: "https://accounts.example.com/sign-in",
       signUpUrl: "https://accounts.example.com/sign-up",
@@ -66,6 +71,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
       publicUrl: BASE,
     });
     mocks.getUser.mockResolvedValue({
@@ -124,6 +130,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
     });
     mocks.getUser.mockResolvedValue({
       fullName: null,
@@ -156,6 +163,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
     });
 
     const first = auth.activityActorLabel!("user_123");
@@ -173,6 +181,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
     });
 
     const first = await auth.activityActorLabel!("user_123");
@@ -194,6 +203,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
     });
 
     const lookups = Array.from({ length: 12 }, (_, index) =>
@@ -226,6 +236,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
     });
 
     const first = auth.activityActorLabel!("user_123");
@@ -249,6 +260,7 @@ describe("clerkAuth inbound auth", () => {
         clerkAuth({
           publishableKey,
           secretKey: "sk_test_fake",
+          allowedOAuthClientIds: ["client_connecta"],
           ...options,
         } as never),
       ).toThrow("removed in issue #178");
@@ -256,19 +268,21 @@ describe("clerkAuth inbound auth", () => {
         clerkAuth({
           publishableKey,
           secretKey: "sk_test_fake",
+          allowedOAuthClientIds: ["client_connecta"],
           ...options,
         } as never),
       ).toThrow("ethos.md");
     }
   });
 
-  it("accepts Clerk OAuth and browser session tokens for the connecta origin", async () => {
+  it("accepts browser session tokens for the operator UI", async () => {
     mocks.authenticateRequest.mockResolvedValue({
-      toAuth: () => ({ isAuthenticated: true, userId: "user_123" }),
+      toAuth: () => ({ isAuthenticated: true, userId: "user_123", tokenType: "session_token", sessionClaims: { azp: BASE } }),
     });
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
       publicUrl: BASE,
     });
     const request = new Request(`${BASE}/ui/data`, {
@@ -279,24 +293,25 @@ describe("clerkAuth inbound auth", () => {
       ok: true,
       userId: "user_123",
     });
-    // authorizedParties must not be passed: OAuth access tokens may carry no
-    // azp claim and Clerk rejects azp=undefined when it is set.
     expect(mocks.authenticateRequest).toHaveBeenCalledWith(request, {
-      acceptsToken: ["oauth_token", "session_token"],
+      acceptsToken: "session_token",
     });
   });
 
-  it("accepts an OAuth access token without an azp claim", async () => {
+  it("accepts an allowlisted OAuth access token without an audience or azp", async () => {
     mocks.authenticateRequest.mockResolvedValue({
       toAuth: () => ({
         isAuthenticated: true,
         userId: "user_oauth",
         tokenType: "oauth_token",
+        clientId: "client_connecta",
+        getToken: async () => "oat_verified",
       }),
     });
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
       publicUrl: BASE,
     });
     const request = new Request(`${BASE}/mcp`, {
@@ -322,9 +337,10 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
       publicUrl: BASE,
     });
-    const request = new Request(`${BASE}/mcp`, {
+    const request = new Request(`${BASE}/ui/data`, {
       method: "POST",
       headers: { Authorization: "Bearer replayed-session-jwt" },
     });
@@ -332,6 +348,206 @@ describe("clerkAuth inbound auth", () => {
     const result = await auth.authorize(request, BASE);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.response.status).toBe(401);
+  });
+
+  describe("MCP OAuth resource binding", () => {
+    const jwt = (claims: Record<string, unknown>) =>
+      [
+        btoa(JSON.stringify({ alg: "RS256", typ: "at+jwt", kid: "test" })),
+        btoa(JSON.stringify({ sub: "user_123", ...claims })),
+        btoa("signature"),
+      ].map((part) => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")).join(".");
+
+    function deployment(allowedOAuthClientIds: readonly string[] = ["client_connecta"]) {
+      const auth = clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+        allowedOAuthClientIds,
+      });
+      return createTestConnecta({
+        publicUrl: BASE,
+        auth,
+        storage: memoryStorage(),
+        connectors: [api("calc", { tools: [{
+          name: "ping",
+          description: "Return a test response",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          handler: async () => "pong",
+        }] })],
+        pools: { support: { tools: ["calc"], grant: () => true } },
+      });
+    }
+
+    function authenticateOAuth(token: string, clientId = "client_connecta") {
+      // The SDK boundary has already verified this exact token. Its OAuth
+      // auth object exposes clientId/scopes but drops the JWT's aud/resource.
+      mocks.authenticateRequest.mockResolvedValue({
+        toAuth: () => ({
+          isAuthenticated: true,
+          tokenType: "oauth_token",
+          userId: "user_123",
+          clientId,
+          scopes: ["openid", "profile", "email"],
+          getToken: async () => token,
+        }),
+      });
+    }
+
+    function mcpRequest(path: string) {
+      return new Request(`${BASE}${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer supplied-token",
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+        }),
+      });
+    }
+
+    async function expectUnauthorized(c: ReturnType<typeof deployment>, path = "/mcp") {
+      const response = await c.fetch(mcpRequest(path));
+      expect(response.status).toBe(401);
+      const metadataPath = path === "/mcp" ? "" : path;
+      expect(response.headers.get("WWW-Authenticate")).toBe(
+        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}"`,
+      );
+      expect(await response.json()).toEqual({ error: "unauthorized" });
+      const metadata = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource${metadataPath}`));
+      expect(await metadata.json()).toMatchObject({ resource: `${BASE}${path}` });
+    }
+
+    it.each([
+      { aud: "https://other.test/mcp" },
+      { aud: `${BASE}/mcp/other` },
+      { aud: null },
+      { aud: [] },
+      { aud: 123 },
+      { aud: [123, `${BASE}/mcp`] },
+      { resource: "https://other.test/mcp" },
+      { aud: `${BASE}/mcp`, resource: "https://other.test/mcp" },
+    ])("rejects an unmatched or malformed binding even for an allowlisted client: %j", async (claims) => {
+      authenticateOAuth(jwt(claims));
+      await expectUnauthorized(deployment());
+    });
+
+    it.each(["oat_verified", jwt({})])("rejects another OAuth application on the same instance: %s", async (token) => {
+      authenticateOAuth(token, "client_other");
+      await expectUnauthorized(deployment());
+    });
+
+    it.each(["oat_verified", jwt({})])("rejects an unbound token without a fallback client allowlist: %s", async (token) => {
+      authenticateOAuth(token);
+      await expectUnauthorized(deployment([]));
+    });
+
+    it.each(["/mcp", "/mcp/support"])("accepts the canonical resource audience at %s without a fallback allowlist", async (path) => {
+      authenticateOAuth(jwt({ aud: `${BASE}${path}` }));
+      const response = await deployment([]).fetch(mcpRequest(path));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('"serverInfo"');
+      expect(mocks.authenticateRequest).toHaveBeenCalledWith(expect.any(Request), { acceptsToken: "oauth_token" });
+    });
+
+    it.each([
+      { aud: ["https://other.test/mcp", `${BASE}/mcp`] },
+      { resource: `${BASE}/mcp` },
+      { aud: `${BASE}/mcp`, resource: [`${BASE}/mcp`] },
+    ])("accepts a verified resource binding: %j", async (claims) => {
+      authenticateOAuth(jwt(claims));
+      const response = await deployment([]).fetch(mcpRequest("/mcp"));
+      expect(response.status).toBe(200);
+      await response.text();
+    });
+
+    it("uses the public resource URL behind a different request origin", async () => {
+      authenticateOAuth(jwt({ aud: `${BASE}/mcp` }));
+      const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE, allowedOAuthClientIds: [] });
+      await expect(auth.authorize(new Request("https://internal.test/mcp"), "https://internal.test")).resolves.toEqual({ ok: true, userId: "user_123" });
+    });
+
+    it("does not treat the base resource audience as a pool audience", async () => {
+      authenticateOAuth(jwt({ aud: `${BASE}/mcp` }));
+      await expectUnauthorized(deployment(), "/mcp/support");
+      authenticateOAuth(jwt({ aud: `${BASE}/mcp/support` }));
+      await expectUnauthorized(deployment());
+    });
+
+    it.each(["oat_verified", jwt({})])("keeps allowlisted unbound tokens working on pools: %s", async (token) => {
+      authenticateOAuth(token);
+      const response = await deployment().fetch(mcpRequest("/mcp/support"));
+      expect(response.status).toBe(200);
+      await response.text();
+    });
+
+    it("rejects session tokens on MCP and keeps the same session working through authorizeUiIdentity", async () => {
+      mocks.authenticateRequest.mockResolvedValue({
+        toAuth: () => ({ isAuthenticated: true, tokenType: "session_token", userId: "user_123", sessionClaims: { azp: BASE } }),
+      });
+      const c = deployment([]);
+      await expectUnauthorized(c);
+      await expectUnauthorized(c, "/mcp/support");
+      const response = await c.fetch(new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer supplied-token" },
+      }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ connectors: [{ id: "calc" }] });
+      expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), { acceptsToken: "session_token" });
+    });
+
+    it("rejects a failed SDK verification before reading token claims", async () => {
+      const getToken = vi.fn();
+      mocks.authenticateRequest.mockResolvedValue({ status: "signed-out", toAuth: () => ({ isAuthenticated: false, getToken }) });
+      await expectUnauthorized(deployment());
+      expect(getToken).not.toHaveBeenCalled();
+    });
+
+    it("checks the audience after real Clerk JWT verification", async () => {
+      const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
+      const keys = await crypto.subtle.generateKey({
+        name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256",
+      }, true, ["sign", "verify"]) as CryptoKeyPair;
+      const publicDer = new Uint8Array(await crypto.subtle.exportKey("spki", keys.publicKey) as ArrayBuffer);
+      const jwtKey = `-----BEGIN PUBLIC KEY-----\n${btoa(String.fromCharCode(...publicDer))}\n-----END PUBLIC KEY-----`;
+      const privateKey = await crypto.subtle.exportKey("jwk", keys.privateKey) as JsonWebKey;
+      const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", jwtKey });
+      mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
+      const c = deployment();
+      const now = Math.floor(Date.now() / 1000);
+      for (const [aud, status] of [[`${BASE}/mcp`, 200], ["https://other.test/mcp", 401]] as const) {
+        const token = await signJwt({
+          sub: "user_123", iss: "https://clerk.example.com", client_id: "client_connecta",
+          scope: "openid profile email", iat: now, exp: now + 300, aud,
+        }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid: "test" } });
+        const request = mcpRequest("/mcp");
+        request.headers.set("Authorization", `Bearer ${token}`);
+        const response = await c.fetch(request);
+        expect(response.status).toBe(status);
+        await response.text();
+      }
+    });
+
+    it("checks token binding on every request even after caching an admitted user", async () => {
+      const gate = vi.fn(() => true);
+      const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE, allowedOAuthClientIds: ["client_connecta"], gate });
+      authenticateOAuth("oat_verified");
+      expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(true);
+      authenticateOAuth(jwt({ aud: "https://other.test/mcp" }));
+      const result = await auth.authorize(mcpRequest("/mcp"), BASE);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(401);
+      expect(gate).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([undefined, null, "client_connecta", [""], ["*"], [" client_connecta"], ["client\nconnecta"], [123]])("requires explicit, well-formed fallback configuration: %j", (allowedOAuthClientIds) => {
+      expect(() => clerkAuth({ publishableKey, secretKey: "sk_test_fake", allowedOAuthClientIds } as never)).toThrow("allowedOAuthClientIds");
+    });
   });
 
   // allowedDomains decides who this deployment admits (documentation/auth.md).
@@ -355,11 +571,18 @@ describe("clerkAuth inbound auth", () => {
       options: Partial<Parameters<typeof clerkAuth>[0]>,
     ) => {
       mocks.authenticateRequest.mockResolvedValue({
-        toAuth: () => ({ isAuthenticated: true, userId: "user_123" }),
+        toAuth: () => ({
+          isAuthenticated: true,
+          userId: "user_123",
+          tokenType: "oauth_token",
+          clientId: "client_connecta",
+          getToken: async () => "oat_verified",
+        }),
       });
       const auth = clerkAuth({
         publishableKey,
         secretKey: "sk_test_fake",
+        allowedOAuthClientIds: ["client_connecta"],
         publicUrl: BASE,
         ...options,
       });
@@ -377,6 +600,7 @@ describe("clerkAuth inbound auth", () => {
         clerkAuth({
           publishableKey,
           secretKey: "sk_test_fake",
+          allowedOAuthClientIds: ["client_connecta"],
           allowedDomains: allowedDomains as string[],
         });
       // An empty list is fail-closed if honored and fail-open if read as "no
@@ -493,6 +717,7 @@ describe("clerkAuth inbound auth", () => {
         clerkAuth({
           publishableKey,
           secretKey: "sk_test_fake",
+          allowedOAuthClientIds: ["client_connecta"],
           allowedDomains: ["aKme.com"],
         }),
       ).toThrow("is not a domain");
@@ -559,13 +784,20 @@ describe("clerkAuth inbound auth", () => {
 
     it("caches the combined verdict, so composing costs no extra Clerk calls", async () => {
       mocks.authenticateRequest.mockResolvedValue({
-        toAuth: () => ({ isAuthenticated: true, userId: "user_123" }),
+        toAuth: () => ({
+          isAuthenticated: true,
+          userId: "user_123",
+          tokenType: "oauth_token",
+          clientId: "client_connecta",
+          getToken: async () => "oat_verified",
+        }),
       });
       mocks.getUser.mockResolvedValue(userWithEmail("dev@acme.com"));
       const gate = vi.fn(() => true);
       const auth = clerkAuth({
         publishableKey,
         secretKey: "sk_test_fake",
+        allowedOAuthClientIds: ["client_connecta"],
         publicUrl: BASE,
         allowedDomains: ["acme.com"],
         gate,
@@ -592,7 +824,13 @@ describe("clerkAuth inbound auth", () => {
           .get("authorization")!
           .replace("Bearer ", "");
         return {
-          toAuth: () => ({ isAuthenticated: true, userId }),
+          toAuth: () => ({
+            isAuthenticated: true,
+            userId,
+            tokenType: "oauth_token",
+            clientId: "client_connecta",
+            getToken: async () => "oat_verified",
+          }),
         };
       });
       mocks.getUser.mockImplementation(async (userId: string) =>
@@ -601,6 +839,7 @@ describe("clerkAuth inbound auth", () => {
       const auth = clerkAuth({
         publishableKey,
         secretKey: "sk_test_fake",
+        allowedOAuthClientIds: ["client_connecta"],
         publicUrl: BASE,
         allowedDomains: ["acme.com"],
       });
@@ -645,7 +884,13 @@ describe("clerkAuth inbound auth", () => {
           .get("authorization")!
           .replace("Bearer ", "");
         return {
-          toAuth: () => ({ isAuthenticated: true, userId }),
+          toAuth: () => ({
+            isAuthenticated: true,
+            userId,
+            tokenType: "oauth_token",
+            clientId: "client_connecta",
+            getToken: async () => "oat_verified",
+          }),
         };
       });
       mocks.getUser.mockImplementation(async (userId: string) =>
@@ -657,6 +902,7 @@ describe("clerkAuth inbound auth", () => {
       const auth = clerkAuth({
         publishableKey,
         secretKey: "sk_test_fake",
+        allowedOAuthClientIds: ["client_connecta"],
         publicUrl: BASE,
         allowedDomains: ["acme.com"],
       });
@@ -720,6 +966,7 @@ describe("clerkAuth inbound auth", () => {
       clerkAuth({
         publishableKey: key as string,
         secretKey: "sk_test_fake",
+        allowedOAuthClientIds: ["client_connecta"],
         publicUrl: BASE,
       });
 
@@ -801,6 +1048,7 @@ describe("clerkAuth inbound auth", () => {
     const auth = clerkAuth({
       publishableKey,
       secretKey: "sk_test_fake",
+      allowedOAuthClientIds: ["client_connecta"],
       publicUrl: BASE,
     });
     const request = new Request(`${BASE}/ui/data`, {

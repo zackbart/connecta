@@ -297,6 +297,7 @@ describe("status UI", () => {
         clerkAuth({
           publishableKey,
           secretKey: "sk_test_fake",
+          allowedOAuthClientIds: ["client_connecta"],
           publicUrl: BASE,
         }),
       ],

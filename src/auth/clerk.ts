@@ -3,6 +3,7 @@
 // ~60s identity caching.
 
 import { createClerkClient } from "@clerk/backend";
+import { decodeJwt } from "@clerk/backend/jwt";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
@@ -14,6 +15,17 @@ export interface ClerkAuthOptions {
   secretKey: string;
   /** Public base URL of this deployment. Defaults to the request origin. */
   publicUrl?: string;
+  /**
+   * OAuth client IDs dedicated to this deployment, used only when a verified
+   * access token has no audience/resource claim. Clerk 3.12 exposes `clientId`
+   * for both JWT and opaque OAuth tokens, but no resource-bound opaque token.
+   * Required explicitly: use `[]` to require resource-bound JWTs or to use
+   * Clerk only for operator sign-in. A present audience/resource must match
+   * the canonical `/mcp` or `/mcp/<pool>` URL even for an allowlisted client.
+   * Never share these clients with another resource server. Pool grants still
+   * narrow access; the fallback client list applies to every pool.
+   */
+  allowedOAuthClientIds: readonly string[];
   /**
    * Email domains this deployment admits, e.g. `["acme.com"]`. An
    * authenticated user whose verified primary email is not on one of them is
@@ -240,6 +252,51 @@ function normalizeAllowedDomains(
   return domains;
 }
 
+/** No wildcard or implicit all-clients mode for unbound OAuth tokens. */
+function normalizeOAuthClientIds(value: readonly string[]): ReadonlySet<string> {
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "clerkAuth: configure `allowedOAuthClientIds` with the OAuth client IDs " +
+        "dedicated to this deployment. Use [] to require resource-bound OAuth " +
+        "JWTs or to use Clerk only for operator sign-in.",
+    );
+  }
+  for (const id of value) {
+    if (typeof id !== "string" || !/^[\x21-\x7e]+$/.test(id) || id === "*") {
+      throw new Error(
+        "clerkAuth: `allowedOAuthClientIds` entries must be nonempty, " +
+          "non-wildcard client IDs without whitespace.",
+      );
+    }
+  }
+  return new Set(value);
+}
+
+/** Called only on the exact token Clerk has already authenticated. */
+function oauthResourceMatches(
+  token: string,
+  resource: string,
+  clientId: string,
+  allowedClientIds: ReadonlySet<string>,
+): boolean {
+  // Opaque verification exposes clientId, not audience/resource metadata.
+  if (token.startsWith("oat_")) return allowedClientIds.has(clientId);
+  const claims = decodeJwt(token).payload as Record<string, unknown>;
+  const bindings = ["aud", "resource"].filter((key) =>
+    Object.prototype.hasOwnProperty.call(claims, key),
+  );
+  if (bindings.length === 0) return allowedClientIds.has(clientId);
+  return bindings.every((key) => {
+    const value = claims[key];
+    const audiences = Array.isArray(value) ? value : [value];
+    return (
+      audiences.length > 0 &&
+      audiences.every((audience) => typeof audience === "string" && audience.length > 0) &&
+      audiences.includes(resource)
+    );
+  });
+}
+
 /**
  * Bounded, escaped form of the denied domain for the operator log — the same
  * treatment server logs give other caller-controlled values. An email domain is
@@ -297,6 +354,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     publishableKey: opts.publishableKey,
   });
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
+  const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
   const activityLabelCache = new Map<
@@ -549,14 +607,10 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       const tokenPresent = Boolean(request.headers.get("authorization"));
       let userId: string | undefined;
       try {
+        const pathname = new URL(request.url).pathname;
+        const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
         const state = await clerk.authenticateRequest(request, {
-          // MCP clients use Clerk OAuth access tokens; the browser operator UI
-          // uses the signed-in operator's short-lived Clerk session token.
-          // authorizedParties must NOT be passed here: OAuth access tokens may
-          // be JWTs without an azp claim, and Clerk rejects azp=undefined when
-          // that option is set. The sibling-subdomain pin it provided is
-          // enforced below, only for session tokens that actually carry azp.
-          acceptsToken: ["oauth_token", "session_token"],
+          acceptsToken: isMcp ? "oauth_token" : "session_token",
         });
         const auth = state.toAuth();
         if (!auth?.isAuthenticated) {
@@ -573,28 +627,32 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
             response: unauthorized(baseUrl, tokenPresent, request),
           };
         }
-        // Session JWTs carry `azp` (the origin they were minted for); pin it
-        // to this connecta deployment so a sibling subdomain's cookie/token
-        // cannot be replayed here. OAuth access tokens may have no azp.
-        const typed = auth as {
-          tokenType?: string;
-          sessionClaims?: { azp?: string } | null;
-          userId?: string | null;
-        };
-        if (typed.tokenType === "session_token") {
-          const azp = typed.sessionClaims?.azp;
+        if (isMcp) {
+          const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
+          if (
+            auth.tokenType !== "oauth_token" ||
+            !oauthResourceMatches(
+              await auth.getToken(),
+              resource,
+              auth.clientId,
+              allowedOAuthClientIds,
+            )
+          ) {
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+          }
+        } else {
+          if (auth.tokenType !== "session_token") {
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+          }
+          // Browser session origins retain their existing deployment pin.
+          const azp = auth.sessionClaims?.azp;
           const origin = new URL(resolveBase(baseUrl)).origin;
           if (azp && azp !== origin) {
-            console.warn(
-              `[connecta] session token azp mismatch: azp=${azp} expected=${origin}`,
-            );
-            return {
-              ok: false,
-              response: unauthorized(baseUrl, tokenPresent, request),
-            };
+            console.warn("[connecta] session token azp mismatch");
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
         }
-        userId = typed.userId ?? undefined;
+        userId = auth.userId ?? undefined;
       } catch (error) {
         console.warn(
           `[connecta] clerk authenticateRequest threw: ${
