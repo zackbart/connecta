@@ -1208,6 +1208,38 @@ test("falls back to the authorization link when the browser blocks the tab", asy
   await expect(crm.locator(".btn.primary")).toHaveCount(1);
 });
 
+test("asks the route again after the fallback link is followed, rather than reopening a spent URL", async ({ page }) => {
+  // A callback claims the URL's state, and can fail after claiming it, so a
+  // followed fallback is never offered twice: the next attempt is Continue,
+  // which hands back the same URL while it is good and a fresh one after.
+  oauthConnected = false;
+  await page.addInitScript("window.open = () => null;");
+  await openAuthenticated(page);
+  const crm = await openRow(page, "CRM");
+  await crm.getByRole("button", { name: "Connect CRM" }).click();
+  const link = crm.getByRole("link", { name: "Open authorization page" });
+  await expect(link).toBeVisible();
+
+  const popup = page.waitForEvent("popup");
+  await link.click();
+  await (await popup).close();
+  await expect(link).toHaveCount(0);
+  // A passive re-read on return keeps it that way.
+  await page.evaluate(`
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+  `);
+  await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
+  await expect(link).toHaveCount(0);
+
+  const before = requests.length;
+  await crm.getByRole("button", { name: "Connect CRM" }).click();
+  await expect(link).toBeVisible();
+  expect(
+    requests.slice(before).filter(({ path }) => path.startsWith("/ui/oauth/")).map(({ method, path }) => `${method} ${path}`),
+  ).toEqual(["POST /ui/oauth/oauth?mode=continue"]);
+});
+
 test("re-reads status when the tab comes back, without starting authorization", async ({ page }) => {
   oauthConnected = false;
   await openAuthenticated(page);

@@ -43,6 +43,7 @@ import {
   askConfirm,
   cancelConfirm,
   disconnectOAuth,
+  followOAuthFallback,
   refreshConnector,
   setConnectorFilter,
   startOAuth,
@@ -210,6 +211,7 @@ function AuthActions({
         href={authorization}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={() => followOAuthFallback(id)}
       >
         Open authorization page
       </a>

@@ -5,8 +5,8 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
-import { required } from "./helpers.js";
-import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
+import { createTestConnecta, required } from "./helpers.js";
+import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
 
 // Every interleaving below is driven through remoteMcp()'s own verifyState and
 // finishAuth, so the SDK runs its real callback sequence: discovery, client,
@@ -30,6 +30,7 @@ function authorizationServer() {
   const tokenRequests: URLSearchParams[] = [];
   let registered = 0;
   let issued = 0;
+  let whileOnTheWire: (() => Promise<void>) | undefined;
   const fetchStub: FetchLike = async (input, init = {}) => {
     const url = new URL(input);
     if (url.href === resourceMetadataUrl) {
@@ -58,6 +59,7 @@ function authorizationServer() {
       const params = new URLSearchParams(String(init.body));
       tokenRequests.push(params);
       if (params.get("grant_type") === "authorization_code") {
+        await whileOnTheWire?.();
         const code = params.get("code") ?? "";
         if (!issuedCodes.has(code) || redeemed.has(code)) {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
@@ -84,6 +86,8 @@ function authorizationServer() {
     tokenRequests,
     /** Consent at the server: a code it will redeem exactly once. */
     issue(code: string) { issuedCodes.add(code); return code; },
+    /** Run `work` once a code exchange has reached the server, before it answers. */
+    onExchange(work: () => Promise<void>) { whileOnTheWire = async () => { whileOnTheWire = undefined; await work(); }; },
     /** Token requests that carried `code`. */
     carrying: (code: string) => tokenRequests.filter((params) => params.get("code") === code).length,
   };
@@ -186,6 +190,127 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       const next = await verified(c, storage, restarted.state);
       expect(await next(server.issue("code-b"))).toBeUndefined();
       expect(await storedTokens(storage, restarted.epoch)).toMatchObject({ access_token: "access-1" });
+    },
+  );
+
+  it.each(STORES)(
+    "sends nothing when a restart lands while the state claim's answer is on its way back, on %s",
+    async (_label, atomic) => {
+      // The claim commits; its answer is held; a restart completes; the
+      // answer arrives. The final epoch check comes after the claim, so it
+      // sees the restart.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const backing = backingStore(atomic);
+      let stateKey: string | undefined;
+      const claimed = deferred<void>();
+      const release = deferred<void>();
+      const hold = async <T>(answer: T) => {
+        stateKey = undefined;
+        claimed.resolve();
+        await release.promise;
+        return answer;
+      };
+      const storage: KVStorage = atomic
+        ? { ...backing,
+            async compareAndSet(key, expected, next, options) {
+              const won = await backing.compareAndSet!(key, expected, next, options);
+              return key === stateKey ? hold(won) : won;
+            } }
+        : { ...backing,
+            async delete(key) {
+              await backing.delete(key);
+              if (key === stateKey) await hold(undefined);
+            } };
+      const c = connector();
+      const { state, epoch } = await started(c, storage);
+      const finish = await verified(c, storage, state);
+      stateKey = oauthValueStorageKey("oauth:state", epoch);
+
+      const finishing = finish(server.issue("code-a"));
+      await claimed.promise;
+      await started(c, storage);
+      release.resolve();
+
+      const error = await finishing;
+      expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(server.tokenRequests).toEqual([]);
+    },
+  );
+
+  it.each(STORES)(
+    "sends nothing when a restart lands while the final epoch read is in flight, on %s",
+    async (_label, atomic) => {
+      // The read is issued after the claim and held before it reaches the
+      // store; the restart publishes; the read then sees it.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const backing = backingStore(atomic);
+      let armed = false;
+      let stateKey: string | undefined;
+      const reading = deferred<void>();
+      const release = deferred<void>();
+      const storage: KVStorage = { ...backing,
+        async get(key) {
+          if (armed && key === "oauth:generation") {
+            armed = false;
+            reading.resolve();
+            await release.promise;
+          }
+          return backing.get(key);
+        },
+        ...(atomic
+          ? { async compareAndSet(key: string, expected: string | null, next: string | null) {
+              const won = await backing.compareAndSet!(key, expected, next);
+              if (key === stateKey) armed = true;
+              return won;
+            } }
+          : { async delete(key: string) {
+              await backing.delete(key);
+              if (key === stateKey) armed = true;
+            } }),
+      };
+      const c = connector();
+      const { state, epoch } = await started(c, storage);
+      const finish = await verified(c, storage, state);
+      stateKey = oauthValueStorageKey("oauth:state", epoch);
+
+      const finishing = finish(server.issue("code-a"));
+      await reading.promise;
+      await started(c, backing);
+      release.resolve();
+
+      expect(String(await finishing)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(server.tokenRequests).toEqual([]);
+    },
+  );
+
+  it.each(STORES)(
+    "saves nothing when a restart lands after the final check, while the request is on the wire, on %s",
+    async (_label, atomic) => {
+      // The other side of the line: the code has left. Its tokens never land
+      // where any reader looks, the callback still reports the supersession,
+      // and the restart's own consent is untouched. That grant is the one more
+      // consent this costs.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const storage = backingStore(atomic);
+      const c = connector();
+      const { state, epoch } = await started(c, storage);
+      const finish = await verified(c, storage, state);
+      let restarted: Awaited<ReturnType<typeof started>> | undefined;
+      server.onExchange(async () => { restarted = await started(c, storage); });
+
+      const error = await finish(server.issue("code-a"));
+
+      expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+      expect(server.carrying("code-a")).toBe(1);
+      const restart = required(restarted);
+      expect(await storedTokens(storage, epoch)).toBeUndefined();
+      expect(await storedTokens(storage, restart.epoch)).toBeUndefined();
+      expect(await storage.get("oauth:generation")).toBe(restart.epoch);
+      expect(await (await verified(c, storage, restart.state))(server.issue("code-b"))).toBeUndefined();
+      expect(await storedTokens(storage, restart.epoch)).toMatchObject({ access_token: "access-2" });
     },
   );
 
@@ -395,7 +520,10 @@ describe("a refused code exchange invalidates only what it began with", () => {
 describe("an entry retirement on a store without compareAndSet", () => {
   const manifestKey = (generation: string) => `oauth:cleanup:${encodeURIComponent(generation)}`;
 
-  it("leaves nothing of a restart it replaced once Disconnect runs", async () => {
+  it.each([
+    ["an epoch an earlier restart published", "v2:unbound-epoch"],
+    ["the legacy generation, which has no record and no manifest", "legacy"],
+  ] as const)("leaves nothing of a restart it replaced once Disconnect runs, retiring %s", async (_label, unbound) => {
     // A flow inspects an unbound grant and passes its retirement's recheck. A
     // restart then runs start to finish and completes its consent. Only then
     // does the retirement's generation write land, replacing the restart's
@@ -403,15 +531,20 @@ describe("an entry retirement on a store without compareAndSet", () => {
     const server = authorizationServer();
     vi.stubGlobal("fetch", server.fetchStub);
     const backing = backingStore(false);
-    // An epoch published by an earlier restart, holding a grant no issuer stamp binds.
-    const unbound = "v2:unbound-epoch";
-    await backing.set("oauth:generation", unbound);
-    await backing.set(manifestKey(unbound), "[]");
+    // A grant no issuer stamp binds: in a published epoch with its manifest,
+    // or written before epochs existed, under the historical key names.
+    if (unbound !== "legacy") {
+      await backing.set("oauth:generation", unbound);
+      await backing.set(manifestKey(unbound), "[]");
+    }
     for (const [key, value] of [
       ["oauth:client", { client_id: "old-client", client_secret: "old-secret", redirect_uris: [REDIRECT] }],
       ["oauth:tokens", { access_token: "old-access", token_type: "Bearer", refresh_token: "old-refresh" }],
     ] as const) {
-      await backing.set(oauthValueStorageKey(key, unbound), JSON.stringify({ connectaOAuthVersion: 2, generation: unbound, value }));
+      await backing.set(
+        oauthValueStorageKey(key, unbound),
+        unbound === "legacy" ? JSON.stringify(value) : JSON.stringify({ connectaOAuthVersion: 2, generation: unbound, value }),
+      );
     }
     let holdGeneration = true;
     const recheckPassed = deferred<void>();
@@ -451,6 +584,53 @@ describe("an entry retirement on a store without compareAndSet", () => {
     for (const key of keys) {
       if (lineage.has(key)) continue;
       expect(await storage.get(key), key).not.toContain(restart.epoch);
+    }
+  });
+});
+
+describe("the callback route and a duplicate callback", () => {
+  it("answers the losing duplicate as an already-used link, not as a refused exchange", async () => {
+    const server = authorizationServer();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const backing = memoryStorage();
+    let holdKey: string | undefined;
+    const reached = deferred<void>();
+    const release = deferred<void>();
+    const storage: KVStorage = { ...backing,
+      async get(key) {
+        const value = await backing.get(key);
+        if (key === holdKey) {
+          holdKey = undefined;
+          reached.resolve();
+          await release.promise;
+        }
+        return value;
+      },
+    };
+    const { logger, warnings } = spyLogger();
+    const connecta = createTestConnecta({ publicUrl: BASE, storage, logger, connectors: [connector()] });
+    try {
+      const c = required(connecta.registry.getConnector("svc"));
+      const start = await c.startAuth!(connecta.registry.contextFor("svc", BASE), { force: true });
+      const state = required(new URL(required(start.authorizationUrl)).searchParams.get("state") ?? undefined);
+      const epoch = required((await backing.get("conn:svc:oauth:generation")) ?? undefined);
+      const callback = `${BASE}/oauth/callback/svc?code=${server.issue("code-a")}&state=${state}`;
+      holdKey = `conn:svc:${oauthValueStorageKey("oauth:verifier", epoch)}`;
+
+      const held = connecta.fetch(new Request(callback));
+      await reached.promise;
+      const first = await connecta.fetch(new Request(callback));
+      release.resolve();
+      const duplicate = await held;
+
+      expect(first.status).toBe(200);
+      expect(duplicate.status).toBe(400);
+      expect(await duplicate.text()).toContain("Authorization could not be completed");
+      expect(server.carrying("code-a")).toBe(1);
+      expect(warnings().join("\n")).toMatch(/with 400: another callback had already claimed its state\. No authorization code was exchanged\./);
+      expect(warnings().join("\n")).not.toMatch(/with 500/);
+    } finally {
+      await connecta.close();
     }
   });
 });

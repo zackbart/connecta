@@ -494,6 +494,17 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
   });
 }
 
+/**
+ * The fallback link a blocked tab left behind has been followed. Its consent
+ * URL is spent once a callback claims its state, and a callback can fail after
+ * claiming it, so the row goes back to its Connect button: a second attempt
+ * asks the route again (Continue), which hands back the same URL while it is
+ * still good and a fresh one once it is not.
+ */
+export function followOAuthFallback(connector: string): void {
+  if (state.oauthBlocked === connector) set({ oauthBlocked: null });
+}
+
 export function disconnectOAuth(connector: string): Promise<void> {
   return mutate({
     request: (current) =>

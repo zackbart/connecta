@@ -45,6 +45,21 @@ export function authorizingContext(ctx: ConnectorContext): ConnectorContext {
   }), oauthPartitionFor(ctx));
 }
 
+/**
+ * A callback whose state another callback already claimed: fixed text, and
+ * nothing was sent. Its own class so the callback route can answer it as the
+ * already-used link it is, not as an exchange the provider refused.
+ */
+export class OAuthCallbackClaimedError extends ConnectorCallError {
+  constructor(connectorId: string) {
+    super(
+      "connector_call_failed",
+      `Connector "${connectorId}" authorization callback was already used by another request; nothing was exchanged.`,
+    );
+    this.name = "OAuthCallbackClaimedError";
+  }
+}
+
 /** A 256-bit random opaque value, hex-encoded — used for the OAuth `state`. */
 function randomState(): string {
   const bytes = new Uint8Array(32);
@@ -747,19 +762,23 @@ export class OAuthRefreshCoordinator {
         const grantType = tokenGrantType(init);
         // The last step before an authorization code leaves: every read the
         // exchange depends on has completed, so this is where the callback
-        // claims its state and proves its epoch is still the live one.
+        // claims its state, and then proves its epoch is still the live one
+        // in the same turn that dispatches the request.
         const exchange = grantType === "authorization_code";
         if (exchange) {
-          const answered = await provider.fenceCodeExchange();
+          const answered = await provider.claimCodeExchange();
           if (answered) return answered;
         }
-        if (requestSignal?.aborted) throw aborted(requestSignal);
-        const signal = requestSignal
-          ? init?.signal
-            ? AbortSignal.any([requestSignal, init.signal])
-            : requestSignal
-          : init?.signal;
-        const response = await baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        const dispatch = () => {
+          if (requestSignal?.aborted) throw aborted(requestSignal);
+          const signal = requestSignal
+            ? init?.signal
+              ? AbortSignal.any([requestSignal, init.signal])
+              : requestSignal
+            : init?.signal;
+          return baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        };
+        const response = await (exchange ? provider.dispatchCodeExchange(dispatch) : dispatch());
         if (grantType === undefined) return response;
         // A code exchange's failure is the SDK's to log as well.
         const forSdk = await sdkSafeTokenResponse(response);
@@ -1934,63 +1953,65 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * @internal The fence a code exchange crosses immediately before the token
-   * request leaves, after every read it depends on — client, verifier,
-   * discovery — has completed.
+   * @internal The first half of the fence a code exchange crosses before the
+   * token request leaves, after every read it depends on — client, verifier,
+   * discovery — has completed: the callback claims its state.
    *
-   * A verified callback claims its state here: on a store with
-   * `compareAndSet` the claim swaps out the exact value `verifyState`
+   * With `compareAndSet` the claim swaps out the exact value `verifyState`
    * matched, so of several callbacks carrying one state exactly one wins and
    * the rest send nothing. A store without it gets a re-read and a delete,
    * which stops a duplicate that arrives after the winner's claim and narrows
-   * — without closing — the race between two that arrive together. Beside the
-   * claim, the live epoch is read once more: a value read can complete after
-   * its own epoch check, so a restart published in that gap is caught here,
-   * before the code, verifier, or client secret is sent anywhere.
+   * — without closing — the race between two that arrive together. A claim
+   * that fails because a restart has already cleaned the epoch up reports the
+   * supersession, not a duplicate.
    *
    * The claim is spent whether or not the exchange then succeeds. The SDK
    * retries a refused code once after invalidating credentials; that retry is
    * answered with the refusal already received rather than sent again.
    */
-  async fenceCodeExchange(): Promise<Response | undefined> {
+  async claimCodeExchange(): Promise<Response | undefined> {
     const callback = this.callback;
     const generation = this.capturedGeneration;
     if (callback?.refusal) return callback.refusal.clone();
-    if (!callback || generation === null) {
-      // Not a callback this provider verified: a bound flow still fences its
-      // epoch, and anything else (direct use of the provider) is unchanged.
-      if (this.flowBound && generation !== null && (await this.generation()) !== generation) {
-        throw this.flowSuperseded();
-      }
-      return undefined;
-    }
-    if (callback.claimed) throw this.callbackAlreadyClaimed();
+    if (!callback || generation === null) return undefined;
+    if (callback.claimed) throw new OAuthCallbackClaimedError(this.connectorId);
     callback.claimed = true;
     const stateKey = oauthValueStorageKey("oauth:state", generation);
-    const claim = this.storage.compareAndSet
-      ? this.storage.compareAndSet(stateKey, callback.state, null)
-      : this.storage.get(stateKey).then(async (raw) => {
-          if (raw !== callback.state) return false;
-          await this.storage.delete(stateKey);
-          return true;
-        });
-    const [claimed, live] = await Promise.all([claim, this.generation()]);
-    if (live !== generation) throw this.flowSuperseded();
-    if (!claimed) throw this.callbackAlreadyClaimed();
-    return undefined;
+    let claimed: boolean;
+    if (this.storage.compareAndSet) {
+      claimed = await this.storage.compareAndSet(stateKey, callback.state, null);
+    } else {
+      claimed = (await this.storage.get(stateKey)) === callback.state;
+      if (claimed) await this.storage.delete(stateKey);
+    }
+    if (claimed) return undefined;
+    if ((await this.generation()) !== generation) throw this.flowSuperseded();
+    throw new OAuthCallbackClaimedError(this.connectorId);
+  }
+
+  /**
+   * @internal The second half: read the live epoch once more and, in the very
+   * reaction to that read, dispatch the token request. No await stands
+   * between the check and `send`, so nothing else this isolate runs can land
+   * between them. A restart published at or before that read fails the
+   * callback with the retryable supersession, and nothing is sent. One
+   * published after it, while the request is already leaving, cannot be
+   * ordered before the send without a lock across requests: its tokens are
+   * never saved, because every write checks the epoch again, and the callback
+   * reports the supersession then. That grant is lost, for one more consent.
+   */
+  dispatchCodeExchange(send: () => Promise<Response>): Promise<Response> {
+    const generation = this.capturedGeneration;
+    if (generation === null || (!this.callback && !this.flowBound)) return send();
+    return this.storage.get("oauth:generation").then((live) => {
+      if ((live ?? LEGACY_GENERATION) !== generation) throw this.flowSuperseded();
+      return send();
+    });
   }
 
   /** @internal Keep a refused code's answer for the SDK's retry to read. */
   recordCodeExchangeRefusal(forSdk: Response): void {
     if (this.callback) this.callback.refusal = forSdk.clone();
-  }
-
-  /** A callback whose state another callback already claimed: fixed text, nothing sent. */
-  private callbackAlreadyClaimed(): ConnectorCallError {
-    return new ConnectorCallError(
-      "connector_call_failed",
-      `Connector "${this.connectorId}" authorization callback was already used by another request; nothing was exchanged.`,
-    );
   }
 
   /** The issuer the epoch's own discovery names, as the SDK would derive it. */
@@ -2071,12 +2092,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private async cleanupBacklog(
     generation: string,
     now: number,
-  ): Promise<{
-    lineage: RetiredGeneration[];
-    recorded: Map<string, number>;
-    /** Whether `generation` has a manifest at all. */
-    published: boolean;
-  }> {
+  ): Promise<{ lineage: RetiredGeneration[]; recorded: Map<string, number> }> {
     const reads = await Promise.allSettled([
       this.storage.get(cleanupBacklogKey(generation)),
       this.storage.get(cleanupTimesKey(generation)),
@@ -2087,9 +2103,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       read.status === "fulfilled" ? read.value : null,
     );
     const recorded = retirementTimes(rawTimes ?? null);
-    if (raw === null || raw === undefined) {
-      return { lineage: [], recorded, published: false };
-    }
+    if (raw === null || raw === undefined) return { lineage: [], recorded };
     const parsed: unknown = JSON.parse(raw);
     if (
       !Array.isArray(parsed) ||
@@ -2108,7 +2122,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
         })),
       ),
       recorded,
-      published: true,
     };
   }
 
@@ -2195,21 +2208,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * unreachable — one more consent, which only an atomic swap could have
    * spared — and, unless it is recorded here, never deleted either.
    *
-   * The sign is `previous`'s own manifest. It existed when this reset read
-   * it, and only a reset that retired `previous` deletes it, after that
-   * reset's own activation and the deletion of `previous`'s values. Gone now,
-   * a sibling has retired `previous`. Its name is not recorded anywhere this
-   * reset can read directly, so the manifests are listed: an epoch with one
-   * that this lineage does not name is the sibling, or one that followed it,
-   * or residue a failed retirement abandoned. Each is recorded, at most
-   * MAX_EXPIRED_SWEEP of them, and the next Disconnect or Restart deletes
-   * those still carrying a manifest; the sweep reclaims the rest once their
-   * grace has passed. Nothing is read on any other reset.
+   * Every reset publishes its epoch's manifest before activating it, so the
+   * sibling has one, even when `previous` — the legacy generation, or an
+   * epoch from before lineages existed — never did. The manifests are listed
+   * once the write has landed: an epoch with one that this lineage does not
+   * name is the sibling, one that followed it, or residue a failed retirement
+   * abandoned. Each is recorded, at most MAX_EXPIRED_SWEEP of them, and the
+   * next Disconnect or Restart deletes those still carrying a manifest; the
+   * sweep reclaims the rest once their grace has passed. Only these
+   * conditional retirements list; no other reset reads anything more.
    *
-   * Best effort, as all cleanup is. It needs `list`; it misses a sibling
-   * whose own cleanup has not yet deleted `previous`'s manifest; and an
-   * eventually consistent store can list late. A failure here never fails the
-   * retirement — the fence, not this, keeps a replaced grant out of use.
+   * Best effort, as all cleanup is. It needs `list`, an eventually consistent
+   * store can list late, and a sibling whose own write lands after this one
+   * replaces this epoch instead. A failure here never fails the retirement:
+   * the fence, not this, keeps a replaced grant out of use.
    */
   private async adoptReplacedSiblings(
     previous: string,
@@ -2219,7 +2231,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const list = this.storage.list?.bind(this.storage);
     if (!list) return;
     try {
-      if ((await this.storage.get(cleanupBacklogKey(previous))) !== null) return;
       const prefix = cleanupBacklogKey("");
       const named = new Set([
         active,
@@ -2708,9 +2719,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       // as possible, and leave the residue an abandoned manifest is.
       if ((await this.generation()) !== expected) throw this.flowSuperseded();
       await this.storage.set("oauth:generation", active);
-      if (inherited.published) {
-        await this.adoptReplacedSiblings(previous, active, retired);
-      }
+      await this.adoptReplacedSiblings(previous, active, retired);
     }
     this.refreshCoordinator?.retire(previous);
 

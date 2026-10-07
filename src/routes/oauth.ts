@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { closeConnectorScope } from "../connector-scope.js";
-import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
+import { OAuthCallbackClaimedError, oauthValueStorageKey } from "../auth/downstream-oauth.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
 import {
@@ -163,6 +163,16 @@ function exchangeErrorCode(err: unknown): string {
     : "";
 }
 
+/** The provider's own refusal of a duplicate callback, wherever it is wrapped. */
+function claimedByAnotherCallback(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (let current = err; current instanceof Error && !seen.has(current); current = current.cause) {
+    if (current instanceof OAuthCallbackClaimedError) return true;
+    seen.add(current);
+  }
+  return false;
+}
+
 async function finishOAuthCallback(
   context: RouteContext,
 ): Promise<Response> {
@@ -256,6 +266,17 @@ async function finishOAuthCallback(
       await callbackRegistry!.invalidateStored(id);
       return withSessionCookies(html("connected", opts, connector), browserIdentity.sessionCookies);
     } catch (err) {
+      // A duplicate of a callback that already claimed this state sent
+      // nothing: it is the already-used link the flat refusal describes, not
+      // an exchange the provider rejected.
+      if (claimedByAnotherCallback(err)) {
+        opts.logger.warn(
+          `[connecta] refused an OAuth callback for connector ` +
+            `${loggableValue(id)} with 400: another callback had already ` +
+            "claimed its state. No authorization code was exchanged.",
+        );
+        return refused();
+      }
       // Neither the page nor the log repeats what the exchange threw: the SDK
       // quotes the token endpoint's error_description or raw body, and a
       // provider echoing a client_secret_post request puts the secret there.

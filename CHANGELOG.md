@@ -41,11 +41,14 @@ configuration changes. What else a deployment may notice: an OAuth flow that a
 concurrent restart or disconnect overtakes now fails with a retryable
 `unavailable` — "authorization changed while this request was in flight; try
 again" — rather than reading on into the newer authorization; a callback
-whose epoch is replaced at any point before its code would be sent fails that
-way without sending it. A callback now claims its state when its exchange
-begins, so of two carrying one state at most one redeems the code on a store
-with `compareAndSet`, and a callback is not retried by reloading it: Continue
-starts a fresh consent instead (#697). A refresh whose rotated
+whose epoch is replaced at or before the final check that dispatches its
+code fails that way without sending it, and one replaced after that check
+never has its tokens saved, which costs that grant one more consent. A
+callback now claims its state when its exchange begins, so of two carrying one
+state at most one redeems the code on a store with `compareAndSet`; the loser
+gets the callback page's flat 400 for a used link. A callback is not retried
+by reloading it: Continue starts a fresh consent instead, and so does the
+operator page's fallback link once followed (#697). A refresh whose rotated
 tokens cannot be stored fails as a retryable outage instead of
 `auth_required`, and `/mcp` bodies stay
 bounded by the host, not by the 4 MiB default the server SDK adopted. Two
@@ -562,10 +565,11 @@ using `quickJsExecutor()` need no configuration change.
   Workers KV, a recheck just before the write narrows that race without
   closing it: a stale retirement can still replace a restart's completed
   epoch, costing that grant one more consent. Nothing is sent anywhere by it,
-  and the replaced epoch is not orphaned: once its write lands, a retirement
-  that finds the epoch it retired already cleaned up by another reset lists
-  the cleanup manifests and records every epoch its lineage does not name, so
-  the next Disconnect or Restart deletes it (#697). A write a reset overtakes after its epoch
+  and the replaced epoch is not orphaned: once its write lands, the
+  retirement lists the cleanup manifests and records every epoch its lineage
+  does not name, so the next Disconnect or Restart deletes it — also when the
+  grant it retired was in the legacy generation, which has no manifest
+  (#697). A write a reset overtakes after its epoch
   check is cleaned up and reported as failed, so a start never hands out
   another flow's consent URL and a callback never reports a grant it could not
   store. A read for a server the
@@ -582,18 +586,24 @@ using `quickJsExecutor()` need no configuration change.
   redeem: the loser, refused with `invalid_grant`, had the SDK invalidate the
   tokens the winner had just stored. Every `remoteMcp()` and `api()` code
   exchange now crosses a fence on the token request itself, after every read
-  it depends on: it reads the epoch once more, failing with the retryable
-  supersession and sending nothing, and claims the exact state its check
-  matched. With `compareAndSet` the claim is atomic and one callback redeems
-  the code; the rest fail with a fixed `connector_call_failed` and send
-  nothing. A store without it re-reads and deletes the state, which stops a
+  it depends on: it claims the exact state its check matched, then reads the
+  epoch once more in the same turn that dispatches the request. Superseded at
+  or before that read, the callback fails with the retryable supersession and
+  sends nothing. Superseded after it, while the request leaves, the code is
+  redeemed but its tokens are never saved; the callback fails the same way,
+  and the grant costs one more consent, since only a lock across requests
+  could order dispatch against a reset. With `compareAndSet` the claim is
+  atomic and one callback redeems the code; the rest fail with a fixed
+  `connector_call_failed`, send nothing, and get the callback route's 400 for
+  a used link rather than its 500 for a refused exchange. A store without it re-reads and deletes the state, which stops a
   late duplicate but not two that read it together. The SDK's one retry after
   a refused code is answered with that refusal instead of sending the code
   again, and its invalidation now deletes only the client and tokens the
   exchange began with or wrote itself: conditionally with `compareAndSet`, and
   without it a client while unchanged and tokens not at all. A claimed state
   is spent even when the exchange fails, so Continue no longer hands back its
-  consent URL. A callback's exchange now always runs on a transport of its
+  consent URL, and the operator page's fallback link for a blocked tab goes
+  back to Connect once followed rather than reopening it. A callback's exchange now always runs on a transport of its
   own, over the provider that verified the state (#697).
 - **No token endpoint's text reaches the host's console.** From client 2.1.0
   the SDK writes a failed refresh or code exchange's `error_description`, or
