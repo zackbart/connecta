@@ -20,9 +20,10 @@ export default class CoverageReporter implements Reporter {
     const vitest = this.vitest!;
     const config = vitest.config;
     // Vitest 4 retains start()'s CLI file filters here, but omits this field
-    // from its declarations. A collection mismatch is never a filter signal.
+    // from its declarations. Static config.filters does not narrow start()'s
+    // collection. A collection mismatch is never a filter signal.
     const filters = (vitest as Vitest & { filenamePattern?: string[] }).filenamePattern;
-    this.partial = !!(filters?.length || config.filters?.length || config.testNamePattern ||
+    this.partial = !!(filters?.length || config.testNamePattern ||
       config.project.length || config.shard || config.changed || config.related?.length || config.tagsFilter?.length);
     this.scheduled = new Set(specifications.filter(({ project }) => project.name === "node")
       .map(({ moduleId }) => moduleId));

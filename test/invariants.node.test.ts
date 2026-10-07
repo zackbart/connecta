@@ -126,6 +126,26 @@ describe("principles backed by tests", () => {
         stderr: expect.stringContaining("INV-9 has no passing enforcing test"),
       };
       await expect(runGate()).rejects.toMatchObject(missingEvidence);
+      // Static test.filters is not the CLI filename filter: a plain run still
+      // executes both suites and must enforce invariant and spec evidence.
+      const config = join(root, "vitest.config.mjs");
+      writeFileSync(config, [
+        `import CoverageReporter from ${JSON.stringify(fileURLToPath(new URL("./fixtures/coverage-reporter.ts", import.meta.url)))};`,
+        'export default { test: { filters: ["does-not-exist"], maxWorkers: 1,',
+        'reporters: ["default", new CoverageReporter()],',
+        'projects: [{ test: { name: "node", include: ["test/**/*.test.ts"], exclude: ["**/dist/**"] } }] } };',
+      ].join("\n"));
+      const runCli = (filters: string[] = []) => promisify(execFile)(process.execPath, [
+        fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url)),
+        "run", ...filters, "--root", root, "--config", config,
+      ], { timeout: 20_000 });
+      await expect(runCli()).rejects.toMatchObject({
+        stdout: expect.stringMatching(/active\.test\.ts[\s\S]*other\.test\.ts|other\.test\.ts[\s\S]*active\.test\.ts/),
+        stderr: expect.stringMatching(/INV-9 has no passing enforcing test[\s\S]*no passing test matches the coverage reference/),
+      });
+      await expect(runCli(["active.test.ts"])).resolves.toMatchObject({
+        stderr: "", stdout: expect.stringContaining("explicit partial run"),
+      });
       writeFileSync(join(root, "test/dist/x.test.ts"),
         'import { it } from "vitest"; it("INV-9: evidence", () => {});');
       await expect(runGate()).rejects.toMatchObject(missingEvidence);
