@@ -43,6 +43,7 @@ import {
   type ApprovalPolicy,
 } from "./tool-safety.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
+import { closeScope } from "./runtime/connector-scope.js";
 import {
   connectorGuide,
   connectorGuideRequired,
@@ -468,10 +469,10 @@ function sandboxProvider(
   baseUrl: string,
   activity: ActivityRequestContext | undefined,
   limits: SandboxLimits,
+  requestScope: object = {},
 ): ExecutorProvider {
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
-  const requestScope = {};
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
     // A program that just missed an address cannot call search_tools.
@@ -932,9 +933,22 @@ export function createExecuteTool(
       // closing it releases the lease and then aborts the signal, so
       // nothing the run started outlives the request.
       const run = Effect.gen(function* () {
+        const requestScope = {};
+        // Per-call signals cancel individual fetches, but do not close the
+        // shared transport. Close its scope after the run's signal ends, on
+        // every exit, using the existing bounded cleanup and deferred tail.
+        yield* Effect.addFinalizer(() => Effect.forEach(
+          registry.listConnectors(),
+          (connector) => closeScope(
+            connector,
+            registry.contextFor(connector.id, baseUrl, requestScope),
+            config.defer,
+          ),
+          { concurrency: "unbounded", discard: true },
+        ));
         const signal = yield* runSignal(callerSignal);
         // Admission comes before provider construction: queued calls retain
-        // no catalogs, request scopes, or provider closures.
+        // no catalogs or provider closures.
         let lease: ExecutorLease | undefined;
         if (isAdmittingExecutor(executor)) {
           lease = yield* timed((elapsed) => {
@@ -965,7 +979,7 @@ export function createExecuteTool(
             approval: config.approval,
             maxWrites: config.maxWrites,
             exemptWrites,
-          }),
+          }, requestScope),
         ));
         if (signal.aborted) {
           return yield* Effect.fail(
