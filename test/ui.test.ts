@@ -1,3 +1,4 @@
+import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { activityHistory } from "../src/activity.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
@@ -577,7 +578,7 @@ describe("status UI", () => {
     const disconnectAuth = vi.fn(async () => {});
     const startAuth = vi.fn(async () => ({
       state: "auth_required" as const,
-      authorizationUrl: "https://auth.example/reconnect",
+      authorizationUrl: "https://auth.example/reconnect?state=test-state",
       message: "Open the authorization URL.",
     }));
     const connector: Connector = {
@@ -599,7 +600,7 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage,
+      storage, vault: oauthVault(storage),
       publicUrl: BASE,
     });
 
@@ -631,16 +632,13 @@ describe("status UI", () => {
     expect(disconnectAuth).toHaveBeenCalledOnce();
     expect(await storage.get("catalog:oauth")).toBeNull();
 
-    const restarted = await credentialRequest(
+    const restarted = await connectRequest(
       connecta,
       "/ui/oauth/oauth",
       { method: "POST" },
     );
-    expect(restarted.status).toBe(200);
-    await expect(restarted.json()).resolves.toMatchObject({
-      state: "auth_required",
-      authorizationUrl: "https://auth.example/reconnect",
-    });
+    expect(restarted.status).toBe(302);
+    expect(restarted.headers.get("Location")).toBe("https://auth.example/reconnect?state=test-state");
     expect(startAuth).toHaveBeenCalledWith(
       expect.anything(),
       { force: true },
@@ -668,7 +666,7 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: fakeClerkAuth(CLERK_OPTIONS),
-      storage,
+      storage, vault: oauthVault(storage),
       publicUrl: BASE,
     });
     await storage.set("catalog:oauth", "stale catalog");
@@ -707,7 +705,7 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage: memoryStorage(),
+      storage: memoryStorage(), vault: oauthVault(memoryStorage()),
       publicUrl: BASE,
     });
 
@@ -740,7 +738,7 @@ describe("status UI", () => {
     expect(options.status).toBe(405);
     expect(options.headers.get("access-control-allow-origin")).toBeNull();
 
-    const restarted = await credentialRequest(
+    const restarted = await connectRequest(
       connecta,
       "/ui/oauth/oauth",
       { method: "POST" },
@@ -775,7 +773,7 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: fakeClerkAuth(CLERK_OPTIONS),
-      storage: memoryStorage(),
+      storage: memoryStorage(), vault: oauthVault(memoryStorage()),
       publicUrl: BASE,
     });
 
@@ -786,7 +784,7 @@ describe("status UI", () => {
     ).toBe(204);
     expect(closeScope).toHaveBeenCalledTimes(1);
 
-    const restarted = await credentialRequest(
+    const restarted = await connectRequest(
       connecta,
       "/ui/oauth/oauth",
       { method: "POST" },

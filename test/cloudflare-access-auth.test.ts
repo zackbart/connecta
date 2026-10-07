@@ -1,3 +1,5 @@
+import { oauthVault } from "./fixtures/oauth.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import { describe, expect, it, vi } from "vitest";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import type { InboundAuthRuntimeContext } from "../src/types.js";
@@ -126,7 +128,7 @@ describe("cloudflareAccessAuth", () => {
 
   it("lets a human Access identity use same-origin operator mutation", async () => {
     const deployment = makeDeployment({
-      auth: cloudflareAccessAuth(),
+      auth: cloudflareAccessAuth(), vault: oauthVault(memoryStorage()),
       connectors: [{ id: "oauth", kind: "mcp", listTools: async () => [], callTool: async () => null, startAuth: async () => ({ state: "ok" }), disconnectAuth: async () => {} }],
     });
     const context = workerRuntime({ user_uuid: "operator-1" });

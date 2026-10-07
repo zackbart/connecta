@@ -599,6 +599,8 @@ export function createMetaTools(
     activity?: ActivityRequestContext | undefined;
     canManageAuth?: ((id: string) => boolean) | undefined;
     credentialHandoffUrl?: string | undefined;
+    oauthConnectUrl?: ((id: string, force?: boolean) => Promise<string>) | undefined;
+    oauthConnectUnavailable?: string | undefined;
     /** Inbound request cancellation shared by every call this request makes. */
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
@@ -1058,45 +1060,22 @@ export function createMetaTools(
               : "Shared credential mutation requires a signed-in human with access to this connector."),
         });
       }
+      if (opts.oauthConnectUnavailable || !opts.oauthConnectUrl) return jsonResult({
+        connector: connector.id, recovery: "unavailable",
+        message: opts.oauthConnectUnavailable ?? "OAuth connection requires an interactive provider and a credential vault with a handoff signing key.",
+      });
       if (!opts.canManageAuth?.(connector.id)) return jsonResult({ connector: connector.id, recovery: "unavailable", message: "Your identity is not permitted to manage authentication for this connection." });
-      const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
       try {
-        const status = await connector.startAuth(
-          ctx,
-          args.force !== undefined ? { force: args.force } : {},
-        );
-        if (status.authorizationUrl) {
-          await registry.bindOAuthHandoff(
-            connector.id,
-            status.authorizationUrl,
-          );
-        }
-        if (status.state === "auth_required" && !status.authorizationUrl) {
-          // auth_required with nothing to open is a dead end for the operator.
-          return errorResult(
-            `Connector "${connector.id}": authorization required but no URL is available — retry authorize_connector.`,
-          );
-        }
         return jsonResult({
           connector: connector.id,
           recovery: "oauth",
-          status: status.state,
-          ...(status.authorizationUrl
-            ? {
-                authorizationUrl: status.authorizationUrl,
-                instructions:
-                  "Have the operator open authorizationUrl in a browser and complete the consent flow. The provider then redirects back to this server's /oauth/callback/<connector> route, which finishes the flow automatically. " +
-                  oauthFollowUp(connector.id),
-              }
-            : {}),
-          ...(status.message ? { message: status.message } : {}),
+          status: "auth_required",
+          authorizationUrl: await opts.oauthConnectUrl(connector.id, args.force),
+          instructions:
+            "Open authorizationUrl in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " + oauthFollowUp(connector.id),
         });
       } catch (err) {
         return errorResult(msg(err));
-      } finally {
-        // Auth state may have changed — even on a throw or a half-wiped force —
-        // so don't serve a stale tool list.
-        await registry.invalidateStored(connector.id);
       }
     },
   };
@@ -1110,7 +1089,7 @@ const CALL_DESTRUCTIVE_DESC =
 const GET_RESULT_DESC =
   "Page a truncated direct-call result by id and byte offset. A program result is never paged; reduce it inside execute_code. Returns a one-line JSON header (offset, bytes, totalBytes, hasMore, nextAction) and then the page as raw text. maxBytes is an upper bound, clamped to the result's inline cap.";
 const AUTHORIZE_DESC =
-  "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
+  "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
   'List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.';
 
@@ -1239,6 +1218,8 @@ export function registerMetaTools(
     activity?: ActivityRequestContext | undefined;
     canManageAuth?: ((id: string) => boolean) | undefined;
     credentialHandoffUrl?: string | undefined;
+    oauthConnectUrl?: ((id: string, force?: boolean) => Promise<string>) | undefined;
+    oauthConnectUnavailable?: string | undefined;
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
     approval?: ApprovalPolicy | undefined;
@@ -1251,6 +1232,8 @@ export function registerMetaTools(
     activity: ctx.activity,
     canManageAuth: ctx.canManageAuth,
     credentialHandoffUrl: ctx.credentialHandoffUrl,
+    oauthConnectUrl: ctx.oauthConnectUrl,
+    oauthConnectUnavailable: ctx.oauthConnectUnavailable,
     requestSignal: ctx.requestSignal,
     defer: ctx.defer,
     approval: ctx.approval,

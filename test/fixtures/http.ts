@@ -106,6 +106,7 @@ export function fakeClerkAuth(options: {
 } = {}): InboundAuth {
   return {
     kind: "clerk",
+    activityActorNamespace: options.frontendApiUrl ?? "https://clerk.example.test",
     interactiveOperator: true,
     uiAuth: {
       kind: "clerk",
@@ -116,7 +117,8 @@ export function fakeClerkAuth(options: {
     },
     authorize(request) {
       if (request.headers.get("authorization") ===
-        `Bearer ${options.token ?? "clerk-operator"}`) {
+        `Bearer ${options.token ?? "clerk-operator"}` ||
+        request.headers.get("cookie")?.split(/;\s*/).includes(`__session=${options.token ?? "clerk-operator"}`)) {
         return { ok: true, userId: options.userId ?? "user_operator" };
       }
       return {

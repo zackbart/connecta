@@ -19,6 +19,12 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { api } from "../src/connectors/api.js";
 import { signJwt } from "@clerk/backend/jwt";
 
+import { createTestConnecta } from "./helpers.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { oauthVault } from "./fixtures/oauth.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import type { Connector } from "../src/types.js";
+
 const BASE = "https://connecta.test";
 const domain = "clerk.example.com$";
 const publishableKey =
@@ -348,6 +354,58 @@ describe("clerkAuth inbound auth", () => {
       ok: true,
       userId: "user_oauth",
     });
+  });
+
+  it.each(["personal", "shared"] as const)("refreshes Clerk browser sessions on connect and callback for %s OAuth", async authScope => {
+    const signedIn = () => ({
+      status: "signed-in",
+      headers: new Headers({ "Set-Cookie": "__session=fresh; Secure; HttpOnly" }),
+      toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }),
+    });
+    mocks.authenticateRequest.mockImplementation(async (request: Request) => {
+      if (request.headers.get("cookie") === "__session=expired") {
+        return {
+          status: "handshake", headers: new Headers({ Location: `https://clerk.example.com/v1/client/handshake?redirect_url=${encodeURIComponent(request.url)}`, "Set-Cookie": "__clerk_hs=refresh; Secure" }),
+          toAuth: () => { throw new Error("handshake is not an identity"); },
+        };
+      }
+      return signedIn();
+    });
+    const finishAuth = vi.fn(async () => {});
+    const connector: Connector = {
+      id: "service", authScope, listTools: async () => [], callTool: async () => null,
+      startAuth: async ctx => {
+        await ctx.storage.set("state", "flow-state");
+        return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
+      },
+      verifyState: async (state, ctx) => state === await ctx.storage.get("state"),
+      finishAuth,
+    };
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, logger: "silent", vault: oauthVault(storage), auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }) });
+    try {
+      const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "alice" }));
+      const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
+      const handshake = await app.fetch(new Request(link, { headers: { Cookie: "__session=expired" } }));
+      expect(handshake.status).toBe(307);
+      expect(handshake.headers.get("Set-Cookie")).toContain("__clerk_hs=refresh");
+      const started = await app.fetch(new Request(link, { headers: { Cookie: "__session=fresh" } }));
+      expect(started.status).toBe(302);
+      expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), { acceptsToken: ["session_token"] });
+      expect(started.headers.get("Location")).toContain("https://consent.example/authorize?");
+      expect(started.headers.get("Set-Cookie")).toContain("__session=fresh");
+      const callbackUrl = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
+      const refresh = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=expired" } }));
+      expect(refresh.status).toBe(307);
+      expect(new URL(refresh.headers.get("Location")!).searchParams.get("redirect_url")).toBe(callbackUrl);
+      expect(finishAuth).not.toHaveBeenCalled();
+      const completed = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=fresh" } }));
+      expect(completed.status).toBe(200);
+      expect(completed.headers.get("Set-Cookie")).toContain("__session=fresh");
+      expect(finishAuth).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
   });
 
   it("still rejects a session token minted for a sibling origin", async () => {

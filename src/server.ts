@@ -6,6 +6,7 @@ import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
 import {
   routeOAuthCallback,
 } from "./routes/oauth.js";
+import { routeConnect } from "./routes/connect.js";
 import { runEdge } from "./runtime/run.js";
 import {
   withSecurityHeaders,
@@ -121,6 +122,9 @@ export function createFetchHandler(
         const uiResponse = yield* Effect.promise(() => ui.handle(context));
         if (uiResponse) return uiResponse;
       }
+
+      const connect = yield* routeConnect(context);
+      if (connect) return connect;
 
       if (request.method === "OPTIONS") {
         const preflight = yield* routeMcp.handle(context);

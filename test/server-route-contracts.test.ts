@@ -1,3 +1,4 @@
+import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
@@ -587,11 +588,13 @@ describe("server route contracts", () => {
           async finishAuth() {},
         },
       ],
-      storage: memoryStorage(),
+      storage: memoryStorage(), auth: callbackAuth,
       publicUrl: BASE,
       logger: silentLogger,
     });
 
+    await bindCallback(connecta, "accepted", "valid-state");
+    for (const id of ["rejected", "throwing", "no-verifier"]) await bindCallback(connecta, id, "wrong");
     const accepted = await connecta.fetch(
       new Request(
         `${BASE}/oauth/callback/accepted?code=auth-code&state=valid-state&iss=https%3A%2F%2Fauth.example`,

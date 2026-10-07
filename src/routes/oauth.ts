@@ -10,6 +10,7 @@ import {
 } from "../oauth-callback-outcome.js";
 import {
   authorizeUiIdentity,
+  withSessionCookies,
   mayManageConnector,
   validateAuthPermissions,
   loggableValue,
@@ -186,18 +187,16 @@ async function finishOAuthCallback(
   }
   try {
     const expectedPrincipalKey = callbackTarget?.principalKey;
-    // A browser returning from consent normally has no MCP Authorization
-    // header. An interactive bearer provider therefore answers 401 here; state
-    // and the saved state-to-principal handoff still prove ownership below.
-    // Rejecting 401 would break that callback. A 403 is an explicit denial,
-    // and a final refusal from any provider is one whatever its status.
     const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
-    if (browserIdentity.ok) {
-      try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
-      if (!mayManageConnector(browserIdentity, connector) || (expectedPrincipalKey && browserIdentity.principalKey !== expectedPrincipalKey)) return refused();
-    } else if (browserIdentity.final === true || (browserIdentity.response.status === 403 && opts.auth.some(provider => provider.interactiveOperator))) {
+    if (!browserIdentity.ok) {
+      // A Clerk browser handshake refreshes its session and returns to this
+      // exact callback. It grants no identity and exchanges no code yet.
+      if (browserIdentity.response.status === 307 && browserIdentity.response.headers.has("location")) return browserIdentity.response;
       return refused();
     }
+    if (!expectedPrincipalKey || browserIdentity.principalKey !== expectedPrincipalKey) return refused();
+    try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
+    if (!mayManageConnector(browserIdentity, connector)) return refused();
     // CSRF / login-fixation guard: this route is intentionally public, so verify
     // the `state` matches the flow connecta started BEFORE exchanging the code.
     if (!connector.verifyState) {
@@ -236,7 +235,7 @@ async function finishOAuthCallback(
       );
       return refused();
     }
-    if (connector.authScope === "personal") {
+    {
       try {
         await opts.registry.clearOAuthHandoff(id, state);
       } catch (err) {
@@ -251,7 +250,7 @@ async function finishOAuthCallback(
     try {
       await connector.finishAuth(code, connectorContext, url.searchParams);
       await callbackRegistry!.invalidateStored(id);
-      return html("connected", opts, connector);
+      return withSessionCookies(html("connected", opts, connector), browserIdentity.sessionCookies);
     } catch (err) {
       // Neither the page nor the log repeats what the exchange threw: the SDK
       // quotes the token endpoint's error_description or raw body, and a
@@ -261,7 +260,7 @@ async function finishOAuthCallback(
           `with 500: the authorization code exchange failed${exchangeErrorCode(err)}. ` +
           "Check the connector's client configuration and re-run authorization.",
       );
-      return html("exchange_failed", opts, connector);
+      return withSessionCookies(html("exchange_failed", opts, connector), browserIdentity.sessionCookies);
     }
   } finally {
     await closeConnectorScope(connector, connectorContext, context.defer);

@@ -1,3 +1,4 @@
+import { callbackAuth, bindCallback, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { auth, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
@@ -4611,7 +4612,7 @@ describe("remoteMcp() startAuth", () => {
       "conn:svc:oauth:tokens",
       JSON.stringify({ access_token: "old", token_type: "Bearer" }),
     );
-    const authUrl = "https://auth.example/reconnect";
+    const authUrl = "https://auth.example/reconnect?state=test-state";
     let builds = 0;
     const connector = remoteMcp("svc", {
       url: "https://unused.example/mcp",
@@ -4630,6 +4631,7 @@ describe("remoteMcp() startAuth", () => {
     const clerk: InboundAuth = {
       kind: "clerk",
       interactiveOperator: true,
+      activityActorNamespace: "https://clerk.example.com",
       uiAuth: {
         kind: "clerk",
         publishableKey: "pk_test_fake",
@@ -4650,7 +4652,7 @@ describe("remoteMcp() startAuth", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: clerk,
-      storage,
+      storage, vault: oauthVault(storage),
       publicUrl: BASE,
     });
     const operatorRequest = (path: string, method = "GET") =>
@@ -4678,7 +4680,7 @@ describe("remoteMcp() startAuth", () => {
       status: "auth_required",
       toolCount: 0,
     });
-    expect(required(data.connectors[0]).authorizationUrl).toBeUndefined();
+    expect(required(data.connectors[0]).authorizationUrl).toContain(`${BASE}/connect/svc?h=`);
     expect(builds).toBe(0);
     expect(await storage.get("conn:svc:oauth:pending")).toBeNull();
     expect(await storage.get("conn:svc:oauth:generation")).toMatch(
@@ -4687,10 +4689,11 @@ describe("remoteMcp() startAuth", () => {
 
     const restarted = await operatorRequest("/ui/oauth/svc", "POST");
     expect(restarted.status).toBe(200);
-    await expect(restarted.json()).resolves.toMatchObject({
-      state: "auth_required",
-      authorizationUrl: authUrl,
-    });
+    const link = (await restarted.json() as { authorizationUrl: string }).authorizationUrl;
+    expect(builds).toBe(0);
+    const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer clerk-token" } }));
+    expect(begun.status).toBe(302);
+    expect(begun.headers.get("Location")).toBe(authUrl);
     expect(builds).toBe(1);
   });
 
@@ -5388,6 +5391,7 @@ describe("remoteMcp() continue and restart starts", () => {
       const users: InboundAuth = {
         kind: "test-users",
         interactiveOperator: true,
+        uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
         activityActorNamespace: "https://identity.test",
         authorize(request) {
           const user = /^Bearer (alice|bob)$/u.exec(
@@ -5408,7 +5412,7 @@ describe("remoteMcp() continue and restart starts", () => {
           }),
         ],
         auth: users,
-        storage: memoryStorage(),
+        storage: memoryStorage(), vault: oauthVault(memoryStorage()),
         publicUrl: BASE,
       });
       const start = async (user: "alice" | "bob", query = "") => {
@@ -5419,10 +5423,10 @@ describe("remoteMcp() continue and restart starts", () => {
           }),
         );
         expect(response.status).toBe(200);
-        return (await response.json()) as {
-          authorizationUrl: string;
-          reused: boolean;
-        };
+        const link = (await response.json() as { authorizationUrl: string }).authorizationUrl;
+        const begun = await connecta.fetch(new Request(link, { headers: { Authorization: `Bearer ${user}` } }));
+        expect(begun.status).toBe(302);
+        return { authorizationUrl: begun.headers.get("Location")! };
       };
       const principalOf = async (url: string) =>
         (await connecta.registry.oauthCallbackView(
@@ -5432,12 +5436,11 @@ describe("remoteMcp() continue and restart starts", () => {
 
       const aliceFirst = await start("alice");
       const aliceAgain = await start("alice", "?mode=continue");
-      expect(aliceAgain).toEqual({ ...aliceFirst, reused: true });
+      expect(aliceAgain).toEqual(aliceFirst);
       expect(server.counts.register).toBe(1);
 
       // Bob's partition holds no pending flow, so his continue starts his own.
       const bob = await start("bob", "?mode=continue");
-      expect(bob.reused).toBe(false);
       expect(bob.authorizationUrl).not.toBe(aliceFirst.authorizationUrl);
       expect(server.counts.register).toBe(2);
 
@@ -5451,7 +5454,6 @@ describe("remoteMcp() continue and restart starts", () => {
       // A restart carries only the restarting principal's own registration.
       const aliceRestart = await start("alice");
       const bobRestart = await start("bob");
-      expect(aliceRestart.reused).toBe(false);
       expect(clientOf(aliceRestart.authorizationUrl)).toBe("client-1");
       expect(clientOf(bobRestart.authorizationUrl)).toBe("client-2");
       expect(server.counts.register).toBe(2);
@@ -6394,7 +6396,7 @@ describe("/oauth/callback/<id> route", () => {
     logger: Logger = silentLogger,
   ) {
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage,
       logger,
       connectors: [
@@ -6431,7 +6433,8 @@ describe("/oauth/callback/<id> route", () => {
         return outcome !== "mismatch";
       });
       connector.closeScope = closeScope;
-      const connecta = createTestConnecta({ publicUrl: BASE, logger: silentLogger, connectors: [connector] });
+      const connecta = createTestConnecta({ publicUrl: BASE, auth: callbackAuth, logger: silentLogger, connectors: [connector] });
+      await bindCallback(connecta, "svc", "verified-state");
       const response = await connecta.fetch(new Request(
         `${BASE}/oauth/callback/svc?code=abc&state=verified-state`,
       ));
@@ -6445,6 +6448,7 @@ describe("/oauth/callback/<id> route", () => {
     const spy = vi.fn();
     const { connecta, storage } = makeConnecta(spy);
     await storage.set(STATE_KEY, "s3cr3t-state");
+    await bindCallback(connecta, "svc", "s3cr3t-state");
     const res = await connecta.fetch(
       new Request(`${BASE}/oauth/callback/svc?code=abc&state=s3cr3t-state`),
     );
@@ -6456,7 +6460,7 @@ describe("/oauth/callback/<id> route", () => {
     expect(callbackParams.get("code")).toBe("abc");
   });
 
-  it.each([401, 403])("allows an identity-free callback on 401, but refuses an explicit 403 (%i)", async (status) => {
+  it.each([401, 403])("refuses an identity-free callback on either 401 or 403 (%i)", async (status) => {
     const finish = vi.fn(async () => {});
     const connecta = createTestConnecta({
       publicUrl: BASE,
@@ -6465,11 +6469,11 @@ describe("/oauth/callback/<id> route", () => {
       connectors: [callbackConnector("svc", finish, async state => state === "verified-state")],
     });
     const response = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
-    expect(response.status).toBe(status === 401 ? 200 : 400);
-    expect(finish).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+    expect(response.status).toBe(400);
+    expect(finish).not.toHaveBeenCalled();
     const invalid = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=wrong`));
     expect(invalid.status).toBe(400);
-    expect(finish).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+    expect(finish).not.toHaveBeenCalled();
   });
 
   it("refuses a callback any provider refused with final, interactive or not", async () => {
@@ -6491,8 +6495,8 @@ describe("/oauth/callback/<id> route", () => {
     expect(refused.status).toBe(400);
     expect(finish).not.toHaveBeenCalled();
     const browser = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
-    expect(browser.status).toBe(200);
-    expect(finish).toHaveBeenCalledTimes(1);
+    expect(browser.status).toBe(400);
+    expect(finish).not.toHaveBeenCalled();
   });
 
   // Human routes skip non-interactive providers unless they declare
@@ -6511,7 +6515,7 @@ describe("/oauth/callback/<id> route", () => {
       list: (prefix) => inner.list!(prefix),
     };
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: counting,
       logger: silentLogger,
       accessTokens: accessTokens(counting),
@@ -6549,7 +6553,7 @@ describe("/oauth/callback/<id> route", () => {
     const unverifiedFinish = vi.fn();
     const throwingFinish = vi.fn();
     const edgeConnecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [
@@ -6650,6 +6654,7 @@ describe("/oauth/callback/<id> route", () => {
     );
     warn.mockClear();
     await storage.set(STATE_KEY, "the-real-state");
+    await bindCallback(connecta, "svc", "attacker-state");
 
     await connecta.fetch(
       new Request(
@@ -6663,7 +6668,7 @@ describe("/oauth/callback/<id> route", () => {
     );
   });
 
-  it("distinguishes a missing state parameter from a mismatched one in the log", async () => {
+  it("refuses a missing state before consulting browser identity or the verifier", async () => {
     const warn = vi.fn();
     const { connecta, storage } = makeConnecta(vi.fn(), memoryStorage(), {
       ...silentLogger,
@@ -6674,10 +6679,7 @@ describe("/oauth/callback/<id> route", () => {
 
     await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc`));
 
-    expect(warn).toHaveBeenCalledTimes(1);
-    const diagnostic = String(required(warn.mock.calls[0])[0]);
-    expect(diagnostic).toContain("the state parameter was missing");
-    expect(diagnostic).not.toContain("did not match");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   // The response channel is closed above; this closes the clock. A refusal that
@@ -6698,7 +6700,7 @@ describe("/oauth/callback/<id> route", () => {
       delete: (k) => inner.delete(k),
     };
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: counting,
       logger: silentLogger,
       connectors: [
@@ -6734,30 +6736,32 @@ describe("/oauth/callback/<id> route", () => {
       return [...reads];
     };
 
+    expect(await readsFor("svc")).toHaveLength(3);
+    expect(await readsFor("nope")).toHaveLength(3);
     // The configured downstream-OAuth connector is the baseline: state plus
     // the epoch that decides whether that state is still current.
-    expect(await readsFor("svc")).toEqual([
+    expect((await readsFor("svc")).slice(1)).toEqual([
       "conn:svc:oauth:generation",
       "conn:svc:oauth:state",
     ]);
     // Every free-by-default refusal pays the same reads in its own namespace,
     // where an unconfigured id simply misses.
-    expect(await readsFor("nope")).toEqual([
+    expect((await readsFor("nope")).slice(1)).toEqual([
       "conn:nope:oauth:generation",
       "conn:nope:oauth:state",
     ]);
-    expect(await readsFor("plain")).toEqual([
+    expect((await readsFor("plain")).slice(1)).toEqual([
       "conn:plain:oauth:generation",
       "conn:plain:oauth:state",
     ]);
-    expect(await readsFor("unverified")).toEqual([
+    expect((await readsFor("unverified")).slice(1)).toEqual([
       "conn:unverified:oauth:generation",
       "conn:unverified:oauth:state",
     ]);
 
     // A configured connector with no outstanding flow still pays both reads.
     await counting.delete(STATE_KEY);
-    expect(await readsFor("svc")).toEqual([
+    expect((await readsFor("svc")).slice(1)).toEqual([
       "conn:svc:oauth:generation",
       "conn:svc:oauth:state",
     ]);
@@ -6768,7 +6772,7 @@ describe("/oauth/callback/<id> route", () => {
     const finishAuth = vi.fn();
     const thrownMessage = `bad\n${"x".repeat(100)}`;
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: { ...silentLogger, warn },
       connectors: [
@@ -6783,6 +6787,7 @@ describe("/oauth/callback/<id> route", () => {
         ),
       ],
     });
+    await bindCallback(connecta, "throwing", "attacker-state");
     warn.mockClear();
 
     const res = await connecta.fetch(

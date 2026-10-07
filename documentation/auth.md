@@ -10,7 +10,7 @@ provider's `authorize(request, baseUrl, runtimeContext)` returns
 non-match and the next provider gets its turn; one marked `final: true` — a
 credential recognized and refused anyway — ends the walk on `/mcp` and the
 artifact pages. The human routes (operators, credentials, access tokens, OAuth
-callbacks) ask only interactive providers, so a slow or failing machine
+connect links and callbacks) ask only interactive providers, so a slow or failing machine
 credential costs them nothing — except a provider that sets
 `finalRefusals: true`, consulted in order for its `final` refusal alone. An
 asserting bearer sets it; nothing else shipped does. Managed client tokens exist
@@ -419,23 +419,21 @@ deleting old keys is hygiene on top. `POST /ui/oauth/<id>` takes a `mode`:
 
 | Request | What it does |
 | --- | --- |
-| `POST /ui/oauth/<id>` or `?mode=restart` | `startAuth(ctx, { force: true })`: a new epoch, with tokens, discovery, and any pending flow wiped. A dynamically registered client may be carried into it ([below](#human-authentication-management)); one that is not carried is registered again. |
-| `?mode=continue` | `startAuth(ctx, { force: false })`: hand back the pending authorization URL if it was written in the last ten minutes and still names the stored client; otherwise start a flow in the current epoch, reusing the stored client registration. A disconnected connector still gets its new epoch first. |
-| `DELETE /ui/oauth/<id>` | Disconnect: a disconnected epoch that passive reads never turn back into a consent flow. |
+| `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it. |
+| `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending flow can be reused; otherwise authorization begins in the current epoch. |
+| `GET /connect/<id>?h=...` | Verifies the signed handoff, browser identity, connector visibility, and management permission before calling `startAuth`. Redirects the verified browser to consent. |
+| `DELETE /ui/oauth/<id>` | Disconnects and invalidates the cached catalog, even if the browser leaves. |
 
-Any other `mode`, or several, is a 400 before anything starts; both modes get
-the same permission, visibility, and principal checks, and a personal
-connector continues only the caller's own flow. A 200 answers
-`{ state, authorizationUrl?, reused? }`, `reused` beside every URL and `true`
-when an earlier start's URL came back unchanged; only such a continue, or one
-that found the connection healthy, leaves the cached catalog alone. The ten
-minutes are `PENDING_AUTHORIZATION_MAX_AGE_MS`: connecta never expires its half
-of a URL, but authorization servers expire theirs, and a fresh start keeping
-the registration costs one authorization request. A URL stored without a write
-time (by an earlier release, or a connector never reset since epochs) is
-stale; `authorize_connector` without `force` follows the same rule. Continue
-trusts the stored registration's `redirect_uris`, which consent refuses after
-a `publicUrl` change; Restart registers for the current URL and recovers.
+`authorize_connector` issues the same browser link, with `force` carried in the
+signed handoff. Status reads never call `startAuth` and never expose the
+provider's consent URL. A UI start answers `{ state: "auth_required",
+authorizationUrl }`, where the URL belongs to connecta. Continuation can reuse a
+pending downstream URL for ten minutes when it still names the stored client.
+The cached catalog stays only when an unforced browser visit reuses that flow or
+finds the connection healthy. Restart invalidates it even if the connection ends
+healthy. A URL stored without a write time is stale. Continue trusts the stored
+registration's `redirect_uris`; after changing `publicUrl`, Restart registers for
+the current callback URL.
 
 A restart cannot know which retired epochs a late write reached, so before
 activating the new epoch it publishes under it a **cleanup lineage**: the
@@ -793,7 +791,7 @@ instead of a base64 stack on every route.
 
 ## Human authentication management
 
-An operator's Connect or Restart gives the start and its handoff 30 seconds;
+A verified browser's `/connect` visit gives the start and its state handoff 30 seconds;
 the request's abort signal and that deadline reach downstream OAuth fetches,
 discovery and registration included, and on expiry the route returns `504`
 `OAuth authorization start timed out` once an already-started reset finishes.
@@ -835,12 +833,37 @@ handoff naming the fields and operator URL, without either `unavailable`, since
 connecta links to no missing page. Only the downstream-OAuth branch consults
 the management permissions, answering `unavailable` to an identity without them.
 
-Core owns the OAuth callback and verifies state and principal ownership without
-the optional browser application. A browser back from consent normally carries
-no MCP `Authorization` header, so an interactive bearer provider's 401 does not
-reject it. The verified state and its saved principal select the owner; a
-browser identity, if present, must match that owner and may then manage the
-connector, while an interactive provider's explicit 403 still refuses the flow.
+Core owns `/connect/<connector>` and the OAuth callback, so both work without
+the optional UI. Interactive browser authentication must be Clerk or Cloudflare
+Access. A machine bearer or `cta_` token cannot complete this flow. Deployments
+without an interactive provider refuse connection at runtime with
+`An interactive provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.`
+This leaves deployments used only by machines free to start and serve their
+configured credentials.
+
+The handoff expires after fifteen minutes and carries the connector, the
+personal owner or `shared`, the initiating principal, the deployment origin,
+and a nonce. The credential vault derives a separate HMAC key with HKDF from
+its encryption key. Without a signing vault, connecta refuses to issue or accept
+links. Configure `vault: encryptedCredentialVault(storage, key)`; custom vaults
+must implement `signOAuthHandoff` and `verifyOAuthHandoff` with a secret key.
+The link grants no browser identity and starts no downstream flow on its own.
+
+Clerk browsers sign in through the configured hosted sign-in page or a local
+Clerk sign-in page and return to the same link. If the session cookie expires
+during consent, Clerk's handshake refreshes it and returns to the callback before
+connecta verifies identity or exchanges the code. Cloudflare Access enforces login
+at the edge and supplies its trusted Worker identity. Protect `/connect/*` and
+`/oauth/callback/*` with the same Access application as the MCP endpoint.
+
+The browser must match the initiating principal for shared and personal links.
+It must also retain the connector's management permission: `personalConnection`
+for personal connectors or `credentialAdministration` for shared connectors.
+Connecta records this principal against the downstream state for both scopes.
+The callback requires the same verified interactive identity and permission,
+checks the downstream state before exchanging a code, and consumes the saved
+handoff. After upgrading, request a new `/connect` link for pending consent. A callback
+without a saved initiating user cannot complete.
 [Meta-tools](./meta-tools.md#authorization-recovery) has the recovery shapes.
 
 ## URL-based downstream OAuth clients

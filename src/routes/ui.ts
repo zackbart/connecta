@@ -1,3 +1,4 @@
+import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import { Effect } from "effect";
 import { CONNECTA_VERSION } from "../version.js";
 import { CONNECTA_FAVICON_ICO } from "../favicon.js";
@@ -204,6 +205,7 @@ function connectorDetail(
         credentialManagement,
         defer,
         oauthManagement: false,
+        ...(!oauthConnectUnavailable(opts) ? { oauthConnectUrl: (id: string) => oauthConnectUrl(opts, baseUrl, id, authz.principalKey) } : {}),
         discoveryConcurrency: 1,
         personalCredentialOwner: authz.principalKey,
         mayManage,

@@ -1,3 +1,4 @@
+import { oauthVault, connectRequest } from "./fixtures/oauth.js";
 // Behavior the operator and activity data routes gained when they moved onto
 // Effect (P1-S18). Each case failed against the async handlers it replaced.
 import { describe, expect, it, vi } from "vitest";
@@ -90,7 +91,7 @@ describe("operator data routes", () => {
     const storage = memoryStorage();
     const connecta = createTestConnecta({
       connectors: [connector],
-      auth: fakeClerkAuth(CLERK_OPTIONS),
+      auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage),
       storage,
       publicUrl: BASE,
     });
@@ -128,7 +129,7 @@ describe("operator data routes", () => {
       const storage = memoryStorage();
       const connecta = createTestConnecta({
         connectors: [connector],
-        auth: fakeClerkAuth(CLERK_OPTIONS),
+        auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage),
         storage,
         publicUrl: BASE,
       });
@@ -136,23 +137,19 @@ describe("operator data routes", () => {
     }
     const fresh = {
       state: "auth_required" as const,
-      authorizationUrl: "https://auth.example/authorize?fresh",
+      authorizationUrl: "https://auth.example/authorize?state=fresh",
     };
 
     it("restarts when no mode is given, as it always has", async () => {
       const { connecta, storage, starts } = oauthConnecta(fresh);
       await storage.set("catalog:oauth", "stale catalog");
 
-      const response = await credentialRequest(connecta, "/ui/oauth/oauth", {
+      const response = await connectRequest(connecta, "/ui/oauth/oauth", {
         method: "POST",
       });
 
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({
-        state: "auth_required",
-        authorizationUrl: fresh.authorizationUrl,
-        reused: false,
-      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Location")).toBe(fresh.authorizationUrl);
       expect(starts).toEqual([{ force: true }]);
       expect(await storage.get("catalog:oauth")).toBeNull();
     });
@@ -161,36 +158,32 @@ describe("operator data routes", () => {
       const { connecta, starts } = oauthConnecta(fresh);
 
       for (const mode of ["restart", "continue"]) {
-        const response = await credentialRequest(
+        const response = await connectRequest(
           connecta,
           `/ui/oauth/oauth?mode=${mode}`,
           { method: "POST" },
         );
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(302);
       }
 
       expect(starts).toEqual([{ force: true }, { force: false }]);
     });
 
-    it("says a continued start reused its URL, and invalidates nothing for it", async () => {
+    it("keeps the catalog when a continued browser visit reuses the consent URL", async () => {
       const { connecta, storage, starts } = oauthConnecta({
         ...fresh,
         authorizationReused: true,
       });
       await storage.set("catalog:oauth", "still valid catalog");
 
-      const response = await credentialRequest(
+      const response = await connectRequest(
         connecta,
         "/ui/oauth/oauth?mode=continue",
         { method: "POST" },
       );
 
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({
-        state: "auth_required",
-        authorizationUrl: fresh.authorizationUrl,
-        reused: true,
-      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Location")).toBe(fresh.authorizationUrl);
       expect(starts).toEqual([{ force: false }]);
       expect(await storage.get("catalog:oauth")).toBe("still valid catalog");
     });
@@ -199,17 +192,17 @@ describe("operator data routes", () => {
       const { connecta, storage } = oauthConnecta({ state: "ok" });
       await storage.set("catalog:oauth", "still valid catalog");
 
-      const continued = await credentialRequest(
+      const continued = await connectRequest(
         connecta,
         "/ui/oauth/oauth?mode=continue",
         { method: "POST" },
       );
       expect(continued.status).toBe(200);
-      await expect(continued.json()).resolves.toEqual({ state: "ok" });
+      expect(await continued.text()).toContain("already connected");
       expect(await storage.get("catalog:oauth")).toBe("still valid catalog");
 
       // A restart that ends healthy still reset the grant under the catalog.
-      const restarted = await credentialRequest(
+      const restarted = await connectRequest(
         connecta,
         "/ui/oauth/oauth?mode=restart",
         { method: "POST" },
@@ -222,12 +215,12 @@ describe("operator data routes", () => {
       const { connecta, storage } = oauthConnecta(fresh);
       await storage.set("catalog:oauth", "stale catalog");
 
-      const continued = await credentialRequest(
+      const continued = await connectRequest(
         connecta,
         "/ui/oauth/oauth?mode=continue",
         { method: "POST" },
       );
-      await expect(continued.json()).resolves.toMatchObject({ reused: false });
+      expect(continued.status).toBe(302);
       expect(await storage.get("catalog:oauth")).toBeNull();
     });
 
@@ -235,7 +228,7 @@ describe("operator data routes", () => {
       const { connecta, starts } = oauthConnecta(fresh);
 
       for (const query of ["?mode=resume", "?mode=", "?mode=continue&mode=restart"]) {
-        const response = await credentialRequest(
+        const response = await connectRequest(
           connecta,
           `/ui/oauth/oauth${query}`,
           { method: "POST" },
@@ -284,11 +277,11 @@ describe("operator data routes", () => {
           auth: { type: "oauth" },
           versionNegotiation: "legacy",
         })],
-        auth: fakeClerkAuth(CLERK_OPTIONS),
+        auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage),
         storage,
         publicUrl: BASE,
       });
-      const started = credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      const started = connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
       await reached;
       await vi.advanceTimersByTimeAsync(30_000);
       const response = await started;
@@ -336,10 +329,10 @@ describe("operator data routes", () => {
             throw new Error("network began after cancellation");
           },
         })],
-        auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
+        auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage), storage, publicUrl: BASE,
       });
       await storage.set("catalog:oauth", "stale");
-      const started = credentialRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
+      const started = connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
       let answered = false;
       void started.then(() => { answered = true; }, () => { answered = true; });
       await reachedWrite;
@@ -429,10 +422,10 @@ describe("operator data routes", () => {
         connectors: [remoteMcp("oauth", {
           url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy",
         })],
-        auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
+        auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage), storage, publicUrl: BASE,
       });
       vi.useFakeTimers();
-      const continued = credentialRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
+      const continued = connectRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
       let answered = false;
       void continued.then(() => { answered = true; }, () => { answered = true; });
       await reachedEntryReset;
@@ -443,8 +436,8 @@ describe("operator data routes", () => {
       vi.useRealTimers();
       expect(await inner.get("conn:oauth:oauth:tokens")).toBeNull();
 
-      const next = await credentialRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
-      expect(next.status).toBe(200);
+      const next = await connectRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
+      expect(next.status).toBe(302);
       const nextGeneration = await storage.get("conn:oauth:oauth:generation");
       await settle(2);
       expect(await storage.get("conn:oauth:oauth:generation")).toBe(nextGeneration);
@@ -483,10 +476,10 @@ describe("operator data routes", () => {
     const storage = memoryStorage();
     await storage.set("catalog:oauth", "stale");
     const connecta = createTestConnecta({
-      connectors: [connector], auth: fakeClerkAuth(CLERK_OPTIONS), storage, publicUrl: BASE,
+      connectors: [connector], auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage), storage, publicUrl: BASE,
     });
     const browser = new AbortController();
-    const starting = credentialRequest(connecta, "/ui/oauth/oauth", {
+    const starting = connectRequest(connecta, "/ui/oauth/oauth", {
       method: "POST", signal: browser.signal,
     });
     await startedHook;

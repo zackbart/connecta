@@ -847,6 +847,7 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
     const operator: InboundAuth = {
       kind: "clerk",
       interactiveOperator: true,
+      activityActorNamespace: "https://clerk.example.com",
       uiAuth: {
         kind: "clerk",
         publishableKey: "pk_test_fake",
@@ -895,15 +896,19 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
 
     const started = await operatorRequest("/ui/oauth/svc", "POST");
     expect(started.status).toBe(200);
-    const { authorizationUrl } = (await started.json()) as {
+    const { authorizationUrl: link } = (await started.json()) as {
       authorizationUrl: string;
     };
+    const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer operator" } }));
+    expect(begun.status).toBe(302);
+    const authorizationUrl = begun.headers.get("Location")!;
     expect(await sealedKinds()).toEqual(["client", "verifier"]);
 
     const state = required(new URL(authorizationUrl).searchParams.get("state") ?? undefined);
     const callback = await connecta.fetch(
       new Request(
         `${BASE}/oauth/callback/svc?code=e2e-code&state=${encodeURIComponent(state)}`,
+        { headers: { Authorization: "Bearer operator" } },
       ),
     );
     expect(callback.status).toBe(200);

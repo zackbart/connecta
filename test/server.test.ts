@@ -1113,7 +1113,7 @@ describe("server /mcp end-to-end", () => {
     const c = createTestConnecta({
       connectors: [calcApi(), authConn],
       auth: fakeClerkAuth({ token: TOKEN }),
-      storage: memoryStorage(),
+      storage: memoryStorage(), vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
       publicUrl: BASE,
     });
     const res = await mcpRpc(
@@ -1132,7 +1132,7 @@ describe("server /mcp end-to-end", () => {
     expect(payload.connector).toBe("needsauth");
     expect((payload as any).recovery).toBe("oauth");
     expect(payload.status).toBe("auth_required");
-    expect(payload.authorizationUrl).toContain("auth.example");
+    expect(payload.authorizationUrl).toContain(`${BASE}/connect/needsauth?h=`);
   });
 
   it("gives a bearer-only deployment a safe handoff but keeps mutation interactive-only", async () => {

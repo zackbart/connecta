@@ -229,7 +229,7 @@ test.beforeAll(async () => {
     }
 
     // The provider's consent screen, as far as the opened tab can tell.
-    if (method === "GET" && url.pathname === "/provider/authorize") {
+    if (method === "GET" && url.pathname === "/connect/oauth" && !realRoutes?.paths.has(url.pathname)) {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       response.end("<!doctype html><title>Consent</title><p>Consent</p>");
       return;
@@ -259,25 +259,31 @@ test.beforeAll(async () => {
         : {}),
       body,
     });
-    if (request.headers.authorization !== `Bearer ${TOKEN}`) {
-      sendJson(response, 401, { error: "unauthorized" });
-      return;
-    }
     if (realRoutes?.paths.has(url.pathname)) {
       const real = await realRoutes.connecta.fetch(
-        new Request(`${REAL_BASE}${url.pathname}`, {
+        new Request(`${REAL_BASE}${url.pathname}${url.search}`, {
           method,
-          headers: { Authorization: "Bearer clerk-operator", Origin: REAL_BASE, "Content-Type": "application/json" },
+          headers: {
+            ...(request.headers.authorization === `Bearer ${TOKEN}` ? { Authorization: "Bearer clerk-operator" } : {}),
+            ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
+            Origin: REAL_BASE, "Content-Type": "application/json",
+          },
           ...(body ? { body: JSON.stringify(body) } : {}),
         }),
       );
       const text = await real.text();
       realRoutes.answered.push(text);
       response.writeHead(real.status, {
-        "Content-Type": "application/json",
+        "Content-Type": real.headers.get("Content-Type") ?? "text/plain",
         "Cache-Control": "no-store",
       });
-      response.end(text);
+      // This local server transports the real deployment's signed browser
+      // route while the payload remains bound to REAL_BASE behind it.
+      response.end(text.replaceAll(`${REAL_BASE}/connect/`, `${origin}/connect/`));
+      return;
+    }
+    if (request.headers.authorization !== `Bearer ${TOKEN}`) {
+      sendJson(response, 401, { error: "unauthorized" });
       return;
     }
     const fault = faults.get(`${method} ${url.pathname}`);
@@ -369,7 +375,7 @@ test.beforeAll(async () => {
         oauthConnected = false;
         sendJson(response, 200, {
           state: "auth_required",
-          authorizationUrl: oauthStartUrl ?? `${origin}/provider/authorize`,
+          authorizationUrl: oauthStartUrl ?? `${origin}/connect/oauth?h=test-handoff`,
           reused: false,
         });
         return;
@@ -955,10 +961,11 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   });
   realRoutes = {
     connecta,
-    paths: new Set(["/ui/oauth/oauth", "/ui/credentials/vaulted/test"]),
+    paths: new Set(["/ui/oauth/oauth", "/connect/oauth", "/ui/credentials/vaulted/test"]),
     answered: [],
   };
   credentialValue = "stored-secret-1234";
+  await page.context().addCookies([{ name: "__session", value: "clerk-operator", url: origin }]);
   await openAuthenticated(page);
 
   const crm = await openRow(page, "CRM");
@@ -966,12 +973,16 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   await crm.getByRole("group", { name: /Disconnect CRM\?/ })
     .getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(crm.locator("#oauthNotice-oauth")).toContainText("Disconnect didn't finish.");
+  oauthConnected = false;
+  const popup = page.waitForEvent("popup");
   await crm.getByRole("button", { name: "Reconnect CRM" }).click();
   await crm.getByRole("group", { name: /Reconnect CRM\?/ })
     .getByRole("button", { name: "Reconnect", exact: true }).click();
-  await expect(crm.locator("#oauthNotice-oauth")).toContainText(
-    "Authorization couldn't start.",
-  );
+  const connectTab = await popup;
+  await expect(connectTab.locator("body")).toContainText("OAuth authorization could not start");
+  expect(await connectTab.content()).not.toContain(SECRET);
+  expect(await connectTab.content()).not.toContain(LEAK);
+  await connectTab.close();
 
   const vaulted = await openRow(page, "Vaulted service");
   await vaulted.getByRole("button", { name: "Test" }).click();
@@ -983,7 +994,7 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   // Not on the page, not in any answer the page received...
   expect(await page.content()).not.toContain(SECRET);
   expect(await page.locator("body").innerText()).not.toContain(SECRET);
-  expect(realRoutes.answered).toHaveLength(3);
+  expect(realRoutes.answered).toHaveLength(4);
   for (const body of realRoutes.answered) expect(body).not.toContain(SECRET);
   // ...and on the host, where an operator debugging it looks.
   expect(logged.filter((line) => line.includes(LEAK))).toEqual([
@@ -1158,7 +1169,7 @@ test("opens the authorization tab inside the click and sends it on once the rout
   expect(requests.filter((request) => request.path.startsWith("/ui/oauth/"))).toHaveLength(1);
 
   release();
-  await tab.waitForURL(`${origin}/provider/authorize`);
+  await tab.waitForURL(`${origin}/connect/oauth?h=test-handoff`);
   // The provider's page gets no handle on the operator page.
   expect(await tab.evaluate("window.opener")).toBeNull();
   await expect(crm.locator("#oauthNotice-oauth")).toHaveText(
@@ -1192,7 +1203,7 @@ test("falls back to the authorization link when the browser blocks the tab", asy
   await crm.getByRole("button", { name: "Connect CRM" }).click();
   await expect(crm.locator("#oauthNotice-oauth")).toContainText("Your browser blocked the new tab.");
   const link = crm.getByRole("link", { name: "Open authorization page" });
-  await expect(link).toHaveAttribute("href", `${origin}/provider/authorize`);
+  await expect(link).toHaveAttribute("href", `${origin}/connect/oauth?h=test-handoff`);
   await expect(link).toHaveAttribute("rel", "noopener noreferrer");
   await expect(crm.locator(".btn.primary")).toHaveCount(1);
 });

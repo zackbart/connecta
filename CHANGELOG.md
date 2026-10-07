@@ -4,6 +4,12 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+Agents and operator connect actions now receive a signed `/connect` URL.
+Connecta verifies the initiating user's Clerk or Cloudflare Access browser
+identity before starting downstream OAuth and again on completion, as required
+by MCP 2026-07-28 URL elicitation. OAuth browser connections require an
+interactive provider and a signing credential vault; reissue pending consent links.
+
 This change moves both MCP edges from 2.0.0 to 2.3.1, pinned exactly and in
 lockstep, because client and server each pin the same exact
 `@modelcontextprotocol/core` and moving one alone would install two.
@@ -511,6 +517,9 @@ using `quickJsExecutor()` need no configuration change.
   The host suspends the refusing bridge call, closes further host access, and
   releases the sandbox lease. The failure reports payload-free attempted,
   admitted, succeeded, and failed host-call counts (#704).
+- Bind downstream OAuth completion to the initiating user for personal and
+  shared connectors. Return connecta `/connect` links to agents and operator
+  actions; keep status reads passive.
 
 - **A grant from before issuer binding is retired, not bound to whoever is
   named.** A token set or client registration v0.8.1 or earlier wrote carries

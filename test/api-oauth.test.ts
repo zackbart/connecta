@@ -1,3 +1,4 @@
+import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { oauthValueStorageKey } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
@@ -311,7 +312,7 @@ describe("api() oauth agent recovery", () => {
     const provider = fakeProvider();
     install(provider);
     const registry = makeRegistry([ccb()]);
-    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true });
+    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true, oauthConnectUrl: async id => `${BASE}/connect/${id}?h=test` });
     const failed = JSON.parse(
       (await mt.callTool({ address: "ccb.whoami" })).content[0]!.text,
     ) as { error: { code: string; recovery?: string } };
@@ -321,7 +322,7 @@ describe("api() oauth agent recovery", () => {
       (await mt.authorizeConnector({ connector: "ccb" })).content[0]!.text,
     ) as { recovery: string; status: string; authorizationUrl: string };
     expect(recovery).toMatchObject({ recovery: "oauth", status: "auth_required" });
-    expect(recovery.authorizationUrl.startsWith(`${AUTHORIZE}?`)).toBe(true);
+    expect(recovery.authorizationUrl.startsWith(`${BASE}/connect/ccb?`)).toBe(true);
 
     const denied = JSON.parse(
       (await createMetaTools(registry, BASE).authorizeConnector({ connector: "ccb" })).content[0]!.text,
@@ -336,6 +337,7 @@ describe("api() oauth callback exchange", () => {
     install(provider);
     const operator: InboundAuth = {
       kind: "test-operator",
+      uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
       interactiveOperator: true,
       activityActorNamespace: "https://identity.test",
       authorize: (request) =>
@@ -357,7 +359,10 @@ describe("api() oauth callback exchange", () => {
         headers: { Authorization: "Bearer operator", Origin: BASE },
       }));
       expect(startResponse.status).toBe(200);
-      const { authorizationUrl } = await startResponse.json() as { authorizationUrl: string };
+      const link = (await startResponse.json() as { authorizationUrl: string }).authorizationUrl;
+      const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer operator" } }));
+      expect(begun.status).toBe(302);
+      const authorizationUrl = begun.headers.get("Location")!;
       const code = provider.consent(authorizationUrl);
       const state = new URL(authorizationUrl).searchParams.get("state")!;
 
@@ -365,7 +370,7 @@ describe("api() oauth callback exchange", () => {
       expect(forged.status).toBe(400);
       expect(provider.tokenRequests).toEqual([]);
 
-      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`));
+      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, { headers: { Authorization: "Bearer operator" } }));
       expect(callback.status).toBe(200);
       const exchange = provider.tokenRequests.at(-1)!;
       expect(exchange.authorization).toBe(`Basic ${btoa("church-client:church-secret")}`);
@@ -475,7 +480,7 @@ describe("api() oauth callback exchange", () => {
     });
     const connecta = createTestConnecta({
       connectors: [api("ccb", { oauth: { ...OAUTH, tokenEndpointAuthMethod: "client_secret_post" }, tools: [] })],
-      storage: memoryStorage(),
+      storage: memoryStorage(), auth: callbackAuth,
       publicUrl: BASE,
       logger: { debug() {}, info() {}, warn, error() {} },
     });
@@ -485,8 +490,9 @@ describe("api() oauth callback exchange", () => {
       const authorizationUrl = new URL(started.authorizationUrl!);
       const code = provider.consent(authorizationUrl.href);
       const state = authorizationUrl.searchParams.get("state")!;
+      await bindCallback(connecta, "ccb", state);
       warn.mockClear();
-      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`));
+      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, { headers: { Authorization: "Bearer operator" } }));
       expect(callback.status).toBe(500);
       expect(await callback.text()).not.toContain("church-secret");
       expect(warn).toHaveBeenCalledTimes(1);

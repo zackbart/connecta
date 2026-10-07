@@ -354,8 +354,8 @@ export interface RegistryView {
     callOptions?: ConnectorOperationOptions,
   ): Promise<ConnectorStatus>;
   invalidateStored(id: string): Promise<void>;
-  /** Bind returned OAuth state to this view's personal storage partition. */
-  bindOAuthHandoff(id: string, authorizationUrl: string): Promise<void>;
+  /** Bind returned OAuth state to its initiating user for either owner scope. */
+  bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void>;
 }
 
 /**
@@ -639,20 +639,18 @@ export class Registry implements RegistryView {
     registry: RegistryView;
     principalKey?: string;
   } | null> {
-    const connector = this.connectors.get(connectorId);
-    if (!connector) return null;
-    if (connector.authScope !== "personal") return { registry: this };
     if (!state) return null;
     const principalKey = await this.opts.storage.get(
       this.oauthHandoffKey(connectorId, await sha256Hex(state)),
     );
-    if (!principalKey) return null;
+    const connector = this.connectors.get(connectorId);
+    if (!connector || !principalKey) return null;
     return {
-      registry: this.scoped({
+      registry: connector.authScope === "personal" ? this.scoped({
         connectorIds: [connectorId],
         subjectKey: principalKey,
         principalKey,
-      }),
+      }) : this,
       principalKey,
     };
   }
@@ -962,8 +960,10 @@ export class Registry implements RegistryView {
 
   credentialUiAvailable(): boolean { return Boolean(this.opts.credentialUi); }
 
-  async bindOAuthHandoff(): Promise<void> {
-    // Shared OAuth already resolves in deployment-wide connector storage.
+  async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
+    const state = new URL(authorizationUrl).searchParams.get("state");
+    if (!state || !principalKey) throw new Error("OAuth requires state and an initiating user");
+    await this.storeOAuthHandoff(id, state, principalKey);
   }
 
   observedOutputSchema(
@@ -2090,24 +2090,7 @@ class ScopedRegistryView implements RegistryView {
 
   credentialUiAvailable(): boolean { return this.root.credentialUiAvailable(); }
 
-  async bindOAuthHandoff(
-    id: string,
-    authorizationUrl: string,
-  ): Promise<void> {
-    const connector = this.getConnector(id);
-    if (connector?.authScope !== "personal" || !this.scope.principalKey) return;
-    let state: string | null = null;
-    try {
-      state = new URL(authorizationUrl).searchParams.get("state");
-    } catch {
-      return;
-    }
-    if (state) {
-      await this.root.storeOAuthHandoff(
-        id,
-        state,
-        this.scope.principalKey,
-      );
-    }
+  async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
+    await this.root.bindOAuthHandoff(id, authorizationUrl, principalKey ?? this.scope.principalKey);
   }
 }
