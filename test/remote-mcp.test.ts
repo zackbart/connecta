@@ -27,15 +27,16 @@ import {
 } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { withAbortableTimeout } from "../src/timeout.js";
+import { withAbortableTimeout, withDeadline } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
 import type {
   Executor,
   KVStorage,
 } from "../src/types.js";
-import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
-import { required, makeRegistry, silentLogger } from "./helpers.js";
+import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "./fixtures/misc.js";
+import { createTestConnecta, required, makeRegistry, seedCatalog, silentLogger } from "./helpers.js";
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
+import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
 
@@ -70,6 +71,8 @@ let closer: (() => Promise<void>) | null = null;
 afterEach(async () => {
   await closer?.();
   closer = null;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -228,10 +231,416 @@ function makeHttpDownstream(
         fetch: fetchStub,
       }) as unknown as Transport,
   });
-  return { connector, requests };
+  return { connector, requests, fetch: fetchStub, url };
 }
 
 describe("remoteMcp() connector", () => {
+  it.each(["success", "failure"])(
+    "keeps an OAuth connection usable after its first call's %s deadline scope ends",
+    async (outcome) => {
+      const storage = memoryStorage();
+      await storage.set("oauth:tokens", JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }));
+      const downstream = httpDownstream((server) => {
+        server.registerTool("echo", {
+          inputSchema: z.object({}),
+          annotations: { readOnlyHint: true },
+        }, async () => ({ content: [{ type: "text", text: "ok" }] }));
+      });
+      const signals: AbortSignal[] = [];
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        init.signal?.throwIfAborted();
+        if (init.signal) signals.push(init.signal);
+        return downstream.fetch(input, init);
+      });
+      const connector = remoteMcp("down", {
+        url: downstream.url,
+        auth: { type: "oauth" },
+      });
+      const context = { ...ctx(storage), requestScope: {} };
+      try {
+        const first = withDeadline(async (signal) => {
+          const result = await connector.callTool("echo", {}, { ...context, signal });
+          if (outcome === "failure") throw new Error("first caller failed");
+          return result;
+        }, { timeoutMs: 60_000, timeoutError: new Error("call deadline") });
+        if (outcome === "failure") await expect(first).rejects.toThrow("first caller failed");
+        else await expect(first).resolves.toMatchObject({ content: [{ text: "ok" }] });
+
+        await expect(withDeadline(
+          (signal) => connector.callTool("echo", {}, { ...context, signal }),
+          { timeoutMs: 60_000, timeoutError: new Error("call deadline") },
+        )).resolves.toMatchObject({ content: [{ text: "ok" }] });
+      } finally {
+        await connector.closeScope!(context);
+      }
+      // The connection's own lifetime still ends at request teardown.
+      expect(signals.length).toBeGreaterThan(0);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+    },
+  );
+
+  it.each(["deadline", "completion"])(
+    "isolates concurrent OAuth call signals when one call ends by %s",
+    async (exit) => {
+      vi.useFakeTimers();
+      const storage = memoryStorage();
+      await storage.set("oauth:tokens", JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }));
+      const downstream = httpDownstream((server) => {
+        server.registerTool("echo", {
+          inputSchema: z.object({ name: z.string() }),
+          annotations: { readOnlyHint: true },
+        }, async ({ name }) => ({ content: [{ type: "text", text: name }] }));
+      });
+      const calls = {
+        first: { started: deferred<void>(), release: deferred<void>(), signal: undefined as AbortSignal | undefined },
+        sibling: { started: deferred<void>(), release: deferred<void>(), signal: undefined as AbortSignal | undefined },
+      };
+      let handshakes = 0;
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        init.signal?.throwIfAborted();
+        const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+        if (message?.method === "server/discover") handshakes++;
+        if (message?.method === "tools/call") {
+          const call = calls[message.params.arguments.name as keyof typeof calls];
+          call.signal = init.signal!;
+          call.started.resolve();
+          let abort!: () => void;
+          try {
+            await Promise.race([
+              call.release.promise,
+              new Promise<never>((_, reject) => {
+                abort = () => reject(init.signal?.reason);
+                init.signal?.addEventListener("abort", abort, { once: true });
+              }),
+            ]);
+            init.signal?.throwIfAborted();
+          } finally {
+            init.signal?.removeEventListener("abort", abort);
+          }
+        }
+        return downstream.fetch(input, init);
+      });
+      const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+      const context = { ...ctx(storage), requestScope: {} };
+      const first = withDeadline(
+        (signal) => connector.callTool("echo", { name: "first" }, { ...context, signal }),
+        { timeoutMs: exit === "deadline" ? 1_000 : 60_000, timeoutError: new Error("first call deadline") },
+      );
+      // Observe a rejection immediately, before advancing the fake clock.
+      const firstResult = first.catch((error: unknown) => error);
+      await calls.first.started.promise;
+      const sibling = withDeadline(
+        (signal) => connector.callTool("echo", { name: "sibling" }, { ...context, signal }),
+        { timeoutMs: 60_000, timeoutError: new Error("sibling call deadline") },
+      );
+      const siblingResult = sibling.catch((error: unknown) => error);
+      try {
+        await calls.sibling.started.promise;
+        if (exit === "deadline") {
+          await vi.advanceTimersByTimeAsync(1_000);
+          expect(await firstResult).toEqual(new Error("first call deadline"));
+          expect(calls.first.signal?.aborted).toBe(true);
+          expect(calls.sibling.signal?.aborted).toBe(false);
+          calls.sibling.release.resolve();
+          expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
+        } else {
+          // The fast sibling finishes while the connection-opening call waits.
+          calls.sibling.release.resolve();
+          expect(await siblingResult).toMatchObject({ content: [{ text: "sibling" }] });
+          expect(calls.first.signal?.aborted).toBe(false);
+          calls.first.release.resolve();
+          expect(await firstResult).toMatchObject({ content: [{ text: "first" }] });
+        }
+        expect(handshakes).toBe(1);
+      } finally {
+        calls.first.release.resolve();
+        calls.sibling.release.resolve();
+        await connector.closeScope!(context);
+        await Promise.all([firstResult, siblingResult]);
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(["client disconnect", "program success", "program failure"])(
+    "cancels every OAuth fan-out call and releases its streams, timers, and request listeners on %s",
+    async (exit) => {
+      vi.useFakeTimers();
+      const storage = memoryStorage();
+      await storage.set("conn:down:oauth:tokens", JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }));
+      await seedCatalog(storage, "down", "echo");
+      const downstream = httpDownstream((server) => {
+        server.registerTool("echo", {
+          inputSchema: z.object({}),
+          annotations: { readOnlyHint: true },
+        }, async () => ({ content: [{ type: "text", text: "ok" }] }));
+      });
+      const started = deferred<void>();
+      const settled = deferred<PromiseSettledResult<unknown>[]>();
+      const signals: AbortSignal[] = [];
+      const bodies: ReadableStream<Uint8Array>[] = [];
+      const bodyListeners = new Set<() => void>();
+      let handshakes = 0;
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        init.signal?.throwIfAborted();
+        if (init.signal) signals.push(init.signal);
+        const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+        if (message?.method === "server/discover") handshakes++;
+        if (message?.method !== "tools/call") return downstream.fetch(input, init);
+        // A real fetch errors its streaming body on abort. Keep these responses
+        // open so teardown must also release the SDK's active SSE readers.
+        const signal = init.signal!;
+        let abort!: () => void;
+        const detach = () => {
+          signal.removeEventListener("abort", abort);
+          bodyListeners.delete(abort);
+        };
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            abort = () => {
+              detach();
+              controller.error(signal.reason);
+            };
+            bodyListeners.add(abort);
+            signal.addEventListener("abort", abort, { once: true });
+          },
+          cancel: detach,
+        });
+        bodies.push(body);
+        if (bodies.length === 3) started.resolve();
+        return new Response(body, { headers: { "content-type": "text/event-stream" } });
+      });
+      const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+      const executor = scriptedExecutor(async (fns) => {
+        const results = Promise.allSettled(Array.from({ length: 3 }, () => required(fns.call)("down.echo", {})));
+        results.then(settled.resolve);
+        if (exit === "client disconnect") return (await results).map((result) => result.status);
+        await started.promise;
+        if (exit === "program failure") throw new Error("program failed");
+        return null;
+      });
+      const connecta = createTestConnecta({ connectors: [connector], auth: [], storage, executor, logger: silentLogger });
+      const controller = new AbortController();
+      const request = mcpRpc("tools/call", {
+        name: "execute_code", arguments: { code: "async () => null" },
+      }, { signal: controller.signal });
+      const added = vi.spyOn(request.signal, "addEventListener");
+      const removed = vi.spyOn(request.signal, "removeEventListener");
+      const background: Promise<unknown>[] = [];
+      const pending = connecta.fetch(request, undefined, { waitUntil: (promise: Promise<unknown>) => background.push(promise) });
+      const result = pending.catch((error: unknown) => error);
+      try {
+        await started.promise;
+        if (exit === "client disconnect") {
+          await vi.advanceTimersByTimeAsync(0);
+          expect(bodies.every((body) => body.locked)).toBe(true);
+          expect(signals.every((signal) => !signal.aborted)).toBe(true);
+          expect(vi.getTimerCount()).toBeGreaterThan(0);
+          const reason = new Error("client disconnected");
+          controller.abort(reason);
+          expect(await result).toBe(reason);
+        } else {
+          const response = await pending;
+          expect(response.status).toBe(200);
+          const payload = await response.json() as { result: { isError?: boolean } };
+          expect(payload.result.isError).toBe(exit === "program failure" ? true : undefined);
+        }
+        expect((await settled.promise).map((call) => call.status)).toEqual(["rejected", "rejected", "rejected"]);
+        await Promise.all(background);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(handshakes).toBe(1);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+        expect(bodies.every((body) => !body.locked)).toBe(true);
+        expect(bodyListeners.size).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(added.mock.calls.length).toBeGreaterThan(0);
+        for (const [event, listener] of added.mock.calls) {
+          expect(removed.mock.calls.some(([removedEvent, removedListener]) => removedEvent === event && removedListener === listener)).toBe(true);
+        }
+      } finally {
+        controller.abort();
+        await result;
+        await Promise.all(background);
+      }
+    },
+  );
+
+  it.each(["success", "failure"])(
+    "spares pending OAuth siblings when the first warm-catalog program call returns %s",
+    async (outcome) => {
+      const pendingStarted = deferred<void>();
+      const releasePending = deferred<void>();
+      let pendingCount = 0;
+      const downstream = httpDownstream((server) => {
+        server.registerTool("echo", {
+          inputSchema: z.object({ pending: z.boolean() }),
+          annotations: { readOnlyHint: true },
+        }, async ({ pending }) => ({
+          content: [{ type: "text", text: "ok" }],
+          ...(!pending && outcome === "failure" ? { isError: true } : {}),
+        }));
+      });
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        init.signal?.throwIfAborted();
+        const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+        if (message?.method === "tools/call") {
+          if (message.params.arguments.pending) {
+            if (++pendingCount === 3) pendingStarted.resolve();
+            await new Promise<void>((resolve, reject) => {
+              const abort = () => reject(init.signal?.reason);
+              init.signal?.addEventListener("abort", abort, { once: true });
+              releasePending.promise.then(resolve).finally(() => {
+                init.signal?.removeEventListener("abort", abort);
+              });
+            });
+            init.signal?.throwIfAborted();
+          } else {
+            await pendingStarted.promise;
+          }
+        }
+        return downstream.fetch(input, init);
+      });
+      const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+      const registry = makeRegistry([connector]);
+      const warmScope = {};
+      const context = registry.contextFor("down", BASE, warmScope);
+      await context.storage.set("oauth:tokens", JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }));
+      await registry.getTools("down", BASE, warmScope);
+      await connector.closeScope!(context);
+
+      const executor = scriptedExecutor(async (fns) => {
+        const call = required(fns.call);
+        const first = call("down.echo", { pending: false });
+        const siblings = Array.from({ length: 3 }, () => call("down.echo", { pending: true }));
+        // Settle all promises before allowing the first completion to release
+        // the slow fetches. This reproduces the production allSettled fan-out.
+        const results = Promise.allSettled([first, ...siblings]);
+        await first.catch(() => {}).finally(() => releasePending.resolve());
+        return (await results).map((result) => result.status);
+      });
+      try {
+        const result = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+          hostCallTimeoutMs: 60_000,
+        })({ code: "async () => null" });
+        expect(result.isError).toBeUndefined();
+        expect(result.structuredContent).toMatchObject({
+          result: [outcome === "success" ? "fulfilled" : "rejected", "fulfilled", "fulfilled", "fulfilled"],
+        });
+      } finally {
+        releasePending.resolve();
+      }
+    },
+  );
+
+  it("lets a second OAuth handshake waiter finish after the first is cancelled", async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const downstream = httpDownstream(() => {});
+    let handshakes = 0;
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      init.signal?.throwIfAborted();
+      const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+      if (message?.method === "server/discover") {
+        handshakes++;
+        entered.resolve();
+        await release.promise;
+        init.signal?.throwIfAborted();
+      }
+      return downstream.fetch(input, init);
+    });
+    const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+    const context = { ...ctx(), requestScope: {} };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const secondListening = vi.spyOn(secondController.signal, "addEventListener");
+    const first = connector.status!({ ...context, signal: firstController.signal });
+    await entered.promise;
+    const second = connector.status!({ ...context, signal: secondController.signal });
+    try {
+      await vi.waitFor(() => expect(secondListening).toHaveBeenCalledWith("abort", expect.any(Function), expect.anything()));
+      firstController.abort(new Error("first caller cancelled"));
+      await expect(first).resolves.toMatchObject({ state: "error", message: "first caller cancelled" });
+      release.resolve();
+      await expect(second).resolves.toEqual({ state: "ok" });
+      expect(handshakes).toBe(1);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([first, second]);
+      await connector.closeScope!(context);
+    }
+  });
+
+  it.each(["last waiter cancels", "scope closes"])(
+    "stops OAuth grant retirement during beginFlow when the %s",
+    async (exit) => {
+      const backing = memoryStorage();
+      const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
+      await backing.set("oauth:tokens", grant);
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const storage: KVStorage = {
+        ...backing,
+        async get(key) {
+          if (key === "oauth:tokens") {
+            entered.resolve();
+            await release.promise;
+          }
+          return backing.get(key);
+        },
+      };
+      const transport = vi.fn();
+      const connector = remoteMcp("down", {
+        url: "https://downstream.test/mcp",
+        auth: { type: "oauth" },
+        _transportFactory: transport,
+      });
+      const controller = new AbortController();
+      const context = { ...ctx(storage), requestScope: {}, signal: controller.signal };
+      const pending = connector.status!(context);
+      await entered.promise;
+      try {
+        if (exit === "last waiter cancels") {
+          controller.abort(new Error("caller left during grant read"));
+          await expect(pending).resolves.toMatchObject({ state: "error" });
+        } else {
+          await connector.closeScope!(context);
+        }
+        release.resolve();
+        await expect(pending).resolves.toMatchObject({ state: "error" });
+        // A cancelled waiter returned before the detached connect did. Let
+        // the released in-memory storage promise chain finish before checking.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(await backing.get("oauth:generation")).toBeNull();
+        expect(await backing.get("oauth:tokens")).toBe(grant);
+        expect(transport).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+        await pending;
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
   it("passes usageGuide through, and leaves it unset by default", () => {
     expect(
       remoteMcp("plain", { url: "https://downstream.test/mcp" }).usageGuide,
@@ -733,6 +1142,44 @@ describe("probe scope teardown", () => {
 });
 
 describe("downstream session termination", () => {
+  it("sends legacy DELETE through the production OAuth wrapper after the first call's deadline scope ends", async () => {
+    const downstream = makeHttpDownstream({ sessionId: "oauth-session" });
+    const storage = memoryStorage();
+    await storage.set("oauth:tokens", JSON.stringify({
+      connectaOAuthVersion: 2,
+      generation: "legacy",
+      issuer: "https://authorization.test",
+      value: { access_token: "oauth-secret", token_type: "bearer" },
+    }));
+    const authorizations: (string | null)[] = [];
+    vi.stubGlobal("fetch", (input: string | URL, init: RequestInit = {}) => {
+      init.signal?.throwIfAborted();
+      if (init.method === "DELETE") authorizations.push(new Headers(init.headers).get("authorization"));
+      return downstream.fetch(input, init);
+    });
+    // No _transportFactory: DELETE must traverse coordinatedFetch and its
+    // connection-owned OAuth signal, just as it does in production.
+    const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+    const context = { ...ctx(storage), requestScope: {} };
+    let callSignal: AbortSignal | undefined;
+    try {
+      await expect(withDeadline((signal) => {
+        callSignal = signal;
+        return connector.status!({ ...context, signal });
+      }, { timeoutMs: 60_000, timeoutError: new Error("call deadline") })).resolves.toEqual({ state: "ok" });
+      expect(callSignal?.aborted).toBe(true);
+    } finally {
+      await connector.closeScope!(context);
+    }
+    expect(downstream.requests.filter((request) => request.method === "DELETE")).toMatchObject([
+      { sessionId: "oauth-session", abortedWhenIssued: false },
+    ]);
+    expect(authorizations).toEqual(["Bearer oauth-secret"]);
+    expect(downstream.requests.every((request) => request.signal?.aborted)).toBe(true);
+    await connector.closeScope!(context);
+    expect(authorizations).toHaveLength(1);
+  });
+
   it.each(["rotation", "generation", "disconnect"] as const)("terminates the old session on %s without waiting for DELETE", async (exit) => {
     const deleting = deferred<void>();
     const releaseDelete = deferred<Response>();

@@ -353,8 +353,8 @@ export interface Connector {
   ): Promise<unknown>;
   /**
    * Optional best-effort teardown for resources retained under
-   * `ctx.requestScope`. The core calls this at most once when a scope it created
-   * solely for probing ends, and never uses that scope again. Teardown gets a
+   * `ctx.requestScope`. The core calls this at most once when a probe or
+   * execute_code scope ends, and never uses that scope again. Teardown gets a
    * small, fixed best-effort completion window; a missing, rejected, or
    * never-settling hook cannot change or hold open the operation's result
    * beyond that bound.
