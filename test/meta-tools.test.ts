@@ -922,7 +922,7 @@ describe("catalog-lookup health accounting", () => {
 });
 
 describe("authorize_connector", () => {
-  it("starts the flow and returns the authorization URL with instructions", async () => {
+  it("returns the browser connection URL without starting the flow", async () => {
     authConnector.startAuthCalls.length = 0;
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(
@@ -937,20 +937,25 @@ describe("authorize_connector", () => {
     expect(parsed.connector).toBe("needsauth");
     expect(parsed.recovery).toBe("oauth");
     expect(parsed.status).toBe("auth_required");
-    expect(parsed.authorizationUrl).toContain("auth.example");
-    expect(parsed.instructions).toContain("/oauth/callback/");
+    expect(parsed.authorizationUrl).toContain(`${BASE}/connect/needsauth?h=`);
+    expect(parsed.instructions).toContain("sign in as the user");
     expect(parsed.instructions).toContain("Then retry the original call");
     expect(parsed.instructions).toContain(
       'connecta.search({ connector: "needsauth" }) inside execute_code',
     );
-    expect(authConnector.startAuthCalls).toEqual([{ force: undefined }]);
+    expect(authConnector.startAuthCalls).toEqual([]);
   });
 
-  it("passes force through to the connector", async () => {
+  it("passes force to the browser link factory without starting consent", async () => {
     authConnector.startAuthCalls.length = 0;
-    const mt = createMetaTools(registry(), BASE);
+    const links: Array<{ id: string; force?: boolean }> = [];
+    const mt = createMetaTools(registry(), BASE, { oauthConnectUrl: async (id, force) => {
+      links.push({ id, ...(force !== undefined ? { force } : {}) });
+      return `${BASE}/connect/${id}?h=test`;
+    } });
     await mt.authorizeConnector({ connector: "needsauth", force: true });
-    expect(authConnector.startAuthCalls).toEqual([{ force: true }]);
+    expect(links).toEqual([{ id: "needsauth", force: true }]);
+    expect(authConnector.startAuthCalls).toEqual([]);
   });
 
   it("reports unavailable when a connector declares no recovery path", async () => {
@@ -1074,7 +1079,7 @@ describe("authorize_connector", () => {
     expect(required(result.content[0]).text).toContain("Unknown connector");
   });
 
-  it("errors when startAuth reports auth_required without a URL", async () => {
+  it("issues a browser link before asking startAuth for a consent URL", async () => {
     const noUrl: Connector = connectorWith({
       id: "nourl",
       kind: "mcp",
@@ -1090,11 +1095,11 @@ describe("authorize_connector", () => {
     });
     const mt = createMetaTools(makeRegistry([noUrl]), BASE);
     const result = await mt.authorizeConnector({ connector: "nourl" });
-    expect(result.isError).toBe(true);
-    expect(required(result.content[0]).text).toContain("no URL is available");
+    expect(result.isError).toBeFalsy();
+    expect(required(result.content[0]).text).toContain("/connect/nourl?h=");
   });
 
-  it("surfaces a startAuth error state as a structured error status (not isError)", async () => {
+  it("leaves startAuth errors for the verified browser visit", async () => {
     const errConn: Connector = connectorWith({
       id: "erroauth",
       kind: "mcp",
@@ -1115,11 +1120,11 @@ describe("authorize_connector", () => {
       status: string;
       message?: string;
     };
-    expect(parsed.status).toBe("error");
-    expect(parsed.message).toContain("ECONNREFUSED");
+    expect(parsed.status).toBe("auth_required");
+    expect(parsed.message).toBeUndefined();
   });
 
-  it("invalidates the tool cache even when startAuth throws", async () => {
+  it("keeps the tool cache unchanged when issuing a browser link", async () => {
     const throwConn: Connector = connectorWith({
       id: "throws",
       kind: "mcp",
@@ -1142,8 +1147,8 @@ describe("authorize_connector", () => {
     };
     const mt = createMetaTools(reg, BASE);
     const result = await mt.authorizeConnector({ connector: "throws" });
-    expect(result.isError).toBe(true);
-    expect(invalidated).toBe(1);
+    expect(result.isError).toBeFalsy();
+    expect(invalidated).toBe(0);
   });
 
   // #261: the surface sweeps in test/code-first-surface.test.ts read tool
@@ -1534,5 +1539,5 @@ describe("empty-query browse of an unconfigured connector", () => {
 });
 
 function createMetaTools(...args: Parameters<typeof buildMetaTools>) {
-  return buildMetaTools(args[0], args[1], { canManageAuth: () => true, credentialHandoffUrl: new URL("/", args[1]).toString(), ...args[2] });
+  return buildMetaTools(args[0], args[1], { canManageAuth: () => true, oauthConnectUrl: async id => `${args[1]}/connect/${id}?h=test-handoff`, credentialHandoffUrl: new URL("/", args[1]).toString(), ...args[2] });
 }

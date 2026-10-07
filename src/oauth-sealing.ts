@@ -58,3 +58,14 @@ export function inheritOAuthSealer(
 ): ConnectorContext {
   return attachOAuthSealer(to, sealers.get(from));
 }
+
+/** A separate HMAC key for browser handoffs, derived from the credential key. */
+export async function deriveOAuthHandoffKey(raw: Uint8Array): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey("raw", raw, "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({
+    name: "HKDF",
+    hash: "SHA-256",
+    salt: new TextEncoder().encode("connecta:oauth-handoff:v1"),
+    info: new TextEncoder().encode("browser-connect"),
+  }, material, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign", "verify"]);
+}

@@ -72,20 +72,17 @@ describe("request pipeline lifetime", () => {
   });
 
   it("releases the permit of a legacy /mcp request whose client leaves mid-call", async () => {
-    // Nothing reaches a stalled startAuth: it takes no signal. The request's
-    // permit must still end with the request.
+    // A downstream read ignores cancellation. The request permit must still
+    // end with the request. OAuth starts now belong to the browser route.
     let started = false;
     const connector: Connector = {
       id: "stalled",
       kind: "api",
-      description: "A connector whose OAuth start never settles",
+      description: "A connector whose downstream read never settles",
       async listTools() {
-        return [];
+        return [{ name: "read", annotations: { readOnlyHint: true }, inputSchema: { type: "object" } }];
       },
-      async callTool() {
-        return null;
-      },
-      startAuth() {
+      callTool() {
         started = true;
         return new Promise(() => {});
       },
@@ -104,7 +101,7 @@ describe("request pipeline lifetime", () => {
     const controller = new AbortController();
     const pending = connecta.fetch(mcpRpc(
       "tools/call",
-      { name: "authorize_connector", arguments: { connector: "stalled" } },
+      { name: "call_tool", arguments: { address: "stalled.read" } },
       { id: 1, signal: controller.signal },
     ));
     pending.catch(() => {});

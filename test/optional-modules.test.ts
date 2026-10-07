@@ -126,11 +126,15 @@ describe("optional deployment modules", () => {
 
   it("allows authorized MCP OAuth initiation and completion with no UI", async () => {
     const oauth: Connector = { ...connector("oauth"), startAuth: vi.fn(async () => ({ state: "auth_required" as const, authorizationUrl: BASE + "/consent?state=state" })), verifyState: async state => state === "state", finishAuth: vi.fn(async () => {}) };
-    const app = createConnecta({ connectors: [oauth], executor, auth, logger: "silent", publicUrl: BASE, identity: { credentialAdministration: () => "all" } });
+    const app = createConnecta({ connectors: [oauth], executor, auth, vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))), logger: "silent", publicUrl: BASE, identity: { credentialAdministration: () => "all" } });
     const response = await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "oauth" } }, { baseUrl: BASE, token: "human" });
-    expect(await response.text()).toContain("authorizationUrl");
+    const rpc = await readJsonRpc(response);
+    const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
+    expect(link).toContain("/connect/oauth?h=");
+    expect(oauth.startAuth).not.toHaveBeenCalled();
+    expect((await app.fetch(new Request(link, { headers }))).status).toBe(302);
     expect(oauth.startAuth).toHaveBeenCalledOnce();
-    const callback = await app.fetch(new Request(BASE + "/oauth/callback/oauth?code=code&state=state"));
+    const callback = await app.fetch(new Request(BASE + "/oauth/callback/oauth?code=code&state=state", { headers }));
     expect(callback.status).toBe(200);
     expect(oauth.finishAuth).toHaveBeenCalledOnce();
     expect(await callback.text()).not.toContain('href="/"');
@@ -166,7 +170,7 @@ describe("optional deployment modules", () => {
 
   it("never starts OAuth for a use-only identity or a revoked browser grant", async () => {
     const oauth: Connector = { ...connector("oauth"), startAuth: vi.fn(async () => ({ state: "ok" as const })), verifyState: async () => true, finishAuth: vi.fn(async () => {}) };
-    const app = createConnecta({ connectors: [oauth], executor, auth, logger: "silent", publicUrl: BASE });
+    const app = createConnecta({ connectors: [oauth], executor, auth, vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))), logger: "silent", publicUrl: BASE });
     const response = await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "oauth" } }, { baseUrl: BASE, token: "human" });
     expect(await response.text()).toContain("not permitted");
     expect(oauth.startAuth).not.toHaveBeenCalled();

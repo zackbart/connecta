@@ -633,13 +633,24 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
     async authorize(request, baseUrl): Promise<AuthResult> {
       const tokenPresent = Boolean(request.headers.get("authorization"));
+      const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
       let userId: string | undefined;
+      let sessionCookies: string[] | undefined;
       try {
         const pathname = new URL(request.url).pathname;
         const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
         const state = await clerk.authenticateRequest(request, {
           acceptsToken: isMcp ? "oauth_token" : "session_token",
         });
+        const browserOAuth = !tokenPresent && browserOAuthRoute;
+        // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
+        // handshake, which returns here with a refreshed, verified session.
+        if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
+          return { ok: false, final: true, response: new Response(null, {
+            status: 307, headers: state.headers,
+          }) };
+        }
+        if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
         const auth = state.toAuth();
         if (!auth?.isAuthenticated) {
           console.warn("[connecta] clerk rejected request: reason=authentication_failed");
@@ -696,7 +707,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       if (!(await checkGate(userId))) {
         return { ok: false, response: forbidden() };
       }
-      return { ok: true, userId };
+      return { ok: true, userId, ...(sessionCookies?.length ? { sessionCookies } : {}) };
     },
   };
 }

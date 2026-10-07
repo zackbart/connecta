@@ -1,3 +1,4 @@
+import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { oauthValueStorageKey } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
@@ -16,6 +17,68 @@ const AUTHORIZE = "https://oauth.provider.test/oauth/authorize";
 const TOKEN = "https://api.provider.test/oauth/token";
 const API = "https://api.provider.test";
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+
+describe("OAuth handoff lifetime", () => {
+  it.each(["personal", "shared"] as const)("does not reapply a completed restart link for %s", async authScope => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ authScope });
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, auth: callbackAuth, vault: new CredentialVault(storage, SEAL_KEY), logger: "silent" });
+    try {
+      const issued = await app.fetch(new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }));
+      const { authorizationUrl } = await issued.json() as { authorizationUrl: string };
+      const started = await app.fetch(new Request(authorizationUrl));
+      expect(started.status).toBe(302);
+      const consent = started.headers.get("Location")!;
+      const state = new URL(consent).searchParams.get("state")!;
+      const target = await app.registry.oauthCallbackView("ccb", state);
+      const code = provider.consent(consent);
+      const result = await app.fetch(new Request(`${BASE}/oauth/callback/ccb?state=${state}&code=${code}`));
+      expect(result.status).toBe(200);
+      expect((await connector.status!(target!.registry.contextFor("ccb", BASE))).state).toBe("ok");
+      const replay = await app.fetch(new Request(authorizationUrl));
+      expect(replay.status).toBe(400);
+      expect((await connector.status!(target!.registry.contextFor("ccb", BASE))).state).toBe("ok");
+    } finally { await app.close(); }
+  });
+
+  it.each(["personal", "shared"] as const)("consumes a %s callback handoff atomically", async authScope => {
+    const provider = fakeProvider();
+    let exchanges = 0;
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init: RequestInit = {}) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === TOKEN) {
+        exchanges++;
+      }
+      return provider.fetchStub(input, init);
+    });
+    const connector = ccb({ authScope });
+    const originalVerify = connector.verifyState!;
+    let verifications = 0;
+    let releaseVerify!: () => void;
+    const verifyGate = new Promise<void>(resolve => { releaseVerify = resolve; });
+    connector.verifyState = async (state, ctx) => {
+      const matched = await originalVerify(state, ctx);
+      if (++verifications === 2) releaseVerify();
+      await verifyGate;
+      return matched;
+    };
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, auth: callbackAuth, vault: new CredentialVault(storage, SEAL_KEY), logger: "silent" });
+    try {
+      const issued = await app.fetch(new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }));
+      const { authorizationUrl } = await issued.json() as { authorizationUrl: string };
+      const begun = await app.fetch(new Request(authorizationUrl));
+      const consent = begun.headers.get("Location")!;
+      const state = new URL(consent).searchParams.get("state")!;
+      const codes = [provider.consent(consent), provider.consent(consent)];
+      const results = await Promise.all(codes.map(code => app.fetch(new Request(`${BASE}/oauth/callback/ccb?state=${state}&code=${code}`))));
+      expect(results.map(response => response.status).sort()).toEqual([200, 400]);
+      expect(exchanges).toBe(1);
+    } finally { await app.close(); }
+  });
+});
 
 const OAUTH: ApiOAuthConfig = {
   authorizationEndpoint: AUTHORIZE,
@@ -311,7 +374,7 @@ describe("api() oauth agent recovery", () => {
     const provider = fakeProvider();
     install(provider);
     const registry = makeRegistry([ccb()]);
-    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true });
+    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true, oauthConnectUrl: async id => `${BASE}/connect/${id}?h=test` });
     const failed = JSON.parse(
       (await mt.callTool({ address: "ccb.whoami" })).content[0]!.text,
     ) as { error: { code: string; recovery?: string } };
@@ -321,7 +384,7 @@ describe("api() oauth agent recovery", () => {
       (await mt.authorizeConnector({ connector: "ccb" })).content[0]!.text,
     ) as { recovery: string; status: string; authorizationUrl: string };
     expect(recovery).toMatchObject({ recovery: "oauth", status: "auth_required" });
-    expect(recovery.authorizationUrl.startsWith(`${AUTHORIZE}?`)).toBe(true);
+    expect(recovery.authorizationUrl.startsWith(`${BASE}/connect/ccb?`)).toBe(true);
 
     const denied = JSON.parse(
       (await createMetaTools(registry, BASE).authorizeConnector({ connector: "ccb" })).content[0]!.text,
@@ -336,6 +399,7 @@ describe("api() oauth callback exchange", () => {
     install(provider);
     const operator: InboundAuth = {
       kind: "test-operator",
+      uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
       interactiveOperator: true,
       activityActorNamespace: "https://identity.test",
       authorize: (request) =>
@@ -357,7 +421,10 @@ describe("api() oauth callback exchange", () => {
         headers: { Authorization: "Bearer operator", Origin: BASE },
       }));
       expect(startResponse.status).toBe(200);
-      const { authorizationUrl } = await startResponse.json() as { authorizationUrl: string };
+      const link = (await startResponse.json() as { authorizationUrl: string }).authorizationUrl;
+      const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer operator" } }));
+      expect(begun.status).toBe(302);
+      const authorizationUrl = begun.headers.get("Location")!;
       const code = provider.consent(authorizationUrl);
       const state = new URL(authorizationUrl).searchParams.get("state")!;
 
@@ -365,7 +432,7 @@ describe("api() oauth callback exchange", () => {
       expect(forged.status).toBe(400);
       expect(provider.tokenRequests).toEqual([]);
 
-      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`));
+      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, { headers: { Authorization: "Bearer operator" } }));
       expect(callback.status).toBe(200);
       const exchange = provider.tokenRequests.at(-1)!;
       expect(exchange.authorization).toBe(`Basic ${btoa("church-client:church-secret")}`);
@@ -475,7 +542,7 @@ describe("api() oauth callback exchange", () => {
     });
     const connecta = createTestConnecta({
       connectors: [api("ccb", { oauth: { ...OAUTH, tokenEndpointAuthMethod: "client_secret_post" }, tools: [] })],
-      storage: memoryStorage(),
+      storage: memoryStorage(), auth: callbackAuth,
       publicUrl: BASE,
       logger: { debug() {}, info() {}, warn, error() {} },
     });
@@ -485,8 +552,9 @@ describe("api() oauth callback exchange", () => {
       const authorizationUrl = new URL(started.authorizationUrl!);
       const code = provider.consent(authorizationUrl.href);
       const state = authorizationUrl.searchParams.get("state")!;
+      await bindCallback(connecta, "ccb", state);
       warn.mockClear();
-      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`));
+      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, { headers: { Authorization: "Bearer operator" } }));
       expect(callback.status).toBe(500);
       expect(await callback.text()).not.toContain("church-secret");
       expect(warn).toHaveBeenCalledTimes(1);

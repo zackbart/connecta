@@ -1,3 +1,4 @@
+import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
 import { describe, expect, it, vi } from "vitest";
 import { renderFixPrompt } from "../src/fix-prompt.js";
 import {
@@ -193,7 +194,7 @@ describe("OAuth callback page", () => {
     const secret = "token endpoint said: client_secret=cs_live_leaked is invalid";
     const warn = vi.fn();
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: { ...silentLogger, warn },
       connectors: [
@@ -202,6 +203,7 @@ describe("OAuth callback page", () => {
         }),
       ],
     });
+    await bindCallback(connecta, "svc", "good-state");
     warn.mockClear();
     const res = await connecta.fetch(
       new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`),
@@ -222,7 +224,7 @@ describe("OAuth callback page", () => {
 
   it("names a provider error by reason and never repeats the parameter", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [oauthConnector(async () => {})],
@@ -239,7 +241,7 @@ describe("OAuth callback page", () => {
 
   it("reports a missing code as the same invalid callback as a bad state", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [oauthConnector(async () => {})],
@@ -260,7 +262,7 @@ describe("OAuth callback page", () => {
 
   it("names the connector by title only after the state check", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [
@@ -268,6 +270,8 @@ describe("OAuth callback page", () => {
         titled("broken", async () => { throw new Error("exchange"); }),
       ],
     });
+    await bindCallback(connecta, "svc", "good-state");
+    await bindCallback(connecta, "broken", "good-state");
     const connected = await connecta.fetch(
       new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`),
     );
@@ -297,7 +301,7 @@ describe("OAuth callback page", () => {
 
   it("keeps every refusal byte-identical across connectors and paths", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [
@@ -328,7 +332,7 @@ describe("OAuth callback page", () => {
 
   it("renders every outcome in the shared, themed layout", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       ui: operatorUi({ branding: {
@@ -340,6 +344,8 @@ describe("OAuth callback page", () => {
         titled("broken", async () => { throw new Error("exchange"); }),
       ],
     });
+    await bindCallback(connecta, "svc", "good-state");
+    await bindCallback(connecta, "broken", "good-state");
     const outcomes: Array<[string, string, string]> = [
       ["/oauth/callback/svc?code=abc&state=good-state", "connected", "status-mark ok"],
       ["/oauth/callback/svc?error=access_denied", "denied", 'status-mark"'],
@@ -370,7 +376,7 @@ describe("OAuth callback page", () => {
 
   it("links the default favicon only where the operator UI serves it", async () => {
     const headless = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       ...({ ui: undefined } as { ui?: never }),
@@ -384,7 +390,7 @@ describe("OAuth callback page", () => {
     expect((await headless.fetch(new Request(`${BASE}/favicon.svg`))).status).toBe(404);
 
     const mounted = createTestConnecta({
-      publicUrl: BASE,
+      publicUrl: BASE, auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [titled("svc")],

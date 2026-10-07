@@ -19,10 +19,89 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { api } from "../src/connectors/api.js";
 import { signJwt } from "@clerk/backend/jwt";
 
+import { oauthVault } from "./fixtures/oauth.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import type { Connector } from "../src/types.js";
+
+describe("OAuth browser token policy", () => {
+  it.each(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])("requires session tokens on %s browser routes", async method => {
+    const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
+    for (const path of ["/connect/service", "/oauth/callback/service"]) {
+      for (const tokenType of ["oauth_token", "api_key", "machine_token", undefined]) {
+        mocks.authenticateRequest.mockResolvedValue({ status: "signed-in", headers: new Headers(),
+          toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType }),
+        });
+        expect((await auth.authorize(new Request(`${BASE}${path}`, { method, headers: { Authorization: "Bearer credential" } }), BASE)).ok).toBe(false);
+        expect([mocks.authenticateRequest.mock.calls.at(-1)![1].acceptsToken].flat()).toEqual(["session_token"]);
+      }
+      mocks.authenticateRequest.mockResolvedValue({ status: "signed-in", headers: new Headers(),
+        toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }),
+      });
+      expect((await auth.authorize(new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=alice" } }), BASE)).ok).toBe(true);
+    }
+  });
+  it.each(["personal", "shared"] as const)("requires a browser session on every callback method for %s", async authScope => {
+    mocks.authenticateRequest.mockReset();
+    mocks.authenticateRequest.mockImplementation(async (request: Request, options: { acceptsToken: string | string[] }) => {
+      const oauth = request.headers.get("authorization") === "Bearer mcp-oauth-token";
+      const session = request.headers.get("cookie") === "__session=alice";
+      const accepted = session || (oauth && [options.acceptsToken].flat().includes("oauth_token"));
+      return {
+        status: accepted ? "signed-in" : "signed-out", headers: new Headers(),
+        toAuth: () => accepted
+          ? session
+            ? { isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }
+            : browserFlowMcpAuth("alice")
+          : { isAuthenticated: false },
+      };
+    });
+    const finishAuth = vi.fn(async () => {});
+    const connector: Connector = {
+      id: "service", authScope, listTools: async () => [], callTool: async () => null,
+      startAuth: async ctx => {
+        await ctx.storage.set("state", "flow-state");
+        return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
+      },
+      verifyState: async (state, ctx) => state === await ctx.storage.get("state"), finishAuth,
+    };
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, logger: "silent", vault: oauthVault(storage), auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }) });
+    try {
+      const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "mcp-oauth-token" }));
+      const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
+      const refusedStart = await app.fetch(new Request(link, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
+      expect(refusedStart.status).toBe(200);
+      expect(await refusedStart.text()).toContain("window.Clerk.mountSignIn");
+      expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }))).status).toBe(302);
+      const callback = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
+      expect((await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }))).status).toBe(400);
+      expect(finishAuth).not.toHaveBeenCalled();
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+        const result = await app.fetch(new Request(callback, { method, headers: { Authorization: "Bearer mcp-oauth-token" } }));
+        expect(result.status).toBe(405);
+        expect(result.headers.get("Allow")).toBe("GET");
+        expect(finishAuth).not.toHaveBeenCalled();
+      }
+      expect((await app.fetch(new Request(callback, { headers: { Cookie: "__session=alice" } }))).status).toBe(200);
+      expect(finishAuth).toHaveBeenCalledOnce();
+    } finally { await app.close(); }
+  });
+});
+
 const BASE = "https://connecta.test";
 const domain = "clerk.example.com$";
 const publishableKey =
   "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
+// Browser-flow setup enters through MCP with a resource-bound OAuth token.
+function browserFlowMcpAuth(userId: string) {
+  const token = [
+    btoa(JSON.stringify({ alg: "RS256", typ: "at+jwt" })),
+    btoa(JSON.stringify({ sub: userId, aud: `${BASE}/mcp` })),
+    btoa("signature"),
+  ].map(part => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")).join(".");
+  return { isAuthenticated: true, userId, tokenType: "oauth_token", clientId: "client_connecta", getToken: async () => token };
+}
+
 const friendlyUser = (fullName = "Ada Lovelace") => ({
   fullName,
   firstName: "Ada",
@@ -348,6 +427,61 @@ describe("clerkAuth inbound auth", () => {
       ok: true,
       userId: "user_oauth",
     });
+  });
+
+  it.each(["personal", "shared"] as const)("refreshes Clerk browser sessions on connect and callback for %s OAuth", async authScope => {
+    const signedIn = () => ({
+      status: "signed-in",
+      headers: new Headers({ "Set-Cookie": "__session=fresh; Secure; HttpOnly" }),
+      toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }),
+    });
+    mocks.authenticateRequest.mockImplementation(async (request: Request) => {
+      if (request.headers.get("authorization") === "Bearer alice") {
+        return { status: "signed-in", headers: new Headers(), toAuth: () => browserFlowMcpAuth("alice") };
+      }
+      if (request.headers.get("cookie") === "__session=expired") {
+        return {
+          status: "handshake", headers: new Headers({ Location: `https://clerk.example.com/v1/client/handshake?redirect_url=${encodeURIComponent(request.url)}`, "Set-Cookie": "__clerk_hs=refresh; Secure" }),
+          toAuth: () => { throw new Error("handshake is not an identity"); },
+        };
+      }
+      return signedIn();
+    });
+    const finishAuth = vi.fn(async () => {});
+    const connector: Connector = {
+      id: "service", authScope, listTools: async () => [], callTool: async () => null,
+      startAuth: async ctx => {
+        await ctx.storage.set("state", "flow-state");
+        return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
+      },
+      verifyState: async (state, ctx) => state === await ctx.storage.get("state"),
+      finishAuth,
+    };
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, logger: "silent", vault: oauthVault(storage), auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }) });
+    try {
+      const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "alice" }));
+      const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
+      const handshake = await app.fetch(new Request(link, { headers: { Cookie: "__session=expired" } }));
+      expect(handshake.status).toBe(307);
+      expect(handshake.headers.get("Set-Cookie")).toContain("__clerk_hs=refresh");
+      const started = await app.fetch(new Request(link, { headers: { Cookie: "__session=fresh" } }));
+      expect(started.status).toBe(302);
+      expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), { acceptsToken: "session_token" });
+      expect(started.headers.get("Location")).toContain("https://consent.example/authorize?");
+      expect(started.headers.get("Set-Cookie")).toContain("__session=fresh");
+      const callbackUrl = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
+      const refresh = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=expired" } }));
+      expect(refresh.status).toBe(307);
+      expect(new URL(refresh.headers.get("Location")!).searchParams.get("redirect_url")).toBe(callbackUrl);
+      expect(finishAuth).not.toHaveBeenCalled();
+      const completed = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=fresh" } }));
+      expect(completed.status).toBe(200);
+      expect(completed.headers.get("Set-Cookie")).toContain("__session=fresh");
+      expect(finishAuth).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
   });
 
   it("still rejects a session token minted for a sibling origin", async () => {

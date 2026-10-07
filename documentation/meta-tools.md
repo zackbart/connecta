@@ -51,8 +51,8 @@ and the measurements never contain program source, arguments, values, addresses,
 credentials, logs, or raw error text.
 
 Connecta's own tools carry the annotations it demands of downstream tools:
-read-only hints on all but `authorize_connector`, which mutates stored auth
-state, and `call_destructive_tool`, the one that sends writes, which is
+read-only hints on all but `authorize_connector`, which requests interactive
+authentication changes, and `call_destructive_tool`, the one that sends writes, which is
 destructive. Otherwise a host that gates on annotations would prompt for every
 search, and a connecta aggregated behind another connecta would be refused by
 its own policy. `call_destructive_tool` is where the prompt belongs: its
@@ -510,7 +510,8 @@ Every typed `auth_required` call failure uses the same envelope:
 `authorize_connector` only after this error. It returns the class-specific
 handoff:
 
-- `oauth`: an `authorizationUrl` and consent instructions;
+- `oauth`: an `authorizationUrl` to connecta's `/connect/<connector>?h=...` route
+  and instructions to sign in as the initiating user;
 - `operator_config`: an `operatorUrl` to the mounted connection UI, plus the
   declared credential label and field names/guidance; or
 - `unavailable`: an honest deployment/configuration message.
@@ -520,12 +521,18 @@ The class follows what the connector declares, not how it was authored: a
 and no OAuth flow, so it uses `operator_config` when both vault and UI are
 configured. Without either it returns `unavailable`, never a dead UI link.
 
-The tool accepts no secret. `force` applies only to OAuth and may discard its
-stored grant before restarting consent. Static credential values are written
+The tool accepts no secret and starts no downstream consent. `force` applies
+only to OAuth and requests a restart when the verified browser opens the signed
+link. That visit may discard the stored grant before restarting consent. Static credential values are written
 only through the same-origin interactive-user credential route, and only for a
 connector visible to that user with the relevant shared or personal management
-permission; OAuth start, `force` included, requires that permission too. Core
-callbacks work without the UI for authorized interactive callers. After OAuth
+permission; Issuing an OAuth link, `force` included, requires that permission too. The
+`/connect` visit and callback both verify the same initiating user under Clerk or
+Cloudflare Access, including for shared connectors. The URL expires after fifteen
+minutes and carries no browser authentication. A signing credential vault is
+required; deployments without either interactive provider return `unavailable`
+with a clear configuration message. Status reads stay passive and never expose
+a downstream authorization-server URL. These routes work without the UI. After OAuth
 consent or a human update, retry the original operation; a static update is read
 from the vault on the next call and needs no redeploy.
 

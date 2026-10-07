@@ -525,6 +525,8 @@ export type AuthResult =
       ok: true;
       userId?: string;
       subjectId?: string;
+      /** Browser session cookies refreshed by an interactive provider. */
+      sessionCookies?: readonly string[];
       /** Human owner represented by a non-interactive access credential. */
       principal?: IdentityReference;
     }

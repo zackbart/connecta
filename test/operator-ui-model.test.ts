@@ -1,3 +1,4 @@
+import { connectRequest } from "./fixtures/oauth.js";
 import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
@@ -281,7 +282,7 @@ describe("operator action notices", () => {
   /** A token endpoint's refusal that quotes the secret it was sent. */
   const SECRET = "sk_live_notice_leak";
   const LEAK = `invalid_grant: token ${SECRET} was revoked`;
-  const CONSENT = "https://auth.example/consent";
+  const CONSENT = "https://auth.example/consent?state=test-state";
 
   function oauthConnector(
     id: string,
@@ -381,17 +382,18 @@ describe("operator action notices", () => {
         502,
         { error: "OAuth authorization requires consent but no safe URL is available" },
       ],
-      ["/ui/oauth/oauthok", "POST", 200, { state: "auth_required", authorizationUrl: CONSENT, reused: false }],
+      ["/ui/oauth/oauthok", "POST", 302, null],
       ["/ui/credentials/rejected/test", "POST", 200, { ok: false }],
       ["/ui/credentials/thrown/test", "POST", 200, { ok: false }],
       ["/ui/credentials/accepted/test", "POST", 200, { ok: true }],
     ];
     for (const [path, method, status, body] of answers) {
-      const res = await credentialRequest(connecta, path, { method });
+      const res = await (path.startsWith("/ui/oauth/") && method === "POST" ? connectRequest : credentialRequest)(connecta, path, { method });
       const text = await res.text();
       expect(res.status, `${method} ${path}`).toBe(status);
       expect(text, `${method} ${path}`).not.toContain(SECRET);
-      expect(JSON.parse(text), `${method} ${path}`).toEqual(body);
+      if (body === null) expect(res.headers.get("Location")).toBe(CONSENT);
+      else expect(JSON.parse(text), `${method} ${path}`).toEqual(body);
     }
 
     // The downstream's words are on the host, one line per failure.

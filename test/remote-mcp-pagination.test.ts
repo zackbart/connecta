@@ -936,7 +936,7 @@ describe("paginated catalogs through the discovery path", () => {
     // An agent meets it as a call failure carrying the route to the URL: the
     // catalog is unreachable, so the recovery is authorize_connector, and that
     // is what hands back the address an operator has to open.
-    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true });
+    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true, oauthConnectUrl: async id => `${BASE}/connect/${id}?h=test` });
     const called = JSON.parse(
       required(
         (await mt.callTool({ address: "paged.gamma", resultMode: "value" }))
@@ -952,7 +952,7 @@ describe("paginated catalogs through the discovery path", () => {
         (await mt.authorizeConnector({ connector: "paged" })).content[0],
       ).text,
     ) as { authorizationUrl?: string };
-    expect(authorized.authorizationUrl).toBe(authUrl);
+    expect(authorized.authorizationUrl).toBe(`${BASE}/connect/paged?h=test`);
   });
 
   it("keeps a later-page non-auth failure classified as error", async () => {

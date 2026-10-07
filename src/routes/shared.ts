@@ -149,6 +149,7 @@ export async function authorize(
       ok: true;
       actor: ActivityActor;
       identity: AuthenticatedIdentity;
+      sessionCookies?: readonly string[];
       subjectKey?: string;
       principalKey?: string;
       connectorIds: "all" | readonly string[];
@@ -247,6 +248,7 @@ export async function authorize(
         ok: true,
         actor,
         identity,
+        ...(result.sessionCookies?.length ? { sessionCookies: result.sessionCookies } : {}),
         ...(subject && partitionIdentity
           ? { subjectKey: await identityStorageKey(subject) }
           : {}),
@@ -417,4 +419,12 @@ export function mayManageConnector(
     : authz.credentialAdministration;
   return permission === "all" ||
     (permission !== "none" && permission.includes(connector.id));
+}
+
+/** Preserve refreshed browser cookies on the redirect or completion page. */
+export function withSessionCookies(response: Response, cookies?: readonly string[]): Response {
+  if (!cookies?.length) return response;
+  const headers = new Headers(response.headers);
+  for (const cookie of cookies) headers.append("Set-Cookie", cookie);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

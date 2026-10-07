@@ -1,3 +1,4 @@
+import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import {
   classifyInboundRequest,
   createMcpHandler,
@@ -337,6 +338,7 @@ function serveMcp(
   actor: ActivityActor,
   registry: RegistryView,
   canManageAuth: (connectorId: string) => boolean,
+  principalKey: string | undefined,
   runtimeContext?: RuntimeExecutionContext,
 ): Effect.Effect<Response, never, Scope.Scope> {
   // Every McpServer the request builds is fresh and closes with its scope.
@@ -375,6 +377,8 @@ function serveMcp(
     registerMetaTools(server, registry, {
       baseUrl,
       canManageAuth,
+      oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
+      oauthConnectUnavailable: oauthConnectUnavailable(opts),
       credentialHandoffUrl: opts.ui?.credentialHandoffUrl(baseUrl),
       ...(activity ? { activity } : {}),
       ...(opts.defaultToolTimeoutMs !== undefined
@@ -698,6 +702,7 @@ export function createMcpRoute(
         authz.actor,
         scopedRegistry,
         id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
+        authz.principalKey,
         runtimeContext,
       ));
       });

@@ -524,7 +524,7 @@ function assertKnownConfig(config: ConnectaConfig): void {
       }
     }
   }
-  if (config.vault && (["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function") || ["seal", "open"].some(key => !["undefined", "function"].includes(typeof (config.vault as unknown as Record<string, unknown>)[key])))) throw new Error("ConnectaConfig.vault must implement CredentialVault");
+  if (config.vault && (["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function") || ["seal", "open", "signOAuthHandoff", "verifyOAuthHandoff"].some(key => !["undefined", "function"].includes(typeof (config.vault as unknown as Record<string, unknown>)[key])))) throw new Error("ConnectaConfig.vault must implement CredentialVault");
   if (config.ui && (typeof config.ui.handle !== "function" || typeof config.ui.credentialHandoffUrl !== "function" || !Array.isArray(config.ui.reservedPaths))) throw new Error("ConnectaConfig.ui must be created with operatorUi(...)");
   const activity = config.activity as unknown;
   if (

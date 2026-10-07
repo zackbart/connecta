@@ -1,15 +1,12 @@
 import { Effect, Result } from "effect";
-import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
 import { closeScope } from "../runtime/connector-scope.js";
-import { withDeadlineEffect } from "../runtime/run.js";
-import type { ConnectorStatus } from "../types.js";
-import { isSafeHttpUrl } from "../ui.js";
+import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import {
   authorizedPerson,
   refuse,
   serveOperator,
   visibleRegistry,
-  type Answer,
+  Answer,
 } from "./operator.js";
 import {
   mayManageConnector,
@@ -19,17 +16,7 @@ import {
   type RouteContext,
 } from "./shared.js";
 
-/** Bounds the start and its handoff; invalidation and scope close finish after it. */
-const OAUTH_START_TIMEOUT_MS = 30_000;
-
-/**
- * How a POST starts authorization, from its `mode` query parameter:
- * `restart` (the default) resets the connector to a fresh epoch — wiping the
- * grant, the client registration, and discovery — before starting over;
- * `continue` hands back a recent pending authorization URL when one exists
- * and otherwise starts a flow in the current epoch, keeping the stored
- * registration. `null` is a malformed request.
- */
+/** A UI action signs its requested mode; the verified /connect visit applies it. */
 function startMode(url: URL): "continue" | "restart" | null {
   const modes = url.searchParams.getAll("mode");
   if (modes.length === 0) return "restart";
@@ -72,130 +59,37 @@ function oauthManagementRequest(
       return yield* refuse('mode must be "continue" or "restart"', 400);
     }
 
+    if (!disconnecting) {
+      const unavailable = oauthConnectUnavailable(opts);
+      if (unavailable) return yield* refuse(unavailable, 403);
+      const authorizationUrl = yield* Effect.tryPromise({
+        try: () => oauthConnectUrl(opts, baseUrl, connectorId, authz.principalKey, mode === "restart"),
+        catch: () => new Answer(privateJson({ error: "OAuth connection link could not be created" }, { status: 502 })),
+      });
+      return privateJson({ state: "auth_required", authorizationUrl });
+    }
+
     let ctx: ReturnType<typeof registry.contextFor> | undefined;
     // The connector scope this request opened ends with it, however it ends.
     yield* Effect.addFinalizer(() =>
       ctx ? closeScope(connector, ctx, defer) : Effect.void,
     );
 
-    const timeoutError = new Error("OAuth authorization start timed out");
-
-    const operation = yield* Effect.result(
-      withDeadlineEffect((signal) => Effect.tryPromise({
-        try: async (): Promise<ConnectorStatus | undefined> => {
-          ctx = registry.contextFor(connectorId, baseUrl, {}, { signal });
-          if (disconnecting) {
-            await disconnectAuth(ctx);
-            return undefined;
-          }
-          const started = await startAuth(ctx, { force: mode === "restart" });
-          if (signal.aborted) throw signal.reason;
-          if (started.authorizationUrl) {
-            await registry.bindOAuthHandoff(connectorId, started.authorizationUrl);
-          }
-          return started;
-        },
-        catch: (error) => error,
-      }), {
-        // A disconnect deliberately ignores both browser cancellation and
-        // this start deadline so its reset reaches invalidation.
-        ...(disconnecting ? {} : { timeoutMs: OAUTH_START_TIMEOUT_MS }),
-        ...(disconnecting ? {} : { signal: request.signal }),
-        timeoutError,
-      }),
-    );
-    const opened = ctx;
-    if (Result.isFailure(operation) && opened) {
-      // Storage has no abort contract. If a reset's generation write is still
-      // pending, answering now would let it publish over a newer flow.
-      yield* Effect.promise(() => drainOAuthStartResets(opened.requestScope ?? opened));
+    // A disconnect commits through invalidation even if its hook rejects or
+    // the browser leaves. It has no start deadline or request signal.
+    ctx = registry.contextFor(connectorId, baseUrl);
+    const operation = yield* Effect.result(Effect.tryPromise({
+      try: () => disconnectAuth(ctx!), catch: error => error,
+    }));
+    const invalidated = yield* Effect.result(Effect.tryPromise({
+      try: () => registry.invalidateStored(connectorId), catch: error => error,
+    }));
+    if (Result.isFailure(operation) || Result.isFailure(invalidated)) {
+      const error = Result.isFailure(operation) ? operation.failure : Result.isFailure(invalidated) ? invalidated.failure : undefined;
+      opts.logger.warn(`[connecta] connector "${connectorId}" OAuth disconnect failed: ${msg(error)}`);
+      return yield* refuse("OAuth disconnect failed", 400);
     }
-    // A disconnect or a restart invalidates the old grant and its cached
-    // catalog, even when a partially failed physical cleanup left its epoch
-    // fence standing. So does a continued start that had to begin a new flow:
-    // the grant it found was missing or refused. A continued start that
-    // reused a pending URL or found the connection healthy changed nothing,
-    // so the catalog stays. (A continue does reset a disconnected connector,
-    // but the disconnect already invalidated that catalog.)
-    const started = Result.isSuccess(operation) ? operation.success : undefined;
-    const reused =
-      mode === "continue" && started?.authorizationReused === true;
-    const unchanged =
-      mode === "continue" && (reused || started?.state === "ok");
-    const invalidated = unchanged
-      ? Result.succeed(undefined)
-      : yield* Effect.result(
-          Effect.tryPromise({
-            try: () => registry.invalidateStored(connectorId),
-            catch: (error) => error,
-          }),
-        );
-    // Every failure below answers in the route's own fixed words. A hook's
-    // rejection and a status message can quote a token endpoint's error body
-    // or a provider's refusal, either of which can quote the secret it was
-    // sent, so that text goes to the deployment's log and nowhere else.
-    const failed = (detail: string, fixed: string, status: number) => {
-      opts.logger.warn(
-        `[connecta] connector "${connectorId}" OAuth ${disconnecting ? "disconnect" : mode} failed: ${detail}`,
-      );
-      return refuse(fixed, status);
-    };
-    const couldNot = disconnecting
-      ? "OAuth disconnect failed"
-      : "OAuth authorization could not start";
-    // A Result, not a caught value, decides whether it failed: a hook that
-    // rejects with no reason at all still failed.
-    if (Result.isFailure(operation)) {
-      if (operation.failure === timeoutError) {
-        return yield* failed(
-          `start exceeded ${OAUTH_START_TIMEOUT_MS} ms`,
-          "OAuth authorization start timed out",
-          504,
-        );
-      }
-      return yield* failed(msg(operation.failure), couldNot, 400);
-    }
-    if (Result.isFailure(invalidated)) {
-      return yield* failed(
-        `stored-state invalidation: ${msg(invalidated.failure)}`,
-        couldNot,
-        400,
-      );
-    }
-
-    const result = operation.success;
-    if (!result) {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-        },
-      });
-    }
-    const authorizationUrl = isSafeHttpUrl(result.authorizationUrl)
-      ? result.authorizationUrl
-      : undefined;
-    if (result.state === "error") {
-      return yield* failed(
-        result.message || "the connector reported an error state",
-        couldNot,
-        502,
-      );
-    }
-    if (result.state === "auth_required" && !authorizationUrl) {
-      return yield* failed(
-        result.message || "consent is required but no safe authorization URL was returned",
-        "OAuth authorization requires consent but no safe URL is available",
-        502,
-      );
-    }
-    // No message: a status message is the same text the Connections page
-    // stopped shipping, and the state and the link are the whole answer.
-    return privateJson({
-      state: result.state,
-      ...(authorizationUrl ? { authorizationUrl, reused } : {}),
-    });
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
   }).pipe(Effect.scoped);
 }
 

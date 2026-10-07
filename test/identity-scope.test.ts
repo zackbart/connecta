@@ -17,6 +17,7 @@ function users(): InboundAuth {
   return {
     kind: "test-users",
     interactiveOperator: true,
+    uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
     activityActorNamespace: "https://identity.test",
     authorize(request) {
       const user = /^Bearer (alice|bob)$/u.exec(
@@ -79,7 +80,7 @@ describe("identity-scoped connectors", () => {
     const docs = api("docs", { tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => null }] });
     docs.startAuth = async () => { starts++; return { state: "auth_required", authorizationUrl: "https://oauth.test/authorize" }; };
     const connecta = createTestConnecta({
-      connectors: [docs], auth: users(),
+      connectors: [docs], auth: users(), vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
       identity: {
         connectorAccess: ({ subject }) => subject?.id === "alice" ? ["docs.read"] : [],
         credentialAdministration: () => "all",
@@ -92,7 +93,7 @@ describe("identity-scoped connectors", () => {
     const absent = await call("bob", "absent");
     expect(hidden.isError).toBe(true);
     expect(hidden.content[0].text).toBe(absent.content[0].text.replace("absent", "docs"));
-    expect(starts).toBe(1);
+    expect(starts).toBe(0);
     await connecta.close();
   });
 
@@ -234,7 +235,7 @@ describe("identity-scoped connectors", () => {
     };
     const connecta = createTestConnecta({
       connectors: [oauth],
-      auth: users(),
+      auth: users(), vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
       identity: { activityAccess: () => false },
       storage: memoryStorage(),
       publicUrl: BASE,
@@ -247,18 +248,21 @@ describe("identity-scoped connectors", () => {
       }),
     );
     expect(started.status).toBe(200);
-    const authorizationUrl = new URL((await started.json() as any).authorizationUrl);
+    const link = (await started.json() as any).authorizationUrl;
+    const consent = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer alice" } }));
+    expect(consent.status).toBe(302);
+    const authorizationUrl = new URL(consent.headers.get("Location")!);
     const state = authorizationUrl.searchParams.get("state");
     const fixedByAnotherUser = await connecta.fetch(
       request(`/oauth/callback/oauth?code=code&state=${state}`, "bob"),
     );
     expect(fixedByAnotherUser.status).toBe(400);
     const callback = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/oauth?code=code&state=${state}`),
+      request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"),
     );
     expect(callback.status).toBe(200);
     const replay = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/oauth?code=code&state=${state}`),
+      request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"),
     );
     expect(replay.status).toBe(400);
 

@@ -29,6 +29,10 @@ export interface CredentialVault {
    * Without both `seal` and `open`, that state is stored as plaintext.
    */
   seal?(connectorId: string, purpose: string, plaintext: string, owner?: string): Promise<string>;
+  /** Sign browser OAuth handoffs with a purpose-specific key; nothing is stored. */
+  signOAuthHandoff?(payload: string): Promise<string>;
+  /** Verify a browser OAuth handoff signature without exposing the key. */
+  verifyOAuthHandoff?(payload: string, signature: string): Promise<boolean>;
   /** Reverse `seal` for the same connector, purpose, and owner; rejects otherwise. */
   open?(connectorId: string, purpose: string, sealed: string, owner?: string): Promise<string>;
 }

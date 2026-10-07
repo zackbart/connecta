@@ -64,7 +64,7 @@ function oauthConnector(): Connector {
     async startAuth() {
       return {
         state: "auth_required",
-        authorizationUrl: "https://provider.example/authorize",
+        authorizationUrl: "https://provider.example/authorize?state=valid-state",
       };
     },
     async disconnectAuth() {},
@@ -129,7 +129,7 @@ function dynamicConnector(catalog: { listings: number }): Connector {
     async startAuth() {
       return {
         state: "auth_required",
-        authorizationUrl: "https://provider.example/authorize",
+        authorizationUrl: "https://provider.example/authorize?state=valid-state",
       };
     },
     async disconnectAuth() {},
@@ -270,14 +270,17 @@ function credentialAndOAuthMutations(
     },
     {
       label: `${id}: downstream OAuth start`,
-      status: 200,
-      run: () =>
-        connecta.fetch(
+      status: 302,
+      run: async () => {
+        const response = await connecta.fetch(
           new Request(`${BASE}/ui/oauth/${id}`, {
             method: "POST",
             headers: operatorHeaders(),
           }),
-        ),
+        );
+        const link = (await response.json() as { authorizationUrl: string }).authorizationUrl;
+        return connecta.fetch(new Request(link, { headers: operatorHeaders() }));
+      },
     },
     {
       label: `${id}: downstream OAuth completion`,
@@ -286,6 +289,7 @@ function credentialAndOAuthMutations(
         connecta.fetch(
           new Request(
             `${BASE}/oauth/callback/${id}?code=auth-code&state=valid-state`,
+            { headers: operatorHeaders() },
           ),
         ),
     },
