@@ -408,8 +408,14 @@ describe("operator data routes", () => {
     const storage: KVStorage = {
       get: (key) => inner.get(key),
       delete: (key) => inner.delete(key),
-      compareAndSet: (key, expected, next, options) =>
-        inner.compareAndSet!(key, expected, next, options),
+      // The entry retirement activates its epoch with a compare-and-set.
+      async compareAndSet(key, expected, next, options) {
+        if (key === "conn:oauth:oauth:generation" && ++generationWrites === 1) {
+          entered();
+          await blocked;
+        }
+        return inner.compareAndSet!(key, expected, next, options);
+      },
       async set(key, value, options) {
         if (key === "conn:oauth:oauth:generation" && ++generationWrites === 1) {
           entered();

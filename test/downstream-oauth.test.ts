@@ -5829,14 +5829,24 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       const published = deferred<void>();
       const resume = deferred<void>();
       let holdA = true;
+      // Hold A just after its retirement publishes its epoch, through
+      // whichever write the store activates it with.
+      const holdAfter = async (key: string) => {
+        if (holdA && key === "oauth:generation") {
+          holdA = false;
+          published.resolve();
+          await resume.promise;
+        }
+      };
       const storage: KVStorage = { ...backing,
         async set(key, value, options) {
           await backing.set(key, value, options);
-          if (holdA && key === "oauth:generation") {
-            holdA = false;
-            published.resolve();
-            await resume.promise;
-          }
+          await holdAfter(key);
+        },
+        async compareAndSet(key, expected, next, options) {
+          const swapped = await backing.compareAndSet!(key, expected, next, options);
+          await holdAfter(key);
+          return swapped;
         },
       };
       const c = connector();
@@ -5889,6 +5899,140 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       }
     },
   );
+
+  it("abandons an entry retirement whose epoch a later reset replaced, touching nothing", async () => {
+    // A inspects an unbound grant and stalls before retiring it. B restarts
+    // and completes its own consent. A's decision was about the grant it
+    // inspected, not B's: the retirement must find its epoch gone and stop.
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const backing = memoryStorage();
+    await legacyGrant(backing);
+    const inspected = deferred<void>();
+    const resume = deferred<void>();
+    let holdRead = true;
+    const storage: KVStorage = { ...backing,
+      async get(key) {
+        const value = await backing.get(key);
+        if (holdRead && key === "oauth:tokens") {
+          holdRead = false;
+          inspected.resolve();
+          await resume.promise;
+        }
+        return value;
+      },
+    };
+    const c = connector();
+
+    const startA = c.startAuth!(scope(storage), { force: false });
+    await inspected.promise;
+
+    server.advertise(foreign);
+    const startB = await c.startAuth!(scope(storage), { force: true });
+    const urlB = new URL(required(startB.authorizationUrl));
+    const epochB = await storage.get("oauth:generation");
+    const stateB = required(urlB.searchParams.get("state") ?? undefined);
+    const callbackB = scope(storage);
+    expect(await c.verifyState!(stateB, callbackB)).toBe(true);
+    await c.finishAuth!("consented", callbackB, new URLSearchParams({ code: "consented", state: stateB }));
+
+    resume.resolve();
+    const resultA = await startA;
+    expect(resultA.state).toBe("error");
+    expect(resultA.authorizationUrl).toBeUndefined();
+    expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
+
+    expect(await storage.get("oauth:generation")).toBe(epochB);
+    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", epochB))) ?? undefined)))
+      .toMatchObject({ issuer: foreign, value: { refresh_token: expect.stringMatching(/^foreign-refresh-/) } });
+    server.requests.length = 0;
+    await c.listTools(scope(storage)).catch(() => {});
+    expect(server.requests.some(({ url }) => url === `${foreign}/token`)).toBe(true);
+    expect(await storage.get("oauth:generation")).toBe(epochB);
+  });
+
+  it("fails a start whose consent URL write a reset overtook, rather than hand out the newer flow's", async () => {
+    // A's consent URL write passes its epoch check and is held; B restarts and
+    // stores its own consent; A's write then lands in an epoch nobody reads.
+    // Reporting success there would let A's start read back B's URL.
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const backing = memoryStorage();
+    const reached = deferred<void>();
+    const resume = deferred<void>();
+    let holdWrite = true;
+    const storage: KVStorage = { ...backing,
+      async set(key, value, options) {
+        if (holdWrite && key === "oauth:pending") {
+          holdWrite = false;
+          reached.resolve();
+          await resume.promise;
+        }
+        await backing.set(key, value, options);
+      },
+    };
+    const c = connector();
+
+    const startA = c.startAuth!(scope(storage), { force: false });
+    await reached.promise;
+
+    const startB = await c.startAuth!(scope(storage), { force: true });
+    const urlB = required(startB.authorizationUrl);
+
+    resume.resolve();
+    const resultA = await startA;
+    expect(resultA.state).toBe("error");
+    expect(resultA.authorizationUrl).toBeUndefined();
+    expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
+    // A's late write was cleaned up, and B's consent is still the one Continue hands back.
+    expect(await backing.get("oauth:pending")).toBeNull();
+    const continued = await c.startAuth!(scope(storage), { force: false });
+    expect(continued).toMatchObject({ authorizationUrl: urlB, authorizationReused: true });
+  });
+
+  it("fails a callback whose token write a reset overtook, rather than report it connected", async () => {
+    // The exchange's token write passes its epoch check and is held; a
+    // restart lands; the write then goes to an epoch nobody reads. Nothing
+    // reads after it, so only the write itself can say it did not land.
+    const server = downstream();
+    vi.stubGlobal("fetch", server.fetchStub);
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const backing = memoryStorage();
+    let holdKey: string | undefined;
+    const reached = deferred<void>();
+    const resume = deferred<void>();
+    const storage: KVStorage = { ...backing,
+      async set(key, value, options) {
+        if (key === holdKey) {
+          holdKey = undefined;
+          reached.resolve();
+          await resume.promise;
+        }
+        await backing.set(key, value, options);
+      },
+    };
+    const c = connector();
+    const started = await c.startAuth!(scope(storage), { force: true });
+    const url = new URL(required(started.authorizationUrl));
+    const epochA = required((await storage.get("oauth:generation")) ?? undefined);
+    holdKey = oauthValueStorageKey("oauth:tokens", epochA);
+
+    const state = required(url.searchParams.get("state") ?? undefined);
+    const callback = scope(storage);
+    expect(await c.verifyState!(state, callback)).toBe(true);
+    const finishing = c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }))
+      .then(() => undefined, (e: unknown) => e);
+    await reached.promise;
+    await c.startAuth!(scope(storage), { force: true });
+    resume.resolve();
+
+    const error = await finishing;
+    expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
+    expect(await storage.get("oauth:generation")).not.toBe(epochA);
+    expect(await backing.get(holdKey ?? oauthValueStorageKey("oauth:tokens", epochA))).toBeNull();
+  });
 
   it("retires a grant from before issuer binding even beside discovery naming the server that issued it", async () => {
     // No record can prove where an unstamped grant came from, so even one that

@@ -59,8 +59,8 @@ nor the 2026-07-28 claim is served exactly as before (#687).
   in the legacy handshake, so connecta's workaround for
   [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
   is gone; the handshake teardown sweeps prove no rejection escapes under
-  workerd without it. Bundles grow by about 5.6 KB gzip at the root and the
-  Worker example and about 2.8 KB for each hosted-MCP provider, within every cap.
+  workerd without it. Bundles grow by about 5.7 KB gzip at the root and the
+  Worker example and about 2.9 KB for each hosted-MCP provider, within every cap.
 - **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
   transport requires the header on every POST and has the server reject a
   request without it, so an intermediary routing on the header and the server
@@ -108,7 +108,13 @@ nor the 2026-07-28 claim is served exactly as before (#687).
   they disagree with the server the epoch's discovery names. The flow is then
   bound to the resulting epoch: its reads and writes never follow the live
   generation, and a flow whose epoch was overtaken fails cleanly, sends
-  nothing, retires nothing, and returns no consent URL. A read for a server the
+  nothing, retires nothing, and returns no consent URL. The retirement acts
+  only on the epoch the decision inspected, activating its replacement with a
+  compare-and-set where the store has one, so a stale decision never retires a
+  grant a later restart completed. A write a reset overtakes after its epoch
+  check is cleaned up and reported as failed, so a start never hands out
+  another flow's consent URL and a callback never reports a grant it could not
+  store. A read for a server the
   stamps do not name hands it nothing and changes nothing; the SDK registers
   and consents within the same epoch, and the next flow's entry retires any
   mixed grant that leaves.

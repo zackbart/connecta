@@ -1564,6 +1564,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // before this set, remove the now-unreachable residue ourselves. The epoch
     // key already provides correctness; this second check is physical hygiene.
     const current = await this.generation();
+    const superseded =
+      current !== generation &&
+      this.flowBound &&
+      !commitAcceptedRefresh &&
+      generation === this.capturedGeneration;
     if (current !== generation || (!commitAcceptedRefresh && this.signal?.aborted)) {
       try {
         // On cancellation the generation may still be active. A newer flow
@@ -1584,6 +1589,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
         }
       }
     }
+    // A bound flow's write that a reset overtook mid-flight is cleaned up
+    // above, but it did not succeed: the flow must not go on as if it had —
+    // a consent URL it reports would be one it could not store.
+    if (superseded) throw this.flowSuperseded();
   }
 
   /**
@@ -1861,7 +1870,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       );
       if (!keep) {
         if (this.signal?.aborted) throw this.signal.reason;
-        epoch = await this.retireGrant();
+        epoch = await this.retireGrant(generation);
       }
     }
     this.captureGeneration(epoch);
@@ -2407,23 +2416,34 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Retire the grant a flow just read, and return the epoch this retirement
-   * published — not the current one, which a concurrent reset may already
-   * have replaced.
+   * Retire the grant a flow inspected in `inspected`, and return the epoch
+   * this retirement published. The decision was made about that epoch's
+   * grant, so it acts only on that epoch: if another reset has replaced it —
+   * a restart that has since completed its own consent, say — the flow is
+   * abandoned with nothing touched, rather than retiring a grant it never
+   * looked at.
    */
-  private retireGrant(): Promise<string> {
-    const published = this.performResetAuthorization(false, false);
+  private retireGrant(inspected: string): Promise<string> {
+    const published = this.performResetAuthorization(false, false, inspected);
     if (this.onReset) this.onReset(published.then(() => {}));
     return published;
   }
 
-  /** The epoch it published. */
+  /**
+   * The epoch it published. With `expected`, the reset is conditional on the
+   * live epoch still being that one: it is checked before anything is
+   * touched, and the activation is a compare-and-set where the store offers
+   * one (a recheck just before the write where it cannot).
+   */
   private async performResetAuthorization(
     operatorDisconnected: boolean,
     preserveClient: boolean,
+    expected?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
-    const previous = await this.generation();
+    const rawGeneration = await this.storage.get("oauth:generation");
+    const previous = rawGeneration ?? LEGACY_GENERATION;
+    if (expected !== undefined && previous !== expected) throw this.flowSuperseded();
     // Only an explicitly forced restart may carry a registration forward, and
     // only one this connector registered: an operator disconnect, an issuer
     // mismatch, and every unforced reset discard it. Discovery is never
@@ -2483,7 +2503,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // A rejection may follow a committed fence. Keep its lineage even when
     // the answer is lost: the next reset must still find the retired grants.
     // A manifest for an epoch that never activated is harmless residue.
-    await this.storage.set("oauth:generation", active);
+    if (expected === undefined) {
+      await this.storage.set("oauth:generation", active);
+    } else if (this.storage.compareAndSet) {
+      if (!(await this.storage.compareAndSet("oauth:generation", rawGeneration, active))) {
+        throw this.flowSuperseded();
+      }
+    } else {
+      // An eventually consistent store has no atomic swap; recheck as late
+      // as possible, and leave the residue an abandoned manifest is.
+      if ((await this.generation()) !== expected) throw this.flowSuperseded();
+      await this.storage.set("oauth:generation", active);
+    }
     this.refreshCoordinator?.retire(previous);
 
     if (reusableClient && !this.signal?.aborted) {

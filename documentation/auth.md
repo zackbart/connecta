@@ -470,12 +470,16 @@ The authorization server a downstream names decides where consent goes,
 never where an existing grant goes. Tokens and a registered client are stored
 bound to the issuer that granted them. While discovery is cached, a refresh
 returns to that issuer whatever the downstream now advertises. When fresh
-discovery names a different one, the bound grant is retired behind a new epoch
-before anything it holds is sent, and the next `authorize_connector` consents
-at the server now named. That is the shape of
+discovery names a different one, that flow is handed nothing the grant holds:
+the issuer-bound reads withhold the client and tokens from the server now
+named, and the SDK registers and consents there within the same epoch. The
+grant itself is not retired inside that flow; the mixed grant it leaves — the
+old server's tokens beside the new server's client or discovery — is retired
+when the next flow begins, before anything is sent (see
+[deciding a grant at flow entry](#deciding-a-grant-at-flow-entry)). That is the
+shape of
 [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h),
-which the SDK has also refused on its own since client 2.2.0; connecta's
-binding is the one that retires the grant. A new consent still goes wherever
+which the SDK has also refused on its own since client 2.2.0. A new consent still goes wherever
 the downstream points: the human who reads the authorization URL before
 approving it is that check, as the SDK says of its own.
 
@@ -513,8 +517,20 @@ the provider:
   that server nothing, and the SDK registers and consents within the same
   epoch. Whatever mixed grant that leaves is retired by the next flow's entry.
 
+The retirement itself acts only on the epoch the decision inspected: it is
+checked before anything is touched, and the new epoch is activated with a
+compare-and-set where the store offers one (a recheck just before the write on
+an eventually consistent store such as Workers KV). If another reset has
+replaced that epoch — a restart that has since completed its own consent — the
+flow is abandoned with nothing touched rather than retiring a grant it never
+looked at.
+
 The flow is then bound to the epoch that decision leaves: every read and
-write it makes names that epoch and never follows the live one. A callback is
+write it makes names that epoch and never follows the live one. A write a
+reset overtakes after its epoch check is cleaned up and reported as the
+failure it is, so a start never reads back another flow's consent URL and a
+callback never reports a grant it could not store; a start reads its consent
+URL from the epoch its own connect attempt began in. A callback is
 bound to the epoch its consent was written in, which its state check
 captured, and decides nothing about the grant there. A flow whose epoch a
 later reset has replaced fails with a retryable `unavailable` — "authorization

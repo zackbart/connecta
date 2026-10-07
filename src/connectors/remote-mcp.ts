@@ -662,6 +662,11 @@ interface ConnectionState {
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
   /**
+   * The OAuth epoch the latest connect attempt began in. A consent URL that
+   * attempt wrote lives there, and only there.
+   */
+  attemptGeneration: string | null;
+  /**
    * Digest of the operator-managed credential this scope's client is bound to
    * — or, while a connect is still in flight, the one that attempt is using.
    * Null for every other auth shape. Set when the attempt starts rather than
@@ -927,6 +932,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authRequired: false,
         provider: null,
         connectedGeneration: null,
+        attemptGeneration: null,
         credentialDigest: null,
       };
       states.set(key, state);
@@ -1202,6 +1208,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // that decision leaves. Nothing is retired from inside the SDK's flow.
       const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
       if (!owned()) return yield* Effect.fail(scopeEndedError());
+      if (provider) state.attemptGeneration = genAtStart;
       if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
         return yield* Effect.fail(operatorDisconnectedError());
       }
@@ -1688,7 +1695,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         };
       } catch (err) {
         if (state.authRequired) {
-          const authorizationUrl = await p.pendingAuthorizationUrl();
+          // The consent URL this start's attempt wrote, read from the epoch
+          // that attempt began in: one a later reset published belongs to
+          // another flow, and this start fails rather than hand it out.
+          let authorizationUrl: string | undefined;
+          try {
+            const reader = newProvider(ctx);
+            if (state.attemptGeneration !== null) {
+              reader.captureGeneration(state.attemptGeneration);
+              await reader.bindFlow();
+            }
+            authorizationUrl = await reader.pendingAuthorizationUrl();
+          } catch (readErr) {
+            return { state: "error", message: msg(readErr) };
+          }
           return {
             state: "auth_required",
             ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),
