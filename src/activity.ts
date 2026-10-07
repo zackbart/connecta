@@ -1,7 +1,7 @@
 import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
 import { boundedEchoText } from "./errors.js";
-import { logFailure } from "./operator-record.js";
+import { failureRecord, logFailure } from "./operator-record.js";
 import type { CatalogDriftCounts, Logger } from "./types.js";
 
 /**
@@ -269,11 +269,11 @@ export function recordToolActivity(
       return;
     }
     const pending = Promise.resolve(result).catch((error) => {
-      logFailure(context.logger, "activity record failed", {}, error);
+      logFailure(context.logger, "activity record failed", failureRecord({}, error));
     });
     if (context.defer) context.defer(pending);
   } catch (error) {
-    logFailure(context.logger, "activity record failed", {}, error);
+    logFailure(context.logger, "activity record failed", failureRecord({}, error));
   }
 }
 
@@ -306,10 +306,10 @@ export function recordCatalogDriftActivity(
       return;
     }
     void Promise.resolve(result).catch((error) => {
-      logFailure(context.logger, "catalog drift record failed", {}, error);
+      logFailure(context.logger, "catalog drift record failed", failureRecord({}, error));
     });
   } catch (error) {
-    logFailure(context.logger, "catalog drift record failed", {}, error);
+    logFailure(context.logger, "catalog drift record failed", failureRecord({}, error));
   }
 }
 

@@ -5,9 +5,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // INV-6 is enforced at the sink: a log line about a failure is built by
-// src/operator-record.ts from typed facts, never from what an error says.
-// This holds every other log call in src/ to that, so a new call site cannot
-// quietly hand a logger an error, its message, or its cause.
+// src/operator-record.ts from typed facts, never from what an error says, and
+// `logFailure` refuses any record that module did not build. This scan is a
+// secondary lint over every other log call in src/, so a new call site cannot
+// quietly hand a logger an error, its message, its name, or its cause, nor
+// reach a logger method through an alias the scan would not see.
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
 
 /** Files that define a sink rather than write to one. */
@@ -18,8 +20,30 @@ const SINK_DEFINITIONS = new Set([
 ]);
 
 const LOG_CALL = /\b(?:logger|console|sealer|this\.sealer)\??\.(?:debug|info|warn|error|log)\s*\(/g;
-const ERROR_TEXT = /\bmsg\(|\.message\b|\.stack\b|\.cause\b|\.errors\b|String\(\s*(?:err|error|e|cause|reason)\b/;
-const BARE_ERROR = /^(?:err|error|e|cause|reason|failure|exception|readErr|renameError)$/;
+const ERRORISH = "(?:err|error|e|cause|reason|failure|exception|readErr|renameError)";
+const ERROR_TEXT = new RegExp(
+  [
+    "\\bmsg\\(",
+    "\\.message\\b",
+    "\\.stack\\b",
+    "\\.cause\\b",
+    "\\.errors\\b",
+    `String\\(\\s*${ERRORISH}\\b`,
+    // Interpolated, or by its name.
+    `\\$\\{\\s*${ERRORISH}\\b`,
+    `\\b${ERRORISH}\\.name\\b`,
+    // Nested in an object or array: `{ error }`, `{ cause: err }`, `[err]`.
+    `[{[,:]\\s*${ERRORISH}\\s*[,}\\]]`,
+  ].join("|"),
+);
+const BARE_ERROR = new RegExp(`^${ERRORISH}$`);
+const LOGGER = "(?:logger|console|this\\.opts\\.logger|opts\\.logger|ctx\\.logger|context\\.logger)";
+/** A logger method taken out of its call: `const { warn } = logger`, `const w = logger.warn`. */
+const ALIAS = new RegExp(
+  `\\{[^}]*\\b(?:debug|info|warn|error|log)\\b[^}]*\\}\\s*=\\s*${LOGGER}\\b|` +
+    `=\\s*${LOGGER}\\??\\.(?:debug|info|warn|error|log)\\b(?!\\s*\\()`,
+  "g",
+);
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -75,9 +99,33 @@ describe("operator log calls", () => {
           }
         }
       }
+      for (const match of source.matchAll(ALIAS)) {
+        const line = source.slice(0, match.index).split("\n").length;
+        problems.push(`src/${name}:${line}: logger method alias ${match[0].slice(0, 80)}`);
+      }
     }
     expect(calls).toBeGreaterThan(50);
     expect(problems).toEqual([]);
+  });
+
+  it("recognizes error text in the shapes a call site could hand it over", () => {
+    for (const arg of [
+      "`failed: ${err}`",
+      "`failed (${error.name})`",
+      "{ error }",
+      "{ connector, cause: err }",
+      "[reason]",
+      "error",
+    ]) {
+      expect(ERROR_TEXT.test(arg) || BARE_ERROR.test(arg), arg).toBe(true);
+    }
+    for (const arg of ['"[connecta] call failed"', "failureRecord({ connector: id }, err)", "{ connector: id }"]) {
+      expect(ERROR_TEXT.test(arg) || BARE_ERROR.test(arg), arg).toBe(false);
+    }
+    for (const alias of ["const { warn } = logger;", "const log = ctx.logger.warn;", "const { error: e } = console;"]) {
+      expect([...alias.matchAll(ALIAS)].length, alias).toBe(1);
+    }
+    expect([..."logger.warn(x); const s = { warn: 1 };".matchAll(ALIAS)]).toEqual([]);
   });
 
   it("finds an error handed to a logger", () => {

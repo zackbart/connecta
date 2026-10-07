@@ -3,7 +3,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { compileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema } from "../src/types.js";
 import { spyLogger } from "./fixtures/misc.js";
-import { required, silentLogger } from "./helpers.js";
+import { silentLogger } from "./helpers.js";
 
 const OPTS = { address: "acme.create_note", logger: silentLogger };
 
@@ -314,7 +314,12 @@ describe("validateToolInput", () => {
     if (!failClosed) {
       for (const result of results) expect(result).toBeNull();
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(required(warn.mock.calls[0])[1]).toMatchObject({ address });
+      // The caller's address is its own text, not a catalog entry connecta
+      // resolved, so the record names only the error's class (INV-6).
+      expect(warn.mock.calls[0]).toEqual([
+        "[connecta] input schema unusable; arguments are not validated",
+        { errorClass: "Error" },
+      ]);
       return;
     }
     const err = results[0]!;

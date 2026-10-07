@@ -277,10 +277,16 @@ runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
 Operators read logs, status messages, and activity, and none of them carries
 any error's text, allowed or not (INV-6). `src/operator-record.ts` builds every
-failure record from typed facts it checks itself (connector, tool, step,
-origin, HTTP status, class, code, retryability, errno, counts), and
-`test/operator-record-sources.node.test.ts` holds every other log call in `src/` to
-that. Fix the sink, not the source: a filter at each source missed the next one.
+failure record from an explicit list of fields, each checked against a constant
+table or grammar (connector, catalog-listed tool, step, origin, HTTP status,
+class, code, retryability, errno, counts), and `logFailure` refuses a record it
+did not build. Provenance is by identity, never by shape: an error's class is
+read from its prototype chain, never its `name`; a tool is named only from the
+catalog entry a call resolved to; and a status message survives only on a status
+object connecta created, so a plugin `status()` contributes its state alone.
+`test/operator-record-sources.node.test.ts` is a secondary lint over every other
+log call in `src/`. Fix the sink, not the source: a filter at each source missed
+the next one.
 
 ## Optional deployment modules
 

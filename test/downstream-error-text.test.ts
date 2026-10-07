@@ -987,7 +987,12 @@ describe("the MCP boundary is an allow-list", () => {
           );
     await connector.closeScope!(context);
     const text = action === "status" ? JSON.stringify(outcome) : rendered(outcome);
-    expect(text).toContain(`${step} with https://downstream.example failed (PlantedError).`);
+    // An unknown class is told by the nearest class connecta labels, never by
+    // its own name: a status record says Error, the agent's text nothing.
+    expect(text).toContain(
+      `${step} with https://downstream.example failed${action === "status" ? " (Error)" : ""}.`,
+    );
+    expect(text).not.toContain("PlantedError");
     if (action !== "status") {
       expect(classifyCallError(outcome)).toEqual({
         ...classifyCallError(new PlantedError(`refused ${SECRET}`)),
@@ -1028,8 +1033,9 @@ describe("the MCP boundary is an allow-list", () => {
       const error = await connector.listTools(context).then(() => null, (err: unknown) => err);
       await connector.closeScope!(context);
       expect((error as Error).message).toContain(
-        'Connector "svc" OAuth discovery with https://auth.example failed (PlantedError).',
+        'Connector "svc" OAuth discovery with https://auth.example failed.',
       );
+      expect((error as Error).message).not.toContain("PlantedError");
       expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)), ...lines);
     } finally {
       KvOAuthProvider.prototype.saveDiscoveryState = original;

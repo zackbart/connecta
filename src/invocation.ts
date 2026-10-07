@@ -22,11 +22,11 @@ import {
   type CallErrorDetails,
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
-import { carryFailureFacts, logFailure } from "./operator-record.js";
+import { carryFailureFacts, failureRecord, logFailure } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
-import { validateToolInput } from "./validate.js";
+import { validateCatalogToolInput } from "./validate.js";
 
 function defined<T extends object>(
   values: T,
@@ -448,14 +448,14 @@ export class InvocationService {
               this.catalog.requestScope,
             ).logger,
             "call failed",
-            {
+            failureRecord({
               connector: target.connector.id,
-              tool: target.toolName,
+              // Named only when the catalog listed it (src/operator-record.ts).
+              tool: resolved?.definition,
               source: context.source,
               attempts,
               durationMs: Date.now() - started,
-            },
-            error,
+            }, error),
           );
         }
         record(
@@ -532,7 +532,7 @@ export class InvocationService {
             target.connector.kind === "mcp" &&
             target.definition.inputSchema
           ) {
-            const invalid = validateToolInput(
+            const invalid = validateCatalogToolInput(
               target.definition.inputSchema,
               args ?? {},
               {
@@ -543,6 +543,7 @@ export class InvocationService {
                   this.catalog.requestScope,
                 ).logger,
               },
+              { connector: target.connector.id, tool: target.definition },
             );
             if (invalid) return classifyCallError(invalid);
           }

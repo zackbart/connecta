@@ -2,7 +2,7 @@
 // Node but not on Workers would leave half the deployments unable to tell a
 // stale allowlist from a current one.
 import { boundedEchoText } from "./errors.js";
-import { logFailure } from "./operator-record.js";
+import { failureRecord, logFailure } from "./operator-record.js";
 import type {
   CatalogDriftCounts,
   CatalogDriftReport,
@@ -337,7 +337,7 @@ export function withVettedCatalog(
         // A drift check is a report about a catalog, never a condition for
         // serving one. Keep the last good observation rather than replacing it
         // with a lie, and let the refresh through.
-        logFailure(ctx.logger, "catalog drift check failed", { connector: connector.id }, error);
+        logFailure(ctx.logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
       }
       return downstream.map((definition) =>
         applyVettedSafety(catalog, definition),

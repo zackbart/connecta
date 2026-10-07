@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { closeConnectorScope } from "../connector-scope.js";
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
-import { logFailure } from "../operator-record.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
 import {
@@ -221,8 +221,7 @@ async function finishOAuthCallback(
       logFailure(
         opts.logger,
         "OAuth callback verifyState threw; no authorization code was exchanged",
-        { connector: id },
-        err,
+        failureRecord({ connector: id }, err),
       );
       return refused();
     }
@@ -245,8 +244,7 @@ async function finishOAuthCallback(
         logFailure(
           opts.logger,
           "OAuth callback handoff could not be consumed; no authorization code was exchanged",
-          { connector: id },
-          err,
+          failureRecord({ connector: id }, err),
         );
         return html("handoff_failed", opts, connector);
       }

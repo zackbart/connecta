@@ -265,13 +265,13 @@ describe("connector status messages", () => {
       expect(copy).not.toContain(SECRET);
     }
 
-    // The host records each state; a message only when it is the failure's
-    // own record, never what a status seam or a thrown error said (INV-6).
+    // The host records each state, and for a failure connecta described its
+    // record; never a message, whatever a status seam or an error said (INV-6).
     const status = (spy: ReturnType<typeof vi.fn>) =>
       spy.mock.calls.filter((call) => call[0] === "[connecta] operator status").map((call) => call[1]);
     expect(status(warn)).toEqual([
       { connector: "down", state: "error" },
-      { connector: "thrown", state: "error", message: 'Connector "thrown" failed (Error).' },
+      { connector: "thrown", state: "error", errorClass: "Error" },
     ]);
     expect(status(info)).toEqual([{ connector: "locked", state: "auth_required" }]);
     const logged = JSON.stringify([...warn.mock.calls, ...info.mock.calls]);

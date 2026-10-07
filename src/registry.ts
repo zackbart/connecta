@@ -30,7 +30,13 @@ import {
   storedCredentialShape,
 } from "./credential-rules.js";
 import { ConnectorCallError } from "./errors.js";
-import { describeFailure, logFailure } from "./operator-record.js";
+import {
+  boundedStatus,
+  failureRecord,
+  failureStatus,
+  logFailure,
+  ownStatus,
+} from "./operator-record.js";
 import {
   ConnectorCallAdmissionController,
   aggregateCallAdmissionSnapshots,
@@ -225,7 +231,7 @@ function warnOnFailure<R>(
 ): Effect.Effect<void, never, R | LoggerService> {
   return Effect.catch(mutation, (err) =>
     LoggerService.use((logger) =>
-      Effect.sync(() => logFailure(logger, event, { connector }, err)),
+      Effect.sync(() => logFailure(logger, event, failureRecord({ connector }, err))),
     ),
   );
 }
@@ -1625,7 +1631,7 @@ export class Registry implements RegistryView {
       },
     );
     const refreshFailed = (err: unknown) => {
-      logFailure(this.opts.logger, "deferred catalog refresh failed", { connector: id }, err);
+      logFailure(this.opts.logger, "deferred catalog refresh failed", failureRecord({ connector: id }, err));
     };
     const { flight, owner } = this.startCatalogRefresh(
       id,
@@ -1654,8 +1660,7 @@ export class Registry implements RegistryView {
       logFailure(
         this.opts.logger,
         "deferred catalog refresh could not attach to the runtime",
-        { connector: id },
-        err,
+        failureRecord({ connector: id }, err),
       );
     }
   }
@@ -1693,7 +1698,7 @@ export class Registry implements RegistryView {
           this.opts,
         );
       } catch (err) {
-        logFailure(this.opts.logger, "catalog read failed", { connector: id }, err);
+        logFailure(this.opts.logger, "catalog read failed", failureRecord({ connector: id }, err));
       }
       if (generation !== this.catalogGeneration(id)) {
         persisted = null;
@@ -1784,8 +1789,7 @@ export class Registry implements RegistryView {
         logFailure(
           this.opts.logger,
           "catalog refresh failed; serving stale catalog",
-          { connector: id },
-          err,
+          failureRecord({ connector: id }, err),
         );
         return stale.tools;
       }
@@ -1869,7 +1873,7 @@ export class Registry implements RegistryView {
       const shape = storedCredentialShape(credential, values);
       return shape.state === "mismatch" ? shape.message : undefined;
     } catch (error) {
-      logFailure(this.opts.logger, "credential shape read failed", { connector: id }, error);
+      logFailure(this.opts.logger, "credential shape read failed", failureRecord({ connector: id }, error));
       return undefined;
     }
   }
@@ -1882,7 +1886,7 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
   ): Promise<ConnectorStatus> {
     const connector = this.connectors.get(id);
-    if (!connector) return { state: "error", message: "Unknown connector" };
+    if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
     const ctx = this.contextFor(id, baseUrl, requestScope, callOptions);
     // Whatever the state turns out to be, it carries the drift the last
     // refresh saw. Reading it is a lookup, not a probe: a connector that has
@@ -1896,29 +1900,25 @@ export class Registry implements RegistryView {
       const access = this.catalogAccess.get(id);
       // Connector.status is an open plugin seam. Rebuild its public fields so
       // a connector cannot smuggle payload through either registry-owned
-      // observation when this runtime has not made one.
-      const boundedStatus: ConnectorStatus = {
-        state: status.state,
-        ...(status.message !== undefined ? { message: status.message } : {}),
-      };
-      return {
-        ...boundedStatus,
+      // observation when this runtime has not made one, nor through its
+      // message, which survives only when connecta wrote it (INV-6).
+      return Object.assign(boundedStatus(status), {
         ...(report ? { catalogDrift: report } : {}),
         ...(access ? { catalogAccess: { ...access } } : {}),
-      };
+      });
     };
     if (connector.status) {
       try {
         return withObservations(await connector.status(ctx));
       } catch (err) {
-        return withObservations({ state: "error", message: describeFailure(id, err) });
+        return withObservations(failureStatus(id, err));
       }
     }
     try {
       await this.getTools(id, baseUrl, requestScope, callOptions);
       return withObservations({ state: "ok" });
     } catch (err) {
-      return withObservations({ state: "error", message: describeFailure(id, err) });
+      return withObservations(failureStatus(id, err));
     }
   }
 

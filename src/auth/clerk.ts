@@ -4,7 +4,7 @@
 
 import { createClerkClient } from "@clerk/backend";
 import { decodeJwt } from "@clerk/backend/jwt";
-import { logFailure } from "../operator-record.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
@@ -510,7 +510,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         email = primary.emailAddress;
       }
     } catch (error) {
-      logFailure(console, "Clerk email lookup failed; denying", { userId }, error);
+      logFailure(console, "Clerk email lookup failed; denying", failureRecord({ userId }, error));
       return false;
     }
     const domain = email ? emailDomain(email) : null;
@@ -674,9 +674,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           } else {
             claims = decodeJwt(token).payload as Record<string, unknown>;
           }
-          const reason = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
-          if (reason) {
-            console.warn(`[connecta] clerk rejected request: reason=${reason}`);
+          const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
+          if (rejection) {
+            console.warn(`[connecta] clerk rejected request: reason=${rejection}`);
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
         } else {

@@ -5,7 +5,7 @@ import type {
   ArgumentValidationIssue,
 } from "./errors.js";
 import { MAX_ARGUMENT_VALIDATION_ISSUES } from "./errors.js";
-import { logFailure } from "./operator-record.js";
+import { failureRecord, logFailure, type FailureSubject } from "./operator-record.js";
 import type { JsonSchema, Logger } from "./types.js";
 
 export interface ValidateToolInputOptions {
@@ -285,16 +285,17 @@ function unusableSchema(address: string, detail: string): Error {
 /**
  * The validator's account of an unusable schema quotes the schema (an
  * unresolvable `$ref`, an invalid `pattern`), and a downstream wrote that
- * schema, so the log records only the address and the error's class.
+ * schema, so the log records only the tool's catalog entry and the error's
+ * class.
  */
 function disableValidation(
   schema: JsonSchema,
-  address: string,
+  subject: FailureSubject,
   logger: Logger,
   err: unknown,
 ): void {
   validators.set(schema, null);
-  logFailure(logger, "input schema unusable; arguments are not validated", { address }, err);
+  logFailure(logger, "input schema unusable; arguments are not validated", failureRecord(subject, err));
 }
 
 /**
@@ -327,6 +328,20 @@ export function validateToolInput(
   args: unknown,
   opts: ValidateToolInputOptions,
 ): ConnectorCallError | null {
+  return validateCatalogToolInput(schema, args, opts, {});
+}
+
+/**
+ * `validateToolInput` for a tool connecta resolved in a catalog. `subject`
+ * names it in the log record when the schema is unusable; a caller's own
+ * address never reaches the log.
+ */
+export function validateCatalogToolInput(
+  schema: JsonSchema,
+  args: unknown,
+  opts: ValidateToolInputOptions,
+  subject: FailureSubject,
+): ConnectorCallError | null {
   const logger = opts.logger ?? console;
   let validator = validators.get(schema);
   if (validator === undefined) {
@@ -334,7 +349,7 @@ export function validateToolInput(
       validator = new Validator(schema as never, "2020-12", false);
       validators.set(schema, validator);
     } catch (err) {
-      disableValidation(schema, opts.address, logger, err);
+      disableValidation(schema, subject, logger, err);
       validator = null;
     }
   }
@@ -348,7 +363,7 @@ export function validateToolInput(
     result = validator.validate(args);
   } catch (err) {
     // e.g. an unresolvable $ref — surfaces on first validate, not compile.
-    disableValidation(schema, opts.address, logger, err);
+    disableValidation(schema, subject, logger, err);
     return opts.failClosed ? unevaluableSchema(opts.address) : null;
   }
   if (result && !result.valid) {

@@ -4,8 +4,8 @@ import {
   unavailableCallError,
   WithheldTextError,
 } from "../errors.js";
-import { attachFailureFacts, carryFailureFacts, failureRecord } from "../operator-record.js";
-import { compileValidator, validateToolInput } from "../validate.js";
+import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
+import { compileValidator, validateCatalogToolInput } from "../validate.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -304,14 +304,14 @@ export function apiConnector(
       }
       const input = args ?? {};
       if (validateArgs && tool.inputSchema) {
-        const invalid = validateToolInput(tool.inputSchema, input, {
+        const invalid = validateCatalogToolInput(tool.inputSchema, input, {
           address: `${id}.${name}`,
           logger: ctx.logger,
           // Always: the schema compiled at construction, so anything that
           // fails here is a schema that cannot be enforced, and a surface we
           // wrote ourselves does not get to admit unvalidated input quietly.
           failClosed: true,
-        });
+        }, { connector: id, tool });
         if (invalid) throw invalid;
       }
       // `await` (not a bare promise return) so a handler that throws before
@@ -340,7 +340,7 @@ export function apiConnector(
           // handler that means the agent to read its words throws a
           // ConnectorCallError. No host is named: connecta does not know
           // which destination the handler read.
-          const kind = failureRecord(error).errorClass;
+          const kind = errorLabel(error);
           throw attachFailureFacts(
             carryFailureFacts(error, new WithheldTextError(
               `Connector "${id}" tool "${name}" handler failed` +

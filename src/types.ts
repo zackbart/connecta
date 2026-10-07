@@ -261,10 +261,11 @@ export interface ConnectorStatus {
    */
   authorizationReused?: boolean;
   /**
-   * From `status()`, operator-facing and logged: connecta's or the
-   * connector's own words, never a downstream's text (INV-6). Connecta's
-   * connectors describe a failed status from its typed record alone. From
-   * `startAuth()`, the message also reaches the agent.
+   * From `startAuth()`, the message reaches the agent. From `status()`, it is
+   * never logged, and `Registry.statusFor` keeps it only when connecta wrote
+   * it: a custom connector's `status()` contributes its state alone, since
+   * its text can quote a downstream (INV-6). Connecta's connectors describe a
+   * failed status from its typed record.
    */
   message?: string;
   /**

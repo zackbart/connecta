@@ -19,6 +19,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { dirname, resolve } from "node:path";
+import { errorLabel } from "../operator-record.js";
 import type { KVStorage, Logger } from "../types.js";
 
 interface Entry {
@@ -323,7 +324,7 @@ export function fileStorage(
         // The parser's account quotes the file, which holds stored state.
         logger.error(
           `[connecta] state file ${path} is not valid JSON ` +
-            `(${error instanceof Error ? error.name : "parse failure"}) — ` +
+            `(${errorLabel(error) ?? "parse failure"}) — ` +
             `moved to ${quarantine}, starting from empty state. Downstream ` +
             `OAuth connectors must be re-authorized and stored credentials ` +
             `re-entered.`,

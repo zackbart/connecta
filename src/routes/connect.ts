@@ -3,7 +3,7 @@ import { escapeHtml, renderPage } from "../branding.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
 import { consumeOAuthConnectLink, oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
-import { logFailure } from "../operator-record.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import { runEdge, withDeadlineEffect } from "../runtime/run.js";
 import {
   authorizeUiIdentity, mayManageConnector, privateJson, validateAuthPermissions, withSessionCookies,
@@ -118,7 +118,7 @@ async function connect(context: RouteContext): Promise<Response> {
     await drainOAuthStartResets(scope);
     await registry.invalidateStored(id);
     if (error === timeoutError) return refuse("OAuth authorization start timed out", 504);
-    logFailure(opts.logger, "OAuth start failed", { connector: id }, error);
+    logFailure(opts.logger, "OAuth start failed", failureRecord({ connector: id }, error));
     return refuse("OAuth authorization could not start", 400);
   } finally {
     await closeConnectorScope(connector, ctx, context.defer);

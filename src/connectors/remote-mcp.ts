@@ -1,12 +1,21 @@
 import {
+  AuthorizationServerMismatchError,
   Client,
+  InsecureTokenEndpointError,
+  InsufficientScopeError,
+  IssuerMismatchError,
+  MissingRequiredClientCapabilityError,
+  OAuthClientFlowError,
   OAuthError,
-  OAuthErrorCode,
   ProtocolError,
   RegistrationRejectedError,
+  ResourceNotFoundError,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
+  SseError,
+  UnsupportedProtocolVersionError,
+  UrlElicitationRequiredError,
   isInputRequiredResult,
   isJSONRPCErrorResponse,
   specTypeSchemas,
@@ -37,7 +46,17 @@ import {
   unavailableCallError,
   WithheldTextError,
 } from "../errors.js";
-import { attachFailureFacts, carryFailureFacts, describeFailure, logFailure } from "../operator-record.js";
+import {
+  attachFailureFacts,
+  carryFailureFacts,
+  errorLabel,
+  failureRecord,
+  failureStatus,
+  labelErrorClass,
+  logFailure,
+  OAUTH_ERROR_CODES,
+  ownStatus,
+} from "../operator-record.js";
 import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
@@ -339,10 +358,12 @@ function terminateSession(
           logFailure(
             logger,
             "session termination refused or failed; the downstream session may remain until its provider timeout",
-            { connector: connectorId },
-            error instanceof SdkHttpError
-              ? attachFailureFacts(error, { httpStatus: error.status })
-              : error,
+            failureRecord(
+              { connector: connectorId },
+              error instanceof SdkHttpError
+                ? attachFailureFacts(error, { httpStatus: error.status })
+                : error,
+            ),
           ),
         ),
       ),
@@ -507,6 +528,7 @@ export class RemoteMcpRedirectError extends ConnectorCallError {
     this.name = "RemoteMcpRedirectError";
   }
 }
+labelErrorClass(RemoteMcpRedirectError, "RemoteMcpRedirectError");
 
 function redirectedInit(init: RequestInit, status: number): RequestInit {
   const method = (init.method ?? "GET").toUpperCase();
@@ -668,6 +690,42 @@ class RemoteMcpDestinationError extends ConnectorCallError {
     this.name = "RemoteMcpDestinationError";
   }
 }
+labelErrorClass(RemoteMcpDestinationError, "RemoteMcpDestinationError");
+
+/** A connection whose request scope ended while it was being made. */
+class ScopeEndedError extends Error {
+  override readonly name = "ScopeEndedError";
+}
+labelErrorClass(ScopeEndedError, "ScopeEndedError");
+
+/** The MCP client's transport lacks the OAuth flow seams this release is pinned against. */
+class UnboundOAuthFlowsError extends Error {
+  override readonly name = "UnboundOAuthFlowsError";
+}
+labelErrorClass(UnboundOAuthFlowsError, "UnboundOAuthFlowsError");
+
+// The pinned SDK's exported errors, labelled by identity for records and
+// connecta's fixed text.
+for (const [ctor, label] of [
+  [SdkError, "SdkError"],
+  [SdkHttpError, "SdkHttpError"],
+  [ProtocolError, "ProtocolError"],
+  [MissingRequiredClientCapabilityError, "MissingRequiredClientCapabilityError"],
+  [ResourceNotFoundError, "ResourceNotFoundError"],
+  [UnsupportedProtocolVersionError, "UnsupportedProtocolVersionError"],
+  [UrlElicitationRequiredError, "UrlElicitationRequiredError"],
+  [SseError, "SseError"],
+  [OAuthError, "OAuthError"],
+  [UnauthorizedError, "UnauthorizedError"],
+  [OAuthClientFlowError, "OAuthClientFlowError"],
+  [AuthorizationServerMismatchError, "AuthorizationServerMismatchError"],
+  [InsecureTokenEndpointError, "InsecureTokenEndpointError"],
+  [InsufficientScopeError, "InsufficientScopeError"],
+  [IssuerMismatchError, "IssuerMismatchError"],
+  [RegistrationRejectedError, "RegistrationRejectedError"],
+] as const) {
+  labelErrorClass(ctor, label);
+}
 
 /**
  * Refuse, before any request leaves, a URL the downstream taught the OAuth
@@ -801,9 +859,8 @@ function ownAbortReasonAsSdkReports(err: unknown, signals: readonly (AbortSignal
 
 /** An error's class name, when it is a plain identifier worth naming. */
 function errorKind(err: unknown): string {
-  return err instanceof Error && err.name !== "Error" && /^[A-Za-z]{1,64}$/.test(err.name)
-    ? ` (${err.name})`
-    : "";
+  const label = errorLabel(err);
+  return label && label !== "Error" ? ` (${label})` : "";
 }
 
 /**
@@ -869,21 +926,10 @@ function tracedOAuthFetch(
   };
 }
 
-/**
- * Codes a refused registration may name in connecta's text: the SDK's OAuth
- * error codes (RFC 6749, RFC 7591's two metadata codes among them) and
- * RFC 7591's software-statement pair. Anything else is the server's prose.
- */
-const REGISTRATION_ERROR_CODES: ReadonlySet<string> = new Set([
-  ...Object.values(OAuthErrorCode),
-  "invalid_software_statement",
-  "unapproved_software_statement",
-]);
-
 function registrationErrorCode(body: string): string | undefined {
   try {
     const code = (JSON.parse(body) as { error?: unknown } | null)?.error;
-    return typeof code === "string" && REGISTRATION_ERROR_CODES.has(code)
+    return typeof code === "string" && OAUTH_ERROR_CODES.has(code)
       ? code
       : undefined;
   } catch {
@@ -1176,13 +1222,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const onUnauthorized = adapted?.onUnauthorized;
     const stepUp = internals._stepUpAuthorize;
     if (!adapted || typeof onUnauthorized !== "function" || typeof stepUp !== "function") {
-      // Named so that a status record, which carries no message, says so.
-      throw Object.assign(new Error(
+      // Its own class, so that a status record, which carries no message, says so.
+      throw new UnboundOAuthFlowsError(
         `[connecta] connector "${id}": the MCP client's transport no longer ` +
           "has the OAuth flow seams this release is pinned against, so its " +
           "flows cannot be bounded. Pin @modelcontextprotocol/client to the " +
           "version this release ships with.",
-      ), { name: "UnboundOAuthFlowsError" });
+      );
     }
     const flow = async <T>(
       start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>,
@@ -1312,11 +1358,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return err;
   };
 
-  // Named so that a status record, which carries no message, still says so.
+  // Its own class, so that a status record, which carries no message, still says so.
   const scopeEndedError = () =>
-    Object.assign(new Error(`Connector "${id}" scope ended during connection.`), {
-      name: "ScopeEndedError",
-    });
+    new ScopeEndedError(`Connector "${id}" scope ended during connection.`);
 
   const requestOptions = (ctx: ConnectorContext) =>
     ctx.timeoutMs || ctx.signal
@@ -2115,30 +2159,30 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       try {
         await ensureConnected(ctx, state);
-        return { state: "ok" };
+        return ownStatus({ state: "ok" });
       } catch (err) {
         // An empty slot, or one with no vault behind it, is reported the way a
         // missing grant is: present, unauthenticated, and repairable — never a
         // boot failure and never a silently absent connector.
         if (err instanceof CredentialRequiredError) {
-          return { state: "auth_required", message: err.message };
+          return ownStatus({ state: "auth_required", message: err.message });
         }
         if (state.authRequired) {
           // Only an OAuth connector has a pending consent URL to offer. A
           // credential connector's downstream 401 is repaired in the operator
           // UI connection, so do not reach into OAuth storage to look for one.
-          return {
+          return ownStatus({
             state: "auth_required",
             message: credentialAuth
               ? "Authorization required — the downstream rejected this connector's stored credential."
               : "Authorization required — open the URL to connect.",
-          };
+          });
         }
         if (err instanceof OperatorDisconnectedError) {
-          return { state: "auth_required", message: err.message };
+          return ownStatus({ state: "auth_required", message: err.message });
         }
         // An operator surface: the record, never the error's own text.
-        return { state: "error", message: describeFailure(id, err) };
+        return failureStatus(id, err);
       }
     },
 

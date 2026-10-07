@@ -22,7 +22,7 @@ import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
 import { msg } from "../errors.js";
-import { logFailure } from "../operator-record.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
 import {
@@ -446,7 +446,7 @@ function serveMcp(
         // Keep the SDK's validation and prevent it from opening an SSE stream.
         // Its capacity error below becomes our permanent unsupported method.
         maxSubscriptions: 0,
-        onerror: (error) => logFailure(opts.logger, "MCP handler error", {}, error, "error"),
+        onerror: (error) => logFailure(opts.logger, "MCP handler error", failureRecord({}, error), "error"),
       }).fetch(request);
       if (request.headers.get("Mcp-Method") === "subscriptions/listen" && response.status === 200) {
         const body = await response.clone().json();
@@ -648,16 +648,16 @@ export function createMcpRoute(
       let access: ConnectorAccess = authz;
       if (poolName !== undefined) {
         const pool = opts.pools?.get(poolName);
-        const reason = !pool ? "undeclared" : yield* Effect.promise(async () => {
+        const verdict = !pool ? "undeclared" : yield* Effect.promise(async () => {
           try {
             return (await pool.grant(authz.identity)) === true ? "granted" : "refused";
           } catch {
             return "grant threw";
           }
         });
-        if (!pool || reason !== "granted") {
+        if (!pool || verdict !== "granted") {
           opts.logger.warn(
-            `[connecta] refused /mcp/${poolName} with 404: pool ${reason}` +
+            `[connecta] refused /mcp/${poolName} with 404: pool ${verdict}` +
               (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
           );
           // The server's own 404, so a browser sees the page every unserved

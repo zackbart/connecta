@@ -314,7 +314,8 @@ describe("api() argument validation", () => {
     expect(typed.retryable).toBe(false);
     expect(typed.message).toContain("refy.broken_schema");
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[1]).toMatchObject({ address: "refy.broken_schema" });
+    // Named by its catalog entry, never the caller's address (INV-6).
+    expect(required(warn.mock.calls[0])[1]).toMatchObject({ connector: "refy", tool: "broken_schema" });
   });
 });
 

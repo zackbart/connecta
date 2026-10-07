@@ -1,4 +1,4 @@
-import { logFailure } from "../operator-record.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import { Effect } from "effect";
 import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
 import {
@@ -218,7 +218,7 @@ function credentialRequest(
                     ctx,
                   );
             const ok = result?.ok === true;
-            if (!ok) logFailure(opts.logger, "credential test failed", { connector: connectorId }, undefined);
+            if (!ok) logFailure(opts.logger, "credential test failed", failureRecord({ connector: connectorId }, undefined));
             return privateJson({ ok });
           } finally {
             releaseCleanup();
@@ -228,7 +228,7 @@ function credentialRequest(
         catch: (error) => error,
       }).pipe(
         Effect.catch((error) => {
-          logFailure(opts.logger, "credential test threw", { connector: connectorId }, error);
+          logFailure(opts.logger, "credential test threw", failureRecord({ connector: connectorId }, error));
           return Effect.succeed(privateJson({ ok: false }));
         }),
       );

@@ -1,4 +1,6 @@
+import { OAuthErrorCode } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bearerToken } from "../src/auth/bearer.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -7,10 +9,14 @@ import { InvocationService } from "../src/invocation.js";
 import {
   describeFailure,
   failureRecord,
-  isFailureDescription,
+  logFailure,
+  OAUTH_ERROR_CODES,
+  type FailureRecord,
+  type FailureSubject,
 } from "../src/operator-record.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, JsonSchema, Logger } from "../src/types.js";
-import { activitySink, makeRegistry } from "./helpers.js";
+import { activitySink, createTestConnecta, makeRegistry } from "./helpers.js";
 
 // INV-6 at the sinks (#695, #716). Every position a downstream controls gets
 // its own sentinel; none may reach a log line, the console, an activity row,
@@ -19,7 +25,8 @@ import { activitySink, makeRegistry } from "./helpers.js";
 // 4xx refusal's text, an isError result's content, or the words a handler
 // put in a ConnectorCallError.
 const planted = (position: string) => `planted-${position}-7f3a9c`;
-const ANY_PLANTED = /planted-[a-z0-9-]+-7f3a9c/;
+/** Any sentinel, including ones shaped as identifiers (an error's name). */
+const ANY_PLANTED = /7f3a9c/;
 const BASE = "https://connecta.test";
 const MCP_URL = "https://downstream.example/mcp";
 
@@ -173,6 +180,10 @@ interface Scenario {
   /** Positions the agent's result may carry: the downstream's own answer. */
   agentMay?: string[];
   args?: Record<string, unknown>;
+  /** The address called, when not `svc.read`. */
+  address?: string;
+  /** The agent's own input comes back to it (a search for the unlisted tool). */
+  agentEchoes?: boolean;
 }
 
 const scenarios: Scenario[] = [
@@ -319,6 +330,38 @@ const scenarios: Scenario[] = [
     connector: () => handler(() => JSON.parse(`{"${planted("json")}`)),
   },
   {
+    name: "api(): an error whose name is planted",
+    connector: () => handler(() => {
+      throw Object.assign(new Error("x"), { name: "PlantedName7f3a9c" });
+    }),
+  },
+  {
+    name: "api(): a subclass whose name is planted",
+    connector: () => handler(() => {
+      throw new (class PlantedClass7f3a9c extends TypeError {})("x");
+    }),
+  },
+  {
+    name: "api(): a DOMException whose name is planted",
+    connector: () => handler(() => {
+      throw new DOMException("x", "PlantedDomName7f3a9c");
+    }),
+  },
+  {
+    name: "remoteMcp: a transport error whose name is planted",
+    connector: remote,
+    fetch: downstream({ call: () => {
+      throw Object.assign(new TypeError("fetch failed"), { name: "PlantedName7f3a9c" });
+    } }),
+  },
+  {
+    name: "a tool name the catalog does not list",
+    connector: remote,
+    fetch: downstream({}),
+    address: `svc.${planted("unlisted")}`,
+    agentEchoes: true,
+  },
+  {
     name: "api(): a provider's own words in a ConnectorCallError",
     connector: () => handler(() => {
       throw new ConnectorCallError("invalid_args", `rejected ${planted("provider")}`);
@@ -330,7 +373,7 @@ const scenarios: Scenario[] = [
 describe("operator sinks", () => {
   it.each(scenarios)(
     "INV-6: $name stays out of logs, console, activity, and status",
-    async ({ connector, fetch, agentMay = [], args = {} }) => {
+    async ({ connector, fetch, agentMay = [], args = {}, address = "svc.read", agentEchoes }) => {
       if (fetch) vi.stubGlobal("fetch", fetch);
       const { logger, lines } = capturingLogger();
       const registry = makeRegistry([connector()], { logger });
@@ -339,13 +382,15 @@ describe("operator sinks", () => {
         registry,
         new CatalogService(registry, BASE),
         target.activity,
-      ).invoke("svc.read", args, { source: "call_tool", allowDestructive: true });
+      ).invoke(address, args, { source: "call_tool", allowDestructive: true });
       const status = await registry.statusFor("svc", BASE);
 
       const operator = [
         ...lines,
         ...consoleLines,
-        JSON.stringify(target.events),
+        // An unlisted tool's activity row records the address the agent
+        // called, which is the agent's own text, not a downstream's.
+        ...(address === "svc.read" ? [JSON.stringify(target.events)] : []),
         JSON.stringify(status),
       ];
       for (const text of operator) expect(text).not.toMatch(ANY_PLANTED);
@@ -359,9 +404,11 @@ describe("operator sinks", () => {
 
       // The agent's result carries the downstream's own answer and nothing else.
       const agent = rendered(outcome.ok ? outcome.value : outcome.error);
+      if (agentEchoes) return;
       for (const match of agent.matchAll(/planted-([a-z0-9-]+)-7f3a9c/g)) {
         expect(agentMay).toContain(match[1]);
       }
+      expect(agent.replace(/planted-[a-z0-9-]+-7f3a9c/g, "")).not.toMatch(ANY_PLANTED);
     },
   );
 });
@@ -372,25 +419,112 @@ describe("the operator record", () => {
       cause: new Error(planted("record-cause")),
       details: { host: "https://user:pass@down.example/path?q=1", code: "ECONNREFUSED" },
     });
-    expect(failureRecord(error)).toEqual({
+    expect({ ...failureRecord({}, error) }).toEqual({
       code: "unavailable",
       retryable: true,
       errorClass: "ConnectorCallError",
       origin: "https://down.example",
       errno: "ECONNREFUSED",
     });
-    const odd = Object.assign(new Error(planted("odd")), { name: planted("name") });
-    expect(failureRecord(odd)).toEqual({});
     expect(describeFailure("svc", error)).toBe(
       'Connector "svc" request to https://down.example failed (ConnectorCallError, unavailable, ECONNREFUSED).',
     );
   });
 
-  it("recognizes a described failure, and nothing a status seam could add to one", () => {
-    const described = describeFailure("svc", new TypeError(planted("x")));
-    expect(isFailureDescription("svc", described)).toBe(true);
-    expect(isFailureDescription("other", described)).toBe(false);
-    expect(isFailureDescription("svc", `${described} ${planted("tail")}`)).toBe(false);
-    expect(isFailureDescription("svc", `Connector "svc" failed (${planted("y")}).`)).toBe(false);
+  it("INV-6: labels an error by its class's identity, never its name", () => {
+    const named = Object.assign(new Error(planted("odd")), { name: "PlantedName7f3a9c" });
+    expect({ ...failureRecord({}, named) }).toEqual({ errorClass: "Error" });
+    const posing = Object.assign(new RangeError("x"), { name: "ConnectorCallError" });
+    expect(failureRecord({}, posing).errorClass).toBe("RangeError");
+    class PlantedClass7f3a9c extends TypeError {}
+    expect(failureRecord({}, new PlantedClass7f3a9c("x")).errorClass).toBe("TypeError");
+    expect(failureRecord({}, new DOMException("x", "AbortError")).errorClass).toBe("AbortError");
+    expect(failureRecord({}, new DOMException("x", "PlantedName7f3a9c")).errorClass).toBe("DOMException");
+    // Shaped like an error, but no class of one: no label at all.
+    expect(failureRecord({}, { name: "TypeError", message: planted("shape") }).errorClass).toBeUndefined();
+    expect(describeFailure("svc", named)).toBe('Connector "svc" failed (Error).');
+  });
+
+  it("INV-6: copies only the subject's listed fields, each checked", () => {
+    const subject = {
+      connector: "svc",
+      tool: { name: "read", description: planted("entry-description") },
+      source: planted("source"),
+      userId: `user ${planted("user")}`,
+      attempts: 2,
+      durationMs: Number.NaN,
+      message: planted("subject-message"),
+      cause: new Error(planted("subject-cause")),
+    } as FailureSubject;
+    const record = failureRecord(subject, new TypeError(planted("error")));
+    expect({ ...record }).toEqual({
+      connector: "svc",
+      tool: "read",
+      attempts: 2,
+      errorClass: "TypeError",
+    });
+    expect({ ...failureRecord({ connector: `svc ${planted("id")}`, tool: undefined }) }).toEqual({
+      connector: "<unknown>",
+      tool: "<unlisted>",
+    });
+    const { logger, lines } = capturingLogger();
+    logFailure(logger, "call failed", record);
+    expect(lines).toEqual(['[connecta] call failed {"connector":"svc","tool":"read","attempts":2,"errorClass":"TypeError"}']);
+  });
+
+  it("INV-6: logFailure refuses a record failureRecord did not build", () => {
+    const { logger, lines } = capturingLogger();
+    const forged = { connector: "svc", errorClass: planted("forged") } as unknown as FailureRecord;
+    expect(() => logFailure(logger, "call failed", forged)).toThrow(TypeError);
+    // A copy of a built record is not that record.
+    const copy = { ...failureRecord({ connector: "svc" }) } as FailureRecord;
+    expect(() => logFailure(logger, "call failed", copy)).toThrow(TypeError);
+    expect(lines).toEqual([]);
+  });
+
+  it("names every OAuth error code the pinned SDK knows", () => {
+    for (const code of Object.values(OAuthErrorCode)) expect(OAUTH_ERROR_CODES.has(code)).toBe(true);
+  });
+});
+
+describe("a plugin status seam", () => {
+  const RECORD_SHAPED = 'Connector "svc" request to https://planted-status-7f3a9c.example failed.';
+  const seam = (status: () => Promise<unknown>): Connector => ({
+    id: "svc",
+    status: status as NonNullable<Connector["status"]>,
+    async listTools() {
+      return [];
+    },
+    async callTool() {
+      return {};
+    },
+  });
+
+  it.each([
+    ["record-shaped prose", () => Promise.resolve({ state: "error", message: RECORD_SHAPED })],
+    ["prose on an auth_required status", () => Promise.resolve({ state: "auth_required", message: planted("auth") })],
+    ["an unknown state", () => Promise.resolve({ state: planted("state"), message: planted("m") })],
+    ["a thrown error with a planted name", () =>
+      Promise.reject(Object.assign(new Error(planted("thrown")), { name: "PlantedName7f3a9c" }))],
+  ])("INV-6: contributes no string to status or the log: %s", async (_, status) => {
+    const { logger, lines } = capturingLogger();
+    const registry = makeRegistry([seam(status)], { logger });
+    const read = await registry.statusFor("svc", BASE);
+    expect(JSON.stringify(read)).not.toMatch(ANY_PLANTED);
+
+    const connecta = createTestConnecta({
+      connectors: [seam(status)],
+      auth: bearerToken("t"),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger,
+    });
+    const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
+      headers: { Authorization: "Bearer t" },
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toMatch(ANY_PLANTED);
+    expect(lines.some((line) => line.startsWith("[connecta] operator status"))).toBe(true);
+    for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
   });
 });

@@ -179,7 +179,8 @@ interface UnavailableDetails {
   code?: string;
 }
 
-const NETWORK_ERROR_CODES = new Set([
+/** The network errnos `networkErrorCode` reports, and `timeout`. */
+export const NETWORK_ERROR_CODES: ReadonlySet<string> = new Set([
   "ECONNREFUSED", "ENOTFOUND", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN",
   "EAI_FAIL", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN", "EHOSTDOWN",
   "ECONNABORTED", "EPIPE", "EACCES", "EPERM",
