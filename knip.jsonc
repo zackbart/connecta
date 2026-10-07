@@ -24,6 +24,7 @@
     "src/providers/gmail.ts",
     "src/providers/drive.ts",
     "src/providers/docs.ts",
+    "src/providers/sheets.ts",
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",

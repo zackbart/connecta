@@ -49,17 +49,17 @@ nor the 2026-07-28 claim is served exactly as before (#687).
 
 This release adds org-wide Google Workspace access with no per-user consent
 step, and its first consumers: a draft-only Gmail connection, a Google Drive
-connection, and a Google Docs connection that reads and edits documents by id.
-A Workspace super admin grants a service account domain-wide delegation once;
-the deployment maps each admitted identity to a Workspace address in config;
-and the provider mints a short-lived token as that user on every call. It is
-the second sanctioned use of the in-repo caller channel, recorded in `ethos.md`
-as config-mapped delegated subjects
+connection, a Google Docs connection that reads and edits documents by id, and
+a Google Sheets connection. A Workspace super admin grants a service account
+domain-wide delegation once; the deployment maps each admitted identity to a
+Workspace address in config; and the provider mints a short-lived token as that
+user on every call. It is the second sanctioned use of the in-repo caller
+channel, recorded in `ethos.md` as config-mapped delegated subjects
 ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing breaks and
 nothing changes for a deployment that imports none of `./providers/gmail`,
-`./providers/drive`, or `./providers/docs`: the shared delegation layer has no
-export of its own, and a deployment's own connectors still never learn their
-caller.
+`./providers/drive`, `./providers/docs`, or `./providers/sheets`: the shared
+delegation layer has no export of its own, and a deployment's own connectors
+still never learn their caller.
 
 ### Added
 
@@ -209,6 +209,34 @@ caller.
   may be missing or hidden from this account, because Drive does not say
   which. Setup — the Google Drive API and the one scope on the delegation
   entry — is documented on `drive()` itself.
+- **Google Sheets connection** ([#682](https://github.com/zackbart/connecta/issues/682)).
+  `@zackbart/connecta/providers/sheets` exports `sheets(id, options)` with the
+  same Workspace options as `gmail()`, plus `SHEETS_SCOPES` and
+  `SHEETS_API_BASE_URL`. Nine hand-written tools: `get_spreadsheet` (title,
+  sheets with ids and grid sizes, named ranges as A1 with the sheet title
+  always quoted, never cell values; `raw: true` for Google's untouched
+  metadata) and `get_values` (one to twenty A1 ranges through
+  `values:batchGet`, value and date render options, paged by whole rows under
+  `maxCells` and `maxBytes` — never more, an oversized row is refused — with
+  the default byte budget sized to what `execute_code` can receive and at most
+  4 MiB for a direct `call_tool` read, which the result stash can still page,
+  and a cursor bound to the call's spreadsheet, ranges, and render options
+  that only ever continues the caller's own ranges; cells over 5,000 characters cut with a marker, and
+  `maxCellChars` up to 50,000 to read one whole) are read-only;
+  `create_spreadsheet`, `add_sheet`, and `append_values` (pinned to
+  `INSERT_ROWS`, so nothing below the table is overwritten) are additive
+  writes; `update_values`, `batch_update_values`, `clear_values`, and
+  `batch_update_spreadsheet` — Google's own `batchUpdate` requests, passed
+  through untouched and always behind approval, its replies cut to their kind,
+  ids, and counts when too large to deliver — are destructive. Writes take a
+  required `RAW` or `USER_ENTERED` and at most 50,000 cells per call. Value
+  updates and clears of fixed ranges are idempotent, so a 5xx stays
+  retryable; an append or create whose outcome is unknown says what to read
+  before repeating it — the table, or a Drive search for the title. A 404
+  never claims absence, since a spreadsheet is a Drive file that may simply not
+  be shared with the caller. Listing and finding spreadsheets is Drive's job.
+  The one scope, `https://www.googleapis.com/auth/spreadsheets`, and its setup
+  are documented on `sheets()`.
 - **Google Workspace domain-wide delegation, shared by every Workspace
   provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
   the downloaded JSON key's text, from deployment secrets rather than the vault,

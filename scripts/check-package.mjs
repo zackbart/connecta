@@ -281,6 +281,8 @@ try {
     "dist/providers/drive.d.ts",
     "dist/providers/docs.js",
     "dist/providers/docs.d.ts",
+    "dist/providers/sheets.js",
+    "dist/providers/sheets.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -650,6 +652,27 @@ const docsConnection = docsProvider.docs("docs", {
 if (docsConnection.id !== "docs" || docsConnection.kind !== "api") {
   throw new Error("Google Docs provider did not return an api() connector");
 }
+const sheetsProvider = await import("@zackbart/connecta/providers/sheets");
+if (typeof sheetsProvider.sheets !== "function") {
+  throw new Error("missing Google Sheets provider constructor");
+}
+const sheetsConnection = sheetsProvider.sheets("sheets", {
+  purpose: "package smoke",
+  serviceAccount: {
+    clientEmail: "smoke@project.iam.gserviceaccount.com",
+    privateKey:
+      "-----BEGIN PRIVATE KEY-----" +
+      btoa(String.fromCharCode(...smokeDer)) +
+      "-----END PRIVATE KEY-----",
+  },
+  subject: () => undefined,
+});
+if (sheetsConnection.id !== "sheets" || sheetsConnection.kind !== "api") {
+  throw new Error("Google Sheets provider did not return an api() connector");
+}
+if (!sheetsConnection.staticTools?.length) {
+  throw new Error("Google Sheets provider published no tools");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -711,6 +734,9 @@ for (const name of [
   "docs",
   "DOCS_API_BASE_URL",
   "DOCS_SCOPES",
+  "sheets",
+  "SHEETS_API_BASE_URL",
+  "SHEETS_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
