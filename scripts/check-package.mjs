@@ -277,6 +277,8 @@ try {
     "dist/providers/basecamp.d.ts",
     "dist/providers/gmail.js",
     "dist/providers/gmail.d.ts",
+    "dist/providers/drive.js",
+    "dist/providers/drive.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -607,6 +609,27 @@ if (gmailConnection.id !== "mail" || gmailConnection.kind !== "api") {
 if (gmailConnection.staticTools?.some((tool) => /send/.test(tool.name))) {
   throw new Error("Gmail provider published a send tool");
 }
+const driveProvider = await import("@zackbart/connecta/providers/drive");
+if (typeof driveProvider.drive !== "function") {
+  throw new Error("missing Google Drive provider constructor");
+}
+const driveConnection = driveProvider.drive("files", {
+  purpose: "package smoke",
+  serviceAccount: {
+    clientEmail: "smoke@project.iam.gserviceaccount.com",
+    privateKey:
+      "-----BEGIN PRIVATE KEY-----" +
+      btoa(String.fromCharCode(...smokeDer)) +
+      "-----END PRIVATE KEY-----",
+  },
+  subject: () => undefined,
+});
+if (driveConnection.id !== "files" || driveConnection.kind !== "api") {
+  throw new Error("Google Drive provider did not return an api() connector");
+}
+if (driveConnection.staticTools?.some((tool) => /^(delete_file|empty_trash|transfer)/.test(tool.name))) {
+  throw new Error("Google Drive provider published a permanent delete or ownership transfer");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -662,6 +685,9 @@ for (const name of [
   "gmail",
   "GMAIL_API_BASE_URL",
   "GMAIL_SCOPES",
+  "drive",
+  "DRIVE_API_BASE_URL",
+  "DRIVE_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

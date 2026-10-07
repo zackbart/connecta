@@ -388,9 +388,10 @@ describe("public package boundary", () => {
   // Delegated Workspace access signs its own RS256 assertions with Web Crypto
   // (#678): no Google auth library, no OAuth client, no MCP SDK. The shared
   // layer under providers/google/ is imported, never exported.
-  it("keeps the Gmail provider and its Workspace layer dependency-free", () => {
+  it("keeps the Workspace providers and their shared layer dependency-free", () => {
     for (const file of [
       join(ROOT, "src", "providers", "gmail.ts"),
+      join(ROOT, "src", "providers", "drive.ts"),
       ...readdirSync(join(ROOT, "src", "providers", "google")).map((name) =>
         join(ROOT, "src", "providers", "google", name),
       ),
