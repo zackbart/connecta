@@ -52,6 +52,16 @@ export interface Logger {
 export interface ToolDef {
   name: string; // unique within the connector
   description?: string;
+  /** Downstream display metadata retained with the catalog. */
+  title?: string;
+  icons?: Array<{
+    src: string;
+    mimeType?: string;
+    sizes?: string[];
+    theme?: "light" | "dark";
+  }>;
+  /** Downstream execution requirements, enforced even on a cached catalog. */
+  execution?: { taskSupport?: "required" | "optional" | "forbidden" };
   inputSchema?: JsonSchema;
   /** Optional JSON Schema describing the tool's structured result. */
   outputSchema?: JsonSchema;
@@ -350,6 +360,8 @@ export interface Connector {
     name: string,
     args: unknown,
     ctx: ConnectorContext,
+    /** The catalog definition, including when discovery used memory/storage. */
+    options?: { definition?: ToolDef },
   ): Promise<unknown>;
   /**
    * Optional best-effort teardown for resources retained under

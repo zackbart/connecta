@@ -1447,8 +1447,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // or rotation can null it before this call resumes, and teardown is
       // caught instead by the `closed` check before every page.
       const client = await ensureConnected(ctx, state);
-      // Raw SDK tools, not ToolDefs: the metadata re-prime below needs fields
-      // (task support) that a ToolDef deliberately does not carry.
+      // Retain raw SDK tools for direct same-scope calls; the returned catalog
+      // keeps only the metadata needed across requests.
       const listed: ListedTool[] = [];
       const names = new Set<string>();
       const spent = new Set<string>();
@@ -1540,6 +1540,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state.toolDefinitions = new Map(listed.map((tool) => [tool.name, tool]));
       return listed.map((t) => ({
         name: t.name,
+        ...(t.title !== undefined ? { title: t.title } : {}),
+        ...(t.icons !== undefined
+          ? { icons: t.icons as NonNullable<ToolDef["icons"]> }
+          : {}),
+        ...(t.execution !== undefined
+          ? { execution: t.execution as NonNullable<ToolDef["execution"]> }
+          : {}),
+        // SEP-2243 declarations live in inputSchema. SDK validation and header
+        // mirroring need no _meta keys, so arbitrary downstream metadata stays
+        // out of the persisted catalog.
         ...(t.description !== undefined ? { description: t.description } : {}),
         ...(t.inputSchema !== undefined
           ? {
@@ -1565,11 +1575,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }));
     },
 
-    async callTool(name, args, ctx) {
+    async callTool(name, args, ctx, options) {
       const state = stateFor(ctx);
       const client = await ensureConnected(ctx, state);
       try {
-        const toolDefinition = state.toolDefinitions.get(name);
+        const definition = options?.definition;
+        const toolDefinition = definition
+          ? {
+              ...definition,
+              // Older stored catalogs and custom connectors may omit inputSchema.
+              inputSchema: (definition.inputSchema ?? { type: "object" }) as
+                Tool["inputSchema"],
+            }
+          : state.toolDefinitions.get(name);
         if (toolDefinition?.execution?.taskSupport === "required") {
           throw new Error(
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
