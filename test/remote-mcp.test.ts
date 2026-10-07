@@ -27,13 +27,13 @@ import {
 } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { withAbortableTimeout } from "../src/timeout.js";
+import { withAbortableTimeout, withDeadline } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
 import type {
   Executor,
   KVStorage,
 } from "../src/types.js";
-import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
+import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "./fixtures/misc.js";
 import { required, makeRegistry, silentLogger } from "./helpers.js";
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
 
@@ -232,6 +232,165 @@ function makeHttpDownstream(
 }
 
 describe("remoteMcp() connector", () => {
+  it.each(["success", "failure"])(
+    "keeps an OAuth connection usable after its first call's %s deadline scope ends",
+    async (outcome) => {
+      const storage = memoryStorage();
+      await storage.set("oauth:tokens", JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }));
+      const downstream = httpDownstream((server) => {
+        server.registerTool("echo", {
+          inputSchema: z.object({}),
+          annotations: { readOnlyHint: true },
+        }, async () => ({ content: [{ type: "text", text: "ok" }] }));
+      });
+      const signals: AbortSignal[] = [];
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        init.signal?.throwIfAborted();
+        if (init.signal) signals.push(init.signal);
+        return downstream.fetch(input, init);
+      });
+      const connector = remoteMcp("down", {
+        url: downstream.url,
+        auth: { type: "oauth" },
+      });
+      const context = { ...ctx(storage), requestScope: {} };
+      try {
+        const first = withDeadline(async (signal) => {
+          const result = await connector.callTool("echo", {}, { ...context, signal });
+          if (outcome === "failure") throw new Error("first caller failed");
+          return result;
+        }, { timeoutMs: 60_000, timeoutError: new Error("call deadline") });
+        if (outcome === "failure") await expect(first).rejects.toThrow("first caller failed");
+        else await expect(first).resolves.toMatchObject({ content: [{ text: "ok" }] });
+
+        await expect(withDeadline(
+          (signal) => connector.callTool("echo", {}, { ...context, signal }),
+          { timeoutMs: 60_000, timeoutError: new Error("call deadline") },
+        )).resolves.toMatchObject({ content: [{ text: "ok" }] });
+      } finally {
+        await connector.closeScope!(context);
+      }
+      // The connection's own lifetime still ends at request teardown.
+      expect(signals.length).toBeGreaterThan(0);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+    },
+  );
+
+  it.each(["success", "failure"])(
+    "spares pending OAuth siblings when the first warm-catalog program call returns %s",
+    async (outcome) => {
+      const pendingStarted = deferred<void>();
+      const releasePending = deferred<void>();
+      let pendingCount = 0;
+      const downstream = httpDownstream((server) => {
+        server.registerTool("echo", {
+          inputSchema: z.object({ pending: z.boolean() }),
+          annotations: { readOnlyHint: true },
+        }, async ({ pending }) => ({
+          content: [{ type: "text", text: "ok" }],
+          ...(!pending && outcome === "failure" ? { isError: true } : {}),
+        }));
+      });
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        init.signal?.throwIfAborted();
+        const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+        if (message?.method === "tools/call") {
+          if (message.params.arguments.pending) {
+            if (++pendingCount === 3) pendingStarted.resolve();
+            await new Promise<void>((resolve, reject) => {
+              const abort = () => reject(init.signal?.reason);
+              init.signal?.addEventListener("abort", abort, { once: true });
+              releasePending.promise.then(resolve).finally(() => {
+                init.signal?.removeEventListener("abort", abort);
+              });
+            });
+            init.signal?.throwIfAborted();
+          } else {
+            await pendingStarted.promise;
+          }
+        }
+        return downstream.fetch(input, init);
+      });
+      const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+      const registry = makeRegistry([connector]);
+      const warmScope = {};
+      const context = registry.contextFor("down", BASE, warmScope);
+      await context.storage.set("oauth:tokens", JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }));
+      await registry.getTools("down", BASE, warmScope);
+      await connector.closeScope!(context);
+
+      const executor = scriptedExecutor(async (fns) => {
+        const call = required(fns.call);
+        const first = call("down.echo", { pending: false });
+        const siblings = Array.from({ length: 3 }, () => call("down.echo", { pending: true }));
+        // Settle all promises before allowing the first completion to release
+        // the slow fetches. This reproduces the production allSettled fan-out.
+        const results = Promise.allSettled([first, ...siblings]);
+        await first.catch(() => {}).finally(() => releasePending.resolve());
+        return (await results).map((result) => result.status);
+      });
+      try {
+        const result = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+          hostCallTimeoutMs: 60_000,
+        })({ code: "async () => null" });
+        expect(result.isError).toBeUndefined();
+        expect(result.structuredContent).toMatchObject({
+          result: [outcome === "success" ? "fulfilled" : "rejected", "fulfilled", "fulfilled", "fulfilled"],
+        });
+      } finally {
+        releasePending.resolve();
+      }
+    },
+  );
+
+  it("lets a second OAuth handshake waiter finish after the first is cancelled", async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const downstream = httpDownstream(() => {});
+    let handshakes = 0;
+    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+      init.signal?.throwIfAborted();
+      const message = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+      if (message?.method === "server/discover") {
+        handshakes++;
+        entered.resolve();
+        await release.promise;
+        init.signal?.throwIfAborted();
+      }
+      return downstream.fetch(input, init);
+    });
+    const connector = remoteMcp("down", { url: downstream.url, auth: { type: "oauth" } });
+    const context = { ...ctx(), requestScope: {} };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const secondListening = vi.spyOn(secondController.signal, "addEventListener");
+    const first = connector.status!({ ...context, signal: firstController.signal });
+    await entered.promise;
+    const second = connector.status!({ ...context, signal: secondController.signal });
+    try {
+      await vi.waitFor(() => expect(secondListening).toHaveBeenCalledWith("abort", expect.any(Function), expect.anything()));
+      firstController.abort(new Error("first caller cancelled"));
+      await expect(first).resolves.toMatchObject({ state: "error", message: "first caller cancelled" });
+      release.resolve();
+      await expect(second).resolves.toEqual({ state: "ok" });
+      expect(handshakes).toBe(1);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([first, second]);
+      await connector.closeScope!(context);
+    }
+  });
+
   it("passes usageGuide through, and leaves it unset by default", () => {
     expect(
       remoteMcp("plain", { url: "https://downstream.test/mcp" }).usageGuide,

@@ -714,6 +714,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
+  const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
   // Long-lived enough for distinct request scopes in this connector runtime to
   // join one token redemption. It owns no client, transport, or request state.
@@ -952,6 +953,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const newProvider = (
     ctx: ConnectorContext,
     state?: ConnectionState,
+    signal: AbortSignal | undefined = ctx.signal,
   ): KvOAuthProvider => {
     if (state?.provider) return state.provider;
     const provider = new KvOAuthProvider(
@@ -961,7 +963,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       refreshCoordinatorFor(ctx),
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
-      ctx.signal,
+      signal,
       JSON.stringify({
         url: new URL(opts.url).href,
         redirectUri: `${ctx.baseUrl}/oauth/callback/${id}`,
@@ -995,18 +997,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
      * retained past the transport it configures.
      */
     credentialFramed: string | null = null,
+    signal: AbortSignal | undefined = ctx.signal,
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
     const guardedFetch = redirectSafeFetch(id, opts.redirects);
     if (opts.auth?.type === "oauth") {
-      const oauthProvider = provider ?? newProvider(ctx);
+      const oauthProvider = provider ?? newProvider(ctx, undefined, signal);
       return new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
           learnedUrlSafeFetch(id, url, guardedFetch),
-          ctx.signal,
+          signal,
         ),
       });
     }
@@ -1143,7 +1146,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // of every shared wait: whatever this caller does next with the client is
     // its own I/O, so it resumes in its own continuation rather than inside the
     // call that completed the attempt.
-    const client = await runEdge(Deferred.await(attempt));
+    connectingWaiters.set(attempt, (connectingWaiters.get(attempt) ?? 0) + 1);
+    let client: Client;
+    try {
+      client = await runEdge(Deferred.await(attempt), { signal: ctx.signal });
+    } finally {
+      const remaining = (connectingWaiters.get(attempt) ?? 1) - 1;
+      if (remaining > 0) connectingWaiters.set(attempt, remaining);
+      else {
+        connectingWaiters.delete(attempt);
+        // A cancelled waiter leaves its siblings' handshake alone. Once every
+        // waiter has left, abandon the attempt and its OAuth refresh too.
+        if (ctx.signal?.aborted && state.connecting === attempt) closeHalf(state);
+      }
+    }
     // Teardown can land between the attempt completing and this caller
     // resuming. The client it would hand back is being closed, and this scope
     // is over.
@@ -1198,10 +1214,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // they unpublish it and close the lease it holds, if it holds one yet.
     const owned = () => state.connecting === attempt && !isClosed(state);
     return Effect.gen(function* () {
+      // The transport and its OAuth provider are shared by every call in this
+      // scope. A call's deadline signal is aborted even on success, so retaining
+      // the first caller's signal here would abort its siblings and later calls.
+      // Keep OAuth work cancellable by the connection's own lifetime instead;
+      // requestOptions still passes each call's signal to the SDK separately.
+      const connectionAbort = new AbortController();
       // A provider belongs to exactly one connect attempt. A force reset can
       // abandon that attempt while its transport still holds the provider;
       // the replacement must never mutate the abandoned provider's epoch.
-      const provider = isOauth ? newProvider(ctx) : null;
+      const provider = isOauth ? newProvider(ctx, undefined, connectionAbort.signal) : null;
       // Every OAuth run of this attempt — a 401's refresh or consent, a
       // step-up — happens inside the SDK, so the grant is decided here, before
       // the SDK is handed the provider, and the attempt is bound to the epoch
@@ -1227,7 +1249,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           inputRequired: { autoFulfill: false },
         },
       );
-      const t = buildTransport(ctx, provider, credentialFramed);
+      const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal);
       if (!owned()) {
         detach(closeConnection(null, t, ctx.logger));
         return yield* Effect.fail(scopeEndedError());
@@ -1242,6 +1264,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         lease,
         Effect.sync(() => handshakeAbort.abort()).pipe(
           Effect.andThen(Effect.suspend(() => closeConnection(held.client, t, ctx.logger))),
+          // Let session termination use the OAuth fetch wrapper before ending
+          // its lifetime. Local transport close aborts all active MCP fetches.
+          Effect.ensuring(Effect.sync(() => connectionAbort.abort())),
         ),
       );
       state.lease = lease;
