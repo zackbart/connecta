@@ -71,7 +71,7 @@ const probeSource = `import { makeServer } from './mcp.mjs';
 import { makeRouter } from './router.mjs';
 import { makeApi } from './httpapi.mjs';
 import { call, search, rendered, validate } from './schema.mjs';
-import { createConnecta } from __CONNECTA_ENTRY__;
+import { createConnecta, customExecutor } from __CONNECTA_ENTRY__;
 import { Schema } from 'effect';
 import { writeFileSync } from 'node:fs';
 
@@ -87,7 +87,7 @@ async function inspect(label, fetcher, req) {
   results.mcp.push(result);
   return result;
 }
-const deployment = createConnecta({ connectors: [], executor: { execute: async () => ({ result: null }) }, logger: 'silent' });
+const deployment = createConnecta({ connectors: [], executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }), logger: 'silent' });
 const originalList = await inspect('connecta legacy fresh tools/list', req => deployment.fetch(req), request('tools/list'));
 const original = JSON.parse(originalList.body).result.tools;
 const first = makeServer();

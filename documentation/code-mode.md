@@ -52,11 +52,16 @@ The [Worker example](../examples/worker/README.md#code-mode) has the full setup.
 
 Replace `import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
 `import { workerExecutor } from "@zackbart/connecta/worker";` and use the wiring above.
-Keep the optional peer. Direct upstream construction and subclasses now throw at boot.
+Keep the peer. Unbranded executors throw, including bundled upstream copies.
+Shipped executors carry a non-enumerable `Symbol.for("connecta.executor")` version/lifecycle brand.
+Custom sandboxes import `customExecutor` from `@zackbart/connecta`, then configure
+`executor: customExecutor(myExecutor, { lifecycle: "self-managed" })`. They own guest termination
+and cleanup at budget exhaustion, cancellation, and deadlines; the wrapper only delegates methods.
 
 ## What an executor must implement
 
-The host side of the seam is two types in `src/types.ts` and nothing else.
+The Promise provider/result seam lives in `src/types.ts`. Custom implementations
+also need the lifecycle wrapper above; structural compatibility alone is insufficient.
 
 ```ts
 interface Executor {
@@ -95,21 +100,17 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    uncaught tool failure keeps its type (`E1`).
 5. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
    call order (`R5`), bounding what it retains.
-6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), staying
-   inside the tested `P2`/`X5` boundary. Settle `execute()` on your own
-   deadline: connecta stops waiting at `execute.watchdogMs` and reports the
-   sandbox unresponsive (`L3`).
-7. **Grant no ambient authority of its own.** Never back this with `eval` or
-   `node:vm`: the sandbox is a containment layer on top of connecta's boundary,
-   not a replacement for it, and every capability arrives through `fns`.
+6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), within
+   `P2`/`X5`. Settle `execute()` on your own deadline; connecta stops waiting
+   at `execute.watchdogMs` and reports the sandbox unresponsive (`L3`).
+7. **Grant no ambient authority.** Never use `eval` or `node:vm`: sandboxing
+   supplements connecta's boundary; every capability arrives through `fns`.
 
-Optionally implement `AdmittingExecutor` (`acquire()` returning a lease whose
-`execute` runs once) for bounded admission (`L7`) and `close()` for shutdown;
-connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise. The
-optional `name` — else a class's constructor name, which a minifier may rewrite
-— is the executor name `/health` and `connecta doctor` report.
-[Emitted output](#emitted-output) asks nothing of an executor: `connecta.emit`
-is just another provider function (`M8`).
+Optional `AdmittingExecutor.acquire()` returns a once-executed lease for bounded
+admission (`L7`); otherwise connecta uses `withExecutorAdmission`. `close()` handles
+shutdown. `/health` and `connecta doctor` report `name`, falling back to the
+constructor name, which minifiers may rewrite. [Emission](#emitted-output) is
+another provider function (`M8`).
 
 ## The program
 
@@ -582,11 +583,10 @@ downstream block, so `S5`'s uncapped fallthrough is contract.
 **M7.** `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
 and `call` share it. `M5`'s bounds are emission's only bounds.
 
-**M8.** Emission asks nothing of an executor: `emit` is a provider function,
-blocks cross the guest boundary once as an argument, and `ExecuteResult` is
-unchanged — `Executor` stays assignable from `@cloudflare/codemode`'s
-`DynamicWorkerExecutor`, so any executor that bridges provider calls gets
-emission for free.
+**M8.** `emit` is a provider function; blocks cross the guest boundary once as
+an argument. `ExecuteResult` remains compatible with upstream codemode's types;
+construction requires the Worker adapter or explicit custom opt-in. Any executor
+that bridges provider calls gets emission for free.
 
 **M9.** Request-local and unstreamed: blocks exist only in the finished
 response, and `emit` resolving means "accepted," never "delivered."
@@ -895,11 +895,11 @@ cannot intercept a frame first. A mismatched frame is ordinary untyped prose.
 
 ## Verification
 
-Every clause has a test. `test/guest-contract-cases.ts` runs on QuickJS in
-`test/guest-api-contract-quickjs.test.ts` and on the Worker adapter with a real
-Miniflare Loader in workerd in `test/guest-api-contract.test.ts`, alongside
-executor-independent clauses. Titles name clauses; rows naming the latter run
-in both arms. `test/codemode-compat.test.ts` pins upstream shape compatibility.
+`test/guest-contract-cases.ts` runs on QuickJS in `test/guest-api-contract-quickjs.test.ts`
+and on the Worker adapter with a real Miniflare Loader in `test/guest-api-contract.test.ts`.
+Titles name clauses; executor-independent clauses run in both arms.
+`test/codemode-compat.test.ts` pins upstream shape compatibility, minified upstream
+rejection, and branded adapter acceptance across module copies.
 
 | Clauses | Test |
 | --- | --- |

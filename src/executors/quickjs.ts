@@ -22,6 +22,7 @@ import {
   ExecutorExecutionError,
 } from "../executor-admission.js";
 import { msg } from "../errors.js";
+import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
 import type {
@@ -901,5 +902,5 @@ class QuickJsChildPool implements AdmittingExecutor {
 export function quickJsExecutor(
   options: QuickJsExecutorOptions = {},
 ): AdmittingExecutor {
-  return new QuickJsChildPool(options);
+  return brandExecutor(new QuickJsChildPool(options), "leased");
 }

@@ -1,7 +1,7 @@
 import { recordCatalogDriftActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import { createConnecta, CONNECTA_VERSION } from "../src/index.js";
+import { customExecutor, createConnecta, CONNECTA_VERSION } from "../src/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import {
@@ -470,7 +470,7 @@ describe("/health", () => {
       call: async () => null,
     });
     const connecta = createConnecta({
-      executor: { execute: async () => ({ result: null }) },
+      executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       storage: memoryStorage(),
       logger: silentLogger,
       publicUrl: BASE,
@@ -527,7 +527,7 @@ describe("the connector seam is projected, not echoed", () => {
 
   it("strips extra fields and bounds the timestamp on /health", async () => {
     const connecta = createConnecta({
-      executor: { execute: async () => ({ result: null }) },
+      executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       storage: memoryStorage(),
       logger: silentLogger,
       publicUrl: BASE,

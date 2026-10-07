@@ -13,7 +13,7 @@ import { activityHistory } from "../src/activity.js";
 import type { CatalogDriftActivityEvent, ToolCallActivityEvent } from "../src/activity.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
-import { createConnecta, type Connecta, type ConnectaConfig } from "../src/index.js";
+import { customExecutor, createConnecta, type Connecta, type ConnectaConfig } from "../src/index.js";
 import { runEdge } from "../src/runtime/run.js";
 import {
   ActivityRecorder,
@@ -30,7 +30,7 @@ import { CONNECTA_VERSION } from "../src/version.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
-const executor = { execute: async () => ({ result: null }) };
+const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 const KEY = btoa("k".repeat(32));
 
 function connecta(config: Partial<ConnectaConfig> = {}): Connecta {
@@ -107,7 +107,7 @@ describe("core services", () => {
     );
     const config: ConnectaConfig = {
       connectors,
-      executor: named,
+      executor: customExecutor(named, { lifecycle: "self-managed" }),
       logger: "silent",
       auth: [clerk, bearer],
       pools: { math: { tools: ["calc.add"] } },
@@ -238,7 +238,7 @@ describe("the per-Connecta runtime", () => {
         order.push(`storage ${typeof (await run(app, Storage)).get}`);
       }),
     };
-    app = connecta({ executor: closing });
+    app = connecta({ executor: customExecutor(closing, { lifecycle: "self-managed" }) });
     await Promise.all([app.close(), app.close()]);
     await app.close();
     expect(closing.close).toHaveBeenCalledOnce();
@@ -260,7 +260,7 @@ describe("the per-Connecta runtime", () => {
   it("is disposed even when the executor's close rejects", async () => {
     const failure = new Error("executor close failed");
     const app = connecta({
-      executor: { execute: async () => ({ result: null }), close: async () => { throw failure; } },
+      executor: customExecutor({ execute: async () => ({ result: null }), close: async () => { throw failure; } }, { lifecycle: "self-managed" }),
     });
     await expect(app.close()).rejects.toBe(failure);
     await expect(app.close()).rejects.toBe(failure);

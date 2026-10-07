@@ -1,4 +1,4 @@
-import { createConnecta } from "../../../src/index.js";
+import { createConnecta, customExecutor } from "../../../src/index.js";
 import { workerExecutor } from "../../../src/worker.js";
 import type { AdmittingExecutor } from "../../../src/types.js";
 
@@ -66,7 +66,7 @@ export default {
       app = createConnecta({
         publicUrl: "http://localhost",
         logger: "silent",
-        executor,
+        executor: customExecutor(executor, { lifecycle: "self-managed" }),
         connectors: [{
           id: "reader", kind: "api",
           async listTools() { return [{ name: "read", annotations: { readOnlyHint: true } }]; },

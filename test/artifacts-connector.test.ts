@@ -16,7 +16,7 @@ import {
 } from "../src/artifacts.js";
 import { runRenderCheck } from "../src/artifacts/connector.js";
 import { bearerToken } from "../src/auth/bearer.js";
-import { createConnecta, type ConnectaConfig } from "../src/index.js";
+import { customExecutor, createConnecta, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor, ExecutorProvider } from "../src/types.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -79,7 +79,7 @@ function deploy(setup: Setup = {}) {
   const store = setup.store ?? kvArtifactStore(memoryStorage());
   const app = createConnecta({
     connectors: [],
-    executor: scriptedExecutor(programs),
+    executor: customExecutor(scriptedExecutor(programs), { lifecycle: "self-managed" }),
     logger: "silent",
     publicUrl: BASE,
     storage: memoryStorage(),
@@ -158,7 +158,7 @@ describe("the artifacts slot", () => {
   });
 
   it("refuses a hand-made module, a clashing connector id, and a missing publicUrl", () => {
-    const base = { connectors: [], executor: scriptedExecutor(new Map()), logger: "silent" as const };
+    const base = { connectors: [], executor: customExecutor(scriptedExecutor(new Map()), { lifecycle: "self-managed" }), logger: "silent" as const };
     expect(() =>
       createConnecta({ ...base, publicUrl: BASE, artifacts: { connector: { id: "x" } } as never }),
     ).toThrow(/must be created with artifacts\(\.\.\.\)/);

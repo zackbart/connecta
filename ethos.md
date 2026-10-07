@@ -25,9 +25,8 @@ version numbers signal change, not stability.
 
 ## Decisions
 
-Revisiting a verdict requires a new argument. Accepted designs live in
-subsystem guides and the CHANGELOG; `planned` ones bind review before either
-carries them.
+New arguments may revisit verdicts. Accepted designs enter guides and CHANGELOG;
+`planned` ones bind review before publication.
 
 | Decision | Verdict | Why |
 | --- | --- | --- |
@@ -48,7 +47,8 @@ carries them.
 | Repository formatter | refused | style is authored, not enforced |
 | Host-side projection or paging of program results | refused | a program projects: heuristics drop fields invisibly, paging rewards unprojected returns ([#223](https://github.com/zackbart/connecta/issues/223)) |
 | Native Tasks for oversized results | refused | tasks solve duration, `get_result` solves size ([#176](https://github.com/zackbart/connecta/issues/176)) |
-| Widening the `Executor` result contract | refused | `{result, error?, logs?}` is the `@cloudflare/codemode` parity guarantee ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Widening `Executor` results | refused | upstream-compatible `{result, error?, logs?}` only ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Executor lifecycle opt-in | accepted | branded adapters or explicit custom responsibility ([#704](https://github.com/zackbart/connecta/issues/704)) |
 | Erasable TypeScript in `execute_code` | refused | a 24 MB core dependency, no measured agent benefit ([#419](https://github.com/zackbart/connecta/issues/419)) |
 | Guest-minted `resource`/`resource_link` blocks | refused | no program mints a URI a client may dereference ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Provenance tracking for emitted content | refused | everything a program emits is program output ([#267](https://github.com/zackbart/connecta/issues/267)) |
@@ -74,7 +74,7 @@ carries them.
 
 ## Invariants
 
-Tests beside subsystem documentation enforce these.
+Tests enforce these.
 
 - **Fail-closed read-only.** A missing, false, or contradictory annotation never gets the benefit of the doubt.
 - **Generated code cannot mint capabilities.** Admission, credentials, and classification are enforced below the sandbox.

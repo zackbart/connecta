@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { listen } from "../src/node.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
@@ -57,7 +57,7 @@ async function doctorAgainst(
         ],
       }),
     ],
-    executor,
+    executor: customExecutor(executor, { lifecycle: "self-managed" }),
     auth: options.auth ?? bearerToken(TOKEN),
     logger: "silent",
     ...(options.storage ? { storage: options.storage } : {}),

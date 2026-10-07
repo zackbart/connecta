@@ -1,6 +1,29 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { buildSync } from "esbuild";
+
+// Each fixture is a separate bundled module, not a renamed stand-in. In the
+// Worker project it executes inside workerd with the native Loader binding.
+function executorBundles() {
+  const sources: Record<string, string> = {
+    "virtual:connecta-minified-upstream": 'export { DynamicWorkerExecutor } from "@cloudflare/codemode";',
+    "virtual:connecta-duplicate-worker": 'export { workerExecutor } from "./src/worker.ts";',
+  };
+  return {
+    name: "connecta-executor-bundles",
+    resolveId(id: string) { return id in sources ? `\0${id}` : undefined; },
+    load(id: string) {
+      const source = sources[id.slice(1)];
+      if (!source) return;
+      return buildSync({
+        stdin: { contents: source, resolveDir: fileURLToPath(new URL(".", import.meta.url)) },
+        bundle: true, format: "esm", platform: "neutral", minify: true,
+        external: ["cloudflare:workers"], write: false,
+      }).outputFiles[0]?.text;
+    },
+  };
+}
 
 // Every test/*.test.ts suite belongs to exactly one of these lists. The Node
 // project runs both; the Workers project runs only the portable list.
@@ -245,6 +268,7 @@ export default defineConfig({
       },
       {
         plugins: [
+          executorBundles(),
           cloudflareTest({
             miniflare: {
               // Match the Worker example's runtime configuration, plus a

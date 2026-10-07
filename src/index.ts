@@ -15,6 +15,8 @@ import {
 } from "./branding.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
+import { assertExecutor } from "./executor-contract.js";
+export { customExecutor, type CustomExecutorOptions } from "./executor-contract.js";
 import {
   AdmissionController,
   executorName,
@@ -315,6 +317,8 @@ export interface ConnectaConfig {
    * `@zackbart/connecta/worker`; Node uses `quickJsExecutor()` from
    * `@zackbart/connecta/quickjs`. Direct upstream DynamicWorkerExecutor
    * construction throws because its request-owned handles cannot be released.
+   * Custom sandboxes explicitly opt in with
+   * `customExecutor(myExecutor, { lifecycle: "self-managed" })`.
    */
   executor: Executor;
 }
@@ -879,21 +883,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         '"@zackbart/connecta/worker" around DynamicWorkerExecutor on Workers.',
     );
   }
-  // Do not import the optional Worker peer into core. Inspect the class
-  // ancestry, not its display name: the supported adapter reports the same
-  // sandbox name but owns its handles through a lease. Subclasses still carry
-  // the upstream executor's private, unreachable loader.
-  for (let prototype = Object.getPrototypeOf(config.executor); prototype; prototype = Object.getPrototypeOf(prototype)) {
-    if (Object.getOwnPropertyDescriptor(prototype, "constructor")?.value?.name === "DynamicWorkerExecutor") {
-      throw new Error(
-        "Direct DynamicWorkerExecutor construction is unsupported: it cannot " +
-          "release request-owned Worker Loader and RPC handles at run end. " +
-          'Replace import { DynamicWorkerExecutor } from "@cloudflare/codemode"; ' +
-          'with import { workerExecutor } from "@zackbart/connecta/worker"; ' +
-          "then configure executor: workerExecutor({ loader: env.LOADER }).",
-      );
-    }
-  }
+  assertExecutor(config.executor);
   const storage = config.storage ?? memoryStorage();
   const logger = resolveLogger(config.logger);
   const credentialVault = config.vault;

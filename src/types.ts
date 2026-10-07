@@ -458,6 +458,8 @@ export interface ExecutorProvider {
  * run owns and releases its Worker Loader and RPC handles. Direct upstream
  * construction is rejected by `createConnecta()`.
  * `quickJsExecutor()` from "@zackbart/connecta/quickjs" is the Node implementation.
+ * Custom implementations must explicitly opt in with
+ * `customExecutor(executor, { lifecycle: "self-managed" })` from the root entry.
  * NEVER back this with an unsandboxed eval — the code is untrusted.
  */
 export interface Executor {

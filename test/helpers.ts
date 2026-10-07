@@ -3,6 +3,7 @@ import { recordToolActivity } from "../src/activity.js";
 import { Registry } from "../src/registry.js";
 import {
   createConnecta as createRuntimeConnecta,
+  customExecutor,
   type ConnectaConfig,
 } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -37,7 +38,7 @@ export function createTestConnecta(
     ui: operatorUi(),
     ...config,
     identity: { credentialAdministration: () => "all", personalConnection: () => "all", ...config.identity },
-    executor: config.executor ?? stubExecutor,
+    executor: customExecutor(config.executor ?? stubExecutor, { lifecycle: "self-managed" }),
   });
 }
 

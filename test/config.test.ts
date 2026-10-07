@@ -5,6 +5,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import {
+  customExecutor,
   createConnecta,
   type ConnectaConfig,
 } from "../src/index.js";
@@ -14,7 +15,7 @@ import type { Connector } from "../src/types.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { silentLogger } from "./helpers.js";
 
-const executor = { execute: async () => ({ result: null }) };
+const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
 type UnsafeCreateConnecta = (
   config: Record<PropertyKey, unknown>,
@@ -24,19 +25,64 @@ const unsafeCreateConnecta =
   createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
-  it("preserves custom executors, including the adapter's sandbox display name", async () => {
+  it("wraps a frozen custom executor without losing private-field receivers or admission", async () => {
+    const events: string[] = [];
+    class SelfManaged {
+      #value = "private";
+      readonly name = "self-managed-test";
+      async execute() { return { result: this.#value }; }
+      async acquire(options?: { signal?: AbortSignal }) {
+        events.push(`acquire ${this.#value} ${options?.signal?.aborted}`);
+        return { execute: this.execute.bind(this), release: () => events.push("release") };
+      }
+      admissionSnapshot() {
+        events.push(`snapshot ${this.#value}`);
+        return { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1, retryAfterMs: 1,
+          active: 0, queued: 0, closed: false,
+          totals: { admitted: 0, queued: 0, rejected: 0, cancelled: 0, closed: 0 },
+          queueWaitMs: { count: 0, total: 0, max: 0 } };
+      }
+      close() { events.push(`close ${this.#value}`); }
+    }
+    const original = Object.freeze(new SelfManaged());
+    const wrapped = customExecutor(original, { lifecycle: "self-managed" });
+    expect(Object.getOwnPropertySymbols(original)).toEqual([]);
+    expect(wrapped.name).toBe(original.name);
+    await expect(wrapped.execute("", [])).resolves.toEqual({ result: "private" });
+    const lease = await wrapped.acquire({ signal: new AbortController().signal });
+    await expect(lease.execute("", [])).resolves.toEqual({ result: "private" });
+    lease.release();
+    wrapped.admissionSnapshot?.();
+    const app = createConnecta({ connectors: [], executor: wrapped, logger: "silent" });
+    await app.close();
+    expect(events).toEqual(["acquire private false", "release", "snapshot private", "close private"]);
+  });
+
+  it("requires explicit opt-in for custom executors regardless of constructor or display name", async () => {
     class CustomExecutor {
       readonly name = "DynamicWorkerExecutor";
       async execute() { return { result: null }; }
     }
+    class DynamicWorkerExecutor {
+      async execute() { return { result: null }; }
+    }
     for (const executor of [
       new CustomExecutor(),
+      new DynamicWorkerExecutor(),
       { name: "DynamicWorkerExecutor", execute: async () => ({ result: null }) },
       { execute: async () => ({ result: null }), async acquire() {
         return { waitMs: 0, execute: async () => ({ result: null }), release() {} };
       } },
     ]) {
-      const app = createConnecta({ connectors: [], executor, logger: "silent" });
+      const construct = () => createConnecta({ connectors: [], executor, logger: "silent" });
+      for (const fragment of [
+        "ConnectaConfig.executor must declare its lifecycle",
+        'import { workerExecutor } from "@zackbart/connecta/worker";',
+        "executor: workerExecutor({ loader: env.LOADER })",
+        "@zackbart/connecta/quickjs",
+        'customExecutor(myExecutor, { lifecycle: "self-managed" })',
+      ]) expect(construct).toThrow(fragment);
+      const app = createConnecta({ connectors: [], executor: customExecutor(executor, { lifecycle: "self-managed" }), logger: "silent" });
       await app.close();
     }
   });

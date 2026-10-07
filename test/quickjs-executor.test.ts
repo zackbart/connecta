@@ -5,6 +5,7 @@ import { USAGE_SKILL } from "../src/skills.js";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
+import { createConnecta } from "../src/index.js";
 import { normalizeCode } from "../src/executors/quickjs.js";
 import { normalizeProgramSource } from "../src/program-source.js";
 import type { Connector, ExecutorProvider } from "../src/types.js";
@@ -87,6 +88,14 @@ it("forwards positional arguments through recovered named functions", async () =
 });
 
 describe("quickJsExecutor", () => {
+  it("carries a non-enumerable lifecycle brand accepted by createConnecta", async () => {
+    const executor = quickJsExecutor();
+    expect(Object.getOwnPropertyDescriptor(executor, Symbol.for("connecta.executor")))
+      .toMatchObject({ enumerable: false, value: { version: 1, lifecycle: "leased" } });
+    const app = createConnecta({ connectors: [], executor, logger: "silent" });
+    await app.close();
+  });
+
   it("identifies itself as QuickJS for /health and doctor (#368)", () => {
     expect((quickJsExecutor() as { name?: string }).name).toBe("QuickJS");
   });

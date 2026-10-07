@@ -9,7 +9,7 @@ import { resolveTheme } from "../src/branding.js";
 import { ArtifactOperations } from "../src/artifacts/operations.js";
 import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
 import { bearerToken } from "../src/auth/bearer.js";
-import { createConnecta, type ConnectaConfig } from "../src/index.js";
+import { customExecutor, createConnecta, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
 import type { InboundAuth } from "../src/types.js";
@@ -18,7 +18,7 @@ import { mcpRpc } from "./fixtures/http.js";
 const BASE = "https://connecta.test";
 const ARTIFACT_ORIGIN = "https://pages.connecta.test";
 const TOKEN = "viewer-token";
-const executor = { execute: async () => ({ result: null }) };
+const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
 const page = (body: string) => `<!doctype html>\n<main id="artifact-root">${body}</main>\n`;
 
@@ -70,7 +70,7 @@ describe("artifact render-check theme", () => {
     } });
     const app = createConnecta({
       connectors: [], publicUrl: BASE, logger: "silent", auth: bearerToken(TOKEN), artifacts: module,
-      executor: { execute: async () => ({ result: { value: 2 } }) },
+      executor: customExecutor({ execute: async () => ({ result: { value: 2 } }) }, { lifecycle: "self-managed" }),
       ui: operatorUi({ branding: { theme: { colorScheme: "dark", accent: "#0a7d55" } } }),
     });
     try {

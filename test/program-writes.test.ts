@@ -14,7 +14,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { classifyWriteOutcome } from "../src/exempt-writes.js";
 import { api } from "../src/connectors/api.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import {
   isApprovalExempt,
@@ -454,7 +454,7 @@ describe("config approval exemptions (#566)", () => {
     const construct = (approval: unknown, connectors: Connector[] = [notes, remote]) =>
       createConnecta({
         connectors,
-        executor,
+        executor: customExecutor(executor, { lifecycle: "self-managed" }),
         logger: "silent",
         execute: { approval: approval as Record<string, "never" | "ask"> },
       });
@@ -512,7 +512,7 @@ describe("retired pause configuration (#672)", () => {
     const construct = () =>
       (createConnecta as (config: unknown) => unknown)({
         connectors: [],
-        executor,
+        executor: customExecutor(executor, { lifecycle: "self-managed" }),
         logger: "silent",
         execute: { [key]: setting },
       });
@@ -522,7 +522,7 @@ describe("retired pause configuration (#672)", () => {
   });
 
   it("lists no resume_execution and reports no resumableWrites on /health", async () => {
-    const connecta = createConnecta({ connectors: [], executor, logger: "silent" });
+    const connecta = createConnecta({ connectors: [], executor: customExecutor(executor, { lifecycle: "self-managed" }), logger: "silent" });
     const listed = await readJsonRpc(await mcpRpc(connecta, "tools/list", {})) as {
       result: { tools: Array<{ name: string; annotations?: Record<string, unknown> }> };
     };

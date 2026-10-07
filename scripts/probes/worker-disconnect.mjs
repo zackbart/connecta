@@ -61,7 +61,7 @@ function h2Fetch(session, target, { method = "GET", headers = {}, body, signal }
 }
 
 const source = `
-import { createConnecta } from ${JSON.stringify(join(root, "src/index.ts"))};
+import { createConnecta, customExecutor } from ${JSON.stringify(join(root, "src/index.ts"))};
 let isolate;
 const events = [];
 const apps = new Map();
@@ -92,7 +92,7 @@ export default {
     const id = url.searchParams.get('id');
     let app = apps.get(id);
     if (!app) { app = createConnecta({
-      connectors: [], logger: 'silent', executor: { execute: async () => ({ result: null }) },
+      connectors: [], logger: 'silent', executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       admission: { requests: { concurrency: 1, maxQueueSize: url.searchParams.has('queue') ? 1 : 0,
         queueTimeoutMs: url.searchParams.has('queue') ? 6000 : 1000,
         maxDurationMs: ${maxDurationMs} } },

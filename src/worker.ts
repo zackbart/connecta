@@ -7,6 +7,7 @@ import {
   ExecutorExecutionError,
 } from "./executor-admission.js";
 import type { AdmittingExecutor, ExecuteResult, ExecutorLease, ExecutorProvider } from "./types.js";
+import { brandExecutor } from "./executor-contract.js";
 
 interface WorkerExecutorOptions {
   loader: DynamicWorkerExecutorOptions["loader"];
@@ -23,7 +24,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
     retryAfterMs: 1_000,
   });
   const active = new Set<ExecutorLease>();
-  return {
+  return brandExecutor<AdmittingExecutor>({
     name: "DynamicWorkerExecutor",
     async acquire(request = {}) {
       const permit = await admission.acquire(request);
@@ -127,5 +128,5 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
       admission.close();
       for (const lease of active) lease.release();
     },
-  };
+  }, "leased");
 }

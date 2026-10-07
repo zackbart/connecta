@@ -679,6 +679,11 @@ compiling and configuring the real thing.
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
   invalid admission rule, the old boolean `accessTokens` option, a missing executor,
-  or direct upstream `DynamicWorkerExecutor` construction:
+  or an executor without a lifecycle brand:
   all refuse to boot (`test/config.test.ts`, `test/registry.test.ts`). Starting
   in the wrong shape is worse than not starting.
+  Shipped `/worker` and `/quickjs` executors carry a non-enumerable global-symbol
+  brand that survives package duplication and bundling. Custom sandboxes opt in
+  through `customExecutor(executor, { lifecycle: "self-managed" })` from the root
+  entry and own their termination and cleanup. Plain upstream executors need
+  the `/worker` adapter, regardless of constructor name.

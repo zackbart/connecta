@@ -80,16 +80,20 @@ before.
 Host-call budget exhaustion now ends a program with one typed error and call
 counts. Calls still awaiting connector admission cannot dispatch after the run
 ends; already dispatched exempt writes drain and retain their outcome accounting.
-**Breaking for Worker deployments:** `createConnecta()` now rejects direct
-`DynamicWorkerExecutor` construction at boot. Replace
+**Breaking for Worker and custom-executor deployments:** `createConnecta()` now
+requires an explicit executor lifecycle contract and rejects every unbranded
+executor at boot, including bundled or minified upstream copies. Replace
 `import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
 `import { workerExecutor } from "@zackbart/connecta/worker";`, and replace
 `executor: new DynamicWorkerExecutor({ loader: env.LOADER })` with
 `executor: workerExecutor({ loader: env.LOADER })`. Keep the optional
 `@cloudflare/codemode` peer installed.
 The adapter disposes request-owned RPC and loader handles without waiting for a
-guest deadline that may never settle after the response ends. Node deployments
-need no configuration change.
+guest deadline that may never settle after the response ends. Custom sandboxes
+import `customExecutor` from `@zackbart/connecta` and configure
+`executor: customExecutor(myExecutor, { lifecycle: "self-managed" })` to accept
+responsibility for guest termination and resource cleanup. Deployments already
+using `quickJsExecutor()` need no configuration change.
 
 ### Added
 
@@ -441,6 +445,11 @@ need no configuration change.
   subclasses, before creating runtime resources. The error names the required
   `/worker` import and configuration migration; custom executors remain
   supported (#704).
+- Require a non-enumerable, versioned lifecycle brand on executors before
+  creating runtime resources. `/worker` and `/quickjs` carry the brand across
+  package copies and bundles; unbranded executors fail with all migration
+  options. Custom sandboxes opt in with
+  `customExecutor(myExecutor, { lifecycle: "self-managed" })` (#704).
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server
