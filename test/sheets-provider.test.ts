@@ -412,7 +412,10 @@ describe("reading values (H9, H10)", () => {
   });
 });
 
-describe("pages that can be delivered", () => {
+// Worst-case sheets of 5,000-character cells paged through whole calls:
+// CPU-bound, with no timing behavior, and on a loaded host past vitest's 5s
+// default. This is a hang guard, not a speed assertion.
+describe("pages that can be delivered", { timeout: 60_000 }, () => {
   const utf8 = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   /** Exactly what the QuickJS executor serializes to hand a host result to a program. */
   const bridged = (value: unknown) => utf8({ ok: true, value });

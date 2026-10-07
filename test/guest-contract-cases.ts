@@ -19,6 +19,7 @@ export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<
   let releaseRead!: () => void;
   const blocked = new Promise<void>((resolve) => { releaseRead = resolve; });
   let writes = 0;
+  let finished = false;
   const limited: Connector = {
     id: "limited",
     kind: "api",
@@ -41,7 +42,20 @@ export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<
         if (Date.now() > deadline) throw new Error("write never queued");
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      setTimeout(releaseRead, 40);
+      // Release the read the moment exhaustion withdraws the queued write,
+      // rather than on a bare 40ms timer a slow guest could outlast before its
+      // fourth call. An implementation that never withdraws the write still
+      // gets the read released 250ms on, while the run waits on it, and the
+      // write that capacity then admits fails the checks below. 250ms is six
+      // times the old margin; it is only the fallback for a broken run.
+      void (async () => {
+        const fallback = Date.now() + 250;
+        while (!finished && Date.now() < fallback
+          && registry.callAdmissionSnapshot().limited?.queued !== 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        releaseRead();
+      })();
       return true;
     },
   }]);
@@ -60,10 +74,22 @@ export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<
       error: { code: "budget_exceeded", writes: { succeeded: 0, failed: 1, unknown: 0 } },
       hostCalls: { attempted: 4, admitted: 3 },
     });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    // With the read released, admission drains; a write still queued behind
+    // it would be admitted and run before it does.
+    releaseRead();
+    const drained = Date.now() + 5_000;
+    while (Date.now() < drained) {
+      const snapshot = registry.callAdmissionSnapshot().limited;
+      if (snapshot?.active === 0 && snapshot.queued === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(writes).toBe(0);
     expect(registry.callAdmissionSnapshot().limited).toMatchObject({ active: 0, queued: 0 });
-  } finally { releaseRead(); }
+  } finally {
+    finished = true;
+    releaseRead();
+  }
 }
 
 export interface ContractState {
@@ -1639,7 +1665,11 @@ export const CONTRACT_CASES: ContractCase[] = [
     }`,
     check(outcome) {
       expect(outcome.isError).toBe(true);
-      expect(outcome.text.toLowerCase()).toMatch(/timed out|timeout/);
+      // Either side of the QuickJS deadline may end it: the child reports its
+      // own timeout, or, when a loaded host delays that report past the
+      // parent's grace, the parent terminates the child at its wall budget.
+      // Both are this clause; a hang or an unrelated error is not.
+      expect(outcome.text.toLowerCase()).toMatch(/timed out|timeout|wall budget/);
     },
   },
 ];

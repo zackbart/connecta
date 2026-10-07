@@ -804,7 +804,11 @@ describe("a message's own body, apart from what it carries", () => {
 
 // --- Worst-case result sizes ---------------------------------------------------------
 
-describe("every result is deliverable both ways it can be called", () => {
+// Worst-case payloads pushed through whole calls: CPU-bound, with no timing
+// behavior, and seconds long even on an idle machine. A loaded one ran the
+// unbudgeted cases past vitest's 5s default, so every case here gets a hang
+// guard sized for that, not a speed assertion.
+describe("every result is deliverable both ways it can be called", { timeout: 60_000 }, () => {
   // Inside execute_code the QuickJS bridge refuses one host result over
   // 256 KiB (MAX_HOST_RESULT_BYTES, src/executors/quickjs-runtime.ts); through
   // call_tool anything up to the stash (8 MiB by default) pages. A result

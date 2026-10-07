@@ -22,6 +22,11 @@ const WORKERD =
   typeof navigator !== "undefined" &&
   navigator.userAgent?.includes("Cloudflare-Workers");
 
+// QuickJS charges its 250ms default guest CPU budget by wall clock, so a loaded
+// host bills its own contention to these programs. Cases that are not about
+// the budget run under a generous one, as the Node QuickJS suites do.
+const GENEROUS_GUEST_CPU_MS = 5_000;
+
 async function loadQuickJsExecutor() {
   // This module now imports node:child_process by design. Keep it out of the
   // Workers bundle entirely; the two callers below skip under workerd.
@@ -398,6 +403,9 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
+  // Two 5 MiB bodies read and parsed end to end: CPU-bound, with no timing
+  // behavior, and on a loaded host past vitest's 5s default. The budget is a
+  // hang guard, not a speed assertion.
   it("leaves the inbound body bound to the host on both protocol legs", async () => {
     // @modelcontextprotocol/server 2.1.0 started refusing bodies over 4 MiB
     // with its own 413. Connecta's bound belongs to the host — `listen()`'s
@@ -455,7 +463,7 @@ describe("server /mcp end-to-end", () => {
     } finally {
       await client.close();
     }
-  });
+  }, 30_000);
 
   it("serves a 2025-era request that omits MCP-Protocol-Version", async () => {
     // Clients before 2025-06-18 never sent the header, and the spec has a
@@ -1955,7 +1963,7 @@ describe("execute_code registration (code mode)", () => {
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      executor: quickJsExecutor(),
+      executor: quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS }),
       activity: activityHistory({
         store: {
           record(event) {
@@ -1997,7 +2005,7 @@ describe("execute_code registration (code mode)", () => {
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      executor: quickJsExecutor(),
+      executor: quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS }),
     });
     const res = await mcpRpc(
       c,
@@ -2041,11 +2049,18 @@ describe("execute_code registration (code mode)", () => {
     "keeps health and ordinary calls responsive while guests run away",
     async () => {
       const { quickJsExecutor } = await loadQuickJsExecutor();
+      // A guest run on the server's event loop would stall it for the whole
+      // CPU budget, so the latency bound is derived from that budget: half of
+      // it leaves a loaded host room for its own scheduling stalls (a fixed
+      // 150ms against a 200ms budget did not) and still fails any guest that
+      // blocks the server.
+      const cpuTimeMs = 1_000;
+      const bound = cpuTimeMs / 2;
       const executor = quickJsExecutor({
         concurrency: 4,
         maxQueueSize: 8,
-        cpuTimeMs: 200,
-        timeoutMs: 2_000,
+        cpuTimeMs,
+        timeoutMs: 10 * cpuTimeMs,
       });
       const c = createTestConnecta({
         connectors: [calcApi()],
@@ -2100,9 +2115,9 @@ describe("execute_code registration (code mode)", () => {
       latencies.sort((a, b) => a - b);
       const p95 = latencies[Math.ceil(latencies.length * 0.95) - 1];
       const p99 = latencies[latencies.length - 1];
-      expect(p95).toBeLessThan(150);
-      expect(p99).toBeLessThan(150);
-      expect(callLatency).toBeLessThan(150);
+      expect(p95).toBeLessThan(bound);
+      expect(p99).toBeLessThan(bound);
+      expect(callLatency).toBeLessThan(bound);
       expect(
         outcomes.every((outcome) =>
           outcome.error?.includes("guest CPU budget"),
@@ -2110,6 +2125,6 @@ describe("execute_code registration (code mode)", () => {
       ).toBe(true);
       await c.close();
     },
-    10_000,
+    30_000,
   );
 });

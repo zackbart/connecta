@@ -219,17 +219,36 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+// One read and one transpile per file for the whole suite: several walks below
+// cover the same files, and on a loaded host the repeats were the difference
+// between a walk that fits its budget and one that does not.
+const sources = new Map<string, string>();
+function sourceOf(file: string): string {
+  let source = sources.get(file);
+  if (source === undefined) {
+    source = readFileSync(file, "utf8");
+    sources.set(file, source);
+  }
+  return source;
+}
+
+const stripped = new Map<string, string>();
 /** The source with comments removed, so prose about a rule never trips it. */
 function codeOnly(file: string): string {
-  return ts.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: {
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-      jsx: ts.JsxEmit.Preserve,
-      removeComments: true,
-    },
-  }).outputText;
+  let code = stripped.get(file);
+  if (code === undefined) {
+    code = ts.transpileModule(sourceOf(file), {
+      fileName: file,
+      compilerOptions: {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+        jsx: ts.JsxEmit.Preserve,
+        removeComments: true,
+      },
+    }).outputText;
+    stripped.set(file, code);
+  }
+  return code;
 }
 
 /** Relative-import closure over test and source files, type imports included. */
@@ -240,7 +259,7 @@ function testGraph(entry: string): Set<string> {
     const file = queue.pop()!;
     if (visited.has(file)) continue;
     visited.add(file);
-    for (const spec of allSpecifiers(readFileSync(file, "utf8"))) {
+    for (const spec of allSpecifiers(sourceOf(file))) {
       if (!spec.startsWith(".")) continue;
       const base = resolve(dirname(file), spec);
       const stem = base.replace(/\.js$/, "");
@@ -252,12 +271,15 @@ function testGraph(entry: string): Set<string> {
   return visited;
 }
 
-describe("Effect boundaries", () => {
+// These are whole-tree static walks, CPU-bound and free of timing behavior: on
+// a loaded host the transpiles alone outran vitest's 5s default. The budget
+// is a hang guard, not a speed assertion.
+describe("Effect boundaries", { timeout: 30_000 }, () => {
   const everySource = sourceFiles(SRC);
 
   it("INV-12: keeps test and platform-runtime Effect packages out of src/", () => {
     for (const file of everySource) {
-      for (const spec of allSpecifiers(readFileSync(file, "utf8"))) {
+      for (const spec of allSpecifiers(sourceOf(file))) {
         for (const pattern of FORBIDDEN_EFFECT_PACKAGES) {
           expect(pattern.test(spec), `${file} imports ${spec}`).toBe(false);
         }
@@ -268,7 +290,7 @@ describe("Effect boundaries", () => {
   it("lets the root entry reach only Effect's stable core", () => {
     const graph = importGraph(ENTRY);
     for (const file of graph) {
-      for (const spec of allSpecifiers(readFileSync(file, "utf8"))) {
+      for (const spec of allSpecifiers(sourceOf(file))) {
         if (!isEffectSpecifier(spec)) continue;
         expect(
           ROOT_EFFECT_ALLOWED.has(spec),
@@ -303,7 +325,7 @@ describe("Effect boundaries", () => {
       .filter((file): file is string => typeof file === "string" &&
         file.endsWith(".test.ts") && !file.endsWith(".node.test.ts"))) {
       for (const file of testGraph(join(HERE, suite))) {
-        for (const spec of allSpecifiers(readFileSync(file, "utf8"))) {
+        for (const spec of allSpecifiers(sourceOf(file))) {
           expect(
             /^effect\/testing(?:\/|$)/.test(spec),
             `${file} (reached from ${suite}) imports ${spec}`,

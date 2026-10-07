@@ -29,9 +29,18 @@ import {
 const checker = fileURLToPath(
   new URL("../scripts/drift-check.mjs", import.meta.url),
 );
-const tsx = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
+// tsx's loader in the checker's own process. The tsx CLI would boot a second
+// Node process per run, and every case here already pays for real ones.
+const tsx = ["--import", new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url).href];
 const manifestDirectory = fileURLToPath(new URL("../scripts/drift", import.meta.url));
 const temporary: string[] = [];
+
+// Every case spawns real checker processes — up to five, and the `--docs` ones
+// boot tsx to load provider sources, about a second apiece on an idle machine
+// and several on a loaded one. Process startup is wall-clock nothing here can
+// fake, so this is a hang guard sized for the heaviest case, not a speed
+// assertion: vitest's 5s default failed these for load, never for behavior.
+const CASE_TIMEOUT_MS = 60_000;
 
 interface Endpoint {
   method: string;
@@ -192,7 +201,7 @@ function runDocumented(
   const result = spawnSync(
     process.execPath,
     [
-      tsx,
+      ...tsx,
       checker,
       "--docs",
       "--provider",
@@ -215,7 +224,7 @@ afterEach(async () => {
   );
 });
 
-describe("maintainer drift check", () => {
+describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
   it("records the touched endpoints and then reports no drift against them", async () => {
     const { directory } = await workspace(["cloudflare", "notion"]);
     const recorded = run(directory, ["cloudflare", "notion"], ["--record"]);
@@ -859,7 +868,7 @@ describe("maintainer drift check", () => {
         new Promise<{ status: number; output: string }>((resolve) => {
           execFile(
             process.execPath,
-            [tsx, checker, "--docs", "--provider", "basecamp", "--setup-reference", `basecamp=${setup}`, "--json"],
+            [...tsx, checker, "--docs", "--provider", "basecamp", "--setup-reference", `basecamp=${setup}`, "--json"],
             { encoding: "utf8" },
             (error, stdout, stderr) => {
               resolve({
@@ -1022,7 +1031,7 @@ function rowPattern(path: string): RegExp {
   return new RegExp(`^${path.replace(/\{[^}]+\}/g, "[^/]+")}$`);
 }
 
-describe("Planning Center's per-product drift check", () => {
+describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS }, () => {
   it("records every product, then reports a contract change and a new version as transitions", async () => {
     const { directory, manifest, specification, documentation } = await planningCenterWorkspace();
     const recorded = runPlanningCenter(directory, ["--record"]);

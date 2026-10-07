@@ -21,10 +21,18 @@ afterEach(async () => {
   );
 });
 
+/**
+ * The guest CPU budget suites get unless they name their own. QuickJS charges
+ * that budget by wall clock while the guest runs, so on a loaded host the 250ms
+ * default bills the machine's contention to a program that only moves a large
+ * string. A suite pinning the budget itself passes `cpuTimeMs` explicitly.
+ */
+const GENEROUS_GUEST_CPU_MS = 5_000;
+
 export function trackedQuickJs(
   options?: QuickJsExecutorOptions,
 ): AdmittingExecutor {
-  const executor = quickJsExecutor(options);
+  const executor = quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS, ...options });
   executors.push(executor);
   return executor;
 }

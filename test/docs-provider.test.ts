@@ -1206,7 +1206,11 @@ describe("every inline element renders as something, or is named (H9)", () => {
   });
 });
 
-describe("round-3 review: outcomes by observed status, bounded copies, one final guard", () => {
+// Cases here push 9 MiB fields and a five-hundred-call sweep of replies near
+// the 192 KiB budget through whole calls: CPU-bound, with no timing behavior,
+// and seconds long even on an idle machine. A loaded one ran them past
+// vitest's 5s default, so this is a hang guard, not a speed assertion.
+describe("round-3 review: outcomes by observed status, bounded copies, one final guard", { timeout: 60_000 }, () => {
   const BUDGET = 192 * 1024;
   const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   const EDITS: Record<string, Record<string, unknown>> = {
@@ -1297,22 +1301,25 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
   it("measures the reply notice it returns, at every size around the boundary", async () => {
     // One reply nearly the whole budget, then 99 small ones: the cut lands
     // between "1 of 100" and more, where the notice's own length decides.
-    const big = (keys: number, tail: number) => ({
-      createNamedRange: Object.fromEntries([
-        ...Array.from({ length: keys }, (_, key) => [`k${key}`, "n".repeat(500)]),
-        ["tail", "t".repeat(tail)],
-      ]),
-    });
+    // All 527 sizes share a connector, token cache, and invariant reply data.
+    // Rebuilding them per size repeated RSA import/signing and large-object
+    // allocation, pushing this sweep past the 5s guard under contention.
+    const connector = connection();
+    const ctx = context();
+    const small = Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }));
+    const value = "n".repeat(500);
     const shown = new Set<number>();
     for (const [keys, step] of [[380, 37], [385, 1]] as const) {
+      const big = {
+        createNamedRange: {
+          ...Object.fromEntries(Array.from({ length: keys }, (_, key) => [`k${key}`, value])),
+          tail: "",
+        },
+      };
+      route = () => ({ body: { documentId: "d", replies: [big, ...small] } });
       for (let tail = 0; tail <= 512; tail += step) {
-        route = () => ({
-          body: {
-            documentId: "d",
-            replies: [big(keys, tail), ...Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }))],
-          },
-        });
-        const result = await call(connection(), "batch_update_document", { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" });
+        big.createNamedRange.tail = "t".repeat(tail);
+        const result = await connector.callTool("batch_update_document", { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" }, ctx) as { replies: unknown[]; notice: string };
         expect(bytes(result), `keys ${keys}, tail ${tail}`).toBeLessThanOrEqual(BUDGET);
         expect(result.notice).toContain(`${result.replies.length} of 100 replies`);
         shown.add(result.replies.length);
@@ -1321,6 +1328,7 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     // The sweep crossed the boundaries it was built for.
     expect(shown.has(1)).toBe(true);
     expect([...shown].some((count) => count > 1)).toBe(true);
+    expect(tokenCalls).toBe(1);
   });
 
   it("routes large reads and uncertain creates the same way in schema, guide, and messages", async () => {

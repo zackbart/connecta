@@ -1,5 +1,5 @@
 import { CredentialVault } from "../src/credentials.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import {
   BASE,
@@ -1215,16 +1215,28 @@ describe("probe timeout", () => {
   });
 
   it("search_tools degrades a hung connector to unavailable within the timeout", async () => {
+    // A fake clock: the probe deadline ends the hung catalog when the test
+    // says so, and on a loaded host a real 50ms one could end the healthy
+    // catalog too.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const mt = createMetaTools(makeRegistry([hangingConnector, calcConnector]), BASE, {
       probeTimeoutMs: 50,
     });
-    const started = Date.now();
-    const parsed = textOf(
-      await mt.searchTools({ query: "add impossible" }),
-    ) as SearchResult;
-    // Returns rather than hanging: the healthy connector still resolves, the
-    // hung one is simply absent (its rejected catalog is dropped).
-    expect(Date.now() - started).toBeLessThan(2_000);
+    let settled = false;
+    const pending = mt.searchTools({ query: "add impossible" }).finally(() => {
+      settled = true;
+    });
+    // Returns rather than hanging, at the probe deadline and not before: the
+    // healthy connector still resolves, the hung one is simply absent (its
+    // rejected catalog is dropped).
+    await vi.advanceTimersByTimeAsync(49);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    const parsed = textOf(await pending) as SearchResult;
     const ids = parsed.connectors.map((c) => c.id);
     expect(ids).toContain("calc");
     expect(ids).not.toContain("hang");
@@ -1234,12 +1246,12 @@ describe("probe timeout", () => {
       guidance: expect.stringContaining("catalogs that answered"),
     });
 
-    const scoped = textOf(
-      await mt.searchTools({
-        connector: "hang",
-        query: "impossible",
-      }),
-    ) as SearchResult;
+    const scopedPending = mt.searchTools({
+      connector: "hang",
+      query: "impossible",
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    const scoped = textOf(await scopedPending) as SearchResult;
     expect(scoped.queryAnalysis).toMatchObject({
       connectorScope: "hang",
       unavailableConnectorCount: 1,

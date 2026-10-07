@@ -250,6 +250,9 @@ describe("public package boundary", () => {
     ).toContain(published);
   });
 
+  // Transforms and loads every provider module cold: CPU-bound, with no timing
+  // behavior. On a loaded host that outran the 5s default, so the budget here
+  // is only a hang guard.
   it("publishes every provider independently from the root entry", async () => {
     const providers = readdirSync(join(ROOT, "src", "providers"))
       .filter((file) => file.endsWith(".ts"))
@@ -274,7 +277,7 @@ describe("public package boundary", () => {
         ).not.toHaveProperty(symbol);
       }
     }
-  });
+  }, 30_000);
 
   it("exports validateToolInput from the core entry", async () => {
     const core = await import("../src/index.js");

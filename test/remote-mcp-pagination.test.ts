@@ -10,7 +10,7 @@ import type {
   Transport,
 } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -44,6 +44,10 @@ const EMPTY_CURSOR = "";
  */
 const MAX_TOOLS = 100_000;
 const MAX_TOOL_PAGES = 10_000;
+// The walks to those ceilings are 100,001 tools or 10,000 in-memory round trips:
+// CPU-bound, with no timing behavior, and on a loaded host they outran
+// vitest's 5s default. Their budget is a hang guard, not a speed assertion.
+const CEILING_WALK_TIMEOUT_MS = 30_000;
 
 function tool(name: string, extra: Partial<Tool> = {}): Tool {
   return {
@@ -412,7 +416,21 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(f.cursors).toEqual([undefined]);
   });
 
+  /**
+   * The probe deadline on a fake clock, so it fires only when a test advances
+   * time: on a loaded host a real 25ms or 100ms one could expire before page
+   * one, or before a catalog that does finish in time. The scheduler stays
+   * real, so the walk itself runs as it would.
+   */
+  function fakeProbeClock(): void {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
   it("stops a stalled catalog walk at the configured probe deadline", async () => {
+    fakeProbeClock();
     const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
     const { promise: gate, resolve: releasePageTwo } = deferred<void>();
     const { connector, cursors } = fixture(async (cursor) => {
@@ -424,11 +442,18 @@ describe("remoteMcp() tools/list pagination", () => {
       return { tools: [tool("beta")], nextCursor: "p3" };
     });
 
+    let settled = false;
     const pending = createMetaTools(makeRegistry([connector]), BASE, {
       probeTimeoutMs: 25,
-    }).searchTools({ query: "alpha" });
+    }).searchTools({ query: "alpha" }).finally(() => {
+      settled = true;
+    });
     await atPageTwo;
     try {
+      await vi.advanceTimersByTimeAsync(24);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
       const payload = JSON.parse(required((await pending).content[0]).text) as {
         connectors: unknown[];
         queryAnalysis?: { unavailableConnectorCount?: number };
@@ -447,6 +472,7 @@ describe("remoteMcp() tools/list pagination", () => {
   });
 
   it("leaves a catalog that finishes inside the probe deadline unchanged", async () => {
+    fakeProbeClock();
     const { connector, cursors } = fixture(() => ({
       tools: [tool("only")],
     }));
@@ -587,7 +613,7 @@ describe("remoteMcp() tools/list pagination", () => {
     // The bound is on what the walk accumulates, so it fires before the second
     // request rather than after some number of pages.
     expect(cursors).toEqual([undefined]);
-  });
+  }, CEILING_WALK_TIMEOUT_MS);
 
   it("keeps an absolute page backstop for a server that satisfies every other guard", async () => {
     const { connector, cursors } = fixture((_cursor, call) => ({
@@ -601,7 +627,7 @@ describe("remoteMcp() tools/list pagination", () => {
       /refusing to page further/,
     );
     expect(cursors).toHaveLength(MAX_TOOL_PAGES);
-  });
+  }, CEILING_WALK_TIMEOUT_MS);
 
   it("accepts a null cursor on the first page as end-of-chain", async () => {
     const { connector, cursors } = fixture(() => ({
