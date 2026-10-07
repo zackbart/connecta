@@ -320,8 +320,11 @@ The required Worker Loader binding is checked into `wrangler.jsonc`:
 "worker_loaders": [{ "binding": "LOADER" }]
 ```
 
-`src/index.ts` constructs `DynamicWorkerExecutor` with only `env.LOADER` and
-serves the seven-tool surface. Do not add `bindings`, `modules`, or
+`src/index.ts` uses `workerExecutor({ loader: env.LOADER })` from
+`@zackbart/connecta/worker`. The adapter constructs the upstream
+`DynamicWorkerExecutor` with only the loader and a deadline, and disposes each
+run's loader and RPC handles when its lease ends, even if the guest has not
+settled. It serves the seven-tool surface. Do not add `bindings`, `modules`, or
 `globalOutbound`; they grant guest code ambient authority. A copied deployment
 owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).

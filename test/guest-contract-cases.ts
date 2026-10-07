@@ -14,6 +14,58 @@ import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 export const CONTRACT_BASE = "https://connecta.contract";
 
+/** Review regression: a write passed its gate but is still in admission. */
+export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
+  let releaseRead!: () => void;
+  const blocked = new Promise<void>((resolve) => { releaseRead = resolve; });
+  let writes = 0;
+  const limited: Connector = {
+    id: "limited",
+    kind: "api",
+    callAdmission: { rules: [{ maxConcurrency: 1, maxQueueSize: 2, queueTimeoutMs: 1_000 }] },
+    async listTools() {
+      return [readOnly("read"), { name: "write", annotations: { readOnlyHint: false } }];
+    },
+    async callTool(name) {
+      if (name === "read") await blocked;
+      else writes++;
+      return "done";
+    },
+  };
+  const registry = makeRegistry([limited, {
+    id: "control", kind: "api",
+    async listTools() { return [readOnly("queued")]; },
+    async callTool() {
+      const deadline = Date.now() + 1_000;
+      while (registry.callAdmissionSnapshot().limited?.queued !== 1) {
+        if (Date.now() > deadline) throw new Error("write never queued");
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      setTimeout(releaseRead, 40);
+      return true;
+    },
+  }]);
+  try {
+    const outcome = await createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
+      maxHostCalls: 3,
+      approval: { connectors: new Map(), tools: new Map([["limited.write", "never"]]) },
+    })({ code: `async () => {
+      void connecta.call("limited.read", {}).catch(() => {});
+      void connecta.call("limited.write", {}).catch(() => {});
+      await connecta.call("control.queued", {});
+      await connecta.call("control.queued", {});
+    }` });
+    expect(outcome.isError).toBe(true);
+    expect(outcome.structuredContent).toMatchObject({
+      error: { code: "budget_exceeded", writes: { succeeded: 0, failed: 1, unknown: 0 } },
+      hostCalls: { attempted: 4, admitted: 3 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(writes).toBe(0);
+    expect(registry.callAdmissionSnapshot().limited).toMatchObject({ active: 0, queued: 0 });
+  } finally { releaseRead(); }
+}
+
 export interface ContractState {
   /** Calls that reached a connector, by canonical address. */
   calls: Record<string, number>;

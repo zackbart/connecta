@@ -6,6 +6,7 @@ import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
+  checkQueuedWriteAtExhaustion,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
@@ -24,6 +25,9 @@ afterAll(async () => {
 });
 
 describe("guest API contract (QuickJS executor)", () => {
+  it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
+    await checkQueuedWriteAtExhaustion(executor);
+  });
   for (const contractCase of CONTRACT_CASES) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness();

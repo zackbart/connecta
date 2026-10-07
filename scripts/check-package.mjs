@@ -244,6 +244,8 @@ try {
     "dist/json-schema.d.ts",
     "dist/executors/quickjs.js",
     "dist/executors/quickjs.d.ts",
+    "dist/worker.js",
+    "dist/worker.d.ts",
     "dist/executors/quickjs-child.js",
     "dist/executors/quickjs-protocol.js",
     "dist/executors/quickjs-runtime.js",

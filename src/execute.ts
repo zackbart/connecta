@@ -452,6 +452,8 @@ interface SandboxLimits {
   maxWrites?: number | undefined;
   /** The program's exempt writes, for close and drain. */
   exemptWrites?: ExemptWrites | undefined;
+  /** Cancel calls still resolving or waiting for admission at run end. */
+  dispatchController?: AbortController | undefined;
 }
 
 /** Numeric accounting only; no addresses, arguments, or results. */
@@ -491,8 +493,12 @@ function sandboxProvider(
 ): ExecutorProvider {
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
+  const hostAccessSignal = limits.dispatchController
+    ? AbortSignal.any([limits.dispatchController.signal, ...(limits.signal ? [limits.signal] : [])])
+    : limits.signal;
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
+    requestSignal: hostAccessSignal,
     // A program that just missed an address cannot call search_tools.
     searchRoute: "connecta.search",
     concurrency: limits.discoveryConcurrency,
@@ -516,7 +522,14 @@ function sandboxProvider(
   // A rejected bridge promise is catchable in both sandboxes. End the host
   // run instead and leave that bridge pending: an awaiting guest cannot catch
   // the refusal and loop. Later calls, including emit, lose host access too.
-  const stopped = new Promise<never>(() => {});
+  const stopped = new Promise<never>((_resolve, reject) => {
+    const ended = () => reject(new Error("The host run ended."));
+    if (signal?.aborted) ended();
+    else signal?.addEventListener("abort", ended, { once: true });
+  });
+  // Stay pending until the lease has disposed the sandbox, then settle the
+  // abandoned host RPC waits without retaining request resources forever.
+  stopped.catch(() => {});
   const approval = limits.approval ?? NO_EXEMPTIONS;
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
@@ -531,6 +544,7 @@ function sandboxProvider(
     source: "execute_code" as const,
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
+    ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
     gates: (target: ResolvedCatalogTool) =>
       isApprovalExempt(approval, target.connector, target.toolName, target.definition),
@@ -611,13 +625,13 @@ function sandboxProvider(
             ? guestFailure(err.code, err.message)
             : err,
       });
-      return (!signal
+      return (!hostAccessSignal
         ? reading
-        : signal.aborted
+        : hostAccessSignal.aborted
           ? Effect.fail(cancelled())
           : Effect.raceAllFirst([
               reading,
-              fromSignal(signal).pipe(Effect.mapError(cancelled)),
+              fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled)),
             ])
       ).pipe(
         Effect.onExit((exit) =>
@@ -723,6 +737,7 @@ function sandboxProvider(
             hostCalls.failed++;
             budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
             exemptWrites?.close();
+            limits.dispatchController?.abort();
             limits.onHostCallBudgetExceeded?.(budgetFailure);
             return stopped;
           }
@@ -769,8 +784,8 @@ function sandboxProvider(
  * ceiling as an untyped executor failure naming the key that sets it. Either
  * way the handler returns and releases the lease, and the abandoned call
  * keeps whatever it was doing: the QuickJS lease release recycles its child,
- * a Dynamic Worker isolate runs on to its own deadline, and a lease granted
- * after its request gave up goes to `late`. The result contract is untouched
+ * the Worker adapter disposes its handles without waiting for the guest. A
+ * lease granted after its request gave up goes to `late`. The result contract is untouched
  * — this only decides when to stop waiting for one.
  */
 function awaitExecutor<A>(
@@ -960,6 +975,7 @@ export function createExecuteTool(
       );
       const invocationFailures: InvocationFailure[] = [];
       const exemptWrites = new ExemptWrites();
+      const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
       let executorLogs: unknown;
@@ -1018,6 +1034,7 @@ export function createExecuteTool(
             approval: config.approval,
             maxWrites: config.maxWrites,
             exemptWrites,
+            dispatchController,
           }, requestScope),
         ));
         if (signal.aborted) {
@@ -1055,6 +1072,7 @@ export function createExecuteTool(
           { watchdog, terminal: Deferred.await(terminal) },
         ).pipe(Effect.ensuring(Effect.suspend(() => {
           exemptWrites.close();
+          dispatchController.abort();
           return exemptWrites.drain();
         }))));
       });

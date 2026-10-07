@@ -77,6 +77,15 @@ non-interactive provider is still skipped there, so a deployment without an
 asserting bearer sees the same human-route behavior and storage reads as
 before.
 
+Host-call budget exhaustion now ends a program with one typed error and call
+counts. Calls still awaiting connector admission cannot dispatch after the run
+ends; already dispatched exempt writes drain and retain their outcome accounting.
+Worker deployments use `workerExecutor({ loader })` from
+`@zackbart/connecta/worker` instead of constructing the upstream executor directly.
+The adapter disposes request-owned RPC and loader handles without waiting for a
+guest deadline that may never settle after the response ends. Node deployments
+need no configuration change.
+
 ### Added
 
 - **Google Docs connection.** `@zackbart/connecta/providers/docs` exports

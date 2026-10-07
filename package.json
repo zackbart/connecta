@@ -166,6 +166,10 @@
     "./auth/access-tokens": {
       "types": "./dist/access-tokens.d.ts",
       "import": "./dist/access-tokens.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
     }
   },
   "scripts": {

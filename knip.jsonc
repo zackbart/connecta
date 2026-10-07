@@ -3,6 +3,7 @@
   "entry": [
     "src/index.ts",
     "src/node.ts",
+    "src/worker.ts",
     "src/json-schema.ts",
     "src/executors/quickjs.ts",
     "src/executors/quickjs-child.ts",

@@ -207,6 +207,8 @@ export interface InvocationContext<T> {
   allowDestructive?: boolean;
   timeoutMs?: number;
   requestSignal?: AbortSignal;
+  /** Run ended: cancel resolution/admission, but spare a dispatched write. */
+  dispatchSignal?: AbortSignal;
   unwrapResult?: boolean;
   /**
    * Caller-owned result policy. MCP applies result paging here; code mode
@@ -466,7 +468,7 @@ export class InvocationService {
         return outcome();
       };
 
-      if (context.requestSignal?.aborted) {
+      if (context.requestSignal?.aborted || context.dispatchSignal?.aborted) {
         // Preserve the cancelled admission-attempt count without starting discovery.
         attempts = 1;
         return failed(callerCancelledDetails());
@@ -482,11 +484,15 @@ export class InvocationService {
         callSignal?: AbortSignal,
       ): Effect.Effect<CallErrorDetails | undefined, unknown> =>
         Effect.gen({ self: this }, function* () {
+          const admissionSignal = context.dispatchSignal
+            ? AbortSignal.any([context.dispatchSignal, ...(callSignal ? [callSignal] : [])])
+            : callSignal;
           const resolution = yield* this.catalog.resolve(
-            address, defined({ signal: callSignal }),
+            address, defined({ signal: admissionSignal }),
           );
           catalogMs += resolution.catalogMs;
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
+          if (admissionSignal?.aborted) return callerCancelledDetails();
           if (!resolution.ok) {
             if (resolution.connector && resolution.toolName) {
               activityTarget = {
@@ -568,7 +574,7 @@ export class InvocationService {
               );
             }
             // Cancellation can arrive during admission or context construction.
-            if (callSignal?.aborted) throw callSignal.reason;
+            if (admissionSignal?.aborted) throw admissionSignal.reason;
             dispatchedToConnector = true;
             return target.connector.callTool(
               target.toolName,
@@ -585,7 +591,7 @@ export class InvocationService {
             Effect.gen({ self: this }, function* () {
               yield* timed(
                 (elapsed) => { admissionMs += elapsed; },
-                admitted(this.registry, target, args, callSignal),
+                admitted(this.registry, target, args, admissionSignal),
               );
               const raw = yield* timed(
                 (elapsed) => { connectorMs += elapsed; },
@@ -603,6 +609,7 @@ export class InvocationService {
           ));
           if (Exit.isFailure(attempt)) {
             if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
+            if (!dispatchedToConnector && admissionSignal?.aborted) return callerCancelledDetails();
             const attemptError = Cause.squash(attempt.cause);
             answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)

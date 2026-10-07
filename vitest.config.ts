@@ -109,6 +109,10 @@ export const NODE_ONLY_SUITES = [
     reason: "spawns the Bash CI path filter and aggregate gate",
   },
   {
+    file: "test/worker-budget-response.test.ts",
+    reason: "runs real HTTP requests through Wrangler/workerd to verify Worker cleanup after the response ends",
+  },
+  {
     file: "test/artifact-eval-grader.test.ts",
     reason: "checks the Node-only fake-world artifact evaluation grader",
   },

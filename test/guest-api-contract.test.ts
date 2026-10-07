@@ -21,6 +21,7 @@ import { fakeExecutor } from "./fixtures/misc.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
+  checkQueuedWriteAtExhaustion,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
@@ -39,16 +40,8 @@ async function loadWorkerExecutor(
     };
     const loader = env.LOADER;
     if (!loader) return undefined;
-    const codemodeModule = "@cloudflare/codemode";
-    const { DynamicWorkerExecutor } = (await import(
-      /* @vite-ignore */ codemodeModule
-    )) as {
-      DynamicWorkerExecutor: new (options: {
-        loader: unknown;
-        timeout?: number;
-      }) => Executor;
-    };
-    return new DynamicWorkerExecutor({ loader, ...options });
+    const { workerExecutor } = await import("../src/worker.js");
+    return workerExecutor({ loader: loader as WorkerLoader, ...options });
   } catch {
     return undefined;
   }
@@ -208,6 +201,58 @@ describe("guest API contract (executor-independent)", () => {
 describe.skipIf(!workerExecutor)(
   "guest API contract (Dynamic Worker executor)",
   () => {
+    it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
+      await checkQueuedWriteAtExhaustion(required(workerExecutor));
+    });
+
+    it("[L4, X3, W9] a timer escape cannot restore host access or replace the terminal result", async () => {
+      let started!: () => void;
+      const writing = new Promise<void>((resolve) => { started = resolve; });
+      let lateReads = 0;
+      const registry = makeRegistry([{
+        id: "writer", kind: "api", approval: "never",
+        async listTools() { return [{ name: "write", annotations: { readOnlyHint: false } }]; },
+        async callTool() {
+          started();
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return "written";
+        },
+      }, {
+        id: "control", kind: "api",
+        async listTools() { return [{ name: "ready", annotations: { readOnlyHint: true } }]; },
+        async callTool() { await writing; return true; },
+      }, {
+        id: "reader", kind: "api",
+        async listTools() { return [{ name: "read", annotations: { readOnlyHint: true } }]; },
+        async callTool() { lateReads++; return "late"; },
+      }]);
+      const outcome = await createExecuteTool(registry, CONTRACT_BASE, required(workerExecutor), silentLogger, undefined, {
+        maxHostCalls: 3,
+      })({ code: `async () => {
+        void connecta.call("writer.write", {}).catch(() => {});
+        await connecta.call("control.ready", {});
+        await connecta.call("control.ready", {});
+        await Promise.race([
+          connecta.call("reader.read", {}),
+          new Promise(resolve => setTimeout(resolve, 20))
+        ]);
+        console.log("guest timer escaped");
+        queueMicrotask(() => {
+          void connecta.call("reader.read", {}).catch(() => {});
+          void connecta.emit({ type: "text", text: "must not be accepted" }).catch(() => {});
+        });
+        return "late guest value";
+      }` });
+      expect(outcome.isError).toBe(true);
+      expect(outcome.structuredContent).toMatchObject({
+        error: { code: "budget_exceeded", writes: { succeeded: 1, failed: 0, unknown: 0 } },
+        hostCalls: { attempted: 4, admitted: 3, succeeded: 3, failed: 1 },
+        logs: "guest timer escaped",
+      });
+      expect(outcome.structuredContent).not.toHaveProperty("result");
+      expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
+      expect(lateReads).toBe(0);
+    });
     for (const contractCase of CONTRACT_CASES) {
       it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
         const harness = contractHarness();

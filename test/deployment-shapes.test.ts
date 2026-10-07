@@ -24,7 +24,7 @@ describe("deployment shapes", () => {
       "utf8",
     );
     const options = [...source.matchAll(
-      /new DynamicWorkerExecutor\(\{([^}]*)\}\)/g,
+      /workerExecutor\(\{([^}]*)\}\)/g,
     )].map((match) => match[1]?.trim());
     expect(options).toEqual(["loader: env.LOADER"]);
   });
