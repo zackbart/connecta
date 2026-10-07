@@ -14,23 +14,32 @@ jobs:
     timeout-minutes: 5
     outputs:
       browser: ${{ steps.paths.outputs.browser }}
+      security: ${{ steps.paths.outputs.security }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Decide whether browser tests are needed
+      - name: Decide whether browser and dependency checks are needed
         id: paths
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           browser=true
+          security=true
           if [[ "$EVENT_NAME" == pull_request ]]; then
-            git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/browser-paths"
-            browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/browser-paths")
+            git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/paths"
+            browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/paths")
+            security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
+          elif git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            # Pushes to main always run browsers; audit when the push moved dependencies.
+            git diff --no-renames --name-only -z "$BEFORE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/paths"
+            security=$(bash scripts/ci-security-paths.sh < "$RUNNER_TEMP/paths")
           fi
           echo "browser=$browser" >> "$GITHUB_OUTPUT"
+          echo "security=$security" >> "$GITHUB_OUTPUT"
 
   # Every PR runs the non-browser checks without installing Chromium.
   core:
@@ -43,9 +52,23 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run check:core
       # The package smoke packs with --ignore-scripts and exercises the generated
       # deployment's own container, so it needs no Chromium or prepack rerun.
-      - run: npm run release:check:core
+      - run: npm run check:package
+
+  # npm audit reads the lockfile and the registry, so it needs no install.
+  security:
+    needs: changes
+    if: needs.changes.outputs.security == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm run check:security
 
   # Gate the job, not the workflow, so irrelevant PRs report a skipped check.
   browser:
@@ -73,15 +96,18 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: npm run test:browser:install -- --with-deps
+      # A timed-out first attempt can leave apt-get holding the dpkg lock.
       - name: Retry Chromium installation once
         if: steps.install.outcome == 'failure'
-        timeout-minutes: 5
-        run: npm run test:browser:install -- --with-deps
+        timeout-minutes: 9
+        run: |
+          bash scripts/ci-settle-apt.sh
+          npm run test:browser:install -- --with-deps
       - run: npm run test:browser
 
-  # Keep the existing check name as the gate for all three jobs, even on failure.
+  # Keep the existing check name as the gate for every job, even on failure.
   check:
-    needs: [core, changes, browser]
+    needs: [core, changes, browser, security]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -92,11 +118,14 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           BROWSER_RESULT: ${{ needs.browser.result }}
           BROWSER_REQUIRED: ${{ needs.changes.outputs.browser }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          SECURITY_REQUIRED: ${{ needs.changes.outputs.security }}
         run: |
           if [[ "$CORE_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
-             [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]]; then
+             [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]] &&
+             [[ "$SECURITY_RESULT" == success || ( "$SECURITY_REQUIRED" == false && "$SECURITY_RESULT" == skipped ) ]]; then
             echo "All required checks passed"
           else
-            echo "Core=$CORE_RESULT changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED"
+            echo "Core=$CORE_RESULT changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED security=$SECURITY_RESULT required=$SECURITY_REQUIRED"
             exit 1
           fi

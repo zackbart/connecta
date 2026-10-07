@@ -86,6 +86,18 @@ describe("documentation link checker", () => {
     });
   });
 
+  it("checks the repository's agent skills", async () => {
+    const root = await fixture({
+      "README.md": "# Current checkout\n",
+      ".claude/skills/release/SKILL.md": "[stale](./missing.md)\n",
+    });
+
+    expect(check(root)).toMatchObject({
+      status: 1,
+      output: expect.stringContaining('.claude/skills/release/SKILL.md:1: missing local target "./missing.md"'),
+    });
+  });
+
   it("holds repository URLs, raw image forms included, to the checkout", async () => {
     const root = await fixture({
       "README.md": [

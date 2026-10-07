@@ -2,42 +2,47 @@
 
 This is the canonical agent instruction file. `CLAUDE.md` is its symlink;
 keep it that way. Connecta aggregates remote MCP servers and HTTP APIs behind one
-MCP endpoint. Agents use JavaScript through `execute_code`, with direct
-calls for known operations and writes. One fetch-native core runs on Node
-and Cloudflare Workers, with Effect inside and Promises at the published edge.
+MCP endpoint. Agents use JavaScript through `execute_code`, with direct calls
+for known operations and writes. One fetch-native core runs on Node and
+Cloudflare Workers, with Effect inside and Promises at the published edge.
 Read [PRINCIPLES.md](./PRINCIPLES.md) before changing a subsystem and start
 with [architecture](./documentation/architecture.md). The other guides cover
 [meta-tools](./documentation/meta-tools.md), [code mode](./documentation/code-mode.md),
-and [auth](./documentation/auth.md). Subsystem source and tests carry the rest.
+and [auth](./documentation/auth.md). Subsystem source and tests carry the rest;
 [README.md](./README.md) is the human-facing overview.
 The [0.29 plan of record #703](https://github.com/zackbart/connecta/issues/703)
 owns the rework and supersedes older guidance wherever they conflict.
 [decisions/](./decisions/) explains past choices without binding later PRs.
 [spec/coverage.json](./spec/coverage.json) records current MCP support, gaps,
 and test evidence. Describe planned work as planned, not shipped behavior.
-The roadmap lives in [GitHub issues](https://github.com/zackbart/connecta/issues).
-File new work with motivation, behavior, and
-acceptance criteria; do not collect it in a TODO.md.
+The roadmap lives in [GitHub issues](https://github.com/zackbart/connecta/issues):
+file new work with motivation, behavior, and acceptance criteria, not a TODO.md.
 
 ## Verification
 
+`npm run check:fast` is the inner loop: docs, fragment, Node-suite, UI, lint,
+Knip, and typecheck checks run concurrently with `vitest related` on both
+projects for files changed since the `origin/main` merge base (uncommitted and
+untracked and deleted paths included, with both sides of renames), suites
+naming a changed path, and the purity, package-surface, and deployment-shapes
+guards. Related runs skip INV and spec coverage checks; `package.json` or
+Vitest config changes wait for `check`.
+Deleted modules require a full Vitest run because their import graph is gone.
+
 `npm run check` must pass before you claim anything is done. It runs
 `check:core` (docs, fragments, Node-suite reasons, UI freshness, lint, unused,
-typecheck, both vitest projects, build, declarations, bundle, examples), then `test:browser` in
-Chromium. Run `npm run test:browser:install` once per machine. `prepack` still
-runs the full `check`; `release:check` adds security and package smoke checks.
-Use `release:check` when touching packaging, dependencies, or exports.
+typecheck, both vitest projects, build, declarations, bundle, examples), then
+`test:browser` in Chromium; run `npm run test:browser:install` once per machine.
+`release:check` adds `check:security` (`npm audit`) and `check:package` (the
+package smoke); use it when touching packaging, dependencies, or exports.
 
-CI's `core` job runs `release:check:core` on every pull request and push to
-`main`, without installing Chromium. The `browser` job skips a PR only when
-every changed path is in the safe set in `scripts/ci-browser-paths.sh`:
-providers and their tests, drift scripts, documentation, decisions, specs,
-Markdown at any depth, changesets, and eval. Everything else runs browser tests;
-every push to `main` does too. The always-running `check` gate requires core and
-path detection to succeed, plus browser success or an intentional safe-path skip.
-Failures and cancellations fail the gate. Publishing runs `release:check`
-once, then `npm publish --ignore-scripts` uses its validated `dist/`.
-`check:fast` arrives in Phase 1 item 2; it does not exist yet.
+CI's `core` job runs `check:core` and `check:package`. `browser` skips a PR
+whose every path is in the safe set in `scripts/ci-browser-paths.sh`;
+`security` runs when root or nested `package.json`, `package-lock.json`,
+`npm-shrinkwrap.json`, or `.npmrc` changes, including the template installed
+by package/Docker smoke and published examples. The nightly Security workflow
+and publishing also audit dependencies. The `check` gate requires each job
+to pass or be intentionally skipped.
 
 ## Source map
 
@@ -77,12 +82,10 @@ checks health, executor, and the current meta-tool set.
 ## Tests
 
 Suites live in `test/`. Node runs every `*.test.ts`; workerd runs the same
-files except `*.node.test.ts`. Each Node-only file starts with
-`// Node-only: <reason>`; `check:changes` checks Vitest collection and reasons. Cite the `INV-n`
-IDs a test enforces in its title; `invariants.node.test.ts` guards evidence rules. The full Node run's coverage
-reporter rejects missing and unknown IDs using executed tests. Spec coverage
-references exact executed test titles and paths; `spec-coverage.node.test.ts` checks its
-structure, and the reporter requires those cases to pass.
+files except `*.node.test.ts`, each of which starts with `// Node-only: <reason>`;
+`check:changes` checks Vitest collection and reasons. Cite the `INV-n` IDs a
+test enforces in its title. The full Node run's coverage reporter rejects
+missing and unknown IDs, and spec coverage titles that no passing test matches.
 
 ## Conventions
 
@@ -100,24 +103,22 @@ structure, and the reporter requires those cases to pass.
   `type: added|changed|fixed|removed|security`, optional `breaking: true`,
   then `---`, a blank line, and entry text without an outer list marker.
   Use a unique filename; keep released CHANGELOG sections unchanged.
-- Run `npm run providers:check` on provider work. It reads public contracts,
-  never credentials. Findings become human-reviewed issues; nothing files itself.
-- At release, bump `package.json` and write the narrative: what changes, breaks,
-  or deployments can ignore. The preserved draft is `release-notes/0.29.0.md`.
-  Run `npm run changelog:assemble -- --version <version> --narrative <file>`
-  (optional `--date YYYY-MM-DD`); it groups Added/Changed/Fixed/Removed/Security
-  entries and deletes consumed fragments. Commit CHANGELOG.md and all files
-  under `.changes/` first; assembly requires clean, tracked inputs. After a failure
-  or interruption, run `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
-  Review and commit the assembled changelog and deletions, run
-  `npm run release:check`, tag `v<version>`, and publish a GitHub Release.
+
+## Skills
+
+Read the matching skill before that work: [add-provider](./.claude/skills/add-provider/SKILL.md)
+(including `providers:check`), [add-spec-feature](./.claude/skills/add-spec-feature/SKILL.md),
+[release](./.claude/skills/release/SKILL.md), and [triage-ci](./.claude/skills/triage-ci/SKILL.md).
 
 ## Agent policy
 
-Build and review with Sol through T3 `delegate_task` (`codex`, `gpt-6.1-sol`); use Opus sparingly for orchestration or final judgment.
-Every PR gets an independent Sol review before merge; builders do not review
-their own PRs. Parallel builders use separate worktrees off `origin/main`.
-One phase checklist item is one PR. Reference its phase issue in the body.
-Under #703's operating mode the orchestrator merges clean, green PRs by squash,
-uses the PR title as the commit summary, and deletes the branch. Deployments,
-advisory publication, and npm publishing wait until the end of Phase 5.
+Opus builds the important work (features, refactors, security fixes, anything
+with design weight) through T3 `delegate_task` (`claudeAgent`, `claude-opus-5-5`).
+GPT-6.1-Sol (`codex`, `gpt-6.1-sol`) does every independent review (xhigh for
+security) and grunt work: rebases, mechanical conversions, docs compression,
+small review-finding fixes. Builders never review their own PRs. Parallel
+builders use separate worktrees off `origin/main`. One phase checklist item is
+one PR; reference its phase issue in the body. Under #703 the orchestrator
+squash-merges clean, green PRs with the PR title as summary and deletes the
+branch. Deployments, advisory publication, and npm publishing wait until the
+end of Phase 5.
