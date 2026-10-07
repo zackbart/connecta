@@ -519,11 +519,18 @@ the provider:
 
 The retirement itself acts only on the epoch the decision inspected: it is
 checked before anything is touched, and the new epoch is activated with a
-compare-and-set where the store offers one (a recheck just before the write on
-an eventually consistent store such as Workers KV). If another reset has
-replaced that epoch — a restart that has since completed its own consent — the
-flow is abandoned with nothing touched rather than retiring a grant it never
-looked at.
+compare-and-set where the store offers one. If another reset has replaced that
+epoch — a restart that has since completed its own consent — the flow is
+abandoned with nothing touched rather than retiring a grant it never looked
+at. That guarantee holds only with the compare-and-set. An eventually
+consistent store such as Workers KV has none, so the retirement rechecks just
+before its write, which narrows the race without closing it — and KV's stale
+reads, which can last a minute or more, widen it. A retirement that passes its
+recheck can still land after a restart completes, replacing that restart's
+epoch: its grant becomes unreachable, costing one more consent, and its
+records are orphaned, so a later Disconnect leaves them stored. Nothing is
+sent anywhere by it; the orphaned records are tracked in
+[#697](https://github.com/zackbart/connecta/issues/697).
 
 The flow is then bound to the epoch that decision leaves: every read and
 write it makes names that epoch and never follows the live one. A write a
@@ -532,11 +539,15 @@ failure it is, so a start never reads back another flow's consent URL and a
 callback never reports a grant it could not store; a start reads its consent
 URL from the epoch its own connect attempt began in. A callback is
 bound to the epoch its consent was written in, which its state check
-captured, and decides nothing about the grant there. A flow whose epoch a
-later reset has replaced fails with a retryable `unavailable` — "authorization
-changed while this request was in flight; try again" — having sent nothing,
-retired nothing, and returned no consent URL; a callback in that position
-fails before its code is redeemed.
+captured, and decides nothing about the grant there. A flow that
+finds its epoch replaced by a later reset fails with a retryable `unavailable`
+— "authorization changed while this request was in flight; try again" —
+retiring nothing and returning no consent URL. A callback whose epoch was
+already replaced when it began fails before its code is redeemed. One replaced
+while the callback is reading its verifier can still redeem the code at the
+original, trusted token endpoint before the failure is noticed at the token
+write; fencing the exchange itself is
+[#697](https://github.com/zackbart/connecta/issues/697).
 
 So a grant from before v0.9.0 is retired on first use, and the connection is
 authorized once more. v0.9.0 through v0.28.1 bound such a grant to whatever its

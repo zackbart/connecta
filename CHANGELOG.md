@@ -32,8 +32,10 @@ secret rotated at the provider, as the advisory itself advises. Nothing in
 configuration changes. What else a deployment may notice: an OAuth flow that a
 concurrent restart or disconnect overtakes now fails with a retryable
 `unavailable` — "authorization changed while this request was in flight; try
-again" — rather than reading on into the newer authorization; a callback in
-that position fails before its code is redeemed. A refresh whose rotated
+again" — rather than reading on into the newer authorization; a callback
+whose epoch was already replaced when it began fails before its code is
+redeemed (one replaced mid-callback is
+[#697](https://github.com/zackbart/connecta/issues/697)). A refresh whose rotated
 tokens cannot be stored fails as a retryable outage instead of
 `auth_required`, and `/mcp` bodies stay
 bounded by the host, not by the 4 MiB default the server SDK adopted. Two
@@ -107,11 +109,16 @@ nor the 2026-07-28 claim is served exactly as before (#687).
   and retires it there if any credential is unstamped, the stamps disagree, or
   they disagree with the server the epoch's discovery names. The flow is then
   bound to the resulting epoch: its reads and writes never follow the live
-  generation, and a flow whose epoch was overtaken fails cleanly, sends
-  nothing, retires nothing, and returns no consent URL. The retirement acts
-  only on the epoch the decision inspected, activating its replacement with a
-  compare-and-set where the store has one, so a stale decision never retires a
-  grant a later restart completed. A write a reset overtakes after its epoch
+  generation, and a flow that finds its epoch overtaken fails cleanly,
+  retires nothing, and returns no consent URL. The retirement acts only on the
+  epoch the decision inspected, activating its replacement with a
+  compare-and-set where the store has one, so there a stale decision never
+  retires a grant a later restart completed. On a store without one, such as
+  Workers KV, a recheck just before the write narrows that race without
+  closing it: a stale retirement can still replace a restart's completed
+  epoch, costing that grant one more consent and orphaning its records, which
+  a later Disconnect leaves stored. Nothing is sent anywhere by it; see
+  [#697](https://github.com/zackbart/connecta/issues/697). A write a reset overtakes after its epoch
   check is cleaned up and reported as failed, so a start never hands out
   another flow's consent URL and a callback never reports a grant it could not
   store. A read for a server the
