@@ -36,13 +36,13 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
-          node -e '
+          node <<'NODE'
             const version = require("./package.json").version;
             const expected = `v${version}`;
             if (process.env.RELEASE_TAG !== expected) {
               throw new Error(`Release tag ${process.env.RELEASE_TAG} must equal ${expected}`);
             }
-          '
+          NODE
       - run: npm ci
       - name: Read installed Playwright version
         id: playwright
@@ -51,7 +51,7 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
-      # Publishing always runs Chromium, including npm publish's prepack check.
+      # Publishing always runs Chromium once, as part of release:check.
       - name: Install Chromium and system dependencies
         id: install
         timeout-minutes: 5
@@ -62,4 +62,6 @@ jobs:
         timeout-minutes: 5
         run: npm run test:browser:install -- --with-deps
       - run: npm run release:check
-      - run: npm publish
+      # release:check built dist/ and checked the package. Keep local prepack,
+      # but do not rerun it when publishing this validated tree.
+      - run: npm publish --ignore-scripts

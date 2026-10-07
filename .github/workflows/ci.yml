@@ -27,21 +27,13 @@ jobs:
         run: |
           browser=true
           if [[ "$EVENT_NAME" == pull_request ]]; then
-            browser=false
             git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/browser-paths"
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                src/operator-ui/*|src/artifacts/*|src/routes/ui*|src/ui.ts|src/page-styles.ts|scripts/build-operator-ui.mjs|playwright.config.*|test/browser/*|package.json|package-lock.json|.github/workflows/ci.yml|.github/workflows/publish.yml)
-                  browser=true
-                  break
-                  ;;
-              esac
-            done < "$RUNNER_TEMP/browser-paths"
+            browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/browser-paths")
           fi
           echo "browser=$browser" >> "$GITHUB_OUTPUT"
 
-  # Keep the existing required-check name. Every PR runs the non-browser checks.
-  check:
+  # Every PR runs the non-browser checks without installing Chromium.
+  core:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -86,3 +78,25 @@ jobs:
         timeout-minutes: 5
         run: npm run test:browser:install -- --with-deps
       - run: npm run test:browser
+
+  # Keep the existing check name as the gate for all three jobs, even on failure.
+  check:
+    needs: [core, changes, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all checks to pass
+        env:
+          CORE_RESULT: ${{ needs.core.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          BROWSER_REQUIRED: ${{ needs.changes.outputs.browser }}
+        run: |
+          if [[ "$CORE_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
+             [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]]; then
+            echo "All required checks passed"
+          else
+            echo "Core=$CORE_RESULT changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED"
+            exit 1
+          fi

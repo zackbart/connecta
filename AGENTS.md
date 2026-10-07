@@ -40,11 +40,16 @@ Chromium. Run `npm run test:browser:install` once per machine. `prepack` still
 runs the full `check`; `release:check` adds security and package smoke checks.
 Use `release:check` when touching packaging, dependencies, or exports.
 
-CI runs `release:check:core` on every pull request and push to `main`, without
-installing Chromium. A separate `browser` job runs on UI, artifact, browser-test,
-dependency, or CI-workflow changes; other PRs report it as skipped rather than
-leaving a pending required check. Both run on `main`, and publishing runs the
-full `release:check`. The exact browser paths live in `.github/workflows/ci.yml`.
+CI's `core` job runs `release:check:core` on every pull request and push to
+`main`, without installing Chromium. The `browser` job skips a PR only when
+every changed path is in the safe set in `scripts/ci-browser-paths.sh`:
+providers and their tests, drift scripts, documentation, decisions, specs,
+Markdown at any depth, changesets, and eval. Everything else runs browser tests;
+every push to `main` does too. The always-running `check` gate requires core and
+path detection to succeed, plus browser success or an intentional safe-path skip.
+Failures and cancellations fail the gate. Publishing runs the full
+`release:check` once, which builds `dist/`, then `npm publish --ignore-scripts`
+uses that validated tree without rerunning local `prepack`.
 
 ## The map
 
