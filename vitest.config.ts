@@ -1,10 +1,9 @@
-import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { buildSync } from "esbuild";
-import { TEST_DIRECTORY, TEST_INCLUDE, NODE_ONLY_EXCLUDE } from "./scripts/test-suites.mjs";
+import { TEST_INCLUDE, NODE_ONLY_EXCLUDE } from "./scripts/test-suites.mjs";
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
 // Worker project it executes inside workerd with the native Loader binding.
@@ -28,15 +27,9 @@ function executorBundles() {
   };
 }
 
-// Filename convention: Node runs every suite; workerd excludes *.node.test.ts.
-// Derive the coverage reporter's complete-run inventory from the same directory.
-const NODE_SUITES = readdirSync(new URL(`./${TEST_DIRECTORY}/`, import.meta.url), { recursive: true })
-  .filter((file): file is string => typeof file === "string" && file.endsWith(".test.ts"))
-  .map((file) => `${TEST_DIRECTORY}/${file.replaceAll("\\", "/")}`);
-
 export default defineConfig({
   test: {
-    reporters: ["default", new CoverageReporter(NODE_SUITES)],
+    reporters: ["default", new CoverageReporter()],
     projects: [
       {
         // The Node template is a consumer project: it imports the package by

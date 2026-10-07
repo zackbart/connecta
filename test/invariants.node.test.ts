@@ -105,4 +105,55 @@ describe("principles backed by tests", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("fails the unfiltered coverage gate despite excluded suites and accepts explicit filters", async () => {
+    const root = mkdtempSync(join(tmpdir(), "connecta-coverage-collection-"));
+    const active = join(root, "test/active.test.ts");
+    const runGate = (mode = "full") => promisify(execFile)(process.execPath, [
+      "--import", "tsx", fileURLToPath(new URL("./fixtures/coverage-gate-runner.ts", import.meta.url)), root, mode,
+    ], { timeout: 20_000 });
+    try {
+      mkdirSync(join(root, "test/dist"), { recursive: true });
+      mkdirSync(join(root, "spec"));
+      writeFileSync(join(root, "PRINCIPLES.md"), "- **INV-9: One attempt per write.**\n");
+      writeFileSync(join(root, "spec/coverage.json"), JSON.stringify({ features: [
+        { tests: [{ file: "test/active.test.ts", title: "INV-9: evidence" }] },
+      ] }));
+      writeFileSync(active, 'import { it } from "vitest"; it("real test", () => {});');
+      writeFileSync(join(root, "test/other.test.ts"),
+        'import { it } from "vitest"; it("other test", () => {});');
+      const missingEvidence = {
+        stderr: expect.stringContaining("INV-9 has no passing enforcing test"),
+      };
+      await expect(runGate()).rejects.toMatchObject(missingEvidence);
+      writeFileSync(join(root, "test/dist/x.test.ts"),
+        'import { it } from "vitest"; it("INV-9: evidence", () => {});');
+      await expect(runGate()).rejects.toMatchObject(missingEvidence);
+      await expect(runGate()).rejects.toMatchObject({
+        stderr: expect.stringContaining("no passing test matches the coverage reference"),
+      });
+      for (const mode of ["file", "name", "project", "shard"]) {
+        await expect(runGate(mode)).resolves.toMatchObject({
+          stderr: "", stdout: expect.stringContaining("explicit partial run"),
+        });
+      }
+      // Ordinary runtime skips do not count as an explicit focus filter.
+      writeFileSync(active, 'import { it } from "vitest"; it("INV-9: evidence", (ctx) => ctx.skip());');
+      await expect(runGate()).rejects.toMatchObject(missingEvidence);
+      writeFileSync(active, 'import { it } from "vitest"; it.only("INV-9: evidence", () => {});');
+      await expect(runGate()).rejects.toMatchObject({
+        stderr: expect.stringContaining("Unexpected .only modifier"),
+      });
+      writeFileSync(active, 'import { it } from "vitest"; it("INV-9: evidence", () => {});');
+      await expect(runGate("omit")).rejects.toMatchObject({
+        stderr: expect.stringContaining("test/other.test.ts: collected suite did not execute in an unfiltered run"),
+      });
+      await expect(runGate()).resolves.toMatchObject({
+        stderr: "", stdout: expect.stringContaining("1 invariants and 1 spec references backed by passing tests"),
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
 });
