@@ -6,7 +6,7 @@ let worker: Unstable_DevWorker;
 beforeAll(async () => {
   worker = await unstable_dev(fileURLToPath(new URL("./fixtures/worker-budget/index.ts", import.meta.url)), {
     config: fileURLToPath(new URL("./fixtures/worker-budget/wrangler.jsonc", import.meta.url)),
-    local: true, port: 0, inspectorPort: 0, logLevel: "error",
+    local: true, persist: false, port: 0, inspectorPort: 0, logLevel: "error",
     experimental: { disableExperimentalWarning: true, disableDevRegistry: true, watch: false },
   });
 }, 60_000);
