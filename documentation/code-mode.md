@@ -3,11 +3,10 @@
 The `execute_code` contract: capabilities, results, failures, retries, limits,
 and activity. Specified in prose first, implemented second.
 
-Two executors implement it: QuickJS in a child process on Node, and
-`workerExecutor()` from `@zackbart/connecta/worker` around upstream
-`DynamicWorkerExecutor` on Workers. Divergence is a bug unless explained in
-[Executor exceptions](#executor-exceptions); a third executor is implementable
-from this document alone.
+Two executors implement it: QuickJS in a Node child process and `workerExecutor()`
+from `@zackbart/connecta/worker` around upstream `DynamicWorkerExecutor` on Workers.
+Divergence is a bug unless explained in [Executor exceptions](#executor-exceptions);
+a third executor is implementable from this document alone.
 [`ethos.md`](../ethos.md) carries the verdicts behind the shape,
 [`meta-tools.md`](./meta-tools.md) owns the top-level tool contract, and clause
 identifiers (`A1`, `E3`, …) are stable and cited by [Verification](#verification).
@@ -50,6 +49,10 @@ are two active runs, eight queued runs, and a five-second queue deadline, settab
 through `admission`. Lease release disposes RPC and loader handles independently
 of guest settlement. `bindings`, `modules`, or `globalOutbound` violate `P2`.
 The [Worker example](../examples/worker/README.md#code-mode) has the full setup.
+
+Replace `import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
+`import { workerExecutor } from "@zackbart/connecta/worker";` and use the wiring above.
+Keep the optional peer. Direct upstream construction and subclasses now throw at boot.
 
 ## What an executor must implement
 
@@ -892,14 +895,11 @@ cannot intercept a frame first. A mismatched frame is ordinary untyped prose.
 
 ## Verification
 
-Every clause has a test. `test/guest-contract-cases.ts` holds the case table,
-written once and run twice: `test/guest-api-contract-quickjs.test.ts` runs it on
-the Node QuickJS executor; `test/guest-api-contract.test.ts` uses the Worker
-adapter around upstream `DynamicWorkerExecutor` with a real Miniflare Worker
-Loader in workerd, alongside the executor-independent clauses. Rows naming `test/guest-api-contract.test.ts` are
-covered by both arms, and each case's title carries its clauses. Two arms
-passing one table is also the check on the executor duties above, with
-`test/codemode-compat.test.ts` holding the upstream `Executor` shape assignable.
+Every clause has a test. `test/guest-contract-cases.ts` runs on QuickJS in
+`test/guest-api-contract-quickjs.test.ts` and on the Worker adapter with a real
+Miniflare Loader in workerd in `test/guest-api-contract.test.ts`, alongside
+executor-independent clauses. Titles name clauses; rows naming the latter run
+in both arms. `test/codemode-compat.test.ts` pins upstream shape compatibility.
 
 | Clauses | Test |
 | --- | --- |

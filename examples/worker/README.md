@@ -329,6 +329,16 @@ settled. It serves the seven-tool surface. Do not add `bindings`, `modules`, or
 owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).
 
+When upgrading an existing deployment, replace
+`import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
+`import { workerExecutor } from "@zackbart/connecta/worker";` and use
+`executor: workerExecutor({ loader: env.LOADER })` instead of
+`executor: new DynamicWorkerExecutor({ loader: env.LOADER })`. Keep
+`@cloudflare/codemode` installed as the optional peer. Direct upstream
+construction now throws at boot with this migration instruction; its private
+loader cannot release request-owned handles through Connecta's generic executor
+wrapper.
+
 ## Strongly consistent storage (optional)
 
 `KVStorage` has an optional atomic `compareAndSet`, for a subsystem that must

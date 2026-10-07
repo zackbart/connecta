@@ -453,7 +453,10 @@ export interface ExecutorProvider {
 /**
  * Runs model-written JavaScript in a sandbox where the ONLY capabilities are
  * the provider functions — no network, filesystem, env, or timers. Structurally
- * compatible with `DynamicWorkerExecutor` from `@cloudflare/codemode` (Workers);
+ * compatible with the upstream `DynamicWorkerExecutor` result/provider seam;
+ * Workers must use `workerExecutor()` from "@zackbart/connecta/worker" so each
+ * run owns and releases its Worker Loader and RPC handles. Direct upstream
+ * construction is rejected by `createConnecta()`.
  * `quickJsExecutor()` from "@zackbart/connecta/quickjs" is the Node implementation.
  * NEVER back this with an unsandboxed eval — the code is untrusted.
  */

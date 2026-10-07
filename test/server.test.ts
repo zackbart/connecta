@@ -1672,19 +1672,19 @@ describe("server open routes", () => {
   });
 
   it("/health reports the configured sandbox, sanitized and bounded", async () => {
-    class DynamicWorkerExecutor {
+    class CustomExecutor {
       async execute() {
         return { result: null };
       }
     }
     const named = createTestConnecta({
       connectors: [calcApi()],
-      executor: new DynamicWorkerExecutor(),
+      executor: new CustomExecutor(),
     });
     const namedBody = (await (
       await named.fetch(new Request(`${BASE}/health`))
     ).json()) as any;
-    expect(namedBody.executor).toEqual({ name: "DynamicWorkerExecutor" });
+    expect(namedBody.executor).toEqual({ name: "CustomExecutor" });
 
     const hostile = createTestConnecta({
       connectors: [calcApi()],

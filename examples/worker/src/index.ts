@@ -75,6 +75,7 @@ function build(env: Env) {
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage,
+    // Required adapter owns each run's handles; direct upstream construction throws.
     executor: workerExecutor({ loader: env.LOADER }),
     auth: [
       // Access owns admission policy. A human identity may use MCP and the

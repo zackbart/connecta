@@ -24,6 +24,23 @@ const unsafeCreateConnecta =
   createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
+  it("preserves custom executors, including the adapter's sandbox display name", async () => {
+    class CustomExecutor {
+      readonly name = "DynamicWorkerExecutor";
+      async execute() { return { result: null }; }
+    }
+    for (const executor of [
+      new CustomExecutor(),
+      { name: "DynamicWorkerExecutor", execute: async () => ({ result: null }) },
+      { execute: async () => ({ result: null }), async acquire() {
+        return { waitMs: 0, execute: async () => ({ result: null }), release() {} };
+      } },
+    ]) {
+      const app = createConnecta({ connectors: [], executor, logger: "silent" });
+      await app.close();
+    }
+  });
+
   it("validates result stash limits and accepts zero to disable stashing", async () => {
     for (const field of ["maxStashBytes", "maxStashEntries"]) {
       for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "64", null]) {

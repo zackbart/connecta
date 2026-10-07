@@ -101,11 +101,13 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     const fileStorage = join(SRC, "storage", "file.ts");
     const quickJsExecutor = join(SRC, "executors", "quickjs.ts");
     const quickJsChild = join(SRC, "executors", "quickjs-child.ts");
+    const workerExecutor = join(SRC, "worker.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
     expect(graph.has(fileStorage)).toBe(false);
     expect(graph.has(quickJsExecutor)).toBe(false);
     expect(graph.has(quickJsChild)).toBe(false);
+    expect(graph.has(workerExecutor)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
     for (const file of ["ui.ts", "operator-ui/generated.ts", "credentials.ts", "activity.ts", "auth/bearer.ts", "artifacts.ts", "access-tokens.ts", "routes/access-tokens.ts"]) expect(graph.has(join(SRC, file)), file).toBe(false);
     const withUi = importGraph(join(SRC, "ui.ts"));

@@ -91,16 +91,15 @@ async function doctorAgainst(
 
 describe("connecta doctor's executor line", () => {
   it("names the sandbox the deployment actually runs", async () => {
-    // The Workers shape, structurally: a class-named executor that is not
-    // QuickJS and never claimed to be.
-    class DynamicWorkerExecutor implements Executor {
+    // A custom class-named sandbox, independent of either built-in executor.
+    class CustomExecutor implements Executor {
       async execute() {
         return { result: 42 };
       }
     }
-    const line = await doctorAgainst(new DynamicWorkerExecutor());
+    const line = await doctorAgainst(new CustomExecutor());
     expect(line).toBe(
-      "Connecta doctor passed: 1 connector(s), DynamicWorkerExecutor " +
+      "Connecta doctor passed: 1 connector(s), CustomExecutor " +
         "executed, prescribed seven-tool surface.",
     );
     expect(line).not.toContain("QuickJS");

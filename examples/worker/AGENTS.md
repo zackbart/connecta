@@ -27,6 +27,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
   broadening the allowlist to an entire origin.
 - Keep `workerExecutor({ loader: env.LOADER })` loader-only. Do not
   add bindings, modules, or outbound access to generated code.
+  Import it from `@zackbart/connecta/worker`; direct upstream
+  `new DynamicWorkerExecutor()` construction throws at boot. Keep the
+  `@cloudflare/codemode` optional peer installed.
 - Keep credentials in Worker secrets. Never commit credential values, Access
   service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`.
 - Add application logic only inside deliberate `api()` connector handlers.

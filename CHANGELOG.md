@@ -80,8 +80,13 @@ before.
 Host-call budget exhaustion now ends a program with one typed error and call
 counts. Calls still awaiting connector admission cannot dispatch after the run
 ends; already dispatched exempt writes drain and retain their outcome accounting.
-Worker deployments use `workerExecutor({ loader })` from
-`@zackbart/connecta/worker` instead of constructing the upstream executor directly.
+**Breaking for Worker deployments:** `createConnecta()` now rejects direct
+`DynamicWorkerExecutor` construction at boot. Replace
+`import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
+`import { workerExecutor } from "@zackbart/connecta/worker";`, and replace
+`executor: new DynamicWorkerExecutor({ loader: env.LOADER })` with
+`executor: workerExecutor({ loader: env.LOADER })`. Keep the optional
+`@cloudflare/codemode` peer installed.
 The adapter disposes request-owned RPC and loader handles without waiting for a
 guest deadline that may never settle after the response ends. Node deployments
 need no configuration change.
@@ -432,6 +437,10 @@ need no configuration change.
   clients only. Clerk browser session tokens authenticate operator routes only.
   Rejections log fixed reason codes, and the MCP `401` metadata challenge is
   unchanged.
+- Reject direct upstream `DynamicWorkerExecutor` construction, including
+  subclasses, before creating runtime resources. The error names the required
+  `/worker` import and configuration migration; custom executors remain
+  supported (#704).
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server

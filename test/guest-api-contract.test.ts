@@ -10,6 +10,7 @@
 // carry the file.
 
 import { describe, expect, it } from "vitest";
+import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
 import {
   guardExecuteResultValue,
@@ -201,6 +202,26 @@ describe("guest API contract (executor-independent)", () => {
 describe.skipIf(!workerExecutor)(
   "guest API contract (Dynamic Worker executor)",
   () => {
+    it("rejects direct upstream construction before loading a Worker and names the migration", async () => {
+      const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
+      const loader = { load() { throw new Error("Construction must not load a Worker."); } } as unknown as WorkerLoader;
+      class LegacySubclass extends DynamicWorkerExecutor {}
+      for (const executor of [
+        new DynamicWorkerExecutor({ loader }),
+        new LegacySubclass({ loader }),
+      ]) {
+        const construct = () => createConnecta({ connectors: [], executor, logger: "silent" });
+        for (const fragment of [
+          "DynamicWorkerExecutor",
+          "request-owned",
+          'import { workerExecutor } from "@zackbart/connecta/worker";',
+          "executor: workerExecutor({ loader: env.LOADER })",
+        ]) expect(construct).toThrow(fragment);
+      }
+      const app = createConnecta({ connectors: [], executor: required(await loadWorkerExecutor()), logger: "silent" });
+      await app.close();
+    });
+
     it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
       await checkQueuedWriteAtExhaustion(required(workerExecutor));
     });
