@@ -71,8 +71,9 @@ const connecta = createConnecta({
     // clerkAuth({
     //   publishableKey: clerkPublishableKey,
     //   secretKey: clerkSecretKey,
-    //   // OAuth clients dedicated to this deployment; [] requires resource-bound JWTs.
-    //   allowedOAuthClientIds: ["your-connecta-client-id"],
+    //   // Enable Clerk aud_claim_enabled; hosts request the MCP URL as resource.
+    //   // Bound JWT and opaque tokens are the default.
+    //   // allowedOAuthClientIds: [],
     //   publicUrl,
     //   // Restrict who may sign in — or use `gate` for anything a domain
     //   // cannot express. Absent, every authenticated Clerk user is admitted.

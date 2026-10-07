@@ -34,7 +34,7 @@ import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 createConnecta({
   storage,
   accessTokens: accessTokens(storage),
-  auth: clerkAuth({ publishableKey, secretKey, allowedOAuthClientIds }),
+  auth: clerkAuth({ publishableKey, secretKey }),
   ui: operatorUi(),
   identity: {
     connectorAccess, // Keep the existing principal and token-id grant rules.
@@ -222,7 +222,7 @@ createConnecta({
         accept: (id) => /^[a-z0-9._%+-]+@example\.com$/.test(id),
       },
     }),
-    clerkAuth({ publishableKey, secretKey, allowedOAuthClientIds }),
+    clerkAuth({ publishableKey, secretKey }),
   ],
   identity: { connectorAccess },
   connectors, executor,
@@ -324,7 +324,7 @@ that sees one tool, both over the same credentials and catalog cache.
 createConnecta({
   auth: [
     bearerToken(botSecret, { subjectId: "calendar-bot" }),
-    clerkAuth({ publishableKey, secretKey, allowedOAuthClientIds }),
+    clerkAuth({ publishableKey, secretKey }),
   ],
   pools: {
     support: {
@@ -705,50 +705,82 @@ webhooks live outside connecta and need their own Access routing policy. The
 
 ## Clerk OAuth tokens and operator sessions
 
-On `/mcp` and `/mcp/<pool>`, `clerkAuth` accepts only Clerk OAuth access
-tokens. A JWT's `aud` or `resource` claim, when present, must contain the
-canonical resource URL published in that endpoint's protected-resource
-metadata. If both claims are present, both must match. A token for `/mcp`
-does not authorize `/mcp/support`, or the reverse. Configure `publicUrl` when
-requests reach the deployment through an internal origin.
-
-Clerk's JWT and opaque OAuth tokens are verified by `@clerk/backend`. In
-3.12.0, the authenticated OAuth object exposes `clientId` and `scopes`, but
-neither audience nor resource. Connecta reads JWT binding claims from the exact
-token the SDK verified. Opaque verification returns no binding to check, and
-Clerk's documented OAuth configuration provides no RFC 8707 resource setting.
-See [Clerk OAuth verification](https://clerk.com/docs/guides/configure/auth-strategies/oauth/verify-oauth-tokens)
-and [OAuth configuration](https://clerk.com/docs/guides/configure/auth-strategies/oauth/how-clerk-implements-oauth).
-
-Every Clerk deployment must now explicitly configure `allowedOAuthClientIds`:
+On `/mcp` and `/mcp/<pool>`, `clerkAuth` requires resource-bound Clerk OAuth
+tokens by default, both JWT and opaque. Verified `aud` or `resource` must
+contain the endpoint's exact canonical URL from protected-resource metadata.
+If both claims are present, both must match. Trailing slashes, case, queries,
+and fragments are not normalized. `/mcp` and `/mcp/support` are distinct
+resources. Set `publicUrl` behind an internal origin.
 
 ```ts
-clerkAuth({
-  publishableKey,
-  secretKey,
-  publicUrl: "https://connecta.example.com",
-  allowedOAuthClientIds: ["your-connecta-client-id"],
-});
+clerkAuth({ publishableKey, secretKey,
+  publicUrl: "https://connecta.example.com" });
 ```
 
-Use exact client IDs from Clerk's OAuth applications, dedicated to this
-deployment. An audience-less JWT or an opaque token must name one of those
-clients. An allowlisted client never overrides a present, mismatched binding.
-This fallback binds admission to the configured clients, not to an RFC 8707
-resource indicator. Do not share these clients with other resource servers.
-The list applies to all pools; pool and identity grants still decide access.
-Dynamically registered clients need their IDs added before they can use
-unbound tokens. Built-in Clerk profile scopes do not identify an MCP resource,
-and `scopes` remains metadata, not an admission rule.
+### Enable resource audiences in Clerk
 
-Use `allowedOAuthClientIds: []` to accept only resource-bound OAuth JWTs, or
-when Clerk provides operator sign-in and another adapter provides MCP auth.
-Omitting the option throws at construction with configuration instructions.
-Clerk session tokens authenticate operator routes and downstream OAuth browser
-callbacks only; they never authenticate MCP requests. Operator sessions retain
-the deployment-origin `azp` check. Rejected MCP tokens still receive a `401`
-Bearer challenge with the endpoint's `resource_metadata` URL, as required by
+Enable `aud_claim_enabled: true` in Clerk's instance OAuth application
+settings. The [Backend API contract](https://github.com/clerk/openapi-specs/blob/f10fb179f42fc591f9d6f0221c089dd19483fd69/bapi/2026-05-12.yml)
+defines `GET` and `PATCH /v1/instance/oauth_application_settings` on
+`https://api.clerk.com`. Patch the setting and read it back to confirm.
+`oauth_jwt_access_tokens` separately selects JWT or opaque format; both work.
+
+For `/mcp`, `/.well-known/oauth-protected-resource` advertises
+`resource: "https://connecta.example.com/mcp"` and the Clerk Frontend API
+origin in `authorization_servers`. Pool metadata lives at
+`/.well-known/oauth-protected-resource/mcp/<pool>` and advertises that pool's
+exact URL. Connecta forwards Clerk's authorization-server metadata.
+
+MCP hosts send that URL as the RFC 8707 `resource` parameter in standard OAuth
+authorization and token requests. Clerk's [Frontend API contract](https://github.com/clerk/openapi-specs/blob/f10fb179f42fc591f9d6f0221c089dd19483fd69/fapi/2026-05-12.yml)
+supports it at authorization and token exchange. Exchange and refresh retain
+the grant's resource when omitted; if supplied, it must match. Enable the
+registration methods your hosts use, such as DCR or [Client ID Metadata Documents](https://clerk.com/docs/guides/configure/auth-strategies/oauth/client-id-metadata-documents).
+Claude, ChatGPT, Claude Code, Codex, and Cursor should use their standard MCP
+OAuth flow. Bound tokens require no connecta client-ID list.
+
+When migrating, enable audience issuance, reconnect for a new resource-bound
+grant, and verify:
+
+1. The endpoint's protected-resource metadata advertises the exact public MCP
+   URL as `resource`, including any pool suffix.
+2. The host sends that `resource` at authorization and exchange. Inspect the
+   new token locally: JWT claims or Clerk's opaque-token verification response
+   from `POST /v1/oauth_applications/access_tokens/verify` must contain that URL
+   in `aud`. Keep tokens out of logs and reports.
+3. With `allowedOAuthClientIds` omitted or `[]`, MCP initialization succeeds at
+   that URL and a different endpoint's token receives `401`. Refresh preserves
+   the audience and operator sign-in works. Repeat for each host and pool.
+
+Clerk's SDK verifies both formats. Connecta reads the authenticated JWT's
+claims. SDK 3.12.0 drops opaque `aud`, so connecta makes one additional Backend
+API verification request and reads the raw response. Its subject and client
+must agree with the SDK, and it must report an unrevoked, unexpired token.
+The extra call follows request cancellation, times out after ten seconds,
+caches no token or audience, and denies admission on failure.
+
+### Explicit fallback for unbound tokens
+
+`allowedOAuthClientIds: ["your-connecta-client-id"]` admits verified tokens
+with no audience/resource claim from exact client IDs dedicated to this
+deployment. Never share these clients with another resource server. A present
+malformed or mismatched binding is rejected even for an allowlisted client.
+The list does not restrict correctly bound tokens. It applies to every pool;
+identity and pool grants still narrow access. Profile scopes do not identify a
+resource, and `scopes` remains metadata, not an admission rule.
+
+Each new DCR registration gets a new client ID and needs an operator update
+for this fallback. Hosts may cache registrations, but the list is impractical
+for standard onboarding. A CIMD client identifies the host, not the deployment
+resource. Prefer resource audiences with `allowedOAuthClientIds` omitted or `[]`.
+
+Clerk session tokens authenticate operator routes and browser OAuth callbacks
+only, with the deployment-origin `azp` check. MCP rejections retain the `401`
+Bearer challenge and endpoint `resource_metadata` URL required by
 [MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#token-handling).
+Authentication logs contain fixed codes such as `oauth_binding_mismatch`,
+`oauth_client_not_allowed`, and `oauth_verification_failed`, never tokens,
+client IDs, claimed audiences, or upstream error text.
 
 ## Clerk configuration is checked at construction
 
