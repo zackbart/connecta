@@ -148,8 +148,10 @@ export function kvArtifactStore(
 
     async putRun(id, run) {
       const started = Date.parse(run.startedAt);
-      const key = `${runPrefix(id)}${pad(Number.isFinite(started) ? started : 0, 15)}:${run.runId}`;
-      await kv.set(key, JSON.stringify(run));
+      await kv.set(
+        layout.run(id, pad(Number.isFinite(started) ? started : 0, 15), run.runId),
+        JSON.stringify(run),
+      );
       const all = await keys(runPrefix(id));
       const excess = all.length - ARTIFACT_RUNS_RETAINED;
       if (excess > 0) {

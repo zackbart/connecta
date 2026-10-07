@@ -229,6 +229,8 @@ export const artifactKeys = {
     head: (id: string) => `${root}head:${id}`,
     versionPrefix: (id: string, stream: string) => `${root}ver:${id}:${stream}:`,
     runPrefix: (id: string) => `${root}run:${id}:`,
+    /** One run under `runPrefix(id)`; `order` sorts runs oldest first. */
+    run: (id: string, order: string, runId: string) => `${root}run:${id}:${order}:${runId}`,
     blob: (key: string) => `${root}blob:${key}`,
     scanCursor: `${root}refresh:scan-cursor`,
   }),

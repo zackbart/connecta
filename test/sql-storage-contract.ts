@@ -166,15 +166,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
 
   it("upgrades a 0.28 activity table and derives friction for rows written before its column", async () => {
     const db = await open();
-    // The original example table: no actor_namespace, friction, or approval.
-    await db.exec(`CREATE TABLE tool_call_activity (
-      id TEXT PRIMARY KEY, occurred_at_ms INTEGER NOT NULL,
-      request_id TEXT NOT NULL, actor_kind TEXT NOT NULL, actor_id TEXT,
-      connector_id TEXT NOT NULL, tool_name TEXT NOT NULL, source TEXT NOT NULL,
-      outcome TEXT NOT NULL, duration_ms INTEGER NOT NULL, attempts INTEGER NOT NULL,
-      error_code TEXT, server_name TEXT NOT NULL, server_version TEXT NOT NULL,
-      deployment_id TEXT
-    )`);
+    await db.exec(LEGACY_ACTIVITY_TABLE);
     const codes = ["unknown_tool", "invalid_args", "auth_required", "not_found", "rate_limited"];
     for (const [index, code] of codes.entries()) {
       await db.exec(
@@ -201,6 +193,34 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 1 })).events[0]?.actor.namespace).toBe("https://clerk.example");
   });
 
+  it("upgrades a 0.28 activity table from many first uses at once", async () => {
+    const db = await open();
+    await db.exec(LEGACY_ACTIVITY_TABLE);
+    // Separate stores stand in for isolates or processes: each reads the old
+    // columns on first use, and all of them try to add the same ones.
+    const stores = Array.from({ length: 8 }, () => db.activity());
+    await Promise.all(stores.map((store, index) => index % 2
+      ? store.list!({ limit: 1 })
+      : store.record(event(index, { actor: { kind: "clerk", namespace: `ns-${index}` } }))));
+    const columns = (await db.rows<{ name: string }>("PRAGMA table_info(tool_call_activity)"))
+      .map((column) => column.name);
+    for (const name of ["actor_namespace", "friction", "approval"]) {
+      expect(columns.filter((column) => column === name)).toHaveLength(1);
+    }
+    expect((await db.activity().list!({ limit: 10 })).events.map((entry) => entry.actor.namespace))
+      .toEqual(["ns-6", "ns-4", "ns-2", "ns-0"]);
+  });
+
+  it("creates the tables from many first uses at once", async () => {
+    const db = await open();
+    await Promise.all([
+      ...Array.from({ length: 4 }, (_, index) => db.activity().record(event(index))),
+      ...Array.from({ length: 4 }, (_, index) => db.storage().set(`k${index}`, "v")),
+    ]);
+    expect((await db.activity().list!({ limit: 10 })).events).toHaveLength(4);
+    expect(await keys(db)).toEqual(["k0", "k1", "k2", "k3"]);
+  });
+
   it("prunes activity older than the retention window as it writes", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-07-27T00:00:00.000Z") });
     const activity = (await open()).activity({ retentionDays: 1 });
@@ -211,6 +231,16 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 10 })).events.map((entry) => entry.id)).toEqual([id(5)]);
   });
 }
+
+/** The 0.28 example's activity table: no actor_namespace, friction, or approval. */
+const LEGACY_ACTIVITY_TABLE = `CREATE TABLE tool_call_activity (
+  id TEXT PRIMARY KEY, occurred_at_ms INTEGER NOT NULL,
+  request_id TEXT NOT NULL, actor_kind TEXT NOT NULL, actor_id TEXT,
+  connector_id TEXT NOT NULL, tool_name TEXT NOT NULL, source TEXT NOT NULL,
+  outcome TEXT NOT NULL, duration_ms INTEGER NOT NULL, attempts INTEGER NOT NULL,
+  error_code TEXT, server_name TEXT NOT NULL, server_version TEXT NOT NULL,
+  deployment_id TEXT
+)`;
 
 async function keys(db: SqlFixture): Promise<string[]> {
   return (await db.rows<{ key: string }>("SELECT key FROM connecta_kv ORDER BY key"))

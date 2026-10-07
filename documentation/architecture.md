@@ -247,7 +247,8 @@ generation fences and grant discards, and the result stash.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
 scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
-two families overlap or another source file spells a prefix. Core hands
+two families overlap, another source file spells a prefix (constant concatenation
+folded), or a storage call passes a key holding literal text. Core hands
 subsystems namespaced views: `conn:<id>:` per connector, `principal:<key>:` per
 personal registry, `results:` and `subject:<key>:` for result paging.
 
@@ -255,7 +256,9 @@ Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge
 is a row in one ledger record, booked by compare-and-set before any chunk is
-written, so isolates and processes sharing the store see one count. A full
+written, so isolates and processes sharing the store see one count. A lost swap
+backs off and re-reads; only a full ledger refuses. Each chunk's TTL is what
+remains of its charge's deadline, so no chunk outlives its charge. A full
 stash returns the successful call's preview and a paging-unavailable notice
 rather than a result id. The shared storage cases live in
 `test/storage-contract.ts` and `test/sql-storage-contract.ts`.

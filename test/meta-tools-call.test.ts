@@ -2112,6 +2112,83 @@ describe("bounded result stash", () => {
     } finally { now.mockRestore(); }
   });
 
+  it("keeps a charge booked until every chunk written under it has expired, however slow the writes", async () => {
+    // Each write takes 20.5 s of a mocked clock, as a slow store might: three
+    // chunks finish 61.5 s after the charge was booked.
+    const start = 1_000_000;
+    let clock = start;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const inner = memoryStorage();
+    let slow = true;
+    const root = new Registry([], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1, maxStashBytes: 3 },
+      persistToolCatalog: false,
+      storage: { ...inner, async set(key, value, options) {
+        if (slow) clock += 20_500;
+        await inner.set(key, value, options);
+      } },
+    });
+    const live = async () => {
+      const ledger = JSON.parse(await inner.get("result-stash:v1:ledger") ?? "null");
+      return (ledger?.entries ?? []).filter((entry: [string, number, number]) => entry[2] > clock).length;
+    };
+    try {
+      expect(await root.stashResult("first", ["h", "a", "b"], 900)).toBe(true);
+      slow = false;
+      // Past the 900 s TTL, but the header landed 61.5 s late: it is still
+      // readable, so its charge must still refuse a second stash.
+      clock = start + 919_000;
+      expect(await inner.get("results:result:first")).toBe("h");
+      expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(false);
+      // Whenever any chunk is readable, its charge is still booked.
+      for (; clock <= start + 970_000; clock += 500) {
+        const readable = await Promise.all([0, 1, 2].map((index) => inner.get(`results:result:first${index ? `#${index}` : ""}`)));
+        if (readable.some((value) => value !== null)) expect(await live()).toBe(1);
+      }
+      expect(await inner.get("results:result:first")).toBeNull();
+      expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(true);
+    } finally { now.mockRestore(); }
+  });
+
+  it.each([
+    { case: "outlasts its deadline", delayMs: 25_000, chunks: ["h", "a", "b", "c"], ttlSeconds: 60 },
+    { case: "has one write slower than the grace", delayMs: 31_000, chunks: ["h"], ttlSeconds: 900 },
+  ])("fails a stash that $case and releases its charge", async ({ delayMs, chunks, ttlSeconds }) => {
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const inner = memoryStorage();
+    const root = new Registry([], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1 },
+      persistToolCatalog: false,
+      storage: { ...inner, async set(key, value, options) {
+        clock += delayMs;
+        await inner.set(key, value, options);
+      } },
+    });
+    try {
+      expect(await root.stashResult("slow", chunks, ttlSeconds)).toBe(false);
+      expect(await inner.list("results:")).toEqual([]);
+      expect(JSON.parse(await inner.get("result-stash:v1:ledger") ?? "null").entries).toEqual([]);
+    } finally { now.mockRestore(); }
+  });
+
+  it("books every simultaneous claim the ledger has room for, and refuses only past capacity", async () => {
+    const storage = memoryStorage();
+    const isolates = Array.from({ length: 5 }, () => new Registry([], {
+      logger: silentLogger,
+      results: { maxStashEntries: 64 },
+      persistToolCatalog: false,
+      storage,
+    }));
+    const accepted = await Promise.all(Array.from({ length: 65 }, (_, index) =>
+      isolates[index % isolates.length]!.stashResult(`claim-${index}`, ["x"], 900)));
+    expect(accepted.filter(Boolean)).toHaveLength(64);
+    expect(JSON.parse(await storage.get("result-stash:v1:ledger") ?? "null").entries).toHaveLength(64);
+    expect(await storage.list("results:result:")).toHaveLength(64);
+  });
+
   it("releases a failed write's charge only after deleting what it may have written", async () => {
     const storage = memoryStorage();
     let failWrite = true;

@@ -6,6 +6,7 @@ import {
   Effect,
   Exit,
   Option,
+  Random,
   Result,
 } from "effect";
 import type { CredentialVault } from "./credential-contract.js";
@@ -384,18 +385,25 @@ export interface RegistryScope {
 const MAX_PERSONAL_REGISTRIES = 1_024;
 const MAX_ABSENT_GRANT_WARNINGS = 1_024;
 /**
- * Ledger swaps one stash attempts before refusing. Contention is between
- * concurrent stashes alone, each one read and one swap, so a refusal here
- * means sustained stash traffic, and the caller keeps its preview.
+ * Compare-and-set attempts one stash makes on the ledger. A lost swap means
+ * another stash changed the ledger first, never that capacity ran out, so
+ * the loser re-reads and plans again after a jittered, growing pause: of 64
+ * simultaneous claims, each one either books a charge or meets a full ledger.
+ * Exhausting the attempts takes seconds of sustained contention on the one
+ * ledger record, and then the caller keeps its preview.
  */
-const STASH_LEDGER_ATTEMPTS = 16;
+const STASH_LEDGER_ATTEMPTS = 32;
+/** First backoff window after a lost swap; it doubles up to the cap. */
+const STASH_LEDGER_BACKOFF_MS = 4;
+const STASH_LEDGER_BACKOFF_CAP_MS = 250;
 /**
- * Slack past a stash entry's TTL before its charge leaves the ledger. The
- * charge is booked before the chunks are written, so their own TTLs start a
- * little later; the slack keeps the ledger from releasing bytes that are
- * still readable.
+ * Slack past a stash's deadline before its charge leaves the ledger, and the
+ * longest one chunk write may take. A chunk's TTL is what remains of the
+ * deadline on the clock read before its write, and the store starts that TTL
+ * no later than the write returns, so the chunk expires within the write's
+ * duration of the deadline. A write slower than this fails the stash.
  */
-const STASH_LEDGER_GRACE_MS = 60_000;
+const STASH_LEDGER_GRACE_MS = 30_000;
 
 /** One live stash charge: its header key, bytes, and expiry (epoch ms). */
 type StashCharge = readonly [key: string, bytes: number, expiresAt: number];
@@ -419,6 +427,36 @@ function liveStashCharges(raw: string | null, now: number): StashCharge[] {
     typeof entry[0] === "string" &&
     Number.isSafeInteger(entry[1]) && entry[1] >= 0 &&
     typeof entry[2] === "number" && entry[2] > now);
+}
+
+/**
+ * Rewrite the stash ledger by compare-and-set. `plan` sees the live charges
+ * and the time it read them at, and answers its result with the entries to
+ * store, or without them when there is nothing to write. Only `plan` refuses:
+ * a lost swap backs off and plans again from a fresh read. Answers undefined
+ * once the attempts run out.
+ */
+function swapStashLedger<A>(
+  plan: (live: StashCharge[], now: number) =>
+    { readonly entries?: StashCharge[]; readonly result: A },
+): Effect.Effect<A | undefined, unknown, Storage> {
+  return Effect.gen(function* () {
+    const ledger = stashLedgerKeys.ledger;
+    for (let attempt = 0; attempt < STASH_LEDGER_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        const window = Math.min(STASH_LEDGER_BACKOFF_CAP_MS, STASH_LEDGER_BACKOFF_MS * 2 ** (attempt - 1));
+        yield* Effect.sleep(Duration.millis(Math.floor((yield* Random.next) * window) + 1));
+      }
+      const raw = yield* storageGet(ledger);
+      const now = yield* Clock.currentTimeMillis;
+      const planned = plan(liveStashCharges(raw, now), now);
+      if (planned.entries === undefined) return planned.result;
+      if (yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({ v: 1, entries: planned.entries }))) {
+        return planned.result;
+      }
+    }
+    return undefined;
+  });
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -925,8 +963,9 @@ export class Registry implements RegistryView {
    * The bounds are the deployment's, not this isolate's. Every charge is a
    * row in one ledger record in storage, booked by compare-and-set before any
    * chunk is written, so every isolate and process sharing the store sees the
-   * same entries and bytes. A charge leaves the ledger when its result's TTL
-   * has passed; the storage TTL reclaims the rows themselves.
+   * same entries and bytes. A charge leaves the ledger just after its
+   * result's deadline, which every chunk's TTL ends by; the storage TTL
+   * reclaims the rows themselves.
    */
   stashResult(
     id: string,
@@ -942,47 +981,42 @@ export class Registry implements RegistryView {
       if (bytes > maxBytes || maxEntries === 0) return false;
       const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
       const charge = keys[0]!;
-      const ledger = stashLedgerKeys.ledger;
-      let reserved = false;
-      for (let attempt = 0; attempt < STASH_LEDGER_ATTEMPTS && !reserved; attempt++) {
-        const raw = yield* storageGet(ledger);
-        const now = yield* Clock.currentTimeMillis;
-        const live = liveStashCharges(raw, now);
+      // One deadline for the charge and every chunk under it. Writes take
+      // time, so a chunk's TTL is whatever remains of the deadline when it is
+      // written, never a fresh `ttlSeconds`, and no single write may take
+      // longer than the grace: no chunk outlives the charge that bounds it.
+      const deadline = yield* swapStashLedger((live, now) => {
         const used = live.reduce((sum, entry) => sum + entry[1], 0);
-        if (live.length >= maxEntries || used + bytes > maxBytes) return false;
-        const expiresAt = now + ttlSeconds * 1000 + STASH_LEDGER_GRACE_MS;
-        reserved = yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({
-          v: 1,
-          entries: [...live, [charge, bytes, expiresAt]],
-        }));
-      }
-      if (!reserved) return false;
+        if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
+        const end = now + ttlSeconds * 1000;
+        return { entries: [...live, [charge, bytes, end + STASH_LEDGER_GRACE_MS]], result: end };
+      });
+      if (deadline === undefined) return false;
+      // A failed write may still have persisted. Delete every key it could
+      // have written and release the charge only when all of them are gone;
+      // otherwise the charge stays booked until it expires, by which time the
+      // storage TTL has removed whatever did land.
+      const release = Effect.gen(function* () {
+        for (const key of keys) yield* storageDelete(key);
+        yield* swapStashLedger((live) => live.some((entry) => entry[0] === charge)
+          ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
+          : { result: undefined });
+      }).pipe(Effect.ignore);
       // Trailing chunks first: the header chunk is what makes an id readable, so
       // a write that fails midway leaves no envelope pointing at absent chunks.
-      yield* Effect.gen(function* () {
+      const written = yield* Effect.gen(function* () {
         for (let index = keys.length - 1; index >= 0; index--) {
-          yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds });
+          const before = yield* Clock.currentTimeMillis;
+          const remaining = Math.floor((deadline - before) / 1000);
+          // Zero would mean no expiry: a stash that outlasts its deadline fails.
+          if (remaining < 1) return false;
+          yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining });
+          if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
         }
-      }).pipe(
-        // A failed write may still have persisted. Delete every key it could
-        // have written and release the charge only when all of them are gone;
-        // otherwise the charge stays booked until it expires, by which time
-        // the storage TTL has removed whatever did land.
-        Effect.onError(() => Effect.gen(function* () {
-          for (const key of keys) yield* storageDelete(key);
-          for (let attempt = 0; attempt < STASH_LEDGER_ATTEMPTS; attempt++) {
-            const raw = yield* storageGet(ledger);
-            const now = yield* Clock.currentTimeMillis;
-            const live = liveStashCharges(raw, now);
-            if (!live.some((entry) => entry[0] === charge)) return;
-            if (yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({
-              v: 1,
-              entries: live.filter((entry) => entry[0] !== charge),
-            }))) return;
-          }
-        }).pipe(Effect.ignore)),
-      );
-      return true;
+        return true;
+      }).pipe(Effect.onError(() => release));
+      if (!written) yield* release;
+      return written;
     }), this.opts);
   }
 

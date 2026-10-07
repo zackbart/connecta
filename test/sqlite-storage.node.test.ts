@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { kvArtifactStore } from "../src/artifacts.js";
+import { Registry } from "../src/registry.js";
 import {
   importStateFile,
   openSqlite,
@@ -12,6 +13,7 @@ import {
   sqliteStorage,
 } from "../src/sqlite.js";
 import { artifactStoreContract, headRecord } from "./artifact-store-contract.js";
+import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
 
 const directories: string[] = [];
@@ -90,6 +92,20 @@ describe("sqliteStorage in a file", () => {
     );
     expect(claims.filter(Boolean)).toHaveLength(1);
     expect(await a.get("claim")).toBe(await b.get("claim"));
+  });
+
+  it("books 64 simultaneous stash claims from two processes at capacity 64, and refuses the 65th", async () => {
+    const path = join(tempDirectory(), "connecta.sqlite");
+    const processes = [openSqlite(path), openSqlite(path)].map((db) => new Registry([], {
+      logger: silentLogger,
+      results: { maxStashEntries: 64 },
+      persistToolCatalog: false,
+      storage: sqliteStorage(track(db)),
+    }));
+    const accepted = await Promise.all(Array.from({ length: 65 }, (_, index) =>
+      processes[index % 2]!.stashResult(`claim-${index}`, ["x"], 900)));
+    expect(accepted.filter(Boolean)).toHaveLength(64);
+    expect(await sqliteStorage(path).list("results:result:")).toHaveLength(64);
   });
 
   it("opens a path given as a string", async () => {

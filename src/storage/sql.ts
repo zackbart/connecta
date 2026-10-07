@@ -350,15 +350,23 @@ export function sqlActivityStore(
   const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
   const ensure = schemaOnce(driver, async (d) => {
     await d.batch(ACTIVITY_SCHEMA.map((statement) => sql(statement)));
-    const columns = new Set(
+    const columns = async () => new Set(
       (await d.all<{ name: string }>(sql("PRAGMA table_info(tool_call_activity)")))
         .map((column) => column.name),
     );
-    const missing = LATER_ACTIVITY_COLUMNS.filter((name) => !columns.has(name));
-    if (missing.length > 0) {
-      await d.batch(missing.map((name) =>
-        sql(`ALTER TABLE tool_call_activity ADD COLUMN ${name} TEXT`),
-      ));
+    // Isolates and processes upgrade an old table concurrently, each from its
+    // own read of the columns. One column per statement, and a refused ALTER
+    // re-reads the table: if another upgrader added the column, this one
+    // moves on to the next instead of failing the write that started it.
+    let present = await columns();
+    for (const name of LATER_ACTIVITY_COLUMNS) {
+      if (present.has(name)) continue;
+      try {
+        await d.run(sql(`ALTER TABLE tool_call_activity ADD COLUMN ${name} TEXT`));
+      } catch (error) {
+        present = await columns();
+        if (!present.has(name)) throw error;
+      }
     }
   });
   return {
