@@ -320,9 +320,10 @@ export function fileStorage(
               `than overwrite it. Move or repair the file, then restart.`,
           );
         }
+        // The parser's account quotes the file, which holds stored state.
         logger.error(
           `[connecta] state file ${path} is not valid JSON ` +
-            `(${error instanceof Error ? error.message : String(error)}) — ` +
+            `(${error instanceof Error ? error.name : "parse failure"}) — ` +
             `moved to ${quarantine}, starting from empty state. Downstream ` +
             `OAuth connectors must be re-authorized and stored credentials ` +
             `re-entered.`,

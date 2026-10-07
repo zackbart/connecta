@@ -29,7 +29,8 @@ import {
 import {
   storedCredentialShape,
 } from "./credential-rules.js";
-import { ConnectorCallError, msg } from "./errors.js";
+import { ConnectorCallError } from "./errors.js";
+import { describeFailure, logFailure } from "./operator-record.js";
 import {
   ConnectorCallAdmissionController,
   aggregateCallAdmissionSnapshots,
@@ -219,11 +220,12 @@ function forEachChunk<T, A>(
  */
 function warnOnFailure<R>(
   mutation: Effect.Effect<void, unknown, R>,
-  failed: string,
+  connector: string,
+  event: "catalog persistence failed" | "catalog invalidation failed",
 ): Effect.Effect<void, never, R | LoggerService> {
   return Effect.catch(mutation, (err) =>
     LoggerService.use((logger) =>
-      Effect.sync(() => logger.warn(`[connecta] ${failed}: ${msg(err)}`)),
+      Effect.sync(() => logFailure(logger, event, { connector }, err)),
     ),
   );
 }
@@ -1378,7 +1380,8 @@ export class Registry implements RegistryView {
               ? this.storeCatalog(id, snapshot)
               : Effect.void,
           ),
-          `connector "${id}" catalog persistence failed`,
+          id,
+          "catalog persistence failed",
         ),
       );
     }
@@ -1621,10 +1624,8 @@ export class Registry implements RegistryView {
         ),
       },
     );
-    const logFailure = (err: unknown) => {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" deferred catalog refresh failed: ${msg(err)}`,
-      );
+    const refreshFailed = (err: unknown) => {
+      logFailure(this.opts.logger, "deferred catalog refresh failed", { connector: id }, err);
     };
     const { flight, owner } = this.startCatalogRefresh(
       id,
@@ -1636,7 +1637,7 @@ export class Registry implements RegistryView {
       // Runs past this response, under the runtime's waitUntil below.
       flight.deferredTail = detach(
         Effect.catchCause(owner, (cause) =>
-          Effect.sync(() => logFailure(Cause.squash(cause))),
+          Effect.sync(() => refreshFailed(Cause.squash(cause))),
         ),
       );
     }
@@ -1645,13 +1646,16 @@ export class Registry implements RegistryView {
     // than the flight's bound.
     flight.deferredTail ??= runEdge(this.joinCatalogRefresh(id, flight)).then(
       () => {},
-      logFailure,
+      refreshFailed,
     );
     try {
       defer(flight.deferredTail);
     } catch (err) {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" deferred catalog refresh could not attach to the runtime: ${msg(err)}`,
+      logFailure(
+        this.opts.logger,
+        "deferred catalog refresh could not attach to the runtime",
+        { connector: id },
+        err,
       );
     }
   }
@@ -1689,9 +1693,7 @@ export class Registry implements RegistryView {
           this.opts,
         );
       } catch (err) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog read failed: ${msg(err)}`,
-        );
+        logFailure(this.opts.logger, "catalog read failed", { connector: id }, err);
       }
       if (generation !== this.catalogGeneration(id)) {
         persisted = null;
@@ -1779,8 +1781,11 @@ export class Registry implements RegistryView {
         !this.invalidated.has(id)
       ) {
         if (readOptions?.defer) this.observeCatalogAccess(id, "stale");
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog refresh failed; serving stale catalog: ${msg(err)}`,
+        logFailure(
+          this.opts.logger,
+          "catalog refresh failed; serving stale catalog",
+          { connector: id },
+          err,
         );
         return stale.tools;
       }
@@ -1864,9 +1869,7 @@ export class Registry implements RegistryView {
       const shape = storedCredentialShape(credential, values);
       return shape.state === "mismatch" ? shape.message : undefined;
     } catch (error) {
-      this.opts.logger.warn(
-        `[connecta] connector "${id}" credential shape read failed: ${msg(error)}`,
-      );
+      logFailure(this.opts.logger, "credential shape read failed", { connector: id }, error);
       return undefined;
     }
   }
@@ -1908,14 +1911,14 @@ export class Registry implements RegistryView {
       try {
         return withObservations(await connector.status(ctx));
       } catch (err) {
-        return withObservations({ state: "error", message: msg(err) });
+        return withObservations({ state: "error", message: describeFailure(id, err) });
       }
     }
     try {
       await this.getTools(id, baseUrl, requestScope, callOptions);
       return withObservations({ state: "ok" });
     } catch (err) {
-      return withObservations({ state: "error", message: msg(err) });
+      return withObservations({ state: "error", message: describeFailure(id, err) });
     }
   }
 
@@ -1930,7 +1933,8 @@ export class Registry implements RegistryView {
       id,
       warnOnFailure(
         this.deleteCatalog(id),
-        `connector "${id}" catalog invalidation failed`,
+        id,
+        "catalog invalidation failed",
       ),
     );
   }

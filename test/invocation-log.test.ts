@@ -12,17 +12,25 @@ import {
 const BASE = "https://connecta.example";
 
 describe("failed call logging", () => {
-  it("warns with a bounded downstream reason while activity stays payload-free", async () => {
+  it("INV-6: records a failure's typed facts, never its text, in the log and activity", async () => {
     const warn = vi.fn();
-    const reason = `downstream exploded ${"x".repeat(400)}`;
+    const argument = "sentinel-argument-41c2";
+    const credential = "sentinel-credential-9e1d";
+    const result = "sentinel-result-6b0a";
+    const code = "sentinel-code-3f77";
     const flaky = api("flaky", {
       tools: [
         {
           name: "read",
           description: "Read a value",
+          inputSchema: { type: "object", properties: { q: { type: "string" } } },
           annotations: { readOnlyHint: true },
-          handler: () => {
-            throw new Error(reason);
+          handler: (args: { q: string }) => {
+            // A downstream that echoes everything it was sent and holds.
+            throw new TypeError(
+              `downstream exploded: ${args.q} ${credential} ${result} ${code}`,
+              { cause: new Error(credential) },
+            );
           },
         },
       ],
@@ -32,7 +40,7 @@ describe("failed call logging", () => {
     });
     const target = activitySink();
 
-    await invokeTestCall(registry, target, "flaky.read");
+    await invokeTestCall(registry, target, "flaky.read", { q: argument });
 
     // The registry may warn about connector conventions at construction; only
     // the failure line is under test here.
@@ -41,19 +49,23 @@ describe("failed call logging", () => {
     );
     expect(failures).toHaveLength(1);
     const [, meta] = failures[0] as [string, Record<string, unknown>];
-    expect(meta).toMatchObject({
+    expect(meta).toEqual({
       connector: "flaky",
       tool: "read",
       source: "call_tool",
       attempts: 1,
+      durationMs: expect.any(Number),
+      code: "connector_call_failed",
+      retryable: false,
+      errorClass: "TypeError",
+      step: "handler",
     });
-    expect(typeof meta.code).toBe("string");
-    expect(typeof meta.durationMs).toBe("number");
-    expect(String(meta.message)).toContain("downstream exploded");
-    expect(String(meta.message).length).toBeLessThanOrEqual(300);
-    // The activity row carries the code, never the downstream text.
     expect(target.events).toHaveLength(1);
-    expect(JSON.stringify(target.events)).not.toContain("downstream exploded");
+    expect(target.events[0]).toMatchObject({ errorCode: "connector_call_failed" });
+    for (const sentinel of [argument, credential, result, code, "downstream exploded"]) {
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(sentinel);
+      expect(JSON.stringify(target.events)).not.toContain(sentinel);
+    }
   });
 
   it("stays quiet for an approval reroute, which is not a failure", async () => {

@@ -579,7 +579,8 @@ describe("remoteMcp() connector", () => {
     try {
       await vi.waitFor(() => expect(secondListening).toHaveBeenCalledWith("abort", expect.any(Function), expect.anything()));
       firstController.abort(new Error("first caller cancelled"));
-      await expect(first).resolves.toMatchObject({ state: "error", message: "first caller cancelled" });
+      // A status message is the failure's record, never its text.
+      await expect(first).resolves.toMatchObject({ state: "error", message: 'Connector "down" failed (Error).' });
       release.resolve();
       await expect(second).resolves.toEqual({ state: "ok" });
       expect(handshakes).toBe(1);
@@ -926,7 +927,8 @@ describe("remoteMcp() connector", () => {
     expect(typed.code).toBe("auth_required");
     expect(typed.retryable).toBe(false);
     expect(typed.message).toContain('authorize_connector({ connector: "locked" })');
-    expect(typed.cause).toBeInstanceOf(UnauthorizedError);
+    // The class is the verdict; its text is not kept for a logger to render (#695).
+    expect(typed.cause).toBeUndefined();
   });
 
   it("INV-7: reuses a client within one request scope but never across requests", async () => {
@@ -1043,7 +1045,7 @@ describe("remoteMcp() connector", () => {
 
     await expect(status).resolves.toMatchObject({
       state: "error",
-      message: expect.stringContaining("scope ended during connection"),
+      message: expect.stringContaining("(ScopeEndedError)"),
     });
     // The connected client was discarded rather than cached into the detached
     // state. Its transport had already observed close, so no second close is
@@ -1290,11 +1292,34 @@ describe("downstream session termination", () => {
     expect(requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(required(warn.mock.calls[0])[0]).toContain(
-      'connector "down" session termination was refused or failed',
+      "session termination refused or failed",
     );
-    expect(String(required(warn.mock.calls[0])[1])).toContain(
-      "Failed to terminate session",
-    );
+    expect(required(warn.mock.calls[0])[1]).toMatchObject({ connector: "down" });
+  });
+
+  it("logs a refused termination's status, not the downstream's text (#695)", async () => {
+    const warn = vi.fn();
+    const planted = "planted-secret-7f3a9c";
+    const { connector } = makeHttpDownstream({
+      sessionId: "sess-1",
+      onDelete: async () =>
+        new Response(`echo ${planted}`, { status: 500, statusText: `Oops ${planted}` }),
+    });
+    const context = {
+      ...ctx(),
+      logger: { ...silentLogger, warn },
+      requestScope: {},
+    };
+
+    await connector.status!(context);
+    await connector.closeScope!(context);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(required(warn.mock.calls[0])[1]).toEqual({
+      connector: "down",
+      errorClass: "SdkHttpError",
+      httpStatus: 500,
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(planted);
   });
 
   it("bounds a downstream that never answers the termination request", async () => {
@@ -1555,7 +1580,7 @@ describe("remoteMcp() redirect policy", () => {
       connector.status!(ctx(storage)),
     ).resolves.toMatchObject({
       state: "error",
-      message: expect.stringContaining("cross-origin redirect"),
+      message: expect.stringContaining("MCP handshake with https://downstream.test failed (RemoteMcpRedirectError)"),
     });
     expect(calls).toHaveLength(1);
     expect(required(calls[0]).get("authorization")).toBe("Bearer oauth-secret");
@@ -1615,7 +1640,7 @@ describe("remoteMcp() redirect policy", () => {
 
     await expect(connector.status!(ctx())).resolves.toMatchObject({
       state: "error",
-      message: expect.stringContaining("redirect policy rejected"),
+      message: expect.stringContaining("MCP handshake with https://downstream.test failed (RemoteMcpRedirectError)"),
     });
     expect(calls).toHaveLength(1);
     expect(required(calls[0]).get("x-api-key")).toBe("static-secret");

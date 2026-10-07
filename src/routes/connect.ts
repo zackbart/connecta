@@ -3,9 +3,10 @@ import { escapeHtml, renderPage } from "../branding.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
 import { consumeOAuthConnectLink, oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
+import { logFailure } from "../operator-record.js";
 import { runEdge, withDeadlineEffect } from "../runtime/run.js";
 import {
-  authorizeUiIdentity, mayManageConnector, privateJson, validateAuthPermissions, msg, withSessionCookies,
+  authorizeUiIdentity, mayManageConnector, privateJson, validateAuthPermissions, withSessionCookies,
   type RouteContext,
 } from "./shared.js";
 
@@ -105,7 +106,9 @@ async function connect(context: RouteContext): Promise<Response> {
     if (handoff.force || (!status.authorizationReused && status.state !== "ok")) await registry.invalidateStored(id);
     if (status.state === "ok") return withSessionCookies(new Response("This connector is already connected.", { headers: { "Cache-Control": "no-store" } }), authz.sessionCookies);
     if (status.state !== "auth_required" || !status.authorizationUrl) {
-      opts.logger.warn(`[connecta] connector "${id}" OAuth ${handoff.force ? "restart" : "continue"} failed: ${status.message ?? "no authorization URL"}`);
+      // The start's message can be a downstream's refusal, which an agent
+      // may read but a log may not (INV-6): the record keeps the state only.
+      opts.logger.warn("[connecta] OAuth start failed", { connector: id, mode: handoff.force ? "restart" : "continue", state: status.state });
       return refuse(status.state === "auth_required" ? "OAuth authorization requires consent but no safe URL is available" : "OAuth authorization could not start", 502);
     }
     const target = new URL(status.authorizationUrl);
@@ -115,7 +118,7 @@ async function connect(context: RouteContext): Promise<Response> {
     await drainOAuthStartResets(scope);
     await registry.invalidateStored(id);
     if (error === timeoutError) return refuse("OAuth authorization start timed out", 504);
-    opts.logger.warn(`[connecta] connector "${id}" OAuth ${handoff.force ? "restart" : "continue"} failed: ${msg(error)}`);
+    logFailure(opts.logger, "OAuth start failed", { connector: id }, error);
     return refuse("OAuth authorization could not start", 400);
   } finally {
     await closeConnectorScope(connector, ctx, context.defer);

@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { closeConnectorScope } from "../connector-scope.js";
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
+import { logFailure } from "../operator-record.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
 import {
@@ -14,7 +15,6 @@ import {
   mayManageConnector,
   validateAuthPermissions,
   loggableValue,
-  msg,
   type RouteContext,
 } from "./shared.js";
 
@@ -218,12 +218,11 @@ async function finishOAuthCallback(
     try {
       stateMatches = await connector.verifyState(state, connectorContext);
     } catch (err) {
-      opts.logger.warn(
-        `[connecta] refused an OAuth callback for connector ` +
-          `${loggableValue(id)} with 400: verifyState threw ` +
-          `${loggableValue(msg(err))}. No authorization code was exchanged. ` +
-          "Re-run authorization from connecta and check the verifier if it " +
-          "fails again.",
+      logFailure(
+        opts.logger,
+        "OAuth callback verifyState threw; no authorization code was exchanged",
+        { connector: id },
+        err,
       );
       return refused();
     }
@@ -243,10 +242,11 @@ async function finishOAuthCallback(
       try {
         if (!await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)) return refused();
       } catch (err) {
-        opts.logger.warn(
-          `[connecta] refused an OAuth callback for connector ` +
-            `${loggableValue(id)} with 500: its principal handoff could not be ` +
-            `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
+        logFailure(
+          opts.logger,
+          "OAuth callback handoff could not be consumed; no authorization code was exchanged",
+          { connector: id },
+          err,
         );
         return html("handoff_failed", opts, connector);
       }

@@ -470,11 +470,11 @@ async function callCloudflare(
     if (envelope === undefined) {
       // A gateway error page or an empty body, not an envelope: the status is
       // the only real signal left.
+      // No cause: the parser's error quotes the body it could not read.
       throw response.ok
         ? new ConnectorCallError(
             "unavailable",
             "Cloudflare returned a non-JSON body for a successful status.",
-            "parseError" in parsed ? { cause: parsed.parseError } : {},
           )
         : failureFor(response.status, response.headers, []);
     }

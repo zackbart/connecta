@@ -360,23 +360,37 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+/** The token endpoint's OAuth `error` codes this module names back. */
+const TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "invalid_scope",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "access_denied",
+  "disabled_client",
+  "rate_limit_exceeded",
+  "server_error",
+  "temporarily_unavailable",
+]);
+
 /**
- * Google's own `error_description`, bounded and stripped to printable text.
- * It describes the refusal ("Invalid email or User ID", "Invalid JWT
- * Signature.") and never echoes the assertion, so it is worth passing on; the
- * classification still comes only from the `error` code.
+ * What the token endpoint answered, in connecta's words: the step, the host,
+ * the status, and the OAuth `error` code when it is one of the known codes.
+ * Google's `error_description` is withheld. It is an authorization server's
+ * text, and the rule for those holds here as in `remoteMcp()`: whatever such
+ * a server writes may echo what it was sent, so none of it reaches an agent
+ * or a log, however benign Google's has been.
  */
-function googleSaid(payload: unknown): string {
-  const description = asRecord(payload)["error_description"];
-  if (typeof description !== "string") return "";
-  const clean = description.replace(/[^\x20-\x7e]/g, " ").trim().slice(0, 200);
-  return clean ? ` Google said: "${clean}".` : "";
+function tokenAnswer(status: number, code: unknown): string {
+  const named = typeof code === "string" && TOKEN_ERROR_CODES.has(code) ? ` with OAuth error ${code}` : "";
+  return ` The token request to ${GOOGLE_TOKEN_ORIGIN} was answered HTTP ${status}${named}; its description is withheld.`;
 }
 
 /**
  * Map a refused token request to what fixes it. The codes are RFC 6749's and
- * Google documents what each means for a delegated assertion; the
- * description is passed on for the reader, never parsed.
+ * Google documents what each means for a delegated assertion.
  */
 function tokenFailure(
   account: ServiceAccountKey,
@@ -386,7 +400,7 @@ function tokenFailure(
   payload: unknown,
 ): ConnectorCallError {
   const code = asRecord(payload)["error"];
-  const said = googleSaid(payload);
+  const said = tokenAnswer(status, code);
   const client = account.clientId
     ? `client ID ${account.clientId} (${account.clientEmail})`
     : `the client ID of ${account.clientEmail}`;

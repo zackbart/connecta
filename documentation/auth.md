@@ -452,6 +452,30 @@ code alone with fixed text. The SDK logs descriptions below the configured
 logger; downstream descriptions and storage errors can quote tokens, client
 secrets, or codes and must not reach that output.
 
+## What a server's errors may say
+
+No authorization, token, registration, or discovery server's text reaches an
+agent: it can echo the request or plant words for an agent. No server's text
+reaches a log, status message, or activity row at all
+([records](./architecture.md#errors-and-records)). A failed
+OAuth flow names its step, the host of that flow's own last request (each flow
+keeps its own, so concurrent calls never borrow one), and for a refused
+registration the status and a registered OAuth `error` code. Google's delegated
+token endpoint gets the same treatment. At the MCP handshake, `tools/list`, and
+`tools/call`, an error keeps its text only if it is the downstream's JSON-RPC
+error answer, the endpoint's HTTP 4xx refusal, or the request's own abort reason
+(checked first, by identity or as the SDK rewraps it). Anything else, a parser's,
+validator's, runtime's, or non-4xx body's account included, becomes the step,
+host, HTTP status if any, and error class. An `api()` handler's failure other
+than a `ConnectorCallError` names its tool and class, and an argument mismatch
+is told from the reviewed findings, never the validator's sentence. Every
+withheld error keeps its original classification, and no connector error keeps
+a runtime, stream, or parser error as `cause`.
+
+The JSON-RPC and 4xx exception is deliberate: tool results already carry that
+server's text verbatim, so redacting its errors buys nothing, and agents need
+the prose to correct their arguments.
+
 ## URLs a downstream advertises
 
 `remoteMcp()` learns server-side fetch URLs from a 401's `resource_metadata`,

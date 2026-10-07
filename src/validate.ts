@@ -5,6 +5,7 @@ import type {
   ArgumentValidationIssue,
 } from "./errors.js";
 import { MAX_ARGUMENT_VALIDATION_ISSUES } from "./errors.js";
+import { logFailure } from "./operator-record.js";
 import type { JsonSchema, Logger } from "./types.js";
 
 export interface ValidateToolInputOptions {
@@ -186,33 +187,32 @@ function normalizedValidationUnits(
   });
 }
 
-function agentFacingValidationError(unit: ValidationUnit): string {
-  return unit.keyword === "false"
-    ? "Value is not allowed by the declared schema."
-    : unit.error;
+const JSON_TYPES: ReadonlySet<string> = new Set([
+  "string", "number", "integer", "boolean", "object", "array", "null",
+]);
+
+/** A schema's `type`, when it names JSON types and nothing else. */
+function declaredType(value: unknown): string | undefined {
+  const types = typeof value === "string" ? [value] : value;
+  return Array.isArray(types) &&
+    types.length > 0 &&
+    types.every((item) => typeof item === "string" && JSON_TYPES.has(item))
+    ? types.join(" | ")
+    : undefined;
 }
 
 function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefined {
   if (unit.keyword === "type") {
-    const value = pointerValue(schema, unit.keywordLocation);
-    if (typeof value === "string") return value;
-    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-      return value.join(" | ");
-    }
+    return declaredType(pointerValue(schema, unit.keywordLocation));
   }
   if (unit.keyword === "required") {
     const missing = REQUIRED_PROPERTY_RE.exec(unit.error)?.[1];
     if (!missing) return undefined;
     const parentLocation = unit.keywordLocation.replace(/\/required$/, "");
-    const value = pointerValue(
+    return declaredType(pointerValue(
       schema,
       `${parentLocation}/properties/${encodePointerPart(missing)}/type`,
-    );
-    if (typeof value === "string") return value;
-    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-      return value.join(" | ");
-    }
-    return "present";
+    )) ?? "present";
   }
   const fixed: Record<string, string> = {
     additionalProperties: "no additional properties",
@@ -282,6 +282,11 @@ function unusableSchema(address: string, detail: string): Error {
   );
 }
 
+/**
+ * The validator's account of an unusable schema quotes the schema (an
+ * unresolvable `$ref`, an invalid `pattern`), and a downstream wrote that
+ * schema, so the log records only the address and the error's class.
+ */
 function disableValidation(
   schema: JsonSchema,
   address: string,
@@ -289,11 +294,7 @@ function disableValidation(
   err: unknown,
 ): void {
   validators.set(schema, null);
-  logger.warn(
-    `[connecta] tool "${address}" has an inputSchema the validator cannot use (${
-      err instanceof Error ? err.message : String(err)
-    }) — arguments are not validated`,
-  );
+  logFailure(logger, "input schema unusable; arguments are not validated", { address }, err);
 }
 
 /**
@@ -353,19 +354,22 @@ export function validateToolInput(
   if (result && !result.valid) {
     const units = normalizedValidationUnits(schema, result.errors);
     const nestedUnits = units.filter((unit) => unit.instanceLocation !== "#");
+    // Told from the reviewed findings, never the validator's own sentences,
+    // which quote the schema's types, enums, and patterns.
+    const validation = validationDetails(schema, units);
+    const shown = nestedUnits.length > 0
+      ? validationDetails(schema, nestedUnits)
+      : validation;
     const detail = boundedEchoText(
-      (nestedUnits.length > 0 ? nestedUnits : units)
-        .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
-        .map((unit) =>
-          `${unit.instanceLocation}: ${agentFacingValidationError(unit)}`,
-        )
+      shown.issues
+        .map((issue) => `${issue.path}: expected ${issue.expected} (${issue.code})`)
         .join("; "),
       256,
     );
     return new ConnectorCallError(
       "invalid_args",
       `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
-      { validation: validationDetails(schema, units) },
+      { validation },
     );
   }
   return null;

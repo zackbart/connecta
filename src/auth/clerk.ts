@@ -4,6 +4,7 @@
 
 import { createClerkClient } from "@clerk/backend";
 import { decodeJwt } from "@clerk/backend/jwt";
+import { logFailure } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
@@ -509,11 +510,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         email = primary.emailAddress;
       }
     } catch (error) {
-      console.warn(
-        `[connecta] clerk email lookup failed for ${userId}: ${
-          error instanceof Error ? error.message : String(error)
-        } — denying`,
-      );
+      logFailure(console, "Clerk email lookup failed; denying", { userId }, error);
       return false;
     }
     const domain = email ? emailDomain(email) : null;

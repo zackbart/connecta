@@ -1,6 +1,7 @@
 import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
 import { boundedEchoText } from "./errors.js";
+import { logFailure } from "./operator-record.js";
 import type { CatalogDriftCounts, Logger } from "./types.js";
 
 /**
@@ -268,11 +269,11 @@ export function recordToolActivity(
       return;
     }
     const pending = Promise.resolve(result).catch((error) => {
-      context.logger.warn("[connecta] activity record failed", error);
+      logFailure(context.logger, "activity record failed", {}, error);
     });
     if (context.defer) context.defer(pending);
   } catch (error) {
-    context.logger.warn("[connecta] activity record failed", error);
+    logFailure(context.logger, "activity record failed", {}, error);
   }
 }
 
@@ -305,10 +306,10 @@ export function recordCatalogDriftActivity(
       return;
     }
     void Promise.resolve(result).catch((error) => {
-      context.logger.warn("[connecta] catalog drift record failed", error);
+      logFailure(context.logger, "catalog drift record failed", {}, error);
     });
   } catch (error) {
-    context.logger.warn("[connecta] catalog drift record failed", error);
+    logFailure(context.logger, "catalog drift record failed", {}, error);
   }
 }
 

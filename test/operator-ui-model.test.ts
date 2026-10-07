@@ -214,7 +214,7 @@ describe("connector status messages", () => {
     expect(problemCopy(undefined)).toBeNull();
   });
 
-  it("classifies a status message into the payload and logs it instead of shipping it", async () => {
+  it("INV-6: classifies a status message into the payload and keeps its text out of the log", async () => {
     const warn = vi.fn();
     const info = vi.fn();
     const connecta = createTestConnecta({
@@ -265,16 +265,18 @@ describe("connector status messages", () => {
       expect(copy).not.toContain(SECRET);
     }
 
-    // The raw detail is on the host, where an operator debugging it looks.
-    const warned = warn.mock.calls.map((call) => String(call[0]));
-    expect(warned.filter((line) => line.includes(LEAK)).map((line) => line.split(":")[0])).toEqual([
-      '[connecta] connector "down" operator status error',
-      '[connecta] connector "thrown" operator status error',
+    // The host records each state; a message only when it is the failure's
+    // own record, never what a status seam or a thrown error said (INV-6).
+    const status = (spy: ReturnType<typeof vi.fn>) =>
+      spy.mock.calls.filter((call) => call[0] === "[connecta] operator status").map((call) => call[1]);
+    expect(status(warn)).toEqual([
+      { connector: "down", state: "error" },
+      { connector: "thrown", state: "error", message: 'Connector "thrown" failed (Error).' },
     ]);
-    const informed = info.mock.calls.map((call) => String(call[0]));
-    expect(informed).toContain(`[connecta] connector "locked" operator status auth_required: ${LEAK}`);
-    // An ok status's message is informational and goes nowhere.
-    expect([...warned, ...informed].some((line) => line.includes("Connected with"))).toBe(false);
+    expect(status(info)).toEqual([{ connector: "locked", state: "auth_required" }]);
+    const logged = JSON.stringify([...warn.mock.calls, ...info.mock.calls]);
+    expect(logged).not.toContain(SECRET);
+    expect(logged).not.toContain("upstream connect error");
   });
 });
 
@@ -317,7 +319,7 @@ describe("operator action notices", () => {
     });
   }
 
-  it("answers downstream failures in fixed words and leaves the downstream's in the log", async () => {
+  it("INV-6: answers downstream failures in fixed words and logs only their records", async () => {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const recorded: unknown[] = [];
     const storage = memoryStorage();
@@ -396,22 +398,22 @@ describe("operator action notices", () => {
       else expect(JSON.parse(text), `${method} ${path}`).toEqual(body);
     }
 
-    // The downstream's words are on the host, one line per failure.
+    // The host records each failure as typed facts, one line per failure,
+    // and none of the downstream's words.
+    const records = logger.warn.mock.calls.map((call) => [String(call[0]), call[1]]);
+    expect(records).toEqual(expect.arrayContaining([
+      ["[connecta] OAuth start failed", { connector: "oauththrows", errorClass: "Error" }],
+      ["[connecta] OAuth disconnect failed", { connector: "oauththrows", errorClass: "Error" }],
+      ["[connecta] OAuth start failed", { connector: "oautherror", mode: "restart", state: "error" }],
+      ["[connecta] OAuth start failed", { connector: "oauthnourl", mode: "restart", state: "auth_required" }],
+      ["[connecta] credential test failed", { connector: "rejected" }],
+      ["[connecta] credential test threw", { connector: "thrown", errorClass: "Error" }],
+    ]));
     const lines = (spy: ReturnType<typeof vi.fn>) =>
-      spy.mock.calls.map((call) => String(call[0]));
-    expect(lines(logger.warn).filter((line) => line.includes(LEAK))).toEqual([
-      `[connecta] connector "oauththrows" OAuth restart failed: ${LEAK}`,
-      `[connecta] connector "oauththrows" OAuth disconnect failed: ${LEAK}`,
-      `[connecta] connector "oautherror" OAuth restart failed: ${LEAK}`,
-      `[connecta] connector "oauthnourl" OAuth restart failed: ${LEAK}`,
-      `[connecta] connector "rejected" credential test failed: ${LEAK}`,
-      `[connecta] connector "thrown" credential test failed: ${LEAK}`,
-    ]);
-    expect(lines(logger.info)).toContain(
-      `[connecta] connector "accepted" credential test passed: Authenticated with ${SECRET}`,
-    );
+      spy.mock.calls.map((call) => JSON.stringify(call));
     const everything = Object.values(logger).flatMap(lines);
     expect(everything.some((line) => line.includes("consent pending"))).toBe(false);
+    expect(everything.join("\n")).not.toContain(SECRET);
     // And not in activity, which has nowhere to put them.
     expect(JSON.stringify(recorded)).not.toContain(SECRET);
   });

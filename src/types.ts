@@ -182,9 +182,9 @@ export interface ConnectorCredentialConfig {
 export interface CredentialTestResult {
   ok: boolean;
   /**
-   * Detail for the deployment's log. The operator page shows fixed copy for
-   * `ok` and never this text, since a downstream's reply quoted here can
-   * quote the credential it rejected.
+   * Shown and logged nowhere: a downstream's reply quoted here can quote the
+   * credential it rejected (INV-6). The operator page shows fixed copy for
+   * `ok`, and the log records only that a test failed.
    */
   message?: string;
 }
@@ -260,6 +260,12 @@ export interface ConnectorStatus {
    * authorization URL instead of starting a new flow. Absent otherwise.
    */
   authorizationReused?: boolean;
+  /**
+   * From `status()`, operator-facing and logged: connecta's or the
+   * connector's own words, never a downstream's text (INV-6). Connecta's
+   * connectors describe a failed status from its typed record alone. From
+   * `startAuth()`, the message also reaches the agent.
+   */
   message?: string;
   /**
    * Drift observed the last time this connector served a catalog refresh *in

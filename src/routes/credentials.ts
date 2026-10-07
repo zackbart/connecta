@@ -1,3 +1,4 @@
+import { logFailure } from "../operator-record.js";
 import { Effect } from "effect";
 import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
 import {
@@ -177,14 +178,9 @@ function credentialRequest(
       // route's: the page shows it beside the Test button. Only `ok` leaves
       // the host. A hook's message, and anything it throws, can quote the
       // downstream's reply, and that reply can quote the credential it just
-      // rejected — so the text goes to the deployment's log and the page
-      // says a fixed sentence for the outcome instead.
-      const logged = (ok: boolean, detail: string | undefined) => {
-        if (!detail) return;
-        const line = `[connecta] connector "${connectorId}" credential test ${ok ? "passed" : "failed"}: ${detail}`;
-        if (ok) opts.logger.info(line);
-        else opts.logger.warn(line);
-      };
+      // rejected — so neither the page nor the log repeats it (INV-6): the
+      // page says a fixed sentence for the outcome, and the log records a
+      // failure's class.
       return yield* Effect.tryPromise({
         try: async () => {
           const values = await vault.getAll(connectorId, owner);
@@ -222,7 +218,7 @@ function credentialRequest(
                     ctx,
                   );
             const ok = result?.ok === true;
-            logged(ok, result?.message);
+            if (!ok) logFailure(opts.logger, "credential test failed", { connector: connectorId }, undefined);
             return privateJson({ ok });
           } finally {
             releaseCleanup();
@@ -232,7 +228,7 @@ function credentialRequest(
         catch: (error) => error,
       }).pipe(
         Effect.catch((error) => {
-          logged(false, msg(error));
+          logFailure(opts.logger, "credential test threw", { connector: connectorId }, error);
           return Effect.succeed(privateJson({ ok: false }));
         }),
       );

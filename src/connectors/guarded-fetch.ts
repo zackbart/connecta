@@ -558,7 +558,12 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       }, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;
-      throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`);
+      throw unavailableCallError(
+        cause,
+        url.href,
+        `Could not reach the ${provider} API.`,
+        ctx.signal,
+      );
     }
     if (REDIRECT_STATUSES.has(response.status)) {
       await response.body?.cancel().catch(() => {});

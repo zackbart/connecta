@@ -803,9 +803,29 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
       error_description: "Invalid email or User ID",
     });
     expect(failure.code).toBe("auth_required");
-    expect(failure.message).toContain("Invalid email or User ID");
+    // The step, the host, and the code; never the server's description (#695).
+    expect(failure.message).toContain(
+      "The token request to https://oauth2.googleapis.com was answered HTTP 400 with OAuth error invalid_grant",
+    );
+    expect(failure.message).not.toContain("Invalid email or User ID");
     expect(failure.message).toMatch(/suspended/);
     expect(failure.message).toMatch(/clock/);
+  });
+
+  it("withholds the token endpoint's description on every refusal (#695)", async () => {
+    const planted = "planted-secret-7f3a9c";
+    for (const [status, error] of [
+      [401, "unauthorized_client"],
+      [400, "invalid_grant"],
+      [401, "invalid_client"],
+      [429, "rate_limit_exceeded"],
+      [503, "temporarily_unavailable"],
+      [400, `${planted}_code`],
+    ] as const) {
+      const { failure } = await refusedWith(status, { error, error_description: `refused ${planted}` });
+      expect(failure.message).toContain(`The token request to https://oauth2.googleapis.com was answered HTTP ${status}`);
+      expect(`${String(failure)} ${failure.stack ?? ""} ${JSON.stringify({ ...failure })}`).not.toContain(planted);
+    }
   });
 
   it("reports a disabled service account", async () => {
@@ -1234,6 +1254,40 @@ describe("the shared client reads bytes and text for the products that need them
       expect(failure.code).toBe("connector_call_failed");
       expect(failure.message).not.toContain("probably applied");
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
+    });
+
+    it("reading-body: keeps a stream's or parser's error, and the body it quotes, out of every failure (#695)", async () => {
+      const planted = "planted-secret-7f3a9c";
+      const quoting = () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(`{"echo":"${planted}`));
+              controller.error(new TypeError(`other side closed after ${planted}`));
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      const malformed = () => new Response(`${planted} is not json`, { headers: { "Content-Type": "application/json" } });
+      apiReplies.push(quoting, quoting, malformed, malformed);
+      const drive = client();
+      const failures = [
+        await failing(drive.json(write, context())),
+        await failing(drive.json(read, context())),
+        await failing(drive.json(write, context())),
+        await failing(drive.json(read, context())),
+      ];
+      expect(failures.map((failure) => [failure.code, failure.retryable])).toEqual([
+        ["connector_call_failed", false],
+        ["unavailable", true],
+        ["connector_call_failed", false],
+        ["connector_call_failed", false],
+      ]);
+      for (const failure of failures) {
+        expect(failure.cause).toBeUndefined();
+        expect(googleOutcomeOf(failure)).toMatchObject({ status: 200, phase: "reading-body" });
+        expect(`${String(failure)} ${failure.stack ?? ""} ${JSON.stringify({ ...failure })}`).not.toContain(planted);
+      }
     });
 
     it("reading-body: a GET whose JSON body breaks off is retryable; malformed JSON is not", async () => {

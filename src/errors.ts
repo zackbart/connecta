@@ -231,17 +231,55 @@ export function networkErrorCode(error: unknown): string | undefined {
   );
 }
 
-/** Use at a fetch boundary where the destination and transport failure are known. */
+/**
+ * Use at a fetch boundary where the destination and transport failure are
+ * known. The runtime's error is read for its errno and dropped, never kept as
+ * `cause`: its message and cause chain can quote the URL, headers, or body of
+ * the request that failed, and a logger that renders an error renders its
+ * cause. The origin and errno in `details` are what survives.
+ *
+ * The one failure kept is the request's own abort reason, when that is what
+ * the fetch rejected with: the caller wrote it, not the downstream, and it is
+ * how a cancelled request tells its reason from a network failure.
+ */
 export function unavailableCallError(
-  cause: unknown,
+  failure: unknown,
   host?: string,
   message = "Could not reach the downstream service.",
+  signal?: AbortSignal,
 ): ConnectorCallError {
-  const code = networkErrorCode(cause);
+  const code = networkErrorCode(failure);
+  const ownReason = signal?.aborted === true && failure === signal.reason;
   return new ConnectorCallError("unavailable", message, {
-    cause,
+    ...(ownReason ? { cause: failure } : {}),
     details: { ...(host ? { host } : {}), ...(code ? { code } : {}) },
   });
+}
+
+/**
+ * A failure told in connecta's words because the original's text came from a
+ * downstream or authorization server, which can echo what the request carried
+ * or plant whatever it likes. There is no `cause`: the original is dropped
+ * whole, never masked.
+ *
+ * It is classified exactly as the original would have been. That verdict is
+ * read from the original once, here, and kept as two flags, so withholding
+ * the text moves no failure between `timeout`, retryable, and the caller's
+ * fallback code. Never wrap a `ConnectorCallError`: it already speaks in
+ * connecta's words and carries its own code.
+ */
+export class WithheldTextError extends Error {
+  /** The original read as a timeout. */
+  readonly timeout: boolean;
+  readonly retryable: boolean;
+
+  constructor(message: string, original: unknown) {
+    super(message);
+    this.name = "WithheldTextError";
+    const verdict = classifyCallError(original);
+    this.timeout = verdict.code === "timeout";
+    this.retryable = verdict.retryable;
+  }
 }
 
 /** Agent-visible recovery class attached only to `auth_required` failures. */
@@ -482,6 +520,13 @@ export function classifyCallError(
       ...(err.validation ? { validation: err.validation } : {}),
       ...(err.details ? { details: err.details } : {}),
       ...(err.current ? { current: err.current } : {}),
+    };
+  }
+  if (err instanceof WithheldTextError) {
+    return {
+      code: err.timeout ? "timeout" : fallbackCode,
+      message: err.message,
+      retryable: err.retryable,
     };
   }
   // An aborted fetch rejects with a DOMException named "AbortError" whose

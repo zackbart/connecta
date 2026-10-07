@@ -267,6 +267,21 @@ literal-headers-plus-personal version of that mistake. Visibility
 (`identity.connectorAccess`) is a separate rule; hiding a connector does not
 change who owns its auth.
 
+### Errors and records
+
+A failure has two audiences with two rules. The agent that made a call may read
+the downstream's own answer to it: a JSON-RPC error message, an HTTP 4xx
+refusal, `isError` content, or the words a handler put in a
+`ConnectorCallError`. Anything else (a transport, parser, stream, validator, or
+runtime error) reaches it in connecta's words: step, origin, HTTP status, and
+class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
+Operators read logs, status messages, and activity, and none of them carries
+any error's text, allowed or not (INV-6). `src/operator-record.ts` builds every
+failure record from typed facts it checks itself (connector, tool, step,
+origin, HTTP status, class, code, retryability, errno, counts), and
+`test/operator-record-sources.node.test.ts` holds every other log call in `src/` to
+that. Fix the sink, not the source: a filter at each source missed the next one.
+
 ## Optional deployment modules
 
 `createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`

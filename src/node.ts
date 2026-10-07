@@ -3,6 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Connecta } from "./index.js";
+import { logFailure } from "./operator-record.js";
 
 export { fileStorage } from "./storage/file.js";
 export type { FileStorageOptions } from "./storage/file.js";
@@ -153,7 +154,7 @@ export function listen(
         // error-log spam vector.
         if (controller.signal.aborted) return;
         // A headless deployment has nothing else to go on; never swallow this.
-        console.error("[connecta] request failed", error);
+        logFailure(console, "request failed", {}, error, "error");
         if (res.headersSent) {
           // Mid-stream failure: appending an error string here would corrupt
           // the partial body the client has already begun reading. Cutting

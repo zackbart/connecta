@@ -1869,6 +1869,16 @@ describe("cloudflare() typed failures", () => {
     expect(error.code).toBe("unavailable");
   });
 
+  caseOf("keeps a malformed 2xx body's parser error out of the error it throws (#695)", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("s3cr3t")) as unknown as typeof fetch;
+    const error = (await connection()
+      .callTool("list_zones", {}, contextWithToken())
+      .catch((thrown: unknown) => thrown)) as ConnectorCallError;
+    expect(error).toMatchObject({ code: "unavailable", retryable: true });
+    expect(error.cause).toBeUndefined();
+    expect(`${String(error)} ${error.stack ?? ""} ${JSON.stringify({ ...error })}`).not.toContain("s3cr3t");
+  });
+
   caseOf("reports an oversized 2xx body as the ceiling failure it is", async () => {
     // A body past the ceiling fails from inside the same `json()` a gateway
     // page fails from, and the two are not the same failure: this one is not

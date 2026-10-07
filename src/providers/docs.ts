@@ -605,8 +605,9 @@ function revisionAfter(reply: JsonRecord, dropped: string[]): string | undefined
   return keptId(asRecord(reply["writeControl"])["requiredRevisionId"], "revisionId", "revisionId", dropped);
 }
 
-function uncertain(message: string, cause: unknown): ConnectorCallError {
-  return new ConnectorCallError("connector_call_failed", message, { retryable: false, cause });
+// No cause: what it would carry is a transport, stream, or parser error that can quote the reply (#695).
+function uncertain(message: string): ConnectorCallError {
+  return new ConnectorCallError("connector_call_failed", message, { retryable: false });
 }
 
 /**
@@ -685,13 +686,13 @@ async function sendWrite(
     if (ctx.signal?.aborted) throw error;
     const outcome = writeOutcome(error);
     if (outcome === "not-sent" || outcome === "refused") throw error;
-    throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)), error);
+    throw uncertain(outcome === "probably-applied" ? words.applied : words.unknown(detailOf(error)));
   }
   if (reply.text.trim() === "") return {};
   try {
     return asRecord(JSON.parse(reply.text));
-  } catch (cause) {
-    throw uncertain(words.applied, cause);
+  } catch {
+    throw uncertain(words.applied);
   }
 }
 
@@ -1183,7 +1184,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         const dropped: string[] = [];
         // An id that could not be passed back is no id at all.
         const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
-        if (!documentId) throw uncertain(createdButUnknown, undefined);
+        if (!documentId) throw uncertain(createdButUnknown);
         let revisionId = keptId(created["revisionId"], "revisionId", "revisionId", dropped);
         if (typeof args["text"] === "string") {
           try {

@@ -2,7 +2,9 @@ import {
   ConnectorCallError,
   networkErrorCode,
   unavailableCallError,
+  WithheldTextError,
 } from "../errors.js";
+import { attachFailureFacts, carryFailureFacts, failureRecord } from "../operator-record.js";
 import { compileValidator, validateToolInput } from "../validate.js";
 import type {
   Connector,
@@ -324,10 +326,32 @@ export function apiConnector(
       try {
         return await tool.handler(input, handlerCtx);
       } catch (error) {
+        // The request's own abort reason, by identity, is the caller's.
+        if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
-        if (error instanceof ConnectorCallError || !networkErrorCode(error)) throw error;
-        throw unavailableCallError(error);
+        if (error instanceof ConnectorCallError) throw error;
+        if (!networkErrorCode(error)) {
+          // Anything else is a runtime's, parser's, or stream's account of
+          // what the handler read (a JSON parser quotes the reply it choked
+          // on; a body stream rejects with whatever the runtime says), so it
+          // is told in connecta's words, classified as the original would
+          // have been, and rebuilt without its cause or nested errors. A
+          // handler that means the agent to read its words throws a
+          // ConnectorCallError. No host is named: connecta does not know
+          // which destination the handler read.
+          const kind = failureRecord(error).errorClass;
+          throw attachFailureFacts(
+            carryFailureFacts(error, new WithheldTextError(
+              `Connector "${id}" tool "${name}" handler failed` +
+                `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
+                "can quote what the downstream sent.",
+              error,
+            )),
+            { step: "handler" },
+          );
+        }
+        throw unavailableCallError(error, undefined, undefined, ctx.signal);
       }
     },
   };

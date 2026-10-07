@@ -22,6 +22,7 @@ import {
   type CallErrorDetails,
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
+import { carryFailureFacts, logFailure } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
@@ -436,26 +437,26 @@ export class InvocationService {
         // A write refused only because its program had already returned
         // leaves no event and nothing in the operator's log.
         if (unrecorded) return outcome();
-        // Activity rows stay payload-free by construction; the operator's log is
-        // where the downstream reason goes, bounded and without arguments.
+        // Activity rows and this log line are both payload-free by
+        // construction: the line is the failure's typed record, never its
+        // message, which may be the downstream's own words (INV-6).
         if (target && details.code !== "destructive_tool_requires_approval") {
-          this.registry
-            .contextFor(
+          logFailure(
+            this.registry.contextFor(
               target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
-            )
-            .logger.warn("[connecta] call failed", {
+            ).logger,
+            "call failed",
+            {
               connector: target.connector.id,
               tool: target.toolName,
               source: context.source,
-              code: details.code,
-              // Sanitized transport diagnostics (origin and errno only, #539).
-              ...(details.details ? { details: details.details } : {}),
               attempts,
               durationMs: Date.now() - started,
-              message: String(details.message ?? "").slice(0, 300),
-            });
+            },
+            error,
+          );
         }
         record(
           details.code === "timeout"
@@ -614,7 +615,7 @@ export class InvocationService {
             answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
-              : classifyCallError(attemptError);
+              : carryFailureFacts(attemptError, classifyCallError(attemptError));
           }
           observedResult = attempt.value.observed;
           result = context.unwrapResult ? observedResult : attempt.value.raw;
@@ -639,9 +640,10 @@ export class InvocationService {
           : dispatch(),
       );
       if (Exit.isFailure(dispatched)) {
+        const failure = Cause.squash(dispatched.cause);
         return failed(context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : classifyCallError(Cause.squash(dispatched.cause)));
+          : carryFailureFacts(failure, classifyCallError(failure)));
       }
       if (dispatched.value) return failed(dispatched.value);
       // A dispatch that returned no refusal resolved a concrete tool.

@@ -21,6 +21,7 @@ import type {
   UiData,
   UiTool,
 } from "../operator-ui/model.js";
+import { describeFailure, isFailureDescription } from "../operator-record.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
@@ -73,22 +74,27 @@ export function uiData(
     const vault = options.credentialVault;
     const owner = options.personalCredentialOwner;
     /**
-     * A connector's status message stops here. It can quote a downstream error
-     * body — and a downstream error body can quote the secret it just rejected —
-     * so the payload carries only the classified `problem` and the raw text goes
-     * to the deployment's log, where an operator debugging the failure already
-     * looks. An `ok` status's message is informational and simply dropped.
+     * A connector's status message stops here: the payload carries only the
+     * classified `problem`. The log records the state, and the message only
+     * when it parses as a failure's record (`describeFailure`): a message from
+     * a connector's own `status()` can quote a downstream error body, which
+     * can quote the secret it just rejected (INV-6). An `ok` status is
+     * informational and simply dropped.
      */
     const logStatus = (
       id: string,
       state: ConnectorStatus["state"] | "failed",
       message: string | undefined,
     ) => {
-      if (!message || state === "ok") return;
+      if (state === "ok") return;
       const logger = registry.contextFor(id, baseUrl, requestScope).logger;
-      const line = `[connecta] connector "${id}" operator status ${state}: ${message}`;
-      if (state === "auth_required") logger.info(line);
-      else logger.warn(line);
+      const record = {
+        connector: id,
+        state,
+        ...(message !== undefined && isFailureDescription(id, message) ? { message } : {}),
+      };
+      if (state === "auth_required") logger.info("[connecta] operator status", record);
+      else logger.warn("[connecta] operator status", record);
     };
 
     // Status first, then the catalog only when status is ok. A failed status
@@ -138,10 +144,7 @@ export function uiData(
           Effect.succeed<Observed>({
             status: {
               state: "error",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Connection details unavailable",
+              message: describeFailure(c.id, error),
             },
             tools: [],
             catalogFailed: false,
@@ -269,7 +272,7 @@ export function uiData(
 
     const unavailable = (c: Connector, error: unknown) =>
       Effect.sync((): UiConnector => {
-        logStatus(c.id, "failed", error instanceof Error ? error.message : String(error));
+        logStatus(c.id, "failed", describeFailure(c.id, error));
         return {
           id: c.id,
           ...(c.title ? { title: c.title } : {}),

@@ -50,10 +50,9 @@ The full Node run checks the executed test tree, including runtime skips.
   limits come from admitted auth and deployment code, never arguments.
 - **INV-5: Credentials stay home.** Encrypt stored downstream credentials,
   partition them by connector and owner, and render them nowhere.
-- **INV-6: Payload-free records.** Activity and logs carry no arguments,
-  results, code, or raw downstream error text. Activity enforces this today;
-  bounded raw failure text in logs remains a coverage gap
-  ([#716](https://github.com/zackbart/connecta/issues/716)).
+- **INV-6: Payload-free records.** Activity, logs, and status carry no
+  arguments, results, code, or raw downstream error text. A failure reaches
+  them only as typed facts the sink itself checks.
 - **INV-7: Nothing request-bound outlives its request.** No transport,
   stream, signal, or awaited promise survives it. Request state that must
   span requests lives in storage with a TTL.

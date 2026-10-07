@@ -179,7 +179,7 @@ describe("ActivityRecorder", () => {
     ));
     expect(deferred).toHaveLength(1);
     await Promise.all(deferred);
-    expect(warn).toHaveBeenCalledWith("[connecta] activity record failed", expect.any(Error));
+    expect(warn).toHaveBeenCalledWith("[connecta] activity record failed", { errorClass: "Error" });
     await app.close();
   });
 
@@ -192,7 +192,7 @@ describe("ActivityRecorder", () => {
     const app = connecta({ activity, logger: { ...silentLogger, warn } });
     const recorder = await run(app, ActivityRecorder);
     await expect(runEdge(recorder.recordTool(REQUEST, TOOL_CALL))).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith("[connecta] activity record failed", expect.any(Error));
+    expect(warn).toHaveBeenCalledWith("[connecta] activity record failed", { errorClass: "Error" });
     await app.close();
   });
 });
