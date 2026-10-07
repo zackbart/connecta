@@ -463,6 +463,13 @@ before.
   of tools requiring task-based execution now use the cached definition, just
   as after a same-request listing. Older stored catalogs remain readable (#704).
 
+- **Tool catalog changes are no longer advertised.** Modern `server/discover`
+  and legacy `initialize` report `tools.listChanged: false`, because a fresh
+  server per request cannot publish those notifications. Modern
+  `subscriptions/listen` requests receive HTTP 404 with JSON-RPC `-32601`
+  (Method not found), without acquiring a request-admission permit or opening
+  an SSE stream. Authentication and SDK protocol/header validation still run.
+  Legacy listens remain unsupported (#704).
 - **A grant from before issuer binding is retired, not bound to whoever is
   named.** A token set or client registration v0.8.1 or earlier wrote carries
   no stamp, and connecta bound it on first read to the issuer that read's

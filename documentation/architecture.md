@@ -65,7 +65,7 @@ top to bottom.
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
 | 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata, with drift as stable short hashes. |
 | 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state and personal-ownership checked, independent of the UI. |
-| 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
+| 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
 Every response leaves through `withSecurityHeaders`, and the UI module adds a
@@ -77,7 +77,12 @@ reordering reads like a harmless refactor.
 An admitted non-preflight `/mcp` request then takes five steps in
 `src/routes/mcp.ts`:
 
-1. **Admit.** One permit from the deployment-wide pool, taken before auth so an
+1. **Admit.** Modern `subscriptions/listen` requests take no permit: their
+   mirrored method and parsed body must both name the unsupported method.
+   They still pass auth, pool grants, and SDK validation, then receive HTTP
+   404 with JSON-RPC `-32601`. Their body classification and auth share the
+   configured request lifetime, starting before classification. Other requests
+   take one permit from the deployment-wide pool, taken before auth so an
    unauthenticated flood costs a permit rather than a Clerk lookup, and held
    until the response *body* completes, the caller leaves, or its configured
    lifetime ends, not until the handler returns.

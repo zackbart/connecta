@@ -53,6 +53,7 @@ export const WORKERS_SUITES = [
   "test/meta-tool-schema-cache.test.ts",
   "test/meta-tool-schemas.test.ts",
   "test/meta-tools.test.ts",
+  "test/mcp-subscriptions.test.ts",
   "test/mixpanel-provider.test.ts",
   "test/notion-provider.test.ts",
   "test/operator-boundary.test.ts",
