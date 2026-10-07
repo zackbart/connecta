@@ -361,8 +361,8 @@ using `quickJsExecutor()` need no configuration change.
 - **Google Slides connection.** `@zackbart/connecta/providers/slides` exports
   `slides(id, options)` with the same Workspace delegation options as `gmail()`,
   plus `SLIDES_SCOPES` and `SLIDES_API_BASE_URL`. It requests exactly
-  `https://www.googleapis.com/auth/presentations`. Fourteen hand-written
-  tools, six of them for comments (below). Of the other eight, four are
+  `https://www.googleapis.com/auth/presentations`. Fifteen hand-written
+  tools, seven of them for comments (below). Of the other eight, four are
   reads: `get_presentation` (title, page size, `revisionId`, a
   layout preview, and each slide's text in reading order — top to bottom,
   then left to right, rotated and nested groups composed — with table cells,
@@ -410,18 +410,25 @@ using `quickJsExecutor()` need no configuration change.
   post's author by `PostAuthor.user` (`users/{id}`) beside the display name.
   It pages under the shared Workspace result budget with the same cursor
   convention as every other read, bound to the deck and its revision and also
-  to the threads themselves, since a reply need not move the revision; a
-  changed deck is a `conflict`, and a quote or post too long for one result
-  continues on the next page from the character it stopped at.
-  `create_comment` (on a page, an element, a range of a shape's text, a
-  cell's text, or a whole cell, optionally assigned) and
-  `create_comment_reply` (which can also resolve, reopen, or reassign) are
-  additive; `update_comment_post`, `delete_comment`, and
-  `delete_comment_reply` are destructive. None is exempt from approval by the
-  provider itself. The raw hatch now sends Slides' five comment request kinds
-  instead of refusing them. Every comment and post id a write returns is
-  whole, and a reply too large for one result keeps its ids while its text is
-  summarized. Slides saves comment changes apart from the rest of a batch: a
+  to the threads and the anchors that place them, since neither a reply nor a
+  moved anchor need move the revision; a changed deck is a `conflict`, and a
+  quote or post too long for one result continues on the next page from the
+  character it stopped at. `raw: true` returns each thread as Slides sends
+  it — post HTML and copy flags kept — with its anchors and their text and
+  cell ranges, chunked like `get_page`'s raw elements. `create_comment` (on a
+  page, an element, a range of a shape's text, a cell's text, or a whole
+  cell, optionally assigned) and `create_comment_reply` (a plain reply) are
+  additive; `update_comment_thread` (resolve, reopen, or reassign, replacing
+  the thread's status or assignee), `update_comment_post`, `delete_comment`,
+  and `delete_comment_reply` are destructive. None is exempt from approval by
+  the provider itself. The raw hatch now sends Slides' five comment request
+  kinds instead of refusing them, and its replies are bounded ids first:
+  every id in every reply is returned whole and text is cut before any id,
+  and ids too many for one result are all returned anyway, for `get_result`
+  to page — where a batch's replies past the budget used to be counted in
+  `repliesNotShown`, which is gone. Its notes no longer say the write
+  applied: Slides accepting a batch and Slides confirming its comments saved
+  are said apart. Slides saves comment changes apart from the rest of a batch: a
   write that sent any and is not answered `ALL_SAVED` — including one Slides
   gave no state at all — carries `commentUpdateState` and a note that the
   write was not all or none and is to be re-read with `list_comments`, not
