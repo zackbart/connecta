@@ -4,6 +4,7 @@ import { connectorWith } from "./fixtures/connectors.js";
 import { api } from "../src/connectors/api.js";
 import { USAGE_SKILL } from "../src/skills.js";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { createConnecta } from "../src/index.js";
@@ -500,32 +501,22 @@ describe("quickJsExecutor", () => {
     expect(child.status, child.stderr).toBe(0);
   }, 2 * SPAWN_BUDGET_MS);
 
-  it("drains pending host calls after a timeout without spinning", async () => {
-    // Two stragglers settling at different times after the budget expires.
-    const slow: ExecutorProvider[] = [
-      {
-        name: "slow",
-        fns: {
-          a: () => new Promise((r) => setTimeout(() => r(1), 600)),
-          b: () => new Promise((r) => setTimeout(() => r(2), 1200)),
-        },
-      },
-    ];
-    const ex = quickJsExecutor({ timeoutMs: 300 });
-    expect(
-      await deadlineOutcome(
-        ex.execute(`async () => Promise.all([slow.a(), slow.b()])`, slow),
-      ),
-    ).toMatch(/timed out|wall budget/);
-    // Regression guard: the old drain re-.then()'d an already-resolved
-    // deferred forever, pinning the microtask queue and starving setTimeout.
-    // If that returns, this macrotask timer never fires and the hard vitest
-    // budget below trips instead of hanging the suite.
-    const tick = await new Promise<string>((r) =>
-      setTimeout(() => r("tick"), 1400),
+  it("drains pending host calls after a timeout without spinning [INV-7]", () => {
+    // Drive the runtime directly, without the pool terminating its child and
+    // settling both calls together. The fixture releases one call, yields a
+    // real event-loop turn, then releases the other and checks disposal.
+    // A missing re-arm spins microtasks and blocks timers in that process;
+    // spawnSync's external watchdog can still kill it. Its budget allows tsx
+    // and WASM startup under load, matching the exit guard above.
+    const child = spawnSync(
+      process.execPath,
+      ["--import", "tsx", fileURLToPath(new URL("./fixtures/quickjs-drain.ts", import.meta.url))],
+      { cwd: process.cwd(), encoding: "utf8", timeout: SPAWN_BUDGET_MS },
     );
-    expect(tick).toBe("tick");
-  }, 15_000);
+    expect(child.error, child.stderr).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toContain("drain completed after separate releases");
+  }, 2 * SPAWN_BUDGET_MS);
 
   it("rejects guest calls that resolve to inherited prototype members", async () => {
     const ex = quickJsExecutor();
