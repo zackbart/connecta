@@ -181,7 +181,7 @@ const closeOne: Program = async (connecta) => {
 };
 
 describe("a program's write", () => {
-  it("is refused before it is sent, pointing at call_destructive_tool", async () => {
+  it("INV-2: is refused before it is sent, pointing at call_destructive_tool", async () => {
     const w = world();
     const result = await w.run(closeOne);
     expect(result.isError).toBe(true);
@@ -221,7 +221,7 @@ describe("a program's write", () => {
 });
 
 describe("config approval exemptions (#566)", () => {
-  it("runs an exempt write, recorded as an ordinary call", async () => {
+  it("INV-2: runs an exempt write, recorded as an ordinary call", async () => {
     const w = world({ approval: policy({ "tracker.close_issue": "never" }) });
     expect(value(await w.run(closeOne)).result).toBe("closed");
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
@@ -285,7 +285,7 @@ describe("config approval exemptions (#566)", () => {
     expect(value(await widened.run(closeOne)).result).toBe("closed");
   });
 
-  it("lets an unawaited exempt write finish, and says how it went", async () => {
+  it("INV-9: lets an unawaited exempt write finish, and says how it went", async () => {
     let writeStarted!: () => void;
     let dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
     const w = world({
@@ -320,6 +320,10 @@ describe("config approval exemptions (#566)", () => {
       code: "write_outcome_unknown",
       writes: { succeeded: 0, failed: 0, unknown: 1 },
     });
+    expect(w.writes()).toEqual([
+      { address: "tracker.close_issue", args: { id: 1 } },
+      { address: "tracker.close_issue", args: { id: 2 } },
+    ]);
   });
 
   it.each([false, true])("drains a dispatched write on terminal host-budget exhaustion (unknown: %s)", async (unknown) => {

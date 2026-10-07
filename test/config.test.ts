@@ -58,7 +58,7 @@ describe("ConnectaConfig boundary", () => {
     expect(events).toEqual(["acquire private false", "release", "snapshot private", "close private"]);
   });
 
-  it("requires explicit opt-in for custom executors regardless of constructor or display name", async () => {
+  it("INV-11: requires explicit opt-in for custom executors regardless of constructor or display name", async () => {
     class CustomExecutor {
       readonly name = "DynamicWorkerExecutor";
       async execute() { return { result: null }; }
@@ -215,7 +215,7 @@ describe("ConnectaConfig boundary", () => {
     expect(connecta.registry.maxResultBytes).toBe(123);
   });
 
-  it("rejects malformed admission bounds at construction", () => {
+  it("INV-11: rejects malformed admission bounds at construction", () => {
     expect(() =>
       createConnecta({
         connectors: [],
@@ -305,7 +305,7 @@ describe("ConnectaConfig boundary", () => {
     expect(await noPersistenceStorage.get("catalog:memory-only")).toBeNull();
   });
 
-  it("rejects an unknown top-level option before reading the config", () => {
+  it("INV-11: rejects an unknown top-level option before reading the config", () => {
     const secret = "must-not-appear";
     let connectorsRead = false;
     const config = { typo: secret } as Record<PropertyKey, unknown>;

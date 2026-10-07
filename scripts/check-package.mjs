@@ -222,13 +222,17 @@ try {
     );
   }
 
+  for (const excluded of ["AGENTS.md", "CLAUDE.md", "PRINCIPLES.md"]) {
+    if (paths.has(excluded)) {
+      throw new Error(`Packed artifact ships repository-only ${excluded}`);
+    }
+  }
+
   for (const required of [
-    "AGENTS.md",
     "README.md",
     "LICENSE",
     "bin/connecta.mjs",
     "documentation/code-mode.md",
-    "ethos.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
     "templates/node/AGENTS.md",

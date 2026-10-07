@@ -813,7 +813,7 @@ describe("paginated catalogs through the discovery path", () => {
     expect(required(called.content[0]).text).toBe("ran:gamma");
   });
 
-  it("never exposes a partial catalog when a later page fails, and keeps the stale fallback", async () => {
+  it("INV-8: never exposes a partial catalog when a later page fails, and keeps the stale fallback", async () => {
     let breakLaterPages = false;
     const { connector } = fixture(threePages(), {
       sendFault: (message) =>

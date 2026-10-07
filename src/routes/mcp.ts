@@ -302,7 +302,7 @@ function admitted(
 function toolkitRetired(logger: Logger): Response {
   logger.warn(
     "[connecta] rejected an /mcp connection carrying ?toolkit= with 404: " +
-      "toolkits were retired in issue #178 (see ethos.md) — one deployment " +
+      "toolkits were retired in issue #178 (see PRINCIPLES.md) — one deployment " +
       "serves one audience. The client sees a transport-level failure and " +
       "never the reason, so remove the ?toolkit= value from its MCP endpoint " +
       "URL, or point it at the deployment for its audience.",

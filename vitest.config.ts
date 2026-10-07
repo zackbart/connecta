@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { buildSync } from "esbuild";
 
@@ -136,6 +137,14 @@ export const NODE_ONLY_SUITES = [
     reason: "runs real HTTP requests through Wrangler/workerd to verify Worker cleanup after the response ends",
   },
   {
+    file: "test/invariants.test.ts",
+    reason: "reads principles and spawns Vitest fixture runs to verify executed evidence",
+  },
+  {
+    file: "test/spec-coverage.test.ts",
+    reason: "reads the MCP coverage record from the checkout",
+  },
+  {
     file: "test/artifact-eval-grader.test.ts",
     reason: "checks the Node-only fake-world artifact evaluation grader",
   },
@@ -245,6 +254,7 @@ const NODE_SUITES = [
 
 export default defineConfig({
   test: {
+    reporters: ["default", new CoverageReporter(NODE_SUITES)],
     projects: [
       {
         // The Node template is a consumer project: it imports the package by

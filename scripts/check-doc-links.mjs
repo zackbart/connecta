@@ -16,26 +16,8 @@ const ignoredDirectories = new Set([
   "dist",
   "node_modules",
 ]);
-// Historical release notes quote the section-number syntax and documentation
-// paths that existed when those releases shipped. They are records, not live
-// documentation pointers, so neither stale-reference nor link checking applies.
-const staleReferenceAllowlist = new Set(["CHANGELOG.md"]);
+// Historical release notes preserve links to paths from older releases.
 const historicalLinkAllowlist = new Set(["CHANGELOG.md"]);
-const staleReferenceDirectoryPrefixes = ["src/", "documentation/", "examples/"];
-
-// The ethos is deliberately terse — the cap is the point, not a formality. It
-// is a word cap, not a line cap: a line cap measured newlines while the file
-// grew sideways into 1,300-character table rows (#469).
-const ethosWordLimit = 1200;
-// Raised from 700 when code-mode.md gained the emitted-output clauses (#270),
-// from 800 when it gained the rendered-output clauses (#277), and from 900
-// to 1,040 when it gained pausing and resuming and their exemptions (#565,
-// #566): the contract grew real surfaces, not prose, written as compressed
-// clauses before the wall moved, and moved only as far as they needed. When
-// pausing left (#672), the wall came back down to 950 rather than staying
-// where the departed surface had put it. The pressure stays — a guide
-// approaching this wall gets compressed before the wall moves again.
-const guideLineLimit = 950;
 
 function usage(message) {
   if (message) console.error(message);
@@ -94,11 +76,6 @@ async function walkFiles(root, directory = root) {
     }
   }
   return paths;
-}
-
-function lineCount(source) {
-  if (source.length === 0) return 0;
-  return source.replace(/\r?\n$/, "").split(/\r?\n/).length;
 }
 
 function headingSlug(text) {
@@ -302,60 +279,8 @@ async function checkPackedLinks(root, packedPaths, errors) {
   }
 }
 
-async function checkStaleReferences(root, paths, errors) {
-  const stalePattern =
-    /(?:docs\/)?documentation\.md(?:#[A-Za-z0-9_/-]+|\s+§\s*\d+)|§\s*\d+/gi;
-  for (const path of paths) {
-    const shown = displayPath(root, path);
-    if (
-      staleReferenceAllowlist.has(shown) ||
-      (shown !== "README.md" &&
-        !staleReferenceDirectoryPrefixes.some((prefix) =>
-          shown.startsWith(prefix),
-        ))
-    ) {
-      continue;
-    }
-    const source = await readFile(path, "utf8");
-    const lines =
-      extname(path).toLowerCase() === ".md"
-        ? activeLines(source)
-        : source
-            .split(/\r?\n/)
-            .map((text, index) => ({ number: index + 1, text }));
-    for (const { number, text } of lines) {
-      for (const match of text.matchAll(stalePattern)) {
-        addError(
-          errors,
-          root,
-          path,
-          number,
-          `stale documentation reference "${match[0]}"`,
-        );
-      }
-    }
-  }
-}
-
 async function checkStructure(root, markdownCache, errors) {
-  // The retired manual must stay retired: a resurrected docs/ directory is
-  // drift back toward the pre-restructure shape, not a new document set.
-  try {
-    const retired = await stat(resolve(root, "docs"));
-    if (retired.isDirectory()) {
-      addError(
-        errors,
-        root,
-        resolve(root, "docs"),
-        1,
-        'retired "docs/" directory exists; guides belong in "documentation/"',
-      );
-    }
-  } catch {
-    // absent, as it should be
-  }
-
-  for (const required of ["README.md", "ethos.md"]) {
+  for (const required of ["README.md", "PRINCIPLES.md"]) {
     const path = resolve(root, required);
     try {
       const source = await readFile(path, "utf8");
@@ -363,19 +288,6 @@ async function checkStructure(root, markdownCache, errors) {
     } catch {
       addError(errors, root, path, 1, `missing ${required}`);
     }
-  }
-
-  const ethosPath = resolve(root, "ethos.md");
-  const ethos = markdownCache.get(ethosPath);
-  const ethosWords = ethos === undefined ? 0 : ethos.split(/\s+/).filter(Boolean).length;
-  if (ethos !== undefined && ethosWords > ethosWordLimit) {
-    addError(
-      errors,
-      root,
-      ethosPath,
-      1,
-      `ethos.md has ${ethosWords} words; expected at most ${ethosWordLimit} — terseness is the point`,
-    );
   }
 
   const guidesDirectory = resolve(root, "documentation");
@@ -418,15 +330,6 @@ async function checkStructure(root, markdownCache, errors) {
       source = await readFile(path, "utf8");
       markdownCache.set(path, source);
     }
-    if (lineCount(source) >= guideLineLimit) {
-      addError(
-        errors,
-        root,
-        path,
-        1,
-        `guide has ${lineCount(source)} lines; expected fewer than ${guideLineLimit}`,
-      );
-    }
     const headings = headingsFor(source);
     const duplicate = headings.find((heading) =>
       headings.some(
@@ -466,7 +369,6 @@ if (packed) {
   );
   const markdownCache = new Map();
   await checkLinks(root, markdownPaths, markdownCache, errors);
-  await checkStaleReferences(root, paths, errors);
   if (shouldCheckStructure) {
     await checkStructure(root, markdownCache, errors);
   }

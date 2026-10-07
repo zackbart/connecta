@@ -1,0 +1,475 @@
+{
+  "revision": "2026-07-28",
+  "sources": [
+    "https://modelcontextprotocol.io/specification/2026-07-28",
+    "https://modelcontextprotocol.io/extensions/overview"
+  ],
+  "scope": "Current connecta behavior, not SDK capability alone. Supported means the described scope has tests; partial names its gaps. Planned includes work deferred beyond 0.29 and unimplemented optional core features. #703 decisions may be superseded by a later record.",
+  "features": [
+    {
+      "id": "json-rpc",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic",
+      "notes": "SDK serves both eras; pool/origin refusals and timeout responses still need JSON-RPC bodies.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+        },
+        {
+          "file": "test/server-route-contracts.test.ts",
+          "title": "pins application error codes for overload and shutdown"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "version-negotiation",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning",
+      "notes": "SDK auto negotiation upward and downstream, with explicit known-legacy opt-out.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+        },
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "keeps automatic version negotiation as the default"
+        },
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "bypasses discovery for a known-legacy downstream"
+        }
+      ]
+    },
+    {
+      "id": "request-metadata",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#_meta",
+      "notes": "SDK validates modern protocol fields; connecta does not yet thread clientCapabilities/clientInfo into tool context or activity.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "refuses a 2026-07-28 request that drops MCP-Protocol-Version with HeaderMismatch"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "stateless-requests",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#statelessness",
+      "notes": "Fresh upward server and request-local downstream clients; legacy session cleanup stays request-scoped.",
+      "tests": [
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "INV-7: reuses a client within one request scope but never across requests"
+        },
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern client without initialize and emits private tools/list cache hints"
+        }
+      ]
+    },
+    {
+      "id": "icons",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#icons",
+      "notes": "Legacy initialize preserves title, websiteUrl and icons; modern server/discover icon metadata has no connecta-specific regression.",
+      "issue": "https://github.com/zackbart/connecta/issues/707",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)"
+        }
+      ]
+    },
+    {
+      "id": "server-discovery",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/discover",
+      "notes": "server/discover works through the SDK; extension advertisement and discovery cache hints remain planned.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern client without initialize and emits private tools/list cache hints"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "streamable-http",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http",
+      "notes": "Fetch-native HTTP supports both eras; custom refusal bodies and parameter/header declarations need alignment.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+        },
+        {
+          "file": "test/server-route-contracts.test.ts",
+          "title": "permits MCP preflight without auth and mirrors valid Mcp-Param header names only"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "stdio",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio",
+      "notes": "The prescribed deployments expose fetch/HTTP; no connecta stdio entrypoint.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "authorization",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource audience; edge-validated Worker Access and machine access tokens exist. Phase 3 hardens metadata/challenges and retires static bearer.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves oauth-protected-resource metadata pointing at the derived fapi url"
+        },
+        {
+          "file": "test/clerk.test.ts",
+          "title": "accepts the canonical resource audience at /mcp without a fallback allowlist"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "authorization-server-discovery",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery",
+      "notes": "Downstream discovery persists across callbacks and binds grants to the validated issuer.",
+      "tests": [
+        {
+          "file": "test/downstream-oauth.test.ts",
+          "title": "persists discovery state across OAuth callback request scopes"
+        },
+        {
+          "file": "test/downstream-oauth.test.ts",
+          "title": "binds client registration and tokens to the validated authorization issuer"
+        }
+      ]
+    },
+    {
+      "id": "client-registration",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration",
+      "notes": "DCR and static OAuth clients exist; self-hosted CIMD default and pre-registered remoteMcp clients are planned.",
+      "tests": [
+        {
+          "file": "test/downstream-oauth.test.ts",
+          "title": "round-trips client information (DCR)"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "authorization-security",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations",
+      "notes": "PKCE, state, issuer, origin, and Clerk resource-audience binding have regressions; callback error ordering and AS revocation still need work.",
+      "tests": [
+        {
+          "file": "test/downstream-oauth.test.ts",
+          "title": "round-trips the PKCE code verifier and throws when missing"
+        },
+        {
+          "file": "test/downstream-oauth.test.ts",
+          "title": "state() persists a random opaque value verifyState checks constant-time"
+        },
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "never sends an OAuth bearer token across an origin boundary"
+        },
+        {
+          "file": "test/clerk.test.ts",
+          "title": "INV-4: does not treat the base resource audience as a pool audience"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "tools-list",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "notes": "The seven current meta-tools are listed; downstream pages assemble complete catalogs.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+        },
+        {
+          "file": "test/remote-mcp-pagination.test.ts",
+          "title": "collects every page, in server order, with metadata intact"
+        }
+      ]
+    },
+    {
+      "id": "tools-call",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "notes": "Direct and program calls work; meta-tool outputSchema and x-mcp-header address declarations remain planned.",
+      "tests": [
+        {
+          "file": "test/meta-tools-call.test.ts",
+          "title": "JSON-wraps an api connector's return value"
+        },
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "callTool proxies args and returns the content array as-is"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "tool-annotations",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "notes": "Read/write routing fails closed; deployment exemptions affect programs only until Phase 2 replaces them.",
+      "tests": [
+        {
+          "file": "test/execute.test.ts",
+          "title": "INV-1: fails closed for unannotated and contradictory tool definitions"
+        },
+        {
+          "file": "test/program-writes.test.ts",
+          "title": "INV-2: runs an exempt write, recorded as an ordinary call"
+        }
+      ]
+    },
+    {
+      "id": "tool-input-schema",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "notes": "Validate tool arguments locally before dispatch.",
+      "tests": [
+        {
+          "file": "test/meta-tools-call.test.ts",
+          "title": "schema-invalid args fail closed as invalid_args without reaching the handler"
+        }
+      ]
+    },
+    {
+      "id": "tool-output-schema",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "notes": "Downstream structured output is SDK-validated across every catalog page; meta-tools do not all declare outputSchema.",
+      "tests": [
+        {
+          "file": "test/remote-mcp-pagination.test.ts",
+          "title": "rejects structured content that violates an EARLIER page's output schema"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/706"
+    },
+    {
+      "id": "tool-content",
+      "status": "supported",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "notes": "Direct downstream content passes through; guest emission permits text, image and audio only.",
+      "tests": [
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "callTool proxies args and returns the content array as-is"
+        },
+        {
+          "file": "test/execute-emit.test.ts",
+          "title": "accepts exactly the three block shapes"
+        }
+      ]
+    },
+    {
+      "id": "resources",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/resources",
+      "notes": "Skill resources and downstream reads inside programs arrive in Phase 3; no general upward resource proxy is claimed.",
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "prompts",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/prompts",
+      "notes": "Deferred for 0.29.0 by #703's Deferred row; no prompts advertised today.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "elicitation",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
+      "notes": "MRTR URL elicitation for auth and direct-call downstream relay arrive in Phase 3.",
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "multi-round-trip-requests",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr",
+      "notes": "Seal requestState for auth and wrap downstream states on direct calls; programs cannot relay downstream input yet.",
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "subscriptions",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions",
+      "notes": "subscriptions/listen is deferred for 0.29.0 by #703's Deferred row.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "cancellation",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation",
+      "notes": "Request abort/deadline cancellation closes calls and scopes; protocol-level cancel notification behavior has no connecta-specific regression.",
+      "tests": [
+        {
+          "file": "test/execute.test.ts",
+          "title": "INV-7: cancels outstanding host calls when sandbox execution ends"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "progress",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress",
+      "notes": "No connecta-specific progress forwarding or notification contract; adopt when a request requires it.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "caching",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching",
+      "notes": "Private upward tools/list hints and TTL catalog storage exist; SDK ResponseCacheStore and downstream ttlMs/cacheScope adoption are planned.",
+      "tests": [
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern client without initialize and emits private tools/list cache hints"
+        },
+        {
+          "file": "test/registry.test.ts",
+          "title": "caches within the TTL and refetches after it expires"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "pagination",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/pagination",
+      "notes": "Downstream tools/list pages are complete-or-failure. SDK-native listTools replaces the hand-written walk in Phase 3.",
+      "tests": [
+        {
+          "file": "test/remote-mcp-pagination.test.ts",
+          "title": "collects every page, in server order, with metadata intact"
+        },
+        {
+          "file": "test/remote-mcp-pagination.test.ts",
+          "title": "INV-8: never exposes a partial catalog when a later page fails, and keeps the stale fallback"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "completion",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/completion",
+      "notes": "No completion/complete handler today; resources/prompts adoption determines its useful scope.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "json-schema",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#json-schema-usage",
+      "notes": "Bounded 2020-12 validation exists, including dependentSchemas/unevaluatedProperties; arbitrary dialect conformance is not claimed.",
+      "tests": [
+        {
+          "file": "test/validate.test.ts",
+          "title": "evaluates dependentSchemas and unevaluatedProperties from 2020-12 schemas"
+        }
+      ],
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "trace-context",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#_meta",
+      "notes": "No connecta traceparent/tracestate/baggage propagation contract; per-request envelope threading comes first.",
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "sampling",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/sampling",
+      "notes": "Deprecated upstream and not adopted under the plan.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "roots",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/roots",
+      "notes": "Deprecated upstream and not adopted under the plan.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "logging",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/logging",
+      "notes": "MCP logging is deprecated upstream and not adopted. Local operator logs are a separate concern.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "legacy-lifecycle",
+      "status": "partial",
+      "spec": "https://modelcontextprotocol.io/specification/2026-07-28/deprecated",
+      "notes": "SDK initialize and legacy sessions remain for older hosts; connecta closes downstream sessions with their request.",
+      "tests": [
+        {
+          "file": "test/remote-mcp.test.ts",
+          "title": "sends the spec DELETE for a stateful downstream before closing"
+        },
+        {
+          "file": "test/server.test.ts",
+          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+        }
+      ]
+    },
+    {
+      "id": "io.modelcontextprotocol/ui",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/extensions/apps/overview",
+      "notes": "MCP Apps is deferred for 0.29.0 by #703's Deferred row.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "io.modelcontextprotocol/skills",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/extensions/skills/overview",
+      "notes": "The current skills meta-tool is not the extension; native skills/resources adoption is Phase 3 item 6.",
+      "issue": "https://github.com/zackbart/connecta/issues/707"
+    },
+    {
+      "id": "io.modelcontextprotocol/tasks",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/extensions/tasks/overview",
+      "notes": "Tasks, including downstream task polling, are deferred for 0.29.0 by #703's Deferred row.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "io.modelcontextprotocol/oauth-client-credentials",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/extensions/auth/oauth-client-credentials",
+      "notes": "Machine clients use cta_ access tokens. The OAuth client credentials extension is not implemented or negotiated.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "io.modelcontextprotocol/enterprise-managed-authorization",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/extensions/auth/enterprise-managed-authorization",
+      "notes": "Inbound human auth is Clerk or Worker Access. Edge-managed Access is not negotiation of this extension.",
+      "decision": "https://github.com/zackbart/connecta/issues/703"
+    }
+  ]
+}

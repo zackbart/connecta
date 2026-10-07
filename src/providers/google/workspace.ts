@@ -7,7 +7,7 @@
  * Whose account. `ConnectorContext` carries no identity, and a deployment's
  * own connector never learns its caller (`src/connector-caller.ts`). A
  * maintained Workspace provider is the second sanctioned reader of that
- * channel (ethos.md, delegated subjects, #678): deployment config supplies
+ * channel (PRINCIPLES.md INV-3, #678): deployment config supplies
  * `subject`, a function from the admitted `AuthenticatedIdentity` to a
  * Workspace address, and the provider reads the identity core attached beside
  * the context. No tool argument, header, or program can name the subject —

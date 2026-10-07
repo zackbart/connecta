@@ -7,7 +7,8 @@ This repository is deployment configuration, not a copy of Connecta itself.
   authenticates the request before the Worker runs; do not add JWT parsing or a
   second Worker-side identity gate.
 - Attach Access to the Worker itself, not only its hostname. Enable Managed
-  OAuth and Dynamic Client Registration on that Access application.
+  OAuth on that Access application. CIMD is the spec's preferred client
+  registration; enable DCR as the fallback Access currently requires.
 - Managed OAuth's **Allowed redirect URIs** must contain all three entries
   below. This is application configuration under
   `oauth_configuration.dynamic_client_registration.allowed_uris`, not an
@@ -37,8 +38,8 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Prefer `api()` when the agent must see an exact reviewed capability set;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
 - Use Access service credentials for `connecta doctor` and unattended clients.
-  A configured Connecta bearer cannot cross the Access edge alone. Connecta-issued
-  tokens are removed. UI, vault, and activity use explicit optional imports;
+  Connecta-issued `cta_` tokens cover machine clients inside connecta; they
+  cannot cross the Access edge alone. UI, vault, and activity use explicit optional imports;
   auth changes require code-derived shared or personal management permissions.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,

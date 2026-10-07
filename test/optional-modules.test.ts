@@ -174,7 +174,7 @@ describe("optional deployment modules", () => {
     expect(oauth.finishAuth).not.toHaveBeenCalled();
   });
 
-  it("refuses passive consent writes while preserving pending state", async () => {
+  it("INV-10: refuses passive consent writes while preserving pending state", async () => {
     const storage = memoryStorage();
     const active = new KvOAuthProvider("oauth", storage, BASE, undefined, true);
     const state = await active.state();

@@ -1,32 +1,15 @@
-# connecta — ethos
+---
+status: superseded
+date: 2026-10-07
+issues: [703, 705]
+supersedes: []
+---
 
-Connecta’s scope, refusals, and invariants. Contradictions require a design decision.
+# The ethos verdict table
 
-## What this is
-
-- **One MCP endpoint.** Agents reach configured connectors through JavaScript,
-  a required executor, and seven meta-tools.
-- **Config-as-code.** One tenant and connector set; identities get
-  config-derived views. Maintained providers, `remoteMcp()`, and `api()` share
-  one connector contract.
-- **Safe by default.** Programs run only read-only or config-exempt tools;
-  every other write crosses `call_destructive_tool`. The host owns approval.
-- **One fetch-native core.** Web APIs on Node and Workers; platform code and
-  optional features behind explicit subpaths; Effect inside, Promises outside.
-- **Human auth management.** Optional pages show status and payload-free history.
-  Explicit permissions allow credential changes and OAuth. Capabilities stay in code.
-
-## What this isn't
-
-No runtime registration, admin-editable capabilities, or policy engine; config
-may only exempt a tool from asking. No schema ingestion, accounts, or groups;
-personal state remains within one tenant. Breaking changes remain acceptable;
-version numbers signal change, not stability.
-
-## Decisions
-
-New arguments may revisit verdicts. Accepted designs enter guides and CHANGELOG;
-`planned` ones bind review before publication.
+Frozen verbatim from `ethos.md` at `c1c2d52`. Superseded by
+[#703](https://github.com/zackbart/connecta/issues/703).
+These verdicts explain the old shape; they do not govern new work.
 
 | Decision | Verdict | Why |
 | --- | --- | --- |
@@ -71,24 +54,3 @@ New arguments may revisit verdicts. Accepted designs enter guides and CHANGELOG;
 | Downstream `ttlMs` cache hints | gated | needs refresh-churn evidence ([#206](https://github.com/zackbart/connecta/issues/206)) |
 | Worker Access inbound auth | provisional | Managed OAuth and Clerk migration need production evidence ([#506](https://github.com/zackbart/connecta/issues/506)) |
 | Program UI tool calls | removed | duplicated calls without improving retrieval ([#287](https://github.com/zackbart/connecta/issues/287), [#484](https://github.com/zackbart/connecta/issues/484)) |
-
-## Invariants
-
-Tests enforce these.
-
-- **Fail-closed read-only.** A missing, false, or contradictory annotation never gets the benefit of the doubt.
-- **Generated code cannot mint capabilities.** Admission, credentials, and classification are enforced below the sandbox.
-- **Only explicitly read-only or config-exempt work runs in the sandbox.** Every other write crosses `call_destructive_tool`.
-- **Nothing request-bound survives a request.** No transport, stream, signal, or awaited promise outlives it.
-- **A downstream catalog is complete or it is a failure.** A partial one is never cached, persisted, or served.
-- **Activity is payload-free by construction.** The event type has nowhere to put arguments, results, code, or raw errors.
-- **An observed shape is never a declaration.** Names and broad types only, labeled, and gone behind any declared schema.
-- **Credentials never leave the host.** Encrypted at rest, readable only by the owning connector (and principal, for personal auth), rendered by nothing.
-- **Import-graph purity.** Nothing reachable from the root entry imports a `node:` builtin or `effect/testing`.
-- **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath; Effect is the one hard dependency, named by no published type.
-- **Human routes manage auth, never capability.** Visibility grants use, not administration. Auth mutations need separate config-derived permissions, denied by default; activity reads its own. Artifact viewing respects connector grants and cannot invoke tools.
-- **Omitted modules do no work.** Core imports no UI bundle, vault, activity, artifacts, or bearer implementation. OAuth callbacks work without UI.
-- **Status reads do not start authorization.** Only an explicit authorized action starts OAuth.
-- **Structural mistakes throw at construction.** Booting into the wrong shape is worse than not booting.
-
-Connecta simplifies [executor](https://github.com/UsefulSoftwareCo/executor).

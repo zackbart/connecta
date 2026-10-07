@@ -9,6 +9,6 @@ export function assertNoRetiredToolkitOptions(
   if (!hasOwn(options, "toolkits") && !hasOwn(options, "unscoped")) return;
   throw new Error(
     `${source} options \`toolkits\` and \`unscoped\` were removed in issue ` +
-      "#178. Deploy one connecta instance per audience instead; see ethos.md.",
+      "#178. Deploy one connecta instance per audience instead; see PRINCIPLES.md.",
   );
 }

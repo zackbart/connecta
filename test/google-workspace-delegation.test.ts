@@ -5,7 +5,7 @@
 // What this pins: the RS256 JWT-bearer assertion (header, claims, and a
 // signature that verifies against the key's public half, signed with Web
 // Crypto in whichever runtime runs this suite), the in-memory token cache and
-// its refresh and dedupe, and the one rule the ethos row exists for — the
+// its refresh and dedupe, and the one rule INV-3 exists for — the
 // subject comes from deployment config applied to the admitted identity, and
 // from nothing a call, a header, or a program sends (#678).
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -491,7 +491,7 @@ describe("whose account a call acts as", () => {
     expect(tokenCalls).toEqual([]);
   });
 
-  it("cannot be chosen by an argument", async () => {
+  it("INV-3: cannot be chosen by an argument", async () => {
     // Every schema is closed, so a subject- or user-shaped argument is refused
     // locally rather than reaching anything that might read it.
     for (const args of [{ subject: "ceo@org.example" }, { userId: "ceo@org.example" }]) {

@@ -194,7 +194,7 @@ class ExecuteDiagnostics {
 
 /**
  * One MCP content block a program may emit. The complete set, by design:
- * `resource` and `resource_link` are refused in ethos.md — pointers get
+ * `resource` and `resource_link` are excluded by PRINCIPLES.md INV-3 — pointers get
  * followed, and connecta serves no resources for them to point at.
  */
 export type EmittedBlock =

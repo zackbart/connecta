@@ -1,35 +1,25 @@
 # Working on connecta
 
-This is the canonical instruction file for coding agents. `CLAUDE.md` is a
-symlink to this file so every agent works from the same conventions.
+This is the canonical agent instruction file. `CLAUDE.md` is its symlink;
+keep it that way. Connecta aggregates remote MCP servers and HTTP APIs behind
+one MCP endpoint. Agents use JavaScript through `execute_code`, with direct
+calls for known operations and writes. One fetch-native core runs on Node
+and Cloudflare Workers, with Effect inside and Promises at the published edge.
 
-A single MCP endpoint aggregating downstream connectors (remote MCP servers and
-plain HTTP APIs) behind seven meta-tools, `execute_code` among them. Every
-deployment configures an executor, and agents reach connectors by writing
-JavaScript against it. One fetch-native core on Effect behind a Promise API,
-running on both Node and Cloudflare Workers. A program runs read-only and
-config-exempt tools; every other write is its own `call_destructive_tool` call,
-so the host's permission prompt is the only approval. The code and the guides
-describe what exists.
+Read [PRINCIPLES.md](./PRINCIPLES.md) before changing a subsystem and start
+with [architecture](./documentation/architecture.md). The other guides cover
+[meta-tools](./documentation/meta-tools.md), [code mode](./documentation/code-mode.md),
+and [auth](./documentation/auth.md). Subsystem source and tests carry the rest.
+[README.md](./README.md) is the human-facing overview.
 
-- **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
-  and isn't, and its decisions table carries a verdict for every shape already
-  considered — accepted, planned, refused, removed, provisional, or gated.
-  Check the table before designing or building anything: a `planned` row is a
-  "yes" that has not shipped, binding on review now and absent from the guides
-  until it lands, so never document it there as if it exists; a `refused` row
-  is a "no" with the reason attached, and a `removed` row (toolkits
-  [#178](https://github.com/zackbart/connecta/issues/178), proactive credential
-  liveness [#179](https://github.com/zackbart/connecta/issues/179), the classic
-  executor-free surface
-  [#273](https://github.com/zackbart/connecta/issues/273)) records a surface
-  that no longer exists — do not reintroduce it without a new decision.
-- There is no TODO.md — the roadmap lives in
-  [GitHub issues](https://github.com/zackbart/connecta/issues). When you find
-  TODO items (in code comments, docs, or conversation), don't accumulate them
-  in a file: turn each one into a GitHub issue that clearly defines what to do
-  — motivation, behavioral requirements, and acceptance criteria — without
-  prescribing the implementation.
+The [0.29 plan of record #703](https://github.com/zackbart/connecta/issues/703)
+owns the rework and supersedes older guidance wherever they conflict.
+[decisions/](./decisions/) explains past choices without binding later PRs.
+[spec/coverage.json](./spec/coverage.json) records current MCP support, gaps,
+and test evidence. Describe planned work as planned, not shipped behavior.
+The roadmap lives in [GitHub issues](https://github.com/zackbart/connecta/issues).
+Turn newly discovered work into an issue with motivation, behavior, and
+acceptance criteria; do not collect it in a TODO.md.
 
 ## Verification
 
@@ -50,129 +40,81 @@ path detection to succeed, plus browser success or an intentional safe-path skip
 Failures and cancellations fail the gate. Publishing runs the full
 `release:check` once, which builds `dist/`, then `npm publish --ignore-scripts`
 uses that validated tree without rerunning local `prepack`.
+`check:fast` arrives in Phase 1 item 2; it does not exist yet.
 
-## The map
+## Source map
 
-- [`ethos.md`](./ethos.md) — what connecta is, what it refuses to be, the
-  decisions table, and the invariants every change must preserve. Check it
-  before building something new; "we already decided not to" is a real answer
-  there, and its planned/removed/provisional verdicts override anything staler.
-- [`documentation/`](./documentation/) — four guides for agents working on the
-  repo: `architecture.md`, `meta-tools.md`, `code-mode.md`, and `auth.md`.
-  Everything else — connectors, providers, admission, storage, the operator
-  UI, operations — is documented where it lives, in the source and its tests.
-  The guides that once covered those survive only in git history, which is
-  worth mining for rationale and worth nothing where it disagrees with
-  `ethos.md` or the code. Start with `architecture.md`.
-- [`README.md`](./README.md) — the human-facing overview.
-- [`templates/node/`](./templates/node/) — the one standalone Node deployment
-  shape copied by `connecta init`, Docker-ready rather than Docker-only. Keep
-  it small and prescribed. There are exactly two deployment shapes, this one
-  and [`examples/worker/`](./examples/worker/); a third scaffold that is a
-  diff away from one of them is the shape
-  [#344](https://github.com/zackbart/connecta/issues/344) deleted.
+- `src/index.ts` constructs the Promise API; `src/server.ts` composes routes.
+- `src/routes/` owns HTTP and upward MCP; `src/meta-tools.ts` and `src/execute.ts` own direct calls and programs.
+- `src/registry.ts`, `src/catalog-service.ts`, and `src/invocation.ts` own
+  catalogs, discovery, calls, and enforcement.
+- `src/connectors/` owns `remoteMcp()` and `api()`; `src/providers/` owns
+  maintained integrations. `src/auth/` owns auth adapters and downstream OAuth.
+- `src/runtime/` is the Effect core. Only `src/runtime/run.ts` starts fibers.
+- `src/node.ts`, `src/storage/file.ts`, and `src/executors/quickjs*` are
+  Node-only. They must remain unreachable from `src/index.ts`.
+- UI, activity, vault, artifacts, and inbound auth implementations use explicit
+  subpaths and typed configuration slots, outside the root import graph.
+- `src/operator-ui/` owns the operator UI. Capability changes remain in code.
 
-**Read `ethos.md` before changing a subsystem, and its guide when it has one.**
+`test/purity.test.ts` guards root imports: no `node:*`, `effect/testing`,
+optional implementations, or provider connections. Platform-bound or heavy
+modules use explicit subpaths and optional peers. Effect is a core dependency.
+`/worker` and `/quickjs` brand executor lifecycles; custom sandboxes opt in with
+`customExecutor(executor, { lifecycle: "self-managed" })` and own cleanup.
+`test/package-surface.test.ts` and the package smoke guard published boundaries.
+Current Worker storage adapters live in `examples/worker/`; Phase 1 item 3
+replaces them with an importable D1 adapter and replaces Node file storage
+with SQLite. Do not describe that migration as complete.
 
-## Deployment setup
+## Deployment shapes
 
-`connecta init [directory]` is the golden path. It copies `templates/node/`,
-pins the generated deployment to the CLI package's exact version, restores the
-template `.gitignore` and the `CLAUDE.md` symlink, and refuses to merge into an
-existing path.
-`connecta doctor` verifies a running deployment's health, executor, and exact
-seven-tool surface. The template carries its own `Dockerfile` and
-`docker-compose.yml`, so the generated project is the container: setup changes
-must keep the root README, the template (source, container files, and README),
-and the `scripts/check-package.mjs` smoke — which builds and runs that
-container when Docker is available — aligned. Do not add a second initializer,
-a second container recipe, or another “recommended” project shape.
+There are two: [templates/node/](./templates/node/) and
+[examples/worker/](./examples/worker/). `connecta init [directory]` copies the
+Node template, pins the exact CLI package version, restores `.gitignore` and
+the `CLAUDE.md` symlink, and refuses an existing path. Its Docker files
+containerize that same project. Keep setup changes aligned with README,
+template source and container files, and `scripts/check-package.mjs`.
+`connecta doctor` checks health, executor, and the current meta-tool set.
 
-## Where new code goes
+## Tests
 
-Two boundaries CI enforces that are not obvious from reading a file:
-
-- **Import-graph purity.** Nothing reachable from `src/index.ts` may import a
-  `node:` builtin — the core is Web-API only so it runs unchanged on Workers.
-  `src/node.ts`, `src/storage/file.ts`, and the QuickJS process-pool entry
-  (`src/executors/quickjs.ts` + child) are the Node-touching paths and must stay
-  unreachable from the root entry. `test/purity.test.ts` walks the import graph
-  and fails otherwise. Need a Node API? It goes behind an explicit Node-only
-  subpath (`/node` or `/quickjs`), never the root. `effect/testing` is banned
-  from `src/` on the same terms — its test clocks and layers have no business
-  in a runtime graph — and the purity walk catches it. The same walk keeps
-  the root entry to `effect` itself and lets only `src/runtime/run.ts` start
-  a fiber.
-- **Optional modules.** Core owns catalog discovery, execution, invocation, and
-  enforcement. UI, activity history, encrypted credentials, and bearer auth
-  implementations stay behind explicit subpaths and outside the root import
-  graph. Use the typed `ui`, `activity`, and `vault` slots; do not add a generic
-  plugin registry or runtime installation.
-- **The published surface.** Platform-specific storage adapters live in
-  `examples/worker/`, never in `src/` and never in the `exports` map. That
-  example does ship in the tarball, Cloudflare KV and D1 adapters included —
-  it is the Workers starting template a consumer copies, and copying it is the
-  point — but every `exports` target resolves into `dist/`, so those adapters
-  are readable reference source and not an importable subpath. What is
-  forbidden is a platform-bound adapter becoming importable from the package,
-  not a file appearing in the artifact. `@clerk/backend` and
-  `quickjs-emscripten` are optional peers behind the `./auth/clerk` and
-  `./quickjs` subpaths, and `@cloudflare/codemode` is the third optional peer,
-  behind the `./worker` executor adapter that owns each run's Worker Loader
-  and RPC handles. None may
-  become a dependency or install with core. Enforced by `test/package-surface.test.ts` and
-  `scripts/check-package.mjs`. Anything heavyweight or platform-bound gets a
-  subpath and an optional peer. The Effect core is the one deliberate
-  exception: it is the core, so it is a hard dependency rather than a peer,
-  under the rule in [Conventions](#conventions).
-
-## Where new tests go
-
-Suites live in `test/` and run as two vitest projects (`vitest.config.ts`).
-Every `*.test.ts` belongs to exactly one explicit list: runtime-portable suites
-in `WORKERS_SUITES`, Node-bound suites in `NODE_ONLY_SUITES` with a reason. The
-`node` project runs both lists; the `workers` project re-runs the portable list
-inside workerd. `test/suite-partition.test.ts` walks the directory and fails on
-an unclassified, double-classified, stale, or reasonless entry.
+Suites live in `test/`. Until Phase 1 item 2 changes the convention, each
+`*.test.ts` belongs to exactly one explicit list in `vitest.config.ts`:
+`WORKERS_SUITES` for portable tests; `NODE_ONLY_SUITES` with a reason for Node.
+Node runs both; workerd reruns portable suites. `suite-partition.test.ts`
+guards the lists. Cite the `INV-n` IDs a test enforces in its title;
+`invariants.test.ts` guards the evidence rules. The full Node run's coverage
+reporter rejects missing and unknown IDs using executed tests. Spec coverage
+references exact executed test titles and paths; `spec-coverage.test.ts` checks its
+structure, and the reporter requires those cases to pass.
 
 ## Conventions
 
-- **Static analysis.** `npm run check:lint` runs Oxlint's correctness category
-  only; it does not enforce style. `npm run check:unused` runs Knip's
-  unused-export and dependency gate. Keep both clean, and prefer removing dead
-  declarations over suppressing a finding.
-- **Effect inside, Promises at the edge.** The core runs on Effect v4 and
-  exports none of it; [Effect inside](./documentation/architecture.md#effect-inside)
-  has the shell/core shape, the one runner, and the cross-request rules.
-  `createConnecta`,
-  `remoteMcp()`, `api()`, custom connectors, and every published `.d.ts` stay
-  Promise-based and name no Effect type: a deployment author should never need
-  a second async paradigm to write a connector, so convert at the boundary,
-  not in the caller. Effect is a hard dependency pinned to one exact version,
-  never a range, and compatible with Alchemy's peer requirement, so a deployment
-  that uses both resolves one Effect rather than two. Modules tagged
-  `@stability unstable` are allowed behind subpaths: they can break in minor releases,
-  so an upgrade is its own deliberate pull request, never a drive-by in another
-  change. `effect/testing` stays out of `src/` (see import-graph purity). The
-  MCP edges do not move with the core — `@modelcontextprotocol/server` upward,
-  the SDK client downstream. Replacing either requires separate proof of the
-  wire contracts and request lifetimes; the stable core release is not that proof.
-- **Style.** There is no formatter. Match the surrounding code. The docs voice
-  is precise, occasionally wry, and always explains *why* — don't flatten it
-  into boilerplate.
-- **Commits.** Imperative summary naming the behavior change, with issue refs in
-  parens: `Normalize maxResultBytes at every intake point (#32) (#39)`.
-- **CHANGELOG.** Each release opens with a narrative paragraph — what this
-  release is, what breaks, what a deployment can ignore — then
-  `### Added` / `### Changed` / `### Fixed`.
-- **Provider drift.** Run `npm run providers:check` for the credential-free
-  public check across every maintained provider. It covers official MCP
-  documentation and OpenAPI contracts and never reads a provider credential.
-  Remote MCP schemas remain owned by the live `tools/list` response rather than
-  a vendored copy. Findings are read by a human and become GitHub issues;
-  nothing files itself. `scripts/drift-check.mjs` is the reference for what
-  each flag covers.
-- **Releases.** `npm run release:check`, tag `v<version>` matching
-  `package.json` exactly (the publish workflow verifies this and fails
-  otherwise), and publishing fires on GitHub **Release publication**, not on the
-  tag push.
+- Effect inside, Promises at the edge. `createConnecta`, `remoteMcp()`, `api()`,
+  custom connectors, and published declarations name no Effect types.
+  Convert at the boundary. See [Effect inside](./documentation/architecture.md#effect-inside).
+  Upgrading an unstable Effect subpath is its own deliberate PR. Replacing
+  either MCP SDK edge needs proof of wire contracts and request lifetimes.
+- There is no formatter until Phase 5. Match surrounding code. Docs explain
+  the contract and why it exists; keep them precise.
+- Keep Oxlint and Knip clean. Remove dead declarations instead of suppressing.
+- Commits use imperative behavior summaries with issue refs in parentheses:
+  `Normalize maxResultBytes at every intake point (#32) (#39)`.
+- Each CHANGELOG release opens with a narrative: what changes, what breaks,
+  what deployments can ignore. Then `### Added`, `### Changed`, `### Fixed`.
+- Run `npm run providers:check` on provider work. It reads public contracts,
+  never credentials. Findings become human-reviewed issues; nothing files itself.
+- Releases use `npm run release:check` and a `v<version>` tag matching
+  `package.json`. Publishing fires on GitHub Release publication, not tag push.
+
+## Agent policy
+
+Build and review with GPT-6.1-Sol through T3 `delegate_task`, provider `codex`,
+model `gpt-6.1-sol`. Use Opus sparingly for orchestration or final judgment.
+Every PR gets an independent Sol review before merge; builders do not review
+their own PRs. Parallel builders use separate worktrees off `origin/main`.
+One phase checklist item is one PR. Reference its phase issue in the body.
+Under #703's operating mode the orchestrator merges clean, green PRs by squash,
+uses the PR title as the commit summary, and deletes the branch. Deployments,
+advisory publication, and npm publishing wait until the end of Phase 5.

@@ -454,6 +454,29 @@ describe("call_tool", () => {
     expect(catalogLoads).toBe(2);
   });
 
+  it("INV-9: dispatches a transiently failing write exactly once", async () => {
+    let calls = 0;
+    const connector = api("once", {
+      tools: [{
+        name: "write",
+        description: "A write whose failure could invite a retry",
+        annotations: { readOnlyHint: false },
+        handler: () => {
+          calls++;
+          throw new Error("temporary 503");
+        },
+      }],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const result = await mt.callDestructiveTool({
+      address: "once.write",
+      reason: "Perform the requested write once.",
+      resultMode: "value",
+    });
+    expect(textOf(result)).toMatchObject({ ok: false, attempts: 1 });
+    expect(calls).toBe(1);
+  });
+
   it("returns transient failures after one attempt and preserves read-only admission", async () => {
     let safeCalls = 0;
     let unsafeCalls = 0;
