@@ -1868,11 +1868,13 @@ describe("remoteMcp() connection lifecycle", () => {
 describe("OAuth callback transport ownership", () => {
   it.each(["exchange", "clearPending"] as const)("closes an exchange-only transport after %s fails", async failure => {
     const backing = memoryStorage();
+    // The exchange's own consent, which its cleanup clears by compare-and-set.
+    await backing.set("oauth:pending", "https://auth.example/authorize");
     const context = { ...ctx(), storage: {
       ...backing,
-      delete: async (key: string) => {
-        if (failure === "clearPending") throw new Error("pending cleanup failed");
-        await backing.delete(key);
+      compareAndSet: async (key: string, expected: string | null, next: string | null) => {
+        if (failure === "clearPending" && next === null) throw new Error("pending cleanup failed");
+        return backing.compareAndSet!(key, expected, next);
       },
     } };
     const close = vi.fn(async () => {});

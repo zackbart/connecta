@@ -935,24 +935,42 @@ describe("KvOAuthProvider over memoryStorage", () => {
   });
 
   it("clearPending attempts every one-shot deletion after a failure", async () => {
+    // Deletion is a compare-and-set against the records this provider wrote
+    // itself (#697): a newer consent's are never its to remove.
     const backing = memoryStorage();
     const deleted: string[] = [];
     const storage: KVStorage = {
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        deleted.push(key);
-        if (key === "oauth:pending") throw new Error("pending delete failed");
-        await backing.delete(key);
+      ...backing,
+      async compareAndSet(key, expected, next, opts) {
+        if (next === null) deleted.push(key);
+        if (next === null && key === "oauth:pending") throw new Error("pending delete failed");
+        return backing.compareAndSet!(key, expected, next, opts);
       },
     };
     const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    await p.state();
+    await p.saveCodeVerifier("v-123");
+    await p.redirectToAuthorization(new URL("https://auth.example/authorize"));
     await expect(p.clearPending()).rejects.toThrow("pending delete failed");
     expect(deleted).toEqual([
       "oauth:pending",
       "oauth:verifier",
       "oauth:state",
     ]);
+    expect(await backing.get("oauth:verifier")).toBeNull();
+    expect(await backing.get("oauth:state")).toBeNull();
+  });
+
+  it("clearPending leaves one-shot records it cannot claim atomically", async () => {
+    // Without compareAndSet, a re-read and a delete could remove a newer
+    // consent's record written between them, so nothing is deleted (#697).
+    const { compareAndSet: _omitted, ...storage } = memoryStorage();
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    const state = await p.state();
+    await p.saveCodeVerifier("v-123");
+    await p.clearPending();
+    expect(await p.verifyState(state)).toBe(true);
+    expect(await p.codeVerifier()).toBe("v-123");
   });
 
   it("an old callback cannot clear a replacement flow's one-shot state", async () => {

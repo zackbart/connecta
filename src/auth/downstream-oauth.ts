@@ -101,6 +101,12 @@ const SEALED_OAUTH_KEYS: ReadonlySet<string> = new Set([
   "oauth:verifier",
 ]);
 const SEALED_VALUE_VERSION = 1;
+/** The records one consent writes and its completed exchange clears. */
+const ONE_SHOT_KEYS: ReadonlySet<string> = new Set([
+  "oauth:pending",
+  "oauth:verifier",
+  "oauth:state",
+]);
 /**
  * The longest cleanup lineage a reset publishes. A reset's storage work no
  * longer depends on the lineage's length — it deletes one retired generation
@@ -1322,25 +1328,34 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * The callback this provider verified, set by a matching `verifyState`.
    * `state` is the exact stored string it matched, which the exchange claims
-   * before the code leaves. `basis` is the raw client and tokens the epoch
-   * held when the exchange was bound — or that the exchange itself wrote
-   * since — and a failed exchange invalidates nothing else. `refusal` is the
-   * token endpoint's answer to a code it refused, handed back to the SDK's
-   * own retry instead of sending the code a second time.
+   * before the code leaves. `refusal` is the token endpoint's answer to a code
+   * it refused, handed back to the SDK's own retry instead of sending the code
+   * a second time.
    */
   private callback:
+    | { state: string; claimed: boolean; refusal?: Response }
+    | undefined;
+  /**
+   * What the epoch held, raw, when a code exchange was bound — or what the
+   * exchange itself wrote since. A failed callback invalidates no client or
+   * tokens but these, and a completed exchange deletes no one-shot record
+   * but these. A value is read only where something will use it, so it is
+   * null both when absent and when unread.
+   */
+  private exchangeBasis:
     | {
-        state: string;
-        basis?: {
-          client: string | null;
-          tokens: string | null;
-          pending: string | null;
-          verifier: string | null;
-        };
-        claimed: boolean;
-        refusal?: Response;
+        client: string | null;
+        tokens: string | null;
+        pending: string | null;
+        verifier: string | null;
+        state: string | null;
       }
     | undefined;
+  /**
+   * One-shot records this provider wrote itself, raw, in its captured epoch.
+   * Its own consent's records are its to clear, as an exchange's basis is.
+   */
+  private readonly ownOneShot = new Map<string, string>();
   /** Tokens this request's issuer-aware auth flow decided to refresh. */
   private refreshBasis:
     | {
@@ -1611,11 +1626,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
       if (SEALED_OAUTH_KEYS.has(key)) throw this.credentialWriteError();
       throw error;
     }
-    // A credential the exchange itself wrote is one it may invalidate again.
-    const basis = this.callback?.basis;
-    if (basis && generation === this.capturedGeneration) {
-      if (key === "oauth:client") basis.client = serialized;
-      else if (key === "oauth:tokens") basis.tokens = serialized;
+    // A credential the exchange itself wrote is one it may invalidate again,
+    // and a one-shot record this provider wrote is one it may clear.
+    if (generation === this.capturedGeneration) {
+      const basis = this.exchangeBasis;
+      if (basis && key === "oauth:client") basis.client = serialized;
+      else if (basis && key === "oauth:tokens") basis.tokens = serialized;
+      else if (ONE_SHOT_KEYS.has(key)) this.ownOneShot.set(key, serialized);
     }
     // If reset landed after the pre-write check and completed its cleanup
     // before this set, remove the now-unreachable residue ourselves. The epoch
@@ -1940,23 +1957,31 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * captured the epoch its consent was written in — without deciding
    * anything about the grant there. An epoch a later reset already replaced
    * fails here, before the SDK can send the code anywhere.
+   *
+   * A code exchange (`exchange`, or any verified callback) also records what
+   * its epoch holds as it begins, beside the epoch check rather than after
+   * it, and only what will be used: the client a refused callback may
+   * re-read and delete, and, where `compareAndSet` can delete atomically,
+   * the tokens and the one-shot consent records.
    */
-  async bindFlow(): Promise<void> {
+  async bindFlow(options: { exchange?: boolean } = {}): Promise<void> {
     const captured = this.capturedGeneration ?? (await this.generation());
-    const callback = this.callback;
-    // A verified callback also records what credentials its epoch holds as
-    // the exchange begins, beside the epoch check rather than after it.
-    const read = (key: string) =>
-      callback ? this.storage.get(oauthValueStorageKey(key, captured)) : null;
-    const [live, client, tokens, pending, verifier] = await Promise.all([
+    const verified = this.callback !== undefined;
+    const exchange = verified || options.exchange === true;
+    const atomic = this.storage.compareAndSet !== undefined;
+    const read = (key: string, wanted: boolean) =>
+      exchange && wanted ? this.storage.get(oauthValueStorageKey(key, captured)) : null;
+    const [live, client, tokens, pending, verifier, state] = await Promise.all([
       this.generation(),
-      read("oauth:client"),
-      read("oauth:tokens"),
-      read("oauth:pending"),
-      read("oauth:verifier"),
+      read("oauth:client", verified),
+      read("oauth:tokens", verified && atomic),
+      read("oauth:pending", atomic),
+      read("oauth:verifier", atomic),
+      // A verified callback's own state is the one its claim spends.
+      read("oauth:state", atomic && !verified),
     ]);
     if (live !== captured) throw this.flowSuperseded();
-    if (callback) callback.basis = { client, tokens, pending, verifier };
+    if (exchange) this.exchangeBasis = { client, tokens, pending, verifier, state };
     this.captureGeneration(captured);
     this.flowBound = true;
   }
@@ -2569,40 +2594,33 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * Clear one-shot flow state after the callback completes.
    *
-   * A verified callback clears only its own consent's records. Its claim
-   * spent the state, and Continue starts a fresh consent in the same epoch
-   * once it sees that, so while this exchange waited on the token endpoint a
-   * newer pending URL, verifier, and state may have been written beside it.
-   * Each is deleted only while it still holds what the exchange began with —
-   * by compare-and-set where the store has it, a re-read where it does not —
-   * and the state only while it is still the one this callback claimed.
+   * A pending URL, verifier, and state are shared by every consent in an
+   * epoch, and Continue writes a fresh set beside a spent one, so while this
+   * exchange waited on the token endpoint a newer consent's records may have
+   * replaced its own. They are deleted only by a compare-and-set against the
+   * values the exchange was bound with, or that this provider wrote itself;
+   * a verified callback's state is already spent by its claim. Without
+   * `compareAndSet`, or without a record of what is its own, nothing is
+   * deleted: a re-read followed by a delete could still remove a newer
+   * consent's record. What is left is harmless. A spent state is never
+   * handed back by Continue, which starts a fresh consent instead, and that
+   * consent's own writes replace the pending URL and verifier.
    */
   async clearPending(): Promise<void> {
-    const generation = await this.writeGeneration();
-    const callback = this.callback;
-    const basis = callback?.basis;
-    if (!callback || !basis || generation !== this.capturedGeneration) {
-      await this.deleteAll([
-        oauthValueStorageKey("oauth:pending", generation),
-        oauthValueStorageKey("oauth:verifier", generation),
-        oauthValueStorageKey("oauth:state", generation),
-      ]);
-      return;
-    }
-    const own: Array<[string, string | null]> = [
-      ["oauth:pending", basis.pending],
-      ["oauth:verifier", basis.verifier],
-      ["oauth:state", callback.state],
+    const basis = this.exchangeBasis;
+    const generation = this.capturedGeneration;
+    const compareAndSet = this.storage.compareAndSet?.bind(this.storage);
+    if (!compareAndSet || generation === null) return;
+    const own = (key: string, bound: string | null | undefined) =>
+      bound ?? this.ownOneShot.get(key) ?? null;
+    const records: Array<[string, string | null]> = [
+      ["oauth:pending", own("oauth:pending", basis?.pending)],
+      ["oauth:verifier", own("oauth:verifier", basis?.verifier)],
+      ["oauth:state", own("oauth:state", basis?.state)],
     ];
     const failure = firstRejection(await Promise.allSettled(
-      own.map(async ([key, began]) => {
-        if (began === null) return;
-        const physicalKey = oauthValueStorageKey(key, generation);
-        if (this.storage.compareAndSet) {
-          await this.storage.compareAndSet(physicalKey, began, null);
-        } else if ((await this.storage.get(physicalKey)) === began) {
-          await this.storage.delete(physicalKey);
-        }
+      records.map(async ([key, value]) => {
+        if (value !== null) await compareAndSet(oauthValueStorageKey(key, generation), value, null);
       }),
     ));
     if (failure) throw failure.reason;
@@ -2903,7 +2921,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     generation: string,
   ): Promise<void> {
     const physicalKey = oauthValueStorageKey(key, generation);
-    const basis = this.callback?.basis;
+    const basis = this.callback ? this.exchangeBasis : undefined;
     if (basis === undefined || generation !== this.capturedGeneration) {
       await this.storage.delete(physicalKey);
       return;

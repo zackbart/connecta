@@ -148,7 +148,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       // The bound verifier read checks the live epoch beside its value read.
       // Hold the value until that check has completed, then restart.
       let holdKey: string | undefined;
-      // The bind's own snapshot reads the verifier first; hold the SDK's read.
+      // Where the bind snapshots the verifier first, hold the SDK's read.
       let skipReads = 0;
       let holding = false;
       const valueRead = deferred<void>();
@@ -175,7 +175,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       const code = server.issue("code-a");
       const finish = await verified(c, storage, state);
       holdKey = oauthValueStorageKey("oauth:verifier", epoch);
-      skipReads = 1;
+      skipReads = backing.compareAndSet ? 1 : 0;
 
       const finishing = finish(code);
       await valueRead.promise;
@@ -324,7 +324,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       vi.stubGlobal("fetch", server.fetchStub);
       const backing = backingStore(atomic);
       let holdKey: string | undefined;
-      // The bind's own snapshot reads the verifier first; hold the SDK's read.
+      // Where the bind snapshots the verifier first, hold the SDK's read.
       let skipReads = 0;
       const reached = deferred<void>();
       const release = deferred<void>();
@@ -346,7 +346,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       const finishHeld = await verified(c, storage, state);
       const finishFirst = await verified(c, storage, state);
       holdKey = oauthValueStorageKey("oauth:verifier", epoch);
-      skipReads = 1;
+      skipReads = backing.compareAndSet ? 1 : 0;
 
       const held = finishHeld(code);
       await reached.promise;
@@ -441,7 +441,7 @@ describe("a refused code exchange invalidates only what it began with", () => {
     vi.stubGlobal("fetch", server.fetchStub);
     const backing = backingStore(atomic);
     let holdKey: string | undefined;
-    // The bind's own snapshot reads the verifier first; hold the SDK's read.
+    // Where the bind snapshots the verifier first, hold the SDK's read.
     let skipReads = 0;
     const reached = deferred<void>();
     const release = deferred<void>();
@@ -461,7 +461,7 @@ describe("a refused code exchange invalidates only what it began with", () => {
     await seedTokens(storage, "kept-before");
     const finish = await verified(c, storage, state);
     holdKey = oauthValueStorageKey("oauth:verifier", epoch);
-    skipReads = 1;
+    skipReads = backing.compareAndSet ? 1 : 0;
 
     // A code the server never issued: the exchange is refused.
     const finishing = finish("unknown-code");
@@ -534,10 +534,10 @@ describe("a refused code exchange invalidates only what it began with", () => {
     expect(await storedTokens(storage, first.epoch)).toMatchObject({ access_token: "access-2" });
   });
 
-  it("does not hand a consent URL whose state an exchange spent back to Continue", async () => {
+  it.each(STORES)("does not hand a consent URL whose state an exchange spent back to Continue, on %s", async (_label, atomic) => {
     const server = authorizationServer();
     vi.stubGlobal("fetch", server.fetchStub);
-    const storage = memoryStorage();
+    const storage = backingStore(atomic);
     const c = connector();
     const first = await c.startAuth!(scope(storage), { force: true });
     const state = required(new URL(required(first.authorizationUrl)).searchParams.get("state") ?? undefined);
@@ -551,6 +551,142 @@ describe("a refused code exchange invalidates only what it began with", () => {
     expect(next.searchParams.get("state")).not.toBe(state);
     expect(next.searchParams.get("client_id")).toBe("client-1");
     // The new consent completes.
+    const nextState = required(next.searchParams.get("state") ?? undefined);
+    expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
+  });
+});
+
+describe("a completed exchange's cleanup of its consent records", () => {
+  it.each(STORES.flatMap(([label, atomic]) =>
+    (["oauth:pending", "oauth:verifier"] as const).map((field) => [label, field, atomic] as const),
+  ))("leaves a newer consent's record that lands between A's ownership check and its delete, on %s, for %s", async (_label, field, atomic) => {
+    // A's exchange is on the wire when Continue starts consent B, which is
+    // held just before it publishes. A completes and reaches its cleanup of
+    // the record, held just before the write; B publishes; A's write lands.
+    // A compare-and-set fails against B's value. Without one, A writes nothing.
+    const server = authorizationServer();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const backing = backingStore(atomic);
+    let heldKey: string | undefined;
+    const reached = deferred<void>();
+    const release = deferred<void>();
+    const hold = async (key: string, next: string | null) => {
+      if (key === heldKey && next === null) {
+        heldKey = undefined;
+        reached.resolve();
+        await release.promise;
+      }
+    };
+    const storage: KVStorage = { ...backing,
+      async delete(key) { await hold(key, null); await backing.delete(key); },
+      ...(atomic ? { async compareAndSet(key: string, expected: string | null, next: string | null) {
+        await hold(key, next);
+        return backing.compareAndSet!(key, expected, next);
+      } } : {}),
+    };
+    const c = connector();
+    const first = await started(c, storage);
+    const finish = await verified(c, storage, first.state);
+    const fieldKey = oauthValueStorageKey(field, first.epoch);
+    heldKey = fieldKey;
+    const sent = deferred<void>();
+    const answer = deferred<void>();
+    server.onExchange(async () => { sent.resolve(); await answer.promise; });
+    const completing = finish(server.issue("code-a"));
+    await sent.promise;
+    const stateKey = oauthValueStorageKey("oauth:state", first.epoch);
+    const begunB = deferred<void>();
+    const publishB = deferred<void>();
+    const continuingStore: KVStorage = { ...backing,
+      async set(key, value, options) {
+        if (key === stateKey) { begunB.resolve(); await publishB.promise; }
+        await backing.set(key, value, options);
+      },
+    };
+    const continuing = c.startAuth!(scope(continuingStore), { force: false });
+    await begunB.promise;
+    answer.resolve();
+    // A reaches its write to the record, or completes without one.
+    await Promise.race([reached.promise, completing]);
+    publishB.resolve();
+    const next = new URL(required((await continuing).authorizationUrl));
+    const valueB = await backing.get(fieldKey);
+    expect(valueB).not.toBeNull();
+    release.resolve();
+
+    expect(await completing).toBeUndefined();
+    expect(await backing.get(fieldKey)).toBe(valueB);
+    const stateB = required(next.searchParams.get("state") ?? undefined);
+    expect(await (await verified(c, backing, stateB))(server.issue("code-b"))).toBeUndefined();
+  });
+
+  it.each(STORES)("leaves a newer consent alone after an exchange no callback verified, on %s", async (_label, atomic) => {
+    // finishAuth driven without verifyState, over a consent too old to hand
+    // back: Continue starts consent B while A is on the wire. A's cleanup has
+    // only the values it was bound with to go on.
+    const server = authorizationServer();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const storage = backingStore(atomic);
+    const c = connector();
+    const first = await started(c, storage);
+    const pendingKey = oauthValueStorageKey("oauth:pending", first.epoch);
+    const stale = JSON.parse(required((await storage.get(pendingKey)) ?? undefined)) as { writtenAt: number };
+    stale.writtenAt = Date.now() - 11 * 60 * 1000;
+    await storage.set(pendingKey, JSON.stringify(stale));
+    const sent = deferred<void>();
+    const release = deferred<void>();
+    server.onExchange(async () => { sent.resolve(); await release.promise; });
+    const code = server.issue("code-a");
+    const completing = c.finishAuth!(code, scope(storage), new URLSearchParams({ code, state: first.state }));
+    await sent.promise;
+    const next = new URL(required((await c.startAuth!(scope(storage), { force: false })).authorizationUrl));
+    const stateB = required(next.searchParams.get("state") ?? undefined);
+    expect(stateB).not.toBe(first.state);
+    release.resolve();
+    await completing;
+
+    expect(await (await verified(c, storage, stateB))(server.issue("code-b"))).toBeUndefined();
+  });
+
+  it("leaves another provider's consent records when it has no record of its own", async () => {
+    // A provider that neither bound an exchange nor wrote a consent owns
+    // nothing to clear, even where compareAndSet exists.
+    const storage = memoryStorage();
+    const writer = new KvOAuthProvider("svc", storage, REDIRECT);
+    const state = await writer.state();
+    await writer.saveCodeVerifier("theirs");
+    await new KvOAuthProvider("svc", storage, REDIRECT).clearPending();
+    expect(await writer.verifyState(state)).toBe(true);
+    expect(await writer.codeVerifier()).toBe("theirs");
+  });
+
+  it.each(STORES)("lets the next consent replace what a completed exchange left, on %s", async (_label, atomic) => {
+    // Whatever cleanup leaves is harmless: Continue never hands back a spent
+    // state, and the consent it starts writes its own verifier and URL.
+    const server = authorizationServer();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const storage = backingStore(atomic);
+    const c = connector();
+    const first = await started(c, storage);
+    const verifierKey = oauthValueStorageKey("oauth:verifier", first.epoch);
+    expect(await (await verified(c, storage, first.state))(server.issue("code-a"))).toBeUndefined();
+    const leftVerifier = await storage.get(verifierKey);
+    expect(leftVerifier === null).toBe(atomic);
+
+    // Continue never hands back the spent consent.
+    const again = await c.startAuth!(scope(storage), { force: false });
+    expect(again.authorizationReused).toBeUndefined();
+    // Once the grant is gone, as a refused refresh leaves it, Continue starts
+    // a fresh consent in the same epoch over whatever was left.
+    await storage.delete(oauthValueStorageKey("oauth:tokens", first.epoch));
+    const continued = await c.startAuth!(scope(storage), { force: false });
+    expect(continued.authorizationReused).toBeUndefined();
+    const next = new URL(required(continued.authorizationUrl));
+    expect(next.searchParams.get("state")).not.toBe(first.state);
+    expect(await storage.get("oauth:generation")).toBe(first.epoch);
+    const replaced = await storage.get(verifierKey);
+    expect(replaced).not.toBeNull();
+    expect(replaced).not.toBe(leftVerifier);
     const nextState = required(next.searchParams.get("state") ?? undefined);
     expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
   });
@@ -633,7 +769,7 @@ describe("the callback route and a duplicate callback", () => {
     vi.stubGlobal("fetch", server.fetchStub);
     const backing = memoryStorage();
     let holdKey: string | undefined;
-      // The bind's own snapshot reads the verifier first; hold the SDK's read.
+      // Where the bind snapshots the verifier first, hold the SDK's read.
       let skipReads = 0;
     const reached = deferred<void>();
     const release = deferred<void>();
@@ -657,7 +793,7 @@ describe("the callback route and a duplicate callback", () => {
       const epoch = required((await backing.get("conn:svc:oauth:generation")) ?? undefined);
       const callback = `${BASE}/oauth/callback/svc?code=${server.issue("code-a")}&state=${state}`;
       holdKey = `conn:svc:${oauthValueStorageKey("oauth:verifier", epoch)}`;
-      skipReads = 1;
+      skipReads = backing.compareAndSet ? 1 : 0;
 
       const held = connecta.fetch(new Request(callback));
       await reached.promise;

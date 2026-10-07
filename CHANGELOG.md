@@ -602,10 +602,15 @@ using `quickJsExecutor()` need no configuration change.
   exchange began with or wrote itself: conditionally with `compareAndSet`, and
   without it a client while unchanged and tokens not at all. A claimed state
   is spent even when the exchange fails, so Continue no longer hands back its
-  consent URL but starts a fresh one, which the earlier exchange's cleanup
-  leaves alone, and the operator page's fallback link for a blocked tab goes
-  back to Connect once followed rather than reopening it. A callback's exchange now always runs on a transport of its
-  own, over the provider that verified the state (#697).
+  consent URL but starts a fresh one, and the operator page's fallback link
+  for a blocked tab goes back to Connect once followed rather than reopening
+  it. A completed exchange deletes its pending URL, verifier, and state only
+  by compare-and-set against the values it was bound with, so a consent
+  Continue started while it was on the wire survives it; without
+  `compareAndSet` it leaves them, which is harmless, since Continue never
+  reuses a spent state and the next consent overwrites them. A callback's
+  exchange now always runs on a transport of its own, over the provider that
+  verified the state (#697).
 - **No token endpoint's text reaches the host's console.** From client 2.1.0
   the SDK writes a failed refresh or code exchange's `error_description`, or
   the raw body of a non-OAuth answer, to `console.warn`, below any logger a

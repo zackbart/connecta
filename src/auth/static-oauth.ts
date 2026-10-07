@@ -636,7 +636,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     const authorizationCode = callbackParams?.get("code") ?? code;
     const iss = callbackParams?.get("iss") ?? undefined;
     provider.exchanging(authorizationCode);
-    await provider.bindFlow();
+    await provider.bindFlow({ exchange: true });
     const result = await runAuth(provider, ctx, {
       authorizationCode,
       ...(iss !== undefined ? { iss } : {}),

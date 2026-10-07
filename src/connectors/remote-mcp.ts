@@ -1679,7 +1679,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // token write remains tagged with that older generation and is unreadable.
       // The exchange reads and writes only the epoch its consent was written
       // in; it decides nothing about the grant there.
-      await provider.bindFlow();
+      await provider.bindFlow({ exchange: true });
       // Always a transport of the exchange's own, over the provider that
       // verified the state: that provider holds the callback's claim, and the
       // fence before the token request is its to cross. A connection this
