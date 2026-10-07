@@ -59,7 +59,8 @@ This release adds org-wide Google Workspace access with no per-user consent
 step, and its first consumers: a draft-only Gmail connection, a Google Drive
 connection, a Google Docs connection that reads and edits documents by id, a
 Google Sheets connection, a Google Slides connection
-([#683](https://github.com/zackbart/connecta/issues/683)), and a Google Forms
+([#683](https://github.com/zackbart/connecta/issues/683), comments included:
+[#696](https://github.com/zackbart/connecta/issues/696)), and a Google Forms
 connection. A Workspace super admin grants a service account domain-wide
 delegation once; the deployment maps each admitted identity to a Workspace
 address in config; and the provider mints a short-lived token as that user on
@@ -368,8 +369,9 @@ using `quickJsExecutor()` need no configuration change.
 - **Google Slides connection.** `@zackbart/connecta/providers/slides` exports
   `slides(id, options)` with the same Workspace delegation options as `gmail()`,
   plus `SLIDES_SCOPES` and `SLIDES_API_BASE_URL`. It requests exactly
-  `https://www.googleapis.com/auth/presentations`. Eight hand-written tools.
-  Four are reads: `get_presentation` (title, page size, `revisionId`, a
+  `https://www.googleapis.com/auth/presentations`. Fifteen hand-written
+  tools, seven of them for comments (below). Of the other eight, four are
+  reads: `get_presentation` (title, page size, `revisionId`, a
   layout preview, and each slide's text in reading order — top to bottom,
   then left to right, rotated and nested groups composed — with table cells,
   alt text, linked charts' spreadsheet ids, speaker notes, and empty
@@ -391,10 +393,7 @@ using `quickJsExecutor()` need no configuration change.
   cannot be delivered after Google's 2xx is refused with "applied — do not
   repeat it; re-read". A write refused because the deck changed since its
   revision is a `conflict`, and a create whose outcome is unknown says what to
-  look for before creating again. Comments are not supported yet: no tool
-  reads them, and the raw hatch refuses Slides' five comment request kinds
-  unsent; a comment save state other than settled, should Google ever report
-  one, is surfaced as `commentUpdateState` rather than called all-or-none.
+  look for before creating again.
   Every read result is built under the shared Workspace result budget, so it
   is deliverable inside a program and directly alike, and nothing it cannot
   carry is lost: cut text carries the `get_page` cursor that continues it
@@ -408,6 +407,43 @@ using `quickJsExecutor()` need no configuration change.
   repeated slide. Slides cannot list decks, and the guide says that is
   Drive's job. A 404 is reported as unknown-or-not-visible, because a deck is
   a Drive file. Setup is documented on `slides()`.
+- **Comments in Google Slides**
+  ([#696](https://github.com/zackbart/connecta/issues/696)). Slides' comment
+  requests went generally available on 2026-09-30, and the connection now
+  reads and writes them. `list_comments` is a read: a deck's threads, or one
+  page's, fetched with `commentsViewMode=COMMENTS_VIEW_MODE_INCLUDED` — the
+  one mode that refuses a view-only account rather than answering it with an
+  empty list — each with its `commentId`, status, the pages and elements its
+  anchor covers, its quoted text, its head post, and its replies, and every
+  post's author by `PostAuthor.user` (`users/{id}`) beside the display name.
+  It pages under the shared Workspace result budget with the same cursor
+  convention as every other read, bound to the deck and its revision and also
+  to the threads and the anchors that place them, since neither a reply nor a
+  moved anchor need move the revision; a changed deck is a `conflict`, and a
+  quote or post too long for one result continues on the next page from the
+  character it stopped at. `raw: true` returns each thread as Slides sends
+  it — post HTML and copy flags kept — with its anchors and their text and
+  cell ranges, chunked like `get_page`'s raw elements. `create_comment` (on a
+  page, an element, a range of a shape's text, a cell's text, or a whole
+  cell, optionally assigned) and `create_comment_reply` (a plain reply) are
+  additive; `update_comment_thread` (resolve, reopen, or reassign with a note,
+  one change per call, enforced before dispatch, replacing the thread's
+  status or assignee), `update_comment_post`, `delete_comment`,
+  and `delete_comment_reply` are destructive. None is exempt from approval by
+  the provider itself. The raw hatch now sends Slides' five comment request
+  kinds instead of refusing them, and its replies are bounded ids first:
+  every reply starts as its ids alone and text is added while the 192 KiB
+  budget holds, so text is cut before any id; ids past that budget are all
+  returned anyway, and past the 256 KiB a program can receive, the tool's
+  description and note say to call it directly and page with `get_result`.
+  Only ids past 4 MiB are left out, counted in `repliesNotShown` beside the
+  comment save state, with where to read what the batch made. Its notes no longer say the write
+  applied: Slides accepting a batch and Slides confirming its comments saved
+  are said apart. Slides saves comment changes apart from the rest of a batch: a
+  write that sent any and is not answered `ALL_SAVED` — including one Slides
+  gave no state at all — carries `commentUpdateState` and a note that the
+  write was not all or none and is to be re-read with `list_comments`, not
+  repeated.
 - **Google Discovery drift checks.** `npm run providers:check -- --provider
   gmail` reads Gmail's credential-free Discovery document and digests the nine
   methods the tools call like any other touched endpoint, and also reports a

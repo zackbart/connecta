@@ -1,9 +1,11 @@
 /**
  * Google Slides as the signed-in Workspace user: read a deck's text slide by
- * slide, any page element by element, its layouts and masters, and a slide's
- * thumbnail link; create a deck, add a slide, replace text, and send raw
- * `batchUpdate` requests behind approval. Hand-written against the Slides API
- * v1 reference (https://developers.google.com/workspace/slides/api/reference/rest).
+ * slide, any page element by element, its layouts and masters, its comment
+ * threads, and a slide's thumbnail link; create a deck, add a slide, replace
+ * text, comment and reply, and send raw `batchUpdate` requests behind
+ * approval. Hand-written against the Slides API v1 reference
+ * (https://developers.google.com/workspace/slides/api/reference/rest) and its
+ * comments guide (https://developers.google.com/workspace/slides/api/guides/comments).
  *
  * Whose decks. Access is a service account with domain-wide delegation
  * (`src/providers/google/workspace.ts`): deployment config maps the admitted
@@ -24,10 +26,16 @@
  *
  * What it does not do. Slides has no list method; finding a deck is Drive's
  * job, and this connection says so rather than guessing. Nothing here shares,
- * moves, or deletes a file. Every write but the two additive ones is
- * destructive, and the raw hatch requires the revision it was read at, so a
- * request built against an old read cannot land on a deck someone else has
- * changed since.
+ * moves, or deletes a file. Every write but the four additive ones — a deck,
+ * a slide, a comment, a reply — is destructive, and the raw hatch requires
+ * the revision it was read at, so a request built against an old read cannot
+ * land on a deck someone else has changed since.
+ *
+ * Comments save apart. Slides commits a batch's deck changes and its comment
+ * changes separately and reports the second in `commentUpdateState`, so a
+ * batch can apply while its comments do not. Every write that carries a
+ * comment request says so in a declared field rather than calling the batch
+ * all or none, and tells the caller to re-read, not repeat.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `scripts/drift/slides-endpoints.json` records the five methods the tools
@@ -164,12 +172,9 @@ const MAX_ID_BYTES = 1024;
 const MAX_ECHO_CHARS = 100;
 
 /**
- * The comment kinds of Slides' Request, refused before anything is sent.
- * Comments in the Slides API went generally available on 2026-09-30, and
- * using them well needs more than a passthrough: a read path for comment
- * threads, per-batch comment save states that can fail apart from the rest
- * of the batch, and author ids nested in every post. Until this connection
- * has those (#696), a comment request is refused, not half-supported.
+ * The comment kinds of Slides' Request. A batch carrying any of them has
+ * comment changes Slides saves apart from the deck's, and only `ALL_SAVED`
+ * says they all landed (#696).
  */
 const COMMENT_KINDS: ReadonlySet<string> = new Set([
   "addCommentReply",
@@ -181,6 +186,29 @@ const COMMENT_KINDS: ReadonlySet<string> = new Set([
 
 /** The comment save states that say every comment change in a batch landed, or none was asked for. */
 const COMMENTS_SETTLED: ReadonlySet<string> = new Set(["NO_UPDATES_REQUESTED", "ALL_SAVED"]);
+
+/**
+ * `commentUpdateState`'s zero value. ProtoJSON omits a zero enum, so a batch
+ * with comment requests whose reply has no state is reported as this one:
+ * Slides did not say the comments saved.
+ */
+const COMMENT_STATE_UNSPECIFIED = "COMMENT_UPDATE_STATE_UNSPECIFIED";
+
+/**
+ * The only view mode that cannot hide comments silently. The default omits
+ * them, and DEFAULT_FOR_CURRENT_ACCESS omits them for a view-only account,
+ * which would read as a deck with none; INCLUDED refuses that account with a
+ * 403 instead.
+ */
+const COMMENTS_INCLUDED = "COMMENTS_VIEW_MODE_INCLUDED";
+
+/** Slides' cap on a post's text and an assignee's address, in UTF-8 bytes. */
+const MAX_COMMENT_BYTES = 2048;
+/** Comment threads per page of list_comments. */
+const DEFAULT_THREADS = 50;
+const MAX_THREADS = 500;
+/** A post's text in a write result; Slides caps what it accepts well below this. */
+const MAX_POST_BYTES = 8 * 1024;
 
 /** EMU per point, the two units a Slides transform uses. */
 const EMU_PER_PT = 12_700;
@@ -223,6 +251,15 @@ const PAGE_FIELDS = [
   `pageElements(${ELEMENT_FIELDS})`,
 ].join(",");
 const LAYOUT_LIST_FIELDS = `presentationId,revisionId,${LAYOUT_FIELDS}`;
+/**
+ * A deck's threads, and the anchors on every page a comment can sit on that
+ * place them: slides, their notes pages, layouts, masters, the notes master.
+ */
+const COMMENT_DECK_FIELDS =
+  "presentationId,revisionId,commentsViewMode,comments," +
+  "slides(objectId,commentAnchors,slideProperties(notesPage(objectId,commentAnchors)))," +
+  "layouts(objectId,commentAnchors),masters(objectId,commentAnchors),notesMaster(objectId,commentAnchors)";
+const COMMENT_PAGE_FIELDS = "objectId,revisionId,commentsViewMode,comments,commentAnchors";
 
 type JsonRecord = Record<string, any>;
 
@@ -335,19 +372,28 @@ function prefixWithin(
  */
 interface Cursor {
   /** The tool that issued it. */
-  k: "deck" | "layouts" | "page";
-  /** The presentation it continues, and for get_page the page. */
+  k: "deck" | "layouts" | "page" | "comments";
+  /** The presentation it continues, and for get_page and a page's list_comments the page. */
   p: string;
   g?: string | undefined;
   /** The state it was issued at: `r:` and the revision, or `f:` and a fingerprint. */
   s: string;
   /** Issued by a raw read. */
   raw?: 1 | undefined;
-  /** The next row: slide, layout, or element. */
+  /** The next row: slide, layout, element, or comment thread. */
   i: number;
-  /** Within that row: a text offset, or a raw JSON offset. */
+  /** Within a thread: the part it continues — 0 the quote, 1 the head post, 2 on its replies. */
+  j?: number | undefined;
+  /** Within that row or part: a text offset, or a raw JSON offset. */
   o?: number | undefined;
 }
+
+const CURSOR_TOOLS: Readonly<Record<Cursor["k"], string>> = {
+  deck: "get_presentation",
+  layouts: "list_layouts",
+  page: "get_page",
+  comments: "list_comments",
+};
 
 function encodeCursor(cursor: Cursor): string {
   let binary = "";
@@ -384,12 +430,14 @@ function decodeCursor(
     typeof cursor.s !== "string" ||
     !Number.isSafeInteger(cursor.i) ||
     cursor.i < 0 ||
-    !counter(cursor.o)
+    !counter(cursor.o) ||
+    !counter(cursor.j)
   ) {
     throw refuse("cursor is not one this connection issued; pass page.nextCursor back unchanged.");
   }
   if (cursor.k !== expected.k) {
-    throw refuse(`cursor belongs to another tool (${cursor.k === "deck" ? "get_presentation" : cursor.k === "layouts" ? "list_layouts" : "get_page"}).`);
+    const tool = Object.hasOwn(CURSOR_TOOLS, cursor.k) ? CURSOR_TOOLS[cursor.k] : undefined;
+    throw refuse(tool ? `cursor belongs to another tool (${tool}).` : "cursor is not one this connection issued; pass page.nextCursor back unchanged.");
   }
   if (cursor.p !== expected.p) throw refuse("cursor continues a different presentation.");
   if ((cursor.g ?? undefined) !== expected.g) throw refuse("cursor continues a different page.");
@@ -854,7 +902,8 @@ function dimension(value: unknown): { magnitude: number; unit: string } | undefi
 
 /** The size of a page object carrying the longest cursor a result may hold. */
 function pageEnvelopeBytes(cursor: Cursor): number {
-  return jsonBytes({ page: { hasMore: true, nextCursor: encodeCursor({ ...cursor, i: 999_999, o: 99_999_999 }) } });
+  const longest = { ...cursor, i: 999_999, o: 99_999_999, j: cursor.j === undefined ? undefined : 999_999 };
+  return jsonBytes({ page: { hasMore: true, nextCursor: encodeCursor(longest) } });
 }
 
 // --- get_page -------------------------------------------------------------------------
@@ -958,12 +1007,34 @@ function projectedRows(leaves: readonly Leaf[], start: { i: number; o: number },
   return { elements, next: index < leaves.length ? { i: index, o: offset } : undefined };
 }
 
+/** How one raw reader lays out its rows. */
+interface RawLayout {
+  /** The tool, for its refusal. */
+  tool: string;
+  /** Item 0 is the page's own properties, returned apart from the rows. */
+  propertiesFirst: boolean;
+  /** What names a chunked item beside its chunk. */
+  idOf: (item: JsonRecord) => JsonRecord;
+}
+
+const PAGE_RAW: RawLayout = {
+  tool: "get_page",
+  propertiesFirst: true,
+  idOf: (item) => ({ objectId: text(item["objectId"]) }),
+};
+
 /**
- * Raw rows of a page from item `i` (0 is the page's own properties), JSON
- * offset `o`: each whole where it fits, and one that fits no page alone in
- * chunks of its JSON text, which concatenated parse to the item.
+ * Raw rows from item `i` (for get_page, 0 is the page's own properties),
+ * JSON offset `o`: each whole where it fits, and one that fits no page alone
+ * in chunks of its JSON text, which concatenated parse to the item.
  */
-function rawRows(items: readonly JsonRecord[], start: { i: number; o: number }, limit: number, room: number): PageRows {
+function rawRows(
+  items: readonly JsonRecord[],
+  start: { i: number; o: number },
+  limit: number,
+  room: number,
+  layout: RawLayout = PAGE_RAW,
+): PageRows {
   const out: PageRows = { elements: [], next: undefined };
   let used = 2;
   let index = start.i;
@@ -973,7 +1044,7 @@ function rawRows(items: readonly JsonRecord[], start: { i: number; o: number }, 
     const item = items[index]!;
     const size = jsonBytes(item) + 32;
     if (offset === 0 && used + size <= room) {
-      if (index === 0) out.properties = item;
+      if (index === 0 && layout.propertiesFirst) out.properties = item;
       else out.elements.push(item);
       used += size;
       rows += 1;
@@ -983,17 +1054,19 @@ function rawRows(items: readonly JsonRecord[], start: { i: number; o: number }, 
     // Whole on a page of its own: start the next page with it.
     if (offset === 0 && rows > 0 && size <= room) break;
     const json = JSON.stringify(item);
-    const objectId = index === 0 ? undefined : text(item["objectId"]);
-    const shell = { objectId, rawJson: { json: "", offset, length: json.length } };
+    const id = index === 0 && layout.propertiesFirst ? {} : layout.idOf(item);
+    const shell = { ...id, rawJson: { json: "", offset, length: json.length } };
     const available = room - used - (jsonBytes(shell) - 2) - 32;
     const cut = available > 2 ? prefixWithin(json.slice(offset), available, () => "") : { text: "", kept: 0 };
     if (cut.kept === 0) {
       if (rows > 0) break;
-      throw new ConnectorCallError("connector_call_failed", "get_page could not fit any part of a raw item in one result.", { retryable: false });
+      throw new ConnectorCallError("connector_call_failed", `${layout.tool} could not fit any part of a raw item in one result.`, {
+        retryable: false,
+      });
     }
     const chunk = { json: cut.text, offset, length: json.length };
-    if (index === 0) out.propertiesJson = chunk;
-    else out.elements.push(compact({ objectId, rawJson: chunk }));
+    if (index === 0 && layout.propertiesFirst) out.propertiesJson = chunk;
+    else out.elements.push(compact({ ...id, rawJson: chunk }));
     rows += 1;
     if (offset + cut.kept < json.length) {
       out.next = { i: index, o: offset + cut.kept };
@@ -1022,7 +1095,9 @@ function rawFingerprint(items: readonly JsonRecord[]): unknown {
  * One batchUpdate. A write that names `requiredRevisionId` is revision
  * guarded: the shared layer turns Slides' precondition refusal into a
  * `conflict`, so a deck someone changed since the read is re-read, not
- * retried. Nothing was applied either way — a batch is all or none.
+ * retried. Nothing was applied in that case: a batch Slides refuses applies
+ * none of its requests. One it accepts applies its deck changes together,
+ * and its comment changes apart (see {@link commentSaveFields}).
  */
 async function batchUpdate(
   client: GoogleWorkspaceClient,
@@ -1066,8 +1141,12 @@ function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, { retryable: error.retryable, cause: error });
 }
 
-/** A field that names something to address later: objectId, commentId, postId, anchorId, … */
-const ID_KEY = /^(id|[a-z][A-Za-z0-9]*Id)$/;
+/**
+ * A field that names something to address later: objectId, commentId,
+ * postId, anchorId, … — and a post author's `user`, the `users/{id}` that
+ * identifies who wrote it.
+ */
+const ID_KEY = /^(id|user|[a-z][A-Za-z0-9]*Id)$/;
 
 /**
  * An id as copied from Google into a result: whole, or not at all. A cut id
@@ -1140,27 +1219,60 @@ function summarizeReply(reply: JsonRecord): JsonRecord {
     if (jsonBytes(summary) <= MAX_REPLY_BYTES) return summary;
   }
   // Ids alone over the per-reply share: still returned, since what a write
-  // created is the one thing a caller cannot ask for again; the result's
-  // budget counts it, and a reply past that is counted as not shown.
+  // created is the one thing a caller cannot ask for again.
   return summary;
 }
 
 /**
- * A batch's replies under one result's budget, in order, after `used` bytes.
- * The write has applied by now, so whatever does not fit is counted and the
- * result says to re-read, never that nothing changed.
+ * The most one host result may carry into an execute_code program
+ * (`MAX_HOST_RESULT_BYTES` in `src/executors/quickjs-runtime.ts`). A write
+ * result past the provider's own 192 KiB budget but under this still reaches
+ * a program; past it, only a direct call does, paging with get_result.
  */
-function boundedReplies(replies: readonly unknown[], used: number): { replies: JsonRecord[]; notShown: number } {
-  const out: JsonRecord[] = [];
-  let total = used + 2;
-  for (const reply of replies) {
-    const summary = summarizeReply(asRecord(reply));
-    const size = jsonBytes(summary) + 1;
-    if (total + size > RESULT_BUDGET_BYTES) break;
-    out.push(summary);
-    total += size;
+const BRIDGE_BYTES = 256 * 1024;
+
+/**
+ * The most a raw batch's result may be when the ids its replies carry
+ * outgrow one result. Every id is still returned, never dropped: a direct
+ * call stashes a result this size and pages it with get_result (the stash
+ * holds 8 MiB by default). Past this, the ids are not returned at all, and
+ * the result says where to read them.
+ */
+const MAX_IDS_RESULT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * A reply at its smallest, however small it already is: every id at every
+ * depth with its numbers and booleans, and how many fields were left out.
+ * A reply with nothing but those passes unchanged.
+ */
+function idsOnlyReply(reply: JsonRecord): JsonRecord {
+  const cut: string[] = [];
+  const ids = asRecord(pruned(reply, "", "", "ids", cut, 0));
+  return cut.length === 0 ? reply : { ...ids, cut: [`(${cut.length} fields left out; ids only)`] };
+}
+
+/**
+ * A batch's replies, in order, after `used` bytes: ids first, then text.
+ * Every reply starts at its ids alone, and replies are then given their
+ * fuller summaries, in order, while the provider's 192 KiB budget holds
+ * them, so text is cut before any id is. Should the ids alone outgrow that
+ * budget, they are all returned anyway (`oversized`) and no text is; nothing
+ * a write created is ever dropped to save space.
+ */
+function boundedReplies(replies: readonly unknown[], used: number): { replies: JsonRecord[]; oversized: boolean } {
+  const out = replies.map((reply) => idsOnlyReply(asRecord(reply)));
+  const sizes = out.map((reply) => jsonBytes(reply) + 1);
+  let total = used + 2 + sizes.reduce((sum, size) => sum + size, 0);
+  if (total > RESULT_BUDGET_BYTES) return { replies: out, oversized: true };
+  for (const [index, reply] of replies.entries()) {
+    const fuller = summarizeReply(asRecord(reply));
+    const size = jsonBytes(fuller) + 1;
+    if (total - sizes[index]! + size > RESULT_BUDGET_BYTES) continue;
+    total += size - sizes[index]!;
+    out[index] = fuller;
+    sizes[index] = size;
   }
-  return { replies: out, notShown: replies.length - out.length };
+  return { replies: out, oversized: false };
 }
 
 /**
@@ -1172,6 +1284,414 @@ function revisionFields(response: JsonRecord): { revisionId?: string; revisionId
   const whole = wholeId(revision);
   if (whole !== undefined) return { revisionId: whole };
   return typeof revision === "string" && revision !== "" ? { revisionIdNotShown: true } : {};
+}
+
+// --- Comments ---------------------------------------------------------------------
+
+/**
+ * What a batch's comment changes came to, as a result field. A batch with no
+ * comment request is settled unless Slides says otherwise. One with any is
+ * settled only on `ALL_SAVED`: anything else — a failure, or no state at all —
+ * is surfaced by name, since its deck changes may have applied while its
+ * comments did not, and the batch is then neither all nor none.
+ */
+function commentSaveFields(response: JsonRecord, sentComments: boolean): { commentUpdateState?: string } {
+  const state = text(response["commentUpdateState"]);
+  const settled = sentComments ? state === "ALL_SAVED" : state === undefined || COMMENTS_SETTLED.has(state);
+  if (settled) return {};
+  return { commentUpdateState: label(state ?? COMMENT_STATE_UNSPECIFIED, MAX_NAME_BYTES, "Slides sent a longer state") ?? "" };
+}
+
+/** What a write whose comments did not all save tells its caller. */
+const COMMENTS_UNSAVED =
+  "Slides accepted the write but did not report its comment changes saved (commentUpdateState), so it was not all or none: " +
+  "other changes may have applied. Do not repeat it; re-read with list_comments to see what saved.";
+
+/** One post's fields, its text apart: the text pages, the rest is small. */
+interface PostPart {
+  row: JsonRecord;
+  content: string;
+  /** An id or author id too long to copy, left out rather than cut. */
+  idsNotShown: boolean;
+}
+
+/** Comment actions that change nothing, and are left unsaid. */
+const QUIET_ACTIONS: ReadonlySet<string> = new Set(["COMMENT_ACTION_TYPE_UNSPECIFIED", "NO_COMMENT_ACTION_CHANGE"]);
+
+/**
+ * A post as returned: its id and its author's `users/{id}` whole — left out
+ * and flagged on the thread's `idsNotShown`, never cut, should either be too
+ * long to copy — beside the display name, which is not an identity.
+ * `contentHtml` is the same text rendered, and is left behind.
+ */
+function postPart(value: unknown): PostPart {
+  const post = asRecord(value);
+  const author = asRecord(post["author"]);
+  const postId = wholeId(post["postId"]);
+  const user = wholeId(author["user"]);
+  const shownAuthor = compact({
+    user,
+    displayName: label(text(author["displayName"]), MAX_NAME_BYTES, "Slides shows the whole name"),
+    me: author["me"] === true || undefined,
+    anonymous: author["anonymous"] === true || undefined,
+  });
+  const action = text(post["commentAction"]);
+  const whole = "Slides shows all of it";
+  return {
+    row: compact({
+      postId,
+      author: Object.keys(shownAuthor).length > 0 ? shownAuthor : undefined,
+      commentAction: action && !QUIET_ACTIONS.has(action) ? label(action, MAX_NAME_BYTES, whole) : undefined,
+      assigneeEmail: label(text(post["assigneeEmail"]), MAX_COMMENT_BYTES + 64, whole),
+      createTime: label(text(post["createTime"]), MAX_NAME_BYTES, whole),
+      updateTime: label(text(post["updateTime"]), MAX_NAME_BYTES, whole),
+      deleted: post["deleted"] === true || undefined,
+      // Slides gives an imported post no author id; this says why.
+      imported: post["fromImportedPresentation"] === true || undefined,
+    }),
+    content: typeof post["content"] === "string" ? post["content"] : "",
+    idsNotShown:
+      (text(post["postId"]) !== undefined && postId === undefined) ||
+      (text(author["user"]) !== undefined && user === undefined),
+  };
+}
+
+/** A post in a write result: its text bounded, never its ids. */
+function writtenPost(value: unknown, maxBytes = MAX_POST_BYTES): JsonRecord {
+  const post = postPart(value);
+  return compact({
+    ...post.row,
+    content: label(text(post.content), maxBytes, "list_comments has the whole post"),
+  });
+}
+
+/** Where an anchor sits: the pages it is on, and the elements on them it covers. */
+interface AnchorPlace {
+  pages: Set<string>;
+  objects: Set<string>;
+}
+
+function anchorPlaces(pages: readonly JsonRecord[]): Map<string, AnchorPlace> {
+  const places = new Map<string, AnchorPlace>();
+  for (const page of pages) {
+    const pageId = text(page["objectId"]);
+    for (const anchor of asArray(page["commentAnchors"]).map(asRecord)) {
+      const anchorId = text(anchor["anchorId"]);
+      if (anchorId === undefined) continue;
+      let place = places.get(anchorId);
+      if (!place) places.set(anchorId, (place = { pages: new Set(), objects: new Set() }));
+      if (pageId) place.pages.add(pageId);
+      for (const object of asArray(anchor["objectAnchors"]).map(asRecord)) {
+        // An anchor on the page itself names the page, already listed.
+        const objectId = text(object["objectId"]);
+        if (objectId && objectId !== pageId) place.objects.add(objectId);
+      }
+    }
+  }
+  return places;
+}
+
+/** Every page a deck read returns anchors on: slides, notes pages, layouts, masters, the notes master. */
+function commentPages(presentation: JsonRecord): JsonRecord[] {
+  const slides = asArray(presentation["slides"]).map(asRecord);
+  return [
+    ...slides,
+    ...slides.map((slide) => asRecord(asRecord(slide["slideProperties"])["notesPage"])),
+    ...asArray(presentation["layouts"]).map(asRecord),
+    ...asArray(presentation["masters"]).map(asRecord),
+    asRecord(presentation["notesMaster"]),
+  ];
+}
+
+/** One thread: its fields, and the texts that page — its quote, its head post, its replies. */
+interface ThreadParts {
+  row: JsonRecord;
+  quote: string;
+  head: PostPart | undefined;
+  replies: PostPart[];
+}
+
+function threadParts(value: unknown, places: ReadonlyMap<string, AnchorPlace>): ThreadParts {
+  const thread = asRecord(value);
+  const commentId = wholeId(thread["commentId"]);
+  const anchorId = wholeId(thread["anchorId"]);
+  const place = anchorId === undefined ? undefined : places.get(anchorId);
+  const ids = (values: Iterable<string> | undefined) =>
+    [...(values ?? [])].map(wholeId).filter((id): id is string => id !== undefined);
+  const pageIds = ids(place?.pages);
+  const objectIds = ids(place?.objects);
+  const replies = asArray(thread["replies"]).map(postPart);
+  const head = thread["headPost"] && typeof thread["headPost"] === "object" ? postPart(thread["headPost"]) : undefined;
+  return {
+    row: compact({
+      commentId,
+      anchorId,
+      status: label(text(thread["status"]), MAX_NAME_BYTES, "Slides shows the status"),
+      // Every id, as everywhere: Slides anchors a group's comment to at most
+      // 100 elements, and the page's budget holds them.
+      pageObjectIds: pageIds.length > 0 ? pageIds : undefined,
+      objectIds: objectIds.length > 0 ? objectIds : undefined,
+      replyCount: replies.length,
+      idsNotShown:
+        (text(thread["commentId"]) !== undefined && commentId === undefined) ||
+        (text(thread["anchorId"]) !== undefined && anchorId === undefined) ||
+        head?.idsNotShown ||
+        replies.some((reply) => reply.idsNotShown) ||
+        undefined,
+    }),
+    quote: typeof thread["plainTextQuote"] === "string" ? thread["plainTextQuote"] : "",
+    head,
+    replies,
+  };
+}
+
+/**
+ * A post row carrying `content` from `offset`, and, when cut — which also
+ * marks its thread `truncated` — the whole length in `contentLength`.
+ */
+function postRow(post: PostPart, content: string, offset: number, cutFrom: number | undefined): JsonRecord {
+  return compact({
+    ...post.row,
+    content: content === "" && cutFrom === undefined ? undefined : content,
+    contentOffset: offset > 0 ? offset : undefined,
+    contentLength: cutFrom,
+  });
+}
+
+/**
+ * Part `j` of a thread placed into its row with `content` from `offset`:
+ * 0 the quote, 1 the head post, 2 on each reply in turn. `undefined` for a
+ * part the thread does not have. `cutFrom`, the part's whole length, marks it
+ * cut.
+ */
+function placePart(
+  thread: ThreadParts,
+  row: JsonRecord,
+  j: number,
+  content: string,
+  offset: number,
+  cutFrom?: number,
+): JsonRecord | undefined {
+  if (j === 0) {
+    if (thread.quote === "") return undefined;
+    return compact({ ...row, quote: content, quoteOffset: offset > 0 ? offset : undefined, quoteLength: cutFrom });
+  }
+  if (j === 1) return thread.head ? { ...row, headPost: postRow(thread.head, content, offset, cutFrom) } : undefined;
+  const reply = thread.replies[j - 2];
+  if (!reply) return undefined;
+  const replies = asArray(row["replies"]);
+  return compact({
+    ...row,
+    // A row that continues a thread from a previous page starts its replies past 0.
+    repliesOffset: replies.length === 0 && j > 2 ? j - 2 : row["repliesOffset"],
+    replies: [...replies, postRow(reply, content, offset, cutFrom)],
+  });
+}
+
+function partText(thread: ThreadParts, j: number): string {
+  if (j === 0) return thread.quote;
+  if (j === 1) return thread.head?.content ?? "";
+  return thread.replies[j - 2]?.content ?? "";
+}
+
+interface ThreadPage {
+  threads: JsonRecord[];
+  next: { i: number; j: number; o: number } | undefined;
+}
+
+/**
+ * Thread rows from thread `i`, part `j`, text offset `o`, under `limit` rows
+ * and `room` bytes. Every thread's ids come whole on every row it appears
+ * on; a quote or post too long for what is left is cut at a character, and
+ * the next page continues that thread (`continued`) from the cut — the same
+ * way get_page continues an element's text.
+ */
+function threadRows(
+  threads: readonly ThreadParts[],
+  start: { i: number; j: number; o: number },
+  limit: number,
+  room: number,
+): ThreadPage {
+  const out: JsonRecord[] = [];
+  let used = 2;
+  let { i, j, o } = start;
+  const fits = (row: JsonRecord) => used + jsonBytes(row) + 1 <= room;
+  const unfit = () =>
+    new ConnectorCallError("connector_call_failed", "list_comments could not fit any of a comment thread in one result; raw: true pages it in JSON chunks.", {
+      retryable: false,
+    });
+  while (i < threads.length && out.length < limit) {
+    const thread = threads[i]!;
+    // Where this row starts: a row that places nothing leaves the next page
+    // to start here, so it is not called continued for parts it skipped.
+    const from = { i, j, o };
+    let row: JsonRecord = compact({ ...thread.row, continued: j > 0 || o > 0 ? true : undefined });
+    if (!fits(row)) {
+      if (out.length > 0) break;
+      throw unfit();
+    }
+    let placed = false;
+    for (const parts = thread.replies.length + 2; j < parts; j += 1, o = 0) {
+      const whole = partText(thread, j);
+      const rest = whole.slice(o);
+      const next = placePart(thread, row, j, rest, o);
+      if (next === undefined) continue;
+      if (fits(next)) {
+        row = next;
+        placed = true;
+        continue;
+      }
+      // The row as it would be with this part cut, so the text's share is
+      // measured against everything else the row carries.
+      const shell = { ...placePart(thread, row, j, "", o, whole.length), truncated: true };
+      const available = room - used - 1 - (jsonBytes(shell) - 2);
+      const cut =
+        available > 2 && rest !== ""
+          ? prefixWithin(rest, available, (dropped) => `\n[… ${dropped} more characters continue on the next page]`)
+          : { text: "", kept: 0 };
+      if (cut.kept === 0) {
+        if (!placed) {
+          if (out.length > 0) return { threads: out, next: from };
+          throw unfit();
+        }
+        out.push({ ...row, truncated: true });
+        return { threads: out, next: { i, j, o } };
+      }
+      out.push({ ...placePart(thread, row, j, cut.text, o, whole.length), truncated: true });
+      return { threads: out, next: { i, j, o: o + cut.kept } };
+    }
+    out.push(row);
+    used += jsonBytes(row) + 1;
+    i += 1;
+    j = 0;
+    o = 0;
+  }
+  return { threads: out, next: i < threads.length ? { i, j, o } : undefined };
+}
+
+/**
+ * The state a list_comments cursor binds to: the revision, the threads
+ * themselves, and the anchors that place them. Slides saves comments apart
+ * from the deck, so a reply added between pages need not move the revision,
+ * and an anchor moved from one element to another need not change a thread;
+ * binding to the exact JSON of both makes either a `conflict`, never a page
+ * that skips, repeats, or places a thread where it no longer is.
+ */
+function commentsState(revisionId: unknown, comments: readonly unknown[], pages: readonly JsonRecord[]): Promise<string> {
+  return stateOf(undefined, () => [
+    text(revisionId) ?? null,
+    comments,
+    pages.map((page) => [page["objectId"] ?? null, page["commentAnchors"] ?? null]),
+  ]);
+}
+
+/**
+ * A thread as Slides sends it — what raw: true returns, and where the
+ * projection's dropped fields live: `contentHtml` and
+ * `fromCopiedPresentation` — with one key added, `commentAnchors`: every
+ * CommentAnchor on the pages read that bears its anchorId, as Slides sends
+ * it, with the `pageObjectId` it sits on. Their text and cell ranges are the
+ * anchor fields the projection leaves out.
+ */
+function rawThread(value: unknown, pages: readonly JsonRecord[]): JsonRecord {
+  const thread = asRecord(value);
+  const anchorId = thread["anchorId"];
+  const anchors = pages.flatMap((page) =>
+    asArray(page["commentAnchors"])
+      .map(asRecord)
+      .filter((anchor) => anchorId !== undefined && anchor["anchorId"] === anchorId)
+      .map((anchor) => ({ pageObjectId: page["objectId"], ...anchor })),
+  );
+  return anchors.length > 0 ? { ...thread, commentAnchors: anchors } : thread;
+}
+
+const COMMENTS_RAW: RawLayout = {
+  tool: "list_comments",
+  propertiesFirst: false,
+  idOf: (item) => ({ commentId: wholeId(item["commentId"]) }),
+};
+
+/** A 403 on a comment read: what it most likely means, beside Google's words. */
+function commentAccess(error: unknown): unknown {
+  if (!(error instanceof ConnectorCallError) || googleOutcomeOf(error)?.status !== 403) return error;
+  return new ConnectorCallError(
+    error.code,
+    `${error.message} Reading comments needs comment access: an account that may only view the deck cannot read them.`,
+    { retryable: error.retryable, cause: error },
+  );
+}
+
+/** A comment's text, refused locally past Slides' own cap rather than sent to fail. */
+function commentText(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  const content = String(value);
+  const bytes = new TextEncoder().encode(content).length;
+  if (bytes > MAX_COMMENT_BYTES) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `${field} is ${bytes} UTF-8 bytes; Slides accepts at most ${MAX_COMMENT_BYTES}. Nothing was sent.`,
+    );
+  }
+  return content;
+}
+
+/**
+ * One comment request as its own batch, and what its result always carries:
+ * the deck, the revision it left, and — whenever Slides does not confirm the
+ * comment saved — the state it reported and what to do about it.
+ */
+async function commentWrite(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  presentationId: string,
+  request: JsonRecord,
+  requiredRevisionId?: string,
+): Promise<{ reply: JsonRecord; header: JsonRecord; saved: boolean }> {
+  const response = await batchUpdate(client, ctx, presentationId, [request], requiredRevisionId);
+  const state = commentSaveFields(response, true);
+  return {
+    reply: asRecord(asArray(response["replies"])[0]),
+    header: compact({ presentationId, ...revisionFields(response), ...state }),
+    saved: state.commentUpdateState === undefined,
+  };
+}
+
+/**
+ * One post added to a thread — a reply, or a status or assignee change —
+ * and its result: the new post's id and author whole, or the write's comment
+ * state when Slides does not confirm it saved.
+ */
+async function postToThread(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  tool: string,
+  args: Record<string, any>,
+  post: JsonRecord,
+): Promise<JsonRecord> {
+  const written = await commentWrite(client, ctx, args["presentationId"], {
+    addCommentReply: { commentId: args["commentId"], post: compact(post) },
+  }).catch((error: unknown) => {
+    throw afterUnknownCreate(
+      error,
+      "Read the thread with list_comments and look for the post before sending it again; a second one is a second post.",
+    );
+  });
+  const reread = "read the thread with list_comments to find the post";
+  const created = asRecord(written.reply["addCommentReply"])["post"];
+  if (wholeId(asRecord(created)["postId"]) === undefined && written.saved) {
+    throw appliedButUnreadable(tool, "Google returned no usable id for the new post", reread);
+  }
+  return appliedDeliverable(
+    compact({
+      ...written.header,
+      commentId: args["commentId"],
+      post: created && typeof created === "object" ? writtenPost(created) : undefined,
+      idsNotShown: postPart(created).idsNotShown || undefined,
+      note: written.saved ? undefined : COMMENTS_UNSAVED,
+    }),
+    tool,
+    reread,
+  );
 }
 
 // --- Schemas ----------------------------------------------------------------------
@@ -1311,6 +1831,70 @@ const WRITE_RESULT_PROPERTIES: Record<string, JsonSchema> = {
   presentationId: { type: "string" },
   revisionId: { type: "string" },
   revisionIdNotShown: { type: "boolean" },
+};
+
+/** Comment and post ids go in a request body, never a path; Slides validates them. */
+function commentIdProperty(description: string): JsonSchema {
+  return { type: "string", minLength: 1, maxLength: 1024, pattern: "^\\S+$", description };
+}
+
+const COMMENT_ID = commentIdProperty("commentId from list_comments or create_comment.");
+const POST_ID = commentIdProperty("postId of the post, from list_comments.");
+
+function commentContentProperty(description: string): JsonSchema {
+  return { type: "string", minLength: 1, maxLength: MAX_COMMENT_BYTES, description };
+}
+
+const ASSIGNEE_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 3,
+  maxLength: 320,
+  pattern: "^[^\\s@]+@[^\\s@]+$",
+  description: "Assign the thread to this address; Slides notifies them.",
+};
+
+const POST_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    postId: { type: "string" },
+    author: {
+      type: "object",
+      properties: {
+        user: { type: "string" },
+        displayName: { type: "string" },
+        me: { type: "boolean" },
+        anonymous: { type: "boolean" },
+      },
+    },
+    content: { type: "string" },
+    contentOffset: { type: "integer" },
+    contentLength: { type: "integer" },
+    commentAction: { type: "string" },
+    assigneeEmail: { type: "string" },
+    createTime: { type: "string" },
+    updateTime: { type: "string" },
+    deleted: { type: "boolean" },
+    imported: { type: "boolean" },
+  },
+};
+
+/** What every comment write returns beside its own ids. */
+const COMMENT_WRITE_PROPERTIES: Record<string, JsonSchema> = {
+  ...WRITE_RESULT_PROPERTIES,
+  commentUpdateState: { type: "string" },
+  note: { type: "string" },
+};
+
+/** What a post added to a thread returns. */
+const REPLY_RESULT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    ...COMMENT_WRITE_PROPERTIES,
+    commentId: { type: "string" },
+    post: POST_SCHEMA,
+    idsNotShown: { type: "boolean" },
+  },
+  required: ["presentationId", "commentId"],
 };
 
 // --- Tools ------------------------------------------------------------------------
@@ -1602,6 +2186,150 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       },
     },
     {
+      name: "list_comments",
+      description:
+        "List a deck's comment threads, or one page's: anchor, status, quoted text, head post, and replies, each author by user id. Long text continues across pages.",
+      annotations: readOnly,
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          pageObjectId: objectIdProperty("Only this slide's or notes page's threads; omit for the whole deck."),
+          limit: limitProperty(MAX_THREADS, DEFAULT_THREADS, "Threads"),
+          cursor: CURSOR_PROPERTY,
+          raw: {
+            type: "boolean",
+            description:
+              "Each thread as Slides sends it, HTML and copy flags kept, with its anchors' ranges; one too large is sent in JSON chunks.",
+          },
+        },
+        ["presentationId"],
+      ),
+      outputSchema: {
+        type: "object",
+        properties: {
+          presentationId: { type: "string" },
+          pageObjectId: { type: "string" },
+          revisionId: { type: "string" },
+          total: { type: "integer" },
+          threads: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                commentId: { type: "string" },
+                anchorId: { type: "string" },
+                status: { type: "string" },
+                pageObjectIds: { type: "array", items: { type: "string" } },
+                objectIds: { type: "array", items: { type: "string" } },
+                replyCount: { type: "integer" },
+                quote: { type: "string" },
+                quoteOffset: { type: "integer" },
+                quoteLength: { type: "integer" },
+                headPost: POST_SCHEMA,
+                replies: { type: "array", items: POST_SCHEMA },
+                repliesOffset: { type: "integer" },
+                continued: { type: "boolean" },
+                truncated: { type: "boolean" },
+                idsNotShown: { type: "boolean" },
+                // raw: true passes Slides' own threads through, with their
+                // commentAnchors, or a chunk of one too large for a page.
+                rawJson: CHUNK_SCHEMA,
+              },
+            },
+          },
+          page: PAGE_SCHEMA,
+        },
+        required: ["presentationId", "total", "threads", "page"],
+      },
+      handler: async (args, ctx) => {
+        const presentationId: string = args["presentationId"];
+        const pageObjectId: string | undefined = args["pageObjectId"];
+        const raw = args["raw"] === true;
+        const scope = pageObjectId === undefined ? {} : { g: pageObjectId };
+        const cursor = decodeCursor(args["cursor"], { k: "comments", p: presentationId, ...scope, raw });
+        const source = asRecord(
+          await client
+            .json(
+              {
+                method: "GET",
+                path:
+                  pageObjectId === undefined
+                    ? presentationPath(presentationId)
+                    : `${presentationPath(presentationId)}/pages/${encodeURIComponent(pageObjectId)}`,
+                query: {
+                  commentsViewMode: COMMENTS_INCLUDED,
+                  fields: pageObjectId === undefined ? COMMENT_DECK_FIELDS : COMMENT_PAGE_FIELDS,
+                },
+              },
+              ctx,
+            )
+            .catch((error: unknown) => {
+              throw commentAccess(error);
+            }),
+        );
+        // Asked for INCLUDED, Slides either includes every thread or refuses;
+        // a reply in any other mode could be missing threads, so it is not
+        // passed off as the list.
+        const mode = text(source["commentsViewMode"]);
+        if (mode !== undefined && mode !== COMMENTS_INCLUDED) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            `Slides answered in comments view mode ${label(mode, MAX_NAME_BYTES, "")}, not ${COMMENTS_INCLUDED}, so its threads may be incomplete. It only read, so nothing was changed.`,
+            { retryable: false },
+          );
+        }
+        const comments = asArray(source["comments"]);
+        const pages = pageObjectId === undefined ? commentPages(source) : [source];
+        const state = await commentsState(source["revisionId"], comments, pages);
+        assertUnchanged(cursor, state, pageObjectId === undefined ? "deck's comments" : "page's comments");
+        const header = compact({
+          presentationId,
+          pageObjectId,
+          revisionId: text(source["revisionId"]),
+          total: comments.length,
+        });
+        const room =
+          RESULT_BUDGET_BYTES -
+          jsonBytes({ ...header, threads: [] }) -
+          pageEnvelopeBytes({ k: "comments", p: presentationId, ...scope, s: state, raw: raw ? 1 : undefined, i: 0, j: 0 }) -
+          64;
+        const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_THREADS;
+        let shown: { threads: JsonRecord[]; next: { i: number; j?: number; o?: number } | undefined };
+        if (raw) {
+          // Slides' own threads, chunked like get_page's raw elements.
+          const rows = rawRows(
+            comments.map((thread) => rawThread(thread, pages)),
+            { i: cursor?.i ?? 0, o: cursor?.o ?? 0 },
+            limit,
+            room,
+            COMMENTS_RAW,
+          );
+          shown = { threads: rows.elements, next: rows.next };
+        } else {
+          const places = anchorPlaces(pages);
+          const threads = comments.map((thread) => threadParts(thread, places));
+          shown = threadRows(threads, { i: cursor?.i ?? 0, j: cursor?.j ?? 0, o: cursor?.o ?? 0 }, limit, room);
+        }
+        const next = shown.next
+          ? encodeCursor({
+              k: "comments",
+              p: presentationId,
+              ...scope,
+              s: state,
+              raw: raw ? 1 : undefined,
+              i: shown.next.i,
+              j: shown.next.j ? shown.next.j : undefined,
+              o: shown.next.o ? shown.next.o : undefined,
+            })
+          : null;
+        return deliverable(
+          { ...header, threads: shown.threads, page: nextPage(next) },
+          "list_comments",
+          "pass a smaller limit, or one page's pageObjectId",
+        );
+      },
+    },
+    {
       name: "get_slide_thumbnail",
       description:
         "Get a PNG thumbnail link for one slide: a URL valid about 30 minutes that opens as the user, plus its size. Never downloads the image.",
@@ -1890,9 +2618,264 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       },
     },
     {
+      name: "create_comment",
+      description:
+        "Comment on a slide, a notes page, an element, a range of its text, or a table cell, optionally assigning it. Adds a thread; Slides notifies as in the editor.",
+      // Additive: a new thread changes nothing that existed. Not read-only,
+      // so it crosses call_destructive_tool unless the deployment exempts it
+      // in `execute.approval`; the provider never exempts itself.
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          objectId: objectIdProperty("The page or element to comment on: the shape or table, for text or a cell."),
+          content: commentContentProperty(`Plain text; Slides' cap is ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
+          textRange: {
+            type: "object",
+            additionalProperties: false,
+            required: ["startIndex", "endIndex"],
+            description: "Anchor to this text of the shape, or of the cell: 0-based, end exclusive.",
+            properties: {
+              startIndex: { type: "integer", minimum: 0, maximum: 10_000_000, description: "First character." },
+              endIndex: { type: "integer", minimum: 1, maximum: 10_000_000, description: "One past the last." },
+            },
+          },
+          cell: {
+            type: "object",
+            additionalProperties: false,
+            required: ["rowIndex", "columnIndex"],
+            description: "A table cell, 0-based: with textRange, that text in it; else the whole cell.",
+            properties: {
+              rowIndex: { type: "integer", minimum: 0, maximum: 100_000, description: "Row." },
+              columnIndex: { type: "integer", minimum: 0, maximum: 100_000, description: "Column." },
+            },
+          },
+          assigneeEmail: ASSIGNEE_PROPERTY,
+          requiredRevisionId: { ...REVISION_PROPERTY, description: "Refuse, unapplied, if the deck changed since this revision." },
+        },
+        ["presentationId", "objectId", "content"],
+      ),
+      outputSchema: {
+        type: "object",
+        properties: {
+          ...COMMENT_WRITE_PROPERTIES,
+          commentId: { type: "string" },
+          anchorId: { type: "string" },
+          status: { type: "string" },
+          quote: { type: "string" },
+          headPost: POST_SCHEMA,
+          replies: { type: "array", items: POST_SCHEMA },
+          idsNotShown: { type: "boolean" },
+        },
+        required: ["presentationId"],
+      },
+      handler: async (args, ctx) => {
+        const content = commentText(args["content"], "content");
+        const objectId: string = args["objectId"];
+        const range = args["textRange"] === undefined ? undefined : asRecord(args["textRange"]);
+        if (range && Number(range["endIndex"]) <= Number(range["startIndex"])) {
+          throw new ConnectorCallError("invalid_args", "textRange.endIndex must be greater than startIndex. Nothing was sent.");
+        }
+        const textRange = range && { type: "FIXED_RANGE", startIndex: range["startIndex"], endIndex: range["endIndex"] };
+        const cell = args["cell"] === undefined ? undefined : asRecord(args["cell"]);
+        const location = cell && { rowIndex: cell["rowIndex"], columnIndex: cell["columnIndex"] };
+        // One anchor: the object itself, text in a shape, text in a cell, or a whole cell.
+        const anchor =
+          location && textRange
+            ? { tableCellTextAnchor: { objectId, cellLocation: location, textRange } }
+            : location
+              ? { tableAnchor: { objectId, tableRange: { location, rowSpan: 1, columnSpan: 1 } } }
+              : textRange
+                ? { shapeTextAnchor: { objectId, textRange } }
+                : { objectId };
+        const written = await commentWrite(
+          client,
+          ctx,
+          args["presentationId"],
+          { insertComment: compact({ ...anchor, content, assigneeEmailAddress: args["assigneeEmail"] }) },
+          args["requiredRevisionId"],
+        ).catch((error: unknown) => {
+          throw afterUnknownCreate(
+            error,
+            "List the deck's comments with list_comments and look for it before commenting again; a second insert makes a second thread.",
+          );
+        });
+        const reread = "list the deck's comments with list_comments to find it";
+        const thread = asRecord(asRecord(written.reply["insertComment"])["commentThread"]);
+        const commentId = wholeId(thread["commentId"]);
+        if (commentId === undefined && written.saved) {
+          throw appliedButUnreadable("create_comment", "Google returned no usable id for the new comment", reread);
+        }
+        const parts = threadParts(thread, new Map());
+        const replies = asArray(thread["replies"]);
+        return appliedDeliverable(
+          compact({
+            ...written.header,
+            commentId,
+            anchorId: wholeId(thread["anchorId"]),
+            status: parts.row["status"],
+            quote: label(text(parts.quote), MAX_POST_BYTES, "list_comments has the whole quote"),
+            headPost: thread["headPost"] ? writtenPost(thread["headPost"]) : undefined,
+            // A new thread has none; any Slides sends keep their ids.
+            replies: replies.length > 0 ? replies.map((reply) => writtenPost(reply, MAX_NAME_BYTES)) : undefined,
+            idsNotShown: parts.row["idsNotShown"],
+            note: written.saved ? undefined : COMMENTS_UNSAVED,
+          }),
+          "create_comment",
+          reread,
+        );
+      },
+    },
+    {
+      name: "create_comment_reply",
+      description: "Reply to a comment thread. Adds a post and changes no existing one; to resolve, reopen, or reassign, use update_comment_thread.",
+      // Additive: a reply is a new post, and the thread's status and
+      // assignee stay as they were.
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          commentId: COMMENT_ID,
+          content: commentContentProperty(`Plain text, up to ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
+        },
+        ["presentationId", "commentId", "content"],
+      ),
+      outputSchema: REPLY_RESULT_SCHEMA,
+      handler: async (args, ctx) =>
+        postToThread(client, ctx, "create_comment_reply", args, { content: commentText(args["content"], "content") }),
+    },
+    {
+      name: "update_comment_thread",
+      description:
+        "Resolve, reopen, or reassign a comment thread with a post. Pass exactly one of status or assigneeEmail; reassignment requires content. Replaces its status or assignee; Slides notifies an assignee.",
+      // Destructive: the thread's status or assignee is replaced. The post
+      // that records it cannot be deleted afterwards.
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      // Keep the field schema flat: discovery renders oneOf before properties,
+      // losing these fields for required-only branches. The handler enforces
+      // exactly one change and text on reassignment before dispatch instead.
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          commentId: COMMENT_ID,
+          status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
+          assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; needs content." },
+          content: commentContentProperty(`Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`),
+        },
+        ["presentationId", "commentId"],
+      ),
+      outputSchema: REPLY_RESULT_SCHEMA,
+      handler: async (args, ctx) => {
+        // Exactly one change per post. Slides requires text on reassignment;
+        // only RESOLVE and REOPEN may go without.
+        if ((args["status"] === undefined) === (args["assigneeEmail"] === undefined)) {
+          throw new ConnectorCallError("invalid_args", "Pass exactly one of status and assigneeEmail. Nothing was sent.");
+        }
+        if (args["assigneeEmail"] !== undefined && args["content"] === undefined) {
+          throw new ConnectorCallError("invalid_args", "A reassignment needs content: Slides requires text on any post that does not resolve or reopen. Nothing was sent.");
+        }
+        return postToThread(client, ctx, "update_comment_thread", args, {
+          content: commentText(args["content"], "content"),
+          commentAction: args["status"] === undefined ? undefined : args["status"] === "RESOLVED" ? "RESOLVE" : "REOPEN",
+          assigneeEmail: args["assigneeEmail"],
+        });
+      },
+    },
+    {
+      name: "update_comment_post",
+      description:
+        "Replace the text of one post in a comment thread, the head post or a reply. Only its author can; the old text is gone.",
+      // Destructive: the post's previous text is overwritten.
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: input(
+        {
+          presentationId: PRESENTATION_ID,
+          commentId: COMMENT_ID,
+          postId: POST_ID,
+          content: commentContentProperty(`The new plain text, up to ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
+        },
+        ["presentationId", "commentId", "postId", "content"],
+      ),
+      outputSchema: {
+        type: "object",
+        properties: { ...COMMENT_WRITE_PROPERTIES, commentId: { type: "string" }, postId: { type: "string" } },
+        required: ["presentationId", "commentId", "postId"],
+      },
+      handler: async (args, ctx) => {
+        const content = commentText(args["content"], "content");
+        const written = await commentWrite(client, ctx, args["presentationId"], {
+          updateCommentPost: { commentId: args["commentId"], postId: args["postId"], content },
+        });
+        return appliedDeliverable(
+          compact({
+            ...written.header,
+            commentId: args["commentId"],
+            postId: args["postId"],
+            note: written.saved ? undefined : COMMENTS_UNSAVED,
+          }),
+          "update_comment_post",
+          "read the thread with list_comments to see the post",
+        );
+      },
+    },
+    {
+      name: "delete_comment",
+      description:
+        "Delete a whole comment thread, every reply with it. Only the author of its head post can, and the API cannot restore it.",
+      // Destructive: the thread and its replies are gone.
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: input({ presentationId: PRESENTATION_ID, commentId: COMMENT_ID }, ["presentationId", "commentId"]),
+      outputSchema: {
+        type: "object",
+        properties: { ...COMMENT_WRITE_PROPERTIES, commentId: { type: "string" } },
+        required: ["presentationId", "commentId"],
+      },
+      handler: async (args, ctx) => {
+        const written = await commentWrite(client, ctx, args["presentationId"], {
+          deleteComment: { commentId: args["commentId"] },
+        });
+        return appliedDeliverable(
+          compact({ ...written.header, commentId: args["commentId"], note: written.saved ? undefined : COMMENTS_UNSAVED }),
+          "delete_comment",
+          "list the deck's comments with list_comments to see whether it is gone",
+        );
+      },
+    },
+    {
+      name: "delete_comment_reply",
+      description:
+        "Delete one reply from a comment thread. Only its author can, and not a reply that resolved, reopened, or assigned the thread.",
+      // Destructive: the reply is gone.
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: input(
+        { presentationId: PRESENTATION_ID, commentId: COMMENT_ID, postId: { ...POST_ID, description: "postId of the reply, from list_comments." } },
+        ["presentationId", "commentId", "postId"],
+      ),
+      outputSchema: {
+        type: "object",
+        properties: { ...COMMENT_WRITE_PROPERTIES, commentId: { type: "string" }, postId: { type: "string" } },
+        required: ["presentationId", "commentId", "postId"],
+      },
+      handler: async (args, ctx) => {
+        const written = await commentWrite(client, ctx, args["presentationId"], {
+          deleteCommentReply: { commentId: args["commentId"], postId: args["postId"] },
+        });
+        return appliedDeliverable(
+          compact({
+            ...written.header,
+            commentId: args["commentId"],
+            postId: args["postId"],
+            note: written.saved ? undefined : COMMENTS_UNSAVED,
+          }),
+          "delete_comment_reply",
+          "read the thread with list_comments to see whether it is gone",
+        );
+      },
+    },
+    {
       name: "batch_update_presentation",
       description:
-        "Send raw Slides batchUpdate requests to a deck, atomically, at the revision it was read at. Always destructive; prefer the named tools when one fits.",
+        "Send raw Slides batchUpdate requests to a deck at the revision it was read at; all apply or none, comments apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
       // Destructive: a raw request can delete or overwrite anything in the deck.
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: input(
@@ -1903,7 +2886,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             type: "array",
             minItems: 1,
             maxItems: MAX_BATCH_REQUESTS,
-            description: `Slides Request objects, applied in order, all or none; 1 to ${MAX_BATCH_REQUESTS} (connecta's bound).`,
+            description: `Slides Request objects, applied in order, all or none but comments; 1 to ${MAX_BATCH_REQUESTS} (connecta's bound).`,
             items: {
               type: "object",
               minProperties: 1,
@@ -1933,16 +2916,6 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         const requests = asArray(args["requests"]);
         const kinds = requests.map((request, index) => [index, Object.keys(asRecord(request))[0] ?? ""] as const);
-        const comments = kinds.filter(([, kind]) => COMMENT_KINDS.has(kind));
-        if (comments.length > 0) {
-          throw new ConnectorCallError(
-            "invalid_args",
-            `This connection does not support Slides comments yet: ${comments
-              .slice(0, 5)
-              .map(([index, kind]) => `requests[${index}] "${kind}"`)
-              .join(", ")}. Leave comment requests out of the batch; add comments in Slides itself. Nothing was sent.`,
-          );
-        }
         const unknown = kinds.filter(([, kind]) => !REQUEST_KINDS.has(kind));
         if (unknown.length > 0) {
           throw new ConnectorCallError(
@@ -1961,40 +2934,54 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           args["requiredRevisionId"],
         );
         // Comment changes save apart from the rest of a batch, and Slides
-        // reports them on their own. None is sent, so anything but "none
-        // asked for" or "all saved" is surfaced as it came, and the result
-        // stops calling the batch all-or-none.
-        const commentState = response["commentUpdateState"];
-        const commentsUnsettled =
-          typeof commentState === "string" && commentState !== "" && !COMMENTS_SETTLED.has(commentState);
-        const header = compact({
-          presentationId: args["presentationId"],
-          ...revisionFields(response),
-          commentUpdateState: commentsUnsettled ? label(commentState, MAX_NAME_BYTES, "Slides sent a longer state") : undefined,
-        });
+        // reports them on their own: a batch that sent any is settled only
+        // when Slides says ALL_SAVED, and one that is not stops being called
+        // all or none.
+        const saved = commentSaveFields(response, kinds.some(([, kind]) => COMMENT_KINDS.has(kind)));
+        const header = compact({ presentationId: args["presentationId"], ...revisionFields(response), ...saved });
         // One reply per request, in order; most are empty, the create replies
-        // carry the new object ids. Bounded, because the write has applied
-        // and its result must still reach the caller.
+        // carry the new ids. Bounded, ids first: Slides accepted the batch, so
+        // what it created must reach the caller.
+        const comments = kinds.some(([, kind]) => COMMENT_KINDS.has(kind));
+        const reread = `re-read with get_presentation or get_page for deck changes${comments ? ", and list_comments for comments" : ""}`;
         const all = asArray(response["replies"]);
         const shown = boundedReplies(all, jsonBytes(header) + 1024);
-        const notes = [
-          commentsUnsettled
-            ? "The batch applied, but Slides reports its comment changes did not all save (commentUpdateState), so it was not all or none."
-            : undefined,
-          shown.notShown > 0 || shown.replies.some((reply) => "cut" in reply)
-            ? `The write applied. ${shown.notShown > 0 ? `The last ${shown.notShown} of ${all.length} replies were too large to return` : "Large reply fields are named in cut"}.`
-            : undefined,
-        ].filter((entry): entry is string => entry !== undefined);
-        return appliedDeliverable(
-          compact({
-            ...header,
-            replies: shown.replies,
-            repliesNotShown: shown.notShown > 0 ? shown.notShown : undefined,
-            note: notes.length > 0 ? `${notes.join(" ")} Re-read with get_presentation or get_page for what it changed.` : undefined,
-          }),
-          "batch_update_presentation",
-          "re-read with get_presentation or get_page for what it changed",
-        );
+        // Neutral about what applied: the comment state, when unconfirmed,
+        // says that apart; these say only what the result left out.
+        const unsaved = saved.commentUpdateState !== undefined ? COMMENTS_UNSAVED : undefined;
+        const notes = (...entries: (string | undefined)[]) => {
+          const said = entries.filter((entry): entry is string => entry !== undefined);
+          return said.length > 0 ? `${said.join(" ")} To see the deck as it is now, ${reread}.` : undefined;
+        };
+        const result = compact({
+          ...header,
+          replies: shown.replies,
+          note: notes(
+            unsaved,
+            shown.replies.some((reply) => "cut" in reply)
+              ? `Large reply fields are named in cut; every id is kept${shown.oversized ? ", and no other text, since the ids alone pass this tool's 192 KiB budget" : ""}.`
+              : undefined,
+          ),
+        });
+        const bytes = jsonBytes(result);
+        if (bytes <= BRIDGE_BYTES) return result;
+        if (bytes <= MAX_IDS_RESULT_BYTES) {
+          return {
+            ...result,
+            note: `${result.note ?? ""} At ${bytes} bytes this result is more than execute_code can carry (${BRIDGE_BYTES}): call the tool directly and page it with get_result.`.trim(),
+          };
+        }
+        // Past any result: the save state and how to recover the ids stay;
+        // the replies do not. Slides accepted the batch, so it is not to be sent again.
+        return compact({
+          ...header,
+          replies: [],
+          repliesNotShown: all.length,
+          note: notes(
+            unsaved,
+            `Slides accepted the batch, but its ${all.length} replies carry ${bytes} bytes of ids, more than any result can carry, so none is shown. Do not send it again; ${comments ? "list_comments has the comments and posts it created, and " : ""}get_presentation or get_page has the objects.`,
+          ),
+        });
       },
     },
   ];
@@ -2062,19 +3049,53 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   changed since you read it.
 - \`batch_update_presentation\` takes Slides' own Request objects and always
   requires the \`revisionId\` from the read the requests were built on. All
-  requests apply or none do. Each write returns the new \`revisionId\` for the
-  next one. A \`conflict\` means the deck changed since that read: re-read it,
-  rebuild the requests, and send them with the new \`revisionId\`. Its
-  replies keep every id at every depth whole; a large reply's other fields
-  are named in \`cut\`, and replies past one result are counted in
-  \`repliesNotShown\`. The write applied either way: re-read for what it made.
-- Comments are not supported yet: no tool reads them, and comment requests
-  (\`insertComment\`, \`addCommentReply\`, …) are refused unsent. Add
-  comments in Slides itself.
+  requests apply or none do, except comment changes (below). Each write
+  returns the new \`revisionId\` for the next one. A \`conflict\` means the
+  deck changed since that read: re-read it, rebuild the requests, and send
+  them with the new \`revisionId\`. Its replies keep every id at every depth
+  whole, in every reply; text is cut first, and a large reply's other fields
+  are named in \`cut\`. Ids too many for this tool's 192 KiB budget are all
+  returned anyway, without text; past 256 KiB, more than a program can
+  receive, call the tool directly and page with \`get_result\`. A batch
+  whose ids pass even that returns its comment state and \`repliesNotShown\`;
+  read what it made with \`list_comments\`, \`get_presentation\`, or
+  \`get_page\`, and do not send it again.
 - An id or revision too long to copy into a result is left out and flagged
   (\`revisionIdNotShown\`), never cut. A failure that says the write
   applied means Google answered 2xx: do not repeat it; re-read instead.
 - Nothing here shares, moves, or deletes a deck.
+
+## Comments
+
+- \`list_comments\` lists the deck's threads, or one page's with
+  \`pageObjectId\` (a speaker-notes comment is on the notes page). Each has
+  its \`commentId\`, \`status\` (OPEN or RESOLVED), where it is anchored
+  (\`pageObjectIds\`, \`objectIds\`), the \`quote\` it was made on, its
+  \`headPost\`, and \`replies\`. A post's \`author.user\` (\`users/…\`) is
+  the stable id; \`displayName\` is only a name. Slides gives no \`user\`
+  for an anonymous or imported post. Text too long for one result continues
+  on the next page: a row with \`continued\` picks up its thread where the
+  last stopped, and \`repliesOffset\` counts the replies before it. Its
+  cursor is bound to the threads and their anchors as well as the revision,
+  so a comment added or moved between pages is a \`conflict\` too. Reading
+  comments needs comment access; a view-only account is refused.
+- The projection leaves out each post's HTML (\`contentHtml\`), whether it
+  came from a copied deck, and the text and cell ranges an anchor covers.
+  \`raw: true\` returns each thread as Slides sends it, with
+  \`commentAnchors\` added (its anchors, each with its \`pageObjectId\`),
+  in \`rawJson\` chunks when one is too large.
+- \`create_comment\` and \`create_comment_reply\` are additive and return
+  every new id whole. \`update_comment_thread\` resolves, reopens, or
+  reassigns a thread (one at a time; a reassignment needs \`content\`),
+  replacing its status or assignee, and is destructive,
+  like \`update_comment_post\`, \`delete_comment\`, and
+  \`delete_comment_reply\`; Slides allows the last three only to the
+  post's author. Comments notify people the way the Slides editor does.
+- Slides saves comment changes apart from the rest of a write. When it does
+  not confirm they saved, the result carries \`commentUpdateState\` — for
+  example \`ALL_FAILED_UNKNOWN_REASON\` — and the write's other changes may
+  still have applied. Do not repeat it: re-read with \`list_comments\`, then
+  decide.
 ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
 }
 
@@ -2112,10 +3133,12 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * });
  * ```
  *
- * Reads run in programs. `create_presentation` and `create_slide` are additive
- * writes the host approves unless the deployment exempts them in
- * `execute.approval`; `replace_all_text` and `batch_update_presentation` are
- * destructive.
+ * Reads run in programs. `create_presentation`, `create_slide`,
+ * `create_comment`, and `create_comment_reply` are additive writes the host
+ * approves unless the deployment exempts them in `execute.approval`;
+ * `replace_all_text`, `update_comment_thread`, `update_comment_post`,
+ * `delete_comment`, `delete_comment_reply`, and `batch_update_presentation`
+ * are destructive.
  */
 export function slides(id: string, options: SlidesOptions): Connector {
   const connection = workspaceConnection("slides", options);
@@ -2136,10 +3159,10 @@ export function slides(id: string, options: SlidesOptions): Connector {
       maxResultBytes: options.maxResultBytes,
     }),
     title: options.title ?? "Google Slides",
-    description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, and edit their text — ${connection.purpose}`,
+    description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
     usageGuide: {
       content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own decks: per-slide text and notes, new decks and slides, text replacement, raw batchUpdate.",
+      summary: "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
       // Required: whose decks they are, that listing is Drive's, and the
       // revision discipline on writes are conventions no schema can carry.
       required: true,

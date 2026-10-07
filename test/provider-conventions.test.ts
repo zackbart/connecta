@@ -290,8 +290,9 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
   // both are destructive, so the verb still names one safety class.
   sheets: ["get", "create", "add", "append", "update", "clear", "batch"],
   // The raw hatch keeps Google's own method name, batchUpdate, so an agent
-  // that knows the Slides reference finds it by that name.
-  slides: ["get", "list", "create", "replace", "batch"],
+  // that knows the Slides reference finds it by that name. Comment posts
+  // are updated and deleted by name, each destructive.
+  slides: ["get", "list", "create", "replace", "update", "delete", "batch"],
   // No delete or submit verb; `batch` is Google's own batchUpdate, the one
   // always-destructive hatch, named as the Forms reference names it.
   forms: ["get", "list", "create", "update", "batch"],
