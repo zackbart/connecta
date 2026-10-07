@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { listen } from "../src/node.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
@@ -57,7 +57,7 @@ async function doctorAgainst(
         ],
       }),
     ],
-    executor,
+    executor: customExecutor(executor, { lifecycle: "self-managed" }),
     auth: options.auth ?? bearerToken(TOKEN),
     logger: "silent",
     ...(options.storage ? { storage: options.storage } : {}),
@@ -91,16 +91,15 @@ async function doctorAgainst(
 
 describe("connecta doctor's executor line", () => {
   it("names the sandbox the deployment actually runs", async () => {
-    // The Workers shape, structurally: a class-named executor that is not
-    // QuickJS and never claimed to be.
-    class DynamicWorkerExecutor implements Executor {
+    // A custom class-named sandbox, independent of either built-in executor.
+    class CustomExecutor implements Executor {
       async execute() {
         return { result: 42 };
       }
     }
-    const line = await doctorAgainst(new DynamicWorkerExecutor());
+    const line = await doctorAgainst(new CustomExecutor());
     expect(line).toBe(
-      "Connecta doctor passed: 1 connector(s), DynamicWorkerExecutor " +
+      "Connecta doctor passed: 1 connector(s), CustomExecutor " +
         "executed, prescribed seven-tool surface.",
     );
     expect(line).not.toContain("QuickJS");

@@ -113,12 +113,16 @@ describe("connecta.emit provider (M7, M8)", () => {
 
   it("spends no host-call budget", async () => {
     const sink = new EmitCollector(10_000, 10);
+    let terminalCode: string | undefined;
     const providers = await buildSandboxProviders(
       makeRegistry([calcConnector]),
       BASE,
       silentLogger,
       undefined,
-      { maxHostCalls: 1, emitCollector: sink },
+      {
+        maxHostCalls: 1, emitCollector: sink,
+        onHostCallBudgetExceeded: (failure) => { terminalCode = failure.details.code; },
+      },
     );
     const fns = required(providers.find((p) => p.name === "connecta")).fns;
     const emit = required(fns.emit);
@@ -129,10 +133,14 @@ describe("connecta.emit provider (M7, M8)", () => {
     await expect(call("calc.add", { a: 1, b: 2 })).resolves.toEqual({
       sum: 3,
     });
-    // …and the budget still holds for the second call.
-    await expect(call("calc.add", { a: 1, b: 2 })).rejects.toThrowError(
-      /host-call budget/,
+    // The next call ends the host run instead of rejecting into the guest.
+    let settled = false;
+    void call("calc.add", { a: 1, b: 2 }).then(
+      () => { settled = true; }, () => { settled = true; },
     );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(terminalCode).toBe("budget_exceeded");
     expect(sink.blocks).toHaveLength(2);
   });
 });

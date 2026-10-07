@@ -6,6 +6,7 @@ import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
+  checkQueuedWriteAtExhaustion,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
@@ -24,6 +25,9 @@ afterAll(async () => {
 });
 
 describe("guest API contract (QuickJS executor)", () => {
+  it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
+    await checkQueuedWriteAtExhaustion(executor);
+  });
   for (const contractCase of CONTRACT_CASES) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness();
@@ -36,6 +40,21 @@ describe("guest API contract (QuickJS executor)", () => {
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
+    const outcome = await contractHarness().run(executor, `async () => {
+      console.log("before budget exhaustion");
+      for (let i = 0; i < 213; i++) {
+        try { await connecta.call("reader.read", { value: "ok" }); }
+        catch { console.log("must not catch the budget refusal"); }
+      }
+    }`);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.value).toMatchObject({
+      error: { code: "budget_exceeded" },
+      logs: "before budget exhaustion",
+    });
+  });
 
   it("[P2, X5] pins the QuickJS capability set", async () => {
     const outcome = await contractHarness().run(executor, CAPABILITY_PROBE_CODE);

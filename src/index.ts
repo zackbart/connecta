@@ -15,6 +15,8 @@ import {
 } from "./branding.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
+import { assertExecutor } from "./executor-contract.js";
+export { customExecutor, type CustomExecutorOptions } from "./executor-contract.js";
 import {
   AdmissionController,
   executorName,
@@ -311,9 +313,12 @@ export interface ConnectaConfig {
   deploymentInfo?: Record<string, unknown>;
   /**
    * Required sandbox for `execute_code`. Workers use
-   * `new DynamicWorkerExecutor({ loader: env.LOADER })` from
-   * `@cloudflare/codemode`; Node uses `quickJsExecutor()` from
-   * `@zackbart/connecta/quickjs`.
+   * `workerExecutor({ loader: env.LOADER })` from
+   * `@zackbart/connecta/worker`; Node uses `quickJsExecutor()` from
+   * `@zackbart/connecta/quickjs`. Direct upstream DynamicWorkerExecutor
+   * construction throws because its request-owned handles cannot be released.
+   * Custom sandboxes explicitly opt in with
+   * `customExecutor(myExecutor, { lifecycle: "self-managed" })`.
    */
   executor: Executor;
 }
@@ -874,10 +879,11 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     throw new Error(
       "ConnectaConfig.executor is required. Configure quickJsExecutor() from " +
         '"@zackbart/connecta/quickjs" on Node, or ' +
-        "new DynamicWorkerExecutor({ loader: env.LOADER }) from " +
-        '"@cloudflare/codemode" on Workers.',
+        "workerExecutor({ loader: env.LOADER }) from " +
+        '"@zackbart/connecta/worker" around DynamicWorkerExecutor on Workers.',
     );
   }
+  assertExecutor(config.executor);
   const storage = config.storage ?? memoryStorage();
   const logger = resolveLogger(config.logger);
   const credentialVault = config.vault;

@@ -1,14 +1,12 @@
 # Code mode — the guest API contract
 
-The normative description of what a program written for `execute_code` is
-promised: what it can reach, what it gets back, how failures look, what it may
-retry, what bounds it runs under, and what it leaves behind in activity. It is
-specified in prose first and implemented second.
+The `execute_code` contract: capabilities, results, failures, retries, limits,
+and activity. Specified in prose first, implemented second.
 
-Two executors implement it: QuickJS in a child process on Node, and
-`DynamicWorkerExecutor` from `@cloudflare/codemode` on Workers. Divergence is a
-bug unless it appears in [Executor exceptions](#executor-exceptions), which
-names the reason; a third executor is implementable from this document alone.
+Two executors implement it: QuickJS in a Node child process and `workerExecutor()`
+from `@zackbart/connecta/worker` around upstream `DynamicWorkerExecutor` on Workers.
+Divergence is a bug unless explained in [Executor exceptions](#executor-exceptions);
+a third executor is implementable from this document alone.
 [`ethos.md`](../ethos.md) carries the verdicts behind the shape,
 [`meta-tools.md`](./meta-tools.md) owns the top-level tool contract, and clause
 identifiers (`A1`, `E3`, …) are stable and cited by [Verification](#verification).
@@ -33,26 +31,37 @@ import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 createConnecta({ executor: quickJsExecutor() /* connectors, auth, storage… */ });
 ```
 
-`quickJsExecutor()` runs each program in a disposable child-process sandbox; its
-CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are configured
-on the executor. Server bundlers must keep the `@zackbart/connecta/quickjs`
-package files external so the child entry stays on disk. The
-[Node template](../templates/node/README.md) carries the complete setup.
+`quickJsExecutor()` runs each program in a disposable child process, with CPU,
+wall-time, memory, stack, queue, result, log, and IPC bounds on the executor.
+Keep `@zackbart/connecta/quickjs` external in server bundles so the child entry
+stays on disk. The [Node template](../templates/node/README.md) has the full setup.
 
-On Cloudflare Workers the Worker Loader binding is the sandbox, and Dynamic
-Workers require the Workers Paid plan:
+On Workers the Worker Loader is the sandbox; Dynamic Workers require the Paid plan:
 
 ```ts
-createConnecta({ executor: new DynamicWorkerExecutor({ loader: env.LOADER }) });
+import { workerExecutor } from "@zackbart/connecta/worker";
+
+createConnecta({ executor: workerExecutor({ loader: env.LOADER }) });
 ```
 
-The supported constructor passes only `loader`; `bindings`, `modules`, or
-`globalOutbound` grant ambient guest authority and violate `P2`. The
-[Worker example](../examples/worker/README.md#code-mode) has the full setup.
+The adapter uses only `loader` and an optional `timeout`. Its admission defaults
+are two active runs, eight queued runs, and a five-second queue deadline, settable
+through `admission`. Lease release disposes RPC and loader handles independently
+of guest settlement. `bindings`, `modules`, or `globalOutbound` violate `P2`.
+The [Worker example](../examples/worker/README.md#code-mode) has the full setup.
+
+Replace `import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
+`import { workerExecutor } from "@zackbart/connecta/worker";` and use the wiring above.
+Keep the peer. Unbranded executors throw, including bundled upstream copies.
+Shipped executors carry a non-enumerable `Symbol.for("connecta.executor")` version/lifecycle brand.
+Custom sandboxes import `customExecutor` from `@zackbart/connecta`, then configure
+`executor: customExecutor(myExecutor, { lifecycle: "self-managed" })`. They own guest termination
+and cleanup at budget exhaustion, cancellation, and deadlines; the wrapper only delegates methods.
 
 ## What an executor must implement
 
-The host side of the seam is two types in `src/types.ts` and nothing else.
+The Promise provider/result seam lives in `src/types.ts`. Custom implementations
+also need the lifecycle wrapper above; structural compatibility alone is insufficient.
 
 ```ts
 interface Executor {
@@ -91,21 +100,17 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    uncaught tool failure keeps its type (`E1`).
 5. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
    call order (`R5`), bounding what it retains.
-6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), staying
-   inside the tested `P2`/`X5` boundary. Settle `execute()` on your own
-   deadline: connecta stops waiting at `execute.watchdogMs` and reports the
-   sandbox unresponsive (`L3`).
-7. **Grant no ambient authority of its own.** Never back this with `eval` or
-   `node:vm`: the sandbox is a containment layer on top of connecta's boundary,
-   not a replacement for it, and every capability arrives through `fns`.
+6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), within
+   `P2`/`X5`. Settle `execute()` on your own deadline; connecta stops waiting
+   at `execute.watchdogMs` and reports the sandbox unresponsive (`L3`).
+7. **Grant no ambient authority.** Never use `eval` or `node:vm`: sandboxing
+   supplements connecta's boundary; every capability arrives through `fns`.
 
-Optionally implement `AdmittingExecutor` (`acquire()` returning a lease whose
-`execute` runs once) for bounded admission (`L7`) and `close()` for shutdown;
-connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise. The
-optional `name` — else a class's constructor name, which a minifier may rewrite
-— is the executor name `/health` and `connecta doctor` report.
-[Emitted output](#emitted-output) asks nothing of an executor: `connecta.emit`
-is just another provider function (`M8`).
+Optional `AdmittingExecutor.acquire()` returns a once-executed lease for bounded
+admission (`L7`); otherwise connecta uses `withExecutorAdmission`. `close()` handles
+shutdown. `/health` and `connecta doctor` report `name`, falling back to the
+constructor name, which minifiers may rewrite. [Emission](#emitted-output) is
+another provider function (`M8`).
 
 ## The program
 
@@ -362,7 +367,8 @@ clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
 ## Errors
 
 **E1.** There are three error channels. Connecta failures are typed whether
-caught or uncaught.
+caught or uncaught. Host-call budget exhaustion ends the host run and blocks host
+access (`L4`); Workers guest computation may continue briefly until teardown (`X3`).
 
 | Channel | Shape | Typed? |
 | --- | --- | --- |
@@ -379,7 +385,7 @@ classification and fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
 `retryable`, and `retryAfterMs`, because a clipped recovery address or argument
 describes a different call. This covers `call`, `search`, `describe`, `emit`, and
-the host-call budget. Program-authored errors stay untyped, and code must never
+write and emitted-output budgets. Program-authored errors stay untyped, and code must never
 parse error prose. An `unavailable` classification may add `details.host`, an
 HTTP(S) origin of at most 253 UTF-8 bytes, and `details.code`, a validated
 network errno, undici transport code, or `timeout` of at most 32 bytes; neither
@@ -512,7 +518,9 @@ truncation marker. Logs survive program failure through either a returned error
 result or a thrown error carrying `logs: string[]`. QuickJS streams captured
 entries to its parent and preserves the received prefix on cancellation,
 shutdown, deadline termination, child crashes, and IPC failures (`X4`). How a
-non-string argument renders is not contract (`X4`).
+non-string argument renders is not contract (`X4`). At terminal host-call
+budget exhaustion, QuickJS returns its streamed prefix; a Dynamic Worker
+has no host log stream and cannot supply logs from its suspended guest (`L4`).
 
 **R6.** Nothing else is added to a normal program result. `diagnostics: true`
 adds one request-local, payload-free `diagnostics` block; a program that emitted
@@ -575,11 +583,10 @@ downstream block, so `S5`'s uncapped fallthrough is contract.
 **M7.** `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
 and `call` share it. `M5`'s bounds are emission's only bounds.
 
-**M8.** Emission asks nothing of an executor: `emit` is a provider function,
-blocks cross the guest boundary once as an argument, and `ExecuteResult` is
-unchanged — `Executor` stays assignable from `@cloudflare/codemode`'s
-`DynamicWorkerExecutor`, so any executor that bridges provider calls gets
-emission for free.
+**M8.** `emit` is a provider function; blocks cross the guest boundary once as
+an argument. `ExecuteResult` remains compatible with upstream codemode's types;
+construction requires the Worker adapter or explicit custom opt-in. Any executor
+that bridges provider calls gets emission for free.
 
 **M9.** Request-local and unstreamed: blocks exist only in the finished
 response, and `emit` resolving means "accepted," never "delivered."
@@ -620,14 +627,11 @@ poll, no cancellation exception to catch, and no guarantee that a `finally`
 block runs — a cancelled QuickJS child is terminated outright. Write programs
 that need no cleanup.
 
-**L2.** What cancellation guarantees: in-flight host calls abort, no further
-host call is admitted — `search` and `describe` included, which fail
-`cancelled` rather than go on loading catalogs — the response returns
-`executor_cancelled` without waiting for the executor to settle, or for an
-`acquire()` that ignores the signal to grant, the admission lease is released
-(a lease granted after the run gave up is released on arrival), and nothing
-request-bound survives the request. Whether the program itself stops is the
-executor's (`X3`).
+**L2.** Cancellation aborts in-flight host calls and admits no further calls,
+including discovery. The response returns `executor_cancelled` without awaiting
+a wedged executor or `acquire()` that ignores its signal. It releases the lease;
+a late-granted lease releases on arrival. Nothing request-bound survives the
+request. Whether guest computation stops is the executor's (`X3`).
 
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
@@ -656,13 +660,25 @@ because connecta enforces them above the sandbox:
 | Result | 24,000 serialized characters |
 | Logs presented to the model | 4,000 characters |
 
-Every `call` attempt spends one host call on entry, before address resolution,
-catalog lookup, safety checks, validation, or dispatch, so unknown addresses,
-unknown tools, catalog failures, and other pre-dispatch refusals cost what a
-successful call costs; catching a refusal does not refund it. `search` and
-`describe` likewise spend on entry. Exhausting the budget fails that call with
-non-retryable `budget_exceeded` (`E2`) and a message naming the budget. No
-connector is reached, and the budget does not refill inside one execution.
+Every `call`, `search`, and `describe` spends one host call on entry, before
+resolution, validation, or dispatch. Catching a local refusal refunds nothing.
+The first call beyond the budget ends the host run with one non-retryable
+`budget_exceeded` (`E2`). Its bridge stays pending until lease disposal so guest
+`try/catch` cannot swallow it. Later host access, including `emit`, stops; pending
+replies are withheld. The refusal reaches no connector, returns no partial result,
+and discards accepted emits (`M4`). Calls still resolving or awaiting admission
+are cancelled, including exempt writes past their gate. Dispatched exempt writes
+drain under `W9`; unknown outcomes retain precedence. The lease then releases:
+QuickJS terminates its child, and the Worker adapter disposes RPC and loader
+handles independently of the guest deadline. Workers guest computation may
+continue briefly, including a timer escaping the bridge (`X3`), with no host
+access. The upstream `Executor` shape remains unchanged.
+
+The failure adds payload-free `hostCalls: { attempted, admitted, succeeded, failed }`
+without diagnostics. `attempted` includes the first refusal, normally 21; `admitted`
+counts the 20 calls past the gate, local refusals included. `succeeded` and `failed`
+count settlements at response time, the budget refusal as failed. Pending calls
+may be in neither count. `emit` and later attempts are excluded; no budget refills.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
@@ -796,12 +812,13 @@ isolate limits apply untuned. A specific heap ceiling is a Node-only option.
 `AbortSignal` and kills the child — SIGTERM, then SIGKILL if it has not exited
 within a second — and releasing a lease whose child is still running recycles
 that child, so a run the watchdog abandons (`L3`) ends too.
-The Dynamic Worker executor's `execute()` takes no signal, so a cancelled or
-abandoned program runs on in its isolate until its host calls fail or its own
-deadline expires. `L2` and `L3` hold either way — the calls abort, connecta
-stops awaiting the executor and frees the admission slot — but "the run ends"
-is best-effort on Workers, and for that tail the code pool bounds what
-connecta is waiting on, not what the platform is still running.
+Upstream `execute()` takes no signal; its guest timeout may never settle after
+the parent response ends. `workerExecutor()` owns each lease's RPC and loader
+handles: release disposes them, detaches host functions, and settles the adapter's
+promise independently of upstream evaluation. Guest computation may continue
+briefly until platform teardown, but no late return, callback, `finally`, call,
+or emit changes the finished host result. Disposal releases request resources;
+it does not guarantee a synchronous guest-CPU kill.
 
 **X4. Log rendering and capture.** QuickJS JSON-stringifies non-string arguments
 and captures `log`, `info`, `warn`, `error`, and `debug`; the Dynamic Worker
@@ -820,11 +837,11 @@ starts has no guest logs to recover.
 `process`, timers, `crypto`, or `WebSocket`, and its Node child starts with an
 explicit environment holding only `TZ=UTC`, so local time matches a Dynamic
 Worker's, rather than inheriting
-deployment variables or `NODE_OPTIONS`. A Dynamic Worker has those globals plus a non-contract set of
-runtime builtins through `import()` and `process.getBuiltinModule()`, including
-`node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`,
-and `cloudflare:workers`; the upstream set drifts, so that is not an allowlist.
-The supported construction is exactly `new DynamicWorkerExecutor({ loader })` —
+deployment variables or `NODE_OPTIONS`. A Dynamic Worker exposes runtime-only
+builtins through `import()` and `process.getBuiltinModule()`, including `node:path`,
+`node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and
+`cloudflare:workers`; the upstream set drifts, so that is not an allowlist.
+The supported adapter uses `new DynamicWorkerExecutor({ loader, timeout })`.
 `bindings`, `modules`, and `globalOutbound` each grant ambient configuration,
 code, or egress. Under it, `process.env`, lexical `this.env`, and
 `cloudflare:workers.env` are empty; `node:fs`, `node:http`, and `node:https` are
@@ -878,15 +895,11 @@ cannot intercept a frame first. A mismatched frame is ordinary untyped prose.
 
 ## Verification
 
-Every clause has a test. `test/guest-contract-cases.ts` holds the case table,
-written once and run twice: `test/guest-api-contract-quickjs.test.ts` runs it on
-the Node QuickJS executor, and `test/guest-api-contract.test.ts` runs it on a
-real `DynamicWorkerExecutor` in workerd — a Miniflare Worker Loader binding
-makes that arm real rather than simulated — alongside the clauses connecta
-enforces above any executor. Rows naming `test/guest-api-contract.test.ts` are
-covered by both arms, and each case's title carries its clauses. Two arms
-passing one table is also the check on the executor duties above, with
-`test/codemode-compat.test.ts` holding the upstream `Executor` shape assignable.
+`test/guest-contract-cases.ts` runs on QuickJS in `test/guest-api-contract-quickjs.test.ts`
+and on the Worker adapter with a real Miniflare Loader in `test/guest-api-contract.test.ts`.
+Titles name clauses; executor-independent clauses run in both arms.
+`test/codemode-compat.test.ts` pins upstream shape compatibility, minified upstream
+rejection, and branded adapter acceptance across module copies.
 
 | Clauses | Test |
 | --- | --- |
@@ -900,7 +913,7 @@ passing one table is also the check on the executor duties above, with
 | `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5`, `S6` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
-| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, budget, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.test.ts` (oversized messages, private transport, forged frames) |
+| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.test.ts` (oversized messages, private transport, forged frames) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/program-writes.test.ts` (the refusal's `nextAction`, nothing sent, a caught refusal) |
@@ -915,7 +928,7 @@ passing one table is also the check on the executor duties above, with
 | `Y4` | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue) |
 | `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease) |
 | `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
-| `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets) |
+| `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors), `test/worker-budget-response.test.ts` (native handle disposal and admission recovery across completed HTTP responses) |
 | `L5`, `L7`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue) |
 | `L6`, `X10` | `test/quickjs-executor.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.test.ts` (outer reply serialization failure settles the call) |
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/d1-activity-example.test.ts` (historical pause and approval rows still render and round-trip) |

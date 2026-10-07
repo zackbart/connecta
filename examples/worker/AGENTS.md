@@ -25,8 +25,11 @@ This repository is deployment configuration, not a copy of Connecta itself.
   allowed. If a client presents a different callback, copy that exact URI from
   its registration attempt and add the narrowest matching entry rather than
   broadening the allowlist to an entire origin.
-- Keep `new DynamicWorkerExecutor({ loader: env.LOADER })` loader-only. Do not
+- Keep `workerExecutor({ loader: env.LOADER })` loader-only. Do not
   add bindings, modules, or outbound access to generated code.
+  Import it from `@zackbart/connecta/worker`; direct upstream
+  `new DynamicWorkerExecutor()` construction throws at boot. Keep the
+  `@cloudflare/codemode` optional peer installed.
 - Keep credentials in Worker secrets. Never commit credential values, Access
   service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`.
 - Add application logic only inside deliberate `api()` connector handlers.

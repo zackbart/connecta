@@ -5,7 +5,7 @@
  * The example itself ships no write-capable tool; this is its shape, not a
  * third deployment scaffold.
  */
-import { DynamicWorkerExecutor } from "@cloudflare/codemode";
+import { workerExecutor } from "@zackbart/connecta/worker";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
@@ -27,7 +27,7 @@ function build(env: Env) {
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage,
-    executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
+    executor: workerExecutor({ loader: env.LOADER }),
     auth: [cloudflareAccessAuth()],
     vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
     ui: operatorUi(),

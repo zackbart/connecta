@@ -2,7 +2,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import { ccb } from "../src/providers/ccb.js";
 import { breeze } from "../src/providers/breeze.js";
 import { basecamp } from "../src/providers/basecamp.js";
@@ -22,7 +22,7 @@ import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } 
 import type { Connector, KVStorage } from "../src/types.js";
 
 const BASE_URL = "https://connecta.example";
-const executor = { execute: async () => ({ result: null }) };
+const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 const CREDENTIAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 const budget = {
   rules: [{ budget: { kind: "rolling-window" as const, maxCalls: 60, windowMs: 60_000 } }],

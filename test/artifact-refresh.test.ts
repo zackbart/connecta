@@ -5,7 +5,7 @@ import { ArtifactOperations } from "../src/artifacts/operations.js";
 import { ArtifactRefreshService } from "../src/artifacts/refresh.js";
 import type { ArtifactRenderCheck } from "../src/artifacts/connector.js";
 import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor, ExecutorProvider } from "../src/types.js";
 
@@ -34,7 +34,7 @@ function setup(execute: Executor["execute"], access?: () => readonly string[], r
       handler: async () => ({ secret: true }) }],
   }), authScope: "personal" as const };
   const app = createConnecta({
-    connectors: [shared, personal], executor: { execute }, artifacts: module,
+    connectors: [shared, personal], executor: customExecutor({ execute }, { lifecycle: "self-managed" }), artifacts: module,
     publicUrl: "https://connecta.test", storage: memoryStorage(), logger: "silent",
     ...(access ? { identity: { connectorAccess: access } } : {}),
   });

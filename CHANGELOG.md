@@ -77,6 +77,24 @@ non-interactive provider is still skipped there, so a deployment without an
 asserting bearer sees the same human-route behavior and storage reads as
 before.
 
+Host-call budget exhaustion now ends a program with one typed error and call
+counts. Calls still awaiting connector admission cannot dispatch after the run
+ends; already dispatched exempt writes drain and retain their outcome accounting.
+**Breaking for Worker and custom-executor deployments:** `createConnecta()` now
+requires an explicit executor lifecycle contract and rejects every unbranded
+executor at boot, including bundled or minified upstream copies. Replace
+`import { DynamicWorkerExecutor } from "@cloudflare/codemode";` with
+`import { workerExecutor } from "@zackbart/connecta/worker";`, and replace
+`executor: new DynamicWorkerExecutor({ loader: env.LOADER })` with
+`executor: workerExecutor({ loader: env.LOADER })`. Keep the optional
+`@cloudflare/codemode` peer installed.
+The adapter disposes request-owned RPC and loader handles without waiting for a
+guest deadline that may never settle after the response ends. Custom sandboxes
+import `customExecutor` from `@zackbart/connecta` and configure
+`executor: customExecutor(myExecutor, { lifecycle: "self-managed" })` to accept
+responsibility for guest termination and resource cleanup. Deployments already
+using `quickJsExecutor()` need no configuration change.
+
 ### Added
 
 - **Google Docs connection.** `@zackbart/connecta/providers/docs` exports
@@ -423,6 +441,15 @@ before.
   clients only. Clerk browser session tokens authenticate operator routes only.
   Rejections log fixed reason codes, and the MCP `401` metadata challenge is
   unchanged.
+- Reject direct upstream `DynamicWorkerExecutor` construction, including
+  subclasses, before creating runtime resources. The error names the required
+  `/worker` import and configuration migration; custom executors remain
+  supported (#704).
+- Require a non-enumerable, versioned lifecycle brand on executors before
+  creating runtime resources. `/worker` and `/quickjs` carry the brand across
+  package copies and bundles; unbranded executors fail with all migration
+  options. Custom sandboxes opt in with
+  `customExecutor(myExecutor, { lifecycle: "self-managed" })` (#704).
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server
@@ -479,6 +506,12 @@ before.
   (Method not found), without acquiring a request-admission permit or opening
   an SSE stream. Authentication and SDK protocol/header validation still run.
   Legacy listens remain unsupported (#704).
+- End `execute_code` at the first host call beyond its budget with one typed
+  `budget_exceeded` error, even when the program catches and ignores failures.
+  The host suspends the refusing bridge call, closes further host access, and
+  releases the sandbox lease. The failure reports payload-free attempted,
+  admitted, succeeded, and failed host-call counts (#704).
+
 - **A grant from before issuer binding is retired, not bound to whoever is
   named.** A token set or client registration v0.8.1 or earlier wrote carries
   no stamp, and connecta bound it on first read to the issuer that read's

@@ -117,8 +117,9 @@ Two boundaries CI enforces that are not obvious from reading a file:
   forbidden is a platform-bound adapter becoming importable from the package,
   not a file appearing in the artifact. `@clerk/backend` and
   `quickjs-emscripten` are optional peers behind the `./auth/clerk` and
-  `./quickjs` subpaths, and `@cloudflare/codemode` is the third, peered
-  without a subpath because a Worker deployment imports it directly. None may
+  `./quickjs` subpaths, and `@cloudflare/codemode` is the third optional peer,
+  behind the `./worker` executor adapter that owns each run's Worker Loader
+  and RPC handles. None may
   become a dependency or install with core. Enforced by `test/package-surface.test.ts` and
   `scripts/check-package.mjs`. Anything heavyweight or platform-bound gets a
   subpath and an optional peer. The Effect core is the one deliberate

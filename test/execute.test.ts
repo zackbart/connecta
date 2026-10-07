@@ -1004,26 +1004,32 @@ describe("buildSandboxProviders", () => {
         return calls;
       },
     });
+    let terminal: InvocationFailure | undefined;
     const providers = await buildSandboxProviders(
       makeRegistry([safe]),
       BASE,
       silentLogger,
       undefined,
-      { maxHostCalls: 2 },
+      { maxHostCalls: 2, onHostCallBudgetExceeded: (failure) => { terminal = failure; } },
     );
     await expect(callCanonical(providers, "safe", "read")).resolves.toBe(1);
     await expect(callCanonical(providers, "safe", "read")).resolves.toBe(2);
-    // Synchronous rejection-handler attach — expect(...).rejects attaches a
-    // microtask later, which workerd reports as an unhandled rejection.
-    const exceeded = await callCanonical(providers, "safe", "read")
-      .then(() => null, (e: unknown) => e as Error);
-    expect(exceeded?.message).toContain("budget exceeded");
+    let settled = false;
+    void callCanonical(providers, "safe", "read").then(
+      () => { settled = true; }, () => { settled = true; },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(terminal?.details.code).toBe("budget_exceeded");
     expect(calls).toBe(2);
 
   });
 
   it.each(["search", "describe"] as const)("counts %s against the shared host-call budget (L4, M7)", async (operation) => {
-    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
+    const terminals: InvocationFailure[] = [];
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger, undefined, {
+      onHostCallBudgetExceeded: (failure) => { terminals.push(failure); },
+    });
     const fns = connectaProvider(providers).fns;
     for (let i = 0; i < 20; i++) {
       await required(fns[operation])(operation === "search" ? {} : { address: "calc.add" });
@@ -1033,9 +1039,13 @@ describe("buildSandboxProviders", () => {
       () => required(fns.search)({}),
       () => required(fns.describe)({ address: "calc.add" }),
     ]) {
-      const failure = await attempt().then(() => null, (error: unknown) => error as InvocationFailure);
-      expect(failure?.details.code).toBe("budget_exceeded");
+      let settled = false;
+      void attempt().then(() => { settled = true; }, () => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
     }
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.details.code).toBe("budget_exceeded");
   });
 
   it("times out a host call even when the connector ignores cancellation", async () => {
@@ -1114,8 +1124,31 @@ describe("execute_code host-call limits from configuration", () => {
       { maxHostCalls: 2 },
     )({ code: "async () => null" });
     expect(calls).toBe(2);
+    expect(out.isError).toBe(true);
+    expect(out.structuredContent).toMatchObject({
+      error: { code: "budget_exceeded", retryable: false },
+      hostCalls: { attempted: 3, admitted: 2, succeeded: 2, failed: 1 },
+    });
     expect(required(out.content[0]).text).toContain("2 calls maximum");
   });
+});
+
+it("a synchronous unawaited burst cannot return success after exhausting its budget", async () => {
+  const executor: Executor = {
+    async execute(_code, providers) {
+      const call = required(connectaProvider(providers).fns.call);
+      for (let i = 0; i < 213; i++) void call("calc.add", { a: 1, b: 1 }).catch(() => {});
+      return { result: "must not be returned", logs: ["before the burst"] };
+    },
+  };
+  const out = await createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger)({ code: "" });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "budget_exceeded", retryable: false },
+    hostCalls: { attempted: 21, admitted: 20 },
+    logs: "before the burst",
+  });
+  expect(out.structuredContent).not.toHaveProperty("result");
 });
 
 describe("MCP and code-mode invocation parity", () => {
@@ -2060,9 +2093,10 @@ it.each([
   ["calc.missing", "unknown_tool"],
   ["broken.read", "catalog_lookup_failed"],
 ])("counts refused %s attempts against the host-call budget", async (address, code) => {
+  let terminal: InvocationFailure | undefined;
   const providers = await buildSandboxProviders(
     makeRegistry([calcConnector, brokenConnector]), BASE, silentLogger, undefined,
-    { maxHostCalls: 2 },
+    { maxHostCalls: 2, onHostCallBudgetExceeded: (failure) => { terminal = failure; } },
   );
   const call = required(connectaProvider(providers).fns.call);
   for (let i = 0; i < 2; i++) {
@@ -2072,9 +2106,13 @@ it.each([
   for (const attempt of [
     () => call(address, {}),
     () => required(connectaProvider(providers).fns.search)({}),
+    () => required(connectaProvider(providers).fns.emit)({ type: "text", text: "after" }),
   ]) {
-    const error = await attempt().then(() => null, (err: InvocationFailure) => err);
-    expect(error?.details.code).toBe("budget_exceeded");
+    let settled = false;
+    void attempt().then(() => { settled = true; }, () => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(terminal?.details.code).toBe("budget_exceeded");
   }
 });
 

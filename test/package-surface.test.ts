@@ -109,6 +109,7 @@ describe("public package boundary", () => {
         "./node",
         "./json-schema",
         "./quickjs",
+        "./worker",
         "./auth/clerk",
         "./auth/cloudflare-access",
         ...providers,

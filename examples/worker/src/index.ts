@@ -35,7 +35,7 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
  */
-import { DynamicWorkerExecutor } from "@cloudflare/codemode";
+import { workerExecutor } from "@zackbart/connecta/worker";
 import {
   api,
   createConnecta,
@@ -75,7 +75,8 @@ function build(env: Env) {
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage,
-    executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
+    // Required adapter owns each run's handles; direct upstream construction throws.
+    executor: workerExecutor({ loader: env.LOADER }),
     auth: [
       // Access owns admission policy. A human identity may use MCP and the
       // operator pages; a service token may use MCP but cannot mutate operator

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta, type ConnectaIdentityConfig, type Connector, type KVStorage } from "../src/index.js";
+import { customExecutor, createConnecta, type ConnectaIdentityConfig, type Connector, type KVStorage } from "../src/index.js";
 import { required } from "./helpers.js";
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
@@ -10,7 +10,7 @@ import { authorize } from "../src/routes/shared.js";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 
 const BASE = "https://connecta.test";
-const executor = { execute: async () => ({ result: null }) };
+const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 const auth = { ...fakeClerkAuth({ token: "human" }), activityActorNamespace: "test-humans" };
 const headers = { Authorization: "Bearer human", Origin: BASE, "Content-Type": "application/json" };
 function connector(id = "shared", personal = false): Connector {

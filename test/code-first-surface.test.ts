@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import { CONNECTA_INSTRUCTIONS, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor } from "../src/types.js";
@@ -23,9 +23,9 @@ const REMOVED_TOOLS = [
   "resume_execution",
 ];
 
-const stubExecutor: Executor = {
+const stubExecutor: Executor = customExecutor({
   execute: async () => ({ result: null }),
-};
+}, { lifecycle: "self-managed" });
 
 function connectors() {
   return [calcApi()];

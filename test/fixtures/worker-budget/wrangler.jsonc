@@ -1,0 +1,7 @@
+{
+  "name": "connecta-worker-budget-test",
+  "main": "index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "worker_loaders": [{ "binding": "LOADER" }]
+}

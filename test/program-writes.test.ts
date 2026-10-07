@@ -14,7 +14,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { classifyWriteOutcome } from "../src/exempt-writes.js";
 import { api } from "../src/connectors/api.js";
-import { createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import {
   isApprovalExempt,
@@ -322,6 +322,42 @@ describe("config approval exemptions (#566)", () => {
     });
   });
 
+  it.each([false, true])("drains a dispatched write on terminal host-budget exhaustion (unknown: %s)", async (unknown) => {
+    let writeStarted!: () => void;
+    const dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
+    const w = world({
+      approval: policy({ "tracker.close_issue": "never" }),
+      read: async () => { await dispatched; return { id: 9 }; },
+      write: async () => {
+        writeStarted();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        if (unknown) throw new ConnectorCallError("timeout", "gateway timed out");
+        return { ok: true };
+      },
+    });
+    const failed = await w.run(async (connecta) => {
+      void connecta.call!("tracker.close_issue", { id: 1 }).catch(() => {});
+      for (let i = 0; i < 213; i++) {
+        try { await connecta.call!("reader.get", { id: 9 }); }
+        catch { /* A budget refusal must never get here. */ }
+      }
+      return "must not be returned";
+    });
+    expect(failed.isError).toBe(true);
+    expect(value(failed)).toMatchObject({
+      error: {
+        code: unknown ? "write_outcome_unknown" : "budget_exceeded",
+        writes: { succeeded: unknown ? 0 : 1, failed: 0, unknown: unknown ? 1 : 0 },
+      },
+      hostCalls: {
+        attempted: 21, admitted: 20,
+        succeeded: unknown ? 19 : 20, failed: unknown ? 2 : 1,
+      },
+    });
+    expect(w.writes()).toHaveLength(1);
+    expect(value(failed)).not.toHaveProperty("result");
+  });
+
   it("puts write counts on the error of a program that fails after writing", async () => {
     const w = world({ approval: policy({ "tracker.close_issue": "never" }) });
     const failed = await w.run(async (connecta) => {
@@ -418,7 +454,7 @@ describe("config approval exemptions (#566)", () => {
     const construct = (approval: unknown, connectors: Connector[] = [notes, remote]) =>
       createConnecta({
         connectors,
-        executor,
+        executor: customExecutor(executor, { lifecycle: "self-managed" }),
         logger: "silent",
         execute: { approval: approval as Record<string, "never" | "ask"> },
       });
@@ -476,7 +512,7 @@ describe("retired pause configuration (#672)", () => {
     const construct = () =>
       (createConnecta as (config: unknown) => unknown)({
         connectors: [],
-        executor,
+        executor: customExecutor(executor, { lifecycle: "self-managed" }),
         logger: "silent",
         execute: { [key]: setting },
       });
@@ -486,7 +522,7 @@ describe("retired pause configuration (#672)", () => {
   });
 
   it("lists no resume_execution and reports no resumableWrites on /health", async () => {
-    const connecta = createConnecta({ connectors: [], executor, logger: "silent" });
+    const connecta = createConnecta({ connectors: [], executor: customExecutor(executor, { lifecycle: "self-managed" }), logger: "silent" });
     const listed = await readJsonRpc(await mcpRpc(connecta, "tools/list", {})) as {
       result: { tools: Array<{ name: string; annotations?: Record<string, unknown> }> };
     };
