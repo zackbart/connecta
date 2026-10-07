@@ -111,6 +111,18 @@ fallback grants no personal-auth ownership and changes no activity attribution. 
 provider supplying only an explicit principal uses it as the subject too. Open
 deployments and providers that return no identity share one result partition.
 
+A maintained provider that acts *as* the caller downstream — `gmail()` through
+Google Workspace domain-wide delegation — reads none of these roles on its own.
+Its `subject` option is a deployment-config function from the admitted
+identity to a downstream account (a Clerk principal id to a Workspace address,
+say), or one fixed address for shared use. The provider applies it once per
+call, and only to a request an inbound provider authenticated — any provider's
+`ok`, a subject-less bearer included, but never an open deployment's anonymous
+admission. An unadmitted or unauthenticated call, or one the function answers
+`undefined` for, fails `auth_required` before any request leaves. Arguments,
+headers, and programs never reach it, and a deployment's own connectors still
+cannot read the caller.
+
 `identity.connectorAccess` returns `"all"` — the default — or a list of grants:
 a declared connector id opens every tool on it, a `connector.tool` address opens
 that tool alone, and `{ tool: "connector.tool", requireReadOnly: true }` opens

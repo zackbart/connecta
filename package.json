@@ -119,6 +119,10 @@
       "types": "./dist/providers/tithely.d.ts",
       "import": "./dist/providers/tithely.js"
     },
+    "./providers/gmail": {
+      "types": "./dist/providers/gmail.d.ts",
+      "import": "./dist/providers/gmail.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"

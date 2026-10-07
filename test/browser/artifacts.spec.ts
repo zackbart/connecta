@@ -235,7 +235,7 @@ test("a failed refresh shows stale data without showing its error to readers", a
   pageSource = '<!doctype html><main id="artifact-root"><script>document.getElementById("artifact-root").textContent=artifact.data.data.secret</script></main>';
   const { module, store } = await start([], async () => { throw new Error("private downstream detail"); });
   const context = attachCaller({ storage: memoryStorage(), logger: console, baseUrl: origin },
-    { identity: { actor: { kind: "test" }, interactive: false } });
+    { identity: { actor: { kind: "test" }, interactive: false }, authenticated: true });
   await module.connector.callTool("set_refresh", {
     id: "probe", document: "data", schedule: "manual", baseVersion: 0,
     program: 'async () => { throw new Error("private downstream detail"); }',

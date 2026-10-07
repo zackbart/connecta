@@ -163,6 +163,7 @@ import {
 } from "../src/catalog.js";
 import { ccb } from "../src/providers/ccb.js";
 import { breeze } from "../src/providers/breeze.js";
+import { gmail } from "../src/providers/gmail.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
 import { planningCenter } from "../src/providers/planning-center.js";
@@ -272,6 +273,8 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
     "record",
     "breeze",
   ],
+  // Draft-only: no verb sends, deletes, or relabels, and there is no hatch.
+  gmail: ["search", "list", "get", "create", "update"],
 };
 
 /**
@@ -326,6 +329,7 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   overflow: [],
   tithely: [],
   breeze: [],
+  gmail: [],
 };
 
 /**
@@ -336,6 +340,17 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
  * connection declare exactly one way to authenticate.
  */
 const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
+
+/**
+ * Providers authenticated by a delegated Google service account (#678). H12
+ * has nothing to hold them to: the key is deployment configuration, read at
+ * construction where a structural mistake throws, and the account a call acts
+ * as is the caller's own, so a Test button with no caller would prove nothing
+ * about anyone's access. A dead grant fails at use with an `auth_required`
+ * that names the scopes to authorize. What H12 still asks is one way to
+ * authenticate — so neither a credential slot nor an OAuth grant.
+ */
+const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail"]);
 
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
@@ -385,6 +400,17 @@ function utf8Length(value: string): number {
 function firstSentence(description: string): string {
   const match = description.match(/^[\s\S]*?[.!?](?=\s|$)/);
   return (match ? match[0] : description).trim();
+}
+
+/** A freshly generated 2048-bit RSA key as the PKCS#8 PEM a JSON key carries. */
+async function rsaPrivateKeyPem(): Promise<string> {
+  const { privateKey } = (await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign"],
+  )) as CryptoKeyPair;
+  const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", privateKey)) as ArrayBuffer);
+  return `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
 }
 
 async function surface(
@@ -438,6 +464,18 @@ const providers = await Promise.all([
   surface(
     "breeze",
     breeze("chms", { subdomain: "gracechurch", purpose: "Pastoral care and giving reports" }),
+  ),
+  surface(
+    "gmail",
+    gmail("mail", {
+      purpose: "Staff email triage and reply drafting",
+      serviceAccount: {
+        clientEmail: "delegate@project.iam.gserviceaccount.com",
+        // A real key, because construction checks it; the catalog signs nothing.
+        privateKey: await rsaPrivateKeyPem(),
+      },
+      subject: () => undefined,
+    }),
   ),
 ]);
 
@@ -540,6 +578,12 @@ describe.each(providers)(
     });
 
     it("declares an operator credential and a test for it (H12)", () => {
+      if (DELEGATED_PROVIDERS.has(name)) {
+        expect(connector.credential).toBeUndefined();
+        expect(connector.startAuth).toBeUndefined();
+        expect(connector.testCredential ?? connector.testCredentials).toBeUndefined();
+        return;
+      }
       if (OAUTH_PROVIDERS.has(name)) {
         expect(connector.credential).toBeUndefined();
         expect(connector.startAuth).toBeInstanceOf(Function);

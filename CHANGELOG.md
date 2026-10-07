@@ -47,6 +47,120 @@ more than 100 messages `400` (`-32600`) where it was accepted. Every client the
 SDK builds sends the header; a 2025-era client that sends neither the header
 nor the 2026-07-28 claim is served exactly as before (#687).
 
+This release adds org-wide Google Workspace access with no per-user consent
+step, and its first consumer: a draft-only Gmail connection. A Workspace super
+admin grants a service account domain-wide delegation once; the deployment maps
+each admitted identity to a Workspace address in config; and the provider mints
+a short-lived token as that user on every call. It is the second sanctioned use
+of the in-repo caller channel, recorded in `ethos.md` as config-mapped delegated
+subjects ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing
+breaks and nothing changes for a deployment that does not import
+`./providers/gmail`: the shared delegation layer has no export of its own, and a
+deployment's own connectors still never learn their caller.
+
+### Added
+
+- **Draft-only Gmail connection.** `@zackbart/connecta/providers/gmail`
+  exports `gmail(id, { purpose, serviceAccount, subject, title?,
+  instructions?, callAdmission?, maxResultBytes?, baseUrl? })`, plus
+  `GMAIL_SCOPES` and `GMAIL_API_BASE_URL`. Eight hand-written tools:
+  `search_threads` (Gmail search syntax, cursor-paged, each thread summarized),
+  `get_thread`, `get_message` (the message's own body — never an attached or
+  forwarded email's — decoded from its charset, HTML converted only when no
+  text part exists, fetched from the attachments endpoint when Gmail stored it
+  apart, reported as `bodyFormat: "unavailable"` rather than empty when too
+  large to read, capped by `maxBodyChars` with an explicit marker, and
+  metadata only for attachments, which include unnamed inline images and any
+  other part that is not body text), `list_labels`, `list_drafts`,
+  `get_draft`, `create_draft`
+  (To/Cc/Bcc, RFC 2047-encoded headers, an optional HTML alternative, and
+  `replyToMessageId`, which sets the thread, `In-Reply-To`, `References`, a
+  `Re:` subject, and every recipient of the replied message's Reply-To or
+  From, parsed as an RFC 5322 address list), and `update_draft` (replaces the
+  body; keeps From, To, Cc, Bcc, Reply-To, Subject, the thread, and the reply
+  headers unless restated, and no other header; refuses, unchanged, a draft
+  with attachments, inline images, or anything else Gmail's whole-message
+  update would delete, and one nested deeper than it inspects). Every result
+  is built to stay under 192 KiB of JSON, so it reaches a program through
+  `execute_code`'s 256 KiB bridge as well as `call_tool` — the whole result,
+  wrapper and cursor included, measured as sent rather than estimated:
+  `get_thread` and `list_labels` page by cursor when a thread or label set is
+  larger, every string field is bounded, an identifier far past any Gmail id
+  is dropped rather than cut and the drop is said — `omittedIds` names the
+  field, `labelIdsOmitted`, `labelsOmitted`, and `attachmentsOmitted` count
+  what a list left out — a saved draft whose id Gmail returned unusably still
+  reads `saved: true` with a note pointing to `list_drafts`, a body past
+  the limit ends with a marker at any `maxBodyChars`, and an untouched
+  `raw: true` message past it is refused with the way forward. Every cursor is
+  bound to the tool and arguments that issued it, and a thread or label page
+  resumes by the identity of what came before: a message or label added or
+  removed before that point answers `conflict` rather than repeating or
+  skipping one. There is no send, delete, or label tool and no raw
+  hatch; `gmail.compose` technically permits sending, and the tool surface is
+  what forbids it. `create_draft` is an additive write and `update_draft` a
+  destructive one; neither is exempt from approval unless the deployment says
+  so in `execute.approval`. The transport is confined beneath `users/me`, so the
+  token's subject is the only mailbox a request can reach. Setup — Cloud
+  project, API, service account with no IAM roles, JSON key (and the
+  `iam.disableServiceAccountKeyCreation` override some organizations need), and
+  the Admin console's domain-wide delegation entry with exactly
+  `gmail.readonly` and `gmail.compose` — is documented on `gmail()` itself.
+- **Google Workspace domain-wide delegation, shared by every Workspace
+  provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
+  the downloaded JSON key's text, from deployment secrets rather than the vault,
+  because one key serves every Workspace connector; anything but a complete,
+  exactly-encoded PKCS#8 RSA key of at least 2048 bits throws at construction,
+  and no key ever appears in
+  a message. `subject` is a function from the authenticated
+  `AuthenticatedIdentity` to a Workspace address — sync or async, for a
+  directory lookup, with the call's abort signal — or one fixed address for
+  shared or scheduled use. The function is never called for an open
+  deployment's anonymous requests or a call no request admitted; those, and an
+  `undefined` answer, fail `auth_required` before any request leaves.
+  Arguments, headers, and programs cannot choose the subject. The RS256
+  JWT-bearer assertion is signed with Web Crypto, so it runs unchanged on Node
+  and Workers with no new dependency. Access tokens are cached in memory only —
+  never in storage — per service account, key, subject, and scope set,
+  replaced a minute before expiry, and bounded at 512. Concurrent callers share
+  one mint through plain outcomes and a deadline, never another request's
+  signal, so a cancelled owner sends a waiting caller in another Worker request
+  to mint for itself. A 401 forgets only the token it rejected and replays the
+  request once, so a streamed request body is refused up front. A write that
+  names the revision it was made against passes `{ revisionGuarded: true }`,
+  and a stale revision — FAILED_PRECONDITION or ABORTED on HTTP 400 or 409 —
+  then arrives as `conflict` with fixed words to re-read and retry, unless
+  Google names a more specific reason — a disabled API, a quota, a missing
+  scope, or a precise permission refusal — which always decides first; otherwise
+  a refused precondition is reported neutrally in Google's own words. A
+  product can read Google's reason codes for any mapped failure — sanitized
+  tokens only, never its prose — and `exportSizeLimitExceeded`,
+  `domainPolicy`, and `insufficientFilePermissions`/`forbidden` refusals
+  name themselves precisely. A download or export can pass `{ maxBytes }` to
+  read only a prefix: the body is streamed, the rest is cancelled unread, and
+  the result says whether it was `truncated`, with its HTTP status and
+  `Content-Range`, so an empty file's 416 arrives as an empty result. A write
+  is never told to retry when it may have landed: one Google accepted whose
+  reply broke off or overflowed, one answered with a redirect, one sent with
+  no answer at all, and one Google answered with any 5xx — whatever reason it
+  named — fail as non-retryable with words saying to re-read its target first,
+  the verdict core's `write_outcome_unknown` gives an exempt program write.
+  Only a 429, or a 4xx naming a quota, is a rate limit for a write. A read
+  stays retryable, as does a write the provider marks `{ idempotent: true }`.
+  An error status is a refusal even when its body cannot be read. A product
+  can ask how far any failed request got: before sending, awaiting a
+  response, reading an accepted reply, redirected, a server error on a write,
+  or refused. Google's
+  refusals map to what fixes them: `unauthorized_client`
+  names the client ID and the exact scopes to authorize, `invalid_grant` names an
+  unknown or suspended user, a deleted key, or clock skew, and a disabled API or
+  a missing scope says so.
+- **Google Discovery drift checks.** `npm run providers:check -- --provider
+  gmail` reads Gmail's credential-free Discovery document and digests the nine
+  methods the tools call like any other touched endpoint, and also reports a
+  touched method that stops accepting the provider's delegated scopes. A
+  manifest with `"format": "google-discovery"` and a `scopes` list is all a
+  further Workspace product needs.
+
 ### Changed
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**

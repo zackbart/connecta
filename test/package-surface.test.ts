@@ -384,6 +384,25 @@ describe("public package boundary", () => {
     }
     expect(source).not.toContain("remote-mcp");
   });
+
+  // Delegated Workspace access signs its own RS256 assertions with Web Crypto
+  // (#678): no Google auth library, no OAuth client, no MCP SDK. The shared
+  // layer under providers/google/ is imported, never exported.
+  it("keeps the Gmail provider and its Workspace layer dependency-free", () => {
+    for (const file of [
+      join(ROOT, "src", "providers", "gmail.ts"),
+      ...readdirSync(join(ROOT, "src", "providers", "google")).map((name) =>
+        join(ROOT, "src", "providers", "google", name),
+      ),
+    ]) {
+      const source = readFileSync(file, "utf8");
+      for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+        expect(match[1], `${file}: ${match[1]} is not a relative import`).toMatch(/^\./);
+        expect(match[1]).not.toMatch(/remote-mcp|static-oauth|downstream-oauth/);
+      }
+    }
+    expect(Object.keys(packageJson.exports ?? {}).some((key) => key.includes("google"))).toBe(false);
+  });
 });
 
 // Effect is the core's implementation and must never become its API: a

@@ -56,6 +56,12 @@ export interface GuardedRequest {
    * the boundary, and anything else knows its own type.
    */
   rawBody?: BodyInit;
+  /**
+   * The mapper reads only a bounded prefix of a successful body, with
+   * `response.prefix()`, so a declared length past the ceiling is not refused
+   * up front: the ceiling still bounds what is read, never what is sent.
+   */
+  prefixOnly?: boolean;
 }
 
 /**
@@ -78,6 +84,16 @@ interface GuardedResponse {
   json(): Promise<unknown>;
   /** Parse JSON while distinguishing malformed content from transport failure. */
   jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
+  /**
+   * At most `maxBytes` of the body (never past the ceiling), then the rest of
+   * the stream cancelled unread. Exactly: it retains at most `maxBytes` bytes,
+   * and consumes from the transport at most `maxBytes` plus one chunk — the
+   * chunk that crosses the bound, whose overflow is how it learns there was
+   * more (`truncated`). Chunks are whatever size the runtime delivers (64 KiB
+   * is common), so that one chunk is the whole of the overrun. Exclusive with
+   * the other readers: a body is read once.
+   */
+  prefix(maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }>;
 }
 
 /** Parse delta-seconds or an HTTP-date into a non-negative wait window. */
@@ -370,9 +386,21 @@ function boundedResponse(
       text: async () => "",
       json: emptyJson,
       jsonResult: () => jsonResult(emptyJson),
+      prefix: async () => ({ bytes: new Uint8Array(), truncated: false }),
     };
   }
   const stream = readableBody(response);
+  const prefix = async (maxBytes: number) => {
+    const keep = Math.min(Math.max(0, Math.trunc(maxBytes)), limit);
+    if (stream) return await readPrefix(stream, keep);
+    // A runtime with no body stream buffers the body regardless; the
+    // ceiling still bounds what is accepted.
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    if (buffer.byteLength > limit && keep === limit) {
+      throw oversized(provider, limit, `${buffer.byteLength} bytes`);
+    }
+    return { bytes: buffer.slice(0, keep), truncated: buffer.byteLength > keep };
+  };
   let read: Promise<Uint8Array> | undefined;
   const bytes = (): Promise<Uint8Array> => {
     read ??= stream
@@ -408,7 +436,50 @@ function boundedResponse(
     text,
     json,
     jsonResult: () => jsonResult(json),
+    prefix,
   };
+}
+
+/**
+ * Read until a chunk crosses `keep` — at most one chunk past it — keep the
+ * first `keep` bytes, and cancel the stream: the source stops producing
+ * instead of being drained to the ceiling for bytes nobody will look at.
+ * A BYOB reader could stop at `keep + 1` exactly, but not every runtime's
+ * fetch body offers one, and one chunk is a bounded overrun.
+ */
+async function readPrefix(
+  stream: ReadableStream<Uint8Array>,
+  keep: number,
+): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (total + value.byteLength > keep) {
+        chunks.push(value.subarray(0, keep - total));
+        total = keep;
+        truncated = true;
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+    if (truncated) await reader.cancel().catch(() => {});
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { bytes, truncated };
 }
 
 async function jsonResult(
@@ -498,7 +569,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       );
     }
     const declared = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > limit) {
+    // A prefix read takes only what it was asked for, so a long body is not
+    // a reason to refuse it; the ceiling still bounds what is read.
+    if (Number.isFinite(declared) && declared > limit && !(request.prefixOnly && response.ok)) {
       await response.body?.cancel().catch(() => {});
       throw oversized(provider, limit, `a declared ${declared} bytes`);
     }

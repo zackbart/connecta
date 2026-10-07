@@ -596,6 +596,9 @@ export function createMcpRoute(
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
           caller: {
             identity: authz.identity,
+            // `authorize` admits an open deployment's every request as the
+            // anonymous actor; only a provider's `ok` is an authentication.
+            authenticated: opts.auth.length > 0,
             ...(poolName !== undefined ? { pool: poolName } : {}),
           },
         });
