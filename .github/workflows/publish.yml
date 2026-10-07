@@ -21,6 +21,7 @@ concurrency:
 jobs:
   npm:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,8 +44,22 @@ jobs:
             }
           '
       - run: npm ci
-      # `check` (in release:check and in npm publish's prepack) runs the
-      # operator-page browser suite, which needs Chromium.
-      - run: npm run test:browser:install -- --with-deps
+      - name: Read installed Playwright version
+        id: playwright
+        run: echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+      # Publishing always runs Chromium, including npm publish's prepack check.
+      - name: Install Chromium and system dependencies
+        id: install
+        timeout-minutes: 5
+        continue-on-error: true
+        run: npm run test:browser:install -- --with-deps
+      - name: Retry Chromium installation once
+        if: steps.install.outcome == 'failure'
+        timeout-minutes: 5
+        run: npm run test:browser:install -- --with-deps
       - run: npm run release:check
       - run: npm publish

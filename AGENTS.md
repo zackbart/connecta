@@ -33,16 +33,18 @@ describe what exists.
 
 ## Verification
 
-`npm run check` must pass before you claim anything is done — `check:docs` →
-`check:operator-ui` → `check:lint` → `check:unused` → `typecheck` → `test`
-(both vitest projects) → `test:browser` (the operator UI in Chromium; run
-`npm run test:browser:install` once per machine, since `check` is also what
-`npm pack` runs) → `build` (which prunes unreachable declarations) →
-`check:declarations` (no Effect type in what ships) → `check:bundle` (per-entry
-gzip caps in `scripts/bundle-budget.json`) → `check:examples`. It is also the
-`prepack` hook. `npm run release:check` adds `check:security` and `check:package` and is
-what CI runs on every pull request, on `main`, and again on publish; use it
-when touching packaging, dependencies, or exports.
+`npm run check` must pass before you claim anything is done. It runs
+`check:core` (docs, operator-ui freshness, lint, unused, typecheck, both vitest
+projects, build, declarations, bundle, examples), then `test:browser` in
+Chromium. Run `npm run test:browser:install` once per machine. `prepack` still
+runs the full `check`; `release:check` adds security and package smoke checks.
+Use `release:check` when touching packaging, dependencies, or exports.
+
+CI runs `release:check:core` on every pull request and push to `main`, without
+installing Chromium. A separate `browser` job runs on UI, artifact, browser-test,
+dependency, or CI-workflow changes; other PRs report it as skipped rather than
+leaving a pending required check. Both run on `main`, and publishing runs the
+full `release:check`. The exact browser paths live in `.github/workflows/ci.yml`.
 
 ## The map
 
