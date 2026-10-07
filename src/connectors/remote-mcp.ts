@@ -638,8 +638,9 @@ interface ConnectionState {
   scope: Scope.Closeable;
   /**
    * The live connection's lifetime, a child of `scope`, taken out when its
-   * transport is built. Closing it closes that transport — through its client
-   * once one is cached — and closing `scope` closes it too.
+   * provider reads storage or a transport is built. Closing it cancels the
+   * provider and closes that transport — through its client once connected —
+   * and closing `scope` closes it too.
    */
   lease: Scope.Closeable | null;
   client: Client | null;
@@ -1220,59 +1221,64 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // Keep OAuth work cancellable by the connection's own lifetime instead;
       // requestOptions still passes each call's signal to the SDK separately.
       const connectionAbort = new AbortController();
-      // A provider belongs to exactly one connect attempt. A force reset can
-      // abandon that attempt while its transport still holds the provider;
-      // the replacement must never mutate the abandoned provider's epoch.
-      const provider = isOauth ? newProvider(ctx, undefined, connectionAbort.signal) : null;
-      // Every OAuth run of this attempt — a 401's refresh or consent, a
-      // step-up — happens inside the SDK, so the grant is decided here, before
-      // the SDK is handed the provider, and the attempt is bound to the epoch
-      // that decision leaves. Nothing is retired from inside the SDK's flow.
-      const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
-      if (!owned()) return yield* Effect.fail(scopeEndedError());
-      if (provider) state.attemptGeneration = genAtStart;
-      if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
-        return yield* Effect.fail(operatorDisconnectedError());
-      }
-      // SDK v2 selects its validator by runtime export condition: AJV on
-      // Node and @cfworker/json-schema under workerd. The Workers-safe path
-      // no longer needs Connecta-specific wiring.
-      const handshakeAbort = new AbortController();
-      const c = new Client(
-        { name: "connecta", version: CONNECTA_VERSION },
-        {
-          versionNegotiation: {
-            mode: opts.versionNegotiation ?? "auto",
-          },
-          // Connecta has no interactive relay. Surface the result manually
-          // below as one structured, non-retryable connector failure.
-          inputRequired: { autoFulfill: false },
-        },
-      );
-      const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal);
-      if (!owned()) {
-        detach(closeConnection(null, t, ctx.logger));
-        return yield* Effect.fail(scopeEndedError());
-      }
-      // From here the connection has a lease on the scope, and closing it —
-      // force reset, rotation, teardown — closes this transport: through the
-      // client once one is cached, the bare transport until then, which is
-      // what aborts a connect still in flight.
+      // Own cancellation before beginFlow's storage reads can retire a grant.
+      // The lease first owns just the signal, then the transport it creates.
       const lease = Scope.forkUnsafe(state.scope);
-      const held: { client: Client | null } = { client: null };
+      const handshakeAbort = new AbortController();
+      const held: { client: Client | null; transport: Transport | null } = {
+        client: null, transport: null,
+      };
       yield* Scope.addFinalizer(
         lease,
         Effect.sync(() => handshakeAbort.abort()).pipe(
-          Effect.andThen(Effect.suspend(() => closeConnection(held.client, t, ctx.logger))),
+          Effect.andThen(Effect.suspend(() => {
+            if (!held.transport) connectionAbort.abort();
+            return closeConnection(held.client, held.transport, ctx.logger);
+          })),
           // Let session termination use the OAuth fetch wrapper before ending
           // its lifetime. Local transport close aborts all active MCP fetches.
           Effect.ensuring(Effect.sync(() => connectionAbort.abort())),
         ),
       );
       state.lease = lease;
-      state.transport = t;
       return yield* Effect.gen(function* () {
+        // A provider belongs to exactly one connect attempt. A force reset can
+        // abandon that attempt while its transport still holds the provider;
+        // the replacement must never mutate the abandoned provider's epoch.
+        const provider = isOauth ? newProvider(ctx, undefined, connectionAbort.signal) : null;
+        // Every OAuth run of this attempt — a 401's refresh or consent, a
+        // step-up — happens inside the SDK, so the grant is decided here, before
+        // the SDK is handed the provider, and the attempt is bound to the epoch
+        // that decision leaves. Nothing is retired from inside the SDK's flow.
+        const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
+        if (provider) state.attemptGeneration = genAtStart;
+        if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
+          return yield* Effect.fail(operatorDisconnectedError());
+        }
+        // SDK v2 selects its validator by runtime export condition: AJV on
+        // Node and @cfworker/json-schema under workerd. The Workers-safe path
+        // no longer needs Connecta-specific wiring.
+        const c = new Client(
+          { name: "connecta", version: CONNECTA_VERSION },
+          {
+            versionNegotiation: {
+              mode: opts.versionNegotiation ?? "auto",
+            },
+            // Connecta has no interactive relay. Surface the result manually
+            // below as one structured, non-retryable connector failure.
+            inputRequired: { autoFulfill: false },
+          },
+        );
+        const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal);
+        if (!owned()) {
+          held.transport = t;
+          return yield* Effect.fail(scopeEndedError());
+        }
+        state.transport = t;
+        held.transport = t;
         yield* promised(() => c.connect(t, { signal: handshakeAbort.signal }));
+        held.client = c;
         // A probe deadline can end its scope while connect is still in flight.
         // The transport is closed immediately by closeScope; if connect wins
         // that race anyway, close the resulting client rather than resurrecting
@@ -1295,7 +1301,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             );
           }
         }
-        held.client = c;
         state.client = c;
         state.connectedGeneration = genAtStart;
         state.authRequired = false;
@@ -1303,7 +1308,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }).pipe(
         Effect.catch((err) => {
           // Close the failed connection through its client, without waiting.
-          held.client = c;
           if (owned()) {
             state.lease = null;
             state.transport = null;
@@ -1317,7 +1321,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             // Whoever abandoned this attempt closed the lease already, while
             // the connect was in flight. A session it acquired after that
             // close still owes its DELETE.
-            detach(closeConnection(c, t, ctx.logger));
+            detach(closeConnection(held.client, held.transport, ctx.logger));
           }
           if (err instanceof UnauthorizedError) {
             return Effect.fail(authRequiredError(err));

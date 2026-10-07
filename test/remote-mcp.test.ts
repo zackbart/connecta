@@ -391,6 +391,57 @@ describe("remoteMcp() connector", () => {
     }
   });
 
+  it.each(["last waiter cancels", "scope closes"])(
+    "stops OAuth grant retirement during beginFlow when the %s",
+    async (exit) => {
+      const backing = memoryStorage();
+      const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
+      await backing.set("oauth:tokens", grant);
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const storage: KVStorage = {
+        ...backing,
+        async get(key) {
+          if (key === "oauth:tokens") {
+            entered.resolve();
+            await release.promise;
+          }
+          return backing.get(key);
+        },
+      };
+      const transport = vi.fn();
+      const connector = remoteMcp("down", {
+        url: "https://downstream.test/mcp",
+        auth: { type: "oauth" },
+        _transportFactory: transport,
+      });
+      const controller = new AbortController();
+      const context = { ...ctx(storage), requestScope: {}, signal: controller.signal };
+      const pending = connector.status!(context);
+      await entered.promise;
+      try {
+        if (exit === "last waiter cancels") {
+          controller.abort(new Error("caller left during grant read"));
+          await expect(pending).resolves.toMatchObject({ state: "error" });
+        } else {
+          await connector.closeScope!(context);
+        }
+        release.resolve();
+        await expect(pending).resolves.toMatchObject({ state: "error" });
+        // A cancelled waiter returned before the detached connect did. Let
+        // the released in-memory storage promise chain finish before checking.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(await backing.get("oauth:generation")).toBeNull();
+        expect(await backing.get("oauth:tokens")).toBe(grant);
+        expect(transport).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+        await pending;
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
   it("passes usageGuide through, and leaves it unset by default", () => {
     expect(
       remoteMcp("plain", { url: "https://downstream.test/mcp" }).usageGuide,
