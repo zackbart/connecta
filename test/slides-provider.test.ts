@@ -181,6 +181,118 @@ const LAYOUT_PAGE = {
   ],
 };
 
+/**
+ * A Post as Slides sends it, from the comments guide's sample response:
+ * `contentHtml` beside `content`, and a PostAuthor whose `user` is the
+ * stable `users/{id}`.
+ */
+function slidesPost(
+  postId: string,
+  content: string,
+  author: Record<string, unknown> = { displayName: "Pat Pastor", me: true, user: "users/1001" },
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    postId,
+    content,
+    contentHtml: `<span>${content}</span>`,
+    author,
+    createTime: "2026-10-01T10:13:12Z",
+    updateTime: "2026-10-01T10:13:12Z",
+    ...extra,
+  };
+}
+
+const SAM = { displayName: "Sam Staff", me: false, user: "users/2002" };
+
+/** CommentThreads as Slides sends them: open with replies, resolved, anonymous, imported, deleted. */
+const THREADS = [
+  {
+    commentId: "c1",
+    anchorId: "a1",
+    status: "OPEN",
+    plainTextQuote: "He is risen",
+    headPost: slidesPost("p1", "Should this be bigger?"),
+    replies: [
+      slidesPost("p2", "Agreed.", SAM),
+      slidesPost("p3", "", SAM, { commentAction: "RESOLVE", contentHtml: "" }),
+    ],
+  },
+  { commentId: "c2", anchorId: "a2", status: "RESOLVED", headPost: slidesPost("p4", "Typo in the notes", { anonymous: true }) },
+  {
+    commentId: "c3",
+    anchorId: "a3",
+    status: "OPEN",
+    headPost: slidesPost("p5", "From the old deck", { displayName: "Old Author" }, { fromImportedPresentation: true }),
+    // A deleted post keeps its id; Slides empties its content and author.
+    replies: [{ postId: "p6", deleted: true, createTime: "2026-10-02T09:00:00Z", updateTime: "2026-10-02T09:00:00Z" }],
+  },
+];
+
+/** presentations.get with commentsViewMode=COMMENTS_VIEW_MODE_INCLUDED, under list_comments' mask. */
+const COMMENT_DECK = {
+  presentationId: "deck1",
+  revisionId: "rev-1",
+  commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED",
+  comments: THREADS,
+  slides: [
+    {
+      objectId: "p",
+      commentAnchors: [
+        { anchorId: "a1", objectAnchors: [{ objectId: "body", shapeTextAnchors: { ranges: [{ startIndex: 0, endIndex: 11 }] } }] },
+      ],
+      slideProperties: { notesPage: { objectId: "p_notes", commentAnchors: [{ anchorId: "a2", objectAnchors: [{ objectId: "n1" }] }] } },
+    },
+    // Anchored to the slide itself: the page, and no element.
+    { objectId: "s2", commentAnchors: [{ anchorId: "a3", objectAnchors: [{ objectId: "s2" }] }] },
+  ],
+};
+
+/** The first thread as list_comments projects it. */
+const C1 = {
+  commentId: "c1",
+  anchorId: "a1",
+  status: "OPEN",
+  pageObjectIds: ["p"],
+  objectIds: ["body"],
+  replyCount: 2,
+  quote: "He is risen",
+  headPost: {
+    postId: "p1",
+    author: { user: "users/1001", displayName: "Pat Pastor", me: true },
+    content: "Should this be bigger?",
+    createTime: "2026-10-01T10:13:12Z",
+    updateTime: "2026-10-01T10:13:12Z",
+  },
+  replies: [
+    {
+      postId: "p2",
+      author: { user: "users/2002", displayName: "Sam Staff" },
+      content: "Agreed.",
+      createTime: "2026-10-01T10:13:12Z",
+      updateTime: "2026-10-01T10:13:12Z",
+    },
+    {
+      postId: "p3",
+      author: { user: "users/2002", displayName: "Sam Staff" },
+      commentAction: "RESOLVE",
+      createTime: "2026-10-01T10:13:12Z",
+      updateTime: "2026-10-01T10:13:12Z",
+    },
+  ],
+};
+
+/** A batchUpdate answer to one insertComment: the new thread, and the comment saved. */
+function insertedComment(thread: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
+  return {
+    presentationId: "deck1",
+    replies: [{ insertComment: { commentThread: { commentId: "c9", anchorId: "a9", status: "OPEN", headPost: slidesPost("p9", "Bigger?"), ...thread } } }],
+    writeControl: { requiredRevisionId: "rev-2" },
+    commentUpdateState: "ALL_SAVED",
+    ...extra,
+  };
+}
+
 describe("slides() identity and surface (H1, H14)", () => {
   it("requires a purpose and names what it does in title, description, and guide", () => {
     expect(() => connection({ purpose: " " })).toThrow(/purpose/);
@@ -195,31 +307,44 @@ describe("slides() identity and surface (H1, H14)", () => {
     expect(guide(connector).required).toBe(true);
   });
 
-  it("has exactly eight tools, and none that shares, moves, or deletes a deck", async () => {
+  it("has exactly fourteen tools, and none that shares, moves, or deletes a deck", async () => {
     const tools = await connection().listTools(context());
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "batch_update_presentation",
+      "create_comment",
+      "create_comment_reply",
       "create_presentation",
       "create_slide",
+      "delete_comment",
+      "delete_comment_reply",
       "get_page",
       "get_presentation",
       "get_slide_thumbnail",
+      "list_comments",
       "list_layouts",
       "replace_all_text",
+      "update_comment_post",
     ]);
   });
 
-  it("classifies reads as read-only, creates as additive, and replacement and the raw hatch as destructive", async () => {
+  it("classifies reads as read-only, creates and replies as additive, and what overwrites or deletes as destructive", async () => {
     const connector = connection();
     const byName = Object.fromEntries((await connector.listTools(context())).map((tool) => [tool.name, tool]));
-    for (const name of ["get_presentation", "get_slide_thumbnail"]) {
+    for (const name of ["get_presentation", "get_page", "list_layouts", "list_comments", "get_slide_thumbnail"]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: true });
       expect(isExplicitlyReadOnly(byName[name]!)).toBe(true);
     }
-    for (const name of ["create_presentation", "create_slide"]) {
+    for (const name of ["create_presentation", "create_slide", "create_comment", "create_comment_reply"]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
+      expect(isExplicitlyReadOnly(byName[name]!)).toBe(false);
     }
-    for (const name of ["replace_all_text", "batch_update_presentation"]) {
+    for (const name of [
+      "replace_all_text",
+      "update_comment_post",
+      "delete_comment",
+      "delete_comment_reply",
+      "batch_update_presentation",
+    ]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
       expect(isExplicitlyReadOnly(byName[name]!)).toBe(false);
     }
@@ -947,6 +1072,29 @@ describe("output schemas declare what the tools return (H8)", () => {
       }),
     ]);
     expect((outputs[outputs.length - 1]![1] as any).replies[0].cut.length).toBeGreaterThan(0);
+    route = () => ({ body: COMMENT_DECK });
+    outputs.push(["list_comments", await call(connector, "list_comments", { presentationId: "deck1" })]);
+    // A continued row, and a page's threads.
+    route = () => ({ body: { ...COMMENT_DECK, comments: [{ ...THREADS[0], plainTextQuote: "q".repeat(300_000) }] } });
+    const cut = await call(connector, "list_comments", { presentationId: "deck1" });
+    outputs.push(["list_comments", cut]);
+    outputs.push(["list_comments", await call(connector, "list_comments", { presentationId: "deck1", cursor: cut.page.nextCursor })]);
+    route = () => ({ body: { objectId: "p", commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED", comments: THREADS.slice(0, 1) } });
+    outputs.push(["list_comments", await call(connector, "list_comments", { presentationId: "deck1", pageObjectId: "p" })]);
+    route = () => ({ body: insertedComment({ replies: [slidesPost("p10", "Yes", SAM)] }) });
+    outputs.push(["create_comment", await call(connector, "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" })]);
+    route = () => ({ body: { presentationId: "deck1", replies: [{}], commentUpdateState: "ALL_FAILED_UNKNOWN_REASON" } });
+    outputs.push(["create_comment", await call(connector, "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" })]);
+    route = () => ({ body: { presentationId: "deck1", replies: [{ addCommentReply: { post: slidesPost("p11", "Done", SAM) } }], commentUpdateState: "ALL_SAVED" } });
+    outputs.push(["create_comment_reply", await call(connector, "create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done" })]);
+    route = () => ({ body: { presentationId: "deck1", replies: [{}], commentUpdateState: "ALL_FAILED_UNKNOWN_REASON" } });
+    for (const [name, args] of [
+      ["update_comment_post", { presentationId: "deck1", commentId: "c1", postId: "p1", content: "Smaller?" }],
+      ["delete_comment", { presentationId: "deck1", commentId: "c1" }],
+      ["delete_comment_reply", { presentationId: "deck1", commentId: "c1", postId: "p2" }],
+    ] as const) {
+      outputs.push([name, await call(connector, name, args)]);
+    }
 
     // The validator bites: a wrong type is caught, so a pass below means something.
     expect(validates(schemas["get_presentation"]!, { presentationId: 7 }, "decks.get_presentation")).toBeDefined();
@@ -1654,50 +1802,577 @@ describe("round four: nested reply ids, and every write result bounded", () => {
   });
 });
 
-describe("comments are out of scope for now", () => {
-  it.each(["insertComment", "addCommentReply", "updateCommentPost", "deleteComment", "deleteCommentReply"])(
-    "refuses %s in a raw batch before anything is sent, saying comments are not supported yet",
-    async (kind) => {
-      const failure = await call(connection(), "batch_update_presentation", {
-        presentationId: "deck1",
-        requiredRevisionId: "rev-1",
-        requests: [{ insertText: { objectId: "t", text: "x" } }, { [kind]: {} }],
-      }).catch((error) => error);
-      expect(failure.code).toBe("invalid_args");
-      expect(failure.message).toContain("does not support Slides comments yet");
-      expect(failure.message).toContain(`requests[1] "${kind}"`);
-      expect(failure.message).toContain("Nothing was sent");
-      expect(calls).toEqual([]);
-      expect(tokenCalls).toBe(0);
-    },
-  );
+describe("comments: the read path (#696)", { timeout: 60_000 }, () => {
+  const BRIDGE_BYTES = 256 * 1024;
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
-  it("says so in the guide", () => {
-    expect(guide(connection()).content).toContain("Comments are not supported yet");
+  it("reads a deck's threads with comments included, each anchored, quoted, and authored by user id", async () => {
+    route = () => ({ body: COMMENT_DECK });
+    const result = await call(connection(), "list_comments", { presentationId: "deck1" });
+    expect(path(0)).toBe("/presentations/deck1");
+    // INCLUDED, never the default (omitted) or DEFAULT_FOR_CURRENT_ACCESS,
+    // which would hand a view-only account an empty list.
+    expect(calls[0]!.url.searchParams.get("commentsViewMode")).toBe("COMMENTS_VIEW_MODE_INCLUDED");
+    const fields = calls[0]!.url.searchParams.get("fields")!;
+    for (const field of ["comments", "revisionId", "commentsViewMode", "slides(objectId,commentAnchors", "notesPage(objectId,commentAnchors)"]) {
+      expect(fields).toContain(field);
+    }
+    expect(result.presentationId).toBe("deck1");
+    expect(result.revisionId).toBe("rev-1");
+    expect(result.total).toBe(3);
+    expect(result.page).toEqual({ hasMore: false, nextCursor: null });
+    expect(result.threads[0]).toEqual(C1);
+    // A speaker-notes comment sits on the notes page; an anonymous author has no id.
+    expect(result.threads[1]).toEqual({
+      commentId: "c2",
+      anchorId: "a2",
+      status: "RESOLVED",
+      pageObjectIds: ["p_notes"],
+      objectIds: ["n1"],
+      replyCount: 0,
+      headPost: {
+        postId: "p4",
+        author: { anonymous: true },
+        content: "Typo in the notes",
+        createTime: "2026-10-01T10:13:12Z",
+        updateTime: "2026-10-01T10:13:12Z",
+      },
+    });
+    // Anchored to the slide itself; an imported post says why it has no
+    // user; a deleted reply keeps its id.
+    expect(result.threads[2]).toMatchObject({
+      commentId: "c3",
+      pageObjectIds: ["s2"],
+      headPost: { postId: "p5", author: { displayName: "Old Author" }, imported: true },
+      replies: [{ postId: "p6", deleted: true }],
+    });
+    expect(result.threads[2].objectIds).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("contentHtml");
   });
 
-  it("surfaces a comment save state that is not settled, and stops calling the batch all-or-none", async () => {
+  it("reads one page's threads from pages.get, with comments included", async () => {
     route = () => ({
-      body: { presentationId: "deck1", replies: [{}], commentUpdateState: "ALL_FAILED_UNKNOWN_REASON", writeControl: { requiredRevisionId: "rev-2" } },
+      body: {
+        objectId: "p",
+        revisionId: "rev-1",
+        commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED",
+        comments: THREADS.slice(0, 1),
+        commentAnchors: COMMENT_DECK.slides[0]!.commentAnchors,
+      },
     });
-    const result = await call(connection(), "batch_update_presentation", {
-      presentationId: "deck1",
-      requiredRevisionId: "rev-1",
-      requests: [{ deleteObject: { objectId: "x" } }],
-    });
-    expect(result.commentUpdateState).toBe("ALL_FAILED_UNKNOWN_REASON");
-    expect(result.note).toContain("was not all or none");
-    expect(result.note).toContain("The batch applied");
+    const result = await call(connection(), "list_comments", { presentationId: "deck1", pageObjectId: "p" });
+    expect(path(0)).toBe("/presentations/deck1/pages/p");
+    expect(calls[0]!.url.searchParams.get("commentsViewMode")).toBe("COMMENTS_VIEW_MODE_INCLUDED");
+    expect(calls[0]!.url.searchParams.get("fields")).toBe("objectId,revisionId,commentsViewMode,comments,commentAnchors");
+    expect(result).toMatchObject({ presentationId: "deck1", pageObjectId: "p", total: 1 });
+    expect(result.threads).toEqual([C1]);
   });
 
-  it.each(["ALL_SAVED", "NO_UPDATES_REQUESTED"])("says nothing extra for a settled state, %s", async (state) => {
-    route = () => ({ body: { presentationId: "deck1", replies: [{}], commentUpdateState: state } });
-    const result = await call(connection(), "batch_update_presentation", {
-      presentationId: "deck1",
-      requiredRevisionId: "rev-1",
-      requests: [{ deleteObject: { objectId: "x" } }],
+  it("reads a deck with no comments, which ProtoJSON sends with no comments array", async () => {
+    route = () => ({ body: { presentationId: "deck1", revisionId: "rev-1", commentsViewMode: "COMMENTS_VIEW_MODE_INCLUDED" } });
+    const result = await call(connection(), "list_comments", { presentationId: "deck1" });
+    expect(result).toEqual({ presentationId: "deck1", revisionId: "rev-1", total: 0, threads: [], page: { hasMore: false, nextCursor: null } });
+  });
+
+  it("refuses a reply in any other view mode rather than pass off a list that may be missing threads", async () => {
+    route = () => ({ body: { ...COMMENT_DECK, commentsViewMode: "COMMENTS_VIEW_MODE_OMITTED", comments: [] } });
+    const failure = await call(connection(), "list_comments", { presentationId: "deck1" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure.message).toContain("COMMENTS_VIEW_MODE_OMITTED");
+    expect(failure.message).toContain("may be incomplete");
+  });
+
+  it("says a 403 on a comment read most likely means the account may only view the deck", async () => {
+    route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
+    const failure = await call(connection(), "list_comments", { presentationId: "deck1" }).catch((error) => error);
+    expect(failure.code).toBe("connector_call_failed");
+    expect(failure.message).toContain("The caller does not have permission");
+    expect(failure.message).toContain("Reading comments needs comment access");
+  });
+
+  it("pages threads by limit with one opaque cursor, each thread once and in order", async () => {
+    route = () => ({ body: COMMENT_DECK });
+    const connector = connection();
+    const first = await call(connector, "list_comments", { presentationId: "deck1", limit: 2 });
+    expect(first.threads.map((thread: any) => thread.commentId)).toEqual(["c1", "c2"]);
+    expect(first.page.hasMore).toBe(true);
+    const second = await call(connector, "list_comments", { presentationId: "deck1", limit: 2, cursor: first.page.nextCursor });
+    expect(second.threads.map((thread: any) => thread.commentId)).toEqual(["c3"]);
+    expect(second.page).toEqual({ hasMore: false, nextCursor: null });
+  });
+
+  it("keeps every page of a worst-case comment list under the bridge cap, every id whole, and every text recoverable", async () => {
+    // Long quotes and long posts in escape-heavy text, far past one result.
+    // Without contentHtml, so the deck stays under the 16 MiB read ceiling.
+    const noHtml = { contentHtml: undefined };
+    const heavy = (chars: number, seed: number) => `${seed}:` + "\u0001😀x".repeat(Math.ceil(chars / 4)).slice(0, chars);
+    // About two megabytes: ten or so pages, small enough to walk inside
+    // workerd too, where every page re-reads and re-hashes the whole list.
+    const threads = Array.from({ length: 20 }, (_, thread) => ({
+      commentId: `c${thread}`,
+      anchorId: `a${thread}`,
+      status: "OPEN",
+      plainTextQuote: heavy(thread % 7 === 0 ? 60_000 : 500, thread),
+      headPost: slidesPost(`p${thread}`, heavy(thread % 5 === 0 ? 40_000 : 1_000, thread), { displayName: "Pat", user: `users/${thread}` }, noHtml),
+      replies: Array.from({ length: thread % 6 === 0 ? 30 : 2 }, (_, reply) =>
+        slidesPost(`p${thread}_${reply}`, heavy(reply % 13 === 0 ? 20_000 : 800, reply), { displayName: "Sam", user: `users/r${reply}` }, noHtml),
+      ),
+    }));
+    route = () => ({ body: { ...COMMENT_DECK, comments: threads } });
+    const connector = connection();
+    const pages: any[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await call(connector, "list_comments", { presentationId: "deck1", limit: 500, ...(cursor ? { cursor } : {}) });
+      pages.push(page);
+      cursor = page.page.nextCursor ?? undefined;
+    } while (cursor && pages.length < 500);
+    expect(cursor).toBeUndefined();
+    expect(pages.length).toBeGreaterThan(5);
+    for (const page of pages) expect(bytes(page)).toBeLessThan(BRIDGE_BYTES);
+
+    // Stitch every row back into threads by id, in order.
+    const quotes = new Map<string, string>();
+    const posts = new Map<string, { content: string; user: string | undefined }>();
+    const strip = (value: string) => value.replace(/\n\[… \d+ more characters continue on the next page\]$/, "");
+    const take = (post: any) => {
+      const seen = posts.get(post.postId);
+      if (seen) {
+        expect(post.contentOffset).toBe(seen.content.length);
+        seen.content += strip(post.content ?? "");
+      } else {
+        expect(post.contentOffset).toBeUndefined();
+        posts.set(post.postId, { content: strip(post.content ?? ""), user: post.author?.user });
+      }
+    };
+    for (const page of pages) {
+      for (const row of page.threads) {
+        if (row.quote !== undefined) quotes.set(row.commentId, (quotes.get(row.commentId) ?? "") + strip(row.quote));
+        if (row.headPost) take(row.headPost);
+        for (const reply of row.replies ?? []) take(reply);
+      }
+    }
+    for (const thread of threads) {
+      expect(quotes.get(thread.commentId), thread.commentId).toBe(thread.plainTextQuote);
+      for (const post of [thread.headPost, ...thread.replies]) {
+        expect(posts.get(post.postId)?.content, post.postId).toBe(post.content);
+        expect(posts.get(post.postId)?.user, post.postId).toBe(post.author.user);
+      }
+    }
+    // Every post exactly once, in Slides' order.
+    expect([...posts.keys()]).toEqual(threads.flatMap((thread) => [thread.headPost, ...thread.replies].map((post) => post.postId)));
+  });
+
+  it("continues one thread across pages, saying where each row picks up", async () => {
+    const replies = Array.from({ length: 3 }, (_, index) => slidesPost(`r${index}`, "y".repeat(100_000), SAM));
+    route = () => ({ body: { ...COMMENT_DECK, comments: [{ ...THREADS[0], replies }] } });
+    const connector = connection();
+    const first = await call(connector, "list_comments", { presentationId: "deck1" });
+    const row = first.threads[0];
+    expect(row).toMatchObject({ commentId: "c1", truncated: true, replyCount: 3 });
+    expect(row.continued).toBeUndefined();
+    const cutPost = row.replies.at(-1);
+    expect(cutPost.contentLength).toBe(100_000);
+    expect(cutPost.content).toMatch(/more characters continue on the next page\]$/);
+    const second = await call(connector, "list_comments", { presentationId: "deck1", cursor: first.page.nextCursor });
+    const next = second.threads[0];
+    expect(next).toMatchObject({ commentId: "c1", anchorId: "a1", status: "OPEN", continued: true, replyCount: 3 });
+    expect(next.headPost).toBeUndefined();
+    expect(next.quote).toBeUndefined();
+    expect(next.repliesOffset).toBe(row.replies.length - 1);
+    expect(next.replies[0].postId).toBe(cutPost.postId);
+    expect(next.replies[0].contentOffset).toBeGreaterThan(0);
+  });
+
+  describe("cursors are bound to the deck, the page, the revision, and the threads", () => {
+    async function firstPage(connector: Connector, deck: any, args: Record<string, unknown> = {}) {
+      route = () => ({ body: deck });
+      const page = await call(connector, "list_comments", { presentationId: "deck1", limit: 1, ...args });
+      expect(page.page.hasMore).toBe(true);
+      return page.page.nextCursor as string;
+    }
+
+    it("continues an unchanged deck", async () => {
+      const connector = connection();
+      const cursor = await firstPage(connector, COMMENT_DECK);
+      const next = await call(connector, "list_comments", { presentationId: "deck1", limit: 1, cursor });
+      expect(next.threads.map((thread: any) => thread.commentId)).toEqual(["c2"]);
     });
+
+    const resolved = [{ ...THREADS[0], status: "RESOLVED" }, ...THREADS.slice(1)];
+    const replied = [{ ...THREADS[0], replies: [...THREADS[0]!.replies!, slidesPost("p7", "More", SAM)] }, ...THREADS.slice(1)];
+    it.each([
+      ["the revision moved", COMMENT_DECK, { ...COMMENT_DECK, revisionId: "rev-2" }],
+      ["a thread was added at the same revision", COMMENT_DECK, { ...COMMENT_DECK, comments: [THREADS[2], ...THREADS] }],
+      ["a reply was added at the same revision", COMMENT_DECK, { ...COMMENT_DECK, comments: replied }],
+      [
+        "a thread was resolved, with no revision (a commenter)",
+        { ...COMMENT_DECK, revisionId: undefined },
+        { ...COMMENT_DECK, revisionId: undefined, comments: resolved },
+      ],
+    ])("is a conflict when %s", async (_label, before, after) => {
+      const connector = connection();
+      const cursor = await firstPage(connector, before);
+      route = () => ({ body: after });
+      await expect(call(connector, "list_comments", { presentationId: "deck1", limit: 1, cursor })).rejects.toMatchObject({
+        code: "conflict",
+        message: expect.stringContaining("deck's comments changed"),
+      });
+    });
+
+    it("refuses a cursor from another deck, page, or tool before any request", async () => {
+      const connector = connection();
+      const deckCursor = await firstPage(connector, COMMENT_DECK);
+      const pageCursor = await firstPage(connector, { ...COMMENT_DECK, objectId: "p" }, { pageObjectId: "p" });
+      route = () => ({ body: SLIDE_PAGE });
+      const elementCursor = (await call(connector, "get_page", { presentationId: "deck1", pageObjectId: "s2", limit: 1 })).page.nextCursor;
+      calls.length = 0;
+      const refusals = [
+        [{ presentationId: "deck2", cursor: deckCursor }, "different presentation"],
+        [{ presentationId: "deck1", pageObjectId: "p", cursor: deckCursor }, "different page"],
+        [{ presentationId: "deck1", pageObjectId: "s2", cursor: pageCursor }, "different page"],
+        [{ presentationId: "deck1", cursor: elementCursor }, "another tool (get_page)"],
+      ] as const;
+      for (const [args, why] of refusals) {
+        await expect(call(connector, "list_comments", args)).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(why) });
+      }
+      await expect(call(connector, "get_page", { presentationId: "deck1", pageObjectId: "s2", cursor: deckCursor })).rejects.toMatchObject({
+        message: expect.stringContaining("another tool (list_comments)"),
+      });
+      expect(calls).toEqual([]);
+    });
+  });
+});
+
+describe("comments: writes (#696)", () => {
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  const sent = (index = 0) => calls[index]!.body.requests;
+
+  it("comments on a page, an element, a range of text, a cell's text, or a whole cell, each as Slides' one anchor", async () => {
+    route = () => ({ body: insertedComment() });
+    const range = (startIndex: number, endIndex: number) => ({ type: "FIXED_RANGE", startIndex, endIndex });
+    const cases = [
+      [{ objectId: "p" }, { objectId: "p" }],
+      [{ objectId: "body", textRange: { startIndex: 0, endIndex: 11 } }, { shapeTextAnchor: { objectId: "body", textRange: range(0, 11) } }],
+      [
+        { objectId: "table", cell: { rowIndex: 1, columnIndex: 2 }, textRange: { startIndex: 0, endIndex: 3 } },
+        { tableCellTextAnchor: { objectId: "table", cellLocation: { rowIndex: 1, columnIndex: 2 }, textRange: range(0, 3) } },
+      ],
+      [
+        { objectId: "table", cell: { rowIndex: 0, columnIndex: 0 } },
+        { tableAnchor: { objectId: "table", tableRange: { location: { rowIndex: 0, columnIndex: 0 }, rowSpan: 1, columnSpan: 1 } } },
+      ],
+    ] as const;
+    for (const [args, anchor] of cases) {
+      calls.length = 0;
+      await call(connection(), "create_comment", { presentationId: "deck1", content: "Bigger?", assigneeEmail: "sam@church.example", ...args });
+      expect(calls[0]!.method).toBe("POST");
+      expect(path(0)).toBe("/presentations/deck1:batchUpdate");
+      expect(sent()).toEqual([{ insertComment: { ...anchor, content: "Bigger?", assigneeEmailAddress: "sam@church.example" } }]);
+      expect(calls[0]!.body.writeControl).toBeUndefined();
+    }
+    calls.length = 0;
+    await call(connection(), "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?", requiredRevisionId: "rev-1" });
+    expect(calls[0]!.body.writeControl).toEqual({ requiredRevisionId: "rev-1" });
+  });
+
+  it("returns the new thread's commentId, head postId, and author's user id", async () => {
+    route = () => ({ body: insertedComment() });
+    const result = await call(connection(), "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" });
+    expect(result).toEqual({
+      presentationId: "deck1",
+      revisionId: "rev-2",
+      commentId: "c9",
+      anchorId: "a9",
+      status: "OPEN",
+      headPost: {
+        postId: "p9",
+        author: { user: "users/1001", displayName: "Pat Pastor", me: true },
+        content: "Bigger?",
+        createTime: "2026-10-01T10:13:12Z",
+        updateTime: "2026-10-01T10:13:12Z",
+      },
+    });
+  });
+
+  it("keeps every id whole when a reply is too large, and summarizes its text", async () => {
+    const huge = "h".repeat(100_000);
+    route = () => ({
+      body: insertedComment({
+        plainTextQuote: huge,
+        headPost: slidesPost("p9", huge, { displayName: "d".repeat(50_000), user: "users/1001" }, { contentHtml: huge }),
+        replies: Array.from({ length: 30 }, (_, index) => slidesPost(`r${index}`, huge, { displayName: "Sam", user: `users/r${index}` })),
+      }),
+    });
+    const result = await call(connection(), "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" });
+    expect(bytes(result)).toBeLessThan(64 * 1024);
+    expect(result.commentId).toBe("c9");
+    expect(result.anchorId).toBe("a9");
+    expect(result.headPost.postId).toBe("p9");
+    expect(result.headPost.author.user).toBe("users/1001");
+    expect(result.headPost.content).toMatch(/list_comments has the whole post\]$/);
+    expect(result.quote).toMatch(/list_comments has the whole quote\]$/);
+    expect(result.replies.map((reply: any) => reply.postId)).toEqual(Array.from({ length: 30 }, (_, index) => `r${index}`));
+    expect(result.replies.map((reply: any) => reply.author.user)).toEqual(Array.from({ length: 30 }, (_, index) => `users/r${index}`));
+  });
+
+  it("replies, resolves, reopens, or reassigns, returning the new post's id and author", async () => {
+    route = () => ({
+      body: { presentationId: "deck1", replies: [{ addCommentReply: { post: slidesPost("p11", "Done", SAM) } }], commentUpdateState: "ALL_SAVED" },
+    });
+    const result = await call(connection(), "create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done", action: "RESOLVE" });
+    expect(sent()).toEqual([{ addCommentReply: { commentId: "c1", post: { content: "Done", commentAction: "RESOLVE" } } }]);
+    expect(result).toEqual({
+      presentationId: "deck1",
+      commentId: "c1",
+      post: {
+        postId: "p11",
+        author: { user: "users/2002", displayName: "Sam Staff" },
+        content: "Done",
+        createTime: "2026-10-01T10:13:12Z",
+        updateTime: "2026-10-01T10:13:12Z",
+      },
+    });
+    calls.length = 0;
+    await call(connection(), "create_comment_reply", { presentationId: "deck1", commentId: "c1", action: "REOPEN" });
+    expect(sent()).toEqual([{ addCommentReply: { commentId: "c1", post: { commentAction: "REOPEN" } } }]);
+    calls.length = 0;
+    await call(connection(), "create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Yours", assigneeEmail: "sam@church.example" });
+    expect(sent()).toEqual([{ addCommentReply: { commentId: "c1", post: { content: "Yours", assigneeEmail: "sam@church.example" } } }]);
+  });
+
+  it("updates a post and deletes a thread or a reply by id", async () => {
+    route = () => ({ body: { presentationId: "deck1", replies: [{}], writeControl: { requiredRevisionId: "rev-3" }, commentUpdateState: "ALL_SAVED" } });
+    const cases = [
+      ["update_comment_post", { commentId: "c1", postId: "p1", content: "Smaller?" }, { updateCommentPost: { commentId: "c1", postId: "p1", content: "Smaller?" } }],
+      ["delete_comment", { commentId: "c1" }, { deleteComment: { commentId: "c1" } }],
+      ["delete_comment_reply", { commentId: "c1", postId: "p2" }, { deleteCommentReply: { commentId: "c1", postId: "p2" } }],
+    ] as const;
+    for (const [name, args, request] of cases) {
+      calls.length = 0;
+      const result = await call(connection(), name, { presentationId: "deck1", ...args });
+      expect(sent(), name).toEqual([request]);
+      const { content: _content, ...ids } = args as Record<string, unknown>;
+      expect(result, name).toEqual({ presentationId: "deck1", revisionId: "rev-3", ...ids });
+    }
+  });
+
+  it("refuses what Slides can only refuse, before any token or request", async () => {
+    const refusals = [
+      ["create_comment", { presentationId: "deck1", objectId: "p", content: "é".repeat(1_025) }, "2050 UTF-8 bytes"],
+      ["create_comment", { presentationId: "deck1", objectId: "p", content: "x", textRange: { startIndex: 5, endIndex: 5 } }, "endIndex"],
+      ["create_comment_reply", { presentationId: "deck1", commentId: "c1" }, "Pass content, action, or both"],
+      ["create_comment_reply", { presentationId: "deck1", commentId: "c1", action: "RESOLVE", assigneeEmail: "a@b.example" }, "assignee"],
+      ["update_comment_post", { presentationId: "deck1", commentId: "c1", postId: "p1", content: "😀".repeat(513) }, "2052 UTF-8 bytes"],
+    ] as const;
+    for (const [name, args, why] of refusals) {
+      await expect(call(connection(), name, args), why).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(why) });
+    }
+    for (const [name, args] of [
+      ["create_comment", { presentationId: "deck1", objectId: "p" }],
+      ["create_comment", { presentationId: "deck1", objectId: "p", content: "" }],
+      ["create_comment_reply", { presentationId: "deck1", commentId: "c1", action: "DELETE" }],
+      ["delete_comment", { presentationId: "deck1", commentId: "c 1" }],
+      ["delete_comment_reply", { presentationId: "deck1", commentId: "c1" }],
+    ] as const) {
+      await expect(call(connection(), name, args)).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    expect(calls).toEqual([]);
+    expect(tokenCalls).toBe(0);
+  });
+
+  it("says a comment create whose outcome is unknown may have applied, and to look before sending it again", async () => {
+    route = () => ({
+      response: () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    for (const [name, args, advice] of [
+      ["create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" }, "look for it before commenting again"],
+      ["create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done" }, "look for the reply before sending it again"],
+    ] as const) {
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("may or may not have been applied");
+      expect(failure.message).toContain(advice);
+    }
+  });
+
+  it("refuses a saved create with no usable id by saying it applied, never that nothing changed", async () => {
+    route = () => ({ body: insertedComment({ commentId: "c".repeat(5_000) }) });
+    const failure = await call(connection(), "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" }).catch((error) => error);
+    expect(failure.message).toContain("create_comment applied — Google answered 2xx");
+    expect(failure.message).toContain("list_comments");
+    expect(failure.message).not.toMatch(/nothing (was|is) (applied|changed)/i);
+  });
+
+  it("flags, never cuts, an author id too long to copy", async () => {
+    const author = { displayName: "Sam", user: `users/${"9".repeat(5_000)}` };
+    route = () => ({
+      body: { presentationId: "deck1", replies: [{ addCommentReply: { post: slidesPost("p11", "Done", author) } }], commentUpdateState: "ALL_SAVED" },
+    });
+    const result = await call(connection(), "create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done" });
+    expect(result.post.postId).toBe("p11");
+    expect(result.post.author).toEqual({ displayName: "Sam" });
+    expect(result.idsNotShown).toBe(true);
+  });
+});
+
+describe("comments: partial saves are reported, not hidden (#696)", () => {
+  const sent = () => calls[0]!.body.requests;
+  const unsaved = {
+    presentationId: "deck1",
+    replies: [{}],
+    writeControl: { requiredRevisionId: "rev-2" },
+    commentUpdateState: "ALL_FAILED_UNKNOWN_REASON",
+  };
+
+  function expectReported(result: any, state: string) {
+    expect(result.commentUpdateState).toBe(state);
+    expect(result.note).toContain("not all or none");
+    expect(result.note).toContain("other changes may have applied");
+    expect(result.note).toContain("Do not repeat it");
+    expect(result.note).toContain("list_comments");
+    expect(result.note).not.toMatch(/nothing (was|is) (applied|changed)/i);
+  }
+
+  it.each([
+    ["create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" }],
+    ["create_comment_reply", { presentationId: "deck1", commentId: "c1", content: "Done" }],
+    ["update_comment_post", { presentationId: "deck1", commentId: "c1", postId: "p1", content: "Smaller?" }],
+    ["delete_comment", { presentationId: "deck1", commentId: "c1" }],
+    ["delete_comment_reply", { presentationId: "deck1", commentId: "c1", postId: "p2" }],
+  ])("%s reports a 2xx whose comment change did not save, as a result rather than a failure", async (name, args) => {
+    route = () => ({ body: unsaved });
+    const result = await call(connection(), name, args);
+    expect(result.presentationId).toBe("deck1");
+    expect(result.revisionId).toBe("rev-2");
+    expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+  });
+
+  it("keeps whatever ids Slides did send beside an unsaved state", async () => {
+    route = () => ({ body: insertedComment({}, { commentUpdateState: "ALL_FAILED_UNKNOWN_REASON" }) });
+    const result = await call(connection(), "create_comment", { presentationId: "deck1", objectId: "p", content: "Bigger?" });
+    expect(result.commentId).toBe("c9");
+    expect(result.headPost.postId).toBe("p9");
+    expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+  });
+
+  it("reports a comment write Slides gave no state for as unspecified, since nothing said it saved", async () => {
+    route = () => ({ body: { presentationId: "deck1", replies: [{}] } });
+    const result = await call(connection(), "delete_comment", { presentationId: "deck1", commentId: "c1" });
+    expectReported(result, "COMMENT_UPDATE_STATE_UNSPECIFIED");
+  });
+
+  it("says nothing extra when Slides reports ALL_SAVED", async () => {
+    route = () => ({ body: { ...unsaved, commentUpdateState: "ALL_SAVED" } });
+    const result = await call(connection(), "delete_comment", { presentationId: "deck1", commentId: "c1" });
     expect(result.commentUpdateState).toBeUndefined();
     expect(result.note).toBeUndefined();
+  });
+
+  describe("in the raw hatch", () => {
+    const batch = (...requests: Record<string, unknown>[]) => ({ presentationId: "deck1", requiredRevisionId: "rev-1", requests });
+
+    it("accepts every Request kind in Slides' Discovery document, comment kinds included", async () => {
+      // `Request`'s properties at Discovery revision 20260930, the revision
+      // scripts/drift/slides-endpoints.json records. A kind Google adds moves
+      // batchUpdate's digested contract, and the drift check says so.
+      const discovery = [
+        "addCommentReply", "createImage", "createLine", "createParagraphBullets", "createShape", "createSheetsChart",
+        "createSlide", "createTable", "createVideo", "deleteComment", "deleteCommentReply", "deleteObject",
+        "deleteParagraphBullets", "deleteTableColumn", "deleteTableRow", "deleteText", "duplicateObject", "groupObjects",
+        "insertComment", "insertTableColumns", "insertTableRows", "insertText", "mergeTableCells", "refreshSheetsChart",
+        "replaceAllShapesWithImage", "replaceAllShapesWithSheetsChart", "replaceAllText", "replaceImage", "rerouteLine",
+        "ungroupObjects", "unmergeTableCells", "updateCommentPost", "updateImageProperties", "updateLineCategory",
+        "updateLineProperties", "updatePageElementAltText", "updatePageElementTransform", "updatePageElementsZOrder",
+        "updatePageProperties", "updateParagraphStyle", "updateShapeProperties", "updateSlideProperties",
+        "updateSlidesPosition", "updateTableBorderProperties", "updateTableCellProperties", "updateTableColumnProperties",
+        "updateTableRowProperties", "updateTextStyle", "updateVideoProperties",
+      ];
+      expect(discovery).toHaveLength(49);
+      route = () => ({ body: { presentationId: "deck1", replies: discovery.map(() => ({})), commentUpdateState: "ALL_SAVED" } });
+      await call(connection(), "batch_update_presentation", batch(...discovery.map((kind) => ({ [kind]: {} }))));
+      expect(sent().map((request: Record<string, unknown>) => Object.keys(request)[0])).toEqual(discovery);
+    });
+
+    it.each(["insertComment", "addCommentReply", "updateCommentPost", "deleteComment", "deleteCommentReply"])(
+      "sends %s as Slides' own request",
+      async (kind) => {
+        route = () => ({ body: { presentationId: "deck1", replies: [{}, {}], commentUpdateState: "ALL_SAVED" } });
+        const result = await call(
+          connection(),
+          "batch_update_presentation",
+          batch({ insertText: { objectId: "t", text: "x" } }, { [kind]: { commentId: "c1" } }),
+        );
+        expect(sent()).toEqual([{ insertText: { objectId: "t", text: "x" } }, { [kind]: { commentId: "c1" } }]);
+        expect(result.commentUpdateState).toBeUndefined();
+        expect(result.note).toBeUndefined();
+      },
+    );
+
+    it("reports a batch whose deck changes applied and whose comments did not", async () => {
+      route = () => ({ body: { ...unsaved, replies: [{}, {}] } });
+      const result = await call(
+        connection(),
+        "batch_update_presentation",
+        batch({ insertText: { objectId: "t", text: "x" } }, { insertComment: { objectId: "p", content: "c" } }),
+      );
+      expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+      expect(result.note).toContain("Re-read with get_presentation or get_page");
+    });
+
+    it("reports a batch with comment requests and no state as unspecified, and one without them as settled", async () => {
+      route = () => ({ body: { presentationId: "deck1", replies: [{}] } });
+      expectReported(
+        await call(connection(), "batch_update_presentation", batch({ deleteComment: { commentId: "c1" } })),
+        "COMMENT_UPDATE_STATE_UNSPECIFIED",
+      );
+      for (const state of [undefined, "NO_UPDATES_REQUESTED", "ALL_SAVED"]) {
+        route = () => ({ body: { presentationId: "deck1", replies: [{}], ...(state ? { commentUpdateState: state } : {}) } });
+        const result = await call(connection(), "batch_update_presentation", batch({ deleteObject: { objectId: "x" } }));
+        expect(result.commentUpdateState, state).toBeUndefined();
+        expect(result.note, state).toBeUndefined();
+      }
+      // A failure Slides reports for a batch with no comments is still said.
+      route = () => ({ body: unsaved });
+      expectReported(
+        await call(connection(), "batch_update_presentation", batch({ deleteObject: { objectId: "x" } })),
+        "ALL_FAILED_UNKNOWN_REASON",
+      );
+    });
+
+    it("keeps a large insertComment reply's comment, post, and author ids whole, and names what it cut", async () => {
+      const long = "l".repeat(5_000);
+      route = () => ({
+        body: insertedComment({
+          plainTextQuote: long,
+          headPost: slidesPost("p9", long, { displayName: "Pat", user: "users/1001" }, { contentHtml: long }),
+          replies: Array.from({ length: 25 }, (_, index) => slidesPost(`r${index}`, long, { displayName: "Sam", user: `users/r${index}` })),
+        }),
+      });
+      const result = await call(connection(), "batch_update_presentation", batch({ insertComment: { objectId: "p", content: "c" } }));
+      const thread = result.replies[0].insertComment.commentThread;
+      expect(thread.commentId).toBe("c9");
+      expect(thread.anchorId).toBe("a9");
+      expect(thread.headPost.postId).toBe("p9");
+      expect(thread.headPost.author.user).toBe("users/1001");
+      expect(thread.replies.map((reply: any) => reply.postId)).toEqual(Array.from({ length: 25 }, (_, index) => `r${index}`));
+      expect(thread.replies.map((reply: any) => reply.author.user)).toEqual(Array.from({ length: 25 }, (_, index) => `users/r${index}`));
+      expect(result.replies[0].cut).toContain("insertComment.commentThread.headPost.content");
+      expect(result.note).toContain("Large reply fields are named in cut");
+    });
+  });
+});
+
+describe("comments in the guide (#696)", () => {
+  it("describes comment support and partial saves, and no longer says comments are unsupported", () => {
+    const content = guide(connection()).content;
+    expect(content).toContain("## Comments");
+    expect(content).toContain("`list_comments`");
+    expect(content).toContain("`author.user`");
+    expect(content).toContain("`commentUpdateState`");
+    expect(content).toContain("Do not repeat it");
+    expect(content).not.toContain("not supported yet");
   });
 });

@@ -77,7 +77,8 @@ Fifty issues in, one small object out. Your context window notices.
   files — never deletes one for good — as each signed-in Workspace user through
   domain-wide delegation, with no per-user consent step; Google Docs reads and
   edits documents, and Google Sheets reads and writes spreadsheets, the same
-  way. Google Slides reads, creates, and edits each user's decks the same way.
+  way. Google Slides reads, creates, edits, and comments on each user's decks the
+  same way.
   Google Forms reads and edits forms and reads their responses the same way.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.
