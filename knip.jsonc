@@ -26,6 +26,7 @@
     "src/providers/docs.ts",
     "src/providers/sheets.ts",
     "src/providers/slides.ts",
+    "src/providers/forms.ts",
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",

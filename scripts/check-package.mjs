@@ -285,6 +285,8 @@ try {
     "dist/providers/sheets.d.ts",
     "dist/providers/slides.js",
     "dist/providers/slides.d.ts",
+    "dist/providers/forms.js",
+    "dist/providers/forms.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -696,6 +698,27 @@ if (slidesConnection.id !== "decks" || slidesConnection.kind !== "api") {
 if (!slidesConnection.staticTools?.length) {
   throw new Error("Google Slides provider published no tools");
 }
+const formsProvider = await import("@zackbart/connecta/providers/forms");
+if (typeof formsProvider.forms !== "function") {
+  throw new Error("missing Google Forms provider constructor");
+}
+const formsConnection = formsProvider.forms("forms", {
+  purpose: "package smoke",
+  serviceAccount: {
+    clientEmail: "smoke@project.iam.gserviceaccount.com",
+    privateKey:
+      "-----BEGIN PRIVATE KEY-----" +
+      btoa(String.fromCharCode(...smokeDer)) +
+      "-----END PRIVATE KEY-----",
+  },
+  subject: () => undefined,
+});
+if (formsConnection.id !== "forms" || formsConnection.kind !== "api") {
+  throw new Error("Google Forms provider did not return an api() connector");
+}
+if (!formsConnection.staticTools?.length) {
+  throw new Error("Google Forms provider published no tools");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -763,6 +786,9 @@ for (const name of [
   "slides",
   "SLIDES_API_BASE_URL",
   "SLIDES_SCOPES",
+  "forms",
+  "FORMS_API_BASE_URL",
+  "FORMS_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
