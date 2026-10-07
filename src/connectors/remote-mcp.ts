@@ -39,6 +39,7 @@ import {
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
+import { reviewedCatalog, withReviewedCatalog } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
   boundedEchoText,
@@ -72,6 +73,7 @@ import type {
   ConnectorUsageGuide,
   CredentialTestResult,
   Logger,
+  ToolClassification,
   ToolDef,
 } from "../types.js";
 
@@ -172,6 +174,17 @@ export interface RemoteMcpOptions {
    */
   usageGuide?: string | ConnectorUsageGuide;
   auth?: RemoteMcpAuth;
+  /**
+   * Reviewed read/write verdicts for this downstream's tools, by exact name.
+   * Validated at construction. A listed read fills downstream silence but
+   * never overrules an explicit write annotation; a listed write or
+   * destructive tool stays a write whatever the downstream claims; an unlisted
+   * tool is read-only only when it says so explicitly. Setting it also reports
+   * catalog drift against the list: unclassified, unserved, contradicted, and
+   * schema-changed tools, as counts. Omit it to keep the downstream's own
+   * annotations, which still fail closed.
+   */
+  classify?: ToolClassification | undefined;
   /**
    * Downstream MCP version-negotiation mode. Defaults to `"auto"`, which
    * probes with `server/discover` and falls back to the legacy lifecycle when
@@ -966,6 +979,10 @@ interface ConnectionState {
  * server or hide other connectors).
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
+  const reviewed =
+    opts.classify === undefined
+      ? undefined
+      : reviewedCatalog(opts.classify, `connector "${id}"`);
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
   assertOAuthScope(id, oauthScope);
@@ -2266,5 +2283,5 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.verifyState = retain(connector.verifyState!, 1);
     connector.finishAuth = retain(connector.finishAuth!, 1);
   }
-  return connector;
+  return reviewed ? withReviewedCatalog(connector, reviewed) : connector;
 }

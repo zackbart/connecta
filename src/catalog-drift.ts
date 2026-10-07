@@ -7,6 +7,7 @@ import type {
   CatalogDriftReport,
   Connector,
   ConnectorContext,
+  ToolClassification,
   ToolDef,
 } from "./types.js";
 
@@ -193,6 +194,74 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
   return { version: 1, tools };
 }
 
+const VERDICTS: Readonly<Record<string, VettedVerdict>> = {
+  read: "read-only",
+  write: "additive",
+  destructive: "destructive",
+};
+const SCHEMA_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const REVIEWED_TOOL_KEYS = new Set(["verdict", "reason", "schemaDigest"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate a public {@link ToolClassification} and build the manifest that
+ * classifies live tools and counts their drift.
+ *
+ * Every structural mistake throws, naming `owner`, because a classification
+ * that half-applies is worse than one that refuses to boot (INV-11). Unknown
+ * keys throw too: a misspelled `verdict` must not quietly leave a write
+ * unclassified.
+ */
+export function reviewedCatalog(
+  classification: ToolClassification,
+  owner: string,
+): VettedCatalog {
+  function fail(detail: string): never {
+    throw new Error(`[connecta] ${owner} classify ${detail}`);
+  }
+  if (!isRecord(classification)) fail("must be an object with a tools record.");
+  for (const key of Object.keys(classification)) {
+    if (key !== "tools") fail(`has unknown key "${key}"; only "tools" is accepted.`);
+  }
+  if (!isRecord(classification.tools)) fail("tools must be a record of tool name to verdict.");
+  const tools = new Map<string, VettedToolRecord>();
+  for (const [name, entry] of Object.entries(classification.tools)) {
+    if (!name || name.trim() !== name) {
+      fail(`tool name "${name}" is empty or has surrounding whitespace.`);
+    }
+    const record: Record<string, unknown> =
+      typeof entry === "string" ? { verdict: entry } : isRecord(entry) ? entry : {};
+    for (const key of Object.keys(record)) {
+      if (!REVIEWED_TOOL_KEYS.has(key)) fail(`tool "${name}" has unknown key "${key}".`);
+    }
+    const verdict =
+      typeof record.verdict === "string" && Object.hasOwn(VERDICTS, record.verdict)
+        ? VERDICTS[record.verdict]
+        : undefined;
+    if (verdict === undefined) {
+      fail(`tool "${name}" needs verdict "read", "write", or "destructive".`);
+    }
+    if (
+      record.reason !== undefined &&
+      (typeof record.reason !== "string" || !record.reason.trim())
+    ) {
+      fail(`tool "${name}" reason must be a non-empty string.`);
+    }
+    const digest = record.schemaDigest;
+    if (digest !== undefined && (typeof digest !== "string" || !SCHEMA_DIGEST.test(digest))) {
+      fail(`tool "${name}" schemaDigest must be "sha256:" and 64 lowercase hex digits.`);
+    }
+    tools.set(name, {
+      verdict: verdict as VettedVerdict,
+      ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
+    });
+  }
+  return { version: 1, tools };
+}
+
 /**
  * Fill in downstream silence; keep reviewed destructive tools fail-closed.
  *
@@ -206,10 +275,16 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
  * a claim to the contrary is a downstream bug rather than news
  * ([#310](https://github.com/zackbart/connecta/issues/310),
  * [#315](https://github.com/zackbart/connecta/issues/315)).
+ *
+ * `reviewedWritesWin` extends that override to reviewed additive writes, which
+ * `remoteMcp({ classify })` always sets: a review that filed a tool as a write
+ * outranks a downstream read claim. The legacy `withVettedCatalog()` wrapper
+ * keeps the older fill-in rule until its providers convert (#705).
  */
 function applyVettedSafety(
   catalog: VettedCatalog,
   definition: ToolDef,
+  reviewedWritesWin: boolean,
 ): ToolDef {
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
@@ -237,6 +312,12 @@ function applyVettedSafety(
         readOnlyHint: false,
         destructiveHint: true,
       },
+    };
+  }
+  if (record?.verdict === "additive" && reviewedWritesWin) {
+    return {
+      ...definition,
+      annotations: { ...downstream, readOnlyHint: false },
     };
   }
   // Maintained additive creates and tools this release has never seen land
@@ -321,6 +402,27 @@ export async function detectCatalogDrift(
  * Wrap a hosted-MCP connector in its vetted manifest: the classification the
  * catalog is normalized with, and the drift check that rides the same listing.
  *
+ * Retained for the hosted providers that have not converted to
+ * `remoteMcp({ classify })` yet (#705); it is deleted with the last of them.
+ */
+export function withVettedCatalog(
+  connector: Connector,
+  catalog: VettedCatalog,
+): Connector {
+  return observedCatalog(connector, catalog, false);
+}
+
+/** The `remoteMcp({ classify })` wrapper: reviewed writes always stay writes. */
+export function withReviewedCatalog(
+  connector: Connector,
+  catalog: VettedCatalog,
+): Connector {
+  return observedCatalog(connector, catalog, true);
+}
+
+/**
+ * Classify a listing and observe its drift in one pass.
+ *
  * The check happens where the tools are already in hand and still unmodified —
  * after the downstream answered, before the classification is applied. It adds
  * no request of its own, which is the whole boundary: connecta watches a
@@ -328,9 +430,10 @@ export async function detectCatalogDrift(
  * initiates one to go looking ([#179](https://github.com/zackbart/connecta/issues/179),
  * [#343](https://github.com/zackbart/connecta/issues/343)).
  */
-export function withVettedCatalog(
+function observedCatalog(
   connector: Connector,
   catalog: VettedCatalog,
+  reviewedWritesWin: boolean,
 ): Connector {
   let observed: CatalogDriftReport | undefined;
   return {
@@ -349,7 +452,7 @@ export function withVettedCatalog(
         logFailure(ctx.logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
       }
       return downstream.map((definition) =>
-        applyVettedSafety(catalog, definition),
+        applyVettedSafety(catalog, definition, reviewedWritesWin),
       );
     },
     catalogDrift(): CatalogDriftReport | undefined {

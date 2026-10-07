@@ -325,6 +325,32 @@ schemas), but withholds a tool name outside the grammar as it does in records.
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
 the next one.
 
+### Providers and reviewed classification
+
+A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
+name, title, kind (`"mcp"`, `"api"`, or `"composed"`), a maintained skill, an
+optional reviewed classification, and a synchronous `create`. The factory
+validates options common to every provider (purpose, title, instructions,
+`authScope`) before `create` runs, and renders the guide: heading, the
+connection context `create` supplies, the maintained text, then deployment
+instructions, which append and never replace. `src/provider.ts` imports neither
+transport, so an `api()` provider gains no MCP client or Effect graph from it
+(`test/purity.test.ts`). The factory carries its `definition`, which build and
+check tools read instead of keeping provider lists; Linear is converted, and
+the other providers move in later #705 items.
+
+`remoteMcp({ classify })` is the public way to declare what a downstream's
+tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
+reason?, schemaDigest? } } }`, validated at construction. It fails closed
+(INV-1): a reviewed read fills silence but yields to an explicit write
+annotation, a reviewed write stays a write whatever the downstream claims, and
+an unlisted tool is a read only when it says so. The same record counts catalog
+drift during refreshes the deployment already asked for, and `scripts/drift-check.mjs` compares
+its names with published inventories. Unconverted hosted providers still use
+the internal `withVettedCatalog()`, whose reviewed creates still yield to a
+downstream read claim (`test/provider-definition.test.ts`,
+`test/linear-snapshot.test.ts`).
+
 ## Optional deployment modules
 
 `createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`
@@ -709,7 +735,8 @@ src/
   server.ts           route ordering, HTTPS upgrade, security wrapper
   routes/             one file per surface; shared.ts holds the auth gate
   skills.ts           MCP instructions, the usage skill, connector guides
-  catalog-drift.ts    vetted manifests and the counts a refresh produces
+  catalog-drift.ts    reviewed classifications and the drift counts a refresh produces
+  provider.ts         defineProvider(): the one maintained-provider shape
   activity.ts         optional history factory and best-effort recorder
   auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
   executors/          the QuickJS pool and child (Node only)

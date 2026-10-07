@@ -176,6 +176,21 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
       );
     }
   });
+
+  it("keeps defineProvider free of both transports, so api() providers carry no MCP graph", () => {
+    // Type-only imports count: the walk is deliberately coarser than the
+    // emitted JavaScript, so a type import cannot become a value import later
+    // without this test noticing.
+    const reached = importGraph(join(SRC, "provider.ts"));
+    expect(reached.has(join(SRC, "catalog-drift.ts"))).toBe(true);
+    for (const file of reached) {
+      expect(file.startsWith(join(SRC, "connectors")), file).toBe(false);
+      expect(file.startsWith(join(SRC, "runtime")), file).toBe(false);
+      expect(file.startsWith(join(SRC, "auth")), file).toBe(false);
+      const source = readFileSync(file, "utf8");
+      expect(source, file).not.toMatch(/\bfrom\s+["'](?:effect|@modelcontextprotocol\/)/);
+    }
+  });
 });
 
 // Effect is the core's implementation, never its API, and never a license to

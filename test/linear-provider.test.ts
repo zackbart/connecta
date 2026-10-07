@@ -310,10 +310,11 @@ describe("linear()", () => {
     expect(tools[8]?.annotations).toMatchObject({ destructiveHint: true });
   });
 
-  it("rejects an empty workspace purpose at construction", () => {
+  it("INV-11: rejects an empty workspace purpose at construction", () => {
     expect(() =>
       linear("tracker", { purpose: "  ", access: "read-write" }),
-    ).toThrow("linear() requires a non-empty workspace purpose.");
+    ).toThrow('linear("tracker") requires a non-empty purpose');
+    expect(mocks.remoteMcp).not.toHaveBeenCalled();
   });
 
   it("requires the operator to declare an access mode (P4)", () => {

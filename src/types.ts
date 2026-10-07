@@ -230,6 +230,43 @@ export interface ConnectorContext {
 type ConnectorStatusState = "ok" | "auth_required" | "error";
 
 /**
+ * What a reviewed downstream tool does. `"read"` is observational. `"write"`
+ * changes state without destroying any that already exists, such as a create.
+ * `"destructive"` modifies or removes existing state, including an upsert that
+ * can overwrite. Both writes leave the read-only path; `"destructive"` also
+ * asserts `destructiveHint`, which shapes the approval copy a human reads.
+ */
+export type ToolVerdict = "read" | "write" | "destructive";
+
+/** One reviewed tool, with the evidence that justifies its verdict. */
+export interface ReviewedTool {
+  verdict: ToolVerdict;
+  /** Why the verdict holds when the name or downstream annotations do not say. */
+  reason?: string;
+  /**
+   * `sha256:<hex>` digest of the input and output schemas the review read.
+   * Omit until a review has actually read them; an invented digest reports
+   * drift that never happened.
+   */
+  schemaDigest?: string;
+}
+
+/**
+ * A reviewed classification of a downstream MCP catalog, keyed by exact tool
+ * name. Plain data, validated at construction, so the same record classifies
+ * live tools and feeds the drift check.
+ *
+ * It fails closed. A name it does not list keeps only an explicit downstream
+ * read annotation; silence and contradiction classify as writes. A listed read
+ * fills downstream silence but never overrules an explicit write annotation.
+ * A listed write or destructive tool stays a write whatever the downstream
+ * claims.
+ */
+export interface ToolClassification {
+  tools: Readonly<Record<string, ToolVerdict | ReviewedTool>>;
+}
+
+/**
  * How far a downstream catalog has moved away from the manifest a release
  * reviewed. Four numbers and nothing else: names, schemas, and prose stay out
  * of every surface this rides on, so a drift report can never become a payload

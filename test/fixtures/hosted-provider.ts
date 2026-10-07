@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { silentLogger } from "../helpers.js";
+import { reviewedCatalog, withReviewedCatalog } from "../../src/catalog-drift.js";
+import type { RemoteMcpOptions } from "../../src/connectors/remote-mcp.js";
 import type { Connector, ConnectorContext, ToolDef } from "../../src/types.js";
 
 export function mockRemoteMcp(mocks: {
@@ -8,16 +10,26 @@ export function mockRemoteMcp(mocks: {
 }): void {
   mocks.listTools.mockReset();
   mocks.remoteMcp.mockReset();
+  // Only the transport is stubbed. A provider that declares `classify` gets
+  // the same classification and drift wrapper the real `remoteMcp()` applies.
   mocks.remoteMcp.mockImplementation(
-    (id: string, options: object): Connector => ({
-      id,
-      kind: "mcp",
-      ...options,
-      listTools: mocks.listTools,
-      async callTool() {
-        return [];
-      },
-    }),
+    (id: string, options: RemoteMcpOptions): Connector => {
+      const connector: Connector = {
+        id,
+        kind: "mcp",
+        ...options,
+        listTools: mocks.listTools,
+        async callTool() {
+          return [];
+        },
+      };
+      return options.classify === undefined
+        ? connector
+        : withReviewedCatalog(
+            connector,
+            reviewedCatalog(options.classify, `connector "${id}"`),
+          );
+    },
   );
 }
 
