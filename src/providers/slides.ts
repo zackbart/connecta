@@ -1224,31 +1224,40 @@ function summarizeReply(reply: JsonRecord): JsonRecord {
 }
 
 /**
+ * The most one host result may carry into an execute_code program
+ * (`MAX_HOST_RESULT_BYTES` in `src/executors/quickjs-runtime.ts`). A write
+ * result past the provider's own 192 KiB budget but under this still reaches
+ * a program; past it, only a direct call does, paging with get_result.
+ */
+const BRIDGE_BYTES = 256 * 1024;
+
+/**
  * The most a raw batch's result may be when the ids its replies carry
  * outgrow one result. Every id is still returned, never dropped: a direct
  * call stashes a result this size and pages it with get_result (the stash
- * holds 8 MiB by default); a program, whose bridge carries 256 KiB, cannot
- * receive it, and the result says so.
+ * holds 8 MiB by default). Past this, the ids are not returned at all, and
+ * the result says where to read them.
  */
 const MAX_IDS_RESULT_BYTES = 4 * 1024 * 1024;
 
 /**
- * A reply at its smallest: whole when small, else every id at every depth
- * with its numbers and booleans, and how many fields were left out.
+ * A reply at its smallest, however small it already is: every id at every
+ * depth with its numbers and booleans, and how many fields were left out.
+ * A reply with nothing but those passes unchanged.
  */
 function idsOnlyReply(reply: JsonRecord): JsonRecord {
-  if (jsonBytes(reply) <= MAX_REPLY_BYTES) return reply;
   const cut: string[] = [];
-  return { ...asRecord(pruned(reply, "", "", "ids", cut, 0)), cut: [`(${cut.length} fields left out; ids only)`] };
+  const ids = asRecord(pruned(reply, "", "", "ids", cut, 0));
+  return cut.length === 0 ? reply : { ...ids, cut: [`(${cut.length} fields left out; ids only)`] };
 }
 
 /**
- * A batch's replies, in order, after `used` bytes: ids first, then detail.
- * Every reply starts at its smallest — whole or ids only — and replies are
- * then given their fuller summaries, in order, while the result's budget
- * holds them, so text is cut before any id is. Should the ids alone outgrow
- * the budget, they are all returned anyway (`oversized`), for get_result to
- * page; nothing a write created is ever dropped to save space.
+ * A batch's replies, in order, after `used` bytes: ids first, then text.
+ * Every reply starts at its ids alone, and replies are then given their
+ * fuller summaries, in order, while the provider's 192 KiB budget holds
+ * them, so text is cut before any id is. Should the ids alone outgrow that
+ * budget, they are all returned anyway (`oversized`) and no text is; nothing
+ * a write created is ever dropped to save space.
  */
 function boundedReplies(replies: readonly unknown[], used: number): { replies: JsonRecord[]; oversized: boolean } {
   const out = replies.map((reply) => idsOnlyReply(asRecord(reply)));
@@ -1508,7 +1517,7 @@ function threadRows(
   let { i, j, o } = start;
   const fits = (row: JsonRecord) => used + jsonBytes(row) + 1 <= room;
   const unfit = () =>
-    new ConnectorCallError("connector_call_failed", "list_comments could not fit any of a comment thread in one result.", {
+    new ConnectorCallError("connector_call_failed", "list_comments could not fit any of a comment thread in one result; raw: true pages it in JSON chunks.", {
       retryable: false,
     });
   while (i < threads.length && out.length < limit) {
@@ -2738,26 +2747,38 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "update_comment_thread",
       description:
-        "Resolve, reopen, or reassign a comment thread, as a post that can carry a note. Replaces its status or assignee; Slides notifies an assignee.",
+        "Resolve, reopen, or reassign a comment thread with a post; a reassignment needs a note. Replaces its status or assignee; Slides notifies an assignee.",
       // Destructive: the thread's status or assignee is replaced. The post
       // that records it cannot be deleted afterwards.
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input(
-        {
-          presentationId: PRESENTATION_ID,
-          commentId: COMMENT_ID,
-          status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
-          assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; Slides notifies them." },
-          content: commentContentProperty(`Optional note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes.`),
-        },
-        ["presentationId", "commentId"],
-      ),
+      inputSchema: {
+        ...input(
+          {
+            presentationId: PRESENTATION_ID,
+            commentId: COMMENT_ID,
+            status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
+            assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; needs content." },
+            content: commentContentProperty(`Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`),
+          },
+          ["presentationId", "commentId"],
+        ),
+        // Exactly one change per post: Slides refuses an assignee on a post
+        // that resolves or reopens, and a post with neither changes nothing.
+        // A reassignment is an ordinary post, which Slides requires to have
+        // text; only RESOLVE and REOPEN may go without.
+        oneOf: [
+          { required: ["status"], not: { required: ["assigneeEmail"] } },
+          { required: ["assigneeEmail", "content"], not: { required: ["status"] } },
+        ],
+      },
       outputSchema: REPLY_RESULT_SCHEMA,
       handler: async (args, ctx) => {
-        // Slides takes one change per post, and refuses an assignee on a
-        // post that resolves or reopens.
+        // The schema refuses these first; the handler holds the same line.
         if ((args["status"] === undefined) === (args["assigneeEmail"] === undefined)) {
           throw new ConnectorCallError("invalid_args", "Pass exactly one of status and assigneeEmail. Nothing was sent.");
+        }
+        if (args["assigneeEmail"] !== undefined && args["content"] === undefined) {
+          throw new ConnectorCallError("invalid_args", "A reassignment needs content: Slides requires text on any post that does not resolve or reopen. Nothing was sent.");
         }
         return postToThread(client, ctx, "update_comment_thread", args, {
           content: commentText(args["content"], "content"),
@@ -2860,7 +2881,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "batch_update_presentation",
       description:
-        "Send raw Slides batchUpdate requests to a deck at the revision it was read at; all apply or none, comments apart. Always destructive; prefer the named tools when one fits.",
+        "Send raw Slides batchUpdate requests to a deck at the revision it was read at; all apply or none, comments apart. Always destructive. Returns every new id; past 256 KiB, only a direct call can page them.",
       // Destructive: a raw request can delete or overwrite anything in the deck.
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: input(
@@ -2892,6 +2913,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             type: "array",
             items: { type: "object", properties: { cut: { type: "array", items: { type: "string" } } } },
           },
+          repliesNotShown: { type: "integer" },
           commentUpdateState: { type: "string" },
           note: { type: "string" },
         },
@@ -2928,27 +2950,44 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // what it created must reach the caller.
         const comments = kinds.some(([, kind]) => COMMENT_KINDS.has(kind));
         const reread = `re-read with get_presentation or get_page for deck changes${comments ? ", and list_comments for comments" : ""}`;
-        const shown = boundedReplies(asArray(response["replies"]), jsonBytes(header) + 1024);
+        const all = asArray(response["replies"]);
+        const shown = boundedReplies(all, jsonBytes(header) + 1024);
         // Neutral about what applied: the comment state, when unconfirmed,
         // says that apart; these say only what the result left out.
-        const notes = [
-          saved.commentUpdateState !== undefined ? COMMENTS_UNSAVED : undefined,
-          shown.replies.some((reply) => "cut" in reply) ? "Large reply fields are named in cut; every id is kept." : undefined,
-          shown.oversized
-            ? "Every id is kept, which makes this result larger than execute_code can carry: call the tool directly and page the result with get_result."
-            : undefined,
-        ].filter((entry): entry is string => entry !== undefined);
+        const unsaved = saved.commentUpdateState !== undefined ? COMMENTS_UNSAVED : undefined;
+        const notes = (...entries: (string | undefined)[]) => {
+          const said = entries.filter((entry): entry is string => entry !== undefined);
+          return said.length > 0 ? `${said.join(" ")} To see the deck as it is now, ${reread}.` : undefined;
+        };
         const result = compact({
           ...header,
           replies: shown.replies,
-          note: notes.length > 0 ? `${notes.join(" ")} To see the deck as it is now, ${reread}.` : undefined,
+          note: notes(
+            unsaved,
+            shown.replies.some((reply) => "cut" in reply)
+              ? `Large reply fields are named in cut; every id is kept${shown.oversized ? ", and no other text, since the ids alone pass this tool's 192 KiB budget" : ""}.`
+              : undefined,
+          ),
         });
-        if (!shown.oversized) return appliedDeliverable(result, "batch_update_presentation", reread);
         const bytes = jsonBytes(result);
-        if (bytes > MAX_IDS_RESULT_BYTES) {
-          throw appliedButUnreadable("batch_update_presentation", `the ids its replies carry come to ${bytes} bytes, more than any result can carry`, reread);
+        if (bytes <= BRIDGE_BYTES) return result;
+        if (bytes <= MAX_IDS_RESULT_BYTES) {
+          return {
+            ...result,
+            note: `${result.note ?? ""} At ${bytes} bytes this result is more than execute_code can carry (${BRIDGE_BYTES}): call the tool directly and page it with get_result.`.trim(),
+          };
         }
-        return result;
+        // Past any result: the save state and how to recover the ids stay;
+        // the replies do not. Slides accepted the batch, so it is not to be sent again.
+        return compact({
+          ...header,
+          replies: [],
+          repliesNotShown: all.length,
+          note: notes(
+            unsaved,
+            `Slides accepted the batch, but its ${all.length} replies carry ${bytes} bytes of ids, more than any result can carry, so none is shown. Do not send it again; ${comments ? "list_comments has the comments and posts it created, and " : ""}get_presentation or get_page has the objects.`,
+          ),
+        });
       },
     },
   ];
@@ -3021,8 +3060,12 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   deck changed since that read: re-read it, rebuild the requests, and send
   them with the new \`revisionId\`. Its replies keep every id at every depth
   whole, in every reply; text is cut first, and a large reply's other fields
-  are named in \`cut\`. Ids too many for one result are all returned
-  anyway: call the tool directly and page with \`get_result\`.
+  are named in \`cut\`. Ids too many for this tool's 192 KiB budget are all
+  returned anyway, without text; past 256 KiB, more than a program can
+  receive, call the tool directly and page with \`get_result\`. A batch
+  whose ids pass even that returns its comment state and \`repliesNotShown\`;
+  read what it made with \`list_comments\`, \`get_presentation\`, or
+  \`get_page\`, and do not send it again.
 - An id or revision too long to copy into a result is left out and flagged
   (\`revisionIdNotShown\`), never cut. A failure that says the write
   applied means Google answered 2xx: do not repeat it; re-read instead.
@@ -3049,7 +3092,8 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   in \`rawJson\` chunks when one is too large.
 - \`create_comment\` and \`create_comment_reply\` are additive and return
   every new id whole. \`update_comment_thread\` resolves, reopens, or
-  reassigns a thread, replacing its status or assignee, and is destructive,
+  reassigns a thread (one at a time; a reassignment needs \`content\`),
+  replacing its status or assignee, and is destructive,
   like \`update_comment_post\`, \`delete_comment\`, and
   \`delete_comment_reply\`; Slides allows the last three only to the
   post's author. Comments notify people the way the Slides editor does.

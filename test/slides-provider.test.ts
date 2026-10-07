@@ -1683,8 +1683,8 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     expect(bytes(result)).toBeGreaterThan(BRIDGE_BYTES);
     expect(result.replies.map((reply: any) => reply.createShape.objectId)).toEqual(replies.map((reply) => reply.createShape.objectId));
     expect(result.repliesNotShown).toBeUndefined();
-    expect(result.note).toContain("Every id is kept");
-    expect(result.note).toContain("page the result with get_result");
+    expect(result.note).toContain("more than execute_code can carry (262144)");
+    expect(result.note).toContain("page it with get_result");
     expect(result.note).not.toMatch(/applied/);
   });
 
@@ -2200,8 +2200,6 @@ describe("comments: writes (#696)", () => {
     const refusals = [
       ["create_comment", { presentationId: "deck1", objectId: "p", content: "é".repeat(1_025) }, "2050 UTF-8 bytes"],
       ["create_comment", { presentationId: "deck1", objectId: "p", content: "x", textRange: { startIndex: 5, endIndex: 5 } }, "endIndex"],
-      ["update_comment_thread", { presentationId: "deck1", commentId: "c1" }, "exactly one of status and assigneeEmail"],
-      ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "RESOLVED", assigneeEmail: "a@b.example" }, "exactly one"],
       ["update_comment_post", { presentationId: "deck1", commentId: "c1", postId: "p1", content: "😀".repeat(513) }, "2052 UTF-8 bytes"],
     ] as const;
     for (const [name, args, why] of refusals) {
@@ -2212,6 +2210,11 @@ describe("comments: writes (#696)", () => {
       ["create_comment", { presentationId: "deck1", objectId: "p", content: "" }],
       ["create_comment_reply", { presentationId: "deck1", commentId: "c1" }],
       ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "DELETED" }],
+      // Exactly one change, and a reassignment carries text: the schema says so.
+      ["update_comment_thread", { presentationId: "deck1", commentId: "c1" }],
+      ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "RESOLVED", assigneeEmail: "a@b.example" }],
+      ["update_comment_thread", { presentationId: "deck1", commentId: "c1", status: "RESOLVED", assigneeEmail: "a@b.example", content: "x" }],
+      ["update_comment_thread", { presentationId: "deck1", commentId: "c1", assigneeEmail: "a@b.example" }],
       ["delete_comment", { presentationId: "deck1", commentId: "c 1" }],
       ["delete_comment_reply", { presentationId: "deck1", commentId: "c1" }],
     ] as const) {
@@ -2219,6 +2222,22 @@ describe("comments: writes (#696)", () => {
     }
     expect(calls).toEqual([]);
     expect(tokenCalls).toBe(0);
+  });
+
+  it("encodes exactly one thread change, and text on a reassignment, in the input schema itself", async () => {
+    const tool = (await connection().listTools(context())).find((entry) => entry.name === "update_comment_thread")!;
+    const check = (args: Record<string, unknown>) =>
+      validateToolInput(tool.inputSchema!, { presentationId: "deck1", commentId: "c1", ...args }, {
+        address: "decks.update_comment_thread",
+        logger: silentLogger,
+        failClosed: true,
+      })?.message;
+    expect(check({ status: "RESOLVED" })).toBeUndefined();
+    expect(check({ status: "OPEN", content: "Not yet" })).toBeUndefined();
+    expect(check({ assigneeEmail: "a@b.example", content: "Yours" })).toBeUndefined();
+    for (const args of [{}, { content: "x" }, { assigneeEmail: "a@b.example" }, { status: "RESOLVED", assigneeEmail: "a@b.example" }, { status: "OPEN", assigneeEmail: "a@b.example", content: "x" }]) {
+      expect(check(args), JSON.stringify(args)).toBeDefined();
+    }
   });
 
   it("says a comment create whose outcome is unknown may have applied, and to look before sending it again", async () => {
@@ -2362,6 +2381,61 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
       );
       expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
       expect(result.note).toContain("re-read with get_presentation or get_page for deck changes, and list_comments for comments");
+    });
+
+    it("cuts text before ids even when every reply is small: 100 replies of about 2 KB each stay under the budget", async () => {
+      const posts = Array.from({ length: 100 }, (_, index) => slidesPost(`p${index}`, "w".repeat(890), SAM, { contentHtml: "h".repeat(890) }));
+      route = () => ({ body: { presentationId: "deck1", replies: posts.map((post) => ({ addCommentReply: { post } })), commentUpdateState: "ALL_SAVED" } });
+      const result = await call(connection(), "batch_update_presentation", batch(...posts.map(() => ({ addCommentReply: { commentId: "c1", post: { content: "w" } } }))));
+      const size = new TextEncoder().encode(JSON.stringify(result)).length;
+      expect(size).toBeLessThanOrEqual(192 * 1024);
+      expect(result.replies.map((reply: any) => reply.addCommentReply.post.postId)).toEqual(posts.map((post) => post.postId));
+      expect(result.replies.map((reply: any) => reply.addCommentReply.post.author.user)).toEqual(posts.map(() => "users/2002"));
+      // The later replies gave up their text so every one keeps its ids.
+      expect(result.replies.at(-1).cut).toEqual([expect.stringContaining("ids only")]);
+      expect(result.note).toContain("every id is kept");
+      expect(result.note).not.toContain("execute_code");
+    });
+
+    it("returns ids past the provider budget but under the 256 KiB bridge with no get_result caveat", async () => {
+      const replies = Array.from({ length: 200 }, (_, index) => ({ createShape: { objectId: `s${index}_${"z".repeat(1_000)}` } }));
+      route = () => ({ body: { presentationId: "deck1", replies } });
+      const result = await call(connection(), "batch_update_presentation", batch({ createShape: {} }));
+      const size = new TextEncoder().encode(JSON.stringify(result)).length;
+      expect(size).toBeGreaterThan(192 * 1024);
+      expect(size).toBeLessThanOrEqual(256 * 1024);
+      expect(result.replies).toHaveLength(200);
+      expect(result.note).toBeUndefined();
+    });
+
+    it("keeps the save state and the way back when even the ids pass any result, and never says applied", async () => {
+      const longId = (prefix: string, index: number) => `${prefix}${index}_${"i".repeat(1_000)}`;
+      const threads = Array.from({ length: 100 }, (_, index) => ({
+        commentId: longId("c", index),
+        anchorId: longId("a", index),
+        status: "OPEN",
+        headPost: { postId: longId("p", index), author: { user: `users/${longId("u", index)}` } },
+        replies: Array.from({ length: 21 }, (_, reply) => ({ postId: longId(`r${reply}_`, index), author: { user: `users/${longId(`v${reply}_`, index)}` } })),
+      }));
+      route = () => ({
+        body: {
+          presentationId: "deck1",
+          replies: threads.map((commentThread) => ({ insertComment: { commentThread } })),
+          commentUpdateState: "ALL_FAILED_UNKNOWN_REASON",
+          writeControl: { requiredRevisionId: "rev-2" },
+        },
+      });
+      const result = await call(connection(), "batch_update_presentation", batch(...threads.map(() => ({ insertComment: { objectId: "p", content: "x" } }))));
+      expect(result.revisionId).toBe("rev-2");
+
+      expect(result.replies).toEqual([]);
+      expect(result.repliesNotShown).toBe(100);
+      expectReported(result, "ALL_FAILED_UNKNOWN_REASON");
+      expect(result.note).toContain("Slides accepted the batch");
+      expect(result.note).toContain("Do not send it again");
+      expect(result.note).toContain("list_comments has the comments and posts it created");
+      expect(result.note).not.toMatch(/(batch|write) applied|applied —/i);
+      expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(4 * 1024);
     });
 
     it("never says a comment-only batch applied when Slides did not confirm its comments, even with a summarized reply", async () => {
@@ -2511,6 +2585,32 @@ describe("comments: raw: true (#696)", { timeout: 60_000 }, () => {
       call(connector, "list_comments", { presentationId: "deck1", cursor: pages[0].page.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("raw: true") });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("comments: a thread whose anchors alone pass one result (#696)", () => {
+  it("says raw: true pages it, and raw: true does", async () => {
+    const objectAnchors = Array.from({ length: 300 }, (_, index) => ({ objectId: `e${index}_${"o".repeat(900)}` }));
+    route = () => ({
+      body: {
+        ...COMMENT_DECK,
+        comments: THREADS.slice(0, 1),
+        slides: [{ objectId: "p", commentAnchors: [{ anchorId: "a1", objectAnchors }] }],
+      },
+    });
+    const failure = await call(connection(), "list_comments", { presentationId: "deck1" }).catch((error) => error);
+    expect(failure).toMatchObject({ code: "connector_call_failed" });
+    expect(failure.message).toContain("raw: true pages it in JSON chunks");
+    const connector = connection();
+    const rows: any[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await call(connector, "list_comments", { presentationId: "deck1", raw: true, ...(cursor ? { cursor } : {}) });
+      rows.push(...page.threads);
+      cursor = page.page.nextCursor ?? undefined;
+    } while (cursor && rows.length < 50);
+    const whole = JSON.parse(rows.map((row) => row.rawJson.json).join(""));
+    expect(whole.commentAnchors[0].objectAnchors).toHaveLength(300);
   });
 });
 

@@ -418,15 +418,18 @@ using `quickJsExecutor()` need no configuration change.
   cell ranges, chunked like `get_page`'s raw elements. `create_comment` (on a
   page, an element, a range of a shape's text, a cell's text, or a whole
   cell, optionally assigned) and `create_comment_reply` (a plain reply) are
-  additive; `update_comment_thread` (resolve, reopen, or reassign, replacing
-  the thread's status or assignee), `update_comment_post`, `delete_comment`,
+  additive; `update_comment_thread` (resolve, reopen, or reassign with a note,
+  one change per call, as its input schema requires, replacing the thread's
+  status or assignee), `update_comment_post`, `delete_comment`,
   and `delete_comment_reply` are destructive. None is exempt from approval by
   the provider itself. The raw hatch now sends Slides' five comment request
   kinds instead of refusing them, and its replies are bounded ids first:
-  every id in every reply is returned whole and text is cut before any id,
-  and ids too many for one result are all returned anyway, for `get_result`
-  to page — where a batch's replies past the budget used to be counted in
-  `repliesNotShown`, which is gone. Its notes no longer say the write
+  every reply starts as its ids alone and text is added while the 192 KiB
+  budget holds, so text is cut before any id; ids past that budget are all
+  returned anyway, and past the 256 KiB a program can receive, the tool's
+  description and note say to call it directly and page with `get_result`.
+  Only ids past 4 MiB are left out, counted in `repliesNotShown` beside the
+  comment save state, with where to read what the batch made. Its notes no longer say the write
   applied: Slides accepting a batch and Slides confirming its comments saved
   are said apart. Slides saves comment changes apart from the rest of a batch: a
   write that sent any and is not answered `ALL_SAVED` — including one Slides
