@@ -180,18 +180,6 @@ const LINEAR_CLASSIFICATION: ToolClassification = {
 };
 
 /**
- * The reviewed classification in the legacy manifest form.
- *
- * @deprecated Read `linear.definition.classify` instead. This alias is derived
- * from it, so the two cannot disagree, and is removed when the remaining
- * hosted providers convert (#705).
- */
-export const LINEAR_VETTED_CATALOG = reviewedCatalog(
-  LINEAR_CLASSIFICATION,
-  'defineProvider("linear")',
-);
-
-/**
  * Connection-independent conventions. The access note and purpose lead the
  * rendered guide; deployment instructions follow it.
  */
@@ -272,3 +260,15 @@ export const linear = defineProvider<LinearOptions>({
     });
   },
 });
+
+/**
+ * The reviewed classification in the legacy manifest form.
+ *
+ * @deprecated Read `linear.definition.classify` instead. This alias is derived
+ * from it, so the two cannot disagree, and is removed when the remaining
+ * hosted providers convert (#705).
+ */
+export const LINEAR_VETTED_CATALOG = reviewedCatalog(
+  linear.definition.classify!,
+  'defineProvider("linear")',
+);

@@ -240,15 +240,16 @@ export type ToolVerdict = "read" | "write" | "destructive";
 
 /** One reviewed tool, with the evidence that justifies its verdict. */
 export interface ReviewedTool {
-  verdict: ToolVerdict;
+  readonly verdict: ToolVerdict;
   /** Why the verdict holds when the name or downstream annotations do not say. */
-  reason?: string;
+  readonly reason?: string;
   /**
    * `sha256:<hex>` digest of the input and output schemas the review read.
    * Omit until a review has actually read them; an invented digest reports
-   * drift that never happened.
+   * drift that never happened. When the live schema no longer matches it, or
+   * it cannot be checked, the verdict lapses and the tool is served as a write.
    */
-  schemaDigest?: string;
+  readonly schemaDigest?: string;
 }
 
 /**
@@ -260,10 +261,10 @@ export interface ReviewedTool {
  * read annotation; silence and contradiction classify as writes. A listed read
  * fills downstream silence but never overrules an explicit write annotation.
  * A listed write or destructive tool stays a write whatever the downstream
- * claims.
+ * claims. A listed tool whose `schemaDigest` no longer matches is a write.
  */
 export interface ToolClassification {
-  tools: Readonly<Record<string, ToolVerdict | ReviewedTool>>;
+  readonly tools: Readonly<Record<string, ToolVerdict | ReviewedTool>>;
 }
 
 /**

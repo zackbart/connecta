@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../src/types.js";
 import {
+  context,
   guideOf,
   itClassifiesLikeARelease,
   mockRemoteMcp,
@@ -9,7 +10,36 @@ import {
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
   remoteMcp: vi.fn(),
+  /**
+   * The mocked downstream serves names and annotations but no schemas, so no
+   * recorded digest can match it. The classification rules below are about
+   * annotations; they read the catalog as if each schema were the one its
+   * release reviewed. The stale-schema case turns this off.
+   */
+  schemasAsReviewed: true,
 }));
+
+vi.mock("../src/catalog-drift.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/catalog-drift.js")>();
+  return {
+    ...actual,
+    withVettedCatalog: (
+      connector: Parameters<typeof actual.withVettedCatalog>[0],
+      catalog: Parameters<typeof actual.withVettedCatalog>[1],
+    ) =>
+      actual.withVettedCatalog(
+        connector,
+        mocks.schemasAsReviewed
+          ? {
+              ...catalog,
+              tools: new Map(
+                [...catalog.tools].map(([name, { verdict }]) => [name, { verdict }]),
+              ),
+            }
+          : catalog,
+      ),
+  };
+});
 
 vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
   // Only the constructor is stubbed. `withCredentialDefaults` is pure option
@@ -29,6 +59,7 @@ import { connectorGuideSummary } from "../src/skills.js";
 describe("mixpanel()", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
+    mocks.schemasAsReviewed = true;
   });
 
   it("owns the endpoint, OAuth default, purpose, and provider guidance", () => {
@@ -224,6 +255,23 @@ describe("mixpanel()", () => {
       unknown: ["Brand-New-Tool", "Get-Brand-New-Thing", "Wreck-Brand-New-Thing"],
     },
   );
+
+  it("INV-1: serves a reviewed read whose schema no longer matches its digest as a write", async () => {
+    mocks.schemasAsReviewed = false;
+    mocks.listTools.mockResolvedValue([
+      { name: "Run-Query" },
+      { name: "List-Dashboards", annotations: { readOnlyHint: true } },
+      { name: "Delete-Dashboard" },
+    ]);
+    const connector = mixpanel("analytics", { purpose: "Product decisions" });
+    const tools = await connector.listTools(context);
+    expect(tools.map((tool) => tool.annotations)).toEqual([
+      { readOnlyHint: false },
+      { readOnlyHint: false },
+      { readOnlyHint: false, destructiveHint: true },
+    ]);
+    expect(connector.catalogDrift?.()).toMatchObject({ schemaChanges: 3 });
+  });
 
   it("rejects an empty account purpose at construction", () => {
     expect(() => mixpanel("analytics", { purpose: "  " })).toThrow(

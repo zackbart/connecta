@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../src/types.js";
+import { required } from "./helpers.js";
 import {
   context,
   guideOf,
@@ -20,7 +21,11 @@ vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import { LINEAR_MCP_ENDPOINTS, linear } from "../src/providers/linear.js";
+import {
+  LINEAR_MCP_ENDPOINTS,
+  LINEAR_VETTED_CATALOG,
+  linear,
+} from "../src/providers/linear.js";
 import { connectorGuideSummary } from "../src/skills.js";
 
 describe("linear()", () => {
@@ -308,6 +313,25 @@ describe("linear()", () => {
     expect(tools[6]?.annotations).toMatchObject({ readOnlyHint: true });
     expect(tools[7]?.annotations).toMatchObject({ destructiveHint: true });
     expect(tools[8]?.annotations).toMatchObject({ destructiveHint: true });
+  });
+
+  it("INV-1: keeps its reviewed verdicts when the definition is written to", async () => {
+    const tools = linear.definition.classify?.tools as Record<string, { verdict: string }>;
+    expect(() => { required(tools.save_issue).verdict = "read"; }).toThrow(TypeError);
+    expect(() => { (tools as Record<string, unknown>).delete_issue = "read"; }).toThrow(TypeError);
+    expect(tools.save_issue).toMatchObject({ verdict: "destructive" });
+    expect(LINEAR_VETTED_CATALOG.tools.get("save_issue")?.verdict).toBe("destructive");
+    mocks.listTools.mockResolvedValue([
+      { name: "save_issue", annotations: { readOnlyHint: true } },
+    ]);
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
+    expect((await connector.listTools(context))[0]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
   });
 
   it("INV-11: rejects an empty workspace purpose at construction", () => {

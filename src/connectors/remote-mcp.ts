@@ -179,7 +179,9 @@ export interface RemoteMcpOptions {
    * Validated at construction. A listed read fills downstream silence but
    * never overrules an explicit write annotation; a listed write or
    * destructive tool stays a write whatever the downstream claims; an unlisted
-   * tool is read-only only when it says so explicitly. Setting it also reports
+   * tool is read-only only when it says so explicitly; a listed tool whose
+   * `schemaDigest` no longer matches, or cannot be checked, is served as a
+   * write. Setting it also reports
    * catalog drift against the list: unclassified, unserved, contradicted, and
    * schema-changed tools, as counts. Omit it to keep the downstream's own
    * annotations, which still fail closed.

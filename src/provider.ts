@@ -111,6 +111,22 @@ export interface ProviderFactory<O extends ProviderOptions> {
   readonly definition: Readonly<ProviderDefinition<O>>;
 }
 
+/**
+ * A validated classification as a deep-frozen copy. The definition is what
+ * build and check tools read and what every later connector classifies with,
+ * so nothing reachable from it may change a verdict after review: neither the
+ * caller's original object nor a write through `factory.definition`.
+ */
+function frozenClassification(classify: ToolClassification): ToolClassification {
+  const tools = Object.fromEntries(
+    Object.entries(classify.tools).map(([name, entry]) => [
+      name,
+      typeof entry === "string" ? entry : Object.freeze({ ...entry }),
+    ]),
+  );
+  return Object.freeze({ tools: Object.freeze(tools) });
+}
+
 const PROVIDER_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const KINDS: ReadonlySet<string> = new Set(["mcp", "api", "composed"]);
 
@@ -160,6 +176,9 @@ export function defineProvider<O extends ProviderOptions>(
   const frozen: Readonly<ProviderDefinition<O>> = Object.freeze({
     ...definition,
     skill: Object.freeze({ ...definition.skill }),
+    ...(definition.classify !== undefined
+      ? { classify: frozenClassification(definition.classify) }
+      : {}),
   });
   const factoryName = `${frozen.name}()`;
 

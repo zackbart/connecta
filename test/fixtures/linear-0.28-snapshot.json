@@ -166,6 +166,7 @@
     "delete_customer_need": "destructive"
   },
   "variants": {
+    "silent": null,
     "empty": {},
     "read": {
       "readOnlyHint": true

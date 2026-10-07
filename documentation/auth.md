@@ -176,7 +176,7 @@ already vouched for by inbound auth. Pools narrow their endpoint, not plain `/mc
 | New name | Excluded until reviewed and added | Excluded until reviewed and added |
 | Removed or renamed name | Unreachable; warned when the scoped view reads the catalog | Same |
 | Missing, false, or contradictory read-only annotations | Removed from discovery and every invocation path, including `call_destructive_tool` and approval-exempt programs | Still granted; `call_tool` refuses writes and write paths take over |
-| Schema change alone | Does not revoke | Does not revoke |
+| Schema change alone | Does not revoke, unless it breaks a reviewed digest: then it is a write, as above | Same as above |
 
 The example assumes both exact tools were reviewed as read-only; names imply no safety.
 Review schemas, annotations, and downstream behavior

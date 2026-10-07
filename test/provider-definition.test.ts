@@ -158,9 +158,48 @@ describe("defineProvider()", () => {
         create,
       });
       factory("acme", { purpose: "Ops" });
-      expect(create.mock.calls[0]?.[2]?.classify).toBe(classify);
-      expect(factory.definition.classify).toBe(classify);
+      expect(create.mock.calls[0]?.[2]?.classify).toEqual(classify);
+      expect(create.mock.calls[0]?.[2]?.classify).toBe(factory.definition.classify);
+      expect(factory.definition.classify).not.toBe(classify);
     }
+  });
+
+  it("INV-1: freezes a copy of the classification, so no verdict changes after review", () => {
+    const entry: { verdict: "destructive"; reason: string } = {
+      verdict: "destructive",
+      reason: "Overwrites in place.",
+    };
+    const tools: Record<string, "read" | typeof entry> = { list: "read", save: entry };
+    const create = createStub();
+    const factory = defineProvider<ProviderOptions>({
+      name: "acme",
+      title: "Acme",
+      kind: "mcp",
+      skill: SKILL,
+      classify: { tools },
+      create,
+    });
+    // The caller's own object stays theirs; the definition kept a copy.
+    entry.verdict = "read" as never;
+    tools.purge = "read";
+    const classify = factory.definition.classify as ToolClassification;
+    expect(classify.tools).toEqual({
+      list: "read",
+      save: { verdict: "destructive", reason: "Overwrites in place." },
+    });
+    expect(Object.isFrozen(classify)).toBe(true);
+    expect(Object.isFrozen(classify.tools)).toBe(true);
+    expect(Object.isFrozen(classify.tools.save)).toBe(true);
+    // Modules are strict, so each write through the definition throws.
+    const writable = classify as unknown as {
+      tools: Record<string, string | { verdict: string }>;
+    };
+    expect(() => { (writable.tools.save as { verdict: string }).verdict = "read"; }).toThrow(TypeError);
+    expect(() => { writable.tools.list = "write"; }).toThrow(TypeError);
+    expect(() => { writable.tools.purge = "read"; }).toThrow(TypeError);
+    expect(() => { writable.tools = {}; }).toThrow(TypeError);
+    factory("acme", { purpose: "Ops" });
+    expect(create.mock.calls[0]?.[2]?.classify?.tools).toEqual(classify.tools);
   });
 });
 

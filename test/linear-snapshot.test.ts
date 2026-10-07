@@ -102,6 +102,12 @@ describe("linear() before and after defineProvider", () => {
 
   it("INV-1: classifies every reviewed and unknown tool the same, except reviewed writes no longer yield to a read claim", async () => {
     const names = Object.keys(classified);
+    // 67 reviewed names and two unknown ones, under every recorded variant:
+    // no annotations at all, an empty object, and seven explicit shapes.
+    expect(names).toHaveLength(69);
+    expect(Object.keys(variants)).toHaveLength(9);
+    expect(variants.silent).toBeNull();
+    let checked = 0;
     // Reviewed creates whose downstream claimed `readOnlyHint: true`. 0.28 let
     // that claim stand; now the review wins and the hint is corrected.
     const corrected: string[] = [];
@@ -111,6 +117,7 @@ describe("linear() before and after defineProvider", () => {
       const { tools } = await listThroughLinear(names, annotations);
       expect(tools.map((tool) => tool.name)).toEqual(names);
       for (const tool of tools) {
+        checked += 1;
         const recorded = classified[tool.name]?.[variant] ?? {};
         const verdict = before.verdicts[tool.name as keyof typeof before.verdicts];
         if (verdict === "additive" && recorded.readOnlyHint === true) {
@@ -125,9 +132,15 @@ describe("linear() before and after defineProvider", () => {
         expect(tool.annotations, `${tool.name}:${variant}`).toEqual(recorded);
       }
     }
+    expect(checked).toBe(621);
     const additive = Object.entries(before.verdicts)
       .filter(([, verdict]) => verdict === "additive")
       .map(([name]) => name);
+    expect(additive).toHaveLength(5);
+    // Five creates under four read-claiming variants differ; fifteen of those
+    // were reads in 0.28 and are writes now.
+    expect(corrected).toHaveLength(20);
+    expect(wereReads).toHaveLength(15);
     const cases = (list: readonly string[]) =>
       additive.flatMap((name) => list.map((v) => `${name}:${v}`)).sort();
     expect(wereReads.sort()).toEqual(

@@ -276,6 +276,10 @@ export function reviewedCatalog(
  * ([#310](https://github.com/zackbart/connecta/issues/310),
  * [#315](https://github.com/zackbart/connecta/issues/315)).
  *
+ * A reviewed tool whose recorded schema digest the live tool no longer
+ * matches, or could not be checked against, keeps no reviewed verdict: it is
+ * served as a write on both wrappers.
+ *
  * `reviewedWritesWin` extends that override to reviewed additive writes, which
  * `remoteMcp({ classify })` always sets: a review that filed a tool as a write
  * outranks a downstream read claim. The legacy `withVettedCatalog()` wrapper
@@ -285,9 +289,20 @@ function applyVettedSafety(
   catalog: VettedCatalog,
   definition: ToolDef,
   reviewedWritesWin: boolean,
+  unverified: ReadonlySet<string>,
 ): ToolDef {
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
+  if (record?.verdict !== "destructive" && unverified.has(definition.name)) {
+    // A review vouches for the schema it read. When the live schema no longer
+    // matches that digest, or the digest could not be checked, the verdict is
+    // about some other tool: the read becomes a write until a release reviews
+    // it again (INV-1). A reviewed destructive tool is already closed below.
+    return {
+      ...definition,
+      annotations: { ...downstream, readOnlyHint: false },
+    };
+  }
   if (record?.verdict === "read-only") {
     if (
       downstream.destructiveHint === true ||
@@ -354,6 +369,70 @@ function contradicts(record: VettedToolRecord, definition: ToolDef): boolean {
 }
 
 /**
+ * Names of served tools whose schemas no longer match the digest a release
+ * recorded for them. A manifest that recorded no digest for a tool cannot have
+ * an opinion about its schema, so it does not pay for a hash either. Throws
+ * when a digest cannot be computed; the caller decides what that means.
+ */
+async function changedSchemas(
+  catalog: VettedCatalog,
+  tools: readonly ToolDef[],
+): Promise<Set<string>> {
+  const changed = new Set<string>();
+  for (const definition of tools) {
+    const recorded = catalog.tools.get(definition.name)?.schemaDigest;
+    if (
+      recorded !== undefined &&
+      recorded !== (await vettedSchemaDigest(definition))
+    ) {
+      changed.add(definition.name);
+    }
+  }
+  return changed;
+}
+
+/** Every served tool whose review recorded a digest: what cannot be verified. */
+function digestedTools(
+  catalog: VettedCatalog,
+  tools: readonly ToolDef[],
+): Set<string> {
+  return new Set(
+    tools
+      .filter((definition) => catalog.tools.get(definition.name)?.schemaDigest !== undefined)
+      .map((definition) => definition.name),
+  );
+}
+
+function countDrift(
+  catalog: VettedCatalog,
+  tools: readonly ToolDef[],
+  changed: ReadonlySet<string>,
+): CatalogDriftCounts {
+  let unclassifiedTools = 0;
+  let annotationConflicts = 0;
+  const served = new Set<string>();
+  for (const definition of tools) {
+    served.add(definition.name);
+    const record = catalog.tools.get(definition.name);
+    if (!record) {
+      unclassifiedTools += 1;
+      continue;
+    }
+    if (contradicts(record, definition)) annotationConflicts += 1;
+  }
+  let unservedTools = 0;
+  for (const name of catalog.tools.keys()) {
+    if (!served.has(name)) unservedTools += 1;
+  }
+  return {
+    unclassifiedTools,
+    unservedTools,
+    annotationConflicts,
+    schemaChanges: changed.size,
+  };
+}
+
+/**
  * Compare a live catalog with the manifest and count what moved.
  *
  * Counts only, and by construction: there is nowhere here to put a tool name,
@@ -365,37 +444,7 @@ export async function detectCatalogDrift(
   catalog: VettedCatalog,
   tools: readonly ToolDef[],
 ): Promise<CatalogDriftCounts> {
-  let unclassifiedTools = 0;
-  let annotationConflicts = 0;
-  let schemaChanges = 0;
-  const served = new Set<string>();
-  for (const definition of tools) {
-    served.add(definition.name);
-    const record = catalog.tools.get(definition.name);
-    if (!record) {
-      unclassifiedTools += 1;
-      continue;
-    }
-    if (contradicts(record, definition)) annotationConflicts += 1;
-    // A manifest that recorded no digest for this tool cannot have an opinion
-    // about its schema, so it does not pay for a hash either.
-    if (
-      record.schemaDigest !== undefined &&
-      record.schemaDigest !== (await vettedSchemaDigest(definition))
-    ) {
-      schemaChanges += 1;
-    }
-  }
-  let unservedTools = 0;
-  for (const name of catalog.tools.keys()) {
-    if (!served.has(name)) unservedTools += 1;
-  }
-  return {
-    unclassifiedTools,
-    unservedTools,
-    annotationConflicts,
-    schemaChanges,
-  };
+  return countDrift(catalog, tools, await changedSchemas(catalog, tools));
 }
 
 /**
@@ -440,19 +489,23 @@ function observedCatalog(
     ...connector,
     async listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
       const downstream = await connector.listTools(ctx);
+      let unverified: ReadonlySet<string>;
       try {
+        unverified = await changedSchemas(catalog, downstream);
         observed = {
           observedAt: new Date().toISOString(),
-          ...(await detectCatalogDrift(catalog, downstream)),
+          ...countDrift(catalog, downstream, unverified),
         };
       } catch (error) {
         // A drift check is a report about a catalog, never a condition for
         // serving one. Keep the last good observation rather than replacing it
-        // with a lie, and let the refresh through.
+        // with a lie, and let the refresh through — but with every digested
+        // review unverified, so none of them vouches for a read (INV-1).
+        unverified = digestedTools(catalog, downstream);
         logFailure(ctx.logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
       }
       return downstream.map((definition) =>
-        applyVettedSafety(catalog, definition, reviewedWritesWin),
+        applyVettedSafety(catalog, definition, reviewedWritesWin, unverified),
       );
     },
     catalogDrift(): CatalogDriftReport | undefined {

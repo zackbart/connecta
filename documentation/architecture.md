@@ -343,8 +343,11 @@ the other providers move in later #705 items.
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
 reason?, schemaDigest? } } }`, validated at construction. It fails closed
 (INV-1): a reviewed read fills silence but yields to an explicit write
-annotation, a reviewed write stays a write whatever the downstream claims, and
-an unlisted tool is a read only when it says so. The same record counts catalog
+annotation, a reviewed write stays a write whatever the downstream claims, an
+unlisted tool is a read only when it says so, and a reviewed tool whose
+`schemaDigest` no longer matches, or cannot be checked, is a write on discovery
+and every invocation path until a release reviews it again; this holds for the
+legacy wrapper too. The same record counts catalog
 drift during refreshes the deployment already asked for, and `scripts/drift-check.mjs` compares
 its names with published inventories. Unconverted hosted providers still use
 the internal `withVettedCatalog()`, whose reviewed creates still yield to a
