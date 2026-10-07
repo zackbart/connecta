@@ -420,10 +420,10 @@ and must stay unreachable from the root. `./auth/clerk` is separate because
 `./auth/cloudflare-access` for a third reason: it is Web-API-pure, but its trust
 contract is specific to a direct Worker invocation carrying `ctx.access`.
 
-`test/purity.test.ts` walks the relative-import graph and fails on any `node:`
+`test/purity.node.test.ts` walks the relative-import graph and fails on any `node:`
 specifier in a reachable file, or on any of those modules — plus the UI bundle,
 encrypted vault, and activity implementation — being reachable at all;
-`test/package-surface.test.ts` and `scripts/check-package.mjs` guard the same
+`test/package-surface.node.test.ts` and `scripts/check-package.mjs` guard the same
 boundary in the published tarball. The failure mode is not theoretical: one
 convenience import of `node:crypto` in a shared helper stops the whole Worker
 shape from building, in someone else's repository rather than this one.
@@ -464,7 +464,7 @@ and `npm run check:declarations` fails if what remains names an Effect type.
 ### One runner
 
 `src/runtime/run.ts` is the only place a fiber starts, and
-`test/purity.test.ts` fails if any other file calls `Effect.run*`, `runFork`,
+`test/purity.node.test.ts` fails if any other file calls `Effect.run*`, `runFork`,
 `forkDaemon`, or `ManagedRuntime.make`. It exports two ways out:
 
 - **`runEdge(effect, { signal, runtime? })`** runs an effect at a Promise
@@ -592,7 +592,7 @@ the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
 on `./activity`, and matching the wire format meant opting out of most of what
 it does: unowned paths fall through rather than 404, a wrong method is a JSON
 405, and the content-type and size checks run before a body is read. The root
-entry may import only `effect` itself (`test/purity.test.ts`). Effect v4's
+entry may import only `effect` itself (`test/purity.node.test.ts`). Effect v4's
 area imports, such as `effect/http-api` and `effect/ai`, would have to stay
 behind a subpath. APIs tagged `@stability unstable` can still change in minor
 releases, so stable v4 keeps the exact pin.
@@ -659,7 +659,7 @@ src/
 
 There are exactly two deployment shapes — `templates/node/`, which
 `connecta init` copies with its container files, and `examples/worker/` — and
-`test/deployment-shapes.test.ts` with `npm run check:examples` keeps both
+`test/deployment-shapes.node.test.ts` with `npm run check:examples` keeps both
 compiling and configuring the real thing.
 
 ## Sharp edges

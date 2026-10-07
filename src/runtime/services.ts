@@ -13,7 +13,7 @@
 // Every import from an optional module is type-only. An omitted activity
 // module is a no-op recorder that builds no event and calls nothing, and the
 // UI, vault, and activity implementations stay out of the root import graph
-// (test/purity.test.ts).
+// (test/purity.node.test.ts).
 
 import { Context, Effect, Layer } from "effect";
 import type { ActivityActor, ActivityEventInput } from "../activity.js";
@@ -53,7 +53,7 @@ export class Vault extends Context.Service<
 /**
  * Connecta's diagnostic logger, already resolved: the configured Logger, a
  * no-op for `"silent"`, or console output prefixed `[connecta]`. Effect's
- * own logger is never used (test/purity.test.ts), because it honors neither
+ * own logger is never used (test/purity.node.test.ts), because it honors neither
  * `"silent"` nor the line format a deployment greps for.
  */
 export class Logger extends Context.Service<Logger, LoggerShape>()(

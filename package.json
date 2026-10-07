@@ -196,11 +196,13 @@
     "eval:smoke": "tsx eval/run-smoke.ts",
     "eval:perf": "tsx eval/run-perf.ts",
     "eval:report": "tsx eval/report.ts",
-    "check:core": "npm run check:docs && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
+    "check:core": "npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
     "check": "npm run check:core && npm run test:browser",
     "release:check:core": "npm run check:core && npm run check:security && npm run check:package",
     "release:check": "npm run check && npm run check:security && npm run check:package",
-    "prepack": "npm run check"
+    "prepack": "npm run check",
+    "check:changes": "node scripts/changelog.mjs --check && node scripts/check-node-suites.mjs && node --test scripts/changelog.test.mjs",
+    "changelog:assemble": "node scripts/changelog.mjs"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

@@ -3,7 +3,7 @@
 // Connecta's published surface is Promise-shaped and stays that way; Effect is
 // an implementation detail behind it. Every edge where a fiber starts runs
 // through this module, so the rules for that crossing live in one file instead
-// of being re-derived at each call site — and test/purity.test.ts fails if any
+// of being re-derived at each call site — and test/purity.node.test.ts fails if any
 // other file under src/ calls Effect.run*, runFork, forkDaemon, or
 // ManagedRuntime.make.
 //

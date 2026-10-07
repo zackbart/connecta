@@ -1,4 +1,4 @@
-// Local-only fixture for test/d1-storage-example.test.ts. getPlatformProxy
+// Local-only fixture for test/d1-storage-example.node.test.ts. getPlatformProxy
 // reads this binding and serves it from an in-memory local D1; nothing here
 // names a real database or deploys anywhere.
 {
