@@ -264,6 +264,7 @@ describe("an asserted principal through a deployment", () => {
     const own = await call("alice_only.me", alice);
     expect(own.status).toBe(200);
     expect(JSON.parse(own.result.content[0].text)).toEqual({
+      authenticated: true,
       identity: {
         actor: { kind: "bearer", id: "alice@example.com", namespace: "eve:example.com" },
         subject: { namespace: "eve:example.com", id: "alice@example.com" },
@@ -312,6 +313,7 @@ describe("an asserted principal through a deployment", () => {
       [HEADER]: "alice@example.com",
     });
     expect(JSON.parse(fallthrough.result.content[0].text)).toEqual({
+      authenticated: true,
       identity: {
         actor: { kind: "edge", id: "edge-service" },
         subject: { namespace: "connecta:auth:edge", id: "edge-service" },
@@ -331,6 +333,7 @@ describe("an asserted principal through a deployment", () => {
       [HEADER]: "alice@example.com",
     });
     expect(JSON.parse(plain.result.content[0].text)).toEqual({
+      authenticated: true,
       identity: {
         actor: { kind: "bearer", id: "calendar-bot" },
         subject: { namespace: "connecta:auth:bearer", id: "calendar-bot" },
