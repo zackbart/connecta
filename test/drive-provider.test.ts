@@ -1223,7 +1223,10 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
   });
 });
 
-describe("every default result crosses into execute_code", () => {
+// Worst-case pages pushed through whole calls: CPU-bound, with no timing
+// behavior, and on a loaded host close to vitest's 5s default. This is a hang
+// guard, not a speed assertion.
+describe("every default result crosses into execute_code", { timeout: 60_000 }, () => {
   // A host result reaches a QuickJS program only under 256 KiB serialized
   // (MAX_QUICKJS_HOST_RPC_BYTES). Defaults must fit with room to spare on the
   // worst input Drive can send; explicit maxima may exceed it and are

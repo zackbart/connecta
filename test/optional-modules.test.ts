@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { customExecutor, createConnecta, type ConnectaIdentityConfig, type Connector, type KVStorage } from "../src/index.js";
 import { required } from "./helpers.js";
 import { operatorUi } from "../src/ui.js";
@@ -22,6 +22,10 @@ function deployment(identity?: ConnectaIdentityConfig) {
 }
 
 describe("optional deployment modules", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("omits all UI routes while core health and OAuth callbacks remain available", async () => {
     const app = createConnecta({ connectors: [], executor, logger: "silent" });
     for (const path of ["/", "/credentials", "/tokens", "/activity", "/ui", "/ui/data", "/ui/oauth/missing", "/favicon.svg"]) {
@@ -63,6 +67,9 @@ describe("optional deployment modules", () => {
   });
 
   it("returns configured connections without touching provider status or tools", async () => {
+    // A fake clock: the probe deadline is what ends the slow status, and on a
+    // loaded host a real 20ms one could end the fast status first.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const slow = connector("slow"), fast = connector("fast");
     slow.status = vi.fn(() => new Promise<never>(() => {}));
     const app = createConnecta({ connectors: [slow, fast], executor, auth, ui: operatorUi(), logger: "silent", discovery: { probeTimeoutMs: 20 } });
@@ -70,9 +77,15 @@ describe("optional deployment modules", () => {
     expect((await list.json() as any).connectors.map((c: any) => c.status)).toEqual(["loading", "loading"]);
     expect(slow.status).not.toHaveBeenCalled();
     expect(fast.listTools).not.toHaveBeenCalled();
+    let settled = false;
     const pending = app.fetch(new Request(BASE + "/ui/connectors/slow", { headers }));
+    void pending.finally(() => { settled = true; });
     const ready = await app.fetch(new Request(BASE + "/ui/connectors/fast", { headers }));
     expect((await ready.json() as any).status).toBe("ok");
+    await vi.advanceTimersByTimeAsync(19);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
     expect((await (await pending).json() as any).status).toBe("error");
   });
 

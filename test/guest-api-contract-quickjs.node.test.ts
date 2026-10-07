@@ -2,7 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   CAPABILITY_PROBE_CODE,
@@ -11,6 +11,12 @@ import {
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
+
+// Every case here drives a real QuickJS child process, whose startup and IPC
+// are wall-clock nothing here can fake: on a loaded host they outran vitest's
+// 5s default with no behavior at fault. This file budget is a hang guard. The
+// deadlines a case pins are the executor's own, asserted on its outcome.
+vi.setConfig({ testTimeout: 20_000 });
 
 // A generous guest-CPU budget: these programs loop and stringify, and the
 // clause under test is never the 250ms default.

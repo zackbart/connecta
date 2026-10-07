@@ -196,7 +196,9 @@ it.each([false, true])("preserves streamed logs after a real child crash (over c
     child = actual.fork(...args);
     return child;
   });
-  const executor = quickJsExecutor();
+  // A real child charges its guest CPU budget by wall clock; a generous one
+  // keeps a loaded host from ending the program before the crash it stages.
+  const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
   const connector = connectorWith({
     id: "crash", kind: "api",
     tools: [{ name: "read", annotations: { readOnlyHint: true } }],

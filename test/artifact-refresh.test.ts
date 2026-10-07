@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { ArtifactOperations } from "../src/artifacts/operations.js";
@@ -57,7 +57,15 @@ const hostCall = (providers: ExecutorProvider[], address: string) =>
   providers[0]!.fns.call!(address, {});
 
 describe("artifact refresh", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("settles an unresponsive admission wait at claim expiry before another run starts", async () => {
+    // A fake clock, installed before the store reads it: the 40ms claim ends
+    // the hung run when the test says so, and cannot also expire under the
+    // run that follows because a loaded host was slow to finish it.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { operations, create, configure } = setup(async () => ({ result: null }));
     await create();
     await configure("async () => ({ value: 2 })");
@@ -76,6 +84,12 @@ describe("artifact refresh", () => {
     for (let n = 0; n < 100 && attempts === 0; n++) await Promise.resolve();
     expect(attempts).toBe(1);
     expect(await refresh.run("weekly", { manual: actor })).toEqual({ status: "skipped" });
+    let settled = false;
+    void first.finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(39);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
     expect(await first).toMatchObject({ status: "failed" });
     expect(dispatched).toBe(0);
     expect(await refresh.run("weekly", { manual: actor })).toMatchObject({ status: "succeeded" });

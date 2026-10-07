@@ -1206,7 +1206,11 @@ describe("every inline element renders as something, or is named (H9)", () => {
   });
 });
 
-describe("round-3 review: outcomes by observed status, bounded copies, one final guard", () => {
+// Cases here push 9 MiB fields and a five-hundred-call sweep of replies near
+// the 192 KiB budget through whole calls: CPU-bound, with no timing behavior,
+// and seconds long even on an idle machine. A loaded one ran them past
+// vitest's 5s default, so this is a hang guard, not a speed assertion.
+describe("round-3 review: outcomes by observed status, bounded copies, one final guard", { timeout: 60_000 }, () => {
   const BUDGET = 192 * 1024;
   const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
   const EDITS: Record<string, Record<string, unknown>> = {

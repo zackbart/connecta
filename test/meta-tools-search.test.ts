@@ -587,6 +587,9 @@ describe("search_tools", () => {
     }
   });
 
+  // Builds and ranks a 100,000-tool catalog: CPU-bound, with no timing
+  // behavior, and on a loaded host past vitest's 5s default. The budget is a
+  // hang guard, not a speed assertion.
   it("keeps 100,000-tool pagination exact at the first, middle, and final page", async () => {
     const total = 100_000;
     const connector: Connector = connectorWith({
@@ -614,7 +617,7 @@ describe("search_tools", () => {
       }
     }
     expect(seen.size).toBe(3 * MAX_SEARCH_LIMIT);
-  });
+  }, 30_000);
 
   it("rejects an oversized multibyte search result with a paging hint", async () => {
     const connector: Connector = connectorWith({

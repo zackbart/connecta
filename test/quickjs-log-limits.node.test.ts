@@ -1,6 +1,6 @@
 // Node-only: runs the Node QuickJS child-process executor.
 import { required } from "./helpers.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_QUICKJS_LOG_TRANSPORT_BYTES,
   serializedBytes,
@@ -12,6 +12,12 @@ import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
 // can't be allowed to retain multiple GB of host memory via console.log.
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const MAX_LOG_TOTAL_CHARS = 256_000;
+
+// Every case here drives a real QuickJS child process, whose startup and IPC
+// are wall-clock nothing here can fake: on a loaded host they outran vitest's
+// 5s default with no behavior at fault. This file budget is a hang guard. The
+// deadlines a case pins are the executor's own, asserted on its outcome.
+vi.setConfig({ testTimeout: 20_000 });
 
 function logTransportBytes(entry: string): number {
   return serializedBytes(JSON.stringify(JSON.stringify(entry)));

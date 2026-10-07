@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Executor, InboundAuth } from "../src/types.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
@@ -22,17 +22,35 @@ function blockingAuth() {
   return { auth, release, calls: () => calls };
 }
 
+/**
+ * Run whatever is due now, without moving the fake clock. Every test here runs
+ * on a fake clock, so a deadline or queue timeout fires only when a test
+ * advances time on purpose — never because a loaded host was slow to reach
+ * the connector before a real 100ms timer ran out.
+ */
+async function settle(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0);
+}
+
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
 ): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
   }
   throw new Error("Condition was not reached.");
 }
 
 describe("request admission", () => {
+  beforeEach(() => {
+    // The clock, not the scheduler: Effect still yields on real immediates.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("aborts an in-flight connector call at the total request deadline", async () => {
     let started = 0;
     let aborted = 0;
@@ -63,8 +81,13 @@ describe("request admission", () => {
       arguments: { address: "calc.add", args: { a: 1, b: 2 } },
     }, { id: 1 }));
     await waitFor(() => started === 1);
+    // Time moves only here: a tick short of the 100ms lifetime the call is
+    // still running, and at 100ms it is aborted.
+    await vi.advanceTimersByTimeAsync(99);
+    expect(aborted).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(aborted).toBe(1);
     await first.catch(() => undefined);
-    await waitFor(() => aborted === 1);
     const health = await connecta.fetch(new Request(`${BASE}/health`));
     expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
   });
@@ -77,8 +100,14 @@ describe("request admission", () => {
         requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
       },
     });
+    let settled = false;
     const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
+    void first.finally(() => { settled = true; });
     await waitFor(() => gate.calls() === 1);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
     expect((await first).status).toBe(504);
     const health = await connecta.fetch(new Request(`${BASE}/health`));
     expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
@@ -117,7 +146,9 @@ describe("request admission", () => {
     const blocked = await connecta.fetch(mcpRpc("tools/list", {}, { id: 2 }));
     expect(blocked.status).toBe(503);
     await blocked.text();
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await vi.advanceTimersByTimeAsync(99);
+    expect(cancellations).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
     expect(cancellations).toBe(1);
 
     const next = await connecta.fetch(mcpRpc("tools/list", {}, { id: 3 }));
@@ -236,7 +267,7 @@ describe("request admission", () => {
     await waitFor(() => gate.calls() === 1);
     const controller = new AbortController();
     const cancelled = connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
     controller.abort(new Error("caller left"));
     await expect(cancelled).rejects.toThrow("caller left");
 
@@ -288,7 +319,7 @@ describe("request admission", () => {
     const controller = new AbortController();
     await connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
     controller.abort(new Error("caller left"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     const health = await connecta.fetch(new Request(`${BASE}/health`));
     expect(await health.json()).toMatchObject({
@@ -320,7 +351,7 @@ describe("request admission", () => {
     const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     await waitFor(() => gate.calls() === 1);
     const queued = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     await connecta.close();
     const queuedResponse = await queued;
@@ -379,7 +410,7 @@ describe("request admission", () => {
         arguments: { code: "() => 2" },
       }, { id: 1 }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
     const third = await connecta.fetch(
       mcpRpc("tools/call", {
         name: "execute_code",

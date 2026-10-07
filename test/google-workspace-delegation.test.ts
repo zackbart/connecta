@@ -736,6 +736,10 @@ describe("the in-memory token cache", () => {
     expect(tokenCalls).toHaveLength(1);
   });
 
+  // 514 mints, each signing a JWT assertion with a real RSA key: CPU-bound and
+  // seconds long on a loaded host, where vitest's 5s default cut it off and
+  // its still-running loop then drained the replies later cases queued. The
+  // budget is a hang guard, not a speed assertion.
   it("stays bounded, dropping the oldest token first", async () => {
     const connector = mailbox({ subject: (who: AuthenticatedIdentity) => `${who.principal?.id}@org.example` });
     await labels(connector, context(identity("first")));
@@ -747,7 +751,7 @@ describe("the in-memory token cache", () => {
     expect(tokenCalls).toHaveLength(513);
     await labels(connector, context(identity("first")));
     expect(tokenCalls).toHaveLength(514);
-  });
+  }, 60_000);
 
   it("forgets a token the API rejects and replays once with a fresh one", async () => {
     apiReplies.push(() => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }));

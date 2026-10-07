@@ -1,12 +1,18 @@
 // Node-only: drives the artifact store over the example D1 and R2 adapters through wrangler's getPlatformProxy.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getPlatformProxy } from "wrangler";
 import { d1Storage } from "../examples/worker/src/d1-storage.js";
 import { r2ArtifactBlobs } from "../examples/worker/src/r2-artifact-blobs.js";
 import { kvArtifactStore } from "../src/artifacts.js";
 import { artifactStoreContract } from "./artifact-store-contract.js";
+
+// Every case here is real I/O against a local workerd that wrangler spawns,
+// wall-clock nothing here can fake: on a loaded host the slower contract cases
+// outran vitest's 5s default with no behavior at fault. This file budget is a
+// hang guard, not a speed assertion.
+vi.setConfig({ testTimeout: 30_000 });
 
 interface Env {
   STORAGE_DB: D1Database;

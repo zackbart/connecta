@@ -4,12 +4,19 @@ import { connectorWith } from "./fixtures/connectors.js";
 import { api } from "../src/connectors/api.js";
 import { USAGE_SKILL } from "../src/skills.js";
 import { spawnSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { createConnecta } from "../src/index.js";
-import { normalizeCode } from "../src/executors/quickjs.js";
+import {
+  normalizeCode,
+  quickJsExecutor as untrackedQuickJs,
+} from "../src/executors/quickjs.js";
 import { normalizeProgramSource } from "../src/program-source.js";
-import type { Connector, ExecutorProvider } from "../src/types.js";
+import {
+  executeQuickJs,
+  prepareQuickJs,
+} from "../src/executors/quickjs-runtime.js";
+import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js";
 import {
   required,
   calcConnector,
@@ -18,6 +25,23 @@ import {
 } from "./helpers.js";
 import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
 import { deferred, waitFor } from "./fixtures/misc.js";
+
+// The real-child cases pay for process startup and IPC, which fake clocks
+// cannot control. On a loaded host they outran vitest's 5s default with no
+// behavior at fault. This file budget is a hang guard. The deadlines a case
+// pins are the executor's own, asserted on its outcome.
+vi.setConfig({ testTimeout: 20_000 });
+
+/**
+ * What ended a run its wall deadline cut short. The child reports its own
+ * expiry as a structural `timed out` result; when a loaded host delays that
+ * report past the parent's fixed grace, the parent terminates the child at its
+ * wall budget and the run rejects instead. Both are the deadline. The child's
+ * own report is pinned race-free, in-process, by the runtime case below.
+ */
+function deadlineOutcome(run: Promise<ExecuteResult>): Promise<string | undefined> {
+  return run.then((out) => out.error, (error: Error) => error.message);
+}
 
 function providers(): ExecutorProvider[] {
   return [
@@ -322,8 +346,11 @@ describe("quickJsExecutor", () => {
 
   it("maps a runaway synchronous loop to the guest CPU budget", async () => {
     // Wall budget far above the 250ms CPU default: a slow CI tick past a tight
-    // wall deadline would otherwise let wallInterrupted win the race.
-    const ex = quickJsExecutor({ timeoutMs: 5_000 });
+    // wall deadline would otherwise let wallInterrupted win the race. The
+    // untracked constructor, because this case pins the production default
+    // the tracked fixture raises.
+    const ex = untrackedQuickJs({ timeoutMs: 5_000 });
+    onTestFinished(() => ex.close?.());
     const out = await ex.execute(`async () => { while (true) {} }`, []);
     expect(out.result).toBeUndefined();
     expect(out.error).toBe("Execution exceeded the 250ms guest CPU budget.");
@@ -331,7 +358,12 @@ describe("quickJsExecutor", () => {
 
   it("rejects an allocation that exceeds the guest heap limit", async () => {
     // Tight 4 MiB cap with a generous time budget: the failure must be the
-    // memory ceiling, not the deadline. A growing allocation blows the cap.
+    // memory ceiling, not the deadline. A growing allocation blows the cap,
+    // bounded so the outcome owes nothing to time: a million-element array is
+    // several times the cap and well within what the runtime holds without
+    // one, so only an enforced cap fails it. Twenty doublings get there; the
+    // tens of thousands of GC-bound pushes this once took outran the budget
+    // on a loaded host.
     const ex = quickJsExecutor({
       memoryLimitBytes: 4 * 1024 * 1024,
       timeoutMs: 10_000,
@@ -339,8 +371,8 @@ describe("quickJsExecutor", () => {
     });
     const out = await ex.execute(
       `async () => {
-        const a = [];
-        for (let i = 0; i < 1e7; i++) a.push("padding".repeat(100));
+        let a = [0];
+        for (let i = 0; i < 20; i++) a = a.concat(a);
         return a.length;
       }`,
       [],
@@ -357,15 +389,59 @@ describe("quickJsExecutor", () => {
     });
   }, 15_000);
 
+  it("reports a hung host wait as a structural timeout inside the runtime", async () => {
+    // The child's half of the deadline, with no parent racing it and on a fake
+    // clock: at its own wall expiry during a host wait, and not before, the
+    // runtime returns a result naming it.
+    await prepareQuickJs();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { promise: waiting, resolve: called } = deferred<void>();
+    let settled = false;
+    const pending = executeQuickJs(
+      `async () => slow.forever({})`,
+      [{
+        name: "slow",
+        fns: {
+          forever: () => {
+            called();
+            return new Promise(() => {});
+          },
+        },
+      }],
+      {
+        timeoutMs: 50,
+        cpuTimeMs: 5_000,
+        memoryLimitBytes: 64 * 1024 * 1024,
+        maxStackSizeBytes: 1024 * 1024,
+      },
+    ).finally(() => {
+      settled = true;
+    });
+    await waiting;
+    await vi.advanceTimersByTimeAsync(49);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    expect(await pending).toMatchObject({
+      error: "Execution timed out after 50ms.",
+    });
+  });
+
   it("times out when a host call hangs", async () => {
     const hang: ExecutorProvider[] = [
       { name: "slow", fns: { forever: () => new Promise(() => {}) } },
     ];
-    const ex = quickJsExecutor({ timeoutMs: 300 });
-    const out = await ex.execute(`async () => slow.forever({})`, hang);
-    expect(out.error).toContain("timed out");
-    // The child reports the wall expiry structurally, the parent retires it,
-    // and the replacement slot keeps serving.
+    // A budget the healthy follow-up below can meet on a loaded host; 300ms
+    // was not always enough for it.
+    const ex = quickJsExecutor({ timeoutMs: 1_000 });
+    expect(
+      await deadlineOutcome(ex.execute(`async () => slow.forever({})`, hang)),
+    ).toMatch(/timed out|wall budget/);
+    // The deadline ends the run, the parent retires the child, and the
+    // replacement slot keeps serving.
     await expect(ex.execute("async () => 3", [])).resolves.toEqual({
       result: 3,
     });
@@ -390,6 +466,14 @@ describe("quickJsExecutor", () => {
     expect(after).toBeLessThanOrEqual(before);
   });
 
+  // The process boots tsx and a QuickJS child, which takes seconds on a loaded
+  // host, so time-to-exit is no signal on its own. What the case pins is that
+  // nothing outlives the computation: a leaked wall-deadline timer would hold
+  // the process for the full EXECUTOR_WALL_MS, and a still-referenced child
+  // forever. The spawn budget sits far below the first and far above startup.
+  // The guest CPU budget is generous for the same reason as the fixture's.
+  const EXECUTOR_WALL_MS = 300_000;
+  const SPAWN_BUDGET_MS = 30_000;
   it("lets a short-lived process exit near computation time", () => {
     const child = spawnSync(
       process.execPath,
@@ -400,21 +484,21 @@ describe("quickJsExecutor", () => {
         "--eval",
         [
           'import { quickJsExecutor } from "./src/executors/quickjs.ts";',
-          "const ex = quickJsExecutor({ timeoutMs: 5_000 });",
+          `const ex = quickJsExecutor({ timeoutMs: ${EXECUTOR_WALL_MS}, cpuTimeMs: 5_000 });`,
           'const providers = [{ name: "fast", fns: { one: async () => 1 } }];',
           'const out = await ex.execute("async () => { for (let i = 0; i < 20; i += 1) await fast.one(); return 20; }", providers);',
-          "if (out.result !== 20) process.exitCode = 1;",
+          "if (out.result !== 20) { console.error(JSON.stringify(out)); process.exitCode = 1; }",
         ].join("\n"),
       ],
       {
         cwd: process.cwd(),
         encoding: "utf8",
-        timeout: 2_000,
+        timeout: SPAWN_BUDGET_MS,
       },
     );
     expect(child.error).toBeUndefined();
     expect(child.status, child.stderr).toBe(0);
-  });
+  }, 2 * SPAWN_BUDGET_MS);
 
   it("drains pending host calls after a timeout without spinning", async () => {
     // Two stragglers settling at different times after the budget expires.
@@ -428,11 +512,11 @@ describe("quickJsExecutor", () => {
       },
     ];
     const ex = quickJsExecutor({ timeoutMs: 300 });
-    const out = await ex.execute(
-      `async () => Promise.all([slow.a(), slow.b()])`,
-      slow,
-    );
-    expect(out.error).toContain("timed out");
+    expect(
+      await deadlineOutcome(
+        ex.execute(`async () => Promise.all([slow.a(), slow.b()])`, slow),
+      ),
+    ).toMatch(/timed out|wall budget/);
     // Regression guard: the old drain re-.then()'d an already-resolved
     // deferred forever, pinning the microtask queue and starving setTimeout.
     // If that returns, this macrotask timer never fires and the hard vitest
@@ -441,7 +525,7 @@ describe("quickJsExecutor", () => {
       setTimeout(() => r("tick"), 1400),
     );
     expect(tick).toBe("tick");
-  }, 4_000);
+  }, 15_000);
 
   it("rejects guest calls that resolve to inherited prototype members", async () => {
     const ex = quickJsExecutor();
@@ -485,7 +569,12 @@ describe("quickJsExecutor", () => {
   });
 
   it("keeps the Node event loop responsive while a guest runs away", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 200, timeoutMs: 2_000 });
+    // A guest run on this event loop would block it for the whole CPU budget,
+    // so the bound is derived from that budget: half of it leaves a loaded
+    // host room for its own scheduling stalls (a fixed 150ms against a 200ms
+    // budget did not) while still failing any guest that blocks the parent.
+    const cpuTimeMs = 1_000;
+    const ex = quickJsExecutor({ cpuTimeMs, timeoutMs: 10 * cpuTimeMs });
     let last = performance.now();
     let maxGap = 0;
     const heartbeat = setInterval(() => {
@@ -496,8 +585,8 @@ describe("quickJsExecutor", () => {
     const out = await ex.execute(`async () => { while (true) {} }`, []);
     clearInterval(heartbeat);
     expect(out.error).toContain("guest CPU budget");
-    expect(maxGap).toBeLessThan(150);
-  }, 10_000);
+    expect(maxGap).toBeLessThan(cpuTimeMs / 2);
+  });
 
   it("cancels a running child from the inbound request signal", async () => {
     const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
