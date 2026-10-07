@@ -3,6 +3,7 @@
 // ~60s identity caching.
 
 import { createClerkClient } from "@clerk/backend";
+import { decodeJwt } from "@clerk/backend/jwt";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
@@ -14,6 +15,17 @@ export interface ClerkAuthOptions {
   secretKey: string;
   /** Public base URL of this deployment. Defaults to the request origin. */
   publicUrl?: string;
+  /**
+   * OAuth client IDs dedicated to this deployment, used only when a verified
+   * access token has no audience/resource claim. Omitted or `[]` requires
+   * resource-bound tokens, both JWT and opaque. Enable Clerk's
+   * `aud_claim_enabled` setting and request the endpoint URL as `resource`.
+   * A present audience/resource must match
+   * the canonical `/mcp` or `/mcp/<pool>` URL even for an allowlisted client.
+   * Never share these clients with another resource server. Pool grants still
+   * narrow access; the fallback client list applies to every pool.
+   */
+  allowedOAuthClientIds?: readonly string[];
   /**
    * Email domains this deployment admits, e.g. `["acme.com"]`. An
    * authenticated user whose verified primary email is not on one of them is
@@ -42,16 +54,6 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, mcp-protocol-version",
 };
-
-/** Coarse bearer shape for diagnostics — never the token itself. */
-function tokenShape(request: Request): string {
-  const header = request.headers.get("authorization");
-  if (!header) return "none";
-  const token = header.replace(/^Bearer\s+/i, "");
-  if (token.startsWith("oat_")) return "oauth-opaque";
-  if (token.startsWith("eyJ")) return "jwt";
-  return "other";
-}
 
 /**
  * Clerk Frontend API origin, derived from pk_(test|live)_<b64 domain>.
@@ -240,6 +242,89 @@ function normalizeAllowedDomains(
   return domains;
 }
 
+/** No wildcard or implicit all-clients mode for unbound OAuth tokens. */
+function normalizeOAuthClientIds(value: readonly string[] | undefined): ReadonlySet<string> {
+  if (value === undefined) return new Set();
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "clerkAuth: `allowedOAuthClientIds` must be an array of OAuth client IDs. " +
+        "Omit it or use [] to require resource-bound OAuth tokens.",
+    );
+  }
+  for (const id of value) {
+    if (typeof id !== "string" || !/^[\x21-\x7e]+$/.test(id) || id === "*") {
+      throw new Error(
+        "clerkAuth: `allowedOAuthClientIds` entries must be nonempty, " +
+          "non-wildcard client IDs without whitespace.",
+      );
+    }
+  }
+  return new Set(value);
+}
+
+/** Only verified claims reach this comparison; resource URLs match exactly. */
+function oauthBindingRejection(
+  claims: Record<string, unknown>,
+  resource: string,
+  clientId: string,
+  allowedClientIds: ReadonlySet<string>,
+): "oauth_client_not_allowed" | "oauth_binding_mismatch" | null {
+  const bindings = ["aud", "resource"].filter((key) =>
+    Object.prototype.hasOwnProperty.call(claims, key),
+  );
+  if (bindings.length === 0) {
+    return allowedClientIds.has(clientId) ? null : "oauth_client_not_allowed";
+  }
+  const matches = bindings.every((key) => {
+    const value = claims[key];
+    const audiences = Array.isArray(value) ? value : [value];
+    return (
+      audiences.length > 0 &&
+      audiences.every((audience) => typeof audience === "string" && audience.length > 0) &&
+      audiences.includes(resource)
+    );
+  });
+  return matches ? null : "oauth_binding_mismatch";
+}
+
+/**
+ * Clerk 3.12's OAuth deserializer drops `aud`. Read the same verification
+ * endpoint directly after SDK authentication, without a shared response cache
+ * or SDK patch. Its subject/client and active verdict must still agree.
+ */
+async function opaqueOAuthClaims(
+  token: string,
+  secretKey: string,
+  userId: string | null,
+  clientId: string,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const response = await fetch("https://api.clerk.com/v1/oauth_applications/access_tokens/verify", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/json",
+      "Clerk-API-Version": "2026-05-12",
+    },
+    body: JSON.stringify({ access_token: token }),
+    redirect: "error",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+  });
+  if (!response.ok) throw new Error("Opaque OAuth verification failed");
+  const claims: unknown = await response.json();
+  if (
+    !claims || typeof claims !== "object" || Array.isArray(claims) ||
+    !("object" in claims) || claims.object !== "clerk_idp_oauth_access_token" ||
+    !("subject" in claims) || claims.subject !== userId ||
+    !("client_id" in claims) || claims.client_id !== clientId ||
+    !("revoked" in claims) || claims.revoked !== false ||
+    !("expired" in claims) || claims.expired !== false
+  ) {
+    throw new Error("Opaque OAuth verification response invalid");
+  }
+  return claims as Record<string, unknown>;
+}
+
 /**
  * Bounded, escaped form of the denied domain for the operator log — the same
  * treatment server logs give other caller-controlled values. An email domain is
@@ -297,6 +382,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     publishableKey: opts.publishableKey,
   });
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
+  const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
   const activityLabelCache = new Map<
@@ -549,61 +635,62 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       const tokenPresent = Boolean(request.headers.get("authorization"));
       let userId: string | undefined;
       try {
+        const pathname = new URL(request.url).pathname;
+        const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
         const state = await clerk.authenticateRequest(request, {
-          // MCP clients use Clerk OAuth access tokens; the browser operator UI
-          // uses the signed-in operator's short-lived Clerk session token.
-          // authorizedParties must NOT be passed here: OAuth access tokens may
-          // be JWTs without an azp claim, and Clerk rejects azp=undefined when
-          // that option is set. The sibling-subdomain pin it provided is
-          // enforced below, only for session tokens that actually carry azp.
-          acceptsToken: ["oauth_token", "session_token"],
+          acceptsToken: isMcp ? "oauth_token" : "session_token",
         });
         const auth = state.toAuth();
         if (!auth?.isAuthenticated) {
-          // Reason (not the token) in the logs: bearer rejections are
-          // otherwise indistinguishable 401s in `wrangler tail`.
-          const detail = state as { reason?: string; message?: string };
-          console.warn(
-            `[connecta] clerk rejected request: status=${state.status}` +
-              ` reason=${detail.reason ?? "?"} message=${detail.message ?? ""}` +
-              ` tokenShape=${tokenShape(request)}`,
-          );
+          console.warn("[connecta] clerk rejected request: reason=authentication_failed");
           return {
             ok: false,
             response: unauthorized(baseUrl, tokenPresent, request),
           };
         }
-        // Session JWTs carry `azp` (the origin they were minted for); pin it
-        // to this connecta deployment so a sibling subdomain's cookie/token
-        // cannot be replayed here. OAuth access tokens may have no azp.
-        const typed = auth as {
-          tokenType?: string;
-          sessionClaims?: { azp?: string } | null;
-          userId?: string | null;
-        };
-        if (typed.tokenType === "session_token") {
-          const azp = typed.sessionClaims?.azp;
+        if (isMcp) {
+          const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
+          if (auth.tokenType !== "oauth_token") {
+            console.warn("[connecta] clerk rejected request: reason=token_type_mismatch");
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+          }
+          const token = await auth.getToken();
+          let claims: Record<string, unknown>;
+          if (token.startsWith("oat_")) {
+            try {
+              claims = await opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, request.signal);
+            } catch {
+              console.warn("[connecta] clerk rejected request: reason=oauth_verification_failed");
+              return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+            }
+          } else {
+            claims = decodeJwt(token).payload as Record<string, unknown>;
+          }
+          const reason = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
+          if (reason) {
+            console.warn(`[connecta] clerk rejected request: reason=${reason}`);
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+          }
+        } else {
+          if (auth.tokenType !== "session_token") {
+            console.warn("[connecta] clerk rejected request: reason=token_type_mismatch");
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+          }
+          // Browser session origins retain their existing deployment pin.
+          const azp = auth.sessionClaims?.azp;
           const origin = new URL(resolveBase(baseUrl)).origin;
           if (azp && azp !== origin) {
-            console.warn(
-              `[connecta] session token azp mismatch: azp=${azp} expected=${origin}`,
-            );
-            return {
-              ok: false,
-              response: unauthorized(baseUrl, tokenPresent, request),
-            };
+            console.warn("[connecta] clerk rejected request: reason=session_origin_mismatch");
+            return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
         }
-        userId = typed.userId ?? undefined;
-      } catch (error) {
-        console.warn(
-          `[connecta] clerk authenticateRequest threw: ${
-            error instanceof Error ? error.message : String(error)
-          } tokenShape=${tokenShape(request)}`,
-        );
+        userId = auth.userId ?? undefined;
+      } catch {
+        console.warn("[connecta] clerk rejected request: reason=authentication_failed");
         return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
       if (!userId) {
+        console.warn("[connecta] clerk rejected request: reason=user_missing");
         return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
       if (!(await checkGate(userId))) {

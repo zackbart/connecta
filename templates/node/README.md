@@ -81,9 +81,27 @@ npm install @clerk/backend
 
 Set `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, enable the corresponding
 `clerkAuth` import and auth entry in `src/index.ts`, and set `PUBLIC_URL`.
-Enable Dynamic Client Registration on the Clerk instance if MCP clients should
-sign in with OAuth. Connecta no longer issues named client access tokens; keep
-the configured bearer only for clients that need it.
+Enable `aud_claim_enabled: true` in Clerk's instance OAuth application settings
+(`PATCH /v1/instance/oauth_application_settings` in Clerk's Backend API), then
+read the setting back. Both JWT and opaque OAuth tokens are supported.
+Leave `allowedOAuthClientIds` omitted or `[]` to require bound tokens.
+
+Connecta's protected-resource metadata advertises the exact public `/mcp` or
+`/mcp/<pool>` URL as `resource` and Clerk as the authorization server. MCP
+hosts use that URL in their standard OAuth `resource` parameter. Enable the
+Clerk registration methods your hosts need, including DCR or CIMD. Reconnect
+after enabling audience issuance and confirm the new token's `aud` matches
+the metadata URL, MCP initialization succeeds, and refresh retains the same
+audience. Clerk's raw verification response exposes `aud` for opaque tokens.
+
+An explicit `allowedOAuthClientIds` list is only a fallback for unbound tokens
+from clients dedicated to this deployment. It never overrides a mismatched
+audience. New DCR registrations need new entries, so prefer audience binding
+for standard host onboarding. Clerk session tokens work only on operator
+routes. [Inbound auth](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#clerk-oauth-tokens-and-operator-sessions)
+explains configuration, verification, and fixed rejection reason codes.
+Machine clients can use connecta-issued `cta_` tokens through the optional
+`accessTokens` module.
 
 Set the code-owned identity resolvers deliberately. `connectorAccess` governs
 use; `credentialAdministration` permits shared-auth changes, and

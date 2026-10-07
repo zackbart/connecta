@@ -416,6 +416,13 @@ before.
 ### Changed
 
 - Contributors: CI runs Chromium only for relevant PR paths and always on `main` and publish, with a versioned browser cache and bounded installation retries; local `check` still runs the full suite (#705).
+- Validate Clerk OAuth audiences on `/mcp` and pool endpoints for both JWT
+  and opaque tokens. Enable Clerk's `aud_claim_enabled` setting and request the
+  endpoint's canonical URL as `resource`. Omitted or empty `allowedOAuthClientIds`
+  requires bound tokens; an explicit list admits unbound tokens from dedicated
+  clients only. Clerk browser session tokens authenticate operator routes only.
+  Rejections log fixed reason codes, and the MCP `401` metadata challenge is
+  unchanged.
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server
