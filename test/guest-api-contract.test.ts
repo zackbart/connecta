@@ -1,6 +1,6 @@
 // The guest API contract of documentation/code-mode.md: the clauses connecta
 // enforces above any executor, plus the Dynamic Worker arm of the shared case
-// table. The QuickJS arm lives in test/guest-api-contract-quickjs.test.ts.
+// table. The QuickJS arm lives in test/guest-api-contract-quickjs.node.test.ts.
 //
 // The Workers arm is real, not simulated: the workers vitest project binds a
 // Miniflare Worker Loader, so `@cloudflare/codemode`'s DynamicWorkerExecutor

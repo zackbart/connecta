@@ -31,7 +31,7 @@ export function executedTitles(root: string, modules: ReadonlyArray<TestModule>)
 export function invariantProblems(ids: readonly string[], titles: readonly TestTitle[]): string[] {
   const problems: string[] = [];
   for (const id of ids) {
-    if (!titles.some(({ file, kind, title, state }) => file !== "test/invariants.test.ts" &&
+    if (!titles.some(({ file, kind, title, state }) => file !== "test/invariants.node.test.ts" &&
       kind === "test" && state === "passed" &&
       [...title.matchAll(/\bINV-\d+\b/g)].some(([citation]) => citation === id))) {
       problems.push(`${id} has no passing enforcing test`);

@@ -6,7 +6,7 @@
  * optional peer, an install step, and an import that never belongs in the root
  * graph. Cloudflare's v4 API is authenticated `fetch` over a uniform
  * `{ success, errors, messages, result, result_info }` envelope, so Web APIs
- * alone keep this provider Workers-clean. `test/package-surface.test.ts` pins
+ * alone keep this provider Workers-clean. `test/package-surface.node.test.ts` pins
  * it: no `cloudflare` package in any dependency field, every import relative.
  */
 import { apiConnector as api, defined, type ApiTool } from "../connectors/api-connector.js";

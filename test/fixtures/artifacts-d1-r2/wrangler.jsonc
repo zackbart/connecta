@@ -1,4 +1,4 @@
-// Local-only fixture for test/artifact-store-d1.test.ts. getPlatformProxy
+// Local-only fixture for test/artifact-store-d1.node.test.ts. getPlatformProxy
 // reads these bindings and serves them from an in-memory local D1 and R2;
 // nothing here names a real database or bucket, or deploys anywhere.
 {
