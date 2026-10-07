@@ -994,7 +994,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             type: "integer",
             minimum: 0,
             maximum: MAX_CHARS,
-            description: `Characters of text kept across all rendered tabs, 0 to ${MAX_CHARS}; defaults to ${DEFAULT_MAX_CHARS}. Connecta's cap. Longer text ends with a truncation marker.`,
+            description: `Characters of text kept across all rendered tabs, 0 to ${MAX_CHARS}; defaults to ${DEFAULT_MAX_CHARS}. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, get_result to page): execute_code carries at most 256 KiB per result.`,
           },
           withIndexes: {
             type: "boolean",
@@ -1448,17 +1448,24 @@ not exist or is not shared with this person; Google does not say which.
   that \`batch_update_document\` requests may need. It is large: pass
   \`tabId\`, and call it directly rather than inside \`execute_code\`,
   which carries at most 256 KiB per result.
+- The same holds for a \`maxChars\` above the default: a long rendering
+  can pass here and still be refused inside \`execute_code\`, even when the
+  program would only measure it. Read it with a direct \`call_tool\`, paged
+  with \`get_result\`, or read one tab at a time.
 
 ## Editing
 
-- \`create_document\` makes a new document in My Drive's root. A failure
-  after the document exists names its id; append the text there rather than
-  creating another.
-- An edit sent with no answer back, or answered with a server error, says
-  its outcome is unknown: re-read
-  before repeating it, or repeat it with the same \`requiredRevisionId\`,
-  which Google refuses if the first attempt landed. One Google answered 2xx
-  whose reply was unreadable says it was applied: do not repeat it.
+- \`create_document\` makes a new document in My Drive's root. Never create
+  again after a failure that may have left one behind; the message says
+  which. When the document exists but its starting text failed, the message
+  names its id: append the text with \`append_text\` straight away only when
+  Google refused it; otherwise read the document first and append only what
+  is missing.
+- An edit sent with no answer back, answered with a server error, or
+  redirected says its outcome is unknown: re-read before repeating it, or
+  repeat it with the same \`requiredRevisionId\`, which Google refuses if the
+  first attempt landed. One Google answered 2xx whose reply was unreadable
+  says it was applied: do not repeat it.
 - \`append_text\` joins the last paragraph; begin with \`\\n\` for a new one.
 - \`replace_all_text\` changes every match at once; read first and make
   \`find\` specific.

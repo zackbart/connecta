@@ -889,33 +889,34 @@ describe("whose documents", () => {
   });
 });
 
-describe("every output is declared (H8, H9)", () => {
-  /** Keys a value emits that its schema does not declare, at every depth. */
-  function undeclared(schema: any, value: unknown, at: string, found: string[]): void {
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => undeclared(schema?.items, item, `${at}[${index}]`, found));
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-    for (const [key, entry] of Object.entries(value)) {
-      const declared = schema?.properties?.[key];
-      if (!declared) {
-        // An opaque object (a raw batchUpdate reply) declares no properties on purpose.
-        if (schema?.properties) found.push(`${at}.${key}`);
-        continue;
-      }
-      undeclared(declared, entry, `${at}.${key}`, found);
-    }
+/** Keys a value emits that its schema does not declare, at every depth. */
+function undeclared(schema: any, value: unknown, at: string, found: string[]): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => undeclared(schema?.items, item, `${at}[${index}]`, found));
+    return;
   }
+  if (!value || typeof value !== "object") return;
+  for (const [key, entry] of Object.entries(value)) {
+    const declared = schema?.properties?.[key];
+    if (!declared) {
+      // An opaque object (a raw batchUpdate reply) declares no properties on purpose.
+      if (schema?.properties) found.push(`${at}.${key}`);
+      continue;
+    }
+    undeclared(declared, entry, `${at}.${key}`, found);
+  }
+}
 
-  async function check(connector: Connector, name: string, result: unknown): Promise<void> {
-    const tool = (await connector.listTools(context())).find((candidate) => candidate.name === name)!;
-    const found: string[] = [];
-    undeclared(tool.outputSchema, result, name, found);
-    expect(found).toEqual([]);
-    const verdict = new Validator(tool.outputSchema as any, "2020-12", false).validate(result);
-    expect(verdict.errors, name).toEqual([]);
-  }
+async function check(connector: Connector, name: string, result: unknown): Promise<void> {
+  const tool = (await connector.listTools(context())).find((candidate) => candidate.name === name)!;
+  const found: string[] = [];
+  undeclared(tool.outputSchema, result, name, found);
+  expect(found).toEqual([]);
+  const verdict = new Validator(tool.outputSchema as any, "2020-12", false).validate(result);
+  expect(verdict.errors, name).toEqual([]);
+}
+
+describe("every output is declared (H8, H9)", () => {
 
   it("declares every key each tool emits, on realistic and on empty resources", async () => {
     const connector = connection();
@@ -1269,13 +1270,16 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
                 tabs: [{ tabProperties: { tabId: "t 0 has spaces", title: "題".repeat(5_000), parentTabId: "p".repeat(200) }, documentTab: {} }],
               },
             };
+    const connector = connection();
     for (const [name, values] of Object.entries({ ...EDITS, create_document: { title: "Minutes", text: "x" } })) {
-      const result = await call(connection(), name, values);
+      const result = await call(connector, name, values);
       expect(bytes(result), name).toBeLessThan(BUDGET);
       expect(result.revisionId, name).toBeUndefined();
       expect(result.dropped, name).toEqual(["revisionId"]);
+      await check(connector, name, result);
     }
-    const read = await call(connection(), "get_document", { documentId: "d" });
+    const read = await call(connector, "get_document", { documentId: "d" });
+    await check(connector, "get_document", read);
     expect(bytes(read)).toBeLessThan(BUDGET);
     expect(read.revisionId).toBeUndefined();
     expect(read.dropped).toEqual(["tabs[0].tabId", "tabs[0].parentTabId", "revisionId"]);
@@ -1317,6 +1321,16 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     // The sweep crossed the boundaries it was built for.
     expect(shown.has(1)).toBe(true);
     expect([...shown].some((count) => count > 1)).toBe(true);
+  });
+
+  it("routes large reads and uncertain creates the same way in schema, guide, and messages", async () => {
+    const connector = connection();
+    const tool = (await connector.listTools(context())).find((candidate) => candidate.name === "get_document")!;
+    expect((tool.inputSchema as any).properties.maxChars.description).toContain("call directly (call_tool, get_result to page)");
+    const content = guide(connector).content;
+    expect(content).toContain("Read it with a direct `call_tool`, paged");
+    expect(content).toContain("straight away only when\n  Google refused it; otherwise read the document first");
+    expect(content).not.toContain("append the text there rather than");
   });
 
   it("refuses a default read past the bridge budget, and lets an explicit one through", async () => {
