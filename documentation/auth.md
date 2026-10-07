@@ -423,6 +423,15 @@ and the provider hooks it calls next finish the job. The pinned SDK behavior is
 spelled out beside `refreshResponseOutcome`. An explicit authorization during
 an outage still falls through to consent, since that is what it asked for.
 
+That answer, and a failed code exchange's, is rebuilt from the OAuth `error`
+code alone, with fixed text beside it. The SDK writes a failure's description
+to the console, below any logger the deployment configured, and a token
+endpoint that echoes the form it refused would otherwise put the refresh token,
+client secret, or authorization code there. A refresh the server honored but
+whose tokens could not be stored is neither verdict: it is a retryable
+`unavailable` in fixed text, the stored grant untouched, because a store's own
+error can quote the value it refused.
+
 ## URLs a downstream advertises
 
 A `remoteMcp()` OAuth connector learns most of the URLs it fetches from the
@@ -456,6 +465,93 @@ folded `2130706433` and `0x7f.1` into `127.0.0.1`, and it never resolves a
 name, because the Workers-safe core has no DNS. A public name that resolves to
 a private address, or rebinds to one after the check, is out of scope; a host
 that must stop that runs connecta behind an egress policy that does.
+
+The authorization server a downstream names decides where consent goes,
+never where an existing grant goes. Tokens and a registered client are stored
+bound to the issuer that granted them. While discovery is cached, a refresh
+returns to that issuer whatever the downstream now advertises. When fresh
+discovery names a different one, that flow is handed nothing the grant holds:
+the issuer-bound reads withhold the client and tokens from the server now
+named, and the SDK registers and consents there within the same epoch. The
+grant itself is not retired inside that flow; the mixed grant it leaves — the
+old server's tokens beside the new server's client or discovery — is retired
+when the next flow begins, before anything is sent (see
+[deciding a grant at flow entry](#deciding-a-grant-at-flow-entry)). That is the
+shape of
+[GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h),
+which the SDK has also refused on its own since client 2.2.0. A new consent still goes wherever
+the downstream points: the human who reads the authorization URL before
+approving it is that check, as the SDK says of its own.
+
+A grant written before issuer binding shipped in v0.9.0 carries no stamp, and
+is the one case the SDK's check cannot cover: it trusts whatever stamp the
+provider hands it. Nothing can stamp it after the fact. Releases before v0.9.0
+stored nothing that names the server a grant came from, and no discovery at
+all — discovery was first persisted in v0.22.3. A discovery record beside such
+a grant proves nothing either: a flow saves discovery before it reads
+credentials, so a downstream's say-so can sit there unbound.
+
+### Deciding a grant at flow entry
+
+Every OAuth run happens inside the SDK — a 401's refresh or consent, a
+step-up, a code exchange — and the SDK calls the provider's hooks in an order
+connecta does not choose: it takes the client before the tokens, builds its
+consent URL from that copy, and writes discovery before either. A grant
+retired from inside those hooks left the flow holding a client its new epoch
+did not, or, when another reset had overtaken it, writing into that reset's
+epoch. So nothing is retired from inside the SDK. The grant is decided once,
+when a flow begins — each `remoteMcp()` connect attempt, inside which every
+401 and step-up runs, and each `api()` call or start — before the SDK is handed
+the provider:
+
+- A grant is kept when every credential in it carries a stamp, the stamps
+  agree, and they name the server the epoch's discovery names, if it kept one.
+  With discovery cached the SDK uses it, so the flow cannot meet another
+  server.
+- Anything else is retired behind a new epoch before anything it holds is
+  sent: a grant from before issuer binding, stamps that disagree with each
+  other, or stamps that disagree with the epoch's discovery.
+- A stamped grant whose epoch kept no discovery (one from before v0.22.3 not
+  refreshed since, or a forced restart's carried client) is kept; the SDK
+  discovers afresh. If it finds another server, the issuer-bound reads hand
+  that server nothing, and the SDK registers and consents within the same
+  epoch. Whatever mixed grant that leaves is retired by the next flow's entry.
+
+The retirement itself acts only on the epoch the decision inspected: it is
+checked before anything is touched, and the new epoch is activated with a
+compare-and-set where the store offers one. If another reset has replaced that
+epoch — a restart that has since completed its own consent — the flow is
+abandoned with nothing touched rather than retiring a grant it never looked
+at. That guarantee holds only with the compare-and-set. An eventually
+consistent store such as Workers KV has none, so the retirement rechecks just
+before its write, which narrows the race without closing it — and KV's stale
+reads, which can last a minute or more, widen it. A retirement that passes its
+recheck can still land after a restart completes, replacing that restart's
+epoch: its grant becomes unreachable, costing one more consent, and its
+records are orphaned, so a later Disconnect leaves them stored. Nothing is
+sent anywhere by it; the orphaned records are tracked in
+[#697](https://github.com/zackbart/connecta/issues/697).
+
+The flow is then bound to the epoch that decision leaves: every read and
+write it makes names that epoch and never follows the live one. A write a
+reset overtakes after its epoch check is cleaned up and reported as the
+failure it is, so a start never reads back another flow's consent URL and a
+callback never reports a grant it could not store; a start reads its consent
+URL from the epoch its own connect attempt began in. A callback is
+bound to the epoch its consent was written in, which its state check
+captured, and decides nothing about the grant there. A flow that
+finds its epoch replaced by a later reset fails with a retryable `unavailable`
+— "authorization changed while this request was in flight; try again" —
+retiring nothing and returning no consent URL. A callback whose epoch was
+already replaced when it began fails before its code is redeemed. One replaced
+while the callback is reading its verifier can still redeem the code at the
+original, trusted token endpoint before the failure is noticed at the token
+write; fencing the exchange itself is
+[#697](https://github.com/zackbart/connecta/issues/697).
+
+So a grant from before v0.9.0 is retired on first use, and the connection is
+authorized once more. v0.9.0 through v0.28.1 bound such a grant to whatever its
+first issuer-aware read discovered, and a grant they bound keeps that binding.
 
 ## Management permissions
 

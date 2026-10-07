@@ -324,6 +324,11 @@ class StaticOAuthProvider extends KvOAuthProvider {
     // Configuration is the discovery; there is nothing to remember.
   }
 
+  /** Configuration names the server a grant here belongs to. */
+  protected override async recordedIssuer(): Promise<string> {
+    return this.settings.identity;
+  }
+
   /** No RFC 8707 `resource` parameter: a plain REST API names no resource. */
   async validateResourceURL(): Promise<URL | undefined> {
     return undefined;
@@ -481,13 +486,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     try {
       if (signal?.aborted) throw signal.reason;
       const provider = providerFor(ctx);
-      const generation = await provider.generation();
+      // Decide the grant before anything reads it, and bind this call's reads
+      // and writes to the resulting epoch: a reset landing meanwhile fails
+      // the call rather than handing it another flow's grant.
+      const generation = await provider.beginFlow();
       if (provider.isOperatorDisconnectedGeneration(generation)) {
         throw new ConnectorCallError("auth_required", disconnectedMessage);
       }
-      // A refresh this call triggers writes into the epoch it started under,
-      // so a reset landing meanwhile leaves its rotation unreadable.
-      provider.captureGeneration(generation);
       const tokens = await provider.tokens(issuerContext);
       if (!tokens) throw authRequiredError();
       const first = await send(tokens.access_token);
@@ -577,15 +582,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }
     if (ctx.signal?.aborted) throw ctx.signal.reason;
     try {
-      let generation = await provider.generation();
       // Born modern. The legacy generation exists so a `remoteMcp()` grant
       // from before epochs survives an upgrade; this connector has no such
       // past, and a flow started there writes an untimed pending URL that a
       // second Connect could not hand back.
-      if (generation === LEGACY_GENERATION) generation = await provider.bumpGeneration();
-      provider.captureGeneration(generation);
-      // An issuer-bound read: a grant from a since-repointed token endpoint
-      // is fenced here, before it could be reported healthy.
+      if ((await provider.generation()) === LEGACY_GENERATION) await provider.bumpGeneration();
+      // A grant from a since-repointed token endpoint is retired here, before
+      // it could be reported healthy.
+      await provider.beginFlow();
       if (await provider.tokens(issuerContext)) {
         return { state: "ok", message: "Already authorized — connection is healthy." };
       }
@@ -632,6 +636,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     const authorizationCode = callbackParams?.get("code") ?? code;
     const iss = callbackParams?.get("iss") ?? undefined;
     provider.exchanging(authorizationCode);
+    await provider.bindFlow();
     const result = await runAuth(provider, ctx, {
       authorizationCode,
       ...(iss !== undefined ? { iss } : {}),

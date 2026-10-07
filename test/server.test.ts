@@ -398,6 +398,143 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
+  it("leaves the inbound body bound to the host on both protocol legs", async () => {
+    // @modelcontextprotocol/server 2.1.0 started refusing bodies over 4 MiB
+    // with its own 413. Connecta's bound belongs to the host — `listen()`'s
+    // `maxBodyBytes`, the Workers platform — so a body the host admitted must
+    // reach the meta-tools. JSON whitespace pads past the SDK default without
+    // changing what the request says.
+    const padding = " ".repeat(5 * 1024 * 1024);
+    const c = makeDeployment();
+
+    const legacy = await c.fetch(new Request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "skills", arguments: {} },
+      })}${padding}`,
+    }));
+    expect(legacy.status).toBe(200);
+    const legacyBody = await readJsonRpc(legacy);
+    expect(legacyBody.error, JSON.stringify(legacyBody)).toBeUndefined();
+    expect(legacyBody.result.isError).toBeFalsy();
+
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${BASE}/mcp`),
+      {
+        fetch: (async (url: string | URL, init?: RequestInit) => {
+          const padded =
+            typeof init?.body === "string" && init.body.includes('"tools/call"')
+              ? { ...init, body: `${init.body}${padding}` }
+              : init;
+          return c.fetch(new Request(url, padded));
+        }) as typeof fetch,
+        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+      },
+    );
+    const client = new Client(
+      { name: "modern-probe", version: "0.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(transport);
+    try {
+      expect(client.getProtocolEra()).toBe("modern");
+      const skills = (await client.callTool({
+        name: "skills",
+        arguments: {},
+      })) as { isError?: boolean; content: { type: string }[] };
+      expect(skills.isError).toBeFalsy();
+      expect(skills.content[0]?.type).toBe("text");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("serves a 2025-era request that omits MCP-Protocol-Version", async () => {
+    // Clients before 2025-06-18 never sent the header, and the spec has a
+    // server that still serves them assume 2025-03-26. A bare JSON-RPC body
+    // carries no 2026-07-28 claim, so it is legacy traffic and is served.
+    const c = makeDeployment();
+    const request = mcpRpc("tools/call", { name: "skills", arguments: {} }, { token: TOKEN });
+    expect(request.headers.has("mcp-protocol-version")).toBe(false);
+    const response = await c.fetch(request);
+    expect(response.status).toBe(200);
+    const body = await readJsonRpc(response);
+    expect(body.error, JSON.stringify(body)).toBeUndefined();
+    expect(body.result.isError).toBeFalsy();
+  });
+
+  it("refuses a 2026-07-28 request that drops MCP-Protocol-Version with HeaderMismatch", async () => {
+    // 2026-07-28 requires the header on every POST and has the server reject a
+    // request missing it, so an intermediary routing on the header and the
+    // server executing the body cannot disagree. @modelcontextprotocol/server
+    // 2.0.0 served such a request anyway; 2.1.0 enforces the rule. A client
+    // the SDK builds always sends the header — here a proxy strips it.
+    const c = makeDeployment();
+    let refused: { status: number; body: any } | undefined;
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${BASE}/mcp`),
+      {
+        fetch: (async (url: string | URL, init?: RequestInit) => {
+          const isCall = typeof init?.body === "string" && init.body.includes('"tools/call"');
+          if (!isCall) return c.fetch(new Request(url, init));
+          const headers = new Headers(init?.headers);
+          expect(headers.get("mcp-protocol-version")).toBe("2026-07-28");
+          headers.delete("mcp-protocol-version");
+          const response = await c.fetch(new Request(url, { ...init, headers }));
+          refused = { status: response.status, body: await response.clone().json() };
+          return response;
+        }) as typeof fetch,
+        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+      },
+    );
+    const client = new Client(
+      { name: "modern-probe", version: "0.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(transport);
+    try {
+      await expect(client.callTool({ name: "skills", arguments: {} })).rejects.toThrow();
+      expect(refused?.status).toBe(400);
+      expect(refused?.body.error.code).toBe(-32020);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("accepts a legacy batch of up to 100 messages and refuses a longer one", async () => {
+    // JSON-RPC batching left the protocol in 2025-06-18; only a 2025-03-26
+    // client may send one. @modelcontextprotocol/server 2.1.0 caps a batch at
+    // 100 messages, a constant with no option, and answers a longer one 400.
+    const c = makeDeployment();
+    const batch = (size: number) =>
+      c.fetch(new Request(`${BASE}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${TOKEN}`,
+        },
+        body: JSON.stringify(
+          Array.from({ length: size }, () => ({
+            jsonrpc: "2.0",
+            method: "notifications/initialized",
+          })),
+        ),
+      }));
+    expect((await batch(100)).status).toBe(202);
+    const refused = await batch(101);
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: { code: number } }).error.code).toBe(-32600);
+  });
+
   it("lists and fetches the usage skill", async () => {
     const c = makeDeployment();
     const listed = await mcpRpc(

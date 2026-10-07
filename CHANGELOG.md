@@ -2,6 +2,156 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This change moves both MCP edges from 2.0.0 to 2.3.1, pinned exactly and in
+lockstep, because client and server each pin the same exact
+`@modelcontextprotocol/core` and moving one alone would install two.
+`@modelcontextprotocol/client` 2.0.0 is affected by
+[GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h), an
+OAuth client that could send stored credentials to an authorization server the
+MCP server chose; `npm run check:security` failed on it. Connecta's issuer
+binding, which shipped in v0.9.0, kept every grant written since then away
+from a server the downstream switches to, but not a grant from before it: such
+a grant carries no issuer, and connecta bound it on first read to whichever
+server that read's discovery named — the downstream's choice when discovery
+was not cached. Nothing a release before v0.9.0 stored names the issuer — they
+kept no discovery at all, which was first persisted in v0.22.3 — and a
+discovery record a later release saved may hold a downstream's say-so, so no
+record can vouch for such a grant. Every grant is now decided once, when a
+flow begins and before the SDK runs, and such a grant is retired there with
+nothing it holds sent anywhere. **Every `remoteMcp()` connection authorized on
+v0.8.1 or earlier and not used since is authorized once more:** its first use
+answers `auth_required`, which Connect or `authorize_connector` repairs. A
+grant v0.9.0 through v0.28.1 bound on its first issuer-aware read was bound to
+whichever issuer that read discovered, and keeps that binding; one whose
+stamps disagree with each other, or with the server its own epoch's discovery
+names, is retired the same way. Any grant that may have met an untrusted
+downstream on an earlier release should have its tokens revoked and any client
+secret rotated at the provider, as the advisory itself advises. Nothing in
+configuration changes. What else a deployment may notice: an OAuth flow that a
+concurrent restart or disconnect overtakes now fails with a retryable
+`unavailable` — "authorization changed while this request was in flight; try
+again" — rather than reading on into the newer authorization; a callback
+whose epoch was already replaced when it began fails before its code is
+redeemed (one replaced mid-callback is
+[#697](https://github.com/zackbart/connecta/issues/697)). A refresh whose rotated
+tokens cannot be stored fails as a retryable outage instead of
+`auth_required`, and `/mcp` bodies stay
+bounded by the host, not by the 4 MiB default the server SDK adopted. Two
+inbound refusals arrive with the server SDK and are kept: a client that claims
+2026-07-28 in its request body but sends no `MCP-Protocol-Version` header is
+answered `400` with `HeaderMismatch` (`-32020`), as that revision requires,
+where it was served before; and the SDK's own cap answers a JSON-RPC batch of
+more than 100 messages `400` (`-32600`) where it was accepted. Every client the
+SDK builds sends the header; a 2025-era client that sends neither the header
+nor the 2026-07-28 claim is served exactly as before (#687).
+
+### Changed
+
+- **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
+  The SDK now binds stored credentials to the issuing authorization server
+  itself, follows HTTP redirects only within an origin for both transports and
+  OAuth requests, and propagates a `saveTokens` failure after a successful
+  refresh. Connecta's redirect handling already refused anything else, so no
+  redirect a downstream sends is treated differently. The server SDK's new
+  4 MiB request-body default is overridden on both protocol legs, so
+  `listen()`'s `maxBodyBytes` (10 MiB by default) and the Workers platform
+  limit remain the bound they were. The SDK now owns the closed-transport race
+  in the legacy handshake, so connecta's workaround for
+  [typescript-sdk#2864](https://github.com/modelcontextprotocol/typescript-sdk/issues/2864)
+  is gone; the handshake teardown sweeps prove no rejection escapes under
+  workerd without it. Bundles grow by about 5.7 KB gzip at the root and the
+  Worker example and about 2.9 KB for each hosted-MCP provider, within every cap.
+- **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
+  transport requires the header on every POST and has the server reject a
+  request without it, so an intermediary routing on the header and the server
+  executing the body cannot disagree; server 2.0.0 served such a request
+  anyway. A client breaks here only if it puts the
+  `io.modelcontextprotocol/protocolVersion` claim in the request's `_meta`,
+  sends `Mcp-Method`, and omits `MCP-Protocol-Version` — a hand-rolled modern
+  client, or a proxy that strips the header. It must send the header with the
+  same value as the claim. Defaulting the header for it is not open to
+  connecta: the spec's allowance to assume `2025-03-26` covers only clients
+  older than 2025-06-18, which send no 2026-07-28 claim and are still served
+  on the legacy leg.
+- **A JSON-RPC batch holds at most 100 messages.** The cap is the server
+  SDK's, not the protocol's: batching left the protocol in 2025-06-18, which
+  sets no size for the 2025-03-26 clients that may still send one. Server 2.1.0
+  answers a longer batch `400` with `-32600` and dispatches none of it; the cap
+  is a constant with no option, and connecta keeps it rather than reimplement
+  the SDK's body handling. A client that batches more must split the batch.
+
+### Fixed
+
+- **A grant from before issuer binding is retired, not bound to whoever is
+  named.** A token set or client registration v0.8.1 or earlier wrote carries
+  no stamp, and connecta bound it on first read to the issuer that read's
+  discovery found. With discovery not cached, that was the server a
+  compromised downstream named, and the refresh token and client secret went
+  to its token endpoint. No stored record proves where such a grant came from:
+  v0.8.1 kept no discovery at all, and from v0.22.3, which first persisted
+  discovery, a flow saves it before it reads credentials, so a record beside an
+  unbound grant may be the downstream's. Such a grant is now retired before
+  anything it holds is sent. The SDK's own SEP-2352 check does not cover this
+  state, as its advisory says: it trusts whatever stamp the provider hands
+  back.
+- **A grant is decided once, before the SDK runs, and a flow keeps to its own
+  epoch.** Retiring a grant from inside the SDK's provider hooks could not be
+  made safe: the SDK takes the client before the tokens and builds its consent
+  URL from that copy, and writes discovery before either, so a grant retired
+  mid-flow left a consent URL naming a client the new epoch did not hold, or a
+  callback with no discovery to check its server against; and a retirement a
+  concurrent reset had overtaken followed the live generation into that
+  reset's epoch, overwriting its pending consent or retiring the grant it had
+  just completed. Each `remoteMcp()` connect attempt — inside which every 401
+  and step-up runs — and each `api()` call or start now reads the grant once
+  and retires it there if any credential is unstamped, the stamps disagree, or
+  they disagree with the server the epoch's discovery names. The flow is then
+  bound to the resulting epoch: its reads and writes never follow the live
+  generation, and a flow that finds its epoch overtaken fails cleanly,
+  retires nothing, and returns no consent URL. The retirement acts only on the
+  epoch the decision inspected, activating its replacement with a
+  compare-and-set where the store has one, so there a stale decision never
+  retires a grant a later restart completed. On a store without one, such as
+  Workers KV, a recheck just before the write narrows that race without
+  closing it: a stale retirement can still replace a restart's completed
+  epoch, costing that grant one more consent and orphaning its records, which
+  a later Disconnect leaves stored. Nothing is sent anywhere by it; see
+  [#697](https://github.com/zackbart/connecta/issues/697). A write a reset overtakes after its epoch
+  check is cleaned up and reported as failed, so a start never hands out
+  another flow's consent URL and a callback never reports a grant it could not
+  store. A read for a server the
+  stamps do not name hands it nothing and changes nothing; the SDK registers
+  and consents within the same epoch, and the next flow's entry retires any
+  mixed grant that leaves.
+- **No token endpoint's text reaches the host's console.** From client 2.1.0
+  the SDK writes a failed refresh or code exchange's `error_description`, or
+  the raw body of a non-OAuth answer, to `console.warn`, below any logger a
+  deployment configures. A token endpoint that echoes the form it refused
+  would put the refresh token, client secret, or authorization code there.
+  Every token-endpoint failure now reaches the SDK rebuilt: its OAuth `error`
+  code, a fixed description, the status, and `Retry-After`. That includes a
+  2xx code-exchange answer that is no token response the SDK accepts, such as
+  one whose `error` is `null`, a number, or an object, which the SDK otherwise
+  quotes whole in the error the connector rejects with. A code outside the
+  registered set becomes `invalid_request`, and a body without a string code
+  `server_error`, the classes the SDK already gave them, so refresh verdicts and
+  callback outcomes are unchanged. A bound grant is also handed back stamped,
+  so the SDK no longer warns about a migrated one on every read.
+- **A rotation that cannot be stored is a retryable outage, not consent.**
+  When the authorization server honored a refresh but its new tokens could not
+  be written, the SDK used to swallow the failure and start authorization, so
+  a passive call answered `auth_required` for a grant that was still good. It
+  now fails `unavailable` and retryable, writes no consent URL, and leaves the
+  stored grant as it was. Any failed credential write — tokens, client
+  registration, PKCE verifier — reports fixed text with no cause attached,
+  because a store's own error can quote the value it refused.
+- **A token endpoint cannot stamp its own issuer.** A refresh answer carrying
+  `issuer` had that field kept when connecta persisted a rotation for a
+  cancelled caller with no issuer to stamp. Only the client binds a grant, so
+  the field is dropped, as the SDK drops it.
+
 ## 0.28.1 — 2026-10-05
 
 This patch adds six maintained connections for church operations and the

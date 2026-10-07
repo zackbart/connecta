@@ -1077,9 +1077,15 @@ describe("remoteMcp() redirect policy", () => {
 
   it("never sends an OAuth bearer token across an origin boundary", async () => {
     const storage = memoryStorage();
+    // A grant this release would write: stamped with the server that issued it.
     await storage.set(
       "oauth:tokens",
-      JSON.stringify({ access_token: "oauth-secret", token_type: "bearer" }),
+      JSON.stringify({
+        connectaOAuthVersion: 2,
+        generation: "legacy",
+        issuer: "https://authorization.test",
+        value: { access_token: "oauth-secret", token_type: "bearer" },
+      }),
     );
     const calls: Headers[] = [];
     vi.stubGlobal(

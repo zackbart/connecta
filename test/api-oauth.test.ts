@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { oauthValueStorageKey } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
@@ -448,7 +448,8 @@ describe("api() oauth callback exchange", () => {
   it.each([
     ["an OAuth error whose description echoes the request", "json", "invalid_grant"],
     ["a non-JSON body echoing the request", "text", "server_error"],
-    ["an unrecognized error code carrying the request", "code", undefined],
+    // A code outside the registered set reaches the SDK as the generic one.
+    ["an unrecognized error code carrying the request", "code", "invalid_request"],
   ] as const)("logs %s as fixed text and a known OAuth code, never the client secret", async (_name, shape, logged) => {
     const provider = fakeProvider();
     vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
@@ -466,6 +467,12 @@ describe("api() oauth callback exchange", () => {
       );
     });
     const warn = vi.fn();
+    // The SDK logs below any configured logger, straight to the console.
+    const consoleCalls = (["debug", "error", "info", "log", "warn"] as const).map((method) => {
+      const spy = vi.spyOn(console, method).mockImplementation(() => {});
+      onTestFinished(() => spy.mockRestore());
+      return spy;
+    });
     const connecta = createTestConnecta({
       connectors: [api("ccb", { oauth: { ...OAUTH, tokenEndpointAuthMethod: "client_secret_post" }, tools: [] })],
       storage: memoryStorage(),
@@ -488,8 +495,10 @@ describe("api() oauth callback exchange", () => {
       expect(line).not.toContain("church-secret");
       expect(line).not.toContain("client_secret");
       expect(line).not.toContain(code);
-      if (logged) expect(line).toContain(`OAuth error ${logged}`);
-      else expect(line).not.toContain("OAuth error");
+      expect(line).toContain(`OAuth error ${logged}`);
+      const written = consoleCalls.flatMap((spy) => spy.mock.calls.map((args) => args.map(String).join(" ")));
+      expect(written.join("\n")).not.toMatch(/church-secret|client_secret/);
+      expect(written.join("\n")).not.toContain(code);
     } finally {
       await connecta.close();
     }
@@ -811,7 +820,10 @@ describe("api() oauth reset and disconnect", () => {
     expect((await storage.list!("")).filter((key) => key.includes("oauth:client"))).toEqual([]);
   });
 
-  it("a PKCE-less callback from a retired flow is exchanged into an epoch no reader reads", async () => {
+  it("a PKCE-less callback from a retired flow fails without redeeming its code", async () => {
+    // The callback is bound to the epoch its consent was written in. A
+    // restart superseded it, so the exchange fails cleanly, before the code
+    // is sent anywhere, and asks to try again.
     const provider = fakeProvider();
     install(provider);
     const connector = api("ccb", { oauth: { ...OAUTH, pkce: false }, tools: [] });
@@ -822,8 +834,9 @@ describe("api() oauth reset and disconnect", () => {
     const callback = ctx();
     expect(await connector.verifyState!(first.searchParams.get("state"), callback)).toBe(true);
     await connector.startAuth!(ctx(), { force: true });
-    await connector.finishAuth!(code, callback);
-    expect(provider.tokenRequests.at(-1)!.params.get("grant_type")).toBe("authorization_code");
+    const exchanges = provider.tokenRequests.length;
+    await expect(connector.finishAuth!(code, callback)).rejects.toThrow(/authorization changed .* try again/);
+    expect(provider.tokenRequests.length).toBe(exchanges);
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
 

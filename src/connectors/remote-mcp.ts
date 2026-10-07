@@ -662,6 +662,11 @@ interface ConnectionState {
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
   /**
+   * The OAuth epoch the latest connect attempt began in. A consent URL that
+   * attempt wrote lives there, and only there.
+   */
+  attemptGeneration: string | null;
+  /**
    * Digest of the operator-managed credential this scope's client is bound to
    * — or, while a connect is still in flight, the one that attempt is using.
    * Null for every other auth shape. Set when the attempt starts rather than
@@ -927,6 +932,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authRequired: false,
         provider: null,
         connectedGeneration: null,
+        attemptGeneration: null,
         credentialDigest: null,
       };
       states.set(key, state);
@@ -1196,12 +1202,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // abandon that attempt while its transport still holds the provider;
       // the replacement must never mutate the abandoned provider's epoch.
       const provider = isOauth ? newProvider(ctx) : null;
-      const genAtStart = provider ? yield* promised(() => provider.generation()) : "";
+      // Every OAuth run of this attempt — a 401's refresh or consent, a
+      // step-up — happens inside the SDK, so the grant is decided here, before
+      // the SDK is handed the provider, and the attempt is bound to the epoch
+      // that decision leaves. Nothing is retired from inside the SDK's flow.
+      const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
       if (!owned()) return yield* Effect.fail(scopeEndedError());
+      if (provider) state.attemptGeneration = genAtStart;
       if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
         return yield* Effect.fail(operatorDisconnectedError());
       }
-      provider?.captureGeneration(genAtStart);
       // SDK v2 selects its validator by runtime export condition: AJV on
       // Node and @cfworker/json-schema under workerd. The Workers-safe path
       // no longer needs Connecta-specific wiring.
@@ -1217,19 +1227,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           inputRequired: { autoFulfill: false },
         },
       );
-      // @modelcontextprotocol/client 2.0.0 can attempt the legacy initialized
-      // notification after we close its transport. Its rejected Promise is
-      // unhandled under workerd even though connect() has a caller. This
-      // connection is already abandoned, so skip only that final handshake
-      // notification after our abort. Remove when the SDK owns this race:
-      // https://github.com/modelcontextprotocol/typescript-sdk/issues/2864
-      const notify = c.notification.bind(c);
-      c.notification = (message, options) => {
-        if (handshakeAbort.signal.aborted && message.method === "notifications/initialized") {
-          return Promise.resolve();
-        }
-        return notify(message, options);
-      };
       const t = buildTransport(ctx, provider, credentialFramed);
       if (!owned()) {
         detach(closeConnection(null, t, ctx.logger));
@@ -1631,6 +1628,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // A transport an attempt built belongs to that attempt's lease; one built
       // here for the exchange alone belongs to this call, which closes it.
       const leased = state.transport;
+      // The exchange reads and writes only the epoch its consent was written
+      // in; it decides nothing about the grant there.
+      await provider.bindFlow();
       const t = (leased ??
         buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
       try {
@@ -1695,7 +1695,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         };
       } catch (err) {
         if (state.authRequired) {
-          const authorizationUrl = await p.pendingAuthorizationUrl();
+          // The consent URL this start's attempt wrote, read from the epoch
+          // that attempt began in: one a later reset published belongs to
+          // another flow, and this start fails rather than hand it out.
+          let authorizationUrl: string | undefined;
+          try {
+            const reader = newProvider(ctx);
+            if (state.attemptGeneration !== null) {
+              reader.captureGeneration(state.attemptGeneration);
+              await reader.bindFlow();
+            }
+            authorizationUrl = await reader.pendingAuthorizationUrl();
+          } catch (readErr) {
+            return { state: "error", message: msg(readErr) };
+          }
           return {
             state: "auth_required",
             ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),

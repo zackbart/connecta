@@ -31,6 +31,16 @@ import {
   type ServerOptions,
 } from "./shared.js";
 
+/**
+ * The SDK's own bound on the body it reads. Since server 2.1.0 the SDK
+ * answers anything over 4 MiB with its own 413, which would quietly shadow
+ * the bound the host already enforces: `listen()`'s `maxBodyBytes` on Node,
+ * the platform's request limit on Workers. The host owns that decision, as it
+ * did before the SDK had an opinion, so the SDK is told to have none. Its
+ * option must be finite.
+ */
+const SDK_BODY_BOUND = { maxRequestBodySize: Number.MAX_SAFE_INTEGER };
+
 export const MCP_CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -379,8 +389,9 @@ function serveMcp(
     // Connecta's established wire contract is JSON, so retain the documented
     // user-land legacy branch with the same transport setting while the modern
     // branch uses the fetch-native handler.
-    if (!(await isLegacyRequest(request))) {
+    if (!(await isLegacyRequest(request, undefined, SDK_BODY_BOUND))) {
       return createMcpHandler(createServer, {
+        ...SDK_BODY_BOUND,
         legacy: "reject",
         onerror: (error) => opts.logger.error("[connecta] MCP handler error", error),
       }).fetch(request);
@@ -389,6 +400,7 @@ function serveMcp(
     // Fresh server + transport per legacy request, stateless and JSON-shaped.
     const server = createServer();
     const transport = new WebStandardStreamableHTTPServerTransport({
+      ...SDK_BODY_BOUND,
       enableJsonResponse: true,
     });
     await server.connect(transport);

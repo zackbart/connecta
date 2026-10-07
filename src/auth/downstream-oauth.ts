@@ -219,14 +219,29 @@ function firstRejection(
   return undefined;
 }
 
-function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
-  if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
+/**
+ * A bound credential as an issuer-aware read hands it back: carrying the
+ * issuer its envelope is bound to. Connecta binds the envelope, so a value
+ * written before binding has no stamp of its own, and the SDK's matching
+ * SEP-2352 check would otherwise warn on the console at every read.
+ */
+function stampedValue<T>(value: T, issuer: string): T {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { ...value, issuer }
+    : value;
+}
+
+/** The `grant_type` of a token request, or undefined for any other request. */
+function tokenGrantType(init: RequestInit | undefined): string | undefined {
+  if ((init?.method ?? "GET").toUpperCase() !== "POST") return undefined;
   const body = init?.body;
-  if (body instanceof URLSearchParams) {
-    return body.get("grant_type") === "refresh_token";
-  }
-  if (typeof body !== "string") return false;
-  return new URLSearchParams(body).get("grant_type") === "refresh_token";
+  if (body instanceof URLSearchParams) return body.get("grant_type") ?? undefined;
+  if (typeof body !== "string") return undefined;
+  return new URLSearchParams(body).get("grant_type") ?? undefined;
+}
+
+function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
+  return tokenGrantType(init) === "refresh_token";
 }
 
 function sdkAcceptsOAuthTokens(value: unknown): boolean {
@@ -351,32 +366,71 @@ function transientFailure(
   };
 }
 
-/** What the SDK sees for a refused grant it would otherwise misread. */
-function refusedGrantResponse(original: Response): Response {
-  void original.body?.cancel().catch(() => {});
-  return Response.json(
-    {
-      error: "invalid_grant",
-      error_description: "The authorization server refused the refresh token.",
-    },
-    { status: 400 },
-  );
-}
+/**
+ * The OAuth `error` codes a token-endpoint failure may carry to the SDK, each
+ * with the only description it will ever see beside it. RFC 6749's error
+ * codes, RFC 8707's, and RFC 9449's: the SDK decides its control flow on the
+ * code, so the code is all that has to survive.
+ */
+const SDK_TOKEN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  invalid_request: "The authorization server refused the token request.",
+  invalid_client: "The authorization server refused the client.",
+  invalid_grant: "The authorization server refused the grant.",
+  unauthorized_client: "The authorization server refused the client for this grant.",
+  unsupported_grant_type: "The authorization server refused the grant type.",
+  invalid_scope: "The authorization server refused the requested scope.",
+  invalid_target: "The authorization server refused the requested resource.",
+  server_error: "The authorization server is temporarily unavailable.",
+  temporarily_unavailable: "The authorization server is temporarily unavailable.",
+  invalid_dpop_proof: "The authorization server refused the DPoP proof.",
+  use_dpop_nonce: "The authorization server requires a DPoP nonce.",
+};
 
-/** What the SDK sees for an outage whose body names a restarting code. */
-function outageResponse(original: Response): Response {
+/**
+ * A token-endpoint failure as the SDK gets to parse it: the OAuth `error`
+ * code, a fixed description, the status, and `Retry-After`, and nothing else
+ * the server wrote. Since client 2.1.0 the SDK writes a failure's description
+ * to `console.warn` when it restarts or falls through to consent, and a body
+ * that is no OAuth error at all goes there raw. A token endpoint that echoes
+ * the form it refused would put the refresh token and client secret in the
+ * host's console, below any logger the deployment configured.
+ */
+function sdkTokenFailure(
+  original: Response,
+  code: string,
+  status = original.status,
+): Response {
   void original.body?.cancel().catch(() => {});
   const retryAfter = original.headers.get("retry-after");
+  const known = code in SDK_TOKEN_ERROR_DESCRIPTIONS ? code : "invalid_request";
   return Response.json(
+    { error: known, error_description: SDK_TOKEN_ERROR_DESCRIPTIONS[known] },
     {
-      error: "server_error",
-      error_description: "The authorization server is temporarily unavailable.",
-    },
-    {
-      status: original.status,
+      status,
       ...(retryAfter !== null ? { headers: { "retry-after": retryAfter } } : {}),
     },
   );
+}
+
+/**
+ * Rebuild a code exchange's answer (or any token request's but a refresh,
+ * which `refreshResponseOutcome` classifies) before the SDK parses it, unless
+ * it is a token response the SDK accepts. Whatever fails that check is a
+ * failure, and the SDK puts a failure's body in its error message whole — a
+ * 200 whose `error` is `null`, a number, or an object included. A code outside
+ * the registered set becomes `invalid_request`, and a body without a string
+ * code becomes `server_error`, the classes the SDK already gave them.
+ */
+async function sdkSafeTokenResponse(response: Response): Promise<Response> {
+  let parsed: unknown;
+  try {
+    parsed = await readRefreshResponse(response);
+  } catch {
+    // Not JSON, or too large to be a token response: only the status is left.
+    return sdkTokenFailure(response, "server_error");
+  }
+  if (response.ok && sdkAcceptsOAuthTokens(parsed)) return response;
+  return sdkTokenFailure(response, oauthErrorCode(parsed) ?? "server_error");
 }
 
 type RefreshResponseOutcome =
@@ -396,18 +450,22 @@ type RefreshResponseOutcome =
  * later `saveTokens` to arrive on a request that may already be cancelled.
  *
  * A failure also decides what the SDK gets to parse. Pinned against
- * `@modelcontextprotocol/client` 2.0.0, `dist/index.mjs`: `authInternal()`
+ * `@modelcontextprotocol/client` 2.3.1, `src/client/auth.ts`: `authInternal()`
  * swallows a refresh failure that is not an `OAuthError`, or is `server_error`,
  * and falls through to `startAuthorization` (`state()`, `saveCodeVerifier()`,
  * `redirectToAuthorization()`); it rethrows every other `OAuthError`, and
  * `auth()` retries once after `invalidateCredentials()` only for
- * `invalid_grant` (tokens) and `invalid_client`/`unauthorized_client` (client
- * and tokens). `executeTokenRequest()` turns a 2xx body carrying `error` into
- * an `OAuthError` with that code. So a dead grant the SDK would rethrow
+ * `invalid_grant` and `invalid_dpop_proof` (tokens) and
+ * `invalid_client`/`unauthorized_client` (client and tokens). A `saveTokens`
+ * failure after a successful refresh propagates instead of falling through,
+ * as it has since 2.1.0. `executeTokenRequest()` turns a 2xx body carrying
+ * `error` into an `OAuthError` with that code. So a dead grant the SDK would rethrow
  * (`bad_refresh_token`, `invalid_scope`, …) reaches it as `invalid_grant`, and
  * an outage whose body names any code but `server_error` reaches it as
  * `server_error` — a 5xx `invalid_grant` must not make the SDK drop a grant
- * nobody refused. The provider hooks below finish the job. If the SDK moves,
+ * nobody refused. Every failure reaches it rebuilt by `sdkTokenFailure`, so
+ * nothing the server wrote but the code it chose is ever the SDK's to log.
+ * The provider hooks below finish the job. If the SDK moves,
  * the tests under "remoteMcp() dead and transient refresh grants" fail first.
  */
 async function refreshResponseOutcome(
@@ -431,17 +489,14 @@ async function refreshResponseOutcome(
         verdict: { kind: "dead" },
         forSdk:
           code !== undefined && SDK_RESTARTING_CODES.has(code)
-            ? response
-            : refusedGrantResponse(response),
+            ? sdkTokenFailure(response, code)
+            : sdkTokenFailure(response, "invalid_grant", 400),
       };
     }
     return {
       failure,
       verdict: transientFailure(`answered HTTP ${response.status}`, response),
-      forSdk:
-        code !== undefined && code !== "server_error"
-          ? outageResponse(response)
-          : response,
+      forSdk: sdkTokenFailure(response, "server_error"),
     };
   }
   let parsed: unknown;
@@ -452,21 +507,26 @@ async function refreshResponseOutcome(
     return {
       failure: new Error("OAuth refresh response did not contain JSON tokens."),
       verdict: transientFailure("answered without a token response", response),
-      forSdk: response,
+      forSdk: sdkTokenFailure(response, "server_error"),
     };
   }
-  if (sdkAcceptsOAuthTokens(parsed)) return { tokens: parsed as OAuthTokens };
+  if (sdkAcceptsOAuthTokens(parsed)) {
+    // An `issuer` names the server a grant is bound to, and only the client
+    // stamps it — never the server answering, as the SDK's own parse agrees.
+    const { issuer: _ignored, ...tokens } = parsed as OAuthTokens;
+    return { tokens };
+  }
   if (oauthErrorCode(parsed) !== undefined) {
     return {
       failure: new Error("OAuth refresh was refused by the authorization server."),
       verdict: { kind: "dead" },
-      forSdk: refusedGrantResponse(response),
+      forSdk: sdkTokenFailure(response, "invalid_grant", 400),
     };
   }
   return {
     failure: new Error("OAuth refresh response did not match the token schema."),
     verdict: transientFailure("answered without a token response", response),
-    forSdk: response,
+    forSdk: sdkTokenFailure(response, "server_error"),
   };
 }
 
@@ -690,7 +750,11 @@ export class OAuthRefreshCoordinator {
             ? AbortSignal.any([requestSignal, init.signal])
             : requestSignal
           : init?.signal;
-        return await baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        const response = await baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        // A code exchange's failure is the SDK's to log as well.
+        return tokenGrantType(init) === undefined
+          ? response
+          : await sdkSafeTokenResponse(response);
       }
 
       // A verdict belongs to one refresh; never let an older one decide this.
@@ -1220,6 +1284,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     | undefined;
   /** How the last refresh this provider took part in failed, if it did. */
   private refreshFailure: RefreshFailure | undefined;
+  /**
+   * Set once a flow has begun (`beginFlow`, `bindFlow`). From then on every
+   * read and write the flow makes is bound to `capturedGeneration`: a
+   * superseded epoch is never followed to the live one, and the flow fails.
+   */
+  private flowBound = false;
   /** Tokens this request's issuer-aware auth flow decided to refresh. */
   private refreshBasis:
     | {
@@ -1330,6 +1400,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * answering that with `UnauthorizedError` would tell the agent a working
    * grant needs consent.
    */
+  /**
+   * A credential write that storage refused, in fixed text and with no
+   * cause attached. Retryable: the grant it held is untouched, so the next
+   * call either refreshes again or meets the server's verdict on it.
+   */
+  private credentialWriteError(): ConnectorCallError {
+    return new ConnectorCallError(
+      "unavailable",
+      `Connector "${this.connectorId}" could not store its OAuth credentials; try again shortly.`,
+    );
+  }
+
   private authorizationRefused(): Error {
     const failure = this.refreshFailure;
     return failure?.kind === "transient"
@@ -1443,9 +1525,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (
       (!commitAcceptedRefresh && this.signal?.aborted) ||
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
-      generation.startsWith(DISCONNECTED_GENERATION_PREFIX) ||
-      (await this.generation()) !== generation
+      generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
     ) {
+      return;
+    }
+    if ((await this.generation()) !== generation) {
+      // A flow bound to a superseded epoch fails there: it must not hand back
+      // a consent URL it could not store. A late commit of an accepted
+      // rotation stays silent, as it always was.
+      if (this.flowBound && !commitAcceptedRefresh && generation === this.capturedGeneration) {
+        throw this.flowSuperseded();
+      }
       return;
     }
     const physicalKey = oauthValueStorageKey(key, generation);
@@ -1458,15 +1548,27 @@ export class KvOAuthProvider implements OAuthClientProvider {
           } satisfies SealedOAuthValue)
         : plaintext;
     if (!commitAcceptedRefresh && this.signal?.aborted) return;
-    if (expected === undefined) {
-      await this.storage.set(physicalKey, serialized);
-    } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
-      return;
+    try {
+      if (expected === undefined) {
+        await this.storage.set(physicalKey, serialized);
+      } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
+        return;
+      }
+    } catch (error) {
+      // A store's own error can quote the value it refused, and from here a
+      // failed credential write reaches the SDK, its console, and the agent.
+      if (SEALED_OAUTH_KEYS.has(key)) throw this.credentialWriteError();
+      throw error;
     }
     // If reset landed after the pre-write check and completed its cleanup
     // before this set, remove the now-unreachable residue ourselves. The epoch
     // key already provides correctness; this second check is physical hygiene.
     const current = await this.generation();
+    const superseded =
+      current !== generation &&
+      this.flowBound &&
+      !commitAcceptedRefresh &&
+      generation === this.capturedGeneration;
     if (current !== generation || (!commitAcceptedRefresh && this.signal?.aborted)) {
       try {
         // On cancellation the generation may still be active. A newer flow
@@ -1487,6 +1589,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
         }
       }
     }
+    // A bound flow's write that a reset overtook mid-flight is cleaned up
+    // above, but it did not succeed: the flow must not go on as if it had —
+    // a consent URL it reports would be one it could not store.
+    if (superseded) throw this.flowSuperseded();
   }
 
   /**
@@ -1589,10 +1695,41 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
     | undefined
   > {
-    const generation = await this.generation();
-    const physicalKey = oauthValueStorageKey(key, generation);
-    const raw = await this.storage.get(physicalKey);
+    let generation: string;
+    let raw: string | null;
+    if (this.flowBound && this.capturedGeneration !== null) {
+      // The flow's own epoch, read beside the live one: a flow whose epoch a
+      // later reset replaced must not read on into the newer epoch.
+      generation = this.capturedGeneration;
+      const [live, value] = await Promise.all([
+        this.generation(),
+        this.storage.get(oauthValueStorageKey(key, generation)),
+      ]);
+      if (live !== generation) throw this.flowSuperseded();
+      raw = value;
+    } else {
+      generation = await this.generation();
+      raw = await this.storage.get(oauthValueStorageKey(key, generation));
+    }
     if (raw === null) return undefined;
+    return this.openStoredValue(key, generation, raw, parseLegacy);
+  }
+
+  /** Decode one physical value: unseal it, then read its envelope or legacy form. */
+  private async openStoredValue<T>(
+    key: string,
+    generation: string,
+    raw: string,
+    parseLegacy: (raw: string) => T,
+  ): Promise<
+    | {
+        stored: OAuthValueRead<T>;
+        raw: string;
+        plaintextCredential: boolean;
+      }
+    | undefined
+  > {
+    const physicalKey = oauthValueStorageKey(key, generation);
     if (
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
       generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
@@ -1662,11 +1799,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * Read credentials only for the authorization server that issued them.
    *
-   * Values written before issuer binding are bound on their first read with a
-   * validated SDK issuer, preserving an existing grant across this upgrade.
-   * A later issuer change is different: publish a new generation before
-   * returning no credentials, so every isolate drops the old registration and
-   * token set and the SDK starts authorization from scratch.
+   * Nothing is retired here. `beginFlow` decided, before the SDK ran, whether
+   * the grant in the flow's epoch belongs to the server it will use; a value
+   * bound to any other server is simply not this flow's, and the SDK goes on
+   * to register and consent within the same epoch.
    */
   private async readIssuerBoundValue<T>(
     key: "oauth:client" | "oauth:tokens",
@@ -1682,28 +1818,109 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
       if (!ctx) return stored.value;
     }
-    if (stored.issuer === undefined) {
-      // Binding is a migration of the value just read, never a new grant.
-      // A rotation or revocation that replaced it must win this race.
-      await this.storeInGeneration(key, stored.generation, () => JSON.stringify({
-        connectaOAuthVersion: STORED_VALUE_VERSION,
-        ...stored,
-        issuer: ctx.issuer,
-      } satisfies StoredOAuthValue<T>), read.raw);
-      return stored.value;
-    }
-    if (stored.issuer === ctx.issuer) return stored.value;
+    // Unstamped, or stamped for another server: never this flow's to send.
+    return stored.issuer === ctx.issuer
+      ? stampedValue(stored.value, ctx.issuer)
+      : undefined;
+  }
 
-    if (this.signal?.aborted) throw this.signal.reason;
-    try {
-      await this.resetAuthorization();
-    } finally {
-      // The issuer-aware flow may continue after the reset. Stamp any later
-      // writes into the replacement epoch; the connector's generation check
-      // still discards this connection attempt before caching it.
-      this.captureGeneration(await this.generation());
+  /**
+   * Begin an issuer-aware flow — a connect, whose 401 may refresh or start
+   * consent, or an `api()` call or start — before the SDK is handed this
+   * provider. The grant in the live epoch is decided here, once:
+   *
+   * - A grant is kept when every credential in it carries a stamp, the stamps
+   *   agree, and they name the server the epoch's discovery names, if it kept
+   *   one. With discovery cached the SDK uses it, so the flow cannot meet
+   *   another server; without it (a grant from before v0.22.3 not refreshed
+   *   since, or a forced restart's carried client) the SDK discovers afresh,
+   *   and a server other than the stamp's is handed nothing by the
+   *   issuer-bound reads below. The SDK then registers and consents within
+   *   the same epoch, and the mixed grant that leaves is retired by the next
+   *   flow's entry.
+   * - Anything else — a value written before issuer binding (v0.8.1 and
+   *   earlier), or stamps that disagree with each other or with the epoch's
+   *   discovery — is retired before anything it holds is sent.
+   *
+   * Every read and write of the flow is then bound to the resulting epoch;
+   * once a later reset supersedes it the flow fails, and is retried afresh.
+   * Returns that epoch.
+   */
+  async beginFlow(): Promise<string> {
+    this.flowBound = false;
+    const generation = await this.generation();
+    let epoch = generation;
+    if (
+      !generation.startsWith(RESETTING_GENERATION_PREFIX) &&
+      !generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
+    ) {
+      const json = (raw: string) => JSON.parse(raw) as unknown;
+      const [client, tokens, issuer] = await Promise.all([
+        this.readStoredValueIn("oauth:client", generation, json),
+        this.readStoredValueIn("oauth:tokens", generation, json),
+        this.recordedIssuer(generation),
+      ]);
+      // Every stored credential must carry a stamp, the stamps must agree, and
+      // they must name the server the epoch's discovery names, if it kept one.
+      const stamps = [client, tokens]
+        .filter((read) => read !== undefined)
+        .map((read) => read.stored.issuer);
+      const keep = stamps.every(
+        (stamp) => stamp !== undefined && stamp === stamps[0] && (issuer === undefined || stamp === issuer),
+      );
+      if (!keep) {
+        if (this.signal?.aborted) throw this.signal.reason;
+        epoch = await this.retireGrant(generation);
+      }
     }
-    return undefined;
+    this.captureGeneration(epoch);
+    this.flowBound = true;
+    return epoch;
+  }
+
+  /**
+   * Bind a flow that already has its epoch — a callback, whose state check
+   * captured the epoch its consent was written in — without deciding
+   * anything about the grant there. An epoch a later reset already replaced
+   * fails here, before the SDK can send the code anywhere.
+   */
+  async bindFlow(): Promise<void> {
+    const captured = this.capturedGeneration ?? (await this.generation());
+    if ((await this.generation()) !== captured) throw this.flowSuperseded();
+    this.captureGeneration(captured);
+    this.flowBound = true;
+  }
+
+  /** The issuer the epoch's own discovery names, as the SDK would derive it. */
+  protected async recordedIssuer(generation: string): Promise<string | undefined> {
+    const read = await this.readStoredValueIn(
+      "oauth:discovery",
+      generation,
+      (raw) => JSON.parse(raw) as OAuthDiscoveryState,
+    );
+    const state = read?.stored.value as Partial<OAuthDiscoveryState> | undefined;
+    if (!state || typeof state !== "object" || !state.authorizationServerUrl) return undefined;
+    const issuer = state.authorizationServerMetadata?.issuer ?? String(state.authorizationServerUrl);
+    return typeof issuer === "string" && issuer !== "" ? issuer : undefined;
+  }
+
+  /** A stored value in a named epoch, outside any flow's binding. */
+  private async readStoredValueIn<T>(
+    key: string,
+    generation: string,
+    parseLegacy: (raw: string) => T,
+  ) {
+    const raw = await this.storage.get(oauthValueStorageKey(key, generation));
+    if (raw === null) return undefined;
+    return this.openStoredValue(key, generation, raw, parseLegacy);
+  }
+
+  /** The fixed, retryable failure of a flow a later reset superseded. */
+  private flowSuperseded(): ConnectorCallError {
+    return new ConnectorCallError(
+      "unavailable",
+      `Connector "${this.connectorId}" authorization changed while this request was in flight; try again.`,
+    );
   }
 
   /**
@@ -1965,7 +2182,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     flight: OAuthRefreshFlight,
     issuer?: string,
   ): Promise<void> {
-    const stamped: OAuthTokens & { issuer?: string } =
+    const stamped: OAuthTokens =
       issuer !== undefined ? { ...tokens, issuer } : tokens;
     await this.persistAcceptedTokens(
       stamped,
@@ -2192,17 +2409,41 @@ export class KvOAuthProvider implements OAuthClientProvider {
     operatorDisconnected = false,
     preserveClient = false,
   ): Promise<void> {
-    const reset = this.performResetAuthorization(operatorDisconnected, preserveClient);
+    const reset = this.performResetAuthorization(operatorDisconnected, preserveClient)
+      .then(() => {});
     this.onReset?.(reset);
     return reset;
   }
 
+  /**
+   * Retire the grant a flow inspected in `inspected`, and return the epoch
+   * this retirement published. The decision was made about that epoch's
+   * grant, so it acts only on that epoch: if another reset has replaced it —
+   * a restart that has since completed its own consent, say — the flow is
+   * abandoned with nothing touched, rather than retiring a grant it never
+   * looked at.
+   */
+  private retireGrant(inspected: string): Promise<string> {
+    const published = this.performResetAuthorization(false, false, inspected);
+    if (this.onReset) this.onReset(published.then(() => {}));
+    return published;
+  }
+
+  /**
+   * The epoch it published. With `expected`, the reset is conditional on the
+   * live epoch still being that one: it is checked before anything is
+   * touched, and the activation is a compare-and-set where the store offers
+   * one (a recheck just before the write where it cannot).
+   */
   private async performResetAuthorization(
     operatorDisconnected: boolean,
     preserveClient: boolean,
-  ): Promise<void> {
+    expected?: string,
+  ): Promise<string> {
     const nonce = crypto.randomUUID();
-    const previous = await this.generation();
+    const rawGeneration = await this.storage.get("oauth:generation");
+    const previous = rawGeneration ?? LEGACY_GENERATION;
+    if (expected !== undefined && previous !== expected) throw this.flowSuperseded();
     // Only an explicitly forced restart may carry a registration forward, and
     // only one this connector registered: an operator disconnect, an issuer
     // mismatch, and every unforced reset discard it. Discovery is never
@@ -2262,7 +2503,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // A rejection may follow a committed fence. Keep its lineage even when
     // the answer is lost: the next reset must still find the retired grants.
     // A manifest for an epoch that never activated is harmless residue.
-    await this.storage.set("oauth:generation", active);
+    if (expected === undefined) {
+      await this.storage.set("oauth:generation", active);
+    } else if (this.storage.compareAndSet) {
+      if (!(await this.storage.compareAndSet("oauth:generation", rawGeneration, active))) {
+        throw this.flowSuperseded();
+      }
+    } else {
+      // An eventually consistent store has no atomic swap; recheck as late
+      // as possible, and leave the residue an abandoned manifest is.
+      if ((await this.generation()) !== expected) throw this.flowSuperseded();
+      await this.storage.set("oauth:generation", active);
+    }
     this.refreshCoordinator?.retire(previous);
 
     if (reusableClient && !this.signal?.aborted) {
@@ -2315,6 +2567,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // lineage without racing a manifest shrink/delete. The successor copies
     // this manifest before activation and then removes this retired copy.
     if (failure) throw failure.reason;
+    return active;
   }
 
   /**
