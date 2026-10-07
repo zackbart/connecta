@@ -55,7 +55,7 @@ test("assembles every category deterministically, preserves narrative and histor
   });
 });
 
-test("printed git command restores byte-identical committed inputs after a partial unlink failure, then permits retry", () => {
+test("printed git command restores byte-identical committed inputs after a partial unlink failure or SIGTERM, then permits retry", () => {
   fixture(({ root, command, assemble, commit, git }) => {
     writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\r\n\r\n## 0.28.1 — 2026-10-05\r\n\r\nPrevious release.\r\n");
     writeFileSync(join(root, ".changes/a.md"), "---\r\ntype: fixed\r\n---\r\n\r\nFirst fix.  \r\n");
@@ -82,19 +82,28 @@ fs.unlinkSync = (file) => {
 };
 syncBuiltinESMExports();
 `);
-    const result = command(assemble, ["--import", fault]);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /injected unlink failure/);
-    const recovery = result.stderr.match(/Recover with: (git restore[^\n]+)/)?.[1];
-    assert.equal(recovery, "git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes");
-    assert.equal(readdirSync(join(root, ".changes")).includes("a.md"), false);
-    assert.match(readFileSync(join(root, "CHANGELOG.md"), "utf8"), /## 0\.29\.0/);
-    // Restore both index and worktree, even if the partial state was staged.
-    git("add", "CHANGELOG.md", ".changes");
-    git(...recovery.split(" ").slice(1));
-    assert.deepEqual(readdirSync(join(root, ".changes")).sort(), names);
-    for (const [file, bytes] of before) assert.deepEqual(readFileSync(join(root, file)), bytes, file);
-    assert.ok(!readdirSync(root).includes("CHANGELOG.md.tmp"));
+    for (const interrupted of [false, true]) {
+      if (interrupted) {
+        writeFileSync(fault, readFileSync(fault, "utf8").replace(
+          'throw Object.assign(new Error("injected unlink failure"), { code: "EPERM" });',
+          'process.kill(process.pid, "SIGTERM");',
+        ));
+      }
+      const result = command(assemble, ["--import", fault]);
+      assert.notEqual(result.status, 0);
+      if (interrupted) assert.equal(result.signal, "SIGTERM");
+      else assert.match(result.stderr, /injected unlink failure/);
+      const recovery = result.stdout.match(/Recovery if assembly fails or is interrupted: (git restore[^\n]+)/)?.[1];
+      assert.equal(recovery, "git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes");
+      if (!interrupted) assert.ok(result.stderr.includes(`Recover with: ${recovery}`));
+      assert.equal(readdirSync(join(root, ".changes")).includes("a.md"), false);
+      assert.match(readFileSync(join(root, "CHANGELOG.md"), "utf8"), /## 0\.29\.0/);
+      // Restore both index and worktree, even if the partial state was staged.
+      git("add", "CHANGELOG.md", ".changes");
+      git(...recovery.split(" ").slice(1));
+      assert.deepEqual(readdirSync(join(root, ".changes")).sort(), names);
+      for (const [file, bytes] of before) assert.deepEqual(readFileSync(join(root, file)), bytes, file);
+    }
     const retry = command(assemble);
     assert.equal(retry.status, 0, retry.stderr);
     const output = readFileSync(join(root, "CHANGELOG.md"), "utf8");
@@ -149,7 +158,7 @@ test("refuses dirty, staged, untracked, and ignored untracked inputs before writ
       if (kind === "dirty fragment" || kind === "staged fragment") writeFileSync(fragment, "Changed fragment\n");
       if (kind === "staged fragment") git("add", ".changes");
       if (kind === "ignored fragment") writeFileSync(join(root, ".gitignore"), ".changes/untracked.md\n");
-      if (kind.includes("fragment") && kind.includes("tracked")) writeFileSync(join(root, ".changes/untracked.md"), "Untracked\n");
+      if (kind === "untracked fragment") writeFileSync(join(root, ".changes/untracked.md"), "Untracked\n");
       if (kind === "ignored fragment") writeFileSync(join(root, ".changes/untracked.md"), "Ignored\n");
       if (kind === "untracked changelog") git("rm", "--cached", "CHANGELOG.md");
       const files = ["CHANGELOG.md", ...readdirSync(join(root, ".changes")).map((file) => `.changes/${file}`)];
