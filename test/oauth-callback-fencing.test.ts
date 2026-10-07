@@ -148,13 +148,15 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       // The bound verifier read checks the live epoch beside its value read.
       // Hold the value until that check has completed, then restart.
       let holdKey: string | undefined;
+      // The bind's own snapshot reads the verifier first; hold the SDK's read.
+      let skipReads = 0;
       let holding = false;
       const valueRead = deferred<void>();
       const epochChecked = deferred<void>();
       const release = deferred<void>();
       const storage: KVStorage = { ...backing,
         async get(key) {
-          if (key === holdKey) {
+          if (key === holdKey && skipReads-- <= 0) {
             holdKey = undefined;
             holding = true;
             const value = await backing.get(key);
@@ -173,6 +175,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       const code = server.issue("code-a");
       const finish = await verified(c, storage, state);
       holdKey = oauthValueStorageKey("oauth:verifier", epoch);
+      skipReads = 1;
 
       const finishing = finish(code);
       await valueRead.promise;
@@ -321,12 +324,14 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       vi.stubGlobal("fetch", server.fetchStub);
       const backing = backingStore(atomic);
       let holdKey: string | undefined;
+      // The bind's own snapshot reads the verifier first; hold the SDK's read.
+      let skipReads = 0;
       const reached = deferred<void>();
       const release = deferred<void>();
       const storage: KVStorage = { ...backing,
         async get(key) {
           const value = await backing.get(key);
-          if (key === holdKey) {
+          if (key === holdKey && skipReads-- <= 0) {
             holdKey = undefined;
             reached.resolve();
             await release.promise;
@@ -341,6 +346,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       const finishHeld = await verified(c, storage, state);
       const finishFirst = await verified(c, storage, state);
       holdKey = oauthValueStorageKey("oauth:verifier", epoch);
+      skipReads = 1;
 
       const held = finishHeld(code);
       await reached.promise;
@@ -385,12 +391,13 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
     vi.stubGlobal("fetch", server.fetchStub);
     const backing = backingStore(false);
     let holdKey: string | undefined;
+    let skipReads = 0;
     const reached = deferred<void>();
     const release = deferred<void>();
     const storage: KVStorage = { ...backing,
       async get(key) {
         const value = await backing.get(key);
-        if (key === holdKey) {
+        if (key === holdKey && skipReads-- <= 0) {
           holdKey = undefined;
           reached.resolve();
           await release.promise;
@@ -434,12 +441,14 @@ describe("a refused code exchange invalidates only what it began with", () => {
     vi.stubGlobal("fetch", server.fetchStub);
     const backing = backingStore(atomic);
     let holdKey: string | undefined;
+    // The bind's own snapshot reads the verifier first; hold the SDK's read.
+    let skipReads = 0;
     const reached = deferred<void>();
     const release = deferred<void>();
     const storage: KVStorage = { ...backing,
       async get(key) {
         const value = await backing.get(key);
-        if (key === holdKey) {
+        if (key === holdKey && skipReads-- <= 0) {
           holdKey = undefined;
           reached.resolve();
           await release.promise;
@@ -452,6 +461,7 @@ describe("a refused code exchange invalidates only what it began with", () => {
     await seedTokens(storage, "kept-before");
     const finish = await verified(c, storage, state);
     holdKey = oauthValueStorageKey("oauth:verifier", epoch);
+    skipReads = 1;
 
     // A code the server never issued: the exchange is refused.
     const finishing = finish("unknown-code");
@@ -493,6 +503,35 @@ describe("a refused code exchange invalidates only what it began with", () => {
 
     expect((error as { code?: unknown }).code).toBe("invalid_grant");
     expect(await storedTokens(storage, epoch)).toMatchObject({ access_token: "began-with" });
+  });
+
+  it.each(STORES)("keeps the consent Continue started while an earlier callback's exchange was on the wire, on %s", async (_label, atomic) => {
+    // A's claim spent its state, so Continue starts consent B in the same
+    // epoch while A waits on the token endpoint. A then succeeds, and its
+    // cleanup must take only its own consent's records, not B's.
+    const server = authorizationServer();
+    vi.stubGlobal("fetch", server.fetchStub);
+    const storage = backingStore(atomic);
+    const c = connector();
+    const first = await started(c, storage);
+    const finish = await verified(c, storage, first.state);
+    const sent = deferred<void>();
+    const release = deferred<void>();
+    server.onExchange(async () => { sent.resolve(); await release.promise; });
+
+    const completing = finish(server.issue("code-a"));
+    await sent.promise;
+    const continued = await c.startAuth!(scope(storage), { force: false });
+    const next = new URL(required(continued.authorizationUrl));
+    const nextState = required(next.searchParams.get("state") ?? undefined);
+    expect(nextState).not.toBe(first.state);
+    release.resolve();
+    expect(await completing).toBeUndefined();
+
+    const again = await c.startAuth!(scope(storage), { force: false });
+    expect(again).toMatchObject({ authorizationUrl: next.href, authorizationReused: true });
+    expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
+    expect(await storedTokens(storage, first.epoch)).toMatchObject({ access_token: "access-2" });
   });
 
   it("does not hand a consent URL whose state an exchange spent back to Continue", async () => {
@@ -594,12 +633,14 @@ describe("the callback route and a duplicate callback", () => {
     vi.stubGlobal("fetch", server.fetchStub);
     const backing = memoryStorage();
     let holdKey: string | undefined;
+      // The bind's own snapshot reads the verifier first; hold the SDK's read.
+      let skipReads = 0;
     const reached = deferred<void>();
     const release = deferred<void>();
     const storage: KVStorage = { ...backing,
       async get(key) {
         const value = await backing.get(key);
-        if (key === holdKey) {
+        if (key === holdKey && skipReads-- <= 0) {
           holdKey = undefined;
           reached.resolve();
           await release.promise;
@@ -616,6 +657,7 @@ describe("the callback route and a duplicate callback", () => {
       const epoch = required((await backing.get("conn:svc:oauth:generation")) ?? undefined);
       const callback = `${BASE}/oauth/callback/svc?code=${server.issue("code-a")}&state=${state}`;
       holdKey = `conn:svc:${oauthValueStorageKey("oauth:verifier", epoch)}`;
+      skipReads = 1;
 
       const held = connecta.fetch(new Request(callback));
       await reached.promise;

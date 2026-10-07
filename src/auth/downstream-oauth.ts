@@ -1331,7 +1331,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private callback:
     | {
         state: string;
-        basis?: { client: string | null; tokens: string | null };
+        basis?: {
+          client: string | null;
+          tokens: string | null;
+          pending: string | null;
+          verifier: string | null;
+        };
         claimed: boolean;
         refusal?: Response;
       }
@@ -1941,13 +1946,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const callback = this.callback;
     // A verified callback also records what credentials its epoch holds as
     // the exchange begins, beside the epoch check rather than after it.
-    const [live, client, tokens] = await Promise.all([
+    const read = (key: string) =>
+      callback ? this.storage.get(oauthValueStorageKey(key, captured)) : null;
+    const [live, client, tokens, pending, verifier] = await Promise.all([
       this.generation(),
-      callback ? this.storage.get(oauthValueStorageKey("oauth:client", captured)) : null,
-      callback ? this.storage.get(oauthValueStorageKey("oauth:tokens", captured)) : null,
+      read("oauth:client"),
+      read("oauth:tokens"),
+      read("oauth:pending"),
+      read("oauth:verifier"),
     ]);
     if (live !== captured) throw this.flowSuperseded();
-    if (callback) callback.basis = { client, tokens };
+    if (callback) callback.basis = { client, tokens, pending, verifier };
     this.captureGeneration(captured);
     this.flowBound = true;
   }
@@ -2004,8 +2013,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const generation = this.capturedGeneration;
     if (generation === null || (!this.callback && !this.flowBound)) return send();
     return this.storage.get("oauth:generation").then((live) => {
+      // Thrown here, synchronously, the supersession rejects the promise the
+      // caller awaits directly.
       if ((live ?? LEGACY_GENERATION) !== generation) throw this.flowSuperseded();
-      return send();
+      const sent = send();
+      // A refusal `send` makes before anything leaves — a learned URL the
+      // guard rejects — would otherwise sit unhandled until this reaction's
+      // result adopts it a turn later, which workerd reports. Marking it
+      // handled here changes nothing else: the caller still receives it.
+      sent.catch(() => {});
+      return sent;
     });
   }
 
@@ -2549,14 +2566,46 @@ export class KvOAuthProvider implements OAuthClientProvider {
       : undefined;
   }
 
-  /** Clear one-shot flow state after the callback completes. */
+  /**
+   * Clear one-shot flow state after the callback completes.
+   *
+   * A verified callback clears only its own consent's records. Its claim
+   * spent the state, and Continue starts a fresh consent in the same epoch
+   * once it sees that, so while this exchange waited on the token endpoint a
+   * newer pending URL, verifier, and state may have been written beside it.
+   * Each is deleted only while it still holds what the exchange began with —
+   * by compare-and-set where the store has it, a re-read where it does not —
+   * and the state only while it is still the one this callback claimed.
+   */
   async clearPending(): Promise<void> {
     const generation = await this.writeGeneration();
-    await this.deleteAll([
-      oauthValueStorageKey("oauth:pending", generation),
-      oauthValueStorageKey("oauth:verifier", generation),
-      oauthValueStorageKey("oauth:state", generation),
-    ]);
+    const callback = this.callback;
+    const basis = callback?.basis;
+    if (!callback || !basis || generation !== this.capturedGeneration) {
+      await this.deleteAll([
+        oauthValueStorageKey("oauth:pending", generation),
+        oauthValueStorageKey("oauth:verifier", generation),
+        oauthValueStorageKey("oauth:state", generation),
+      ]);
+      return;
+    }
+    const own: Array<[string, string | null]> = [
+      ["oauth:pending", basis.pending],
+      ["oauth:verifier", basis.verifier],
+      ["oauth:state", callback.state],
+    ];
+    const failure = firstRejection(await Promise.allSettled(
+      own.map(async ([key, began]) => {
+        if (began === null) return;
+        const physicalKey = oauthValueStorageKey(key, generation);
+        if (this.storage.compareAndSet) {
+          await this.storage.compareAndSet(physicalKey, began, null);
+        } else if ((await this.storage.get(physicalKey)) === began) {
+          await this.storage.delete(physicalKey);
+        }
+      }),
+    ));
+    if (failure) throw failure.reason;
   }
 
   /**
