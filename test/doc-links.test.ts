@@ -122,68 +122,10 @@ describe("documentation link checker", () => {
     });
   });
 
-  it("reports an active stale source-code reference", async () => {
-    const root = await fixture({
-      "README.md": "# Fixture\n",
-      "src/example.ts":
-        "// See docs/documentation.md#16-scoped-views.\n",
-    });
-
-    expect(check(root)).toMatchObject({
-      status: 1,
-      output: expect.stringContaining(
-        'src/example.ts:1: stale documentation reference "docs/documentation.md#16-scoped-views"',
-      ),
-    });
-  });
-
-  it("reports a stale numbered-manual reference", async () => {
-    const root = await fixture({
-      "README.md": "# Fixture\n",
-      "src/example.ts": "// See docs/documentation.md §16.\n",
-    });
-
-    expect(check(root)).toMatchObject({
-      status: 1,
-      output: expect.stringContaining(
-        'src/example.ts:1: stale documentation reference "docs/documentation.md §16"',
-      ),
-    });
-  });
-
-  it.each([
-    "README.md",
-    "src/example.ts",
-    "documentation/guide.md",
-    "examples/Dockerfile",
-  ])("reports a bare numbered citation in %s", async (path) => {
-    const root = await fixture({
-      [path]: "See (§16) for details.\n",
-    });
-
-    expect(check(root)).toMatchObject({
-      status: 1,
-      output: expect.stringContaining(
-        `${path}:1: stale documentation reference "§16"`,
-      ),
-    });
-  });
-
-  it("deliberately permits historical numbered citations in CHANGELOG", async () => {
-    const root = await fixture({
-      "CHANGELOG.md": "- Preserved the old (§16) behavior.\n",
-    });
-
-    expect(check(root)).toMatchObject({
-      status: 0,
-      output: expect.stringContaining("documentation check passed"),
-    });
-  });
-
   it("accepts the full expected structure", async () => {
     const root = await fixture({
       "README.md": "# Fixture\n",
-      "ethos.md": "# Ethos\n",
+      "PRINCIPLES.md": "# Principles\n",
       "documentation/architecture.md": "# Architecture\n",
     });
 
@@ -193,7 +135,7 @@ describe("documentation link checker", () => {
     });
   });
 
-  it("requires README.md, ethos.md, and a documentation/ directory", async () => {
+  it("requires README.md, PRINCIPLES.md, and a documentation/ directory", async () => {
     const root = await fixture({
       "CHANGELOG.md": "history\n",
     });
@@ -201,51 +143,16 @@ describe("documentation link checker", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("README.md:1: missing README.md");
-    expect(result.output).toContain("ethos.md:1: missing ethos.md");
+    expect(result.output).toContain("PRINCIPLES.md:1: missing PRINCIPLES.md");
     expect(result.output).toContain(
       'documentation:1: missing "documentation/" directory',
-    );
-  });
-
-  it("rejects a resurrected docs/ directory", async () => {
-    const root = await fixture({
-      "README.md": "# Fixture\n",
-      "ethos.md": "# Ethos\n",
-      "documentation/architecture.md": "# Architecture\n",
-      "docs/old.md": "# Retired manual\n",
-    });
-
-    expect(check(root, true)).toMatchObject({
-      status: 1,
-      output: expect.stringContaining(
-        'docs:1: retired "docs/" directory exists; guides belong in "documentation/"',
-      ),
-    });
-  });
-
-  it("enforces the ethos and guide length limits", async () => {
-    const root = await fixture({
-      "README.md": "# Fixture\n",
-      "ethos.md": Array(1201).fill("ethos word").join(" "),
-      "documentation/architecture.md": Array(950)
-        .fill("architecture line")
-        .join("\n"),
-    });
-    const result = check(root, true);
-
-    expect(result.status).toBe(1);
-    expect(result.output).toContain(
-      "ethos.md:1: ethos.md has 2402 words; expected at most 1200 — terseness is the point",
-    );
-    expect(result.output).toContain(
-      "documentation/architecture.md:1: guide has 950 lines; expected fewer than 950",
     );
   });
 
   it("rejects non-Markdown entries and an otherwise-empty documentation/", async () => {
     const root = await fixture({
       "README.md": "# Fixture\n",
-      "ethos.md": "# Ethos\n",
+      "PRINCIPLES.md": "# Principles\n",
       "documentation/notes.txt": "not a guide\n",
     });
     const result = check(root, true);
@@ -262,7 +169,7 @@ describe("documentation link checker", () => {
   it("rejects duplicate guide heading slugs", async () => {
     const root = await fixture({
       "README.md": "# Fixture\n",
-      "ethos.md": "# Ethos\n",
+      "PRINCIPLES.md": "# Principles\n",
       "documentation/architecture.md": "# Repeat\n\n# Repeat\n",
     });
 

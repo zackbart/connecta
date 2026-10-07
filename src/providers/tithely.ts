@@ -2,7 +2,7 @@
  * Tithe.ly's giving API (v1), hand-written against the per-operation reference
  * at https://docs.tithe.ly/reference/introduction. No SDK exists to depend on,
  * and none would be welcome: this is a payments API, and every tool below was
- * chosen and written, not generated (ethos: OpenAPI ingestion is refused).
+ * chosen and written, not generated (decision record 0001: hand-authored tools).
  *
  * Facts the code leans on, each from the reference unless marked otherwise:
  *

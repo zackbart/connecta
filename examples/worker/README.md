@@ -285,10 +285,13 @@ does not create credentials or permissions by itself.
 
 ### Client authentication and activity
 
-Interactive MCP clients use Access Managed OAuth. Unattended clients use Access
-service tokens when needed. Connecta-issued `cta_` tokens and their management
-routes are removed; a configured Connecta bearer cannot cross the Access edge
-alone.
+Interactive MCP clients use Access Managed OAuth. Machine clients can use
+connecta-issued `cta_` tokens through the optional
+`@zackbart/connecta/auth/access-tokens` module. Configure `accessTokens(storage)`
+and explicit `identity.accessTokenManagement` permissions to enable token
+management. A Connecta token cannot cross the Access edge alone; unattended
+clients still need separate Access-edge admission, such as Access service
+credentials.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.ACTIVITY_DB) })`
 from `@zackbart/connecta/activity`. Enable the database and bindings described

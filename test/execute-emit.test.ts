@@ -36,7 +36,7 @@ function emitHandler(
 describe("EmitCollector validation (M1)", () => {
   const collector = () => new EmitCollector(10_000, 10);
 
-  it("rejects every invalid shape and accepts nothing", () => {
+  it("INV-3: rejects every invalid shape and accepts nothing", () => {
     const invalid: Array<[unknown, string]> = [
       ["bare", "content block"],
       [null, "content block"],

@@ -100,8 +100,11 @@ audience. New DCR registrations need new entries, so prefer audience binding
 for standard host onboarding. Clerk session tokens work only on operator
 routes. [Inbound auth](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#clerk-oauth-tokens-and-operator-sessions)
 explains configuration, verification, and fixed rejection reason codes.
-Machine clients can use connecta-issued `cta_` tokens through the optional
-`accessTokens` module.
+Machine clients use connecta-issued `cta_` access tokens
+through the optional `@zackbart/connecta/auth/access-tokens` module. Configure
+`accessTokens(storage)` and explicit `identity.accessTokenManagement` permissions
+to enable token management. The configured static bearer remains available
+until its Phase 3 retirement.
 
 Set the code-owned identity resolvers deliberately. `connectorAccess` governs
 use; `credentialAdministration` permits shared-auth changes, and

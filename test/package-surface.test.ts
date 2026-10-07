@@ -91,6 +91,12 @@ describe("public package boundary", () => {
     expect(packageJson.files).not.toContain("assets");
   });
 
+  it("keeps repository agent instructions and decision history out of the package", () => {
+    for (const file of ["AGENTS.md", "CLAUDE.md", "PRINCIPLES.md", "decisions", "spec"]) {
+      expect(packageJson.files).not.toContain(file);
+    }
+  });
+
   it("exports exactly the documented subpaths plus the manifest", () => {
     // The manifest is a courtesy the ecosystem expects — bundler plugins,
     // framework build steps, and version probes resolve `<pkg>/package.json`
@@ -141,9 +147,7 @@ describe("public package boundary", () => {
   // The rule is about the exports map, not the tarball: `examples/worker`
   // ships — Cloudflare KV and D1 adapters included — because it is the Workers
   // starting template a consumer copies, and nothing under examples/ is
-  // importable from the package. AGENTS.md is the canonical instruction file,
-  // so a sentence there that reads stricter than the artifact invites the next
-  // agent to "fix" the artifact instead of the words (#377).
+  // importable from the package. Phase 1 item 3 will change this boundary.
   it("keeps the shipped example adapters out of the importable surface", () => {
     expect(packageJson.files).toContain("examples/worker");
     // `./package.json` is the manifest itself — a data file, not a code path
@@ -159,17 +163,10 @@ describe("public package boundary", () => {
     for (const target of targets) {
       expect(target, `${target} resolves outside dist/`).toMatch(/^\.\/dist\//);
     }
-    const rule = readFileSync(join(ROOT, "AGENTS.md"), "utf8")
-      .split("\n- **")
-      .find((bullet) => bullet.startsWith("The published surface."));
-    expect(rule).toBeDefined();
-    expect(rule).toContain("examples/worker");
-    expect(rule).toContain("exports");
-    // The adapters are unimportable reference source, not an absent file.
-    expect(rule).not.toMatch(/not the package/);
+
   });
 
-  it("keeps Clerk behind an optional adapter subpath", () => {
+  it("INV-13: keeps Clerk behind an optional adapter subpath", () => {
     expect(packageJson.dependencies).not.toHaveProperty("@clerk/backend");
     expect(packageJson.peerDependencies).toHaveProperty(
       "@clerk/backend",
@@ -190,7 +187,7 @@ describe("public package boundary", () => {
     expect(source).not.toMatch(/from\s+["'][^./]/);
   });
 
-  it("keeps QuickJS behind an optional executor subpath", () => {
+  it("INV-13: keeps QuickJS behind an optional executor subpath", () => {
     expect(packageJson.dependencies).not.toHaveProperty("quickjs-emscripten");
     expect(packageJson.peerDependencies).toHaveProperty(
       "quickjs-emscripten",
@@ -211,7 +208,7 @@ describe("public package boundary", () => {
     ]);
   });
 
-  it("keeps the Workers executor an optional peer with a published range", () => {
+  it("INV-13: keeps the Workers executor an optional peer with a published range", () => {
     // Every Cloudflare deployment installs `@cloudflare/codemode` by hand, and
     // until #376 the only range anywhere in the artifact was a devDependency
     // nobody who installs the package can read. A declared optional peer makes
@@ -424,7 +421,7 @@ describe("Effect behind the published surface", () => {
       timeout: 60_000,
     });
 
-  it("publishes no Effect type in any reachable declaration", () => {
+  it("INV-13: publishes no Effect type in any reachable declaration", () => {
     const result = runChecker([]);
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);

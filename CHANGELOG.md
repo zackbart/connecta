@@ -56,7 +56,7 @@ connection. A Workspace super admin grants a service account domain-wide
 delegation once; the deployment maps each admitted identity to a Workspace
 address in config; and the provider mints a short-lived token as that user on
 every call. It is the second sanctioned use of the in-repo caller channel,
-recorded in `ethos.md` as config-mapped delegated subjects
+recorded in the former ethos as config-mapped delegated subjects
 ([#678](https://github.com/zackbart/connecta/issues/678)). Nothing breaks and
 nothing changes for a deployment that imports none of `./providers/gmail`,
 `./providers/drive`, `./providers/docs`, `./providers/sheets`,
@@ -450,6 +450,8 @@ using `quickJsExecutor()` need no configuration change.
   package copies and bundles; unbranded executors fail with all migration
   options. Custom sandboxes opt in with
   `customExecutor(myExecutor, { lifecycle: "self-managed" })` (#704).
+- Replace the contributor ethos with principles, decision history, and test-backed
+  invariant and MCP coverage records. No runtime behavior changes (#705).
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server
@@ -2231,7 +2233,7 @@ residue from #179, and the v1 persisted-catalog reader, unreachable since
 - **Package and docs.** Six finished design records moved to
   [`records/`](https://github.com/zackbart/connecta/tree/main/records), outside
   the published files, and packed-link validation folded into the documentation
-  checker: −1,342 shipped lines, −91 KB (#464). `ethos.md` is the constitution
+  checker: −1,342 shipped lines, −91 KB (#464). the ethos is the constitution
   again — refusals, invariants, and what this is, at 1,188 words instead of
   3,174, with every decision intact and a word cap replacing the line cap
   (#471).
@@ -3777,7 +3779,7 @@ the new text is the entire release (#282, PR #284).
   says to fetch first and check the shape in code, and on a surprise — empty
   array, missing key — to return a trimmed first record instead of rendering.
   The wrong view becomes the sample you needed.
-- **Result sampling on the catalog surface is refused.** The `ethos.md`
+- **Result sampling on the catalog surface is refused.** The former ethos
   decisions table records `sample` / `dryRun` as refused: sampling is execution
   and cannot ride a catalog read, most tools carry required arguments no
   sampler can invent, and a program that checks the shape before rendering
@@ -4134,7 +4136,7 @@ nine tools with the same descriptions and the same instructions as before, byte
 for byte. `surface: "classic"` alongside an executor restores the ten-tool shape.
 
 The default was flipped by owner decision for a single-operator deployment rather
-than by the repeated per-model eval that [`ethos.md`](./ethos.md) had gated it on;
+than by the repeated per-model eval that [former ethos](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md) had gated it on;
 that row now records the decision and its reasoning, and
 [`eval/code-first-gate`](./eval/code-first-gate/README.md) remains as measurement
 with all three of its arms now real deployment shapes rather than harness
@@ -4399,13 +4401,13 @@ optional property checks, and an automated Workers test-partition guard. A
 deployment can take this release without touching its config: entrypoints,
 options, storage formats, and the tool surface are unchanged. The docs were
 restructured — the old numbered manual is retired in favor of a terse
-[`ethos.md`](./ethos.md) and stub guides in `documentation/` — and the
+[former ethos](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md) and stub guides in `documentation/` — and the
 temporary `@hono/node-server` override is gone now that the SDK (1.30.0)
 depends on a patched version upstream.
 
 ### Added
 
-- **`ethos.md`** — what connecta is, what it refuses to be, a decisions table,
+- **The former ethos document** — what connecta is, what it refuses to be, a decisions table,
   and the invariants, each enforced or reviewer-owned (#175, PR #180). CI caps
   its length; terseness is the point.
 - **Route-contract and operator-UI browser tests** pinning server behavior

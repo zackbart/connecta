@@ -296,7 +296,7 @@ describe("clerkAuth inbound auth", () => {
           allowedOAuthClientIds: ["client_connecta"],
           ...options,
         } as never),
-      ).toThrow("ethos.md");
+      ).toThrow("PRINCIPLES.md");
     }
   });
 
@@ -496,7 +496,7 @@ describe("clerkAuth inbound auth", () => {
       await expect(auth.authorize(new Request("https://internal.test/mcp"), "https://internal.test")).resolves.toEqual({ ok: true, userId: "user_123" });
     });
 
-    it("does not treat the base resource audience as a pool audience", async () => {
+    it("INV-4: does not treat the base resource audience as a pool audience", async () => {
       authenticateOAuth(jwt({ aud: `${BASE}/mcp` }));
       await expectUnauthorized(deployment(), "/mcp/support");
       authenticateOAuth(jwt({ aud: `${BASE}/mcp/support` }));
@@ -642,7 +642,7 @@ describe("clerkAuth inbound auth", () => {
       }
     });
 
-    it("does not log SDK rejection details or thrown errors", async () => {
+    it("INV-6: does not log SDK rejection details or thrown errors", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         mocks.authenticateRequest.mockResolvedValue({
@@ -1138,7 +1138,7 @@ describe("clerkAuth inbound auth", () => {
   });
 
   // A key that cannot yield a Frontend API origin is a structural mistake, and
-  // ethos.md says those throw at construction. Before this check the failure
+  // PRINCIPLES.md says those throw at construction. Before this check the failure
   // was `atob`'s DOMException raised from inside the returned object: on the
   // Workers shape, which builds per request, that made every route — /health
   // included — a 500 whose stack named base64, not the misconfigured variable.

@@ -18,8 +18,8 @@ This repository is deployment configuration, not a copy of Connecta itself.
   imports and typed `ui`, `vault`, and `activity` options in `src/index.ts`.
   Follow README "Select optional modules". Auth management requires explicit
   `credentialAdministration` or `personalConnection` permissions; visibility
-  alone never grants it. Configured bearer auth is a client option, not a human
-  management identity. Connecta-issued access tokens are removed.
+  alone never grants it. Clerk supplies human identity; `cta_` access tokens cover machine clients.
+  The static bearer adapter retires in Phase 3.
   `src/file-activity.ts` remains the deployment-owned history store.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,

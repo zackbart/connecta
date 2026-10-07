@@ -283,7 +283,7 @@ describe("api() oauth authorization start", () => {
     expect((await connector.status!(registry.contextFor("ccb", BASE))).state).toBe("ok");
   });
 
-  it("reports auth_required from status without starting authorization", async () => {
+  it("INV-10: reports auth_required from status without starting authorization", async () => {
     const storage = memoryStorage();
     const connector = ccb();
     const registry = makeRegistry([connector], { storage });
@@ -769,7 +769,7 @@ describe("api() oauth reset and disconnect", () => {
     return { provider, connector, ctx, storage };
   }
 
-  it("disconnect fences the grant until an explicit start, which passive reads never make", async () => {
+  it("INV-10: disconnect fences the grant until an explicit start, which passive reads never make", async () => {
     const { provider, connector, ctx, storage } = await connected();
     await connector.disconnectAuth!(ctx());
     expect(await storage.get("conn:ccb:oauth:generation")).toMatch(/^disconnected:/);

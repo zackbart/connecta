@@ -929,7 +929,7 @@ describe("remoteMcp() connector", () => {
     expect(typed.cause).toBeInstanceOf(UnauthorizedError);
   });
 
-  it("reuses a client within one request scope but never across requests", async () => {
+  it("INV-7: reuses a client within one request scope but never across requests", async () => {
     const first = await connectServer();
     const second = await connectServer();
     closer = async () => {

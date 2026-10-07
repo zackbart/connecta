@@ -4,8 +4,8 @@ One Web-standard `fetch(request) => Promise<Response>` handler, a long-lived
 registry behind it, and a strict rule about what may be imported. Everything
 else in this repository is a detail of those three things.
 
-Read [`ethos.md`](../ethos.md) first; this guide says how the shape it describes
-is assembled and where each subsystem lives. The surface itself belongs to
+Read [PRINCIPLES.md](https://github.com/zackbart/connecta/blob/main/PRINCIPLES.md)
+first; this guide explains the shape and where each subsystem lives. The surface itself belongs to
 [meta-tools](./meta-tools.md), [code mode](./code-mode.md), and
 [inbound auth](./auth.md).
 
@@ -37,9 +37,8 @@ the saved rotation ([#526](https://github.com/zackbart/connecta/issues/526)).
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the
-request that created them. `Nothing request-bound survives a request` is an ethos
-invariant, not a style preference: a client retained across requests on Workers
-is a cross-request capability leak, and a promise awaited after the response is
+request that created them. INV-7 requires this lifetime: a client retained
+across requests on Workers is a cross-request capability leak, and a promise awaited after the response is
 work the runtime may already have torn down. Deferred work has one sanctioned
 channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activity
 writes use it, as does a stale-window catalog refresh, which owns a fresh scope
@@ -402,8 +401,7 @@ carries whether an inbound provider *authenticated* it: an open deployment
 admits everyone as the anonymous actor, and the function is never asked about
 them. No caller, an unauthenticated one, or no address fails `auth_required`
 before any request leaves. The provider never chooses the account and a
-deployment's own connector still cannot read the caller (ethos.md, delegated
-subjects; `test/google-workspace-delegation.test.ts`). Its tokens live in a
+deployment's own connector still cannot read the caller (PRINCIPLES.md, INV-3; `test/google-workspace-delegation.test.ts`). Its tokens live in a
 bounded module-level map, in memory only, keyed by the key's own digest as well
 as the account, subject, and scopes. A mint in flight is shared across requests
 the way the catalog and OAuth flights are: the owner settles a plain outcome

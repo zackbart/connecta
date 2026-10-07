@@ -11,7 +11,7 @@
 // - maintained providers that act *as* the caller downstream — Google
 //   Workspace through domain-wide delegation (`src/providers/google/`) — which
 //   hand the identity to a deployment-config function that names the
-//   downstream subject (ethos.md, delegated subjects, #678). The
+//   downstream subject (PRINCIPLES.md INV-3, #678). The
 //   provider never decides whose account to open; config does, from this.
 //
 // Core sets it from the authorization that admitted the request, on the scoped

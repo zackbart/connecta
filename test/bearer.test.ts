@@ -51,7 +51,7 @@ describe("retired bearerToken audience options", () => {
       expect(() => bearerToken("s", options as never)).toThrow(
         "removed in issue #178",
       );
-      expect(() => bearerToken("s", options as never)).toThrow("ethos.md");
+      expect(() => bearerToken("s", options as never)).toThrow("PRINCIPLES.md");
     }
   });
 });

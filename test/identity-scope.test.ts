@@ -343,7 +343,7 @@ describe("identity-scoped tools", () => {
     expect(deleted.count).toBe(1);
   });
 
-  it("scopes a program's search and call through the same view", async () => {
+  it("INV-3 INV-4: scopes a program's search and call through the same view", async () => {
     const outcomes: Record<string, unknown> = {};
     const executor = {
       async execute(_code: string, providers: Array<{ name: string; fns: Record<string, (...args: any[]) => Promise<unknown>> }>) {
@@ -603,7 +603,7 @@ describe("named tool pools", () => {
     expect(full.text).toContain("billing.invoices");
   });
 
-  it("never widens the identity's own view", async () => {
+  it("INV-4: never widens the identity's own view", async () => {
     const c = deployment(
       { support: { tools: ["notes", "wiki", "billing"], grant: () => true } },
       (id) => (id === "alice" ? ["notes.search", "wiki"] : ["billing"]),

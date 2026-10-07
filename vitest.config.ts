@@ -136,6 +136,14 @@ export const NODE_ONLY_SUITES = [
     reason: "runs real HTTP requests through Wrangler/workerd to verify Worker cleanup after the response ends",
   },
   {
+    file: "test/invariants.test.ts",
+    reason: "reads principles and parses test registrations from the checkout",
+  },
+  {
+    file: "test/spec-coverage.test.ts",
+    reason: "reads the MCP coverage record and resolves test titles on disk",
+  },
+  {
     file: "test/artifact-eval-grader.test.ts",
     reason: "checks the Node-only fake-world artifact evaluation grader",
   },

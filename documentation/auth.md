@@ -646,9 +646,9 @@ createConnecta({
 ## Cloudflare Access on Workers
 
 [`cloudflareAccessAuth()`](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
-is the Worker-specific path. `ethos.md` records it as **provisional**: Managed
-OAuth and the Clerk migration still want production evidence
-([#506](https://github.com/zackbart/connecta/issues/506)).
+is the supported Worker-specific path under
+[#703](https://github.com/zackbart/connecta/issues/703). Node uses Clerk;
+Access trusts the identity validated at the Worker edge.
 
 ```ts
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";

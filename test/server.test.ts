@@ -939,7 +939,7 @@ describe("server /mcp end-to-end", () => {
     expect(inner).toEqual({ sum: 7 });
   });
 
-  it("records one payload-free activity event for each resolved tool call", async () => {
+  it("INV-6: records one payload-free activity event for each resolved tool call", async () => {
     const events: ToolCallActivityEvent[] = [];
     const activity: ActivityStore = {
       record(event) {
@@ -1049,7 +1049,7 @@ describe("server /mcp end-to-end", () => {
     });
   });
 
-  it("stores a finite error code instead of a raw downstream error", async () => {
+  it("INV-6: stores a finite error code instead of a raw downstream error", async () => {
     const events: ToolCallActivityEvent[] = [];
     const failing: Connector = {
       id: "private",

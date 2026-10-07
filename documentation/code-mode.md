@@ -7,7 +7,7 @@ Two executors implement it: QuickJS in a Node child process and `workerExecutor(
 from `@zackbart/connecta/worker` around upstream `DynamicWorkerExecutor` on Workers.
 Divergence is a bug unless explained in [Executor exceptions](#executor-exceptions);
 a third executor is implementable from this document alone.
-[`ethos.md`](../ethos.md) carries the verdicts behind the shape,
+[`PRINCIPLES.md`](https://github.com/zackbart/connecta/blob/main/PRINCIPLES.md) states the invariants,
 [`meta-tools.md`](./meta-tools.md) owns the top-level tool contract, and clause
 identifiers (`A1`, `E3`, …) are stable and cited by [Verification](#verification).
 
@@ -543,7 +543,7 @@ request; it is not activity, a session, or a stream.
 
 MCP-native output a return value cannot carry: base64 is not projectable, so a
 block that survives intake uncapped (`S5`) must not die at the `R2` exit guard.
-The refused alternatives are in `ethos.md`
+The earlier alternatives are in [decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)
 ([#267](https://github.com/zackbart/connecta/issues/267),
 [#270](https://github.com/zackbart/connecta/issues/270)).
 

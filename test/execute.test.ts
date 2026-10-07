@@ -439,7 +439,7 @@ describe("buildSandboxProviders", () => {
     expect(calls).toBe(0);
   });
 
-  it("fails closed for unannotated and contradictory tool definitions", async () => {
+  it("INV-1: fails closed for unannotated and contradictory tool definitions", async () => {
     let calls = 0;
     const ambiguous: Connector = connectorWith({
       id: "ambiguous",
@@ -2045,7 +2045,7 @@ describe("execute_code handler", () => {
     expect(parsed.result.totalChars).toBeGreaterThan(100_000);
   });
 
-  it("cancels outstanding host calls when sandbox execution ends", async () => {
+  it("INV-7: cancels outstanding host calls when sandbox execution ends", async () => {
     let pending: Promise<unknown> | undefined;
     const hanging: Connector = connectorWith({
       id: "hanging",

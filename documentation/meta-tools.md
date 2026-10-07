@@ -182,8 +182,8 @@ discovery made the same bet).
 ```
 
 It is something to read, not something that runs: programs stay JavaScript,
-and the refusal of erasable TypeScript in `execute_code` stands
-([ethos](../ethos.md#decisions)). The output half is the provider's declared
+and `execute_code` accepts no erasable TypeScript
+([decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)). The output half is the provider's declared
 schema, else an `S9` observation that opens with the
 `/* observed, not declared */` marker and keeps the `outputSchemaSource`
 field, else `unknown` — runtime evidence never reads as a contract, even when

@@ -13,7 +13,7 @@ beforeAll(async () => {
 afterAll(async () => { await worker?.stop(); });
 
 describe("Worker budget exhaustion across a completed HTTP response", () => {
-  it("disposes native handles and frees the lease before a later request, without the guest timeout", async () => {
+  it("INV-7: disposes native handles and frees the lease before a later request, without the guest timeout", async () => {
     const response = await worker.fetch("/mcp", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },

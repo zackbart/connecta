@@ -78,7 +78,7 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     expect(graph.size).toBeGreaterThan(1);
   });
 
-  it("contains no `node:` builtin imports or requires", () => {
+  it("INV-12: contains no `node:` builtin imports or requires", () => {
     for (const file of graph) {
       const source = readFileSync(file, "utf8");
       expect(
@@ -96,7 +96,7 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     }
   });
 
-  it("never reaches node-only modules or optional auth adapters", () => {
+  it("INV-12: never reaches node-only modules or optional auth adapters", () => {
     const nodeAdapter = join(SRC, "node.ts");
     const fileStorage = join(SRC, "storage", "file.ts");
     const quickJsExecutor = join(SRC, "executors", "quickjs.ts");
@@ -170,7 +170,7 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
 
 // Effect is the core's implementation, never its API, and never a license to
 // run fibers from anywhere. These walks hold the lines the Promise edge
-// (src/runtime/run.ts) depends on; see ethos.md's Effect decision.
+// (src/runtime/run.ts) depends on; see PRINCIPLES.md INV-13.
 
 const ROOT = resolve(SRC, "..");
 const RUNNER = join(SRC, "runtime", "run.ts");
@@ -256,7 +256,7 @@ function testGraph(entry: string): Set<string> {
 describe("Effect boundaries", () => {
   const everySource = sourceFiles(SRC);
 
-  it("keeps test and platform-runtime Effect packages out of src/", () => {
+  it("INV-12: keeps test and platform-runtime Effect packages out of src/", () => {
     for (const file of everySource) {
       for (const spec of allSpecifiers(readFileSync(file, "utf8"))) {
         for (const pattern of FORBIDDEN_EFFECT_PACKAGES) {

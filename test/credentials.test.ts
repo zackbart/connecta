@@ -174,7 +174,7 @@ describe("storedCredentialShape", () => {
 });
 
 describe("CredentialVault", () => {
-  it("keeps connector credential access limited to stored own fields", async () => {
+  it("INV-3 INV-5: keeps connector credential access limited to stored own fields", async () => {
     const vault = new CredentialVault(memoryStorage(), KEY);
     await vault.set("service", "synthetic-secret", "operator");
     const registry = makeRegistry([
@@ -199,7 +199,7 @@ describe("CredentialVault", () => {
     expect(await vault.get("service", "constructor")).toBe("declared-secret");
   });
 
-  it("encrypts credentials in the existing KV storage and decrypts on demand", async () => {
+  it("INV-5: encrypts credentials in the existing KV storage and decrypts on demand", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);
 
@@ -224,7 +224,7 @@ describe("CredentialVault", () => {
     });
   });
 
-  it("returns masked metadata without returning the credential", async () => {
+  it("INV-5: returns masked metadata without returning the credential", async () => {
     const vault = new CredentialVault(memoryStorage(), KEY);
     await vault.set("service", "abcdefghij9876", "user_123");
 
@@ -275,7 +275,7 @@ describe("CredentialVault", () => {
     );
   });
 
-  it("binds ciphertext to its connector id", async () => {
+  it("INV-5: binds ciphertext to its connector id", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);
     await vault.set("one", "token-one", "user_123");

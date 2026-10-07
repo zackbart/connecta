@@ -41,7 +41,7 @@
 //
 // Published specifications are drift evidence and nothing else. Nothing here
 // generates a tool, and no runtime module reads a spec — schema ingestion stays
-// refused (ethos.md).
+// not implemented (decisions/0001-ethos-verdict-table.md).
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";

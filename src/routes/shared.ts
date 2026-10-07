@@ -391,7 +391,7 @@ export function validateAuthPermissions(
  * Whether this identity may open artifact pages: exactly whoever may read the
  * `artifacts` connector — it is visible to them and `get_artifact` is among
  * its tools they were granted. Viewing grants nothing a program could not
- * already read (ethos, "Human routes manage auth, never capability").
+ * already read (PRINCIPLES.md, INV-4).
  */
 export function mayViewArtifacts(authz: AuthorizedIdentity, registry: Registry): boolean {
   if (authz.connectorIds !== "all" && !authz.connectorIds.includes("artifacts")) {
