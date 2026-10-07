@@ -2,10 +2,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertSuiteCollection } from "./check-node-suites.mjs";
-import { GUARDS, failureOutput, relatedInputs } from "./check-fast.mjs";
+import { GUARDS, changedPaths, failureOutput, relatedInputs } from "./check-fast.mjs";
 
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "connecta-changelog-"));
@@ -229,7 +230,7 @@ test("check:fast always runs the guards and adds suites that name a changed path
     { file: "test/fixture-reader.test.ts", text: 'new URL("./fixtures/catalog.json", import.meta.url)' },
     { file: "test/unrelated.test.ts", text: "import { createConnecta } from '../src/index.js';" },
   ];
-  assert.deepEqual(relatedInputs({ changed: [], suites }), { related: [...GUARDS].sort(), deferred: [] });
+  assert.deepEqual(relatedInputs({ changed: [], suites }), { related: [...GUARDS].sort(), deferred: [], fullRun: false });
   const { related, deferred } = relatedInputs({ changed: [".github/workflows/ci.yml", "test/fixtures/catalog.json", "src/server.ts"], suites });
   assert.deepEqual(deferred, []);
   for (const file of [...GUARDS, ".github/workflows/ci.yml", "test/ci.node.test.ts", "test/fixtures/catalog.json", "test/fixture-reader.test.ts", "src/server.ts"]) {
@@ -250,4 +251,72 @@ test("check:fast keeps a failing Vitest run's summary and bounds other output", 
   assert.equal(failureOutput(vitest), ["⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", " FAIL test/a.test.ts > breaks", " Test Files  1 failed"].join("\n"));
   const long = Array.from({ length: 250 }, (_, index) => `line ${index}`).join("\n");
   assert.deepEqual(failureOutput(`${long}\n`).split("\n"), Array.from({ length: 200 }, (_, index) => `line ${index + 50}`));
+});
+
+
+test("check:fast keeps deleted fixtures and both sides of staged and committed renames", () => {
+  fixture(({ root, git, commit }) => {
+    const old = "test/fixtures/artifacts-d1-r2/wrangler.jsonc";
+    const renamed = "test/fixtures/artifacts-d1-r2/renamed.jsonc";
+    mkdirSync(join(root, "test/fixtures/artifacts-d1-r2"), { recursive: true });
+    writeFileSync(join(root, old), "{}\n");
+    commit();
+    const base = git("rev-parse", "HEAD").trim();
+    const suites = [{ file: "test/artifact-store-d1.node.test.ts", text: 'new URL("./fixtures/artifacts-d1-r2/wrangler.jsonc", import.meta.url)' }];
+    rmSync(join(root, old));
+    assert.deepEqual(changedPaths("HEAD", root), [old]);
+    const selection = relatedInputs({ changed: changedPaths("HEAD", root), deleted: [old], suites });
+    assert.ok(selection.related.includes(suites[0].file));
+    assert.ok(!selection.related.includes(old));
+    assert.equal(selection.fullRun, false);
+    git("restore", old);
+    git("mv", old, renamed);
+    assert.deepEqual(changedPaths(base, root).sort(), [old, renamed].sort());
+    commit();
+    assert.deepEqual(changedPaths(base, root).sort(), [old, renamed].sort());
+    writeFileSync(join(root, "untracked.json"), "{}\n");
+    assert.ok(changedPaths(base, root).includes("untracked.json"));
+    const renamedSelection = relatedInputs({ changed: changedPaths(base, root), deleted: [old], suites });
+    assert.ok(renamedSelection.related.includes(suites[0].file));
+    assert.ok(renamedSelection.related.includes(renamed));
+  });
+});
+
+test("check:fast runs both full projects when a deleted module's former dependents are unknown", () => {
+  for (const path of ["src/removed.ts", "src/removed.js", "src/removed.mjs", "src/removed.cts", "src/operator-ui/removed.tsx"]) {
+    const selection = relatedInputs({ changed: [path], deleted: [path], suites: [] });
+    assert.equal(selection.fullRun, true, path);
+    assert.ok(!selection.related.includes(path));
+  }
+});
+
+test("check:fast preserves every failure section even when the summary exceeds 200 lines", () => {
+  const summary = [
+    "⎯⎯⎯ Failed Suites 1 ⎯⎯⎯", "Error: Cannot find module removed.js",
+    ...Array.from({ length: 250 }, (_, index) => `stack ${index}`),
+    "⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", "AssertionError: false is not true",
+    "⎯⎯⎯ Unhandled Errors ⎯⎯⎯", "Error: unhandled rejection",
+    " Test Files  2 failed", " Errors  1 error",
+  ].join("\n");
+  assert.equal(failureOutput(`✓ passing suite\n${summary}\n`), summary);
+  for (const section of ["Unhandled Errors", "Errors  1 error"]) {
+    assert.equal(failureOutput(`✓ passing suite\n${section}\nError: details\n`), `${section}\nError: details`);
+  }
+});
+
+test("check:fast prints a real mixed Vitest run's missing-module and assertion diagnostics", () => {
+  fixture(({ root }) => {
+    writeFileSync(join(root, "vitest.config.mjs"), 'export default { test: { globals: true, include: ["*.test.mjs"] } };\n');
+    writeFileSync(join(root, "suite.test.mjs"), 'import "./missing-module.mjs";\n');
+    writeFileSync(join(root, "assertion.test.mjs"), 'test("fails an assertion", () => expect(false).toBe(true));\n');
+    const vitest = fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [vitest, "run", "--config", "vitest.config.mjs", "--maxWorkers", "1"], {
+      cwd: root, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0" }, timeout: 30_000,
+    });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    const summary = failureOutput(`${result.stdout}\n${result.stderr}`);
+    for (const diagnostic of ["Failed Suites", "Failed Tests", "missing-module.mjs", "AssertionError"]) {
+      assert.ok(summary.includes(diagnostic), `${diagnostic} missing from ${summary}`);
+    }
+  });
 });

@@ -91,16 +91,19 @@ describe("CI browser paths", () => {
 });
 
 describe("CI security paths", () => {
-  it.each([["package.json"], ["package-lock.json"], ["src/server.ts", "package-lock.json"]])("audits dependencies when %s changes", (...paths) => {
-    expect(securityRequired(paths)).toBe("true");
+  const inputs = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"];
+  const directories = ["", "templates/node/", "examples/worker/", "packages/workspace/", "packages/nested/workspace/"];
+  it.each(directories.flatMap((directory) => inputs.map((input) => `${directory}${input}`)))("audits dependencies when %s changes", (path) => {
+    expect(securityRequired([path])).toBe("true");
+    expect(securityRequired(["src/server.ts", path])).toBe("true");
   });
 
   it.each([
     "src/server.ts",
-    "templates/node/package.json",
-    "examples/worker/package-lock.json",
     ".github/workflows/security.yml",
     "package.json.md",
+    "nested/package.json.md",
+    "nested/.npmrc.md",
   ])("leaves %s to the nightly audit", (path) => {
     expect(securityRequired([path])).toBe("false");
   });

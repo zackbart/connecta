@@ -17,8 +17,10 @@ to merge on: it runs `if: always()` and on failure prints
   including the generated Node deployment's Docker build).
 - `browser`: Playwright Chromium. Skipped on a PR only when every changed path
   is in the safe set. Every push to `main` runs it.
-- `security`: `npm run check:security`, only when root `package.json` or
-  `package-lock.json` changed (PR diff, or the push range on `main`).
+- `security`: `npm run check:security`, when a root or nested `package.json`,
+  `package-lock.json`, `npm-shrinkwrap.json`, or `.npmrc` changes (PR diff, or
+  the push range on `main`). This includes templates installed by package and
+  Docker smoke, published examples, and any future workspaces.
 - `check` passes when core and changes succeed, and browser and security each
   succeed or were skipped *because they were not required*. A cancelled or
   unexpectedly skipped job fails it.
@@ -45,8 +47,10 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 - **Coverage reporter.** `Test-backed coverage failed` comes from the full,
   unfiltered Node run: an `INV-n` lost its passing test, a `spec/coverage.json`
   title no longer matches a passing test exactly, or a collected suite did not
-  run. A focused rerun reports itself as partial and cannot reproduce it;
-  rerun `npm run test:node`.
+  run. Reproduce it with unfiltered `npm run test`, the test step in `check`.
+  Project filters (including `npm run test:node`), file filters, and focused
+  reruns skip invariant and spec enforcement by design and cannot reproduce
+  coverage failures.
 - **Node-only collection.** `check:changes` fails when a `*.node.test.ts`
   lacks its first-line `// Node-only: <reason>`, or a suite sits outside `test/`.
 

@@ -23,9 +23,11 @@ file new work with motivation, behavior, and acceptance criteria, not a TODO.md.
 `npm run check:fast` is the inner loop: docs, fragment, Node-suite, UI, lint,
 Knip, and typecheck checks run concurrently with `vitest related` on both
 projects for files changed since the `origin/main` merge base (uncommitted and
-untracked included), suites naming a changed path, and the purity,
-package-surface, and deployment-shapes guards. It is partial: coverage skips
-INV and spec checks, and `package.json` or Vitest config changes wait for `check`.
+untracked and deleted paths included, with both sides of renames), suites
+naming a changed path, and the purity, package-surface, and deployment-shapes
+guards. Related runs skip INV and spec coverage checks; `package.json` or
+Vitest config changes wait for `check`.
+Deleted modules require a full Vitest run because their import graph is gone.
 
 `npm run check` must pass before you claim anything is done. It runs
 `check:core` (docs, fragments, Node-suite reasons, UI freshness, lint, unused,
@@ -36,9 +38,11 @@ package smoke); use it when touching packaging, dependencies, or exports.
 
 CI's `core` job runs `check:core` and `check:package`. `browser` skips a PR
 whose every path is in the safe set in `scripts/ci-browser-paths.sh`;
-`security` runs only when root `package.json` or `package-lock.json` changes,
-and the nightly Security workflow and publishing audit the rest. The `check`
-gate requires each job to pass or be intentionally skipped.
+`security` runs when root or nested `package.json`, `package-lock.json`,
+`npm-shrinkwrap.json`, or `.npmrc` changes, including the template installed
+by package/Docker smoke and published examples. The nightly Security workflow
+and publishing also audit dependencies. The `check` gate requires each job
+to pass or be intentionally skipped.
 
 ## Source map
 

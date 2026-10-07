@@ -17,40 +17,44 @@ const FULL_RUN = /(^|\/)(package\.json|(vitest|vite)\.config\.[^/]+)$/;
 // Plain data in, plain data out: the related inputs for a diff. A suite that
 // names a changed path in its source (a workflow, a script, a fixture it reads)
 // is related even though no import connects them.
-export function relatedInputs({ changed, suites }) {
+export function relatedInputs({ changed, suites, deleted = [] }) {
   const related = new Set(GUARDS);
   const deferred = [];
+  // A removed module has no current import graph. Run both projects rather
+  // than guessing which former dependents Vitest can still discover.
+  const fullRun = deleted.some((path) => /\.[cm]?[jt]sx?$/.test(path));
   for (const path of changed) {
     if (FULL_RUN.test(path)) {
       deferred.push(path);
       continue;
     }
-    related.add(path);
+    if (!deleted.includes(path)) related.add(path);
     const names = path.startsWith("test/") ? [path, path.slice("test/".length)] : [path];
     for (const { file, text } of suites) {
       if (names.some((name) => text.includes(name))) related.add(file);
     }
   }
-  return { related: [...related].sort(), deferred };
+  return { related: [...related].sort(), deferred, fullRun };
 }
 
-function git(args) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8" });
+function git(args, cwd) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" });
 }
 
-function changedPaths(base) {
+export function changedPaths(base, cwd = root) {
   let mergeBase;
   try {
-    mergeBase = git(["merge-base", base, "HEAD"]).trim();
+    mergeBase = git(["merge-base", base, "HEAD"], cwd).trim();
   } catch {
     throw new Error(`check:fast: cannot find a merge base with ${base}; run git fetch origin or pass --base <ref>.`);
   }
   // Working tree against the merge base: commits, staged, and unstaged edits.
   const listed = [
-    ...git(["diff", "--no-renames", "--name-only", "-z", mergeBase]).split("\0"),
-    ...git(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+    ...git(["diff", "--no-renames", "--name-only", "-z", mergeBase], cwd).split("\0"),
+    ...git(["ls-files", "--others", "--exclude-standard", "-z"], cwd).split("\0"),
   ];
-  return [...new Set(listed)].filter((path) => path && existsSync(join(root, path)));
+  // --no-renames retains both the old and new path, including deletions.
+  return [...new Set(listed)].filter(Boolean);
 }
 
 function suiteSources() {
@@ -66,11 +70,13 @@ function suiteSources() {
   return suites;
 }
 
-// A failing Vitest run prints every passing suite first; keep its failure
-// summary. Other steps keep their last lines.
+// A failing Vitest run prints every passing suite first. Keep everything from
+// its first failure section, including suite failures and unhandled errors.
+// Only output without a Vitest failure section is limited to its last lines.
 export function failureOutput(output) {
-  const summary = output.indexOf("Failed Tests");
-  const lines = output.slice(summary === -1 ? 0 : output.lastIndexOf("\n", summary) + 1).trimEnd().split("\n");
+  const summary = output.search(/^.*(?:Failed Suites|Failed Tests|Unhandled Errors|Errors\s+\d+).*$/m);
+  if (summary !== -1) return output.slice(summary).trimEnd();
+  const lines = output.trimEnd().split("\n");
   return lines.slice(-200).join("\n");
 }
 
@@ -96,7 +102,10 @@ async function main() {
   const index = args.indexOf("--base");
   const base = index === -1 ? "origin/main" : args[index + 1];
   if (!base || args.length !== (index === -1 ? 0 : 2)) throw new Error("usage: npm run check:fast [-- --base <ref>]");
-  const { related, deferred } = relatedInputs({ changed: changedPaths(base), suites: suiteSources() });
+  const changed = changedPaths(base);
+  const deleted = changed.filter((path) => !existsSync(join(root, path)));
+  const { related, deferred, fullRun } = relatedInputs({ changed, deleted, suites: suiteSources() });
+  if (fullRun) console.log(`Deleted modules require a full Vitest run: ${deleted.join(", ")}.`);
   const vitest = join(root, "node_modules/vitest/vitest.mjs");
   const results = await Promise.all([
     run("docs", "npm", ["run", "-s", "check:docs"]),
@@ -105,7 +114,9 @@ async function main() {
     run("lint", "npm", ["run", "-s", "check:lint"]),
     run("unused", "npm", ["run", "-s", "check:unused"]),
     run("typecheck", "npm", ["run", "-s", "typecheck"]),
-    run(`vitest related (${related.length} inputs)`, process.execPath, [vitest, "related", "--run", ...related]),
+    fullRun
+      ? run("vitest full (deleted modules)", process.execPath, [vitest, "run"])
+      : run(`vitest related (${related.length} inputs)`, process.execPath, [vitest, "related", "--run", ...related]),
   ]);
   for (const result of results) {
     console.log(`${result.ok ? "ok  " : "FAIL"} ${result.name} ${result.seconds}s`);
@@ -114,7 +125,7 @@ async function main() {
       for (const line of result.output.split("\n").filter((line) => /^\s*(Test Files|Tests) /.test(line))) console.log(`  ${line.trim()}`);
     }
   }
-  if (deferred.length) console.log(`Not run here (Vitest would rerun every suite): ${deferred.join(", ")}. npm run check covers them.`);
+  if (deferred.length && !fullRun) console.log(`Not run here (Vitest would rerun every suite): ${deferred.join(", ")}. npm run check covers them.`);
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   const failed = results.filter(({ ok }) => !ok).length;
   console.log(`check:fast ${failed ? `failed (${failed} steps)` : "passed"} in ${seconds}s against ${base}. Partial: run npm run check before claiming done.`);
