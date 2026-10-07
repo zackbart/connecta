@@ -335,7 +335,7 @@ validates options common to every provider (purpose, title, instructions,
 connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
-(`test/purity.test.ts`). The factory carries its `definition`, which build and
+(`test/purity.node.test.ts`). The factory carries its `definition`, which build and
 check tools read instead of keeping provider lists; Linear is converted, and
 the other providers move in later #705 items.
 
