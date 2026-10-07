@@ -420,7 +420,7 @@ deleting old keys is hygiene on top. `POST /ui/oauth/<id>` takes a `mode`:
 | Request | What it does |
 | --- | --- |
 | `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it. |
-| `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending flow can be reused; otherwise authorization begins in the current epoch. |
+| `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending flow whose state no callback has claimed can be reused; otherwise authorization begins in the current epoch. |
 | `GET /connect/<id>?h=...` | Verifies the signed handoff, browser identity, connector visibility, and management permission before calling `startAuth`. Redirects the verified browser to consent. |
 | `DELETE /ui/oauth/<id>` | Disconnects and invalidates the cached catalog, even if the browser leaves. |
 
@@ -583,26 +583,26 @@ it touches anything and activating the new epoch with a compare-and-set where
 the store offers one; if another reset replaced that epoch — a restart that
 completed its own consent — the flow is abandoned with nothing touched. That
 guarantee needs the compare-and-set. Workers KV has none, so the retirement
-rechecks just before its write, which narrows the race without closing it,
-and KV's stale reads, a minute or more, widen it: a retirement can still land
-after a restart completes and replace its epoch, making that grant
-unreachable (one more consent) and orphaning its records, which a later
-Disconnect leaves stored. Nothing is sent anywhere; tracking the orphans is
-[#697](https://github.com/zackbart/connecta/issues/697).
+rechecks just before its write, which narrows the race without closing it, and
+KV's stale reads, a minute or more, widen it: a retirement can still land after
+a restart completes and replace its epoch, making that grant unreachable (one
+more consent). Nothing is sent; it lists manifests to record replaced epochs
+for the next Disconnect or Restart to delete (best effort).
 
 The flow is then bound to the resulting epoch: every read and write names it,
 never the live one. A write a reset overtakes after its epoch check is cleaned
 up and reported as failed, so a start never reads back another flow's consent
-URL (it reads from the epoch its connect attempt began in) and a callback
-never reports a grant it could not store. A callback is bound to the epoch its
-state check captured and decides nothing about the grant there. A flow whose
-epoch a later reset replaced fails with a retryable `unavailable` —
-"authorization changed while this request was in flight; try again" —
-retiring nothing and returning no consent URL. A callback whose epoch was
-already replaced as it began fails before redeeming its code; one replaced
-while it reads its verifier can still redeem at the original, trusted token
-endpoint before the token write notices, and fencing that exchange is
-[#697](https://github.com/zackbart/connecta/issues/697).
+URL (it reads from the epoch its connect attempt began in) and a callback never
+reports a grant it could not store. A flow whose epoch a later reset replaced
+fails with a retryable `unavailable` ("authorization changed while this request
+was in flight; try again"), retiring nothing and returning no consent URL. A
+callback is bound to the epoch its state check captured; it claims that state
+(atomically with `compareAndSet`: one duplicate redeems, the rest get a 400)
+and rereads the epoch in the turn that sends its code: superseded by then, it
+sends nothing; later, it saves nothing (one more consent). Continue never
+reuses a spent state. Cleanup deletes tokens and consent records only by
+compare-and-set against what it was bound with; without CAS it leaves them,
+concurrent duplicates may both send, and both checks trust the store's reads.
 
 ## Management permissions
 

@@ -7,6 +7,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
 import { createTestConnecta, required } from "./helpers.js";
 import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
+import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
 
 // Every interleaving below is driven through remoteMcp()'s own verifyState and
 // finishAuth, so the SDK runs its real callback sequence: discovery, client,
@@ -764,20 +765,25 @@ describe("an entry retirement on a store without compareAndSet", () => {
 });
 
 describe("the callback route and a duplicate callback", () => {
-  it("answers the losing duplicate as an already-used link, not as a refused exchange", async () => {
+  it("answers a duplicate that got past the handoff as an already-used link, not as a refused exchange", async () => {
+    // The route consumes its state handoff atomically where the store can;
+    // without compareAndSet two callbacks can both read it before either
+    // deletes it. The loser is held right there while the winner completes,
+    // then reaches the exchange, whose own claim refuses it.
     const server = authorizationServer();
     vi.stubGlobal("fetch", server.fetchStub);
-    const backing = memoryStorage();
-    let holdKey: string | undefined;
-      // Where the bind snapshots the verifier first, hold the SDK's read.
-      let skipReads = 0;
+    const backing = backingStore(false);
+    // The route reads the handoff twice: to find the callback's owner, then,
+    // after verifyState, to consume it. Hold the loser at the second.
+    let holding = false;
+    let handoffReads = 0;
     const reached = deferred<void>();
     const release = deferred<void>();
     const storage: KVStorage = { ...backing,
       async get(key) {
         const value = await backing.get(key);
-        if (key === holdKey && skipReads-- <= 0) {
-          holdKey = undefined;
+        if (holding && key.startsWith("oauth-handoff:") && ++handoffReads === 2) {
+          holding = false;
           reached.resolve();
           await release.promise;
         }
@@ -785,15 +791,14 @@ describe("the callback route and a duplicate callback", () => {
       },
     };
     const { logger, warnings } = spyLogger();
-    const connecta = createTestConnecta({ publicUrl: BASE, storage, logger, connectors: [connector()] });
+    const connecta = createTestConnecta({ publicUrl: BASE, storage, logger, auth: callbackAuth, connectors: [connector()] });
     try {
       const c = required(connecta.registry.getConnector("svc"));
       const start = await c.startAuth!(connecta.registry.contextFor("svc", BASE), { force: true });
       const state = required(new URL(required(start.authorizationUrl)).searchParams.get("state") ?? undefined);
-      const epoch = required((await backing.get("conn:svc:oauth:generation")) ?? undefined);
+      await bindCallback(connecta, "svc", state);
       const callback = `${BASE}/oauth/callback/svc?code=${server.issue("code-a")}&state=${state}`;
-      holdKey = `conn:svc:${oauthValueStorageKey("oauth:verifier", epoch)}`;
-      skipReads = backing.compareAndSet ? 1 : 0;
+      holding = true;
 
       const held = connecta.fetch(new Request(callback));
       await reached.promise;
