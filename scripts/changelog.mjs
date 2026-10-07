@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,7 +34,8 @@ function fragments(directory) {
       throw new Error(`${name}: fragments must be named <pr-or-slug>.md`);
     }
     const file = join(directory, name);
-    return { file, ...parseFragment(readFileSync(file, "utf8"), name) };
+    const bytes = readFileSync(file);
+    return { file, bytes, ...parseFragment(bytes.toString("utf8"), name) };
   });
 }
 
@@ -66,7 +67,8 @@ function main() {
   }
   if (!entries.length) throw new Error("No changelog fragments to assemble");
   const file = join(root, "CHANGELOG.md");
-  const changelog = readFileSync(file, "utf8");
+  const original = readFileSync(file);
+  const changelog = original.toString("utf8");
   const headings = [...changelog.matchAll(/^## (.+)$/gm)];
   if (headings.some(([heading]) => heading === "## Unreleased" || heading.split(/\s/)[1] === version)) {
     throw new Error("Remove the unreleased section or existing version before assembling");
@@ -79,12 +81,44 @@ function main() {
   });
   const section = `## ${version} — ${date}\n\n${narrative}\n\n${sections.join("\n\n")}\n\n`;
   const insertion = headings[0]?.index ?? changelog.length;
-  // Commit the complete changelog before consuming anything. A refused assembly
-  // never deletes a fragment, and an interrupted cleanup cannot duplicate a release.
+  // Keep the original bytes until consumption completes so a filesystem error
+  // restores the entire input set and permits a same-version retry.
   const temporary = `${file}.tmp`;
-  writeFileSync(temporary, changelog.slice(0, insertion) + section + changelog.slice(insertion));
-  renameSync(temporary, file);
-  for (const entry of entries) unlinkSync(entry.file);
+  let committed = false;
+  const deleted = [];
+  try {
+    writeFileSync(temporary, changelog.slice(0, insertion) + section + changelog.slice(insertion));
+    renameSync(temporary, file);
+    committed = true;
+    for (const entry of entries) {
+      unlinkSync(entry.file);
+      deleted.push(entry);
+    }
+  } catch (error) {
+    const failures = [];
+    if (committed) {
+      try {
+        writeFileSync(temporary, original);
+        renameSync(temporary, file);
+      } catch (restoreError) {
+        failures.push(`CHANGELOG.md: ${restoreError.message}`);
+      }
+    }
+    for (const entry of deleted) {
+      try {
+        writeFileSync(entry.file, entry.bytes);
+      } catch (restoreError) {
+        failures.push(`${entry.file}: ${restoreError.message}`);
+      }
+    }
+    try {
+      rmSync(temporary, { force: true });
+    } catch (cleanupError) {
+      failures.push(`${temporary}: ${cleanupError.message}`);
+    }
+    const recovery = failures.length ? `Rollback failed: ${failures.join("; ")}` : "Original changelog and fragments restored; retry after clearing the fault.";
+    throw new Error(`Changelog assembly failed: ${error.message}. ${recovery}`);
+  }
   console.log(`Assembled ${entries.length} fragments into ${version}. Review and commit CHANGELOG.md and the deletions.`);
 }
 

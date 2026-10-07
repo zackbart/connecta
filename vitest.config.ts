@@ -4,6 +4,7 @@ import { defineConfig } from "vitest/config";
 import CoverageReporter from "./test/fixtures/coverage-reporter.js";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { buildSync } from "esbuild";
+import { TEST_DIRECTORY, TEST_INCLUDE, NODE_ONLY_EXCLUDE } from "./scripts/test-suites.mjs";
 
 // Each fixture is a separate bundled module, not a renamed stand-in. In the
 // Worker project it executes inside workerd with the native Loader binding.
@@ -29,9 +30,9 @@ function executorBundles() {
 
 // Filename convention: Node runs every suite; workerd excludes *.node.test.ts.
 // Derive the coverage reporter's complete-run inventory from the same directory.
-const NODE_SUITES = readdirSync(new URL("./test/", import.meta.url), { recursive: true })
+const NODE_SUITES = readdirSync(new URL(`./${TEST_DIRECTORY}/`, import.meta.url), { recursive: true })
   .filter((file): file is string => typeof file === "string" && file.endsWith(".test.ts"))
-  .map((file) => `test/${file.replaceAll("\\", "/")}`);
+  .map((file) => `${TEST_DIRECTORY}/${file.replaceAll("\\", "/")}`);
 
 export default defineConfig({
   test: {
@@ -54,7 +55,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
-          include: ["test/**/*.test.ts"],
+          include: TEST_INCLUDE,
         },
       },
       {
@@ -74,8 +75,8 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
-          include: ["test/**/*.test.ts"],
-          exclude: ["test/**/*.node.test.ts"],
+          include: TEST_INCLUDE,
+          exclude: NODE_ONLY_EXCLUDE,
         },
       },
     ],
