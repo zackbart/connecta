@@ -9,8 +9,33 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      browser: ${{ steps.paths.outputs.browser }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Decide whether browser tests are needed
+        id: paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          browser=true
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/browser-paths"
+            browser=$(bash scripts/ci-browser-paths.sh < "$RUNNER_TEMP/browser-paths")
+          fi
+          echo "browser=$browser" >> "$GITHUB_OUTPUT"
+
+  # Every PR runs the non-browser checks without installing Chromium.
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -18,11 +43,60 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # `check` runs the operator-page browser suite, which needs Chromium and
-      # the system libraries it links against.
-      - run: npm run test:browser:install -- --with-deps
-      # release:check ends in the package smoke, which packs the tarball, runs
-      # `connecta init`, and then builds and runs the generated deployment's own
-      # container. Runners have Docker, and the smoke fails rather than skips
-      # when CI is set — so there is no separate image job to drift from it.
-      - run: npm run release:check
+      # The package smoke packs with --ignore-scripts and exercises the generated
+      # deployment's own container, so it needs no Chromium or prepack rerun.
+      - run: npm run release:check:core
+
+  # Gate the job, not the workflow, so irrelevant PRs report a skipped check.
+  browser:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Read installed Playwright version
+        id: playwright
+        run: echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+      # Even a cache hit needs the runner's system libraries.
+      - name: Install Chromium and system dependencies
+        id: install
+        timeout-minutes: 5
+        continue-on-error: true
+        run: npm run test:browser:install -- --with-deps
+      - name: Retry Chromium installation once
+        if: steps.install.outcome == 'failure'
+        timeout-minutes: 5
+        run: npm run test:browser:install -- --with-deps
+      - run: npm run test:browser
+
+  # Keep the existing check name as the gate for all three jobs, even on failure.
+  check:
+    needs: [core, changes, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all checks to pass
+        env:
+          CORE_RESULT: ${{ needs.core.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          BROWSER_REQUIRED: ${{ needs.changes.outputs.browser }}
+        run: |
+          if [[ "$CORE_RESULT" == success && "$CHANGES_RESULT" == success ]] &&
+             [[ "$BROWSER_RESULT" == success || ( "$BROWSER_REQUIRED" == false && "$BROWSER_RESULT" == skipped ) ]]; then
+            echo "All required checks passed"
+          else
+            echo "Core=$CORE_RESULT changes=$CHANGES_RESULT browser=$BROWSER_RESULT required=$BROWSER_REQUIRED"
+            exit 1
+          fi

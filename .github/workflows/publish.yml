@@ -21,6 +21,7 @@ concurrency:
 jobs:
   npm:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,16 +36,32 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
-          node -e '
+          node <<'NODE'
             const version = require("./package.json").version;
             const expected = `v${version}`;
             if (process.env.RELEASE_TAG !== expected) {
               throw new Error(`Release tag ${process.env.RELEASE_TAG} must equal ${expected}`);
             }
-          '
+          NODE
       - run: npm ci
-      # `check` (in release:check and in npm publish's prepack) runs the
-      # operator-page browser suite, which needs Chromium.
-      - run: npm run test:browser:install -- --with-deps
+      - name: Read installed Playwright version
+        id: playwright
+        run: echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+      # Publishing always runs Chromium once, as part of release:check.
+      - name: Install Chromium and system dependencies
+        id: install
+        timeout-minutes: 5
+        continue-on-error: true
+        run: npm run test:browser:install -- --with-deps
+      - name: Retry Chromium installation once
+        if: steps.install.outcome == 'failure'
+        timeout-minutes: 5
+        run: npm run test:browser:install -- --with-deps
       - run: npm run release:check
-      - run: npm publish
+      # release:check built dist/ and checked the package. Keep local prepack,
+      # but do not rerun it when publishing this validated tree.
+      - run: npm publish --ignore-scripts

@@ -105,6 +105,10 @@ export const WORKERS_SUITES = [
 
 export const NODE_ONLY_SUITES = [
   {
+    file: "test/ci-browser-paths.test.ts",
+    reason: "spawns the Bash CI path filter and aggregate gate",
+  },
+  {
     file: "test/artifact-eval-grader.test.ts",
     reason: "checks the Node-only fake-world artifact evaluation grader",
   },

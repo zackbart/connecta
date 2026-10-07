@@ -415,6 +415,8 @@ before.
 
 ### Changed
 
+- Contributors: CI runs Chromium only for relevant PR paths and always on `main` and publish, with a versioned browser cache and bounded installation retries; local `check` still runs the full suite (#705).
+
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server
   itself, follows HTTP redirects only within an origin for both transports and
