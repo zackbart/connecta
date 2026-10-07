@@ -1542,7 +1542,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         name: t.name,
         ...(t.title !== undefined ? { title: t.title } : {}),
         ...(t.icons !== undefined
-          ? { icons: t.icons as NonNullable<ToolDef["icons"]> }
+          ? {
+              // Inline images can consume the catalog ceiling and storage chunks.
+              // The SDK needs no icons for validation or parameter mirroring.
+              icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as
+                NonNullable<ToolDef["icons"]>,
+            }
           : {}),
         ...(t.execution !== undefined
           ? { execution: t.execution as NonNullable<ToolDef["execution"]> }
