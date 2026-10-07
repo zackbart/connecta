@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { repositoryTitles } from "./fixtures/test-titles.js";
 
-const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const coverage = JSON.parse(readFileSync(new URL("../spec/coverage.json", import.meta.url), "utf8")) as {
   revision: string;
   features: Array<{
@@ -16,7 +13,6 @@ const coverage = JSON.parse(readFileSync(new URL("../spec/coverage.json", import
     tests?: Array<{ file: string; title: string }>;
   }>;
 };
-const titles = repositoryTitles(ROOT).filter(({ kind, disabled }) => kind === "test" && !disabled);
 
 // Snapshot of the 2026-07-28 specification's component inventory and official
 // extensions, linked in coverage.sources. Update with a spec revision, not just
@@ -41,7 +37,7 @@ describe("MCP specification coverage", () => {
     expect(coverage.features.map(({ id }) => id).sort()).toEqual([...FEATURES].sort());
   });
 
-  it("backs implemented claims with exact existing test titles and future choices with references", () => {
+  it("requires test evidence for implemented claims and decision references for future choices", () => {
     for (const feature of coverage.features) {
       expect(["supported", "partial", "planned", "declined"], feature.id).toContain(feature.status);
       expect(feature.spec, feature.id).toMatch(/^https:\/\/modelcontextprotocol\.io\//);
@@ -52,10 +48,21 @@ describe("MCP specification coverage", () => {
         expect(feature.issue ?? feature.decision, feature.id)
           .toMatch(/^https:\/\/github\.com\/zackbart\/connecta\/(?:issues|pull)\/\d+(?:#.*)?$/);
       }
+      // The end-of-run reporter checks these against passing runner cases.
       for (const reference of feature.tests ?? []) {
-        expect(titles.some(({ file, title }) => file === reference.file && title === reference.title),
-          `${feature.id}: ${reference.file}: ${reference.title}`).toBe(true);
+        expect(reference.file, feature.id).toMatch(/^test\/.*\.test\.ts$/);
+        expect(reference.title.trim().length, feature.id).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it("records the 0.29.0 Deferred row as declined rather than planned", () => {
+    for (const id of ["prompts", "subscriptions", "io.modelcontextprotocol/ui", "io.modelcontextprotocol/tasks"]) {
+      const feature = coverage.features.find((feature) => feature.id === id)!;
+      expect(feature.status, id).toBe("declined");
+      expect(feature.decision, id).toBe("https://github.com/zackbart/connecta/issues/703");
+      expect(feature.notes, id).toContain("Deferred row");
+      expect(feature.notes, id).toContain("0.29.0");
     }
   });
 });

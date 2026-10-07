@@ -929,7 +929,7 @@ describe("errors (H11)", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it.each(writes)("never tells %s to retry when no reply comes back", async (name, args) => {
+  it.each(writes)("INV-9: never tells %s to retry when no reply comes back", async (name, args) => {
     route = () => ({ raw: noReply });
     const failure = await call(connection(), name, args).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });

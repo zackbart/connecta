@@ -1,94 +1,55 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { join, relative, sep } from "node:path";
-import ts from "typescript";
+import { relative, sep } from "node:path";
+import type { TestModule, TestSuite, TestState } from "vitest/node";
 
 export interface TestTitle {
   file: string;
   title: string;
   kind: "test" | "suite";
-  disabled?: true;
+  state: TestState;
 }
 
-// Resolve test-framework imports so a same-named local function cannot certify a test.
-// Only module statements and suite callbacks register evidence; test bodies and
-// unused helper functions do not. Parameterized titles keep their format string.
-export function sourceTitles(file: string, source: string): TestTitle[] {
-  const path = `/${file}`;
-  const tree = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
-  const options = { noLib: true, noResolve: true };
-  const host = ts.createCompilerHost(options);
-  host.getSourceFile = (name) => name === path ? tree : undefined;
-  const checker = ts.createProgram([path], options, host).getTypeChecker();
+// Evidence comes from the runner after execution, never from source text.
+// Unconfigured fixtures and non-registering calls are absent; skip/todo and
+// runtime ctx.skip() remain visible but cannot certify behavior.
+export function executedTitles(root: string, modules: ReadonlyArray<TestModule>): TestTitle[] {
   const titles: TestTitle[] = [];
-
-  function testImport(identifier: ts.Identifier): string | undefined {
-    const declaration = checker.getSymbolAtLocation(identifier)?.declarations?.[0];
-    if (!declaration || !ts.isImportSpecifier(declaration)) return undefined;
-    const imported = declaration.propertyName ?? declaration.name;
-    const module = declaration.parent.parent.parent;
-    return ts.isImportDeclaration(module) && ts.isStringLiteral(module.moduleSpecifier) &&
-      ["vitest", "@playwright/test"].includes(module.moduleSpecifier.text) ? imported.text : undefined;
-  }
-  function registration(expression: ts.Expression): string | undefined {
-    if (ts.isIdentifier(expression)) return testImport(expression);
-    if (ts.isPropertyAccessExpression(expression)) {
-      const base = registration(expression.expression);
-      if (base === "test" && expression.name.text === "describe") return "describe";
-      return ["each", "for", "only", "skip", "todo", "fails", "skipIf", "runIf", "concurrent", "sequential"]
-        .includes(expression.name.text) ? base : undefined;
+  function visit(parent: TestModule | TestSuite, file: string) {
+    for (const child of parent.children) {
+      titles.push({
+        file, title: child.name, kind: child.type,
+        state: child.type === "test" ? child.result().state : child.state(),
+      });
+      if (child.type === "suite") visit(child, file);
     }
-    if (ts.isCallExpression(expression)) return registration(expression.expression);
-    if (ts.isTaggedTemplateExpression(expression)) return registration(expression.tag);
-    return undefined;
   }
-  function disabled(expression: ts.Expression): boolean {
-    if (ts.isPropertyAccessExpression(expression)) {
-      return ["skip", "todo", "skipIf", "runIf"].includes(expression.name.text) || disabled(expression.expression);
-    }
-    if (ts.isCallExpression(expression)) return disabled(expression.expression);
-    if (ts.isTaggedTemplateExpression(expression)) return disabled(expression.tag);
-    return false;
+  for (const module of modules) {
+    visit(module, relative(root, module.moduleId).split(sep).join("/"));
   }
-  function visit(node: ts.Node, inactive = false) {
-    // Suite callbacks are entered explicitly below; other functions are not
-    // registration contexts, even if their bodies spell a real test-framework call.
-    if (ts.isFunctionLike(node)) return;
-    if (ts.isCallExpression(node)) {
-      const name = registration(node.expression);
-      if (["it", "test", "describe"].includes(name ?? "")) {
-        const title = node.arguments[0];
-        const skipped = inactive || disabled(node.expression);
-        if (title && (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title))) {
-          titles.push({
-            file, title: title.text, kind: name === "describe" ? "suite" : "test",
-            ...(skipped ? { disabled: true } : {}),
-          });
-        }
-        if (name === "describe") {
-          for (const argument of node.arguments.slice(1)) {
-            if (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument)) {
-              visit(argument.body, skipped);
-            }
-          }
-        }
-        return;
-      }
-    }
-    ts.forEachChild(node, (child) => visit(child, inactive));
-  }
-  visit(tree);
   return titles;
 }
 
-export function repositoryTitles(root: string): TestTitle[] {
-  function walk(directory: string): TestTitle[] {
-    return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) return walk(path);
-      if (!/\.(?:test|spec)\.ts$/.test(entry.name)) return [];
-      const file = relative(root, path).split(sep).join("/");
-      return sourceTitles(file, readFileSync(path, "utf8"));
-    });
+export function invariantProblems(ids: readonly string[], titles: readonly TestTitle[]): string[] {
+  const problems: string[] = [];
+  for (const id of ids) {
+    if (!titles.some(({ file, kind, title, state }) => file !== "test/invariants.test.ts" &&
+      kind === "test" && state === "passed" &&
+      [...title.matchAll(/\bINV-\d+\b/g)].some(([citation]) => citation === id))) {
+      problems.push(`${id} has no passing enforcing test`);
+    }
   }
-  return walk(join(root, "test"));
+  for (const { file, title } of titles) {
+    for (const [id] of title.matchAll(/\bINV-\d+\b/g)) {
+      if (!ids.includes(id)) problems.push(`${file}: ${title}: unknown invariant ${id}`);
+    }
+  }
+  return problems;
+}
+
+export function referenceProblems(
+  references: readonly { file: string; title: string }[],
+  titles: readonly TestTitle[],
+): string[] {
+  return references.filter((reference) => !titles.some(({ file, title, kind, state }) =>
+    kind === "test" && state === "passed" && file === reference.file && title === reference.title))
+    .map(({ file, title }) => `${file}: ${title}: no passing test matches the coverage reference`);
 }

@@ -174,7 +174,7 @@ describe("storedCredentialShape", () => {
 });
 
 describe("CredentialVault", () => {
-  it("INV-3 INV-5: keeps connector credential access limited to stored own fields", async () => {
+  it("INV-5: keeps connector credential access limited to stored own fields", async () => {
     const vault = new CredentialVault(memoryStorage(), KEY);
     await vault.set("service", "synthetic-secret", "operator");
     const registry = makeRegistry([

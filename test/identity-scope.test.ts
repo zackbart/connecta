@@ -140,7 +140,7 @@ describe("identity-scoped connectors", () => {
     expect(await bobResults.get("result:id")).toBeNull();
   });
 
-  it("isolates personal vault entries while visible shared auth stays editable", async () => {
+  it("INV-5: isolates personal vault entries while visible shared auth stays editable", async () => {
     const personal = api("personal", {
       description: "Personal connection",
       authScope: "personal",

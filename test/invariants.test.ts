@@ -1,12 +1,14 @@
-import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { repositoryTitles, sourceTitles } from "./fixtures/test-titles.js";
+import { invariantProblems, referenceProblems, type TestTitle } from "./fixtures/test-titles.js";
 
-const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const principles = readFileSync(new URL("../PRINCIPLES.md", import.meta.url), "utf8");
 const ids = [...principles.matchAll(/^- \*\*(INV-\d+):/gm)].map((match) => match[1]!);
-const titles = repositoryTitles(ROOT);
 
 // These are gaps in parts of an invariant, not exemptions from citing a real
 // test. Remove each entry when its target behavior has its own regression.
@@ -16,70 +18,90 @@ const TRANSITIONAL_GAPS = {
 };
 
 describe("principles backed by tests", () => {
-  it("gives each documented invariant a unique ID and an enforcing test title", () => {
+  it("gives each documented invariant a unique ID", () => {
     expect(ids.length).toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) {
-      expect(titles.some(({ file, kind, title, disabled }) => file !== "test/invariants.test.ts" &&
-        kind === "test" && !disabled &&
-        [...title.matchAll(/\bINV-\d+\b/g)].some(([citation]) => citation === id)), id).toBe(true);
-    }
-  });
-
-  it("rejects unknown invariant citations in test and suite titles", () => {
-    for (const { file, title } of titles) {
-      for (const [id] of title.matchAll(/\bINV-\d+\b/g)) {
-        expect(ids, `${file}: ${title}`).toContain(id);
-      }
-    }
     for (const [id, todo] of Object.entries(TRANSITIONAL_GAPS)) {
       expect(ids).toContain(id);
       expect(todo).toMatch(/TODO Phase \d+ \(#\d+ item \d+\)/);
     }
   });
 
-  it("separates enforcing tests from comments, ordinary strings, and skipped tests", () => {
-    const source = [
-      'import { it, test, describe } from "vitest";',
-      '// it("comment", () => {});',
-      'const prose = "ordinary string";',
-      'it.skip("skipped", () => {});',
-      'test.todo("todo");',
-      'it("real test", () => {});',
-      'it.each([1, 2])("case %s", () => {});',
-      'describe("suite", () => {});',
-      'function unused() { it("not registered", () => {}); }',
-      'it("outer", () => { it("inside test", () => {}); });',
-      'describe("shadowing", () => { const it = () => {}; it("fake", () => {}); });',
-      'describe.skip("skipped suite", () => { it("skipped child", () => {}); });',
-    ].join("\n");
-    expect(sourceTitles("fixture.test.ts", source).filter(({ disabled }) => !disabled)).toEqual([
-      { file: "fixture.test.ts", title: "real test", kind: "test" },
-      { file: "fixture.test.ts", title: "case %s", kind: "test" },
-      { file: "fixture.test.ts", title: "suite", kind: "suite" },
-      { file: "fixture.test.ts", title: "outer", kind: "test" },
-      { file: "fixture.test.ts", title: "shadowing", kind: "suite" },
+  it("requires a passing enforcing case, rather than a suite or the guard itself", () => {
+    const title = "INV-9: evidence";
+    for (const state of ["skipped", "pending", "failed"] as const) {
+      expect(invariantProblems(["INV-9"], [{ file: "test/write.test.ts", kind: "test", title, state }]))
+        .toEqual(["INV-9 has no passing enforcing test"]);
+    }
+    for (const citation of [
+      { file: "test/write.test.ts", kind: "suite", title, state: "passed" },
+      { file: "test/invariants.test.ts", kind: "test", title, state: "passed" },
+    ] as const) {
+      expect(invariantProblems(["INV-9"], [citation])).toEqual(["INV-9 has no passing enforcing test"]);
+    }
+    expect(invariantProblems(["INV-9"], [{ file: "test/write.test.ts", kind: "test", title, state: "passed" }]))
+      .toEqual([]);
+  });
+
+  it("rejects unknown citations even in skipped test and suite titles", () => {
+    expect(invariantProblems([], [
+      { file: "test/write.test.ts", kind: "test", title: "INV-99: skipped", state: "skipped" },
+      { file: "test/write.test.ts", kind: "suite", title: "INV-98: suite", state: "passed" },
+    ])).toEqual([
+      "test/write.test.ts: INV-99: skipped: unknown invariant INV-99",
+      "test/write.test.ts: INV-98: suite: unknown invariant INV-98",
     ]);
   });
 
-  it("requires a Vitest import and resolves its local alias", () => {
-    expect(sourceTitles("fake.test.ts", 'const it = () => {}; it("fake", () => {});')).toEqual([]);
-    expect(sourceTitles("alias.test.ts", 'import { it as check } from "vitest"; check("real", () => {});')).toEqual([
-      { file: "alias.test.ts", title: "real", kind: "test" },
-    ]);
-  });
+  it("rejects fixture-only, skipped, conditional, and empty parameterized citations from a real runner", async () => {
+    const root = mkdtempSync(join(tmpdir(), "connecta-invariant-evidence-"));
+    const output = join(root, "titles.json");
+    try {
+      writeFileSync(join(root, "active.test.ts"), [
+        'import { it, describe } from "vitest";',
+        '// it("INV-9: comment", () => {});',
+        'const prose = "INV-9: ordinary string";',
+        'it.skip("INV-9: skipped", () => {});',
+        'it.todo("INV-9: todo");',
+        'describe.skip("parent", () => { it("INV-9: skipped child", () => {}); });',
+        'it("INV-9: runtime skip", (ctx) => { ctx.skip(); });',
+        'if (false) { it("INV-9: false branch", () => {}); }',
+        'it.each([])("INV-9: empty cases %s", () => {});',
+        'function unused() { it("INV-9: unused helper", () => {}); }',
+        'it("real test", () => {});',
+        'it.each([1, 2])("real case %s", () => {});',
+      ].join("\n"));
+      // A valid registration in a file outside the runner's include list.
+      writeFileSync(join(root, "fixture.test.ts"),
+        'import { it } from "vitest"; it("INV-9: unexecuted fixture", () => {});');
+      await promisify(execFile)(process.execPath, [
+        "--import", "tsx", fileURLToPath(new URL("./fixtures/collect-executed-titles.ts", import.meta.url)), root, output,
+      ], { timeout: 20_000 });
+      const titles = JSON.parse(readFileSync(output, "utf8")) as TestTitle[];
+      expect(titles.filter(({ kind, state }) => kind === "test" && state === "passed").map(({ title }) => title))
+        .toEqual(["real test", "real case 1", "real case 2"]);
+      expect(invariantProblems(["INV-9"], titles)).toEqual(["INV-9 has no passing enforcing test"]);
+      expect(referenceProblems([{ file: "fixture.test.ts", title: "INV-9: unexecuted fixture" }], titles))
+        .toEqual(["fixture.test.ts: INV-9: unexecuted fixture: no passing test matches the coverage reference"]);
+      expect(referenceProblems([{ file: "active.test.ts", title: "INV-9: skipped" }], titles))
+        .toEqual(["active.test.ts: INV-9: skipped: no passing test matches the coverage reference"]);
+      expect(referenceProblems([{ file: "active.test.ts", title: "real case 1" }], titles)).toEqual([]);
 
-  it("recognizes browser registrations and excludes hooks and unsupported methods", () => {
-    const source = [
-      'import { test } from "@playwright/test";',
-      'test.describe("browser suite", () => { test("browser case", () => {}); });',
-      'test.beforeEach(() => { test("inside hook", () => {}); });',
-      'test.fake("unsupported method", () => {});',
-    ].join("\n");
-    expect(sourceTitles("browser.spec.ts", source)).toEqual([
-      { file: "browser.spec.ts", title: "browser suite", kind: "suite" },
-      { file: "browser.spec.ts", title: "browser case", kind: "test" },
-    ]);
-  });
-
+      // Exercise the same end-of-run reporter installed in vitest.config.ts.
+      writeFileSync(join(root, "PRINCIPLES.md"), "- **INV-9: One attempt per write.**\n");
+      mkdirSync(join(root, "spec"));
+      writeFileSync(join(root, "spec/coverage.json"), JSON.stringify({ features: [] }));
+      const runGate = () => promisify(execFile)(process.execPath, [
+        "--import", "tsx", fileURLToPath(new URL("./fixtures/collect-executed-titles.ts", import.meta.url)), root, output, "gate",
+      ], { timeout: 20_000 });
+      await expect(runGate()).rejects.toMatchObject({
+        stderr: expect.stringContaining("INV-9 has no passing enforcing test"),
+      });
+      writeFileSync(join(root, "active.test.ts"),
+        readFileSync(join(root, "active.test.ts"), "utf8") + '\nit("INV-9: passing evidence", () => {});');
+      await expect(runGate()).resolves.toMatchObject({ stderr: "" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

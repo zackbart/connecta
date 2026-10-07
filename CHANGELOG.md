@@ -451,7 +451,9 @@ using `quickJsExecutor()` need no configuration change.
   options. Custom sandboxes opt in with
   `customExecutor(myExecutor, { lifecycle: "self-managed" })` (#704).
 - Replace the contributor ethos with principles, decision history, and test-backed
-  invariant and MCP coverage records. No runtime behavior changes (#705).
+  invariant and MCP coverage records. Evidence comes from passing cases in the
+  full Node run, so fixtures, non-registering calls, and runtime skips cannot
+  certify coverage. Deferred MCP features remain declined for 0.29.0 (#705).
 
 - **`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.3.1.**
   The SDK now binds stored credentials to the issuing authorization server

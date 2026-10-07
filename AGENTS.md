@@ -40,14 +40,12 @@ path detection to succeed, plus browser success or an intentional safe-path skip
 Failures and cancellations fail the gate. Publishing runs the full
 `release:check` once, which builds `dist/`, then `npm publish --ignore-scripts`
 uses that validated tree without rerunning local `prepack`.
-
 `check:fast` arrives in Phase 1 item 2; it does not exist yet.
 
 ## Source map
 
 - `src/index.ts` constructs the Promise API; `src/server.ts` composes routes.
-- `src/routes/` owns HTTP and upward MCP. `src/meta-tools.ts` and
-  `src/execute.ts` own direct calls and programs.
+- `src/routes/` owns HTTP and upward MCP; `src/meta-tools.ts` and `src/execute.ts` own direct calls and programs.
 - `src/registry.ts`, `src/catalog-service.ts`, and `src/invocation.ts` own
   catalogs, discovery, calls, and enforcement.
 - `src/connectors/` owns `remoteMcp()` and `api()`; `src/providers/` owns
@@ -86,8 +84,10 @@ Suites live in `test/`. Until Phase 1 item 2 changes the convention, each
 `WORKERS_SUITES` for portable tests; `NODE_ONLY_SUITES` with a reason for Node.
 Node runs both; workerd reruns portable suites. `suite-partition.test.ts`
 guards the lists. Cite the `INV-n` IDs a test enforces in its title;
-`invariants.test.ts` rejects missing and unknown IDs. Spec coverage references
-exact test titles and paths; `spec-coverage.test.ts` checks them.
+`invariants.test.ts` guards the evidence rules. The full Node run's coverage
+reporter rejects missing and unknown IDs using executed tests. Spec coverage
+references exact executed test titles and paths; `spec-coverage.test.ts` checks its
+structure, and the reporter requires those cases to pass.
 
 ## Conventions
 

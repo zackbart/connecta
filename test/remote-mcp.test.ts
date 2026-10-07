@@ -236,7 +236,7 @@ function makeHttpDownstream(
 
 describe("remoteMcp() connector", () => {
   it.each(["success", "failure"])(
-    "keeps an OAuth connection usable after its first call's %s deadline scope ends",
+    "INV-7: keeps an OAuth connection usable after its first call's %s deadline scope ends",
     async (outcome) => {
       const storage = memoryStorage();
       await storage.set("oauth:tokens", JSON.stringify({
@@ -971,7 +971,7 @@ describe("remoteMcp() connector", () => {
     expect(builds).toBe(2);
   });
 
-  it("closes a connected scope at most once", async () => {
+  it("INV-7: closes a connected scope at most once", async () => {
     const { connector, counts } = await makeTrackedConnector();
     const requestScope = {};
     const context = { ...ctx(), requestScope };

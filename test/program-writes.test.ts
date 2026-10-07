@@ -285,7 +285,7 @@ describe("config approval exemptions (#566)", () => {
     expect(value(await widened.run(closeOne)).result).toBe("closed");
   });
 
-  it("lets an unawaited exempt write finish, and says how it went", async () => {
+  it("INV-9: lets an unawaited exempt write finish, and says how it went", async () => {
     let writeStarted!: () => void;
     let dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
     const w = world({
@@ -320,6 +320,10 @@ describe("config approval exemptions (#566)", () => {
       code: "write_outcome_unknown",
       writes: { succeeded: 0, failed: 0, unknown: 1 },
     });
+    expect(w.writes()).toEqual([
+      { address: "tracker.close_issue", args: { id: 1 } },
+      { address: "tracker.close_issue", args: { id: 2 } },
+    ]);
   });
 
   it.each([false, true])("drains a dispatched write on terminal host-budget exhaustion (unknown: %s)", async (unknown) => {

@@ -126,11 +126,15 @@
       "id": "authorization",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
-      "notes": "Clerk and edge-validated Worker Access plus machine access tokens exist; Phase 3 hardens metadata/challenges and retires static bearer.",
+      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource audience; edge-validated Worker Access and machine access tokens exist. Phase 3 hardens metadata/challenges and retires static bearer.",
       "tests": [
         {
           "file": "test/server.test.ts",
           "title": "serves oauth-protected-resource metadata pointing at the derived fapi url"
+        },
+        {
+          "file": "test/clerk.test.ts",
+          "title": "accepts the canonical resource audience at /mcp without a fallback allowlist"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"
@@ -168,7 +172,7 @@
       "id": "authorization-security",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations",
-      "notes": "PKCE, state, issuer and origin binding have regressions; callback error ordering and AS revocation still need work.",
+      "notes": "PKCE, state, issuer, origin, and Clerk resource-audience binding have regressions; callback error ordering and AS revocation still need work.",
       "tests": [
         {
           "file": "test/downstream-oauth.test.ts",
@@ -181,6 +185,10 @@
         {
           "file": "test/remote-mcp.test.ts",
           "title": "never sends an OAuth bearer token across an origin boundary"
+        },
+        {
+          "file": "test/clerk.test.ts",
+          "title": "INV-4: does not treat the base resource audience as a pool audience"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"
@@ -284,9 +292,9 @@
     },
     {
       "id": "prompts",
-      "status": "planned",
+      "status": "declined",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/prompts",
-      "notes": "Deferred beyond 0.29; no prompts advertised today.",
+      "notes": "Deferred for 0.29.0 by #703's Deferred row; no prompts advertised today.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -305,9 +313,9 @@
     },
     {
       "id": "subscriptions",
-      "status": "planned",
+      "status": "declined",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions",
-      "notes": "subscriptions/listen is deferred beyond 0.29.",
+      "notes": "subscriptions/listen is deferred for 0.29.0 by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -430,9 +438,9 @@
     },
     {
       "id": "io.modelcontextprotocol/ui",
-      "status": "planned",
+      "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/apps/overview",
-      "notes": "MCP Apps is deferred beyond 0.29.",
+      "notes": "MCP Apps is deferred for 0.29.0 by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -444,9 +452,9 @@
     },
     {
       "id": "io.modelcontextprotocol/tasks",
-      "status": "planned",
+      "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/tasks/overview",
-      "notes": "Tasks, including downstream task polling, are deferred beyond 0.29.",
+      "notes": "Tasks, including downstream task polling, are deferred for 0.29.0 by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {

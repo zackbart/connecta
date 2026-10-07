@@ -34,7 +34,8 @@ The remaining static bearer adapter retires in Phase 3.
 
 ## Invariants
 
-Each ID must appear in at least one test title under `test/`.
+Each ID must appear in at least one passing Vitest test title under `test/`.
+The full Node run checks the executed test tree, including runtime skips.
 
 - **INV-1: Fail-closed classification.** Missing, false, or contradictory
   read annotations classify as writes.
