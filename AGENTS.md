@@ -78,7 +78,7 @@ checks health, executor, and the current meta-tool set.
 
 Suites live in `test/`. Node runs every `*.test.ts`; workerd runs the same
 files except `*.node.test.ts`. Each Node-only file starts with
-`// Node-only: <reason>`; `check:changes` checks the reasons. Cite the `INV-n`
+`// Node-only: <reason>`; `check:changes` checks Vitest collection and reasons. Cite the `INV-n`
 IDs a test enforces in its title; `invariants.node.test.ts` guards evidence rules. The full Node run's coverage
 reporter rejects missing and unknown IDs using executed tests. Spec coverage
 references exact executed test titles and paths; `spec-coverage.node.test.ts` checks its
@@ -106,7 +106,10 @@ structure, and the reporter requires those cases to pass.
   or deployments can ignore. The preserved draft is `release-notes/0.29.0.md`.
   Run `npm run changelog:assemble -- --version <version> --narrative <file>`
   (optional `--date YYYY-MM-DD`); it groups Added/Changed/Fixed/Removed/Security
-  entries and deletes consumed fragments. Review and commit both, run
+  entries and deletes consumed fragments. Commit CHANGELOG.md and all files
+  under `.changes/` first; assembly requires clean, tracked inputs. After a failure
+  or interruption, run `git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes`.
+  Review and commit the assembled changelog and deletions, run
   `npm run release:check`, tag `v<version>`, and publish a GitHub Release.
 
 ## Agent policy

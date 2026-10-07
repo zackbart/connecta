@@ -56,6 +56,7 @@ export default defineConfig({
         test: {
           name: "node",
           include: TEST_INCLUDE,
+          exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },
       },
       {
@@ -76,7 +77,7 @@ export default defineConfig({
         test: {
           name: "workers",
           include: TEST_INCLUDE,
-          exclude: NODE_ONLY_EXCLUDE,
+          exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },
       },
     ],

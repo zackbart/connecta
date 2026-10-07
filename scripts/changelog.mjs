@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,15 +35,25 @@ function fragments(directory) {
       throw new Error(`${name}: fragments must be named <pr-or-slug>.md`);
     }
     const file = join(directory, name);
-    const bytes = readFileSync(file);
-    return { file, bytes, ...parseFragment(bytes.toString("utf8"), name) };
+    return { file, ...parseFragment(readFileSync(file, "utf8"), name) };
   });
 }
 
 function main() {
   const args = process.argv.slice(2);
+  const check = args.length === 1 && args[0] === "--check";
+  if (!check) {
+    const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+    const untracked = git(["ls-files", "--others", "--", "CHANGELOG.md", ".changes"]);
+    if (untracked || !git(["ls-files", "--", "CHANGELOG.md"]).trim()) {
+      throw new Error("Commit CHANGELOG.md and every file under .changes/ before assembling; untracked inputs cannot be recovered with git.");
+    }
+    if (git(["status", "--porcelain", "--", "CHANGELOG.md", ".changes"])) {
+      throw new Error("Commit changes to CHANGELOG.md and .changes/ before assembling; inputs must be tracked and unmodified.");
+    }
+  }
   const entries = fragments(join(root, ".changes"));
-  if (args.length === 1 && args[0] === "--check") {
+  if (check) {
     console.log(`Changelog: ${entries.length} valid fragments.`);
     return;
   }
@@ -67,8 +78,7 @@ function main() {
   }
   if (!entries.length) throw new Error("No changelog fragments to assemble");
   const file = join(root, "CHANGELOG.md");
-  const original = readFileSync(file);
-  const changelog = original.toString("utf8");
+  const changelog = readFileSync(file, "utf8");
   const headings = [...changelog.matchAll(/^## (.+)$/gm)];
   if (headings.some(([heading]) => heading === "## Unreleased" || heading.split(/\s/)[1] === version)) {
     throw new Error("Remove the unreleased section or existing version before assembling");
@@ -81,43 +91,13 @@ function main() {
   });
   const section = `## ${version} — ${date}\n\n${narrative}\n\n${sections.join("\n\n")}\n\n`;
   const insertion = headings[0]?.index ?? changelog.length;
-  // Keep the original bytes until consumption completes so a filesystem error
-  // restores the entire input set and permits a same-version retry.
-  const temporary = `${file}.tmp`;
-  let committed = false;
-  const deleted = [];
+  const recovery = "git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes";
+  console.log(`Recovery if assembly fails or is interrupted: ${recovery}`);
   try {
-    writeFileSync(temporary, changelog.slice(0, insertion) + section + changelog.slice(insertion));
-    renameSync(temporary, file);
-    committed = true;
-    for (const entry of entries) {
-      unlinkSync(entry.file);
-      deleted.push(entry);
-    }
+    writeFileSync(file, changelog.slice(0, insertion) + section + changelog.slice(insertion));
+    for (const entry of entries) unlinkSync(entry.file);
   } catch (error) {
-    const failures = [];
-    if (committed) {
-      try {
-        writeFileSync(temporary, original);
-        renameSync(temporary, file);
-      } catch (restoreError) {
-        failures.push(`CHANGELOG.md: ${restoreError.message}`);
-      }
-    }
-    for (const entry of deleted) {
-      try {
-        writeFileSync(entry.file, entry.bytes);
-      } catch (restoreError) {
-        failures.push(`${entry.file}: ${restoreError.message}`);
-      }
-    }
-    try {
-      rmSync(temporary, { force: true });
-    } catch (cleanupError) {
-      failures.push(`${temporary}: ${cleanupError.message}`);
-    }
-    const recovery = failures.length ? `Rollback failed: ${failures.join("; ")}` : "Original changelog and fragments restored; retry after clearing the fault.";
-    throw new Error(`Changelog assembly failed: ${error.message}. ${recovery}`);
+    throw new Error(`Changelog assembly failed: ${error.message}. Recover with: ${recovery}`);
   }
   console.log(`Assembled ${entries.length} fragments into ${version}. Review and commit CHANGELOG.md and the deletions.`);
 }

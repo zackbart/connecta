@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { assertSuiteCollection } from "./check-node-suites.mjs";
 
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "connecta-changelog-"));
@@ -13,22 +14,30 @@ function fixture(run) {
     copyFileSync(new URL("./changelog.mjs", import.meta.url), join(root, "scripts/changelog.mjs"));
     writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\n\n## 0.28.1 — 2026-10-05\n\nPrevious release.\n");
     writeFileSync(join(root, "narrative.md"), "This release changes contributor tooling.\n\nDeployments need no changes.\n");
+    execFileSync("git", ["init", "--quiet", root]);
+    const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+    const commit = () => {
+      git("add", ".");
+      git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "Fixture");
+    };
+    commit();
     const command = (args, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, join(root, "scripts/changelog.mjs"), ...args], { cwd: root, encoding: "utf8" });
     const assemble = ["--version", "0.29.0", "--narrative", "narrative.md", "--date", "2026-10-07"];
-    run({ root, command, assemble });
+    run({ root, command, assemble, commit, git });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
 test("assembles every category deterministically, preserves narrative and history, and consumes only fragments", () => {
-  fixture(({ root, command, assemble }) => {
+  fixture(({ root, command, assemble, commit }) => {
     const types = ["security", "removed", "fixed", "changed", "added"];
     for (const [i, type] of types.entries()) {
       writeFileSync(join(root, `.changes/${i}.md`), `---\ntype: ${type}\n${type === "changed" ? "breaking: true\n" : ""}---\n\n${type} entry\ncontinued\n`);
     }
     writeFileSync(join(root, ".changes/.gitkeep"), "");
     const history = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+    commit();
     const result = command(assemble);
     assert.equal(result.status, 0, result.stderr);
     const output = readFileSync(join(root, "CHANGELOG.md"), "utf8");
@@ -39,18 +48,20 @@ test("assembles every category deterministically, preserves narrative and histor
     assert.deepEqual(readdirSync(join(root, ".changes")), [".gitkeep"]);
     assert.equal(command(["--check"]).status, 0);
     writeFileSync(join(root, ".changes/new.md"), "---\ntype: fixed\n---\n\nAnother fix.\n");
-    assert.notEqual(command(assemble).status, 0);
+    commit();
+    assert.match(command(assemble).stderr, /existing version/);
     assert.equal(readFileSync(join(root, "CHANGELOG.md"), "utf8"), output);
     assert.ok(readdirSync(join(root, ".changes")).includes("new.md"));
   });
 });
 
-test("restores byte-identical history and all fragments after a partial unlink failure, then permits retry", () => {
-  fixture(({ root, command, assemble }) => {
+test("printed git command restores byte-identical committed inputs after a partial unlink failure, then permits retry", () => {
+  fixture(({ root, command, assemble, commit, git }) => {
     writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\r\n\r\n## 0.28.1 — 2026-10-05\r\n\r\nPrevious release.\r\n");
     writeFileSync(join(root, ".changes/a.md"), "---\r\ntype: fixed\r\n---\r\n\r\nFirst fix.  \r\n");
     writeFileSync(join(root, ".changes/b.md"), "---\ntype: added\n---\n\nSecond entry.\n\n");
     writeFileSync(join(root, ".changes/.gitkeep"), "");
+    commit();
     const names = readdirSync(join(root, ".changes")).sort();
     const before = new Map(["CHANGELOG.md", ...names.map((name) => `.changes/${name}`)]
       .map((file) => [file, readFileSync(join(root, file))]));
@@ -73,7 +84,14 @@ syncBuiltinESMExports();
 `);
     const result = command(assemble, ["--import", fault]);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /injected unlink failure.*Original changelog and fragments restored/);
+    assert.match(result.stderr, /injected unlink failure/);
+    const recovery = result.stderr.match(/Recover with: (git restore[^\n]+)/)?.[1];
+    assert.equal(recovery, "git restore --source=HEAD --staged --worktree -- CHANGELOG.md .changes");
+    assert.equal(readdirSync(join(root, ".changes")).includes("a.md"), false);
+    assert.match(readFileSync(join(root, "CHANGELOG.md"), "utf8"), /## 0\.29\.0/);
+    // Restore both index and worktree, even if the partial state was staged.
+    git("add", "CHANGELOG.md", ".changes");
+    git(...recovery.split(" ").slice(1));
     assert.deepEqual(readdirSync(join(root, ".changes")).sort(), names);
     for (const [file, bytes] of before) assert.deepEqual(readFileSync(join(root, file)), bytes, file);
     assert.ok(!readdirSync(root).includes("CHANGELOG.md.tmp"));
@@ -93,8 +111,9 @@ test("rejects malformed metadata and empty entries without changing history or c
     "---\ntype: fixed\nextra: true\n---\n\nEntry", "---\ntype: fixed\nbreaking: false\n---\n\nEntry",
     "---\ntype: fixed\n---\n\n", "---\ntype: fixed\n---\n\n### Section", "---\ntype: fixed\n---\n\n- Entry",
   ]) {
-    fixture(({ root, command, assemble }) => {
+    fixture(({ root, command, assemble, commit }) => {
       writeFileSync(join(root, ".changes/bad.md"), text);
+      commit();
       const before = readFileSync(join(root, "CHANGELOG.md"), "utf8");
       assert.notEqual(command(["--check"]).status, 0, text);
       assert.notEqual(command(assemble).status, 0, text);
@@ -105,9 +124,10 @@ test("rejects malformed metadata and empty entries without changing history or c
 });
 
 test("requires fragments, a narrative, a version, and a real date before writing", () => {
-  fixture(({ root, command, assemble }) => {
+  fixture(({ root, command, assemble, commit }) => {
     assert.notEqual(command(assemble).status, 0);
     writeFileSync(join(root, ".changes/good.md"), "---\r\ntype: fixed\r\n---\r\n\r\nFix.\r\n");
+    commit();
     const before = readFileSync(join(root, "CHANGELOG.md"), "utf8");
     for (const args of [[], ["--version", "no"], ["--version", "0.29.0"], [...assemble.slice(0, 4), "--date", "2026-02-30"], [...assemble, "--unknown", "yes"]]) {
       assert.notEqual(command(args).status, 0);
@@ -119,60 +139,76 @@ test("requires fragments, a narrative, a version, and a real date before writing
   });
 });
 
-test("Node-only reason check rejects a missing or blank first-line comment", () => {
-  const root = mkdtempSync(join(tmpdir(), "connecta-node-suites-"));
-  try {
-    mkdirSync(join(root, "scripts"));
-    mkdirSync(join(root, "test/nested"), { recursive: true });
-    copyFileSync(new URL("./check-node-suites.mjs", import.meta.url), join(root, "scripts/check-node-suites.mjs"));
-    copyFileSync(new URL("./test-suites.mjs", import.meta.url), join(root, "scripts/test-suites.mjs"));
-    execFileSync("git", ["init", "--quiet", root]);
-    const file = join(root, "test/nested/example.node.test.ts");
-    for (const text of ["import {};\n", "// Node-only: \n"]) {
-      writeFileSync(file, text);
-      const result = spawnSync(process.execPath, [join(root, "scripts/check-node-suites.mjs")], { encoding: "utf8" });
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /example\.node\.test\.ts/);
-    }
-    writeFileSync(file, "// Node-only: uses real TCP sockets.\n");
-    execFileSync(process.execPath, [join(root, "scripts/check-node-suites.mjs")]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+test("refuses dirty, staged, untracked, and ignored untracked inputs before writing", () => {
+  for (const kind of ["dirty changelog", "dirty fragment", "staged fragment", "untracked fragment", "ignored fragment", "untracked changelog"]) {
+    fixture(({ root, command, assemble, commit, git }) => {
+      const fragment = join(root, ".changes/good.md");
+      writeFileSync(fragment, "---\ntype: fixed\n---\n\nFix.\n");
+      commit();
+      if (kind === "dirty changelog") writeFileSync(join(root, "CHANGELOG.md"), "Dirty history\n");
+      if (kind === "dirty fragment" || kind === "staged fragment") writeFileSync(fragment, "Changed fragment\n");
+      if (kind === "staged fragment") git("add", ".changes");
+      if (kind === "ignored fragment") writeFileSync(join(root, ".gitignore"), ".changes/untracked.md\n");
+      if (kind.includes("fragment") && kind.includes("tracked")) writeFileSync(join(root, ".changes/untracked.md"), "Untracked\n");
+      if (kind === "ignored fragment") writeFileSync(join(root, ".changes/untracked.md"), "Ignored\n");
+      if (kind === "untracked changelog") git("rm", "--cached", "CHANGELOG.md");
+      const files = ["CHANGELOG.md", ...readdirSync(join(root, ".changes")).map((file) => `.changes/${file}`)];
+      const before = files.map((file) => readFileSync(join(root, file)));
+      const result = command(assemble);
+      assert.notEqual(result.status, 0, kind);
+      assert.match(result.stderr, /Commit .*before assembling/, kind);
+      assert.deepEqual(files.map((file) => readFileSync(join(root, file))), before, kind);
+    });
   }
 });
 
-test("suite guard rejects tracked and untracked off-tree suites and ignores generated directories", () => {
-  const root = mkdtempSync(join(tmpdir(), "connecta-node-suites-"));
-  try {
-    mkdirSync(join(root, "scripts"));
-    mkdirSync(join(root, "test/nested"), { recursive: true });
-    mkdirSync(join(root, "outside"));
-    for (const file of ["check-node-suites.mjs", "test-suites.mjs"]) {
-      copyFileSync(new URL(file, import.meta.url), join(root, "scripts", file));
+test("rejects a committed legacy Unreleased section without touching inputs", () => {
+  fixture(({ root, command, assemble, commit }) => {
+    writeFileSync(join(root, ".changes/good.md"), "---\ntype: fixed\n---\n\nFix.\n");
+    const history = "# Changelog\n\n## Unreleased\n\nLegacy entry.\n";
+    writeFileSync(join(root, "CHANGELOG.md"), history);
+    commit();
+    assert.match(command(assemble).stderr, /unreleased section/);
+    assert.equal(readFileSync(join(root, "CHANGELOG.md"), "utf8"), history);
+    assert.equal(readdirSync(join(root, ".changes")).length, 1);
+  });
+});
+
+function collection(node, workers, details = {}) {
+  return { node, workers, details: Object.fromEntries([...node, ...workers].map((file) => [file, details[file] ?? {}])) };
+}
+
+test("collection assertion enforces exact Node-only membership and first-line reasons", () => {
+  const file = "test/nested/example.node.test.ts";
+  const portable = "test/portable.test.ts";
+  for (const firstLine of ["import {};", "// Node-only: ", "// Node-only:    "]) {
+    assert.throws(() => assertSuiteCollection(collection([portable, file], [portable], { [file]: { firstLine } })), /first-line/);
+  }
+  const details = { [file]: { firstLine: "// Node-only: uses TCP sockets." } };
+  assert.match(assertSuiteCollection(collection([portable, file], [portable], details)), /1 reasons present/);
+  assert.throws(() => assertSuiteCollection(collection([portable, file], [portable, file], details)), /workers must collect none/);
+  assert.throws(() => assertSuiteCollection(collection([portable], [])), /exactly the/);
+  assert.throws(() => assertSuiteCollection(collection([], [portable])), /not collected by node/);
+  assert.throws(() => assertSuiteCollection(collection(["outside/a.test.ts"], ["outside/a.test.ts"])), /under test/);
+});
+
+for (const directory of ["ignored", "dist", "worktrees", "symlink", "node_modules"]) {
+  test(`collection regression: test/${directory}/ cannot bypass suite checks`, () => {
+    const file = `test/${directory}/example.node.test.ts`;
+    assert.throws(() => assertSuiteCollection(collection([file], [])), /first-line/);
+    if (["dist", "worktrees", "node_modules"].includes(directory)) {
+      const portable = `test/${directory}/pkg/portable.test.ts`;
+      assert.throws(() => assertSuiteCollection(collection([portable], [portable])), /outside node_modules, dist, and nested worktrees/);
     }
-    execFileSync("git", ["init", "--quiet", root]);
-    writeFileSync(join(root, ".gitignore"), "ignored/\n");
-    for (const directory of ["node_modules", "dist", "worktrees", "ignored"]) {
-      mkdirSync(join(root, directory));
-      writeFileSync(join(root, directory, "generated.node.test.ts"), "import {};\n");
+    if (directory === "symlink") {
+      assert.throws(() => assertSuiteCollection(collection([file], [], { [file]: { realFile: "outside/example.node.test.ts", firstLine: "// Node-only: sockets." } })), /under test/);
     }
-    writeFileSync(join(root, "test/nested/portable.test.ts"), "import {};\n");
-    writeFileSync(join(root, "test/nested/example.node.test.ts"), "// Node-only: uses real TCP sockets.\n");
-    const check = () => spawnSync(process.execPath, [join(root, "scripts/check-node-suites.mjs")], { cwd: root, encoding: "utf8" });
-    assert.equal(check().status, 0);
-    writeFileSync(join(root, "outside/a.node.test.ts"), "import {};\n");
-    writeFileSync(join(root, "outside/b.test.ts"), "import {};\n");
-    execFileSync("git", ["-C", root, "add", "outside/b.test.ts"]);
-    const result = check();
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /not collected by Vitest:\noutside\/a\.node\.test\.ts\noutside\/b\.test\.ts/);
-    assert.match(result.stderr, /first-line.*\noutside\/a\.node\.test\.ts/);
-    writeFileSync(join(root, "outside/a.node.test.ts"), "// Node-only: uses real TCP sockets.\n");
-    const reasonPresent = check();
-    assert.notEqual(reasonPresent.status, 0);
-    assert.match(reasonPresent.stderr, /not collected by Vitest/);
-    assert.doesNotMatch(reasonPresent.stderr, /need a first-line/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+  });
+}
+
+test("collection rejects nested git worktrees with arbitrary names and resolved excluded paths", () => {
+  const file = "test/nested/portable.test.ts";
+  for (const details of [{ inWorktree: true }, { realFile: "test/node_modules/pkg/portable.test.ts" }, { realFile: "test/.claude/portable.test.ts" }]) {
+    assert.throws(() => assertSuiteCollection(collection([file], [file], { [file]: details })), /nested worktrees/);
   }
 });

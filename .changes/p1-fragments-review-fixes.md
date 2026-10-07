@@ -2,6 +2,7 @@
 type: fixed
 ---
 
-Changelog assembly restores the original changelog and consumed fragments when
-filesystem operations fail, allowing a same-version retry. The suite guard
-rejects repository tests outside Vitest's shared collection directory (#705).
+Changelog assembly requires committed inputs and prints the git restore command
+for recovery after a failure or interruption. The suite guard checks Vitest's
+actual Node and Workers collection, including excluded directories and symlink
+targets (#705).
