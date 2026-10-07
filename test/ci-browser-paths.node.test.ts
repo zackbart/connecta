@@ -1,18 +1,22 @@
-// Node-only: spawns the Bash CI path filter and aggregate gate.
+// Node-only: spawns the Bash CI path filters and aggregate gate.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const filter = fileURLToPath(new URL("../scripts/ci-browser-paths.sh", import.meta.url));
-function browserRequired(paths: string[]): string {
-  const result = spawnSync("bash", [filter], {
-    input: paths.map((path) => `${path}\0`).join(""),
-    encoding: "utf8",
-  });
-  expect(result.status, result.stderr).toBe(0);
-  return result.stdout.trim();
+function pathFilter(script: string) {
+  const filter = fileURLToPath(new URL(`../scripts/${script}`, import.meta.url));
+  return (paths: string[]): string => {
+    const result = spawnSync("bash", [filter], {
+      input: paths.map((path) => `${path}\0`).join(""),
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout.trim();
+  };
 }
+const browserRequired = pathFilter("ci-browser-paths.sh");
+const securityRequired = pathFilter("ci-security-paths.sh");
 
 describe("CI browser paths", () => {
   it.each([
@@ -86,6 +90,22 @@ describe("CI browser paths", () => {
   });
 });
 
+describe("CI security paths", () => {
+  it.each([["package.json"], ["package-lock.json"], ["src/server.ts", "package-lock.json"]])("audits dependencies when %s changes", (...paths) => {
+    expect(securityRequired(paths)).toBe("true");
+  });
+
+  it.each([
+    "src/server.ts",
+    "templates/node/package.json",
+    "examples/worker/package-lock.json",
+    ".github/workflows/security.yml",
+    "package.json.md",
+  ])("leaves %s to the nightly audit", (path) => {
+    expect(securityRequired([path])).toBe("false");
+  });
+});
+
 describe("CI aggregate check", () => {
   // Exercise the actual workflow step, so its condition cannot drift from the test.
   const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -93,22 +113,37 @@ describe("CI aggregate check", () => {
   if (!step) throw new Error("CI aggregate check step is missing");
   const script = step.replace(/^          /gm, "");
 
+  // Browser cases run with security skipped as unneeded, the common pull request.
   it.each([
-    ["success", "success", "success", "true", 0],
-    ["success", "success", "skipped", "false", 0],
-    ["failure", "success", "success", "true", 1],
-    ["cancelled", "success", "success", "true", 1],
-    ["skipped", "success", "success", "true", 1],
-    ["success", "failure", "skipped", "", 1],
-    ["success", "cancelled", "skipped", "", 1],
-    ["success", "skipped", "skipped", "", 1],
-    ["success", "success", "failure", "true", 1],
-    ["success", "success", "cancelled", "true", 1],
-    ["success", "success", "skipped", "true", 1],
-    ["success", "success", "skipped", "", 1],
-  ])("handles core=%s changes=%s browser=%s required=%s", (core, changes, browser, required, status) => {
+    ["success", "success", "success", "true", "skipped", "false", 0],
+    ["success", "success", "skipped", "false", "skipped", "false", 0],
+    ["failure", "success", "success", "true", "skipped", "false", 1],
+    ["cancelled", "success", "success", "true", "skipped", "false", 1],
+    ["skipped", "success", "success", "true", "skipped", "false", 1],
+    ["success", "failure", "skipped", "", "skipped", "", 1],
+    ["success", "cancelled", "skipped", "", "skipped", "", 1],
+    ["success", "skipped", "skipped", "", "skipped", "", 1],
+    ["success", "success", "failure", "true", "skipped", "false", 1],
+    ["success", "success", "cancelled", "true", "skipped", "false", 1],
+    ["success", "success", "skipped", "true", "skipped", "false", 1],
+    ["success", "success", "skipped", "", "skipped", "false", 1],
+    ["success", "success", "success", "true", "success", "true", 0],
+    ["success", "success", "success", "true", "failure", "true", 1],
+    ["success", "success", "success", "true", "cancelled", "true", 1],
+    ["success", "success", "success", "true", "skipped", "true", 1],
+    ["success", "success", "success", "true", "skipped", "", 1],
+    ["success", "success", "success", "true", "failure", "false", 1],
+  ])("handles core=%s changes=%s browser=%s required=%s security=%s required=%s", (core, changes, browser, required, security, securityNeeded, status) => {
     const result = spawnSync("bash", ["-e", "-c", script], {
-      env: { ...process.env, CORE_RESULT: core, CHANGES_RESULT: changes, BROWSER_RESULT: browser, BROWSER_REQUIRED: required },
+      env: {
+        ...process.env,
+        CORE_RESULT: core,
+        CHANGES_RESULT: changes,
+        BROWSER_RESULT: browser,
+        BROWSER_REQUIRED: required,
+        SECURITY_RESULT: security,
+        SECURITY_REQUIRED: securityNeeded,
+      },
       encoding: "utf8",
     });
     expect(result.status, result.stdout + result.stderr).toBe(status);

@@ -62,13 +62,18 @@ function displayPath(root, path) {
   return shown.split(sep).join("/");
 }
 
-async function walkFiles(root, directory = root) {
+// Agent state under .claude/ (nested worktrees, settings) is not documentation;
+// its checked-in skills are.
+async function walkFiles(root, directory = root, only = undefined) {
   const entries = await readdir(directory, { withFileTypes: true });
   const paths = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const path = resolve(directory, entry.name);
+    if (only && entry.name !== only) continue;
     if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) {
+      if (entry.name === ".claude" && directory === root) {
+        paths.push(...(await walkFiles(root, path, "skills")));
+      } else if (!ignoredDirectories.has(entry.name)) {
         paths.push(...(await walkFiles(root, path)));
       }
     } else if (entry.isFile()) {

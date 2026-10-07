@@ -57,10 +57,13 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: npm run test:browser:install -- --with-deps
+      # A timed-out first attempt can leave apt-get holding the dpkg lock.
       - name: Retry Chromium installation once
         if: steps.install.outcome == 'failure'
-        timeout-minutes: 5
-        run: npm run test:browser:install -- --with-deps
+        timeout-minutes: 9
+        run: |
+          bash scripts/ci-settle-apt.sh
+          npm run test:browser:install -- --with-deps
       - run: npm run release:check
       # release:check built dist/ and checked the package. Keep local prepack,
       # but do not rerun it when publishing this validated tree.

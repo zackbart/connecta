@@ -5,7 +5,9 @@ test-results/
 .dev.vars
 .env
 .connecta-state.json
-.claude/
+# Agent state stays local; the repository's skills are checked in.
+.claude/*
+!.claude/skills/
 *.log
 
 assets/icon-options/

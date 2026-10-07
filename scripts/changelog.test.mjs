@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertSuiteCollection } from "./check-node-suites.mjs";
+import { GUARDS, relatedInputs } from "./check-fast.mjs";
 
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "connecta-changelog-"));
@@ -220,4 +221,26 @@ test("collection rejects nested git worktrees with arbitrary names and resolved 
   for (const details of [{ inWorktree: true }, { realFile: "test/node_modules/pkg/portable.test.ts" }, { realFile: "test/.claude/portable.test.ts" }]) {
     assert.throws(() => assertSuiteCollection(collection([file], [file], { [file]: details })), /nested worktrees/);
   }
+});
+
+test("check:fast always runs the guards and adds suites that name a changed path", () => {
+  const suites = [
+    { file: "test/ci.node.test.ts", text: 'readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url))' },
+    { file: "test/fixture-reader.test.ts", text: 'new URL("./fixtures/catalog.json", import.meta.url)' },
+    { file: "test/unrelated.test.ts", text: "import { createConnecta } from '../src/index.js';" },
+  ];
+  assert.deepEqual(relatedInputs({ changed: [], suites }), { related: [...GUARDS].sort(), deferred: [] });
+  const { related, deferred } = relatedInputs({ changed: [".github/workflows/ci.yml", "test/fixtures/catalog.json", "src/server.ts"], suites });
+  assert.deepEqual(deferred, []);
+  for (const file of [...GUARDS, ".github/workflows/ci.yml", "test/ci.node.test.ts", "test/fixtures/catalog.json", "test/fixture-reader.test.ts", "src/server.ts"]) {
+    assert.ok(related.includes(file), file);
+  }
+  assert.ok(!related.includes("test/unrelated.test.ts"));
+});
+
+test("check:fast defers inputs that would make Vitest rerun every suite", () => {
+  const changed = ["package.json", "vitest.config.ts", "templates/node/package.json", "src/package.json.ts"];
+  const { related, deferred } = relatedInputs({ changed, suites: [] });
+  assert.deepEqual(deferred, ["package.json", "vitest.config.ts", "templates/node/package.json"]);
+  assert.deepEqual(related, [...GUARDS, "src/package.json.ts"].sort());
 });
