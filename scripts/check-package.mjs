@@ -279,6 +279,8 @@ try {
     "dist/providers/gmail.d.ts",
     "dist/providers/drive.js",
     "dist/providers/drive.d.ts",
+    "dist/providers/docs.js",
+    "dist/providers/docs.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "examples/worker/src/r2-artifact-blobs.ts",
@@ -630,6 +632,24 @@ if (driveConnection.id !== "files" || driveConnection.kind !== "api") {
 if (driveConnection.staticTools?.some((tool) => /^(delete_file|empty_trash|transfer)/.test(tool.name))) {
   throw new Error("Google Drive provider published a permanent delete or ownership transfer");
 }
+const docsProvider = await import("@zackbart/connecta/providers/docs");
+if (typeof docsProvider.docs !== "function") {
+  throw new Error("missing Google Docs provider constructor");
+}
+const docsConnection = docsProvider.docs("docs", {
+  purpose: "package smoke",
+  serviceAccount: {
+    clientEmail: "smoke@project.iam.gserviceaccount.com",
+    privateKey:
+      "-----BEGIN PRIVATE KEY-----" +
+      btoa(String.fromCharCode(...smokeDer)) +
+      "-----END PRIVATE KEY-----",
+  },
+  subject: () => undefined,
+});
+if (docsConnection.id !== "docs" || docsConnection.kind !== "api") {
+  throw new Error("Google Docs provider did not return an api() connector");
+}
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
   throw new Error("missing kvArtifactStore");
@@ -688,6 +708,9 @@ for (const name of [
   "drive",
   "DRIVE_API_BASE_URL",
   "DRIVE_SCOPES",
+  "docs",
+  "DOCS_API_BASE_URL",
+  "DOCS_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

@@ -1,0 +1,30 @@
+{
+  "provider": "docs",
+  "specification": {
+    "url": "https://docs.googleapis.com/$discovery/rest?version=v1",
+    "format": "google-discovery"
+  },
+  "scopes": [
+    "https://www.googleapis.com/auth/documents"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/documents/{documentId}",
+      "specRevision": "20261005",
+      "contract": "sha256:f0630c58e5817442c02bac8f3e98d1c04d552d4df4ddb7e1f73b714c501a13b2"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents",
+      "specRevision": "20261005",
+      "contract": "sha256:3b8b35ecf2f94776723dbbe586355e9f7fc2002aa488e8b6c32b58e4aadbb477"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/documents/{documentId}:batchUpdate",
+      "specRevision": "20261005",
+      "contract": "sha256:f22440d7367f202609bbfd061f5208fea9a5a5dfe913a5cdd5aa2283786bd4c3"
+    }
+  ]
+}

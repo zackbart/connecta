@@ -65,17 +65,18 @@ Fifty issues in, one small object out. Your context window notices.
 - **Wrap any HTTP API by hand.** A few lines per tool. No OpenAPI conversion —
   generated tool sprawl is the problem, not the fix.
 - **Use maintained connections** for Basecamp, Breeze ChMS, Church Community
-  Builder, Cloudflare, Gmail, Google Drive, Linear, Mixpanel, Notion,
-  Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel: known
-  endpoints, auth defaults, and vetted read/write classifications, imported
-  one at a time.
+  Builder, Cloudflare, Gmail, Google Docs, Google Drive, Linear, Mixpanel,
+  Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel:
+  known endpoints, auth defaults, and vetted read/write classifications,
+  imported one at a time.
   Cloudflare, Notion, and Vercel each let the deployment choose their
   hand-written API interface or official hosted MCP. Planning Center, Overflow,
   Tithe.ly, Breeze, and Church Community Builder are hand-written over their
   whole APIs, with every money-moving write behind approval. Gmail reads mail
   and writes drafts — never sends — and Google Drive reads, writes, and shares
   files — never deletes one for good — as each signed-in Workspace user through
-  domain-wide delegation, with no per-user consent step.
+  domain-wide delegation, with no per-user consent step; Google Docs reads and
+  edits documents the same way.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.
 - **Teach undeclared result shapes by using them.** Successful read-only calls

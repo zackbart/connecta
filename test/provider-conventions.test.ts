@@ -165,6 +165,7 @@ import { ccb } from "../src/providers/ccb.js";
 import { breeze } from "../src/providers/breeze.js";
 import { gmail } from "../src/providers/gmail.js";
 import { drive } from "../src/providers/drive.js";
+import { docs } from "../src/providers/docs.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
 import { planningCenter } from "../src/providers/planning-center.js";
@@ -279,6 +280,9 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
   // No permanent delete: trash is recoverable, and `delete` names only the
   // removal of a share. `restore` is Drive's untrash.
   drive: ["search", "list", "get", "create", "update", "move", "copy", "trash", "restore", "share", "delete"],
+  // No search or list: finding a document is Drive's job. "batch" is Google's
+  // own name for its raw edit method, documents.batchUpdate.
+  docs: ["get", "create", "append", "insert", "replace", "batch"],
 };
 
 /**
@@ -335,6 +339,7 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   breeze: [],
   gmail: [],
   drive: [],
+  docs: [],
 };
 
 /**
@@ -355,7 +360,7 @@ const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
  * that names the scopes to authorize. What H12 still asks is one way to
  * authenticate — so neither a credential slot nor an OAuth grant.
  */
-const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive"]);
+const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive", "docs"]);
 
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
@@ -486,6 +491,17 @@ const providers = await Promise.all([
     "drive",
     drive("files", {
       purpose: "Staff documents and shared drives",
+      serviceAccount: {
+        clientEmail: "delegate@project.iam.gserviceaccount.com",
+        privateKey: await rsaPrivateKeyPem(),
+      },
+      subject: () => undefined,
+    }),
+  ),
+  surface(
+    "docs",
+    docs("docs", {
+      purpose: "Staff meeting notes and sermon drafts",
       serviceAccount: {
         clientEmail: "delegate@project.iam.gserviceaccount.com",
         privateKey: await rsaPrivateKeyPem(),
