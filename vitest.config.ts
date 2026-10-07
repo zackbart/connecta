@@ -96,6 +96,7 @@ export const WORKERS_SUITES = [
   "test/drive-provider.test.ts",
   "test/docs-provider.test.ts",
   "test/sheets-provider.test.ts",
+  "test/slides-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

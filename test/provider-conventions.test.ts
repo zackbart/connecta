@@ -167,6 +167,7 @@ import { gmail } from "../src/providers/gmail.js";
 import { drive } from "../src/providers/drive.js";
 import { docs } from "../src/providers/docs.js";
 import { sheets } from "../src/providers/sheets.js";
+import { slides } from "../src/providers/slides.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
 import { planningCenter } from "../src/providers/planning-center.js";
@@ -287,6 +288,9 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
   // `batch` opens both multi-range value writes and the raw batchUpdate hatch;
   // both are destructive, so the verb still names one safety class.
   sheets: ["get", "create", "add", "append", "update", "clear", "batch"],
+  // The raw hatch keeps Google's own method name, batchUpdate, so an agent
+  // that knows the Slides reference finds it by that name.
+  slides: ["get", "list", "create", "replace", "batch"],
 };
 
 /**
@@ -345,6 +349,7 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
   drive: [],
   docs: [],
   sheets: [],
+  slides: [],
 };
 
 /**
@@ -365,7 +370,7 @@ const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
  * that names the scopes to authorize. What H12 still asks is one way to
  * authenticate — so neither a credential slot nor an OAuth grant.
  */
-const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive", "docs", "sheets"]);
+const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive", "docs", "sheets", "slides"]);
 
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
@@ -518,6 +523,17 @@ const providers = await Promise.all([
     "sheets",
     sheets("sheets", {
       purpose: "Finance and attendance spreadsheets",
+      serviceAccount: {
+        clientEmail: "delegate@project.iam.gserviceaccount.com",
+        privateKey: await rsaPrivateKeyPem(),
+      },
+      subject: () => undefined,
+    }),
+  ),
+  surface(
+    "slides",
+    slides("decks", {
+      purpose: "Sermon slides and staff meeting decks",
       serviceAccount: {
         clientEmail: "delegate@project.iam.gserviceaccount.com",
         privateKey: await rsaPrivateKeyPem(),

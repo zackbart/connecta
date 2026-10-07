@@ -135,6 +135,10 @@
       "types": "./dist/providers/sheets.d.ts",
       "import": "./dist/providers/sheets.js"
     },
+    "./providers/slides": {
+      "types": "./dist/providers/slides.d.ts",
+      "import": "./dist/providers/slides.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"

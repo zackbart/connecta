@@ -76,6 +76,7 @@ const SPEC_PROVIDERS = [
   "drive",
   "docs",
   "sheets",
+  "slides",
 ];
 /** Providers whose manifest names one specification per product and version. */
 const VERSIONED_SPEC_PROVIDERS = new Set(["planning-center"]);
