@@ -419,7 +419,7 @@ using `quickJsExecutor()` need no configuration change.
   page, an element, a range of a shape's text, a cell's text, or a whole
   cell, optionally assigned) and `create_comment_reply` (a plain reply) are
   additive; `update_comment_thread` (resolve, reopen, or reassign with a note,
-  one change per call, as its input schema requires, replacing the thread's
+  one change per call, enforced before dispatch, replacing the thread's
   status or assignee), `update_comment_post`, `delete_comment`,
   and `delete_comment_reply` are destructive. None is exempt from approval by
   the provider itself. The raw hatch now sends Slides' five comment request
