@@ -163,6 +163,25 @@ const MAX_ID_BYTES = 1024;
 /** replace_all_text echoes each find this far, in order with its count. */
 const MAX_ECHO_CHARS = 100;
 
+/**
+ * The comment kinds of Slides' Request, refused before anything is sent.
+ * Comments in the Slides API went generally available on 2026-09-30, and
+ * using them well needs more than a passthrough: a read path for comment
+ * threads, per-batch comment save states that can fail apart from the rest
+ * of the batch, and author ids nested in every post. Until this connection
+ * has those (#696), a comment request is refused, not half-supported.
+ */
+const COMMENT_KINDS: ReadonlySet<string> = new Set([
+  "addCommentReply",
+  "deleteComment",
+  "deleteCommentReply",
+  "insertComment",
+  "updateCommentPost",
+]);
+
+/** The comment save states that say every comment change in a batch landed, or none was asked for. */
+const COMMENTS_SETTLED: ReadonlySet<string> = new Set(["NO_UPDATES_REQUESTED", "ALL_SAVED"]);
+
 /** EMU per point, the two units a Slides transform uses. */
 const EMU_PER_PT = 12_700;
 
@@ -1061,8 +1080,11 @@ function wholeId(value: unknown): string | undefined {
 /**
  * `value` keeping, at any depth, every id whole, every number and boolean,
  * and — in "short" mode — strings short enough to read at a glance; every
- * path left out goes to `cut`. Arrays keep their first items, and nesting
- * deeper than any reply Slides sends is cut where it starts.
+ * path left out goes to `cut`. Every array item is walked in both modes, so
+ * no id is dropped to save space — the result's budget, which counts what
+ * does not fit, handles that; past the first few items, "short" mode keeps
+ * only their ids.
+ * Nesting deeper than any reply Slides sends is cut where it starts.
  */
 function pruned(value: unknown, key: string, path: string, mode: "short" | "ids", cut: string[], depth: number): unknown {
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
@@ -1077,10 +1099,16 @@ function pruned(value: unknown, key: string, path: string, mode: "short" | "ids"
     return undefined;
   }
   if (Array.isArray(value)) {
-    if (value.length > MAX_REPLY_ITEMS) cut.push(`${path}[${MAX_REPLY_ITEMS}…${value.length - 1}]`);
-    return value
-      .slice(0, MAX_REPLY_ITEMS)
-      .map((item, index) => pruned(item, key, `${path}[${index}]`, mode, cut, depth + 1) ?? null);
+    // Every item is walked; past the first few, only for ids, whose cut
+    // fields are summed up in one entry rather than one per item.
+    if (mode === "short" && value.length > MAX_REPLY_ITEMS) {
+      cut.push(`${path}[${MAX_REPLY_ITEMS}…${value.length - 1}] (ids only)`);
+    }
+    return value.map((item, index) => {
+      const itemMode = mode === "short" && index >= MAX_REPLY_ITEMS ? "ids" : mode;
+      const sink = itemMode === mode ? cut : [];
+      return pruned(item, key, `${path}[${index}]`, itemMode, sink, depth + 1) ?? null;
+    });
   }
   const out: JsonRecord = {};
   for (const [field, item] of Object.entries(value)) {
@@ -1097,12 +1125,11 @@ function cutList(cut: readonly string[]): string[] {
 }
 
 /**
- * One batchUpdate reply, small enough to return. Most are tiny — a new
- * object's id, a count — and pass whole. One that is not, such as a comment
- * thread with its content and HTML, is walked: every id at every depth
- * (`insertComment.commentThread.commentId`, `.headPost.postId`, …) is kept
- * whole, then short fields while they fit, and every path left out is named
- * in `cut`, so nothing is dropped without a word.
+ * One batchUpdate reply, small enough to return. Slides' replies are tiny —
+ * a new object's id, a count — and pass whole. One that is not is walked:
+ * every id at every depth is kept whole, then short fields while they fit,
+ * and every path left out is named in `cut`, so nothing is dropped without a
+ * word.
  */
 function summarizeReply(reply: JsonRecord): JsonRecord {
   if (jsonBytes(reply) <= MAX_REPLY_BYTES) return reply;
@@ -1898,15 +1925,25 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             items: { type: "object", properties: { cut: { type: "array", items: { type: "string" } } } },
           },
           repliesNotShown: { type: "integer" },
+          commentUpdateState: { type: "string" },
           note: { type: "string" },
         },
         required: ["presentationId", "replies"],
       },
       handler: async (args, ctx) => {
         const requests = asArray(args["requests"]);
-        const unknown = requests
-          .map((request, index) => [index, Object.keys(asRecord(request))[0] ?? ""] as const)
-          .filter(([, kind]) => !REQUEST_KINDS.has(kind));
+        const kinds = requests.map((request, index) => [index, Object.keys(asRecord(request))[0] ?? ""] as const);
+        const comments = kinds.filter(([, kind]) => COMMENT_KINDS.has(kind));
+        if (comments.length > 0) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            `This connection does not support Slides comments yet: ${comments
+              .slice(0, 5)
+              .map(([index, kind]) => `requests[${index}] "${kind}"`)
+              .join(", ")}. Leave comment requests out of the batch; add comments in Slides itself. Nothing was sent.`,
+          );
+        }
+        const unknown = kinds.filter(([, kind]) => !REQUEST_KINDS.has(kind));
         if (unknown.length > 0) {
           throw new ConnectorCallError(
             "invalid_args",
@@ -1923,21 +1960,37 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           requests,
           args["requiredRevisionId"],
         );
-        const header = compact({ presentationId: args["presentationId"], ...revisionFields(response) });
+        // Comment changes save apart from the rest of a batch, and Slides
+        // reports them on their own. None is sent, so anything but "none
+        // asked for" or "all saved" is surfaced as it came, and the result
+        // stops calling the batch all-or-none.
+        const commentState = response["commentUpdateState"];
+        const commentsUnsettled =
+          typeof commentState === "string" && commentState !== "" && !COMMENTS_SETTLED.has(commentState);
+        const header = compact({
+          presentationId: args["presentationId"],
+          ...revisionFields(response),
+          commentUpdateState: commentsUnsettled ? label(commentState, MAX_NAME_BYTES, "Slides sent a longer state") : undefined,
+        });
         // One reply per request, in order; most are empty, the create replies
         // carry the new object ids. Bounded, because the write has applied
         // and its result must still reach the caller.
         const all = asArray(response["replies"]);
-        const shown = boundedReplies(all, jsonBytes(header) + 512);
+        const shown = boundedReplies(all, jsonBytes(header) + 1024);
+        const notes = [
+          commentsUnsettled
+            ? "The batch applied, but Slides reports its comment changes did not all save (commentUpdateState), so it was not all or none."
+            : undefined,
+          shown.notShown > 0 || shown.replies.some((reply) => "cut" in reply)
+            ? `The write applied. ${shown.notShown > 0 ? `The last ${shown.notShown} of ${all.length} replies were too large to return` : "Large reply fields are named in cut"}.`
+            : undefined,
+        ].filter((entry): entry is string => entry !== undefined);
         return appliedDeliverable(
           compact({
             ...header,
             replies: shown.replies,
             repliesNotShown: shown.notShown > 0 ? shown.notShown : undefined,
-            note:
-              shown.notShown > 0 || shown.replies.some((reply) => "cut" in reply)
-                ? `The write applied. ${shown.notShown > 0 ? `The last ${shown.notShown} of ${all.length} replies were too large to return` : "Large reply fields are named in cut"}; re-read with get_presentation or get_page for what it created.`
-                : undefined,
+            note: notes.length > 0 ? `${notes.join(" ")} Re-read with get_presentation or get_page for what it changed.` : undefined,
           }),
           "batch_update_presentation",
           "re-read with get_presentation or get_page for what it changed",
@@ -2012,10 +2065,12 @@ from a Drive search or from a URL (\`/presentation/d/<id>/\`).
   requests apply or none do. Each write returns the new \`revisionId\` for the
   next one. A \`conflict\` means the deck changed since that read: re-read it,
   rebuild the requests, and send them with the new \`revisionId\`. Its
-  replies keep every id at every depth — new objects', comments' and posts'
-  — whole; a large reply's other fields are named in \`cut\`, and replies
-  past one result are counted in \`repliesNotShown\`. The write applied
-  either way: re-read for what it made.
+  replies keep every id at every depth whole; a large reply's other fields
+  are named in \`cut\`, and replies past one result are counted in
+  \`repliesNotShown\`. The write applied either way: re-read for what it made.
+- Comments are not supported yet: no tool reads them, and comment requests
+  (\`insertComment\`, \`addCommentReply\`, …) are refused unsent. Add
+  comments in Slides itself.
 - An id or revision too long to copy into a result is left out and flagged
   (\`revisionIdNotShown\`), never cut. A failure that says the write
   applied means Google answered 2xx: do not repeat it; re-read instead.

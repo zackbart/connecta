@@ -815,35 +815,21 @@ describe("writing", () => {
   });
 });
 
-/** A Post as Slides' Response reference shapes it, with long content and HTML. */
-function post(postId: string) {
-  return {
-    postId,
-    author: { displayName: "Ann Elder", me: false, user: "users/123" },
-    createTime: "2026-10-06T12:00:00Z",
-    updateTime: "2026-10-06T12:00:00Z",
-    content: "c".repeat(2_048),
-    contentHtml: `<p>${"h".repeat(2_048)}</p>`,
-  };
-}
-
-/** insertComment and addCommentReply replies, nested as Slides sends them. */
-function commentReplies(count: number) {
+/**
+ * Replies larger than Slides' own — each kind's reply is an id or a count —
+ * with ids nested beside long fields, to drive the summarizer that bounds
+ * whatever Google sends.
+ */
+function bulkyReplies(count: number) {
   return Array.from({ length: count }, (_, index) =>
     index % 2 === 0
       ? {
-          insertComment: {
-            commentThread: {
-              commentId: `comment-${index}`,
-              anchorId: `anchor-${index}`,
-              status: "OPEN",
-              plainTextQuote: "q".repeat(2_000),
-              headPost: post(`head-${index}`),
-              replies: [post(`reply-${index}-a`), post(`reply-${index}-b`)],
-            },
+          duplicateObject: {
+            objectId: `dup-${index}`,
+            detail: { sourceId: `src-${index}`, status: "OK", note: "n".repeat(2_048), parts: [{ partId: `part-${index}-a`, body: "b".repeat(2_048) }] },
           },
         }
-      : { addCommentReply: { post: post(`post-${index}`) } },
+      : { createShape: { objectId: `shape-${index}`, blob: "x".repeat(2_048) } },
   );
 }
 
@@ -951,13 +937,13 @@ describe("output schemas declare what the tools return (H8)", () => {
       }),
     ]);
     // Summarized replies too, whose `cut` the walk must find declared.
-    route = () => ({ body: { presentationId: "deck1", replies: commentReplies(4) } });
+    route = () => ({ body: { presentationId: "deck1", replies: bulkyReplies(4) } });
     outputs.push([
       "batch_update_presentation",
       await call(connector, "batch_update_presentation", {
         presentationId: "deck1",
         requiredRevisionId: "rev-1",
-        requests: Array.from({ length: 4 }, () => ({ insertComment: {} })),
+        requests: Array.from({ length: 4 }, () => ({ createShape: {} })),
       }),
     ]);
     expect((outputs[outputs.length - 1]![1] as any).replies[0].cut.length).toBeGreaterThan(0);
@@ -1515,18 +1501,18 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
 
   it("bounds a raw batch's replies, keeping every new id and naming what it cut, and never says nothing changed", async () => {
     const replies = Array.from({ length: 100 }, (_, index) => ({
-      insertComment: { objectId: `c${index}`, content: "x".repeat(2_048), html: `<p>${"y".repeat(2_048)}</p>` },
+      createShape: { objectId: `c${index}`, content: "x".repeat(2_048), html: `<p>${"y".repeat(2_048)}</p>` },
     }));
     route = () => ({ body: { presentationId: "deck1", replies, writeControl: { requiredRevisionId: "rev-2" } } });
     const result = await call(connection(), "batch_update_presentation", {
       presentationId: "deck1",
       requiredRevisionId: "rev-1",
-      requests: Array.from({ length: 100 }, () => ({ insertComment: {} })),
+      requests: Array.from({ length: 100 }, () => ({ createShape: {} })),
     });
     expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
     expect(result.revisionId).toBe("rev-2");
     expect(result.replies).toHaveLength(100);
-    expect(result.replies[7]).toEqual({ insertComment: { objectId: "c7" }, cut: ["insertComment.content", "insertComment.html"] });
+    expect(result.replies[7]).toEqual({ createShape: { objectId: "c7" }, cut: ["createShape.content", "createShape.html"] });
     expect(result.note).toMatch(/^The write applied\./);
     expect(JSON.stringify(result)).not.toMatch(/nothing (was|is) changed/i);
   });
@@ -1547,7 +1533,7 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     expect(result.replies.length + result.repliesNotShown).toBe(400);
     expect(result.replies[0].createShape.objectId).toBe(`s0_${"z".repeat(900)}`);
     expect(result.note).toContain("The write applied");
-    expect(result.note).toContain("re-read with get_presentation or get_page");
+    expect(result.note).toContain("Re-read with get_presentation or get_page");
   });
 
   it("refuses a thumbnail link too long to pass on, rather than returning or cutting it", async () => {
@@ -1566,44 +1552,40 @@ describe("round four: nested reply ids, and every write result bounded", () => {
   const batch = (count: number) => ({
     presentationId: "deck1",
     requiredRevisionId: "rev-1",
-    requests: Array.from({ length: count }, () => ({ insertComment: {} })),
+    requests: Array.from({ length: count }, () => ({ createShape: {} })),
   });
 
-  it("keeps every nested comment and post id in Slides' real reply shapes while cutting content", async () => {
-    route = () => ({ body: { presentationId: "deck1", replies: commentReplies(100), writeControl: { requiredRevisionId: "rev-2" } } });
+  it("keeps every nested id while cutting long fields, and names what it cut", async () => {
+    route = () => ({ body: { presentationId: "deck1", replies: bulkyReplies(100), writeControl: { requiredRevisionId: "rev-2" } } });
     const result = await call(connection(), "batch_update_presentation", batch(100));
     expect(bytes(result)).toBeLessThan(BRIDGE_BYTES);
     expect(result.replies).toHaveLength(100);
     expect(result.repliesNotShown).toBeUndefined();
-    const thread = result.replies[0].insertComment.commentThread;
-    expect(thread).toMatchObject({
-      commentId: "comment-0",
-      anchorId: "anchor-0",
-      status: "OPEN",
-      headPost: { postId: "head-0", author: { displayName: "Ann Elder", me: false, user: "users/123" } },
+    expect(result.replies[0]).toEqual({
+      duplicateObject: { objectId: "dup-0", detail: { sourceId: "src-0", status: "OK", parts: [{ partId: "part-0-a" }] } },
+      cut: ["duplicateObject.detail.note", "duplicateObject.detail.parts[0].body"],
     });
-    expect(thread.replies.map((reply: any) => reply.postId)).toEqual(["reply-0-a", "reply-0-b"]);
-    expect(thread.headPost.content).toBeUndefined();
-    expect(result.replies[0].cut).toEqual(
-      expect.arrayContaining([
-        "insertComment.commentThread.plainTextQuote",
-        "insertComment.commentThread.headPost.content",
-        "insertComment.commentThread.headPost.contentHtml",
-      ]),
-    );
-    expect(result.replies[1]).toMatchObject({ addCommentReply: { post: { postId: "post-1" } } });
-    expect(result.replies[1].cut).toEqual(["addCommentReply.post.content", "addCommentReply.post.contentHtml"]);
+    expect(result.replies[1]).toEqual({ createShape: { objectId: "shape-1" }, cut: ["createShape.blob"] });
     expect(result.note).toMatch(/^The write applied\./);
   });
 
   it("keeps ids whole even when only ids fit, and never cuts one", async () => {
     const longId = `id-${"x".repeat(900)}`;
-    const reply = { insertComment: { commentThread: { commentId: longId, headPost: { ...post(longId), author: { displayName: "d".repeat(250) } } } } };
+    const reply = { duplicateObject: { objectId: longId, detail: { sourceId: longId, label: "d".repeat(250) } } };
     route = () => ({ body: { presentationId: "deck1", replies: [reply] } });
     const result = await call(connection(), "batch_update_presentation", batch(1));
-    const thread = result.replies[0].insertComment.commentThread;
-    expect(thread.commentId).toBe(longId);
-    expect(thread.headPost.postId).toBe(longId);
+    expect(result.replies[0].duplicateObject.objectId).toBe(longId);
+    expect(result.replies[0].duplicateObject.detail.sourceId).toBe(longId);
+  });
+
+  it("keeps every id in an array longer than the short-field limit", async () => {
+    // Fifty nested ids beside long text: the short pass keeps twenty items,
+    // so only the ids pass fits, and it walks every item.
+    const parts = Array.from({ length: 50 }, (_, index) => ({ partId: `part-${index}`, body: "b".repeat(400) }));
+    route = () => ({ body: { presentationId: "deck1", replies: [{ groupObjects: { objectId: "g1", parts } }] } });
+    const result = await call(connection(), "batch_update_presentation", batch(1));
+    expect(result.replies[0].groupObjects.parts.map((part: any) => part.partId)).toEqual(parts.map((part) => part.partId));
+    expect(result.replies[0].groupObjects.objectId).toBe("g1");
   });
 
   it("drops, flags, and never cuts a revision too long to copy, on every write", async () => {
@@ -1669,5 +1651,53 @@ describe("round four: nested reply ids, and every write result bounded", () => {
     expect(failure.message).toContain("create_presentation applied — Google answered 2xx — but its result is");
     expect(failure.message).toContain("search Drive for the deck by its title");
     expect(failure.message).not.toMatch(/nothing (was|is) (applied|changed)/i);
+  });
+});
+
+describe("comments are out of scope for now", () => {
+  it.each(["insertComment", "addCommentReply", "updateCommentPost", "deleteComment", "deleteCommentReply"])(
+    "refuses %s in a raw batch before anything is sent, saying comments are not supported yet",
+    async (kind) => {
+      const failure = await call(connection(), "batch_update_presentation", {
+        presentationId: "deck1",
+        requiredRevisionId: "rev-1",
+        requests: [{ insertText: { objectId: "t", text: "x" } }, { [kind]: {} }],
+      }).catch((error) => error);
+      expect(failure.code).toBe("invalid_args");
+      expect(failure.message).toContain("does not support Slides comments yet");
+      expect(failure.message).toContain(`requests[1] "${kind}"`);
+      expect(failure.message).toContain("Nothing was sent");
+      expect(calls).toEqual([]);
+      expect(tokenCalls).toBe(0);
+    },
+  );
+
+  it("says so in the guide", () => {
+    expect(guide(connection()).content).toContain("Comments are not supported yet");
+  });
+
+  it("surfaces a comment save state that is not settled, and stops calling the batch all-or-none", async () => {
+    route = () => ({
+      body: { presentationId: "deck1", replies: [{}], commentUpdateState: "ALL_FAILED_UNKNOWN_REASON", writeControl: { requiredRevisionId: "rev-2" } },
+    });
+    const result = await call(connection(), "batch_update_presentation", {
+      presentationId: "deck1",
+      requiredRevisionId: "rev-1",
+      requests: [{ deleteObject: { objectId: "x" } }],
+    });
+    expect(result.commentUpdateState).toBe("ALL_FAILED_UNKNOWN_REASON");
+    expect(result.note).toContain("was not all or none");
+    expect(result.note).toContain("The batch applied");
+  });
+
+  it.each(["ALL_SAVED", "NO_UPDATES_REQUESTED"])("says nothing extra for a settled state, %s", async (state) => {
+    route = () => ({ body: { presentationId: "deck1", replies: [{}], commentUpdateState: state } });
+    const result = await call(connection(), "batch_update_presentation", {
+      presentationId: "deck1",
+      requiredRevisionId: "rev-1",
+      requests: [{ deleteObject: { objectId: "x" } }],
+    });
+    expect(result.commentUpdateState).toBeUndefined();
+    expect(result.note).toBeUndefined();
   });
 });

@@ -308,13 +308,16 @@ caller.
   `batch_update_presentation` (1 to 100 raw Slides requests, each refused
   locally unless it is one known Request kind, always at a required
   `revisionId`, its replies bounded — every id at every depth kept whole,
-  comment and post ids included, large fields named in `cut`, overflow
-  counted, and the write reported as applied) are destructive. Every write
-  result is size-checked too: copied ids and revisions are whole or flagged,
-  never cut, and a result that still cannot be delivered after Google's 2xx
-  is refused with "applied — do not repeat it; re-read". A write refused because the deck changed since its
+  large fields named in `cut`, overflow counted, and the write reported as
+  applied) are destructive. Every write result is size-checked too: copied
+  ids and revisions are whole or flagged, never cut, and a result that still
+  cannot be delivered after Google's 2xx is refused with "applied — do not
+  repeat it; re-read". A write refused because the deck changed since its
   revision is a `conflict`, and a create whose outcome is unknown says what to
-  look for before creating again.
+  look for before creating again. Comments are not supported yet: no tool
+  reads them, and the raw hatch refuses Slides' five comment request kinds
+  unsent; a comment save state other than settled, should Google ever report
+  one, is surfaced as `commentUpdateState` rather than called all-or-none.
   Every read result is built under the shared Workspace result budget, so it
   is deliverable inside a program and directly alike, and nothing it cannot
   carry is lost: cut text carries the `get_page` cursor that continues it
