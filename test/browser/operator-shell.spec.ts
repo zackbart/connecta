@@ -32,7 +32,7 @@ test.beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", origin);
     const clerk = url.searchParams.has("clerk");
-    const access = url.searchParams.has("access") || new URL(request.headers.referer ?? origin).searchParams.has("access");
+    const access = request.headers["x-test-access"] === "1" || url.searchParams.has("access") || new URL(request.headers.referer ?? origin).searchParams.has("access");
     const result = await (access ? accessApp : apps[clerk ? 1 : 0]!).fetch(new Request(url, { method: request.method ?? "GET", headers: request.headers as Record<string, string> }), undefined,
       access ? { waitUntil() {}, access: { aud: "app", getIdentity: async () => ({ user_uuid: "access-operator" }) } } : undefined);
     response.writeHead(result.status, Object.fromEntries(result.headers));
@@ -58,6 +58,8 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
 }
 
 test("operator shell admits ambient Access without sending a stored token", async ({ page }) => {
+  // Preserve the trusted edge context after the router drops fixture query parameters.
+  await page.context().setExtraHTTPHeaders({ "X-Test-Access": "1" });
   await page.addInitScript("localStorage.setItem('connecta:token', 'stale-token');");
   const dataRequest = page.waitForRequest(request => new URL(request.url()).pathname === "/ui/data");
   await page.goto(`${origin}/access?access`);
