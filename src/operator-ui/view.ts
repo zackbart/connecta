@@ -7,7 +7,6 @@ import type {
   UiConnector,
   UiData,
   UiProblem,
-  UiToolSafety,
 } from "./model.js";
 import type { FixPromptKind } from "./fix-prompts.js";
 
@@ -627,9 +626,7 @@ export function connectorStatusLabel(status: string, problem?: UiProblem): strin
   return "Unavailable";
 }
 
-function toolCountLabel(count: number): string {
-  return `${count} ${count === 1 ? "tool" : "tools"}`;
-}
+
 
 /** The tone a status carries wherever it is rendered as a badge or a tile. */
 export type Tone = "ok" | "warn" | "danger" | "neutral";
@@ -640,120 +637,6 @@ export function connectorStatusTone(status: string): Tone {
   if (status === "loading") return "neutral";
   return "danger";
 }
-
-/**
- * The deployment in four numbers, so the page answers "is anything wrong"
- * above the list instead of only inside it. `attention` is what an operator
- * can act on now; `unavailable` is what they cannot. A connector still loading
- * its catalog counts only toward `total`, since calling it connected or failed
- * would be a guess either way.
- */
-export interface ConnectorSummary {
-  total: number;
-  connected: number;
-  /** Waiting on authorization, whether OAuth or a secret in configuration. */
-  attention: number;
-  /** Waiting on a credential someone can add on this page. */
-  credentials: number;
-  unavailable: number;
-  /** Connectors whose details have not arrived yet. */
-  loading: number;
-  tools: number;
-  /** Connectors whose last observed catalog refresh differed from the manifest. */
-  drifting: number;
-}
-
-export function summarizeConnectors(
-  connectors: readonly UiConnector[],
-): ConnectorSummary {
-  const summary: ConnectorSummary = {
-    total: connectors.length,
-    connected: 0,
-    attention: 0,
-    credentials: 0,
-    unavailable: 0,
-    loading: 0,
-    tools: 0,
-    drifting: 0,
-  };
-  for (const connector of connectors) {
-    if (connector.status === "ok") summary.connected += 1;
-    else if (connector.status === "auth_required" || connector.status === "credential_required") {
-      if (connector.problem === "credential_required") summary.credentials += 1;
-      else summary.attention += 1;
-    }
-    else if (connector.status === "loading") summary.loading += 1;
-    else summary.unavailable += 1;
-    summary.tools += connector.toolCount || 0;
-    if (driftState(connector.catalogDrift) === "warning") summary.drifting += 1;
-  }
-  return summary;
-}
-
-/**
- * The one line above the list. Connected and tool counts are always present;
- * the two counts an operator may have to act on appear only when they are not
- * zero, so a healthy deployment stays short.
- */
-export function connectorSummaryParts(
-  summary: ConnectorSummary,
-): Array<{ text: string; tone: Tone }> {
-  // Nothing has answered yet: "0 connected · 0 tools" would be a claim, and
-  // a false one.
-  if (summary.total > 0 && summary.loading === summary.total) {
-    return [
-      {
-        text: `Checking ${summary.total} connector${summary.total === 1 ? "" : "s"}…`,
-        tone: "neutral",
-      },
-    ];
-  }
-  return [
-    { text: `${summary.connected} connected`, tone: "neutral" as Tone },
-    ...(summary.attention
-      ? [
-          {
-            text: `${summary.attention} need${summary.attention === 1 ? "s" : ""} authorization`,
-            tone: "warn" as Tone,
-          },
-        ]
-      : []),
-    ...(summary.credentials
-      ? [
-          {
-            text: `${summary.credentials} need${summary.credentials === 1 ? "s" : ""} a credential`,
-            tone: "warn" as Tone,
-          },
-        ]
-      : []),
-    ...(summary.unavailable
-      ? [{ text: `${summary.unavailable} unavailable`, tone: "danger" as Tone }]
-      : []),
-    { text: toolCountLabel(summary.tools), tone: "neutral" as Tone },
-    ...(summary.loading
-      ? [{ text: `${summary.loading} still loading`, tone: "neutral" as Tone }]
-      : []),
-  ];
-}
-
-/**
- * The badge for each call path, keyed by the server's classification so each
- * state is a row here rather than a branch in a component.
- */
-export const TOOL_SAFETY_BADGE: Readonly<
-  Record<UiToolSafety, { label: string; tone: Tone; title: string }>
-> = {
-  runs_in_programs: {
-    label: "read",
-    tone: "ok",
-    title: "Classified as a read: call_tool and execute_code may call it.",
-  },
-  needs_approval: {
-    label: "write",
-    tone: "warn",
-    title: "Classified as a write: trusted programs may call it; read-only pools use call_destructive_tool. The host controls approval.",
-  },
-};
 
 /**
  * What the page says about a connector that is not usable, one fixed sentence
@@ -794,11 +677,6 @@ export function problemTone(problem: UiProblem): "warn" | "danger" {
     problem === "auth_required"
     ? "warn"
     : "danger";
-}
-
-/** Who owns this connector's downstream credentials, in two words. */
-export function authScopeLabel(scope: UiConnector["authScope"]): string {
-  return scope === "personal" ? "personal auth" : "shared auth";
 }
 
 /**
@@ -847,7 +725,7 @@ const DRIFT_CATEGORIES: ReadonlyArray<{
   { key: "droppedTools", label: "Dropped tool names" },
 ];
 
-export function driftTotal(drift?: CatalogDriftReport): number {
+function driftTotal(drift?: CatalogDriftReport): number {
   if (!drift) return 0;
   return DRIFT_CATEGORIES.reduce((sum, { key }) => sum + (drift[key] || 0), 0);
 }

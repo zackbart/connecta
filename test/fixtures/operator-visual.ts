@@ -124,10 +124,13 @@ export function operatorVisualVariant(base: OperatorVisualFixture, variant: Visu
       slot.status = slotLive.status = "credential_required";
       slot.problem = slotLive.problem = "credential_mismatch";
     }
-    if (variant === "credential-fields") slot.credential.fields = [
+    if (variant === "credential-fields") {
+      slot.credential.fields = [
       { name: "username", label: "Username", inputType: "text", configured: true, lastFour: "lice", updatedAt: VISUAL_NOW },
       { name: "password", label: "Password", inputType: "password", configured: true, lastFour: "1234", updatedAt: VISUAL_NOW },
-    ];
+      ];
+      fixture.contract.config.connectors.find(c => c.id === "slot")!.credential = { label: slot.credential.label, fields: slot.credential.fields.map(({ name, label }) => ({ name, label })) };
+    }
   }
   if (variant.startsWith("oauth-")) {
     const path = variant === "oauth-static" ? "static" : variant === "oauth-cimd" ? "cimd" : "dcr";

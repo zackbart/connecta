@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { OperatorUiContract } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
-import { createOperatorVisualFixture, VISUAL_STATES } from "./fixtures/operator-visual.js";
+import { createOperatorVisualFixture, VISUAL_STATES, VISUAL_VARIANTS, operatorVisualVariant } from "./fixtures/operator-visual.js";
 
 // These fixtures pass through the current config/data/detail routes at creation.
 // Validate the relationships the browser relies on as well as their TS contract:
@@ -47,4 +47,21 @@ describe("operator visual fixture contract", () => {
     expect(JSON.stringify({ contract, data })).not.toContain("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=");
     expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
   });
+  it("validates detail variants against the same contract and declared credential fields", async () => {
+    const base = await createOperatorVisualFixture("populated");
+    for (const variant of VISUAL_VARIANTS) {
+      const { contract, data } = operatorVisualVariant(base, variant);
+      for (const detail of data.connectors) {
+        const live = contract.live.connectors.find(c => c.id === detail.id)!;
+        expect(detail.status, variant).toBe(live.status);
+        expect(detail.registrationPath, variant).toBe(live.auth?.registrationPath);
+        if (detail.credential?.fields) {
+          const configured = contract.config.connectors.find(c => c.id === detail.id)?.credential?.fields;
+          expect(detail.credential.fields.map(f => ({ name: f.name, label: f.label })), variant).toEqual(configured?.map(f => ({ name: f.name, label: f.label })));
+        }
+      }
+      expect(JSON.parse(JSON.stringify({ contract, data }))).toEqual({ contract, data });
+    }
+  });
+
 });

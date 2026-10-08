@@ -170,10 +170,17 @@ for (const variant of VISUAL_VARIANTS) for (const scheme of ["light", "dark"]) {
         else if (variant.startsWith("drift-")) await expect(page.locator("#drift-github")).toBeVisible();
         else if (variant.startsWith("oauth-")) await expect(page.getByRole("button", { name: "Disconnect Slack", exact: true })).toBeVisible();
         else if (variant === "branded") await expect(page.locator("#attentionHeading")).toBeVisible();
-        else await expect(page.locator("#credential-slot")).toBeVisible();
+        else {
+          await expect(page.locator("#credential-slot")).toBeVisible();
+          if (variant === "narrow-auth") {
+            await page.getByRole("button", { name: "Add credential", exact: true }).click();
+            await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+          }
+        }
       }
       await page.evaluate("document.fonts.ready");
       expect(await page.evaluate("window.__csp")).toEqual([]);
+      if (variant.startsWith("narrow-")) expect(await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
       await screenshot(page, `${variant}-${scheme}`);
     } finally { release(); }
   });
