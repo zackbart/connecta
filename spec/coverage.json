@@ -10,7 +10,7 @@
       "id": "json-rpc",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic",
-      "notes": "SDK serves both eras. Connecta-owned admission, origin/access, pool, and deadline refusals use JSON-RPC error bodies with application codes outside reserved ranges; auth-adapter-owned refusal bodies remain adapter-defined pending Phase 3 inbound auth.",
+      "notes": "SDK serves both eras. Connecta-owned admission, origin/access, pool, and deadline refusals use JSON-RPC error bodies with application codes outside reserved ranges and omitted unknown request IDs validated against the modern SDK schema; auth-adapter-owned refusal bodies remain adapter-defined pending Phase 3 inbound auth.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -27,6 +27,10 @@
         {
           "file": "test/request-admission.test.ts",
           "title": "ends stalled authorization before a response and returns its permit"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "INV-4 INV-7: validates transport refusals against the modern JSON-RPC error schema"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

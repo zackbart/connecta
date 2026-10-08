@@ -110,7 +110,7 @@ describe("request admission", () => {
     expect(settled).toBe(true);
     const response = await first;
     expect(response.status).toBe(504);
-    expect(await response.json()).toEqual({ jsonrpc: "2.0", id: null, error: { code: -33003, message: "MCP request lifetime exceeded." } });
+    expect(await response.json()).toEqual({ jsonrpc: "2.0", error: { code: -33003, message: "MCP request lifetime exceeded." } });
     const health = await connecta.fetch(new Request(`${BASE}/health`));
     expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
     gate.release();
@@ -199,7 +199,6 @@ describe("request admission", () => {
     expect(overloaded.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(await overloaded.json()).toEqual({
       jsonrpc: "2.0",
-      id: null,
       error: {
         code: -33001,
         message: "Server capacity is exhausted. Retry later.",

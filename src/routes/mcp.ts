@@ -136,7 +136,7 @@ function withMcpCors(
 
 /** Transport refusals occur before the RPC body is decoded, so its id is unknown. */
 function mcpRefusal(status: number, code: number, message: string): Response {
-  const response = Response.json({ jsonrpc: "2.0", id: null, error: { code, message } }, {
+  const response = Response.json({ jsonrpc: "2.0", error: { code, message } }, {
     status,
     headers: { "Cache-Control": "no-store" },
   });
@@ -166,7 +166,6 @@ function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
-      id: null,
       error: {
         // MCP 2026-07-28 basic#error-codes forbids new allocations in the
         // legacy -32000..-32019 range. Use application codes outside the

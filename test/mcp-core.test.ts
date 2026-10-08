@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ServerContext } from "@modelcontextprotocol/server";
+import { specTypeSchemas, type ServerContext } from "@modelcontextprotocol/server";
 import { activityHistory, recordToolActivity, type ActivityRequestContext, type ToolCallActivityEvent } from "../src/activity.js";
 import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.js";
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
@@ -91,8 +91,46 @@ describe("2026-07-28 core", () => {
       const response = await c.fetch(modern("tools/list"));
       expect(response.status).toBe(403);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
-      expect(await response.json()).toEqual({ jsonrpc: "2.0", id: null, error: { code: -33005, message: "MCP access is forbidden." } });
+      const body = await response.json();
+      expect((await specTypeSchemas.JSONRPCErrorResponse["~standard"].validate(body)).issues).toBeUndefined();
+      expect(body).toEqual({ jsonrpc: "2.0", error: { code: -33005, message: "MCP access is forbidden." } });
     } finally { await c.close(); }
+  });
+
+  it("INV-4 INV-7: validates transport refusals against the modern JSON-RPC error schema", async () => {
+    async function refusal(response: Response, status: number, code: number): Promise<void> {
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      expect((await specTypeSchemas.JSONRPCErrorResponse["~standard"].validate(body)).issues).toBeUndefined();
+      expect(body).not.toHaveProperty("id");
+      expect(body).toMatchObject({ jsonrpc: "2.0", error: { code } });
+    }
+    const c = createTestConnecta({ connectors: [], logger: silentLogger });
+    try {
+      const origin = modern("tools/list");
+      origin.headers.set("Origin", "https://attacker.example");
+      await refusal(await c.fetch(origin), 403, -33005);
+      await refusal(await c.fetch(new Request(`${BASE}/mcp/missing`, modern("tools/list"))), 404, -33004);
+    } finally { await c.close(); }
+    await refusal(await c.fetch(modern("tools/list")), 503, -33002);
+
+    let release!: () => void;
+    let authorizing = false;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const busy = createTestConnecta({ connectors: [], logger: silentLogger,
+      admission: { requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: 100 } },
+      auth: { kind: "blocked", authorize: async () => { authorizing = true; await blocked; return { ok: true }; } },
+    });
+    const first = busy.fetch(modern("tools/list"));
+    try {
+      await expect.poll(() => authorizing).toBe(true);
+      await refusal(await busy.fetch(modern("tools/list")), 503, -33001);
+      await refusal(await first, 504, -33003);
+    } finally {
+      release();
+      await first.then(response => response.body?.cancel()).catch(() => {});
+      await busy.close();
+    }
   });
 
   it("INV-7: cancels an adapter stream returned by the request deadline abort", async () => {

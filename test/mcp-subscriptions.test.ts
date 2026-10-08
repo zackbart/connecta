@@ -190,7 +190,7 @@ describe("MCP subscriptions", () => {
         notifications: { toolsListChanged: true },
       }, 1));
       expect(response.status).toBe(504);
-      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -33003 } });
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
       const health = await c.fetch(new Request(`${BASE}/health`));
       expect(await health.json()).toMatchObject({
         admission: { requests: { active: 0, totals: { admitted: 0 } } },
@@ -218,7 +218,7 @@ describe("MCP subscriptions", () => {
         duplex: "half",
       } as RequestInit));
       expect(response.status).toBe(504);
-      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -33003 } });
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
       expect(cancelled).toBe(true);
     } finally {
       await c.close();

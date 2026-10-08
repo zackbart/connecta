@@ -142,8 +142,8 @@ call tools declare `address` as `x-mcp-header: "Address"`, which the SDK mirrors
 and validates as `Mcp-Param-Address` on modern requests.
 
 Connecta's own admission, deadline, pool, and access refusals use JSON-RPC error
-bodies with `Cache-Control: no-store` and the HTTP statuses below. Their RPC id
-is `null` because the route refuses before decoding the RPC body. An aborted
+bodies with `Cache-Control: no-store` and the HTTP statuses below. They omit the
+unknown RPC id because the route refuses before decoding the RPC body. An aborted
 request releases its resources without cancelling a newly created deadline
 error body. Auth adapters continue to own their challenges and refusal bodies.
 
