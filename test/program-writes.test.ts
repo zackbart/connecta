@@ -53,7 +53,6 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
-  failOnInvocationFailure?: boolean;
   trust?: PoolTrust;
   maxWrites?: number;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -116,7 +115,6 @@ function world(options: WorldOptions = {}) {
     activity,
     {
       trust: options.trust,
-      failOnInvocationFailure: options.failOnInvocationFailure,
       ...(options.maxWrites !== undefined ? { maxWrites: options.maxWrites } : {}),
     },
   );
@@ -225,9 +223,9 @@ describe("trusted-pool programs (#706)", () => {
     expect(w.writes()).toHaveLength(1);
   });
 
-  it.each(["succeeded", "failed", "unknown"] as const)("INV-9: refresh refusals finish %s write accounting", async (state) => {
+  it.each(["succeeded", "failed", "unknown"] as const)("INV-9: program failures retain %s write accounting after caught host failures", async (state) => {
     const w = world({
-      trust: "trusted", failOnInvocationFailure: true,
+      trust: "trusted",
       read: () => { throw new ConnectorCallError("not_found", "Read refused"); },
       write: () => {
         if (state === "failed") throw new ConnectorCallError("invalid_args", "Write refused");
@@ -236,16 +234,15 @@ describe("trusted-pool programs (#706)", () => {
       },
     });
     const result = await w.run(async (connecta) => {
-      // Refresh picks the first caught refusal; an uncertain write must still
-      // replace that refusal and carry its accounting through the same exit.
+      // A guest catching host failures still owns every write it dispatched.
       try { await connecta.call!("reader.get", {}); } catch {}
       try { await connecta.call!("tracker.close_issue", { id: 1 }); } catch {}
-      return "caught";
+      throw new Error("Guest failed after catching host failures");
     });
     expect(result.isError).toBe(true);
     expect(value(result)).toMatchObject({
       error: {
-        code: state === "unknown" ? "write_outcome_unknown" : "not_found",
+        code: state === "unknown" ? "write_outcome_unknown" : "program_error",
         writes: { succeeded: state === "succeeded" ? 1 : 0, failed: state === "failed" ? 1 : 0, unknown: state === "unknown" ? 1 : 0 },
       },
       hostCalls: { attempted: 2, admitted: 2, succeeded: state === "succeeded" ? 1 : 0, failed: state === "succeeded" ? 1 : 2 },

@@ -532,8 +532,7 @@ type Parsed = ConfigOutput<typeof connectaConfig>;
 
 /**
  * The configuration a Connecta runs with: validated, every default applied,
- * auth ordered, and `serverInfo` named and
- * versioned. Built once by createConnecta; nothing downstream re-derives it.
+ * auth ordered, and `serverInfo` named and versioned. Built once by createConnecta; nothing downstream re-derives it.
  */
 export interface ResolvedConfig extends Omit<Parsed, "serverInfo"> {
   /** `serverInfo` with its name and version defaults applied. */
@@ -571,7 +570,6 @@ function assertCoherent(config: Parsed): void {
   if (config.discovery.catalogMinTtlSeconds > config.discovery.catalogMaxTtlSeconds || config.discovery.catalogMaxTtlSeconds > 86_400) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
   }
-
 }
 
 /**

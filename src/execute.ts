@@ -410,7 +410,6 @@ interface SandboxLimits {
   discoveryConcurrency?: number | undefined;
   /** Per-connector deadline for in-program catalog probes. Default 30_000. */
   probeTimeoutMs?: number | undefined;
-  onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
   /** Terminal host refusal, never delivered as a guest rejection. */
   onHostCallBudgetExceeded?: ((failure: InvocationFailure) => void) | undefined;
   diagnostics?: ExecuteDiagnostics | undefined;
@@ -748,7 +747,6 @@ function sandboxProvider(
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
       const failure = boundedGuestFailure(sentSecrets.redact(err));
-      limits.onInvocationFailure?.(failure);
       return Effect.fail(failure);
     });
   return {
@@ -952,10 +950,9 @@ function runSignal(
 function leased(
   executor: AdmittingExecutor,
   signal: AbortSignal,
-  wait = true,
 ): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(
-    awaitExecutor(() => executor.acquire({ signal, wait }), signal, {
+    awaitExecutor(() => executor.acquire({ signal, wait: true }), signal, {
       late: (lease) => lease.release(),
     }),
     (lease) => Effect.sync(() => lease.release()),
@@ -967,10 +964,6 @@ interface RunnerConfig {
   /** An HTTP request shares its scope with every registered tool. */
   requestScope?: object | undefined;
   defaultToolTimeoutMs?: number | undefined;
-  /** Nested runners must never queue behind the program holding their parent slot. */
-  waitForAdmission?: boolean | undefined;
-  /** Refresh only: a refused host call fails the whole run even if guest code catches it. */
-  failOnInvocationFailure?: boolean | undefined;
   discoveryConcurrency?: number | undefined;
   probeTimeoutMs?: number | undefined;
   maxEmittedBytes?: number | undefined;
@@ -1025,7 +1018,6 @@ export function createExecuteTool(
         resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
         diagnostics,
       );
-      const invocationFailures = new Set<InvocationFailure>();
       const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
       const programWrites = new ProgramWrites();
       const dispatchController = new AbortController();
@@ -1056,7 +1048,7 @@ export function createExecuteTool(
         if (isAdmittingExecutor(executor)) {
           lease = yield* timed((elapsed) => {
             if (diagnostics) diagnostics.admissionMs = elapsed;
-          }, leased(executor, signal, config.waitForAdmission !== false));
+          }, leased(executor, signal));
           if ((lease.waitMs ?? 0) > 0) {
             logger.debug("[connecta] execute_code admitted after queue wait", {
               waitMs: lease.waitMs,
@@ -1074,7 +1066,6 @@ export function createExecuteTool(
               budgetFailure = failure;
               Deferred.doneUnsafe(terminal, Effect.fail(failure));
             },
-            onInvocationFailure: (failure) => { invocationFailures.add(failure); },
             emitCollector: emitted,
             ...(diagnostics ? { diagnostics } : {}),
             discoveryConcurrency: config.discoveryConcurrency,
@@ -1153,17 +1144,9 @@ export function createExecuteTool(
         if (Exit.isFailure(exit)) {
           return failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported);
         }
-        const finished = finishedRun(sentSecrets.redact(exit.value), reported);
-        if (config.failOnInvocationFailure && invocationFailures.size > 0) {
-          const refusal = invocationFailures.values().next().value!;
-          return failureResponse(refusal.details.message, {
-            code: refusal.details,
-          });
-        }
-        return finished;
+        return finishedRun(sentSecrets.redact(exit.value), reported);
       }), (unfinished) => {
-        // Every run response passes through write accounting, including a
-        // refresh refusal after the guest caught its invocation failure.
+        // Every run response passes through write accounting.
         const response = programWrites.finish(unfinished);
         // Calls abandoned by the guest are failed when the run cancels them.
         const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
