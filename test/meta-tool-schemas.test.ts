@@ -116,7 +116,7 @@ describe("meta-tool input schemas", () => {
 });
 
 describe("meta-tool output schemas", () => {
-  it("INV-3: every meta-tool advertises a schema matching successful structured content", async () => {
+  it("INV-3: structured-only meta-tools advertise schemas and direct-call tools permit native content", async () => {
     const app = makeDeployment({ executor: stubExecutor, trust: "trusted" });
     try {
       const list = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: TOKEN }));
@@ -135,15 +135,22 @@ describe("meta-tool output schemas", () => {
       };
       expect(list.result.tools).toHaveLength(6);
       for (const tool of list.result.tools) {
-        expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
+        const directCall = tool.name === "call_tool" || tool.name === "call_destructive_tool";
+        if (directCall) expect(tool.outputSchema, tool.name).toBeUndefined();
+        else expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
         const response = await readJsonRpc(
           await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }),
         );
         expect(response.error, tool.name).toBeUndefined();
         expect(response.result.isError, tool.name).toBeFalsy();
-        expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(
-          true,
-        );
+        if (directCall) {
+          expect(JSON.parse(response.result.content[0].text), tool.name).toEqual(response.result.structuredContent);
+        }
+        if (!directCall) {
+          expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(
+            true,
+          );
+        }
       }
       const search = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools");
       expect(search.outputSchema).toEqual(CATALOG_SEARCH_RESULT_SCHEMA);

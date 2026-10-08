@@ -30,7 +30,7 @@ import {
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
-import { AUTHORIZE_OUTPUT, CALL_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
+import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
@@ -352,7 +352,6 @@ function headOf(bytes: Uint8Array, cap: number): Uint8Array {
 function noticeFirst(notice: object, preview: string): ToolResult {
   return {
     content: [{ type: "text", text: `${JSON.stringify(notice)}\n${preview}` }],
-    structuredContent: { ...notice, format: "text" },
   };
 }
 
@@ -734,12 +733,14 @@ function metaToolsForRequest(
             ];
           }
           const guarded = await guardContent(content, results, cap);
-          guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
+          // Native blocks and bounded previews are the result. A format-only
+          // structuredContent hides them in clients that prefer that field.
+          guarded.result._meta = { "dev.connecta/format": format };
           return processed(guarded.result, guarded.truncated);
         }
         const value = result;
         const guarded = await guardText(serializeResultText(value), results, cap);
-        guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
+        guarded.result._meta = { "dev.connecta/format": format };
         return processed(guarded.result, guarded.truncated, { value });
       },
       activityFriction: (processed) => processed.friction,
@@ -1283,7 +1284,7 @@ export function registerMetaTools(
     {
       description: CALL_DESC,
       inputSchema: CALL_INPUT,
-      outputSchema: CALL_OUTPUT,
+      // Default mode returns native content, so no structured result is promised.
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
@@ -1301,7 +1302,6 @@ export function registerMetaTools(
     {
       description: describedFor(registry, CALL_DESTRUCTIVE_DESC, "destructive"),
       inputSchema: CALL_DESTRUCTIVE_INPUT,
-      outputSchema: CALL_OUTPUT,
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,
