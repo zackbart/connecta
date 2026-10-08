@@ -12,7 +12,7 @@ describe("factory configuration provenance", () => {
   it.each([undefined, {}, { maxActive: 100 }])("INV-10: distinguishes omitted and explicit accessTokens maxActive: %j", async options => {
     const storage = memoryStorage();
     const module = accessTokens(storage, options);
-    const raw = { executor, connectors: [], storage, accessTokens: module };
+    const raw = { executor, publicUrl: "https://connecta.example", logger: "silent" as const, connectors: [], storage, accessTokens: module };
     const app = createTestConnecta(raw);
     try {
       expect(app.describeConfig().modules.accessTokens.maxActive).toBe(100);
@@ -25,7 +25,7 @@ describe("factory configuration provenance", () => {
 
   it.each([{}, { versionNegotiation: "auto" as const, redirects: "none" as const, requireHttps: false }])("INV-10: distinguishes omitted and explicit remoteMcp transport defaults: %j", async transport => {
     const connector = remoteMcp("remote", { url: "https://remote.example/mcp", ...transport });
-    const raw = { executor, connectors: [connector] };
+    const raw = { executor, publicUrl: "https://connecta.example", logger: "silent" as const, connectors: [connector] };
     const app = createTestConnecta(raw);
     try {
       const snapshot = app.describeConfig();
@@ -44,7 +44,7 @@ describe("factory configuration provenance", () => {
     const options: { url: string; redirects: "none"; requireHttps?: boolean } = { url: "https://remote.example/mcp", redirects: "none" };
     const connector = remoteMcp("remote", options);
     options.requireHttps = true;
-    const raw = { executor, connectors: [connector] };
+    const raw = { executor, publicUrl: "https://connecta.example", logger: "silent" as const, connectors: [connector] };
     const app = createTestConnecta(raw);
     try {
       const sources = describeConfigSources(app.describeConfig(), raw);
@@ -56,7 +56,7 @@ describe("factory configuration provenance", () => {
 
   it("INV-10: marks artifact policy defaults per option, including nested allowlists", async () => {
     const module = artifacts({ store: kvArtifactStore(memoryStorage()), allowlist: { scripts: [] }, limits: { titleChars: 120 } });
-    const raw = { executor, connectors: [], artifacts: module };
+    const raw = { executor, publicUrl: "https://connecta.example", logger: "silent" as const, connectors: [], artifacts: module };
     const app = createTestConnecta(raw);
     try {
       const sources = describeConfigSources(app.describeConfig(), raw);
