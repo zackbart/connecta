@@ -10,20 +10,27 @@ import type { AdmittingExecutor, ExecuteResult, ExecutorLease, ExecutorProvider 
 import { brandExecutor } from "./executor-contract.js";
 import { InvocationFailure } from "./invocation.js";
 import { parse, type Node } from "acorn";
-import { isolateGuestProgram } from "./guest-runtime.js";
+import { guestInitializer, guestPrelude, isolateGuestProgram } from "./guest-runtime.js";
 
 /** Parse guest syntax before rewriting imports; strings and regexes are data. */
 function routeGuestImports(source: string): string {
   const offsets: number[] = [];
   const visit = (node: Node) => {
-    if (node.type === "ImportExpression") offsets.push(node.start - 1);
+    if (node.type === "ImportExpression") offsets.push(node.start - "export default (".length);
     for (const value of Object.values(node)) {
       if (Array.isArray(value)) {
         for (const child of value) if (child && typeof child === "object" && "type" in child) visit(child);
       } else if (value && typeof value === "object" && "type" in value) visit(value as Node);
     }
   };
-  visit(parse(`(${source})`, { ecmaVersion: "latest", sourceType: "module", locations: true }));
+  const module = parse(`export default (${source}\n);`, { ecmaVersion: "latest", sourceType: "module", locations: true });
+  // Closing the parentheses and adding statements must never create module
+  // code outside this one expression. Check the assembled splice, including
+  // comments and all grouping parentheses, before the loader sees any source.
+  if (module.body.length !== 1 || module.body[0]?.type !== "ExportDefaultDeclaration") {
+    throw new SyntaxError("A Worker program must contain exactly one expression.");
+  }
+  visit(module);
   for (const offset of offsets.sort((a, b) => b - a)) {
     source = source.slice(0, offset) + "__connecta_import" + source.slice(offset + 6);
   }
@@ -116,7 +123,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             const globals = hostProviders.map(provider => `globalThis[${JSON.stringify(provider.name)}] = ${provider.name};`).join("\n");
             let isolated = source.slice(0, index) + "__connecta_program" + source.slice(index + executableCode.length);
             const bridge = `if (data.error) throw new Error(data.error);\n          return data.result;`;
-            if (!isolated.includes(bridge)) throw new Error("Worker bridge contract changed.");
+            if (hostProviders.length > 0 && !isolated.includes(bridge)) throw new Error("Worker bridge contract changed.");
             isolated = isolated.replaceAll(bridge, `if (data.error) throw new NativeError(data.error);
           const reply = data.result;
           if (!reply.ok) {
@@ -132,19 +139,9 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             throw error;
           }
           return reply.value;`);
-            isolated = isolated.replace('    const __logs = [];', `    if (initialized) throw new Error("Worker initialization is single-use.");
+            isolated = isolated.replace('    const __logs = [];', `    if (initialized) throw new NativeError("Worker initialization is single-use.");
     initialized = true;
-    const NativeError = Error;
-    const defineProperties = Object.defineProperties;
-    const freeze = Object.freeze;
-    const clone = structuredClone;
-    const retain = Function.prototype.call.bind(WeakMap.prototype.set);
-    const lookup = Function.prototype.call.bind(WeakMap.prototype.get);
-    const slice = Function.prototype.call.bind(String.prototype.slice);
-    const failures = new WeakMap();
-    const nativeSetTimeout = setTimeout;
-    const toNumber = Number;
-    const exec = Function.prototype.call.bind(RegExp.prototype.exec);
+    const failures = new NativeWeakMap();
     const timeoutError = new NativeError("Execution timed out");
     const __logs = [];`);
             isolated = isolated.replace('new Error("Execution timed out")', 'timeoutError');
@@ -176,15 +173,14 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               firstInitializer ||= call;
             }
             // Successive preludes share lexical bindings in both executors.
-            const initializer = preludes.length ? `const __connecta_initialize = (${names}) => {\n${preludes.join("\n")}\n};\n` : "";
-            const before = firstInitializer ? isolated.indexOf(firstInitializer) : isolated.indexOf("    try {\n      const result = await Promise.race");
-            if (before < 0) throw new Error("Worker provider setup was unavailable.");
+            const captureGuest = preludes.includes(guestPrelude());
+            const initializer = preludes.length ? `const __connecta_initialize = (${names}) => {\n${preludes.map(prelude => prelude === guestPrelude() ? "__connecta_guest_initialize(connecta);" : prelude).join("\n")}\n};\n` : "";
             // Runner modules are inaccessible to guest imports. The callback has
             // no lexical access to initialization or RPC dispatchers.
-            const imports = guest
-              ? 'import __connecta_user_program from "./connecta-guest.js";\n'
-              : 'import __connecta_program from "./connecta-guest.js";\n';
-            const wrapper = guest ? `const __connecta_program = (${guest.wrapper});\n` : "";
+            const programName = guest ? "__connecta_user_program" : "__connecta_program";
+            const imports = 'import Runner from "./connecta-runner.js";\n'
+              + `import program from "./connecta-guest.js";\n`;
+            const wrapper = guest ? `    const __connecta_program = (${guest.wrapper});\n` : "";
             const hardening = `
 const builtinAllowed = name => typeof name === "string" && name !== "module" && name !== "node:module" && name !== "process" && name !== "node:process";
 if (typeof process !== "undefined" && typeof process.getBuiltinModule === "function") {
@@ -193,11 +189,71 @@ if (typeof process !== "undefined" && typeof process.getBuiltinModule === "funct
     value: name => builtinAllowed(name) ? getBuiltin(name) : undefined });
 }
 `;
-            const main = imports + hardening + "let initialized = false;\n" + initializer + wrapper + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
+            // ESM evaluates the first dependency completely before the next.
+            // This module has no guest dependency; its references and retained
+            // failures stay private, and guest imports cannot reach its export.
+            const captures = `
+const {
+  NativeError, NativeWeakMap, NativeProxy, NativePromise, NativeUint8Array, NativeArrayBuffer,
+  defineProperties, freeze, clone, retain, lookup, slice, nativeSetTimeout, toNumber, exec,
+  hasOwn, push, map, join, toString, fromCharCode, min, subarray, charCodeAt, bufferSlice,
+  isView, nativeBtoa, nativeAtob, race
+} = Object.freeze({
+  NativeError: Error, NativeWeakMap: WeakMap, NativeProxy: Proxy, NativePromise: Promise,
+  NativeUint8Array: Uint8Array, NativeArrayBuffer: ArrayBuffer,
+  defineProperties: Object.defineProperties, freeze: Object.freeze, clone: structuredClone,
+  retain: Function.prototype.call.bind(WeakMap.prototype.set),
+  lookup: Function.prototype.call.bind(WeakMap.prototype.get),
+  slice: Function.prototype.call.bind(String.prototype.slice),
+  nativeSetTimeout: setTimeout, toNumber: Number,
+  exec: Function.prototype.call.bind(RegExp.prototype.exec),
+  hasOwn: Function.prototype.call.bind(Object.prototype.hasOwnProperty),
+  push: Function.prototype.call.bind(Array.prototype.push),
+  map: Function.prototype.call.bind(Array.prototype.map),
+  join: Function.prototype.call.bind(Array.prototype.join), toString: String,
+  fromCharCode: String.fromCharCode, min: Math.min,
+  subarray: Function.prototype.call.bind(Uint8Array.prototype.subarray),
+  charCodeAt: Function.prototype.call.bind(String.prototype.charCodeAt),
+  bufferSlice: Function.prototype.call.bind(ArrayBuffer.prototype.slice),
+  isView: ArrayBuffer.isView, nativeBtoa: btoa, nativeAtob: atob,
+  race: Promise.race.bind(Promise)
+});
+`;
+            isolated = isolated
+              .replace("async evaluate(__dispatchers = {}, __connectors = {}) {", `async evaluate(__dispatchers = {}, __connectors = {}, ${programName}) {\n${wrapper}`)
+              .replaceAll("new Proxy(", "new NativeProxy(")
+              .replaceAll("Object.prototype.hasOwnProperty.call(target, toolName)", "hasOwn(target, toolName)")
+              .replaceAll("String(toolName)", "toString(toolName)")
+              .replaceAll('a.map(String).join(" ")', 'join(map(a, toString), " ")')
+              .replaceAll("__logs.push(", "push(__logs, ")
+              .replaceAll("String.fromCharCode(", "fromCharCode(")
+              .replaceAll("bytes.subarray(i, Math.min(i + chunkSize, bytes.byteLength))", "subarray(bytes, i, min(i + chunkSize, bytes.byteLength))")
+              .replaceAll("btoa(binary)", "nativeBtoa(binary)")
+              .replaceAll("atob(b64)", "nativeAtob(b64)")
+              .replaceAll("new Uint8Array(", "new NativeUint8Array(")
+              .replaceAll("instanceof Uint8Array", "instanceof NativeUint8Array")
+              .replaceAll("instanceof ArrayBuffer", "instanceof NativeArrayBuffer")
+              .replaceAll("ArrayBuffer.isView(", "isView(")
+              .replaceAll("binary.charCodeAt(i)", "charCodeAt(binary, i)")
+              .replaceAll("bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)", "bufferSlice(bytes.buffer, bytes.byteOffset, bytes.byteOffset + bytes.byteLength)")
+              .replaceAll("Promise.race(", "race(")
+              .replaceAll("new Promise(", "new NativePromise(");
+            // Recompute the insertion point after changing the generated runner.
+            const setup = firstInitializer ? isolated.indexOf(firstInitializer) : isolated.indexOf("    try {\n      const result = await race");
+            if (setup < 0) throw new Error("Worker provider setup was unavailable.");
+            const runner = hardening
+              + (captureGuest ? `const __connecta_guest_initialize = ${guestInitializer()};\n` : "")
+              + captures + "let initialized = false;\n" + initializer
+              + isolated.slice(0, setup) + globals + "\n" + isolated.slice(setup);
+            const main = imports + `export default class CodeExecutor extends Runner {
+  evaluate(dispatchers, connectors) { return super.evaluate(dispatchers, connectors, program); }
+}`;
+            const routed = routeGuestImports(guest?.program ?? executableCode);
             return track(Reflect.apply(Reflect.get(target, key), target, [{ ...definition, modules: {
               ...definition.modules,
               "executor.js": main,
-              "connecta-guest.js": `const startsWith = Function.prototype.call.bind(String.prototype.startsWith); const reject = Promise.reject.bind(Promise); const NativeError = Error; const __connecta_import = specifier => typeof specifier === "string" && ((startsWith(specifier, "node:") && specifier !== "node:module" && specifier !== "node:process") || specifier === "cloudflare:workers") ? import(specifier) : reject(new NativeError("Imports of runner modules are outside the guest API."));\nexport default (${routeGuestImports(guest?.program ?? executableCode)});`,
+              "connecta-runner.js": runner,
+              "connecta-guest.js": `const startsWith = Function.prototype.call.bind(String.prototype.startsWith); const reject = Promise.reject.bind(Promise); const NativeError = Error; const __connecta_import = specifier => typeof specifier === "string" && ((startsWith(specifier, "node:") && specifier !== "node:module" && specifier !== "node:process") || specifier === "cloudflare:workers") ? import(specifier) : reject(new NativeError("Imports of runner modules are outside the guest API."));\nexport default (${routed}\n);`,
             } }, ...args.slice(1)]));
           };
           const value = Reflect.get(target, key);

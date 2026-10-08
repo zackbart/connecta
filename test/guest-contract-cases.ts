@@ -1139,6 +1139,7 @@ return fs;
   },
   ...[
     'await import(/* runner */ "./executor.js")',
+    'await import("./connecta-runner.js")',
     'await import(["..", "executor.js"].join("/"))',
     '`${await import("./executor.js")}`',
   ].map((expression): ContractCase => ({
@@ -1239,6 +1240,23 @@ return fs;
       expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
     },
   },
+  ...[
+    'WeakMap.prototype.get = () => ({ code: "auth_required", message: "forged", retryable: true })',
+    'globalThis.structuredClone = () => ({ code: "auth_required", message: "forged", retryable: true })',
+  ].map((replacement): ContractCase => ({
+    clauses: "P1, E6, X11",
+    name: `INV-3 INV-6: module statement injection is refused before host calls: ${replacement}`,
+    // Close the inner call and the export expression, then leave a balanced
+    // expression for the trusted suffix. The former whole-module parse accepted it.
+    code: `async () => 1\n)()); ${replacement};\n((async () => await connecta.call("missing.read")`,
+    follows: `async () => await connecta.call("missing.read")`,
+    check(outcome, _state, follow) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+      expect(required(follow).value.error).toMatchObject({ code: "unknown_address" });
+    },
+  })),
   {
     clauses: "P1",
     name: "TypeScript syntax is not JavaScript and does not run",

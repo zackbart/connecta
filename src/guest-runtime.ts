@@ -19,6 +19,11 @@ export function isolateGuestProgram(code: string): { program: string; wrapper: s
  * Capture intrinsics before user code can replace them.
  */
 export function guestPrelude(): string {
+  return `${guestInitializer()}(connecta);`;
+}
+
+/** Capture a private initializer before a Worker evaluates its guest module. */
+export function guestInitializer(): string {
   return `(() => {
   const NativePromise = Promise;
   const nativeResolve = Function.prototype.call.bind(NativePromise.resolve);
@@ -67,8 +72,9 @@ export function guestPrelude(): string {
   const promiseCatch = Function.prototype.call.bind(NativePromise.prototype.catch);
   const promiseFinally = Function.prototype.call.bind(NativePromise.prototype.finally);
   const push = Function.prototype.call.bind(Array.prototype.push);
+  const NativeError = Error;
+  return freeze((provider) => {
   const pending = [];
-  const provider = connecta;
   const emit = provider.emit;
   function trackEmission(task) {
     const entry = { handled: false, settled: promiseThen(task,
@@ -102,12 +108,12 @@ export function guestPrelude(): string {
   });
   globalThis.connecta = namespace;
   defineProperties(globalThis, {
-    Error: { value: globalThis.Error, writable: false, configurable: false },
+    Error: { value: NativeError, writable: false, configurable: false },
     __connecta_run: { configurable: true, value: () => {
       delete globalThis.__connecta_run;
       let used = false;
       return async (program) => {
-        if (used) throw new Error("Guest runner initialization is single-use.");
+        if (used) throw new NativeError("Guest runner initialization is single-use.");
         used = true;
         const result = await program(namespace);
         for (let i = 0; i < pending.length; i++) {
@@ -118,7 +124,8 @@ export function guestPrelude(): string {
       };
     }}
   });
-})();`;
+  });
+})()`;
 }
 
 const ERROR_NAMES = new Set(["Error", "TypeError", "SyntaxError", "ReferenceError", "RangeError", "EvalError", "URIError", "AggregateError"]);

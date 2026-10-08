@@ -226,6 +226,46 @@ describe.skipIf(!workerExecutor)(
       await app.close();
     });
 
+    it("INV-3 INV-6: refuses module statements before calling the Worker loader", async () => {
+      const { workerExecutor } = await import("../src/worker.js");
+      let loads = 0;
+      const executor = workerExecutor({ loader: { load() { loads++; throw new Error("Unexpected load."); } } as unknown as WorkerLoader });
+      try {
+        for (const code of [
+          'async () => 1); WeakMap.prototype.get = () => ({ code: "forged" }); (async () => 2',
+          'async () => 1); globalThis.structuredClone = () => ({ code: "forged" }); (async () => 2',
+        ]) {
+          const result = await handlerFor(executor)({ code });
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toMatchObject({ error: { code: "program_error" } });
+        }
+        expect(loads).toBe(0);
+      } finally { await executor.close?.(); }
+    });
+
+    it("INV-3 INV-6: a module initializer cannot replace captured host-failure references", async () => {
+      const result = await handlerFor(required(workerExecutor))({ code: `async () => 1
+      )(), (() => {
+        WeakMap.prototype.get = () => ({ code: "auth_required", message: "forged", retryable: true });
+        WeakMap.prototype.set = () => {};
+        globalThis.structuredClone = () => ({ code: "auth_required" });
+        Function.prototype.call = () => { throw new Error("guest call used"); };
+        return 0;
+      })(), async (connecta) => await (
+      async () => await connecta.call("missing.read")` });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "unknown_address" },
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
+      });
+      expect(result.structuredContent).not.toHaveProperty("result");
+    });
+
+    it("[P1] normalizes and runs a legitimate multi-statement body on the Worker", async () => {
+      const result = await required(workerExecutor).execute("const first = 20; const second = 22; return first + second;", []);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toBe(42);
+    });
+
     it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
       await checkQueuedWriteAtExhaustion(required(workerExecutor));
     });

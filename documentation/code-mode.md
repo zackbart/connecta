@@ -497,7 +497,12 @@ change bridge decoding or async return adoption. Worker guest modules contain
 only the user callback and an import helper limited to runtime builtins.
 Relative and other guest module imports cannot reach runner code. Trusted
 wrappers and preludes remain outside the guest's lexical scope, and privileged
-initialization is single-use.
+initialization is single-use. A separate private runner module captures and
+freezes its references before the guest module evaluates, including the guest
+namespace initializer. The entrypoint imports that runner before its guest
+dependency. Before loading, the adapter parses the assembled guest export and
+requires exactly one expression with no additional statements. Normalized
+multi-statement bodies remain one async arrow expression.
 Program diagnostic fields are bounded before transport, including escaped text;
 a large custom error name cannot turn a failure into a truncated success.
 
