@@ -214,7 +214,6 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const BODILESS_STATUSES = new Set([204, 205, 304]);
 
 const decoder = new TextDecoder();
-const encoder = new TextEncoder();
 
 /**
  * A base URL is deployment configuration, so a bad one is a structural mistake
@@ -362,9 +361,9 @@ async function drain(
 /**
  * Every read is capped at `maxResponseBytes`: a streaming body is abandoned at
  * the ceiling rather than buffered past it, and where a runtime gives no body
- * stream the text is measured in UTF-8 bytes before it is accepted, with JSON
- * parsed from that same bounded text. Such a runtime still buffers internally,
- * but cannot return an oversized body as a successful result.
+ * stream the buffered bytes are measured before they are accepted, with text
+ * and JSON decoded from them. Such a runtime still buffers internally, but
+ * cannot return an oversized body as a successful result.
  *
  * A mapper must re-throw `ConnectorCallError` and swallow only what it
  * recognizes: a bare `catch` around `response.json()` eats this refusal along
@@ -415,13 +414,9 @@ function boundedResponse(
   };
   let readText: Promise<string> | undefined;
   const text = (): Promise<string> => {
-    readText ??= stream
-      ? bytes().then((body) => decoder.decode(body))
-      : response.text().then((body) => {
-          const size = encoder.encode(body).length;
-          if (size > limit) throw oversized(provider, limit, `${size} bytes`);
-          return body;
-        });
+    // Bytes, then UTF-8, never `response.text()`: workerd quotes a text
+    // read's non-text Content-Type in its own log (INV-6).
+    readText ??= bytes().then((body) => decoder.decode(body));
     return readText;
   };
   const json = async (): Promise<unknown> => {

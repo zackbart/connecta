@@ -37,6 +37,7 @@ import {
   refreshCoordinatorsByPartition,
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
+import { byteReadResponse } from "../byte-read-response.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -543,43 +544,6 @@ function redirectedInit(init: RequestInit, status: number): RequestInit {
   return redirected;
 }
 
-/** Media types an MCP or OAuth exchange reads (JSON, SSE, a text refusal). */
-function readableMediaType(contentType: string): boolean {
-  const essence = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  const [type, subtype = ""] = essence.split("/");
-  return type === "text" || subtype === "json" || subtype.endsWith("+json");
-}
-
-/**
- * The response without a body no MCP or OAuth exchange reads.
- *
- * The SDK drains every response it rejects with `.text()`, and workerd, when
- * `.text()` meets a body whose Content-Type is not text, prints a native
- * warning quoting that Content-Type: below every console and logger, so a
- * downstream could write into the deployment's log. Such a body is cancelled
- * here and the response handed on empty, with the same status and headers,
- * so the SDK's verdict (an unexpected content type, a refusal) is unchanged
- * and there is nothing left for it to drain.
- */
-function withoutUnreadableBody(response: Response): Response {
-  const type = response.headers.get("content-type");
-  if (response.body === null || type === null || readableMediaType(type)) {
-    return response;
-  }
-  let empty: Response;
-  try {
-    empty = new Response(null, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  } catch {
-    return response;
-  }
-  void response.body.cancel().catch(() => {});
-  return empty;
-}
-
 /**
  * Wrap fetch with explicit, bounded redirect handling.
  *
@@ -616,7 +580,9 @@ export function redirectSafeFetch(
           init.signal ?? undefined,
         );
       }
-      if (!REDIRECT_STATUSES.has(response.status)) return withoutUnreadableBody(response);
+      // Every MCP and OAuth exchange reads its answer through here, and the
+      // SDK reads bodies with `.text()` and `.json()`: as bytes, never text.
+      if (!REDIRECT_STATUSES.has(response.status)) return byteReadResponse(response);
 
       const location = response.headers.get("location");
       await response.body?.cancel().catch(() => {});
@@ -922,7 +888,8 @@ function tracedOAuthFetch(
       trail.last = { step, host: url.origin };
       if (step === "client registration") trail.registration = url.origin;
     }
-    return await baseFetch(input, init);
+    // The SDK's own fetch when it was handed none: read as bytes all the same.
+    return byteReadResponse(await baseFetch(input, init));
   };
 }
 

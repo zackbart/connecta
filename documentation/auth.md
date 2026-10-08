@@ -872,6 +872,8 @@ owner's access token as `Authorization: Bearer` with these rules:
   `unavailable` and keep the grant. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
+- The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so
+  workerd never quotes a downstream's Content-Type in its own log (INV-6).
 
 Epoch fencing and cleanup lineage, vault sealing, shared/personal ownership,
 callback state/principal checks, `authorize_connector`, Connect, Restart, and

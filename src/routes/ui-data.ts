@@ -21,7 +21,13 @@ import type {
   UiData,
   UiTool,
 } from "../operator-ui/model.js";
-import { failureRecord, failureStatus, logFailure, statusFailure } from "../operator-record.js";
+import {
+  failureRecord,
+  failureStatus,
+  logFailure,
+  recordedToolName,
+  statusFailure,
+} from "../operator-record.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
@@ -118,11 +124,15 @@ export function uiData(
         if (status.state !== "ok" || signal.aborted) {
           return { status, tools: [], catalogFailed: false };
         }
+        // A catalog is configuration the operator chose to load, and its
+        // descriptions are the agent's too, so the page shows them as text.
+        // A name outside MCP's tool-name grammar is withheld here as in every
+        // record (INV-6), and so is the address built from it.
         return yield* attempt(async () =>
           (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(
             (t): UiTool => ({
-              name: t.name,
-              address: `${c.id}.${t.name}`,
+              name: recordedToolName(t),
+              address: `${c.id}.${recordedToolName(t)}`,
               ...(t.description ? { description: t.description } : {}),
               safety: uiToolSafety(
                 t,

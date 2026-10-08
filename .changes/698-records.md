@@ -28,6 +28,12 @@ ECONNREFUSED).`. A custom connector's `status()` contributes only its state:
 from the message it approved, whatever was assigned since, and the operator
 page logs a status
 as its state and, for a failure connecta described, that failure's record.
-On Workers, a downstream reply whose Content-Type is neither text nor JSON is
-handed on without its body, because workerd prints that Content-Type natively
-when the SDK drains it (#695, #716).
+workerd prints a body's Content-Type natively when `.text()` or `.json()`
+reads a body it does not parse as text, so `remoteMcp()`, its OAuth flows,
+`ctx.oauth.fetch()` (and its clones), the guarded fetch, and Clerk now read
+downstream bodies as bytes decoded as UTF-8; a refusal labelled with any
+Content-Type reaches the agent as its words. The operator page's catalog
+withholds a tool name outside the grammar, and its address, as `<withheld>`.
+A catalog drift report's `observedAt` is re-serialized as ISO-8601 UTC, and a
+report whose `observedAt` is not an ISO-8601 date-time is dropped from
+health, status, and the operator page (#695, #716).

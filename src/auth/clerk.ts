@@ -4,6 +4,7 @@
 
 import { createClerkClient } from "@clerk/backend";
 import { decodeJwt } from "@clerk/backend/jwt";
+import { byteReadResponse } from "../byte-read-response.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
@@ -312,7 +313,7 @@ async function opaqueOAuthClaims(
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
   });
   if (!response.ok) throw new Error("Opaque OAuth verification failed");
-  const claims: unknown = await response.json();
+  const claims: unknown = await byteReadResponse(response).json();
   if (
     !claims || typeof claims !== "object" || Array.isArray(claims) ||
     !("object" in claims) || claims.object !== "clerk_idp_oauth_access_token" ||
@@ -616,7 +617,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
               { status: 502, headers: CORS_HEADERS },
             );
           }
-          return Response.json(await upstream.json(), { headers: CORS_HEADERS });
+          return Response.json(await byteReadResponse(upstream).json(), { headers: CORS_HEADERS });
         } catch {
           return Response.json(
             { error: "upstream authorization server metadata unavailable" },

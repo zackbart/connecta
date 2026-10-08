@@ -286,7 +286,12 @@ never its `name`; a classification only from one connecta registered; a tool
 only from the catalog entry a call resolved to, and only if it fits MCP's
 tool-name grammar (else `<withheld>`, in activity rows too); and a status
 message only from the snapshot connecta took of a status it created, so a
-plugin `status()` or a decorator contributes its state alone.
+plugin `status()` or a decorator contributes its state alone. workerd quotes a
+body's Content-Type in its own output when a text read meets a type it does not
+parse as text, so connecta reads downstream bodies as bytes
+(`src/byte-read-response.ts`), `ctx.oauth.fetch()` answers included. The
+operator page may show catalog metadata the operator loaded (descriptions,
+schemas), but withholds a tool name outside the grammar as it does in records.
 `test/operator-record-sources.node.test.ts` is a secondary lint over every other
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
 the next one.

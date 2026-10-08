@@ -60,9 +60,11 @@ function rendered(value: unknown, seen = new Set<unknown>()): string {
 
 let consoleLines: string[] = [];
 /**
- * Bodies read as text although their Content-Type is not text. workerd prints
- * a native warning quoting that Content-Type for each, outside every console
- * this file can spy on, so none may happen.
+ * Bodies read natively as text whose Content-Type workerd may not parse as
+ * text, or that carries a sentinel. workerd prints a native warning quoting
+ * such a Content-Type for each text read (`.json()` included), outside every
+ * console this file can spy on, so none may happen: connecta reads a
+ * downstream's body as bytes.
  */
 let textOnUnreadable: string[] = [];
 
@@ -74,20 +76,22 @@ beforeEach(() => {
       consoleLines.push(args.map((arg) => rendered(arg)).join(" "));
     });
   }
-  const text = Response.prototype.text;
-  vi.spyOn(Response.prototype, "text").mockImplementation(function (this: Response) {
-    const type = this.headers.get("content-type");
-    const essence = type?.split(";")[0]?.trim().toLowerCase() ?? "";
-    if (
-      this.body !== null &&
-      type !== null &&
-      !essence.startsWith("text/") &&
-      !/\/(?:.*\+)?json$/.test(essence)
-    ) {
-      textOnUnreadable.push(type);
-    }
-    return text.call(this);
-  });
+  for (const reader of ["text", "json"] as const) {
+    const read = Response.prototype[reader] as (this: Response) => Promise<unknown>;
+    vi.spyOn(Response.prototype, reader).mockImplementation(function (this: Response) {
+      const type = this.headers.get("content-type");
+      const essence = type?.split(";")[0]?.trim().toLowerCase() ?? "";
+      if (
+        this.body !== null &&
+        type !== null &&
+        (ANY_PLANTED.test(type) ||
+          !/^(?:text\/[a-z0-9.+-]+|[a-z0-9.+-]+\/(?:[a-z0-9.-]+\+)?json)$/.test(essence))
+      ) {
+        textOnUnreadable.push(type);
+      }
+      return read.call(this) as never;
+    });
+  }
 });
 
 afterEach(() => {
@@ -245,6 +249,9 @@ const scenarios: Scenario[] = [
       status: 400,
       headers: { "content-type": `application/${planted("ct-4xx")}` },
     }) }),
+    // Read as bytes, the refusal reaches the agent like any other 4xx answer;
+    // the type it was labelled with reaches no one.
+    agentMay: ["ct-4xx-body"],
   },
   {
     name: "remoteMcp: a planted content type on a 5xx answer",
@@ -261,6 +268,31 @@ const scenarios: Scenario[] = [
       headers: { "content-type": `application/${planted("ct-init")}` },
     }) }),
   },
+  // Content-Types that pass a loose text-or-JSON filter and that workerd's own
+  // parser still quotes: a JSON subtype under a planted type, and a planted
+  // parameter on a type with no subtype (#695 round 7).
+  ...[
+    ["a JSON subtype of a planted type", `x-${planted("ct-json-type")}/json`],
+    ["a planted parameter on a bare text type", `text; x=${planted("ct-param")}`],
+    ["a planted parameter on application/json", `application/json; x=${planted("ct-json-param")}`],
+  ].flatMap(([label, type]): Scenario[] => [
+    {
+      name: `remoteMcp: ${label} on an HTTP 400 refusal`,
+      connector: remote,
+      fetch: downstream({ call: () => new Response(`refused ${planted("ct-loose-4xx-body")}`, {
+        status: 400,
+        headers: { "content-type": type! },
+      }) }),
+      agentMay: ["ct-loose-4xx-body"],
+    },
+    {
+      name: `remoteMcp: ${label} on a 200 reply`,
+      connector: remote,
+      fetch: downstream({ call: () => new Response(`{"x":"${planted("ct-loose-200-body")}"}`, {
+        headers: { "content-type": type! },
+      }) }),
+    },
+  ]),
   {
     name: "remoteMcp: a transport error and its cause",
     connector: remote,
@@ -705,5 +737,149 @@ describe("a catalog name outside MCP's tool-name grammar", () => {
     for (const text of [...lines, ...consoleLines, JSON.stringify(target.events)]) {
       expect(text).not.toMatch(ANY_PLANTED);
     }
+  });
+});
+
+describe("ctx.oauth.fetch", () => {
+  const TOKEN = "https://api.provider.test/oauth/token";
+  const API = "https://api.provider.test";
+  const oauthConnector = (read: (response: Response) => Promise<unknown>): Connector =>
+    api("svc", {
+      oauth: {
+        authorizationEndpoint: "https://oauth.provider.test/authorize",
+        tokenEndpoint: TOKEN,
+        clientId: "client",
+        clientSecret: "secret",
+        apiOrigins: [API],
+      },
+      tools: [{
+        name: "read",
+        description: "Read a thing",
+        annotations: { readOnlyHint: true },
+        handler: async (_args, ctx) => await read(await ctx.oauth!.fetch(`${API}/me`)),
+      }],
+    });
+
+  it.each([
+    ["json()", (response: Response) => response.json()],
+    ["text()", (response: Response) => response.text()],
+    ["clone().json()", (response: Response) => response.clone().json()],
+  ])("INV-6: a handler's %s of a planted Content-Type prints nothing the downstream wrote", async (_, read) => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      // The token endpoint labels its answer with a planted type too.
+      if (url === TOKEN) {
+        return new Response(JSON.stringify({ access_token: "a", token_type: "Bearer", expires_in: 3600 }), {
+          headers: { "content-type": `application/${planted("token-ct")}` },
+        });
+      }
+      return new Response(`{"name":"${planted("oauth-body")}"}`, {
+        headers: { "content-type": `application/${planted("oauth-ct")}` },
+      });
+    });
+    const connector = oauthConnector(read);
+    const { logger, lines } = capturingLogger();
+    const registry = makeRegistry([connector], { logger });
+    const ctx = () => registry.contextFor("svc", BASE);
+    const started = await connector.startAuth!(ctx());
+    const authorizationUrl = new URL(started.authorizationUrl!);
+    const state = authorizationUrl.searchParams.get("state")!;
+    const callback = ctx();
+    expect(await connector.verifyState!(state, callback)).toBe(true);
+    await connector.finishAuth!("code", callback, new URLSearchParams({ code: "code", state }));
+
+    const target = activitySink();
+    const outcome = await new InvocationService(
+      registry,
+      new CatalogService(registry, BASE),
+      target.activity,
+    ).invoke("svc.read", {}, { source: "call_tool", allowDestructive: true });
+    // The agent reads the body as the handler decoded it.
+    expect(outcome.ok).toBe(true);
+    expect(rendered(outcome.ok ? outcome.value : undefined)).toContain(planted("oauth-body"));
+    expect(textOnUnreadable).toEqual([]);
+    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events)]) {
+      expect(text).not.toMatch(ANY_PLANTED);
+    }
+  });
+});
+
+describe("the operator page's catalog", () => {
+  it("INV-6: shows a description but withholds a name outside MCP's tool-name grammar", async () => {
+    const name = `read\nAuthorization: Bearer ${planted("ui-name")}`;
+    vi.stubGlobal("fetch", downstream({ tools: [
+      { name, description: `Reads ${planted("ui-description")}`, inputSchema: { type: "object" } },
+      { name: "list", description: "Lists things", inputSchema: { type: "object" } },
+    ] }));
+    const connecta = createTestConnecta({
+      connectors: [remote()],
+      auth: bearerToken("t"),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: capturingLogger().logger,
+    });
+    const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
+      headers: { Authorization: "Bearer t" },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const { tools } = JSON.parse(body) as { tools: Array<Record<string, unknown>> };
+    expect(tools.map((tool) => [tool.name, tool.address])).toEqual([
+      ["<withheld>", "svc.<withheld>"],
+      ["list", "svc.list"],
+    ]);
+    // Catalog metadata the operator loaded and the agent already sees.
+    expect(tools[0]?.description).toBe(`Reads ${planted("ui-description")}`);
+    expect(body.replace(planted("ui-description"), "")).not.toMatch(ANY_PLANTED);
+  });
+});
+
+describe("a forwarded catalog drift report", () => {
+  const drifting = (observedAt: string): Connector => ({
+    id: "svc",
+    async listTools() {
+      return [];
+    },
+    async callTool() {
+      return {};
+    },
+    catalogDrift: () => ({
+      observedAt,
+      unclassifiedTools: 1,
+      unservedTools: 0,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    }),
+  });
+
+  it.each([
+    ["header text after a timestamp", `2026-08-12T00:00:00.000Z\nAuthorization: Bearer ${planted("drift")}`],
+    ["header text alone", `Authorization: Bearer ${planted("drift")}`],
+    ["a timestamp-shaped prefix of text", `2026-08-12T00:00${planted("drift")}`],
+  ])("INV-6: puts no %s on health, status, or the operator page", async (_, observedAt) => {
+    const { logger, lines } = capturingLogger();
+    const connecta = createTestConnecta({
+      connectors: [drifting(observedAt)],
+      auth: bearerToken("t"),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger,
+    });
+    const health = await (await connecta.fetch(new Request(`${BASE}/health`))).text();
+    const page = await (await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
+      headers: { Authorization: "Bearer t" },
+    }))).text();
+    const status = JSON.stringify(await connecta.registry.statusFor("svc", BASE));
+    for (const text of [health, page, status, ...lines, ...consoleLines]) {
+      expect(text).not.toMatch(ANY_PLANTED);
+    }
+    expect(status).not.toContain("catalogDrift");
+  });
+
+  it("INV-6: re-serializes a real timestamp as connecta's own ISO-8601 UTC form", async () => {
+    const registry = makeRegistry([drifting("2026-08-12T02:00:00+02:00")]);
+    expect((await registry.statusFor("svc", BASE)).catalogDrift?.observedAt).toBe(
+      "2026-08-12T00:00:00.000Z",
+    );
   });
 });

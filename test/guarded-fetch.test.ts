@@ -553,9 +553,10 @@ describe("guarded fetch diagnostics and bodies without streams", () => {
 
   it.each(["text", "json", "jsonResult"] as const)("enforces UTF-8 bytes through %s without a stream", async (accessor) => {
     stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null,
-      text: async () => JSON.stringify("é".repeat(600)),
+      arrayBuffer: async () => new TextEncoder().encode(JSON.stringify("é".repeat(600))).buffer,
+      text: async () => "trusted incorrectly",
       json: async () => "trusted incorrectly",
-    }) as Response);
+    }) as unknown as Response);
     const error = await failure(transport()(
       { method: "GET", path: "/large" }, context(), (response) => response[accessor](),
     ));
@@ -563,10 +564,13 @@ describe("guarded fetch diagnostics and bodies without streams", () => {
     expect(error.message).toContain("1024-byte response ceiling");
   });
 
-  it("parses bounded text rather than trusting json() without a stream", async () => {
-    const text = vi.fn(async () => '{"id":"é"}');
+  // Bytes, never `text()` or `json()`: workerd quotes a text read's non-text
+  // Content-Type in its own log (INV-6).
+  it("INV-6: decodes bounded bytes rather than trusting text() or json() without a stream", async () => {
+    const arrayBuffer = vi.fn(async () => new TextEncoder().encode('{"id":"é"}').buffer);
+    const text = vi.fn(async () => '{"wrong":true}');
     const json = vi.fn(async () => ({ wrong: true }));
-    stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null, text, json }) as unknown as Response);
+    stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null, arrayBuffer, text, json }) as unknown as Response);
     await expect(transport({ maxResponseBytes: 11 })(
       { method: "GET", path: "/small" }, context(), async (response) => {
         const value = await response.json();
@@ -575,6 +579,7 @@ describe("guarded fetch diagnostics and bodies without streams", () => {
       },
     )).resolves.toEqual({ id: "é" });
     expect(json).not.toHaveBeenCalled();
-    expect(text).toHaveBeenCalledTimes(1);
+    expect(text).not.toHaveBeenCalled();
+    expect(arrayBuffer).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,14 +1,22 @@
 // What an operator may read about a failure: log records and status text.
 // Web-API only — no node: imports here.
 //
-// Threat model. Text a downstream server or HTTP API authored, and anything
-// derived from it, never reaches an operator sink: logs, activity rows, and
-// status, health, and UI data. Every typed field connecta records is checked
-// against a closed set or a grammar. Operator-authored code (custom
-// connectors, plugin `status()`, decorators) is trusted to follow the
-// contract, and connecta still checks the typed fields it records from it;
-// deliberately adversarial operator code is out of scope. A catalog-listed
-// tool name that fits MCP's tool-name grammar may be logged.
+// Threat model. INV-6 here covers records of calls and failures: logs,
+// activity rows, status and statusFor, health, doctor output, and any native
+// runtime output connecta triggers (workerd's console). Text a downstream
+// server or HTTP API authored, and anything derived from it, never reaches
+// one. Every typed field connecta records is checked against a closed set or
+// a grammar. Operator-authored code (custom connectors, plugin `status()`,
+// decorators) is trusted to follow the contract, and connecta still checks
+// the typed fields it records from it; deliberately adversarial operator code
+// is out of scope.
+//
+// Catalog metadata a connector serves is configuration the operator chose to
+// load, and agents already see it: a tool name that fits MCP's tool-name
+// grammar, a description, and input and output schemas may appear in the
+// authenticated operator page's catalog views, and such a name may be
+// logged. A name outside the grammar is withheld everywhere operator-facing,
+// the page included, until #725 drops it at intake.
 //
 // INV-6 says logs carry no arguments, results, code, or raw downstream error
 // text. Filtering errors where they arise kept missing sources: a validator's
@@ -306,7 +314,8 @@ function connectorId(value: unknown): string | undefined {
 
 /**
  * How an operator record names a catalog entry: its name when it fits MCP's
- * tool-name grammar, else `<withheld>`. Activity rows use it too.
+ * tool-name grammar, else `<withheld>`. Activity rows and the operator page's
+ * catalog use it too, so a withheld name appears nowhere an operator reads.
  */
 export function recordedToolName(entry: { readonly name: string }): string {
   return typeof entry.name === "string" && TOOL_NAME_RE.test(entry.name) ? entry.name : WITHHELD_TOOL;

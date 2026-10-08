@@ -5,6 +5,7 @@ import type {
   OAuthDiscoveryState,
   StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
+import { byteReadResponse } from "../byte-read-response.js";
 import type {
   ApiOAuthClientAuthentication,
   ApiOAuthConfig,
@@ -470,17 +471,21 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       init.signal && ctx.signal
         ? AbortSignal.any([init.signal, ctx.signal])
         : (init.signal ?? ctx.signal);
-    const send = (accessToken: string) => {
+    const send = async (accessToken: string) => {
       const sent = new Headers(headers);
       sent.set("Authorization", `Bearer ${accessToken}`);
       // The token rides to a declared origin and no further: a redirect is
       // handed back to the handler unfollowed rather than re-sent anywhere.
-      return fetch(url, {
+      // The handler reads the answer with `.json()` or `.text()`, which read
+      // bytes here: workerd quotes a text read's non-text Content-Type in
+      // its own log, out of the handler's reach.
+      const response = await fetch(url, {
         ...init,
         headers: sent,
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
+      return byteReadResponse(response);
     };
 
     if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
