@@ -109,6 +109,10 @@
       "types": "./dist/providers/gmail/index.d.ts",
       "import": "./dist/providers/gmail/index.js"
     },
+    "./providers/infisical": {
+      "types": "./dist/providers/infisical/index.d.ts",
+      "import": "./dist/providers/infisical/index.js"
+    },
     "./providers/linear": {
       "types": "./dist/providers/linear/index.d.ts",
       "import": "./dist/providers/linear/index.js"

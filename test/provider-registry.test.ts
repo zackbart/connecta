@@ -15,6 +15,7 @@ import { overflow } from "../src/providers/overflow/index.js";
 import { revenuecat } from "../src/providers/revenuecat/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
+import { infisical } from "../src/providers/infisical/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
 import { connectorGuideSummary } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -53,6 +54,29 @@ function deployment(storage: KVStorage, connectors: Connector[], credentials = f
 }
 
 const providers: ProviderCase[] = [
+  {
+    name: "infisical",
+    ids: ["infisical", "infisical_eu"],
+    toolName: "list_projects",
+    secondToolName: "list_folders",
+    descriptionMarks: ["Production secrets", "EU development secrets"],
+    admissionIds: ["infisical"],
+    meteredId: "infisical",
+    staticCatalog: true,
+    factory: (storage) =>
+      deployment(
+        storage,
+        [
+          infisical("infisical", { purpose: "Production secrets", callAdmission: budget }),
+          infisical("infisical_eu", {
+            purpose: "EU development secrets",
+            baseUrl: "https://eu.infisical.com/api",
+            authScope: "personal",
+          }),
+        ],
+        true,
+      ),
+  },
   {
     name: "stripe",
     ids: ["stripe_live", "stripe_sandbox"] as const,

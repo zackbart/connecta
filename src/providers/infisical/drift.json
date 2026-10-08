@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "provider": "infisical",
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://app.infisical.com/api/docs/json"
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/auth/universal-auth/login",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ccef971794906b4e80a05b9f2d3d1c6e0c0a9f9386bbbc74202eb3ffee9d1501"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/projects",
+          "specRevision": "0.0.1",
+          "contract": "sha256:264ec9e490071b9983610925d0c21ca86e52b6d4f7a6b47ebf58b087e6ed55dc"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/folders",
+          "specRevision": "0.0.1",
+          "contract": "sha256:ee61382641775ce058551b37136c39f7a0f494f4c933b4966fda9511a4c3f56d"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/folders",
+          "specRevision": "0.0.1",
+          "contract": "sha256:39faaa9bdde916bb40bccc545daef4dcae8c0e9d9124c1e103a191c8be4ca2ca"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v4/secrets",
+          "specRevision": "0.0.1",
+          "contract": "sha256:62900275efa64fb19399b9fd9a9e1b42a479dd992ceea0aec36aa1ab6780fdbd"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v4/secrets/{secretName}",
+          "specRevision": "0.0.1",
+          "contract": "sha256:b31a17b07cd5847bd1b87d8b4514e2564afe29167be62ccdabfb22b6216c46bd"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v4/secrets/{secretName}",
+          "specRevision": "0.0.1",
+          "contract": "sha256:3ed7fc38a4446208939ca024768f0efddfb7605d873f5a273811f8b722813dfc"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/v4/secrets/{secretName}",
+          "specRevision": "0.0.1",
+          "contract": "sha256:23f88b807c54a38c76b021aeee7c645c5bff2df51b7d9463781f88c1237b1914"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v4/secrets/{secretName}",
+          "specRevision": "0.0.1",
+          "contract": "sha256:dd1dd87a6310fb13e937a895c10798bd9840c516221b27a0745d81469ec3b84c"
+        }
+      ]
+    }
+  ]
+}

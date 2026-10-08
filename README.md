@@ -65,7 +65,7 @@ across them in one task. Changing your connected services does not require
 changing the agent's connection. Your deployment decides which services and
 operations each caller can reach.
 
-Connecta includes maintained connections for <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
+Connecta includes maintained connections for <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 Each connection has its own setup guide.
 Notion, Vercel, and Cloudflare offer hosted MCP connections and selected HTTP
 API capabilities. You can also connect other remote MCP servers or define the
