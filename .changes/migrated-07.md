@@ -24,7 +24,7 @@ replacements in one atomic batch, optionally at a required revision) and
 locally unless it is one known Request kind, always at a required
 `revisionId`, its replies bounded — every id at every depth kept whole,
 large fields named in `cut`, overflow counted, and the write reported as
-applied) are destructive. Every write result is size-checked too: copied
+applied) are annotated as destructive and classified as writes. Every write result is size-checked too: copied
 ids and revisions are whole or flagged, never cut, and a result that still
 cannot be delivered after Google's 2xx is refused with "applied — do not
 repeat it; re-read". A write refused because the deck changed since its
@@ -43,3 +43,6 @@ changed between pages is a `conflict` to restart, never a skipped or
 repeated slide. Slides cannot list decks, and the guide says that is
 Drive's job. A 404 is reported as unknown-or-not-visible, because a deck is
 a Drive file. Setup is documented on `slides()`.
+
+Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+The MCP host controls approval.

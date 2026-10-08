@@ -44,8 +44,7 @@ Additive writes:
 or base64 content as one multipart upload, or an empty file; `convertTo`
 imports it as a Google Doc, Sheet, or Slides file) and `copy_file`, because
 a new file takes its folder's sharing and so discloses its content to
-everyone a shared destination reaches — a deployment that accepts that can
-still exempt either in `execute.approval` — and `update_file_content`,
+everyone a shared destination reaches. These classify as writes, as do `update_file_content`,
 `update_file` (rename, description), `move_file` (a move changes inherited
 sharing), `trash_file`, `share_file` (user, group, domain, or anyone with
 the link, up to writer or organizer, emailing no one unless
@@ -63,3 +62,6 @@ no empty-trash, no ownership transfer, and no raw hatch. A 404 says the file
 may be missing or hidden from this account, because Drive does not say
 which. Setup — the Google Drive API and the one scope on the delegation
 entry — is documented on `drive()` itself.
+
+Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+The MCP host controls approval.

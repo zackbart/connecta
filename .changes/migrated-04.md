@@ -20,7 +20,7 @@ that only ever continues the caller's own ranges; cells over 5,000 characters cu
 `INSERT_ROWS`, so nothing below the table is overwritten) are additive
 writes; `update_values`, `batch_update_values`, `clear_values`, and
 `batch_update_spreadsheet` — Google's own `batchUpdate` requests, passed
-through untouched and always behind approval, its replies cut to their kind,
+through untouched and classified as a write, its replies cut to their kind,
 ids, and counts when too large to deliver — are destructive. Writes take a
 required `RAW` or `USER_ENTERED` and at most 50,000 cells per call. Value
 updates and clears of fixed ranges are idempotent, so a 5xx stays
@@ -30,3 +30,6 @@ never claims absence, since a spreadsheet is a Drive file that may simply not
 be shared with the caller. Listing and finding spreadsheets is Drive's job.
 The one scope, `https://www.googleapis.com/auth/spreadsheets`, and its setup
 are documented on `sheets()`.
+
+Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+The MCP host controls approval.

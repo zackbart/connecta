@@ -40,7 +40,7 @@ is never told to retry when it may have landed: one Google accepted whose
 reply broke off or overflowed, one answered with a redirect, one sent with
 no answer at all, and one Google answered with any 5xx — whatever reason it
 named — fail as non-retryable with words saying to re-read its target first,
-the verdict core's `write_outcome_unknown` gives an exempt program write.
+the verdict core's `write_outcome_unknown` gives a trusted-pool program write.
 Only a 429, or a 4xx naming a quota, is a rate limit for a write. A read
 stays retryable, as does a write the provider marks `{ idempotent: true }`.
 An error status is a refusal even when its body cannot be read. A product

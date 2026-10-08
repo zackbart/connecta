@@ -40,8 +40,8 @@ removed before that point answers `conflict` rather than repeating or
 skipping one. There is no send, delete, or label tool and no raw
 hatch; `gmail.compose` technically permits sending, and the tool surface is
 what forbids it. `create_draft` is an additive write and `update_draft` a
-destructive one; neither is exempt from approval unless the deployment says
-so in `execute.approval`. The transport is confined beneath `users/me`, so the
+destructive one. Both classify as writes; trusted pools permit them in programs,
+and the host controls approval. The transport is confined beneath `users/me`, so the
 token's subject is the only mailbox a request can reach. Setup — Cloud
 project, API, service account with no IAM roles, JSON key (and the
 `iam.disableServiceAccountKeyCreation` override some organizations need), and

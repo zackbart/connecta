@@ -19,7 +19,7 @@ beyond inspection. An array or class instance where an options object belongs
 string map (static `headers`, `authorizationParams`, `tokenRequestHeaders`)
 must hold string values. An `api()` tool is checked in place and passed
 through as given, so a class-instance tool keeps its prototype handler and
-private fields; a tool without a handler function refuses to construct. Pool names and `execute.approval` keys such as `__proto__` and
+private fields; a tool without a handler function refuses to construct. Pool names and `classification` map keys such as `__proto__` and
 `constructor` are ordinary entries (#705).
 
 Provider definitions declare a closed `options` shape with `optionsOf<T>()`.

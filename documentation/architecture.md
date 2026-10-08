@@ -481,13 +481,12 @@ visible. Before any diagnostic is truncated or returned, the
 agent boundary replaces these values and their auth prefixes, mixed JSON
 escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
 transports register sensitive headers and query values after assembling the
-request; custom API handlers use `ctx.fetch`. General values shorter than eight
-characters, including Basic usernames, do not enter the matcher. Basic
-passwords and explicitly secret fields such as `client_secret` are redacted
-at every length. Short secrets match only when bounded by characters other
-than Unicode letters, numbers or underscore. A password `the` therefore
-leaves `other` intact; an isolated `the` equal to that password is withheld.
-Encoded and JSON-escaped echoes use the same rule. Connecta's own messages
+request; custom API handlers use `ctx.fetch`. Values shorter than eight
+characters do not enter the matcher, including Basic usernames, passwords
+and explicitly secret fields such as `client_secret`. Configured short
+credentials produce one payload-free warning per connector; use secrets of
+at least eight characters. Encoded and JSON-escaped echoes of registered
+credentials follow the same redaction rules. Connecta's own messages
 never quote a credential.
 OAuth discovery and consent URLs are refused as a typed, non-retryable failure
 when they contain a known credential, before persistence or reuse. This guard
@@ -621,9 +620,13 @@ check tools read instead of keeping provider lists. All twenty providers
 live in their own folders. The eight hosted implementations, including the
 MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
 `remoteMcp({ classify })`. The eleven API-only factories retain an internal
-adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement. The other
-mixed providers still select one interface; capability reconciliation is planned in
-[#705 item 5d](https://github.com/zackbart/connecta/issues/705).
+adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement.
+Notion, Vercel and Cloudflare default to hosted MCP and select explicit REST
+complements with `surface: "api"`. Configure both under distinct connector ids
+with independent credentials when both are needed. Notion preserves its
+internal-integration identity under `integration_*` names; Vercel and Cloudflare
+retain documented REST gaps rather than duplicate hosted operations. See the
+[provider migration guide](./provider-migration-0.29.md).
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
@@ -686,11 +689,11 @@ and each lazy details request owns a bounded downstream scope, so one failing
 provider leaves the other connections usable. A connector's status message
 never reaches the page: it can quote a downstream error body, and that body can
 quote the secret it rejected, so the details payload carries only a classified
-`problem` — which picks fixed on-screen copy and a fixed fix prompt — and the raw
-text goes to the server log. The OAuth and credential Test notices keep the
-same rule: those routes answer a downstream's failure in fixed words (a Test
-answers only `{ ok }`), log its text, and the page picks a sentence by outcome
-without ever rendering what the server sent. Credential handoff URLs exist only while the UI is
+`problem`, which picks fixed on-screen copy and a fixed fix prompt. Server
+logs contain only checked failure records, with no raw text. OAuth and
+credential Test notices keep the same rule: those routes answer failures in
+fixed words (a Test answers only `{ ok }`), log checked facts, and let the page
+pick a sentence by outcome. Credential handoff URLs exist only while the UI is
 mounted; OAuth callbacks never need it.
 
 Its appearance is one token layer, and it is not the UI's alone: every page
@@ -887,7 +890,10 @@ complete SQL cache entry, but never await another request's listing, retain
 its client, or inherit its sent-secret set. A rotated cache generation makes
 late publication from an invalidated request unreachable. Missing chunks,
 expired entries, storage errors, or a failed page trigger a fresh complete
-listing; failures never fall back to an expired catalog.
+listing. A transient first-page tool-listing failure may use a complete catalog
+within five minutes of expiry in the same auth partition. Partial walks and
+auth or permission failures refuse fallback; resources require unexpired
+inventories, and stale fallback cannot authorize post-entry auth recovery.
 
 ### Why not Schema or HttpApi
 

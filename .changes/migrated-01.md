@@ -19,7 +19,7 @@ out; `raw: true` returns Google's resource instead, up to 4 MB),
 document exists names its id instead of inviting a duplicate), `append_text`
 and `insert_text` (additive), `replace_all_text` (string or RE2, by tab,
 reporting the count), and `batch_update_document`, a raw
-`documents.batchUpdate` passthrough that is always destructive, takes 1–100
+`documents.batchUpdate` passthrough annotated as destructive and classified as a write, takes 1–100
 requests of known generally available kinds (contents unvalidated), returns
 Google's replies within the shared result budget (projected to ids and
 counts, then cut to a counted prefix, still saying the batch applied), and
@@ -42,3 +42,6 @@ list tool: finding a document is Drive's job, and `documents` cannot list. A
 is unknown and for one not shared with the caller alike. Setup, including
 the Admin console scope, is documented on `docs()`; drift is checked against
 the Docs Discovery document.
+
+Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+The MCP host controls approval.
