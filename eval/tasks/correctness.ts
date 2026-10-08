@@ -7,8 +7,11 @@ export interface Correctness {
   destination(world: World, trace: AgentTrace): boolean;
   /** Every expression must match the final answer, never the tool output. */
   evidence: RegExp[];
-  /** Facts belonging to separate records must stay together in one clause. */
+  /** Required record facts, checked against every multi-field clause. */
   records?: EvidenceRecord[];
+  /** Full fake record set recognizes facts from unrequested records too. */
+  recordUniverse?: (world: World) => EvidenceRecord[];
+  consistentAnswer?: (world: World, answer: string) => boolean;
   referenceAnswer: string;
 }
 
@@ -22,15 +25,17 @@ function factPattern(fact: string): RegExp {
 }
 
 /** Match complete records and reject cross-record contradictions anywhere. */
-function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
+function recordEvidence(answer: string, records: EvidenceRecord[], universe = records): boolean {
   // Markdown styling is presentation, not part of a fact. Test-count prose
   // is not a run status (for example, "0 failed tests").
   answer = answer.replace(/[*`]/g, "").replace(/\b\d+\s+(?:failed|passed)\s+tests?\b/gi, "test count");
-  if (records.length === 1) return Object.values(records[0]!).every(fact => factPattern(fact).test(answer));
   const patterns = records.map(record => Object.fromEntries(
     Object.entries(record).map(([key, fact]) => [key, factPattern(fact)])));
-  const fields = [...new Set(patterns.flatMap(record => Object.keys(record)))];
-  const hasFields = (text: string) => fields.every(field => patterns.some(record => record[field]?.test(text)));
+  const known = universe.map(record => Object.fromEntries(
+    Object.entries(record).map(([key, fact]) => [key, factPattern(fact)])));
+  const fields = [...new Set(known.flatMap(record => Object.keys(record)))];
+  const requiredFields = [...new Set(patterns.flatMap(record => Object.keys(record)))];
+  const hasFields = (text: string) => requiredFields.every(field => patterns.some(record => record[field]?.test(text)));
   const hasId = (text: string) => patterns.some(record => record.id!.test(text));
   const clauses: string[] = [];
   // Newlines delimit markdown table rows; bullets also work on a single line.
@@ -49,13 +54,21 @@ function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
     }
     clauses.push(sentence.slice(start));
   }
-  return patterns.every(record => clauses.some(clause => Object.values(record).every(pattern => pattern.test(clause)))) &&
+  const complete = records.length === 1
+    ? Object.values(patterns[0]!).every(pattern => pattern.test(answer))
+    : patterns.every(record => clauses.some(clause => Object.values(record).every(pattern => pattern.test(clause))));
+  // A single-record answer may distribute evidence across sentences, but
+  // every pairing must still describe that requested record. Multi-record
+  // answers may describe any one real record in each clause.
+  const compatible = records.length === 1 ? known.filter(record =>
+    record.id!.source === patterns[0]!.id!.source) : known;
+  return complete &&
     clauses.every(clause => {
-      const matches = fields.map(field => ({ field, facts: patterns.flatMap(record =>
+      const matches = fields.map(field => ({ field, facts: known.flatMap(record =>
         record[field]?.test(clause) ? [record[field]!] : []) })).filter(match => match.facts.length);
       // Shared facts (such as two runs both passing) are compatible. Every
       // fact in a clause must be consistent with at least one single record.
-      return !matches.some(match => match.field === "id") || matches.length < 2 || patterns.some(record => matches.every(({ field, facts }) =>
+      return matches.length < 2 || compatible.some(record => matches.every(({ field, facts }) =>
         facts.every(fact => fact.source === record[field]?.source)));
     });
 }
@@ -103,7 +116,8 @@ function correctnessChecks(spec: Correctness, world: World, trace: AgentTrace): 
   return [
     { id: "correct-destination", description: "used the requested connector, tool and target", pass: spec.destination(world, trace) },
     { id: "answer-evidence", description: "the final answer cites every required fake fact",
-      pass: spec.evidence.every(pattern => pattern.test(answer)) && (!spec.records || recordEvidence(answer, spec.records)), detail: answer.slice(0, 500) },
+      pass: spec.evidence.every(pattern => pattern.test(answer)) && (!spec.records || recordEvidence(answer, spec.records, spec.recordUniverse?.(world))) &&
+        (!spec.consistentAnswer || spec.consistentAnswer(world, answer)), detail: answer.slice(0, 500) },
   ];
 }
 

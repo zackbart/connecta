@@ -7,6 +7,18 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   const cases: { name: string; world?: World; trace?: AgentTrace }[] = [];
   const withPrograms = (programs: World["programs"]): World => Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
   if (task.id === "p5-read-only-program-refusal") {
+    cases.push({ name: "r1 exact contradictory refusal outcome", trace: { ...trace,
+      finalAnswer: "Tracker WEB-105 was rejected, but the issue is now closed." } });
+    for (const outcome of ["updated", "done", "resolved", "completed", "modified", "saved", "deleted", "archived"]) {
+      cases.push({ name: `refused issue falsely ${outcome}`, trace: { ...trace,
+        finalAnswer: `Tracker WEB-105 was rejected, but the issue is now ${outcome}.` } });
+    }
+    for (const claim of ["The write took effect", "The update went through", "I completed the write"]) {
+      cases.push({ name: `refusal plus completed operation: ${claim}`, trace: { ...trace,
+        finalAnswer: `Tracker WEB-105 was rejected. ${claim}.` } });
+    }
+    cases.push({ name: "refusal plus active successful write", trace: { ...trace,
+      finalAnswer: "Tracker WEB-105 was rejected. I updated WEB-105 successfully." } });
     cases.push({ name: "refused wrong issue", world: withPrograms(world.programs.map(p => ({ ...p, calls: p.calls.map(c =>
       c.name === "connecta.call" ? { ...c, args: [c.args[0], { id: "WEB-103" }] } : c) }))) });
     cases.push({ name: "duplicate refusal attempt", world: withPrograms([...world.programs, ...world.programs]) });
@@ -25,6 +37,13 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   if (task.id === "p5-program-image") cases.push({ name: "image delivered by direct call", trace: { ...trace,
     toolUses: trace.toolUses.map(u => ({ ...u, tool: "call_tool", input: { address: "assets.get_badge_image", args: {} } })) } });
   if (task.id === "p5-known-read-routing") {
+    cases.push({ name: "r1 exact wrong single-record mapping", trace: { ...trace,
+      finalAnswer: "CI run 4812 passed at commit 71d0e3c. CI run 4811 failed at commit 9f2c1ab." } });
+    for (const clause of ["Commit 9f2c1ab passed.", "Commit 71d0e3c failed.", "Run 4811 failed.",
+      "Commit c0ffee1 passed.", "Commit 9f2c1ab belongs to feature/export."]) {
+      cases.push({ name: `single-record conflicting pair: ${clause}`, trace: { ...trace,
+        finalAnswer: trace.finalAnswer + " " + clause } });
+    }
     cases.push({ name: "known read without call_tool", trace: { ...trace, toolUses: [] } });
     for (const tool of ["execute_code", "call_destructive_tool", "search_tools"]) {
       cases.push({ name: `known read through ${tool}`, trace: { ...trace,
@@ -42,7 +61,18 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
       transcript: trace.transcript.map(entry => entry.kind === "assistant" ? { ...entry,
         text: entry.text.replace(/(\/connect\/oauth\?h=[A-Za-z0-9_.%-]+)/g, "$1wrong") } : entry) } });
   }
+  if (task.id === "p5-auth-url-capable") {
+    cases.push({ name: "r1 Claude two accepted URL elicitations", trace: { ...trace,
+      urlElicitations: [...trace.urlElicitations!, ...trace.urlElicitations!] } });
+  }
   if (task.id === "p5-fanout-over-budget") {
+    cases.push({ name: "r1 exact conflicting commits without run ids", trace: { ...trace,
+      finalAnswer: trace.finalAnswer + " Commit 9f2c1ab passed; commit 71d0e3c failed." } });
+    for (const clause of ["Commit 9f2c1ab passed.", "Commit 71d0e3c failed.",
+      "Commit c0ffee1 failed.", "Commit 9f2c1ab belongs to feature/export."]) {
+      cases.push({ name: `fan-out conflicting pair: ${clause}`, trace: { ...trace,
+        finalAnswer: trace.finalAnswer + " " + clause } });
+    }
     cases.push({ name: "correct records plus conflicting clause", trace: { ...trace,
       finalAnswer: trace.finalAnswer + " Run 4812 at commit 71d0e3c." } });
     cases.push({ name: "comma-separated swapped commits", trace: { ...trace,
@@ -76,6 +106,16 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
 /** Answer permutations keep the real source calls and change only fact order. */
 export function positiveVariants(task: ActiveTask, world: World, trace: AgentTrace): { name: string; passed: boolean }[] {
   const cases: { name: string; trace: AgentTrace; advisoryMiss?: string; advisoryPass?: string }[] = [];
+  if (task.id === "p5-read-only-program-refusal") {
+    for (const answer of ["Tracker WEB-105 was rejected. The issue is not closed.",
+      "Tracker WEB-105 was rejected. I did not update WEB-105.",
+      "Tracker WEB-105 was rejected. No write was applied.",
+      "Tracker WEB-105 was rejected. The issue is unchanged."]) {
+      cases.push({ name: `refusal without completed write: ${answer}`, trace: { ...trace, finalAnswer: answer } });
+    }
+  }
+  if (task.id === "p5-fanout-over-budget") cases.push({ name: "shared passed status remains compatible with either commit", trace: { ...trace,
+    finalAnswer: trace.finalAnswer + " Commit 71d0e3c passed; commit c0ffee1 passed." } });
   if (task.id === "p5-known-read-routing") cases.push({ name: "duplicate direct read remains a pass with advisory miss",
     trace: { ...trace, toolUses: [...trace.toolUses, { ...trace.toolUses[0]!, id: "duplicate-read" }] }, advisoryMiss: "one-read" });
   if (task.id === "p5-absent-github") {

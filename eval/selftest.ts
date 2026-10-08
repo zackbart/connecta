@@ -48,6 +48,8 @@ if (!validPng(BADGE_PNG) || validPng(LEGACY_BADGE_PNG)) throw new Error("Badge P
 interface TrialControl {
   task: string; runner: string; repeat: number; checks: string[];
   finalAnswer: string; channel?: string;
+  urlElicitations?: AgentTrace["urlElicitations"];
+  expectedFailures?: string[];
   program?: string; programResult?: string;
 }
 const trialControls = JSON.parse(await readFile(new URL("./tasks/fixtures/baseline-909b-controls.json", import.meta.url), "utf8")) as TrialControl[];
@@ -138,6 +140,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
       for (const control of trialControls.filter(c => c.task === task.id)) {
         const saved = structuredClone(saveGradeInputs(world, trace));
         saved.trace.finalAnswer = control.finalAnswer;
+        if (control.urlElicitations) saved.trace.urlElicitations = control.urlElicitations;
         if (control.channel) for (const call of saved.world.calls) {
           if (call.service === "chat" && call.tool === "post_message") call.args.channel = control.channel;
         }
@@ -160,6 +163,12 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
         const graded = regradeTrial({ ...task, runnerSkips: {} }, trial, "codex");
         positives.push({ name: `saved ${control.runner} #${control.repeat}: ${control.checks.join(", ")}`,
           passed: control.checks.every(id => graded.checks.some(c => c.id === id && c.pass)) && !graded.regrade?.unavailable.length });
+        if (control.expectedFailures) {
+          const measured = regradeTrial(task, trial, control.runner as "claude" | "codex");
+          regressions.push({ name: `saved ${control.runner} #${control.repeat}: measurable URL-auth failure`,
+            rejected: measured.status === "fail" && !measured.skip && control.expectedFailures.every(id =>
+              measured.checks.some(c => c.id === id && !c.pass)) });
+        }
         const missing = regradeTrial({ ...task, runnerSkips: {} }, { ...trial,
           saved: { ...saved, trace: { ...saved.trace, finalAnswer: "Completed." } } }, "codex");
         regressions.push({ name: `saved ${control.runner} #${control.repeat} without evidence`,

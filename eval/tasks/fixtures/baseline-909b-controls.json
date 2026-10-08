@@ -300,5 +300,147 @@
       "answer-evidence"
     ],
     "finalAnswer": "GitHub data is unavailable: no GitHub connector is configured, so I can\u2019t retrieve the open pull request count.\n\nSource system: GitHub  \nRecord ids: None available  \nSupporting fact: Connecta reports that GitHub is not configured; available connectors are tracker, chat, analytics, billing, ci, and audit.\n\nANSWER: unavailable"
+  },
+  {
+    "task": "p5-auth-url-capable",
+    "runner": "claude",
+    "repeat": 1,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "Northwind's outstanding balance is **$5,650.50 USD**. It comes from three invoices: **in_1002, in_1003 and in_1005**.\n\n**Source system:** the OAuth invoice service (`oauth` connector), read with `oauth.get_balance`.\n\n**Supporting facts:**\n- The request was `customer: \"Northwind\"`, and the response returned `customer: \"Northwind\"`.\n- The response gave `outstandingUsd: 5650.5` and `invoiceIds: [\"in_1002\",\"in_1003\",\"in_1005\"]`.\n- The response gave no per-invoice amounts, so I couldn't check that the three invoices add up to $5,650.50.\n\n**Connection:** you didn't need to complete a connection URL. My first call returned an empty result. `authorize_connector` then reported status \"ok\" with no URL to open, and the retry returned the data above.",
+    "urlElicitations": [
+      {
+        "connector": "oauth",
+        "url": "http://127.0.0.1:1234/connect/oauth?h=control0",
+        "action": "accept"
+      },
+      {
+        "connector": "oauth",
+        "url": "http://127.0.0.1:1234/connect/oauth?h=control1",
+        "action": "accept"
+      }
+    ],
+    "expectedFailures": [
+      "host-mode"
+    ]
+  },
+  {
+    "task": "p5-read-only-program-refusal",
+    "runner": "claude",
+    "repeat": 2,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "No, a program can't close WEB-105 in this read-only pool. My one attempt was refused, and I didn't retry.\n\n- **Source system:** Issue tracker (connector `tracker`).\n- **Record id:** WEB-105. It was not changed, because the close never ran.\n- **Tool:** `tracker.close_issue` takes `id` and an optional `comment`. The catalog marks it as a write (`readOnlyHint: false`, classification \"write\").\n- **Attempt:** I called `tracker.close_issue` with `{\"id\":\"WEB-105\"}` through the read-only `call_tool` route.\n- **Refusal:** The call failed with `destructive_tool_requires_approval` (`retryable: false`, `attempts: 0`). The message said the tool is a write and must go through `call_destructive_tool` so the host can ask for approval.\n- **Approval route:** `call_destructive_tool` isn't available in this session. I tried it first and got \"No such tool available\". The write can't be approved or run from here."
+  },
+  {
+    "task": "p5-auth-url-capable",
+    "runner": "claude",
+    "repeat": 2,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "Northwind's outstanding balance is **$5,650.50 USD**. It comes from three invoices: **in_1002, in_1003 and in_1005**.\n\nNo connection URL was needed. The first two reads of `oauth.get_balance` came back empty. `authorize_connector` for `oauth` then returned status \"ok\", and the retry returned the data.\n\n**Source and supporting facts**\n- **Source system:** `oauth` connector (OAuth invoice service), tool `get_balance`.\n- **Query:** customer \"Northwind\".\n- **Customer in the response:** Northwind.\n- **`outstandingUsd`:** 5650.5.\n- **`invoiceIds`:** in_1002, in_1003, in_1005.\n\nThe response gave only the total and the invoice ids. It had no per-invoice amounts, so I couldn't check that the three invoices add up to the total.",
+    "urlElicitations": [
+      {
+        "connector": "oauth",
+        "url": "http://127.0.0.1:1234/connect/oauth?h=control0",
+        "action": "accept"
+      },
+      {
+        "connector": "oauth",
+        "url": "http://127.0.0.1:1234/connect/oauth?h=control1",
+        "action": "accept"
+      }
+    ],
+    "expectedFailures": [
+      "host-mode"
+    ]
+  },
+  {
+    "task": "p5-known-read-routing",
+    "runner": "claude",
+    "repeat": 2,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "CI run 4812 **failed**, on commit **9f2c1ab**.\n\n- **Source system:** CI, read with `ci.get_run`.\n- **Record id:** runId 4812.\n- **Facts from the record:**\n  - Branch: `main`\n  - Status: `failed`\n  - Commit: `9f2c1ab`\n  - Started: 2026-10-08T14:07:47.490Z\n  - Failed tests: 1\n  - Flaky tests: 1\n  - Log size: 184,991 bytes\n\nThe first call returned no data. I repeated it with the result returned as a value, and that call returned the record above."
+  },
+  {
+    "task": "p5-read-only-program-refusal",
+    "runner": "codex",
+    "repeat": 1,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "The close attempt was refused: the tracker call returned **\u201cuser rejected MCP tool call.\u201d** I made one attempt only and did not retry. The refusal is consistent with this read-only pool; I can\u2019t verify the issue\u2019s current state from that response.\n\n**Source system:** tracker (Issue tracker)  \n**Record ID:** WEB-105  \n**Supporting facts:** Discovered `tracker.close_issue` (`id` required); its schema identifies it as write-capable. The single call for `WEB-105` was rejected."
+  },
+  {
+    "task": "p5-auth-url-capable",
+    "runner": "codex",
+    "repeat": 1,
+    "checks": [
+      "host-mode",
+      "connect-visited",
+      "zero-writes",
+      "correct-destination",
+      "answer-evidence"
+    ],
+    "finalAnswer": "Northwind\u2019s outstanding balance is **$5,650.50 USD**, contributed by invoices **in_1002, in_1003, and in_1005**.\n\n**Source system:** OAuth invoice service (`oauth.get_balance`)  \n**Record IDs:** in_1002, in_1003, in_1005  \n**Supporting facts:** The balance lookup for Northwind returned `outstandingUsd: 5650.5` and those three invoice IDs.",
+    "urlElicitations": [
+      {
+        "connector": "oauth",
+        "url": "http://127.0.0.1:1234/connect/oauth?h=control0",
+        "action": "accept"
+      }
+    ]
+  },
+  {
+    "task": "p5-known-read-routing",
+    "runner": "codex",
+    "repeat": 1,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "CI run **4812** failed on commit **9f2c1ab**.\n\nSource system: **ci**  \nRecord ID: **4812**  \nSupporting facts: `get_run` reports status `failed` and commit `9f2c1ab` (branch `main`; 1 failed test and 1 flaky test)."
+  },
+  {
+    "task": "p5-read-only-program-refusal",
+    "runner": "codex",
+    "repeat": 2,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "The attempt to close **WEB-105** was refused: the MCP tool call was rejected by the user-approval gate. I made one attempt and did not retry. The issue was not changed by a successful close.\n\n- **Source system:** Tracker (Issue tracker)\n- **Record ID:** WEB-105\n- **Supporting facts:** The discovered `close_issue` tool accepts an issue key (`id`) and is classified as a write. Its single attempted call returned \u201cuser rejected MCP tool call.\u201d"
+  },
+  {
+    "task": "p5-auth-url-capable",
+    "runner": "codex",
+    "repeat": 2,
+    "checks": [
+      "host-mode",
+      "connect-visited",
+      "zero-writes",
+      "correct-destination",
+      "answer-evidence"
+    ],
+    "finalAnswer": "Northwind\u2019s outstanding balance is **$5,650.50 USD**, contributed by invoices **in_1002, in_1003, and in_1005**.\n\n- **Source system:** OAuth invoice service (`oauth.get_balance`)\n- **Record IDs:** `in_1002`, `in_1003`, `in_1005`\n- **Supporting facts:** The balance response for Northwind returned `outstandingUsd: 5650.5` and those three invoice IDs. No connection was needed.",
+    "urlElicitations": [
+      {
+        "connector": "oauth",
+        "url": "http://127.0.0.1:1234/connect/oauth?h=control0",
+        "action": "accept"
+      }
+    ]
+  },
+  {
+    "task": "p5-known-read-routing",
+    "runner": "codex",
+    "repeat": 2,
+    "checks": [
+      "answer-evidence"
+    ],
+    "finalAnswer": "Run **4812** has status **failed** and commit **9f2c1ab**.\n\n- **Source system:** CI (`ci.get_run`)\n- **Record ID:** 4812\n- **Supporting facts:** The run record reports `status: failed` and `commit: 9f2c1ab` (branch `main`; started 2026-10-08T14:11:25.440Z)."
   }
 ]

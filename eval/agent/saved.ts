@@ -10,6 +10,7 @@ export interface SavedGradeInputs {
   version: 1;
   trace: AgentTrace;
   world: {
+    ci?: World["ci"];
     tracker: TrackerState;
     chat: ChatState;
     audit: AuditState;
@@ -22,7 +23,7 @@ export interface SavedGradeInputs {
 
 export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInputs {
   return { version: 1, trace, world: {
-    tracker: world.tracker, chat: world.chat, audit: world.audit,
+    ci: world.ci, tracker: world.tracker, chat: world.chat, audit: world.audit,
     oauth: { connected: world.oauth.connected, starts: world.oauth.starts, visits: world.oauth.visits },
     ...(world.artifacts ? { artifacts: world.artifacts } : {}),
     programs: world.programs, calls: world.ledger.calls,
@@ -33,6 +34,7 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
   if (saved.version !== 1) throw new Error("Unsupported saved grading inputs");
   // No servers, HTTP requests, CLI processes, or model calls are started.
   const world = new World();
+  if (saved.world.ci) world.ci.splice(0, world.ci.length, ...saved.world.ci);
   Object.assign(world.tracker, saved.world.tracker);
   Object.assign(world.chat, saved.world.chat);
   Object.assign(world.audit, saved.world.audit);

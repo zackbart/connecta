@@ -72,6 +72,19 @@ const trusted = withCorrectness({ ...base, id: "p5-trusted-program-write", title
   ], reference: async ({ call }) => { await call("execute_code", { code: WRITE_CODE }); },
 }, { destination: w => called(w, "tracker.close_issue", { id: "WEB-105" }), evidence: [/tracker/i, /WEB-105/, /closed/i], referenceAnswer: "Tracker WEB-105 is closed." });
 
+/** Reject completed-write claims about the target, including issue pronouns. */
+function assertsRefusedWrite(answer: string): boolean {
+  const target = String.raw`(?:WEB-105|(?:the |this |that )?(?:issue|record)|it)`;
+  const outcome = String.raw`(?:closed|updated|done|resolved|completed|changed|written|applied|modified|saved|deleted|archived)`;
+  const passive = new RegExp(String.raw`\b${target}\s+(?:(?:is|was|has been|had been|has|remains)\s+)?(?:(?:now|successfully|already|finally)\s+)*${outcome}\b`, "i");
+  const active = new RegExp(String.raw`\b(?:closed|updated|resolved|completed|changed|modified|saved|deleted|archived)\s+${target}\b|\b(?:write|update|change|close|operation)\s+(?:(?:is|was|has been)\s+)?(?:(?:now|successfully)\s+)*(?:applied|done|completed|successful|succeeded|executed|took effect|went through)\b|\b(?:completed|applied|executed)\s+(?:the )?(?:write|update|change|operation)\b`, "i");
+  return answer.split(/[.!?;,\n]+|\b(?:but|and|yet|however)\b/i).some(clause => {
+    // A failed attempt or an explicit negation is not a completed write.
+    const affirmative = clause.replace(/\b(?:not|never|no|cannot|can['’]t|could not|couldn['’]t|unable to)\b[^,]*/gi, "");
+    return passive.test(affirmative) || active.test(affirmative);
+  });
+}
+
 const refused = withCorrectness({ ...base, id: "p5-read-only-program-refusal", title: "Read-only pool refuses program writes",
   measures: "The read-only pool rejects the same program before downstream dispatch.",
   deployment: { pools, pool: "reads" }, approvals: { deny: ["call_destructive_tool"] },
@@ -82,6 +95,7 @@ const refused = withCorrectness({ ...base, id: "p5-read-only-program-refusal", t
   ], reference: async ({ call }) => { await call("execute_code", { code: WRITE_CODE }); },
 }, { destination: w => refusedTarget(w),
   evidence: [/tracker/i, /WEB-105/, /refus|denied|blocked|rejected/i],
+  consistentAnswer: (world, answer) => !world.ledger.calls.every(c => c.kind === "read") || !assertsRefusedWrite(answer),
   referenceAnswer: "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write." });
 
 const paging = withCorrectness({ ...base, id: "p5-result-paging", title: "Page a result and reduce in one program",
@@ -130,7 +144,6 @@ function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefin
 }
 
 const auth = (capable: boolean): ActiveTask => withCorrectness({ ...base,
-  ...(capable ? { runnerSkips: { claude: { code: "runner-limitation" as const, reason: "Claude Code 2.1.292 did not exercise the simulated capable-host MRTR path: it recovered through authorize_connector without a verified /connect visit or URL elicitation. Native CLI URL support is not established by this task." } } } : {}),
   id: capable ? "p5-auth-url-capable" : "p5-auth-connect-incapable", title: capable ? "Auth via capable host URL elicitation" : "Auth via /connect handoff",
   measures: "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
   world: { oauth: true }, host: { urlElicitation: capable ? "capable" : "incapable" },
@@ -160,6 +173,11 @@ const auth = (capable: boolean): ActiveTask => withCorrectness({ ...base,
   records: ["in_1002", "in_1003", "in_1005"].map(id => ({ id })),
   referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005." });
 
+// Keep recognition tied to the same full record set the fake CI serves.
+function ciRecords(world: World) {
+  return world.ci.map(({ runId, ...facts }) => ({ id: String(runId), ...facts }));
+}
+
 const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "Recover from fan-out over budget",
   measures: "A terminal budget refusal cannot be hidden with allSettled; remaining reads use bounded programs.",
   deployment: { execute: { maxHostCalls: 2 } },
@@ -174,6 +192,7 @@ const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "R
   },
 }, { destination: w => [4812,4811,4810].every(runId => called(w, "ci.get_run", { runId })),
   evidence: [/\bCI\b/i],
+  recordUniverse: ciRecords,
   records: [{ id: "4812", status: "failed", commit: "9f2c1ab" },
     { id: "4811", status: "passed", commit: "71d0e3c" }, { id: "4810", status: "passed", commit: "c0ffee1" }],
   referenceAnswer: "CI: 4812 failed, commit 9f2c1ab; 4811 passed, commit 71d0e3c; 4810 passed, commit c0ffee1." });
@@ -250,7 +269,7 @@ const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "
     { ...check("one-read", "the identical read was not repeated", trace.toolUses.length === 1), advisory: true },
   ],
   reference: async ({ call }) => { await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } }); },
-}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i], records: [{ id: "4812", status: "failed", commit: "9f2c1ab" }], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
+}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i], recordUniverse: ciRecords, records: [{ id: "4812", status: "failed", commit: "9f2c1ab" }], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
 
 const resourceRead = withCorrectness({ ...base, id: "p5-connecta-read", title: "Read and reduce with connecta.read",
   world: { assets: true },

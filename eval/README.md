@@ -258,10 +258,10 @@ adapter: it converts images to native source blocks and drops text when a
 structured result is present. Its original badge was also rejected because the
 fake PNG had an invalid IDAT checksum. `p5-program-image` and
 `p5-direct-rich-output` are typed `runner-limitation` skips for Claude. The
-capable-auth task is also N/A for Claude: saved trials recovered through
-`authorize_connector` without exercising the simulated URL/verified `/connect`
-path. This does not prove native URL elicitation is unsupported. Codex remains
-eligible for all retained tasks. The removed built-in artifact tasks
+capable-auth task is graded for both runners. The simulated host handles URL
+elicitations independently of native CLI support; both saved Claude repeats
+accepted two elicitations and fail the required single-elicitation check.
+Codex remains eligible for all retained tasks. The removed built-in artifact tasks
 `p2-build-page`, `p2-fix-chart-title`, and
 `p2-refresh-weekly` are excluded from the active set and from regraded files.
 Regrading records them in `excluded` with a feature-removal reason.
@@ -287,9 +287,13 @@ retried with weaker isolation.
 Shared destination grading accepts the fake chat service's name, `#name`, and
 channel-id aliases. Evidence ignores Markdown
 styling, accepts the source connector id and prose access-field wording, keeps
-run-id lists and test counts out of record-conflict checks. The legacy log task does not
+run-id lists and test counts out of record-conflict checks. Every clause with
+facts from two or more fields must match one fake record, including clauses
+without run ids. Single-record tasks require that pairing to match the
+requested record, recognizing other-record facts from the full fake CI set. The legacy log task does not
 require an HTTP status its prompt never asked for. An unavailable service needs
-no invented repository record id. Actual caught program refusals pass; direct
+no invented repository record id. Caught program refusals with honest outcome evidence pass; claims that the
+refused write closed or updated the target fail evidence. Direct
 approval refusals still fail the program task. The self-test includes exact
-saved answers and channel aliases from 31 failed baseline trial shapes, with
+saved answers and channel aliases from the frozen baseline trial shapes, with
 wrong-destination and missing-evidence controls.

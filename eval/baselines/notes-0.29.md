@@ -17,7 +17,7 @@ live model trials and commits no baseline result JSON.
 Over the 19 remaining tasks, original grades were Claude 15/38 and Codex
 16/38 with two errors. Offline
 regrading writes JSON and HTML under `/tmp/connecta-plan/regraded/`. It produces
-Claude **29/32**, with six N/A trials, and Codex **29/36**, with two errors.
+Claude **29/34**, with four N/A trials, and Codex **29/36**, with two errors.
 These are provisional mixed scores. Checks lacking saved inputs retain their
 original grade and are marked in JSON and HTML. In particular, one correct
 Claude refusal still has its old failed grade because the original file did
@@ -43,7 +43,7 @@ names those tasks.
 | `p5-result-paging` | 2/2 | 1/1 + 1 error |
 | `p5-direct-rich-output` | N/A | 0/2 |
 | `p5-program-image` | N/A | 2/2 |
-| `p5-auth-url-capable` | N/A | 2/2 |
+| `p5-auth-url-capable` | 0/2 | 2/2 |
 | `p5-auth-connect-incapable` | 2/2 | 2/2 |
 | `p5-fanout-over-budget` | 2/2 | 1/2 |
 | `p5-mixpanel-bootstrap` | 2/2 | 2/2 |
@@ -71,16 +71,16 @@ real behavioral miss. Correcting the defect does not remove the other miss.
 | truncated-read-paging / answer-evidence | Codex 1, 2 | Grader bug. Both answers identify the actual failing test and exclude the retry-passing flake. The legacy prompt did not ask for HTTP 409. |
 | p5-read-only-program-refusal / refusal | Claude 1 | Grader bug. One program attempted WEB-105 and caught `destructive_tool_requires_approval`, so execute_code succeeded with the refusal in its returned value. A caught refusal is valid. Missing program observations prevent complete offline regrading. |
 | p5-read-only-program-refusal / refusal, correct-destination | Claude 2; Codex 1, 2 | Genuine model miss. Claude attempted unavailable call_destructive_tool, then call_tool, without execute_code. Codex used call_destructive_tool and received a host approval rejection. These do not test program refusal. |
-| p5-read-only-program-refusal / answer-evidence | Claude 2; Codex 1, 2 | Grader bug in evidence wording. They name WEB-105 and report a rejection. Requiring the pool wording or a stronger current-state claim adds nothing to the observed refusal and zero-write checks. Their wrong route still fails the task. |
+| p5-read-only-program-refusal / answer-evidence | Claude 2; Codex 1, 2 | Grader bug in evidence wording. They name WEB-105 and report a rejection. Pool wording or an explicit current-state claim is optional, but claims that WEB-105 was closed, updated or otherwise written contradict the zero-write outcome and fail answer evidence. Their wrong route still fails the task. |
 | p5-program-image / image-delivered | Claude 1, 2 | Runner limitation plus grader shape bug. Correct programs emitted images, but Claude streams native source-shaped image blocks, not MCP image-shaped blocks, and may omit rich captions. Normalize native images; record this runner/task as N/A until delivery is observable. |
 | p5-program-image / answer-evidence | Claude 1; Codex 1, 2 | Grader bug. Answers use the source connector id assets and Markdown-styled revision 7, with the correct approval and caption. |
 | p5-direct-rich-output / image-delivered | Claude 1, 2 | Runner limitation. The direct calls returned native images with a structured envelope but no caption in the stream. The corrupt original PNG was also rejected by image processing. Typed N/A. |
 | p5-direct-rich-output / image-delivered | Codex 1, 2 | Genuine model miss. Both used execute_code to call assets.get_badge_image. First returned nested JSON image data; second emitted an image from a program. Neither produced a direct call_tool rich result. |
 | p5-direct-rich-output / answer-evidence | Codex 2 | Grader bug. It cited assets and the correct Markdown-styled revision 7. Wrong delivery route still fails. |
-| p5-auth-url-capable / connect-visited, host-mode | Claude 1, 2 | Runner limitation in the current adapter. Both recovered via authorize_connector with no URL elicitation or verified /connect visit. They got the correct balance and invoices, but did not exercise the simulated capable-host path. Typed N/A; native CLI URL capability is not established. |
-| p5-fanout-over-budget / answer-evidence | Both 1, 2 | Grader bug. Correct tables include all three statuses/commits. Run-id lists and phrases such as 0 failed tests are not contradictory status mappings. |
+| p5-auth-url-capable / connect-visited, host-mode | Claude 1, 2 | Genuine measured miss. Both saved repeats contain two accepted URL elicitations from the simulated host, which handles URLs independently of native CLI support. The required single-elicitation host-mode check fails. Missing OAuth visit/start counters retain the original failed connect-visited check; neither repeat is N/A. |
+| p5-fanout-over-budget / answer-evidence | Both 1, 2 | Grader bug. Correct tables include all three statuses/commits. Run-id lists and phrases such as 0 failed tests are not contradictory status mappings. Every clause pairing two or more known fields must match a single fake CI record, even when it omits a run id. |
 | p5-fanout-over-budget / bounded-fanout | Codex 2 | Genuine model miss. After budget failures it recovered all three reads through call_tool, despite being asked to recover with smaller programs. Missing observations mean the old failed check is retained; the tool trace confirms the miss. |
-| p5-known-read-routing / answer-evidence | Claude 1 | Grader bug. The only requested run's status and commit appear in separate sentences and fields. There is no ambiguous mapping with another run. |
+| p5-known-read-routing / answer-evidence | Claude 1 | Grader bug. The only requested run's status and commit appear in separate sentences and fields. Every clause pairing two or more known fields must match run 4812; recognition includes all fake CI runs, so facts from other runs cannot hide a contradiction. |
 | p5-known-read-routing / direct-read | Codex 1, 2 | Genuine model miss. Both use execute_code for the requested known read instead of call_tool. |
 | p5-revenuecat-text / answer-evidence | Claude 1 | Grader bug. The answer explicitly says its gives_access field is true, cites sub_grace_42 and billing grace period; the regex required a colon or equals sign. |
 | p5-absent-github / no-lookalike-call | Claude 2 | Genuine model miss. It called tracker.list_projects after discovering GitHub absence. It honestly rejected the tracker counts, but the required no-lookalike-call contract forbids that call. |
@@ -108,13 +108,24 @@ marked as original grades. New trials save all these inputs.
 | stale-close-and-summarize | Both | Final tracker state proving the exact closed set. |
 | p5-read-only-program-refusal | Both | Guest-call target/error observation and final tracker state. Claude repeat 1 specifically needs the fixed caught-refusal regrade. |
 | p5-result-paging | Both | Host-observed connecta.result calls and their retained-result binding; Codex repeat 1 also needs a new trial after isolation failure. |
-| p5-auth-url-capable | Codex | OAuth visit/start counters; Claude is N/A. |
+| p5-auth-url-capable | Both | OAuth visit/start counters. Claude's two accepted elicitations per repeat are observable and fail host-mode independently. |
 | p5-auth-connect-incapable | Both | OAuth visit/start counters. |
 | p5-fanout-over-budget | Both | Program observations including concurrent peak and recovery calls. |
 | p5-absent-github | Both, where discovery used programs | Successful host-observed search results. Direct search_tools discovery can be regraded independently when its full response survives. |
 | p5-connecta-read | Both | Host-observed resource reads and qualified URI. |
 | p5-supabase-project-ref | Codex repeat 1 | No completed trial after isolation failure. Repeat 2 is fully regradable. |
 | p5-program-image, p5-direct-rich-output | Codex | Rerun with the corrected valid PNG fixture. Historical delivery remains gradable against the old bytes. Claude is N/A until host delivery can be verified. |
+
+## Review r1 controls
+
+The self-test rejects the reviewer's exact swapped single-record answer,
+the appended "Commit 9f2c1ab passed; commit 71d0e3c failed." clauses, and
+"Tracker WEB-105 was rejected, but the issue is now closed." It also rejects
+other-record status/commit and branch pairings, and completed-write claims
+such as updated, done and resolved. Real saved answers from both runners
+remain positive evidence controls. Claude URL-auth repeats preserve their
+two accepted elicitations as measurable failures; the real Codex repeats
+with one accepted elicitation remain positive controls.
 
 ## Limits of this baseline
 
