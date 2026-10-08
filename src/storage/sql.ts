@@ -138,12 +138,12 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
   const ensure = schemaOnce(driver, (d) =>
     d.batch(KV_SCHEMA.map((statement) => sql(statement))),
   );
-  // Every statement that tests liveness binds the current time as ?2.
-  const live = "(expires_at_ms IS NULL OR expires_at_ms > ?2)";
+  // Parameters are positional in both drivers; bind each occurrence in SQL order.
+  const live = "(expires_at_ms IS NULL OR expires_at_ms > ?)";
   const current = async (key: string, now: number) => {
     const [row] = await driver.all<{ value: string; value_bytes: TextBytes | null }>(
       sql(
-        `SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ?1 AND ${live}`,
+        `SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ? AND ${live}`,
         key,
         now,
       ),
@@ -166,13 +166,13 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
       await driver.batch([
         sql(
           `DELETE FROM connecta_kv WHERE key IN (
-            SELECT key FROM connecta_kv WHERE expires_at_ms <= ?1 LIMIT ${SWEEP_ROWS}
+            SELECT key FROM connecta_kv WHERE expires_at_ms <= ? LIMIT ${SWEEP_ROWS}
           )`,
           now,
         ),
         sql(
           `INSERT INTO connecta_kv (key, value, expires_at_ms)
-           VALUES (?1, ?2, ?3)
+           VALUES (?, ?, ?)
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms`,
           key,
@@ -184,7 +184,7 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
     async delete(key) {
       validateStorageKey(key);
       await ensure();
-      await driver.run(sql("DELETE FROM connecta_kv WHERE key = ?1", key));
+      await driver.run(sql("DELETE FROM connecta_kv WHERE key = ?", key));
     },
     async list(prefix) {
       validateStorageKey(prefix);
@@ -192,9 +192,11 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
       const rows = await driver.all<{ key: string }>(
         sql(
           `SELECT key FROM connecta_kv
-           WHERE key >= ?1
-             AND substr(CAST(key AS BLOB), 1, length(CAST(?1 AS BLOB))) = CAST(?1 AS BLOB)
+           WHERE key >= ?
+             AND substr(CAST(key AS BLOB), 1, length(CAST(? AS BLOB))) = CAST(? AS BLOB)
              AND ${live}`,
+          prefix,
+          prefix,
           prefix,
           Date.now(),
         ),
@@ -213,7 +215,7 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
       }
       if (next === null) {
         return (await driver.run(sql(
-          `DELETE FROM connecta_kv WHERE key = ?1 AND ${live} AND value = ?3`,
+          `DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`,
           key,
           now,
           expected,
@@ -233,25 +235,25 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
         // upsert's WHERE false, so nothing changes and the claim is refused.
         return (await driver.run(sql(
           `INSERT INTO connecta_kv (key, value, expires_at_ms)
-           VALUES (?1, ?3, ?4)
+           VALUES (?, ?, ?)
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms
            WHERE connecta_kv.expires_at_ms IS NOT NULL
-             AND connecta_kv.expires_at_ms <= ?2`,
+             AND connecta_kv.expires_at_ms <= ?`,
           key,
-          now,
           next,
           expiry,
+          now,
         ))) > 0;
       }
       return (await driver.run(sql(
-        `UPDATE connecta_kv SET value = ?4, expires_at_ms = ?5
-         WHERE key = ?1 AND ${live} AND value = ?3`,
+        `UPDATE connecta_kv SET value = ?, expires_at_ms = ?
+         WHERE key = ? AND ${live} AND value = ?`,
+        next,
+        expiry,
         key,
         now,
         expected,
-        next,
-        expiry,
       ))) > 0;
     },
   };
@@ -455,7 +457,7 @@ export function sqlActivityStore(
             actor_namespace, connector_id, tool_name, source, outcome,
             duration_ms, attempts, error_code, friction, approval,
             server_name, server_version, deployment_id
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           event.id,
           occurredAtMs,
           event.requestId,
@@ -481,7 +483,7 @@ export function sqlActivityStore(
         sql(
           `DELETE FROM tool_call_activity WHERE id IN (
             SELECT id FROM tool_call_activity
-            WHERE occurred_at_ms < ?1
+            WHERE occurred_at_ms < ?
             ORDER BY occurred_at_ms ASC
             LIMIT ${RETENTION_SWEEP_ROWS}
           )`,
@@ -498,10 +500,11 @@ export function sqlActivityStore(
       const rows = (await driver.all<Record<string, unknown>>(position
         ? sql(
             `${ACTIVITY_SELECT}
-             WHERE occurred_at_ms < ?1
-                OR (occurred_at_ms = ?1 AND id < ?2)
+             WHERE occurred_at_ms < ?
+                OR (occurred_at_ms = ? AND id < ?)
              ORDER BY occurred_at_ms DESC, id DESC
-             LIMIT ?3`,
+             LIMIT ?`,
+            position.occurredAtMs,
             position.occurredAtMs,
             position.id,
             pageSize,
@@ -509,7 +512,7 @@ export function sqlActivityStore(
         : sql(
             `${ACTIVITY_SELECT}
              ORDER BY occurred_at_ms DESC, id DESC
-             LIMIT ?1`,
+             LIMIT ?`,
             pageSize,
           ))).map(activityRow);
       const hasMore = rows.length > boundedLimit;
