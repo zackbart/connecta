@@ -10,6 +10,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta } from "./helpers.js";
 import { activityHistory } from "../src/activity.js";
 import { failureRecord } from "../src/operator-record.js";
+import type { ConnectaPoolConfig } from "../src/config.js";
 import type { InboundAuth } from "../src/types.js";
 
 const BASE = "https://connecta.test";
@@ -56,13 +57,14 @@ async function assertDenialSinks(
   status: number,
   spies: ReturnType<typeof captureOutput>,
   context?: { waitUntil(promise: Promise<unknown>): void; access: { aud: string; getIdentity(): Promise<Record<string, unknown>> } },
+  options: { pools?: Record<string, ConnectaPoolConfig>; reason?: string; canaries?: string[] } = {},
 ) {
   const lines: unknown[][] = [];
   const sink = (...args: unknown[]) => { lines.push(args); };
   const record = vi.fn();
   const storage = memoryStorage();
   const call = vi.fn(async () => null);
-  const app = createTestConnecta({ publicUrl: BASE, auth: provider,
+  const app = createTestConnecta({ publicUrl: BASE, auth: provider, pools: options.pools,
     connectors: [{ id: "service", kind: "mcp", description: "Service", listTools: async () => [],
       callTool: call, status: async () => ({ state: "ok" }) }],
     accessTokens: accessTokens(storage), activity: activityHistory({ store: { record, recordCatalogDrift: record } }),
@@ -75,8 +77,11 @@ async function assertDenialSinks(
     const connectorStatus = await app.registry.statusFor("service", BASE);
     const operatorData = JSON.stringify({ lines, activity: record.mock.calls, connectorStatus,
       config: app.describeConfig(), health: await health.json(), refusal: await response.text() });
-    expect(operatorData).not.toContain(SENTINEL);
-    expect(output(spies)).not.toContain(SENTINEL);
+    for (const canary of [SENTINEL, ...options.canaries ?? []]) {
+      expect(operatorData).not.toContain(canary);
+      expect(output(spies)).not.toContain(canary);
+    }
+    if (options.reason) expect(lines).toEqual([["[connecta] MCP pool request denied", { reason: options.reason }]]);
     expect(record).not.toHaveBeenCalled();
     expect(call).not.toHaveBeenCalled();
   } finally { await app.close(); }
@@ -88,6 +93,10 @@ describe("Clerk operator output with the real SDK", () => {
   it("INV-6: checks inbound denial reasons against the operator record allowlist", () => {
     expect(failureRecord({ reason: "email_domain_denied" })).toEqual({ reason: "email_domain_denied" });
     expect(failureRecord({ reason: SENTINEL as never })).toEqual({});
+    for (const reason of ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"] as const) {
+      expect(failureRecord({ reason })).toEqual({ reason });
+    }
+    expect(failureRecord({ userId: "denied-canary@example.test" } as never)).toEqual({});
   });
 
   it.each(["domain-denied", "unverified-email", "missing-email", "malformed-email", "lookup-failed", "gate-denied", "gate-failed"])(
@@ -157,6 +166,42 @@ describe("Clerk operator output with the real SDK", () => {
       if (["invalid-aud", "explicit-header"].includes(denial)) expect(getIdentity).not.toHaveBeenCalled();
     },
   );
+
+  it.each(["clerk", "access-uuid", "access-email"].flatMap(provider =>
+    ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"].map(reason => ({ provider, reason })),
+  ))("INV-4 INV-6: $provider $reason exposes no provider identity in pool refusal sinks", async ({ provider: kind, reason }) => {
+    const spies = captureOutput();
+    const userId = `${SENTINEL}-user`;
+    const email = "denied-canary@example.test";
+    const name = `${SENTINEL}-name`;
+    const identity = { ...(kind === "access-uuid" ? { user_uuid: userId } : {}), email, name };
+    const getIdentity = vi.fn(async () => identity);
+    const context = kind === "clerk" ? undefined : { waitUntil() {}, access: { aud: "app", getIdentity } };
+    const headers = new Headers({ "Content-Type": "application/json", Accept: "application/json, text/event-stream" });
+    if (kind === "clerk") {
+      const { privateKey, kid, jwks } = await session(userId);
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json(jwks)));
+      const now = Math.floor(Date.now() / 1000);
+      const token = await signJwt({ sub: userId, iss: FRONTEND, client_id: "client_connecta",
+        scope: "openid profile email", aud: `${BASE}/mcp/support`, exp: now + 300, nbf: now - 5, iat: now - 5,
+      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const grant = vi.fn((_caller: Parameters<NonNullable<ConnectaPoolConfig["grant"]>>[0]) => {
+      if (reason === "pool_grant_threw") throw new Error(`${userId} ${email} ${name}`);
+      return false;
+    });
+    await assertDenialSinks(kind === "clerk" ? auth() : cloudflareAccessAuth(), new Request(`${BASE}/mcp/support`, {
+      method: "POST", headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }), 404, spies, context, {
+      pools: reason === "pool_not_declared" ? {} : { support: { tools: ["service"], grant } },
+      reason, canaries: [userId, email, "example.test", name],
+    });
+    expect(grant).toHaveBeenCalledTimes(reason === "pool_not_declared" ? 0 : 1);
+    if (reason !== "pool_not_declared") expect(grant.mock.calls[0]![0].principal?.id).toBe(kind === "access-email" ? email : userId);
+    if (context) expect(getIdentity).toHaveBeenCalledTimes(1);
+  });
 
   it.each(["/ui/access-tokens", "/connect/service", "/oauth/callback/service", "/mcp", "/mcp/support"])(
     "INV-4: explicit Authorization owns %s with another user's real session cookie", async path => {

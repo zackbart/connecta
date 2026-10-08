@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createTestConnecta } from "./helpers.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { OPERATOR_UI_ASSETS, OPERATOR_UI_SCRIPT_PATH, OPERATOR_UI_STYLE_PATH } from "../src/operator-ui/generated.js";
 import { renderUiHtml } from "../src/ui.js";
 
 const BASE = "https://connecta.test";
-const deployment = () => createTestConnecta({ connectors: [], auth: bearerToken("test"), storage: memoryStorage(), publicUrl: BASE });
+const deployment = () => createTestConnecta({ connectors: [], auth: machineAuth("test"), storage: memoryStorage(), publicUrl: BASE });
 
 describe("operator assets on both runtimes", () => {
   it("serves exact hashed assets without authentication, with immutable caching and conditional HEAD", async () => {
