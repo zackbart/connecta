@@ -67,7 +67,7 @@ async function assertDenialSinks(
   const app = createTestConnecta({ publicUrl: BASE, auth: provider, pools: options.pools,
     connectors: [{ id: "service", kind: "mcp", description: "Service", listTools: async () => [],
       callTool: call, status: async () => ({ state: "ok" }) }],
-    accessTokens: accessTokens(storage), activity: activityHistory({ store: { record, recordCatalogDrift: record } }),
+    accessTokens: accessTokens(storage), activity: activityHistory({ store: { record } }),
     logger: { debug: sink, info: sink, warn: sink, error: sink },
   });
   try {
