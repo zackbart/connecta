@@ -178,7 +178,7 @@ describe("basecamp()", () => {
     expect(guide).toContain("Do not call `create_stream_ticket`");
     expect(guide).toContain("not a fixed set");
     expect(guide).toContain("`Retry-After`");
-    expect(guide).toContain("configured pool trust policy");
+    expect(guide).toContain('skills({ name: "usage" })');
     expect(guide).toContain("authorize_connector");
   });
 

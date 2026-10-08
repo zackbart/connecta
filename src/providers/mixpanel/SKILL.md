@@ -27,5 +27,5 @@
 - This account's tool list is not a fixed set. Mixpanel gates parts of its MCP catalog by plan and beta enrollment — experiments, feature flags, session replay, and issue triage are the usual absentees — so search this connector for what it actually exposes rather than assuming a documented tool is here.
 - Mixpanel meters MCP traffic per user per hour, shared with everything else that credential does. Reuse discovery results within a run and avoid speculative fan-out.
 - An `auth_required` failure means this connector's Mixpanel authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Mixpanel's own words instead — read it rather than re-authorizing.
-- Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.
+- Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
 <!-- endfragment -->

@@ -1,0 +1,32 @@
+{
+  "basecamp": [
+    [
+      "Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.",
+      "For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`."
+    ]
+  ],
+  "mixpanel": [
+    [
+      "Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.",
+      "For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`."
+    ]
+  ],
+  "revenuecat": [
+    [
+      "Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.",
+      "For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`."
+    ]
+  ],
+  "stripe": [
+    [
+      "Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.",
+      "For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`."
+    ]
+  ],
+  "cloudflare": [
+    [
+      "  PUT, PATCH, and DELETE requests inside one program. Read-only pools route\n  it through `call_destructive_tool`; trusted pools permit it in programs.\n  The host controls approval. The MCP schema cannot establish that arbitrary\n  code is read-only.",
+      "  PUT, PATCH, and DELETE requests inside one program. Fetch\n  `skills({ name: \"usage\" })` for guest calls and routing. The MCP schema\n  cannot establish that arbitrary code is read-only."
+    ]
+  ]
+}

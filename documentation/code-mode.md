@@ -321,6 +321,10 @@ says so inside its `Promise<…>`.
 
 ### connecta.call
 
+The published `GuestApi` type describes the supplied global for editors.
+The executable usage guide checks its API notation against those declarations;
+programs still use plain JavaScript.
+
 ```js
 const { data: run, format } = await connecta.call("ci.get_run", { runId: 42 });
 // Equivalent: connecta.call({ address: "ci.get_run", args: { runId: 42 }, timeoutMs: 30_000 })

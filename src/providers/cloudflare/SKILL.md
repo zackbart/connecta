@@ -33,10 +33,9 @@
 - Use `search` to find the exact method, path, and fields before writing an
   execute program. Do not guess an endpoint from product naming.
 - Connecta classifies `execute` as a write because it can mix GET, POST,
-  PUT, PATCH, and DELETE requests inside one program. Read-only pools route
-  it through `call_destructive_tool`; trusted pools permit it in programs.
-  The host controls approval. The MCP schema cannot establish that arbitrary
-  code is read-only.
+  PUT, PATCH, and DELETE requests inside one program. Fetch
+  `skills({ name: "usage" })` for guest calls and routing. The MCP schema
+  cannot establish that arbitrary code is read-only.
 - Keep returned values small. Filter and project inside the Cloudflare MCP
   program, then reduce again inside Connecta's `execute_code` when several
   calls must be joined.

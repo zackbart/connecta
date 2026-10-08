@@ -1,0 +1,19 @@
+{
+  "breeze": {
+    "padded-purpose": {
+      "guide": "737bd34ca38d7efaefcdcc39d4f394f1f1520918fee81ae5d62ef42681ab2dc3"
+    },
+    "empty-title": {
+      "guide": "737bd34ca38d7efaefcdcc39d4f394f1f1520918fee81ae5d62ef42681ab2dc3"
+    },
+    "blank-title": {
+      "guide": "737bd34ca38d7efaefcdcc39d4f394f1f1520918fee81ae5d62ef42681ab2dc3"
+    },
+    "default": {
+      "guide": "737bd34ca38d7efaefcdcc39d4f394f1f1520918fee81ae5d62ef42681ab2dc3"
+    },
+    "instructions": {
+      "guide": "e3b1eab1a7a147fb4a2c81b332de32bc2c4923b00d41b0f65f39f9c530b8890f"
+    }
+  }
+}
