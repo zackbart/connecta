@@ -127,7 +127,7 @@ export const stashLedgerKeys = {
     version: { number: 1, in: "key" },
     codec: jsonCodec,
     // Durable as a record, self-pruning by content: an entry leaves the
-    // ledger once its result's TTL has passed.
+    // ledger after settlement once every possible chunk TTL has passed.
     ttl: { kind: "durable" },
     durable: false,
   },

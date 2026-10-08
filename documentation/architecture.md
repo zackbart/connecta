@@ -370,7 +370,8 @@ State-file import validates all keys before writing. The `connecta_kv` table
 keeps its existing TEXT keys, including compatibility with the 0.28 schema.
 Storage writes no log lines. A refused import names the file and an entry's
 position, never a key, a value, or the JSON parser's account, which quotes
-the file (INV-6).
+the file (INV-6). Database failures report only a fixed import step and an
+entry's position, including errors raised by target-database triggers.
 
 Remote MCP catalogs use the SDK `ResponseCacheStore` over this same SQL KV.
 The `response-cache:v1:` family binds connector id, a hash of its configured
@@ -455,7 +456,12 @@ reads only what it covers. Its bounds (`results.maxStashBytes`,
 is a row in one ledger record, booked by compare-and-set before any chunk is
 written, so isolates and processes sharing the store see one count. A lost swap
 backs off and re-reads; only a full ledger refuses. Each chunk's TTL is what
-remains of its charge's deadline, so no chunk outlives its charge. A full
+remains of the stash's deadline when the write begins. The charge stays
+reserved while writes are pending, then expires 30 seconds past the latest
+possible chunk expiry, measured at write completion even when a write rejects.
+Failed cleanup retains that charge; successful cleanup releases it. A crash or
+an unavailable ledger during settlement can leave a reservation booked, keeping
+the bounds conservative until the ledger is repaired. A full
 stash returns the successful call's preview and a paging-unavailable notice
 rather than a result id. The shared storage cases live in
 `test/storage-contract.ts` and `test/sql-storage-contract.ts`.

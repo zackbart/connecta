@@ -4,6 +4,7 @@ import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/ind
 import { InvalidActivityCursorError } from "../src/activity.js";
 import { agentFrictionForCode } from "../src/activity-friction.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
+import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract, NUL_VALUES } from "./storage-contract.js";
 
 /**
@@ -26,6 +27,17 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  stashChargeContract(async () => {
+    const db = await open();
+    const storage = db.storage();
+    await storage.get("warm");
+    return {
+      storage,
+      advance: (ms) =>
+        db.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms),
+    };
   });
 
   let casDatabase: SqlFixture;

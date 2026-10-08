@@ -166,16 +166,23 @@ export function importStateFile(
       throw new TypeError(`${statePath} is not a connecta state file: entry ${index + 1} has no string value`);
     }
   }
-  const db = typeof database === "string" ? openSqlite(database) : database;
+  let db: DatabaseSync | undefined;
+  let transaction = false;
+  let step = "open the SQLite database";
   const result: StateFileImport = { imported: 0, kept: 0, expired: 0 };
-  db.exec("BEGIN IMMEDIATE");
   try {
+    db = typeof database === "string" ? openSqlite(database) : database;
+    step = "begin the import transaction";
+    db.exec("BEGIN IMMEDIATE");
+    transaction = true;
+    step = "prepare the key-value table";
     for (const statement of KV_SCHEMA) db.exec(statement);
     const insert = db.prepare(
       `INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ?)
        ON CONFLICT (key) DO NOTHING`,
     );
-    for (const [key, entry] of entries) {
+    for (const [index, [key, entry]] of entries.entries()) {
+      step = `import entry ${index + 1} into the key-value table`;
       const { value, exp } = entry as { value: string; exp?: number };
       if (exp !== undefined && exp <= now) {
         result.expired += 1;
@@ -187,10 +194,17 @@ export function importStateFile(
         result.kept += 1;
       }
     }
+    step = "commit the import transaction";
     db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+  } catch {
+    if (transaction) {
+      try {
+        db!.exec("ROLLBACK");
+      } catch {
+        // Rollback errors can contain stored text too. Report the failed step.
+      }
+    }
+    throw new Error(`State import failed: could not ${step}`);
   }
   return result;
 }

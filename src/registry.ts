@@ -269,11 +269,9 @@ const STASH_LEDGER_ATTEMPTS = 32;
 const STASH_LEDGER_BACKOFF_MS = 4;
 const STASH_LEDGER_BACKOFF_CAP_MS = 250;
 /**
- * Slack past a stash's deadline before its charge leaves the ledger, and the
- * longest one chunk write may take. A chunk's TTL is what remains of the
- * deadline on the clock read before its write, and the store starts that TTL
- * no later than the write returns, so the chunk expires within the write's
- * duration of the deadline. A write slower than this fails the stash.
+ * Slack past the latest possible chunk expiry before its charge leaves the
+ * ledger, and the longest one chunk write may take before the stash fails.
+ * A failed write can still persist, so its completion also bounds expiry.
  */
 const STASH_LEDGER_GRACE_MS = 30_000;
 
@@ -786,9 +784,9 @@ export class Registry implements RegistryView {
    * The bounds are the deployment's, not this isolate's. Every charge is a
    * row in one ledger record in storage, booked by compare-and-set before any
    * chunk is written, so every isolate and process sharing the store sees the
-   * same entries and bytes. A charge leaves the ledger just after its
-   * result's deadline, which every chunk's TTL ends by; the storage TTL
-   * reclaims the rows themselves.
+   * same entries and bytes. A pending write keeps its charge reserved; after
+   * writing, the charge expires past every chunk's possible expiry. The
+   * storage TTL reclaims the rows themselves.
    */
   stashResult(
     id: string,
@@ -805,17 +803,22 @@ export class Registry implements RegistryView {
         if (bytes > maxBytes || maxEntries === 0) return false;
         const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
         const charge = keys[0]!;
-        // One deadline for the charge and every chunk under it. Writes take
-        // time, so a chunk's TTL is whatever remains of the deadline when it is
-        // written, never a fresh `ttlSeconds`, and no single write may take
-        // longer than the grace: no chunk outlives the charge that bounds it.
+        // Chunk TTLs use one deadline. Reserve the charge while writes are
+        // pending: a slow write can persist after any precomputed expiry.
+        // Once every write settles, replace the reservation with a deadline
+        // covering the latest possible chunk expiry, including failed writes.
         const deadline = yield* swapStashLedger((live, now) => {
           const used = live.reduce((sum, entry) => sum + entry[1], 0);
           if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
           const end = now + ttlSeconds * 1000;
-          return { entries: [...live, [charge, bytes, end + STASH_LEDGER_GRACE_MS]], result: end };
+          return { entries: [...live, [charge, bytes, Number.MAX_SAFE_INTEGER]], result: end };
         });
         if (deadline === undefined) return false;
+        let expiresAt = deadline + STASH_LEDGER_GRACE_MS;
+        const settle = swapStashLedger((live) => ({
+          entries: live.map((entry) => (entry[0] === charge ? [charge, bytes, expiresAt] : entry)),
+          result: undefined,
+        })).pipe(Effect.ignore);
         // A failed write may still have persisted. Delete every key it could
         // have written and release the charge only when all of them are gone;
         // otherwise the charge stays booked until it expires, by which time the
@@ -827,7 +830,10 @@ export class Registry implements RegistryView {
               ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
               : { result: undefined },
           );
-        }).pipe(Effect.ignore);
+        }).pipe(
+          Effect.catch(() => settle),
+          Effect.ignore,
+        );
         // Trailing chunks first: the header chunk is what makes an id readable, so
         // a write that fails midway leaves no envelope pointing at absent chunks.
         const written = yield* Effect.gen(function* () {
@@ -836,12 +842,22 @@ export class Registry implements RegistryView {
             const remaining = Math.floor((deadline - before) / 1000);
             // Zero would mean no expiry: a stash that outlasts its deadline fails.
             if (remaining < 1) return false;
-            yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining });
+            yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining }).pipe(
+              Effect.ensuring(
+                Effect.gen(function* () {
+                  // A relative TTL starts no later than the write settles. Keep
+                  // this bound even if the store persisted and then rejected.
+                  const after = yield* Clock.currentTimeMillis;
+                  expiresAt = Math.max(expiresAt, after + remaining * 1000 + STASH_LEDGER_GRACE_MS);
+                }),
+              ),
+            );
             if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
           }
           return true;
         }).pipe(Effect.onError(() => release));
         if (!written) yield* release;
+        else yield* settle;
         return written;
       }),
       this.opts,
