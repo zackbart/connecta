@@ -10,6 +10,8 @@ import { SentSecrets, sentSecretsFor, trackCredentialReads } from "../src/sent-s
 import { CredentialVault } from "../src/credentials.js";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { scopes } from "../src/storage/keys.js";
+import { seedGrant } from "./fixtures/oauth.js";
 import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, spyLogger } from "./fixtures/misc.js";
@@ -215,7 +217,7 @@ describe("call-scoped sent credentials", () => {
     const header = "auxiliary-header-credential";
     const query = "auxiliary-query-credential";
     const storage = memoryStorage();
-    await storage.set("conn:api:oauth:tokens", JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer: "https://oauth.api.test/token", value: { access_token: SECRET, token_type: "bearer" } }));
+    await seedGrant(storage, { issuer: "https://oauth.api.test/token", tokens: { access_token: SECRET, token_type: "bearer" } }, undefined, scopes.connector("api"));
     const server = httpDownstream((mcp) => mcp.registerTool("read", { description: "Read", annotations: { readOnlyHint: true } }, async () => ({ content: [{ type: "text", text: "ok" }] })));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
@@ -321,7 +323,7 @@ describe("call-scoped sent credentials", () => {
     const connector = remoteMcp("remote", { url: server.url, auth });
     const scope = {}; const ctx = { ...connectorContext(), requestScope: scope };
     if (mode === "credential") ctx.credential = { get: async () => SECRET, getAll: async () => ({ value: SECRET }) };
-    if (mode === "oauth") await ctx.storage.set("oauth:tokens", JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer: "https://authorization.test", value: { access_token: SECRET, token_type: "bearer" } }));
+    if (mode === "oauth") await seedGrant(ctx.storage, { issuer: "https://authorization.test", tokens: { access_token: SECRET, token_type: "bearer" } });
     try {
       await connector.listTools(ctx);
       // Distinct call contexts share the transport, never the secret set.
@@ -340,7 +342,7 @@ describe("call-scoped sent credentials", () => {
     const rotated = `${SECRET}-rotated`;
     let refused = false;
     const storage = memoryStorage();
-    await storage.set("conn:api:oauth:tokens", JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer: tokenEndpoint, value: { access_token: SECRET, refresh_token: "refresh-credential", token_type: "bearer" } }));
+    await seedGrant(storage, { issuer: tokenEndpoint, tokens: { access_token: SECRET, refresh_token: "refresh-credential", token_type: "bearer" } }, undefined, scopes.connector("api"));
     vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
       if (String(input) === tokenEndpoint) return Response.json({ access_token: rotated, token_type: "bearer" });
       const bearer = new Headers(init?.headers).get("authorization");

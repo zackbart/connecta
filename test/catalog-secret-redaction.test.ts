@@ -5,6 +5,8 @@ import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { CredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { scopes } from "../src/storage/keys.js";
+import { seedGrant } from "./fixtures/oauth.js";
 import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -59,7 +61,7 @@ describe("discovery sent credentials", () => {
       return server.fetch(input instanceof Request ? input.url : input, init);
     });
     const storage = memoryStorage();
-    if (mode === "oauth") await storage.set("conn:remote:oauth:tokens", JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer: "https://authorization.test", value: { access_token: TOKEN, token_type: "bearer" } }));
+    if (mode === "oauth") await seedGrant(storage, { issuer: "https://authorization.test", tokens: { access_token: TOKEN, token_type: "bearer" } }, undefined, scopes.connector("remote"));
     const connector = remoteMcp("remote", { url: server.url, auth: mode === "request" ? { type: "request", token: async () => TOKEN } : { type: "oauth" } });
     const registry = makeRegistry([connector], { storage });
     const contexts: ConnectorContext[] = [];
@@ -137,7 +139,7 @@ describe("discovery sent credentials", () => {
   it.each(["api", "oauth"] as const)("INV-5: %s catalog decorators use credentials sent by API fetch paths at registry intake", async (mode) => {
     const storage = memoryStorage();
     const tokenEndpoint = "https://oauth.api.test/token";
-    if (mode === "oauth") await storage.set("conn:api:oauth:tokens", JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer: tokenEndpoint, value: { access_token: TOKEN, token_type: "bearer" } }));
+    if (mode === "oauth") await seedGrant(storage, { issuer: tokenEndpoint, tokens: { access_token: TOKEN, token_type: "bearer" } }, undefined, scopes.connector("api"));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       expect(request.headers.get(mode === "oauth" ? "authorization" : "x-api-key")).toBe(mode === "oauth" ? `Bearer ${TOKEN}` : TOKEN);

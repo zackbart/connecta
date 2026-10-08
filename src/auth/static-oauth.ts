@@ -404,6 +404,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     sentSecretsFor(ctx).request(input, { ...init, headers });
     return byteReadResponse(await fetch(input, { ...init, headers, redirect: "manual" }));
   };
+
   /**
    * The SDK's `auth()` over this provider. The token endpoint is fetched
    * through the refresh coordinator, with permanent spent fingerprints,
