@@ -36,6 +36,22 @@ for (const status of [200, 301, 302, 303, 307, 308, 400, 503]) {
 }
 
 describe("reset revocation snapshot", () => {
+  it.each(["http://mcp.example/revoke", "http://10.0.0.1/revoke", "ftp://mcp.example/revoke"])("INV-5 INV-6: refuses plaintext or unsupported revocation transport before sending to %s", async endpoint => {
+    const storage = memoryStorage();
+    const issuer = "https://auth.example";
+    await seedGrant(storage, { issuer, client: { value: { client_id: "client", client_secret: "SECRET_SENTINEL" } },
+      tokens: { access_token: "ACCESS_SENTINEL", refresh_token: "REFRESH_SENTINEL", token_type: "Bearer" },
+      discovery: { authorizationServerUrl: issuer, authorizationServerMetadata: { issuer, revocation_endpoint: endpoint } } });
+    let sends = 0;
+    const provider = new KvOAuthProvider("svc", storage, "https://connecta.test/oauth/callback/svc");
+    const error = await provider.disconnectAuthorization(async () => { sends++; return new Response(null); }).catch(error => error);
+    expect(error.code).toBe("oauth_revocation_failed");
+    expect(error.message).not.toMatch(/SENTINEL|mcp\.example|10\.0\.0\.1/);
+    expect(error.cause).toBeUndefined();
+    expect(sends).toBe(0);
+    expect(JSON.parse((await storage.get(oauthGrantKeys.grant))!).body).toBeUndefined();
+  });
+
   it("INV-5 INV-9: concurrent disconnects revoke only the snapshot removed by a winning CAS", async () => {
     const server = await nativeOAuthServer("sdk-revoke-200");
     const storage = memoryStorage();

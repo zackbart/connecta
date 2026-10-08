@@ -2,6 +2,7 @@ import type { FetchLike } from "@modelcontextprotocol/client";
 import { Effect } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
+import { classifyHost } from "../url-safety.js";
 import { authenticateRemoteClient, type RemoteOAuthClient } from "./downstream-client-metadata.js";
 import { discoveryIssuer, type MigratedGrantBody } from "./oauth-v2-migration.js";
 
@@ -26,7 +27,11 @@ export async function revokeDownstreamGrant(body: MigratedGrantBody, send: Fetch
     if (typeof endpoint !== "string" || !body.issuer || discoveryIssuer(body.discovery) !== body.issuer ||
       !body.client || (body.client.value.issuer !== undefined && body.client.value.issuer !== body.issuer)) throw new OAuthRevocationError();
     const target = new URL(endpoint);
-    if (target.username || target.password || target.hash) throw new OAuthRevocationError();
+    // An operator-trusted HTTP MCP origin does not authorize plaintext
+    // credential endpoints. Only the existing loopback development exception
+    // is eligible; the connector's destination guard still checks that scope.
+    if ((target.protocol !== "https:" && !(target.protocol === "http:" && classifyHost(target.hostname) === "loopback")) ||
+      target.username || target.password || target.hash) throw new OAuthRevocationError();
     const information = body.client.value;
     const secret = configuredClient ? configuredClient.clientSecret : information.client_secret;
     if (configuredClient && (body.issuer !== configuredClient.issuer || information.client_id !== configuredClient.clientId)) throw new OAuthRevocationError();

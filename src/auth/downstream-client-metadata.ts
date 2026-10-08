@@ -45,6 +45,12 @@ export function selfHostedClientUrl(publicUrl: string | undefined, id: string): 
   } catch { return undefined; }
 }
 
+/** One canonical callback for the served document and the SDK's whole flow. */
+export function downstreamRedirectUri(baseUrl: string, publicUrl: string | undefined, id: string): string {
+  const clientId = selfHostedClientUrl(publicUrl, id);
+  return `${clientId ? new URL(clientId).origin : baseUrl.replace(/\/$/, "")}/oauth/callback/${id}`;
+}
+
 // Built-in declarations only, with no credentials or provider-controlled document bytes.
 const documents = new WeakMap<Connector, { scope?: string }>();
 export function declareSelfHostedClient(connector: Connector, scope?: string): void {
@@ -54,8 +60,7 @@ export function selfHostedClientDocument(connector: Connector, publicUrl: string
   const declaration = documents.get(connector);
   const clientId = selfHostedClientUrl(publicUrl, connector.id);
   if (!declaration || !clientId) return undefined;
-  const origin = new URL(clientId).origin;
-  return { client_id: clientId, ...downstreamClientMetadata(`${origin}/oauth/callback/${connector.id}`, declaration.scope, clientName) };
+  return { client_id: clientId, ...downstreamClientMetadata(downstreamRedirectUri(publicUrl!, publicUrl, connector.id), declaration.scope, clientName) };
 }
 
 /** RFC 6749 client authentication; deployment-selected methods never downgrade. */

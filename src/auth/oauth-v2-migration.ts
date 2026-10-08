@@ -15,7 +15,7 @@ import type { KVStorage } from "../types.js";
 /** A grant body as layout 3 stores it. */
 export interface MigratedGrantBody {
   issuer?: string;
-  client?: { value: OAuthClientInformationMixed; binding?: string; carried?: true };
+  client?: { value: OAuthClientInformationMixed; binding?: string; carried?: true; registrationPath?: "cimd" | "dcr" | "static" };
   tokens?: OAuthTokens;
   discovery?: OAuthDiscoveryState;
 }

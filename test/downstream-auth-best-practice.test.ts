@@ -17,7 +17,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: RemoteMcpAuth; revocation?: boolean; revokeStatus?: number; revokeThrows?: boolean; issRequired?: boolean } = {}) {
+function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: RemoteMcpAuth; revocation?: boolean; revokeStatus?: number; revokeThrows?: boolean; issRequired?: boolean; registeredClientId?: string } = {}) {
   const sent: Array<{ url: string; init: RequestInit; form: URLSearchParams }> = [];
   const registrations: Record<string, unknown>[] = [];
   let issuer = ISSUER;
@@ -42,7 +42,7 @@ function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: Remo
     if (url === `${issuer}/register`) {
       const metadata = JSON.parse(String(init.body));
       registrations.push(metadata);
-      return Response.json({ ...metadata, client_id: "registered-client" });
+      return Response.json({ ...metadata, client_id: options.registeredClientId ?? "registered-client" });
     }
     if (url === `${issuer}/token`) return Response.json({ access_token: "ACCESS_TOKEN_SENTINEL", refresh_token: "REFRESH_TOKEN_SENTINEL", token_type: "Bearer" });
     if (url === `${issuer}/revoke`) {
@@ -101,6 +101,27 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
+  it.each(["https://CONNECTA.example:443", `${BASE}/`])("INV-5: keeps CIMD, consent, and exchange callback URLs identical for %s", async publicUrl => {
+    const flow = setup({ cimd: true, publicUrl });
+    const document = await (await flow.app.fetch(new Request(DOCUMENT))).json() as { redirect_uris: string[] };
+    const status = await flow.start();
+    expect(new URL(status.authorizationUrl!).searchParams.get("redirect_uri")).toBe(document.redirect_uris[0]);
+    expect(document.redirect_uris).toEqual([`${BASE}/oauth/callback/svc`]);
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    expect(flow.sent.find(request => request.url.endsWith("/token"))!.form.get("redirect_uri")).toBe(document.redirect_uris[0]);
+  });
+
+  it("INV-6: records DCR when the AS returns the metadata URL as its opaque registered client ID", async () => {
+    const flow = setup({ registeredClientId: DOCUMENT });
+    const status = await flow.start();
+    expect(flow.registrations).toHaveLength(1);
+    expect(new URL(status.authorizationUrl!).searchParams.get("client_id")).toBe(DOCUMENT);
+    expect(status.registrationPath).toBe("dcr");
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    expect((await flow.app.registry.statusFor("svc", BASE)).registrationPath).toBe("dcr");
+    expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body.client.registrationPath).toBe("dcr");
+  });
+
   it.each([null, "http://connecta.example", "https://localhost", "https://10.0.0.1", "https://[::1]"])("INV-4: uses DCR without a configured public HTTPS URL (%s)", async publicUrl => {
     const flow = setup({ cimd: true, publicUrl });
     expect((await flow.app.fetch(new Request(DOCUMENT))).status).toBe(404);
@@ -136,6 +157,35 @@ describe("downstream OAuth best practice", () => {
     expect((await flow.start()).state).toBe("error");
     expect(flow.registrations).toHaveLength(0);
     expect(flow.sent.some(request => request.url.endsWith("/token"))).toBe(false);
+    expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
+  });
+
+  it("INV-10: passive status does not persist a static client's discovery, identity, or consent", async () => {
+    const flow = setup({ auth: { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } } });
+    const storage = flow.ctx().storage;
+    expect(await storage.list("oauth:")).toEqual([]);
+    expect((await flow.connector.status!(flow.ctx())).state).toBe("auth_required");
+    expect(await storage.list("oauth:")).toEqual([]);
+    expect(flow.sent.some(request => request.url.endsWith("/token") || request.url.endsWith("/register"))).toBe(false);
+    const status = await flow.start();
+    expect(status.registrationPath).toBe("static");
+    expect(JSON.parse((await storage.get("oauth:grant"))!).body.client).toMatchObject({ value: { client_id: "static-client" }, registrationPath: "static" });
+  });
+
+  it.each(["none", "client_secret_post"] as const)("INV-5 INV-6: pins static %s authentication for exchange and revocation", async tokenEndpointAuthMethod => {
+    const flow = setup({ revocation: true, auth: { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", tokenEndpointAuthMethod,
+      ...(tokenEndpointAuthMethod === "none" ? {} : { clientSecret: SECRET }) } } });
+    const status = await flow.start();
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    await flow.connector.disconnectAuth!(flow.ctx());
+    const credentials = flow.sent.filter(request => request.url.endsWith("/token") || request.url.endsWith("/revoke"));
+    expect(credentials).toHaveLength(2);
+    for (const request of credentials) {
+      expect(request.form.get("client_id")).toBe("static-client");
+      expect(request.form.get("client_secret")).toBe(tokenEndpointAuthMethod === "none" ? null : SECRET);
+      expect(new Headers(request.init.headers).has("authorization")).toBe(false);
+      expect(request.init.redirect).toBe("manual");
+    }
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 

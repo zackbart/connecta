@@ -662,6 +662,7 @@ function grantBody(value: unknown): GrantBody {
             value: client.value as unknown as OAuthClientInformationMixed,
             ...(typeof client.binding === "string" ? { binding: client.binding } : {}),
             ...(client.carried === true ? { carried: true as const } : {}),
+            ...(client.registrationPath === "cimd" || client.registrationPath === "dcr" || client.registrationPath === "static" ? { registrationPath: client.registrationPath } : {}),
           },
         }
       : {}),
@@ -1171,8 +1172,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const client = this.clientOptions?.client;
     if (client) {
       if ((ctx && ctx.issuer !== client.issuer) || body.issuer !== client.issuer) throw this.flowSuperseded();
-      if (!body.client) await this.saveClientInformation({ client_id: client.clientId }, { issuer: client.issuer });
-      else if (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding) throw this.flowSuperseded();
+      if (!body.client && !this.allowAuthorization) throw this.authorizationRefused();
+      if (body.client && (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding)) throw this.flowSuperseded();
       return { client_id: client.clientId, issuer: client.issuer,
         token_endpoint_auth_method: this.clientMetadata.token_endpoint_auth_method,
         ...(client.clientSecret !== undefined ? { client_secret: client.clientSecret } : {}) };
@@ -1186,18 +1187,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
     info: OAuthClientInformationMixed,
     ctx?: OAuthClientInformationContext,
   ): Promise<void> {
+    const { body } = await this.boundGrant();
+    const registrationPath = this.clientOptions?.client ? "static"
+      : body.client?.value.client_id === info.client_id && body.client.registrationPath ? body.client.registrationPath
+      : this.clientMetadataUrl && body.discovery?.authorizationServerMetadata?.client_id_metadata_document_supported === true ? "cimd" : "dcr";
     await this.writeCredential(
       "client",
-      { value: this.clientOptions?.client ? { client_id: this.clientOptions.client.clientId } : info, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
+      { value: this.clientOptions?.client ? { client_id: this.clientOptions.client.clientId } : info, registrationPath, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
       ctx?.issuer,
     );
   }
 
   async registrationPath(): Promise<"cimd" | "dcr" | "static" | undefined> {
     const { body } = await this.boundGrant();
-    if (!body.client) return undefined;
-    if (this.clientOptions?.client) return body.issuer === this.clientOptions.client.issuer && body.client.value.client_id === this.clientOptions.client.clientId ? "static" : undefined;
-    return body.client.value.client_id === this.clientMetadataUrl ? "cimd" : "dcr";
+    return body.client?.registrationPath;
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
@@ -1215,6 +1218,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     const issuer = discoveryIssuer(state);
     if (this.clientOptions?.client && issuer !== this.clientOptions.client.issuer) throw this.flowSuperseded();
+    if (this.clientOptions?.client && !this.allowAuthorization && !(await this.boundGrant()).body.client) throw this.authorizationRefused();
     this.consentDiscovery = state;
     await this.updateGrant((grant) => {
       const body: GrantBody = grant.body.issuer !== issuer
@@ -1285,6 +1289,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (!this.allowAuthorization) throw this.authorizationRefused();
     const state = this.consent.state ?? authorizationUrl.searchParams.get("state");
     if (!state) throw new Error(`OAuth consent for "${this.connectorId}" carries no state`);
+    const client = this.clientOptions?.client;
+    if (client && !(await this.boundGrant()).body.client) {
+      await this.saveClientInformation({ client_id: client.clientId }, { issuer: client.issuer });
+    }
     const configured = this.configuredAuthorizationBinding();
     if (configured?.issuer !== undefined) {
       const issuer = configured.issuer;
@@ -1890,6 +1898,6 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ) {
       return undefined;
     }
-    return { issuer, client: { value: client.value, binding: client.binding, carried: true } };
+    return { issuer, client: { value: client.value, binding: client.binding, carried: true, ...(client.registrationPath ? { registrationPath: client.registrationPath } : {}) } };
   }
 }

@@ -1,4 +1,4 @@
-import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, selfHostedClientUrl, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
+import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, downstreamRedirectUri, selfHostedClientUrl, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import {
   AuthorizationServerMismatchError,
   Client,
@@ -1597,18 +1597,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   ): KvOAuthProvider => {
     if (state?.provider) return state.provider;
     const metadataUrl = staticClient ? undefined : clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id);
+    const redirectUri = downstreamRedirectUri(ctx.baseUrl, ctx.publicUrl, id);
     const provider = new KvOAuthProvider(
       id,
       ctx.storage,
-      `${ctx.baseUrl}/oauth/callback/${id}`,
+      redirectUri,
       refreshCoordinatorFor(ctx),
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
       signal,
       JSON.stringify({
         url: new URL(opts.url).href,
-        redirectUri: `${ctx.baseUrl}/oauth/callback/${id}`,
-        clientMetadata: downstreamClientMetadata(`${ctx.baseUrl}/oauth/callback/${id}`, oauthScope, ctx.oauthClientName,
+        redirectUri,
+        clientMetadata: downstreamClientMetadata(redirectUri, oauthScope, ctx.oauthClientName,
           staticClient?.tokenEndpointAuthMethod ?? (staticClient?.clientSecret === undefined ? "none" : "client_secret_basic")),
         authScope: opts.authScope ?? "shared",
         versionNegotiation: opts.versionNegotiation ?? "auto",

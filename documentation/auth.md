@@ -417,8 +417,10 @@ removed grant's saved authorization-server metadata advertises a revocation
 endpoint, Connecta makes one RFC 7009 request using that same issuer and client.
 It revokes the refresh token when present, otherwise the access token. It never
 rediscovers an issuer or sends credentials to a replacement server on Disconnect.
-The existing advertised-URL destination guard applies, and revocation never
-follows redirects. The request has its own twenty-second deadline; browser
+The endpoint must use HTTPS, with HTTP allowed only for the existing loopback
+development exception. Trusting a configured HTTP MCP origin does not permit
+plaintext public revocation. The advertised-URL destination guard also applies,
+and revocation never follows redirects. The request has its own twenty-second deadline; browser
 cancellation cannot undo local removal. It reads no provider response text.
 
 A revocation refusal, timeout, network failure, or unsafe advertised destination
@@ -909,7 +911,7 @@ self-hosted OAuth connectors have a document; unknown, non-OAuth, external-CIMD,
 and static-client connectors return 404. Other methods return 405.
 
 The document contains its own URL as `client_id`, `serverInfo.name` as
-`client_name`, the exact `publicUrl` callback in `redirect_uris`, the
+`client_name`, the canonical `publicUrl` origin's callback in `redirect_uris`, the
 `authorization_code` and `refresh_token` grants, `response_types: ["code"]`,
 `application_type: "web"`, `token_endpoint_auth_method: "none"`, and configured
 `scope` when present. It contains no secrets. Alternate request hosts never add
@@ -925,7 +927,11 @@ configuration binding use one metadata builder.
 | Unset, HTTP, loopback, or private `publicUrl` | `dcr`, without a self-hosted document |
 
 `startAuth()` and operator connector status expose `registrationPath` after a
-client has been selected. Reads neither register a client nor begin consent.
+client has been selected. The selected mechanism is stored alongside the client,
+including across a restart that preserves DCR registration. Older grants without
+that field omit the path until a new client is selected. Reads neither register
+a client nor begin consent; static client information is persisted during explicit
+consent, not passive status.
 DCR fallback follows the server's advertised capabilities; a rejected CIMD
 consent is not silently retried under another client identity.
 
