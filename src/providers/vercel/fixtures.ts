@@ -1,5 +1,5 @@
 import { vercel } from "./index.js";
-const options: Parameters<typeof vercel>[1] = { "purpose":"Audit fixture" };
+const options: Parameters<typeof vercel>[1] = { "purpose":"Audit fixture", "surface":"api" };
 export const fixture = {
   name: "vercel",
   options,

@@ -157,9 +157,9 @@ describe("TypeScript signatures over real provider schemas", () => {
   });
 
   it("renders every Notion tool with its declared input and output within budget", async () => {
-    const tools = await notion("workspace", { purpose: "Team knowledge base" })
+    const tools = await notion("workspace", { surface: "api", purpose: "Team knowledge base" })
       .listTools(notionContext());
-    expect(tools.length).toBeGreaterThan(10);
+    expect(tools).toHaveLength(15);
     for (const tool of tools) {
       const input = tool.inputSchema ?? { type: "object" };
       const found = search(input, tool.outputSchema);
@@ -176,12 +176,12 @@ describe("TypeScript signatures over real provider schemas", () => {
       );
       expectBalanced(described.text);
     }
-    const self = required(tools.find((tool) => tool.name === "get_self"));
+    const self = required(tools.find((tool) => tool.name === "integration_get_self"));
     expect(search(self.inputSchema ?? {}, self.outputSchema).text).toBe(
       "(args?: {}) => Promise<{ id: string; name: string | null; type?: string | null; workspace_name?: string | null }>",
     );
     // Notion's property maps declare no properties: an open map, not `{}`.
-    const schema = required(tools.find((tool) => tool.name === "get_data_source_schema"));
+    const schema = required(tools.find((tool) => tool.name === "integration_get_data_source_schema"));
     expect(search(schema.inputSchema ?? {}, schema.outputSchema).text).toContain(
       "properties: Record<string, unknown>",
     );

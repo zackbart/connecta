@@ -1,0 +1,14 @@
+{
+  "removedApiTools": {
+    "list_teams": "list_teams",
+    "list_projects": "list_projects",
+    "get_project": "get_project",
+    "list_deployments": "list_deployments",
+    "get_deployment": "get_deployment",
+    "get_build_logs": "list_deployment_events",
+    "get_runtime_logs": "get_runtime_logs",
+    "list_project_domains": "list_project_domains",
+    "add_project_domain": "add_project_domain",
+    "cancel_deployment": "cancel_deployment"
+  }
+}

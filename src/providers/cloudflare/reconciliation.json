@@ -1,0 +1,26 @@
+{
+  "removedApiTools": {
+    "create_dns_record": "execute",
+    "create_kv_namespace": "execute",
+    "create_r2_bucket": "execute",
+    "retry_pages_deployment": "execute",
+    "add_pages_domain": "execute",
+    "update_zone_setting": "execute",
+    "delete_worker_script": "execute",
+    "rename_kv_namespace": "execute",
+    "delete_kv_namespace": "execute",
+    "bulk_write_kv_values": "execute",
+    "bulk_delete_kv_values": "execute",
+    "update_r2_bucket": "execute",
+    "delete_r2_bucket": "execute",
+    "delete_r2_object": "execute",
+    "rollback_pages_deployment": "execute",
+    "delete_pages_deployment": "execute",
+    "delete_pages_domain": "execute",
+    "purge_pages_build_cache": "execute",
+    "delete_pages_project": "execute",
+    "update_dns_record": "execute",
+    "delete_dns_record": "execute",
+    "purge_cache": "execute"
+  }
+}

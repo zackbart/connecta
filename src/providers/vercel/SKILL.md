@@ -10,48 +10,52 @@
 
 <!-- fragment: guide_1 -->
 
+## REST complement routing
 
-Project names are accepted where Vercel accepts an id or name, but deployment,
-environment-variable, and team ids are opaque. Read them from their list tool
-and pass them back unchanged.
+Hosted MCP is the default. Configure this complement with `surface: "api"`
+and a separate connector id and access-token credential. OAuth and API-token
+stores are independent; failures never switch identity or replay a write.
+Team defaults route calls and do not constrain the token's permissions.
 
-## Diagnose deployments in order
+Use hosted `list_teams`, `list_projects`, `get_project`, `list_deployments`,
+`get_deployment`, `get_deployment_build_logs` or `list_deployment_events`,
+`get_runtime_logs`, `list_project_domains`, `add_project_domain`, and
+`cancel_deployment` for the corresponding operations. Follow their live schemas,
+not the removed REST argument shapes. Read deployment status before logs and
+narrow log windows.
 
-- Read `get_deployment` first. Its state says whether logs can still change.
-- Use `get_build_logs` for install, build, and framework output.
-- Use `get_runtime_logs` for application requests after a deployment runs.
-- `promote_deployment` moves an existing build to production. It does not
-  rebuild it. A rebuild or Git deployment belongs in `vercel_api_mutate`.
+This complement retains `verify_project_domain`, `remove_project_domain`,
+`promote_deployment`, and `delete_deployment` because the reviewed category
+pages do not publish equivalent tools. `promote_deployment` moves an existing
+build to production and does not rebuild it. New deployments use hosted
+`create_deployment` or `deploy_to_vercel`.
 
 ## Environment values
 
-`list_project_env_vars` never decrypts or returns values. It reports names,
-targets, visibility, branch bindings, and ids. The create and update tools take
-values only as write input, and their projected results omit them. Environment
-changes apply to future deployments, not deployments that already exist.
+`list_project_env_vars` never decrypts or returns values. Set `upsert: false` on
+`upsert_project_env_var` for create-only writes that refuse to overwrite. `upsert_project_env_var`,
+`update_project_env_var`, and `delete_project_env_var` return metadata without
+values. Create/update values are write input only. The hosted connector excludes
+`filter_project_envs`, `get_project_env`, `create_project_env`, and
+`edit_project_env`, whose published contracts lack these response protections.
+Environment changes apply to future deployments.
 
-## Named tools and the REST hatches
+## REST gaps and uploads
 
-Use named tools when one exists. They validate arguments and return smaller,
-stable objects. `vercel_api_get` reaches every other GET endpoint and
-`vercel_api_mutate` reaches JSON POST, PUT, PATCH, and DELETE endpoints.
-`vercel_api_upload` sends explicit text or base64 bytes and never reads a
-local file. Paths include Vercel's API version, such as `/v1/edge-config`,
-and query parameters are name/value pairs. Pass `personalAccount: true` to
-omit this connection's default team. No hatch accepts an absolute URL.
-
-## Pagination and rate limits
-
-List tools return `page.hasMore` and `page.nextCursor`. Pass the cursor back
-unchanged. Vercel meters endpoints separately and returns the reset in response
-headers. A rate-limit failure carries that delay when Vercel supplies it.
+`vercel_api_get` and `vercel_api_mutate` reach uncovered endpoints. They refuse
+paths owned by the canonical hosted or value-safe named tools. Do not use a
+raw hatch to restore a removed duplicate. `upload_file` on MCP owns deployment
+file uploads; `vercel_api_upload` retains other raw-body endpoints and explicit
+headers. It never reads a local file. Paths include the API version and cannot
+be absolute URLs. Query parameters are name/value pairs; `personalAccount: true`
+omits this connection's default team. Rate-limit failures carry vendor retry timing.
 <!-- endfragment -->
 
 <!-- fragment: guide_2 -->
 # Vercel MCP usage
 
 Official MCP surface: tool names, descriptions, argument schemas, and result
-schemas come from Vercel's live server. Connecta preserves that catalog and
+schemas come from Vercel's live server. Connecta preserves retained vendor contracts and
 applies release-reviewed classification. Reviewed writes stay writes even when Vercel claims they only read.
 
 Account purpose: <!-- endfragment -->
@@ -59,6 +63,10 @@ Account purpose: <!-- endfragment -->
 <!-- fragment: guide_3 -->
 
 
+- Hosted MCP owns discovery, deployments, logs, project-domain listing/adding,
+  cancellation and file uploads. Use the separately configured REST complement
+  for value-safe project environment variables, uncovered lifecycle/domain
+  operations and REST gaps. It has its own connector id and credential.
 - Discover the live catalog before assuming a tool exists. Vercel can change
   the surface independently of a Connecta release, and account features may
   affect what the authorization can reach.

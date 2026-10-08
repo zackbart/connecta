@@ -166,7 +166,13 @@
         "web_fetch_vercel_url",
         "import-claude-design-from-url",
         "change_toolbar_thread_resolve_status",
-        "edit_toolbar_message"
+        "edit_toolbar_message",
+        "list_project_domains",
+        "add_project_domain",
+        "cancel_deployment",
+        "upload_file",
+        "create_deployment",
+        "list_deployment_events"
       ]
     }
   ]

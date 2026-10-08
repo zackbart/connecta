@@ -396,7 +396,7 @@ describe("hand-written providers refuse schemas they cannot enforce (H5)", () =>
       (provider) => provider.name === "notion",
     )!;
     await expect(
-      connector.callTool("get_self", { workspace: "nope" }, CONTEXT),
+      connector.callTool("integration_get_self", { workspace: "nope" }, CONTEXT),
     ).rejects.toMatchObject({ code: "invalid_args" });
   });
 });

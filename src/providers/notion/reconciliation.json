@@ -1,0 +1,21 @@
+{
+  "removedApiTools": {
+    "search": "integration_search",
+    "get_page": "integration_get_page",
+    "get_page_content": "integration_get_page_content",
+    "get_page_property": "integration_get_page_property",
+    "get_database": "integration_get_database",
+    "get_data_source_schema": "integration_get_data_source_schema",
+    "query_data_source": "integration_query_data_source",
+    "list_users": "integration_list_users",
+    "get_self": "integration_get_self",
+    "list_comments": "integration_list_comments",
+    "create_page": "integration_create_page",
+    "append_blocks": "integration_append_blocks",
+    "update_page_properties": "integration_update_page_properties",
+    "trash_page": "integration_trash_page",
+    "add_comment": "integration_add_comment"
+  },
+  "canonicalHalf": "api",
+  "identity": "internal integration token; hosted OAuth is not equivalent"
+}

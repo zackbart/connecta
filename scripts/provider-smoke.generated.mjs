@@ -40,7 +40,7 @@ var fixture3 = {
 
 // src/providers/cloudflare/fixtures.ts
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
-var options4 = { "purpose": "Audit fixture" };
+var options4 = { "purpose": "Audit fixture", "surface": "api" };
 var fixture4 = {
   name: "cloudflare",
   options: options4,
@@ -146,7 +146,7 @@ var fixture10 = {
 
 // src/providers/notion/fixtures.ts
 import { notion } from "@zackbart/connecta/providers/notion";
-var options11 = { "purpose": "Audit fixture" };
+var options11 = { "purpose": "Audit fixture", "surface": "api" };
 var fixture11 = {
   name: "notion",
   options: options11,
@@ -154,7 +154,7 @@ var fixture11 = {
   create(id = "fixture", overrides = {}) {
     return notion(id, { ...options11, ...overrides });
   },
-  conventions: { "verbs": ["list", "get", "search", "create", "update", "delete", "add", "append", "query", "trash"], "nestedDescriptionExceptions": [], "auth": "credential" }
+  conventions: { "verbs": ["integration"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/overflow/fixtures.ts
@@ -250,7 +250,7 @@ var fixture18 = {
 
 // src/providers/vercel/fixtures.ts
 import { vercel } from "@zackbart/connecta/providers/vercel";
-var options19 = { "purpose": "Audit fixture" };
+var options19 = { "purpose": "Audit fixture", "surface": "api" };
 var fixture19 = {
   name: "vercel",
   options: options19,

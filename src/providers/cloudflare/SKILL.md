@@ -6,24 +6,26 @@
 ---
 
 <!-- fragment: guide_0 -->
-
-- Prefer a named tool: its schema is complete, projected, and enough to call it without provider documentation. For an operation without a named tool, use `cloudflare_api_get` for GET, `cloudflare_api_mutate` for JSON POST/PUT/PATCH/DELETE, or `cloudflare_api_upload` for raw and multipart content. Raw tools take a path below `/client/v4`; their argument schemas are complete, but endpoint-specific query, header, and body fields come from Cloudflare's API reference. Use `headers` for endpoint-specific controls such as `cf-r2-jurisdiction`, `Range`, `If-None-Match`, and Cloudflare product metadata. `Authorization`, `Cookie`, `Host`, `Content-Length`, `Content-Type`, and `Transfer-Encoding` are connector-owned and refused: authentication, host, content type, and request framing are not the caller's to set.
-- The raw tools cover the wider control plane without weakening routing: GET is explicitly read-only; every mutation and upload is destructive and must cross the host's approval boundary. The configured Cloudflare credential remains the hard provider-side permission boundary. Absolute URLs, traversal, and query strings embedded in `path` are refused locally.
-- Useful raw paths include `/accounts/{accountId}/images/v1` (Images), `/accounts/{accountId}/stream` (Stream), `/zones/{zoneId}/email/routing/rules` (Email Routing), `/accounts/{accountId}/d1/database` (D1), and `/accounts/{accountId}/queues` (Queues). On GET, use `responseType: "text"` or `"base64"` for non-JSON content. Direct-upload endpoints can issue upload URLs; `cloudflare_api_upload` can also send explicit text, base64 bytes, or multipart fields/files.
-- Three areas are deliberately unnamed. Read a bucket's CORS policy with `get_r2_cors`, then change it with `cloudflare_api_mutate` — `PUT` or `DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors`, rule fields per Cloudflare's reference — and read account storage totals with `cloudflare_api_get` at `/accounts/{accountId}/r2/metrics`. Zone settings are read one at a time with `get_zone_setting`: Cloudflare deprecated the bulk `/zones/{zoneId}/settings` read and published no replacement for it, so reach for the whole set through `cloudflare_api_get` only when one setting genuinely will not do.
-- Lists paginate with `page` and `perPage` and return a `page` object; request the next page only when `page.hasMore` is true. `list_zone_rulesets`, `list_r2_buckets`, `list_r2_objects`, and `list_kv_keys` page by cursor instead: pass `cursor`, continue while `nextCursor` is present, and expect no `page` object. Their schemas say so too. `list_worker_scripts` is unpaginated.
-- Results are projected to the fields that identify and describe a resource. Pass `raw: true` on a read when you genuinely need a field the projection drops.
+- This is the explicit `surface: "api"` complement. Hosted MCP is the default; configure each under a separate connector id with independent authorization and recovery. Never fall back to another credential after an error or repeat a write to recover its response.
+- Named tools are canonical for reads in read-only programs. `cloudflare_api_get` covers other GET endpoints, including text and byte-preserving `responseType: "base64"` downloads. Hosted `search` discovers API contracts; hosted `execute` owns ordinary JSON mutations. Execute remains a write even for a GET-only program.
+- `cloudflare_api_mutate` retains only a demonstrated auth/header gap: Global API Key identity, or R2 bucket endpoints requiring `cf-r2-jurisdiction`, which is absent from the vendor request helper. Ordinary headers such as `Accept` do not qualify. Other API-token JSON mutations are refused locally and must use hosted `execute`.
+- `cloudflare_api_upload` retains byte-safe upload bodies, explicit endpoint headers and multipart field/file encoding for Worker scripts, KV values, R2 objects, Images, Stream and Pages uploads. Other token-auth endpoints are refused, regardless of claimed content type. The vendor supports raw/multipart bodies, but its helper returns non-JSON bodies as text and exposes only content type on the request. Use API uploads when those compatibility requirements matter. Raw tools take a path below `/client/v4`; absolute URLs, traversal and embedded query strings are refused. `Authorization`, `Cookie`, `Host`, `Content-Length`, `Content-Type`, and `Transfer-Encoding` are connector-owned headers and cannot be overridden.
+- Useful paths include `/accounts/{accountId}/images/v1`, `/accounts/{accountId}/stream`, `/accounts/{accountId}/d1/database`, `/accounts/{accountId}/queues`, `/accounts/{accountId}/r2/buckets/{bucketName}/cors`, and `/accounts/{accountId}/r2/metrics`. Change CORS with hosted `execute`, except for the explicit legacy-identity/header gaps above.
+- Lists use `page`/`perPage` and return `page.hasMore`; rulesets, R2 buckets/objects and KV keys instead use opaque cursors. `list_worker_scripts` is unpaginated. Use `get_zone_setting` for one setting; Cloudflare deprecated the bulk `/zones/{zoneId}/settings` read. Reads project resource identity and state; `raw: true` returns dropped vendor fields.
 - <!-- endfragment -->
 
 <!-- fragment: guide_1 -->
-
-- A `rate_limited` failure carries the wait window. Cloudflare's limit is 1,200 requests per five minutes per user, counted across the dashboard and every token, so do not fan out speculatively; filter server-side with `name`, `type`, and `content` instead of listing everything and filtering locally.
-- Named creates that only add a resource are write-routed without claiming destruction. Updates, overwrites, deletes, rollbacks, cache purges, `cloudflare_api_mutate`, and `cloudflare_api_upload` are destructive. Read current state before changing it, and prefer a targeted `purge_cache` over `everything`.
+- Honor vendor rate-limit waits. The documented 1,200 calls per five minutes are cumulative across a user and its tokens.
+- Read state before replacement, rollback or purge. Prefer targeted cache purges in hosted `execute`. Mutations/uploads stay write-classified; approval belongs to the host and program access to the configured pool.
 <!-- endfragment -->
 
 <!-- fragment: guide_2 -->
 
 
+- Hosted `execute` owns ordinary mutations. The separate `surface: "api"`
+  complement owns read-only-program reads, binary/header-compatible uploads
+  and legacy Global API Key or R2 jurisdiction mutations. Configure distinct
+  connector ids and authorize each explicitly; there is no credential fallback.
 - Resolve account and zone ids independently. Defaults do not constrain token permissions. Distinguish missing or revoked credentials from missing product permissions, and honor supplied rate-limit waits.
 - The catalog contains `search` and `execute`. Search runs code against
   Cloudflare's OpenAPI document. Execute runs code that may call any authorized

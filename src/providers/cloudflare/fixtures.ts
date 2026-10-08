@@ -1,5 +1,5 @@
 import { cloudflare } from "./index.js";
-const options: Parameters<typeof cloudflare>[1] = { "purpose":"Audit fixture" };
+const options: Parameters<typeof cloudflare>[1] = { "purpose":"Audit fixture", "surface":"api" };
 export const fixture = {
   name: "cloudflare",
   options,

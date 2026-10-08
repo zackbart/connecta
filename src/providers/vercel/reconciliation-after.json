@@ -1,0 +1,394 @@
+{
+  "api": [
+    {
+      "name": "vercel_api_get",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "classification": "read"
+    },
+    {
+      "name": "vercel_api_mutate",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "vercel_api_upload",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "verify_project_domain",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "remove_project_domain",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "list_project_env_vars",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "classification": "read"
+    },
+    {
+      "name": "upsert_project_env_var",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "update_project_env_var",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "delete_project_env_var",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "promote_deployment",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "delete_deployment",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    }
+  ],
+  "mcp": [
+    {
+      "name": "list_project_domains",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "add_project_domain",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "cancel_deployment",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "upload_file",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "create_deployment",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "list_deployment_events",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "search_vercel_documentation",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "list_teams",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "list_projects",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_project",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "list_deployments",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_deployment",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_deployment_build_logs",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_runtime_logs",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_runtime_errors",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_web_analytics",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "list_agent_run_projects",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "list_agent_runs",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_agent_run",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_agent_run_trace",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "check_domain_availability_and_price",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_purchase_quote",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_domain_order",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "list_toolbar_threads",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "get_toolbar_thread",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "use_vercel_cli",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      },
+      "classification": "read"
+    },
+    {
+      "name": "reply_to_toolbar_thread",
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "classification": "write"
+    },
+    {
+      "name": "add_toolbar_reaction",
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "classification": "write"
+    },
+    {
+      "name": "deploy_to_vercel",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "buy_pro",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "buy_credits",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "buy_addon",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "buy_domain",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "get_access_to_vercel_url",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "web_fetch_vercel_url",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "import-claude-design-from-url",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "change_toolbar_thread_resolve_status",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
+    {
+      "name": "edit_toolbar_message",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    }
+  ]
+}

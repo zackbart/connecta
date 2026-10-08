@@ -103,7 +103,7 @@ function context(token: string | null = "secret_token"): ConnectorContext {
 
 function build(overrides: Record<string, unknown> = {}): Connector {
   return notion("workspace", {
-    purpose: "Team knowledge base",
+    surface: "api", purpose: "Team knowledge base",
     ...overrides,
   } as any);
 }
@@ -196,21 +196,21 @@ describe("notion() tool surface", () => {
   it("publishes exactly the maintained tool inventory", () => {
     const names = build().staticTools?.map((tool) => tool.name);
     expect(names).toEqual([
-      "search",
-      "get_page",
-      "get_page_content",
-      "get_page_property",
-      "get_database",
-      "get_data_source_schema",
-      "query_data_source",
-      "list_users",
-      "get_self",
-      "list_comments",
-      "create_page",
-      "append_blocks",
-      "update_page_properties",
-      "trash_page",
-      "add_comment",
+      "integration_search",
+      "integration_get_page",
+      "integration_get_page_content",
+      "integration_get_page_property",
+      "integration_get_database",
+      "integration_get_data_source_schema",
+      "integration_query_data_source",
+      "integration_list_users",
+      "integration_get_self",
+      "integration_list_comments",
+      "integration_create_page",
+      "integration_append_blocks",
+      "integration_update_page_properties",
+      "integration_trash_page",
+      "integration_add_comment",
     ]);
   });
 
@@ -225,23 +225,23 @@ describe("notion() tool surface", () => {
     // it is the exact partition the release ships. Moving a name across this
     // line changes which calls a host asks a human about.
     expect(reads).toEqual([
-      "search",
-      "get_page",
-      "get_page_content",
-      "get_page_property",
-      "get_database",
-      "get_data_source_schema",
-      "query_data_source",
-      "list_users",
-      "get_self",
-      "list_comments",
+      "integration_search",
+      "integration_get_page",
+      "integration_get_page_content",
+      "integration_get_page_property",
+      "integration_get_database",
+      "integration_get_data_source_schema",
+      "integration_query_data_source",
+      "integration_list_users",
+      "integration_get_self",
+      "integration_list_comments",
     ]);
     expect(writes).toEqual([
-      "create_page",
-      "append_blocks",
-      "update_page_properties",
-      "trash_page",
-      "add_comment",
+      "integration_create_page",
+      "integration_append_blocks",
+      "integration_update_page_properties",
+      "integration_trash_page",
+      "integration_add_comment",
     ]);
 
     // Only operations that replace or remove existing state claim destruction;
@@ -249,7 +249,7 @@ describe("notion() tool surface", () => {
     const destructive = tools
       .filter((tool) => tool.annotations?.destructiveHint === true)
       .map((tool) => tool.name);
-    expect(destructive).toEqual(["update_page_properties", "trash_page"]);
+    expect(destructive).toEqual(["integration_update_page_properties", "integration_trash_page"]);
   });
 
   it("gives every tool the description and schemas the registry expects", () => {
@@ -313,7 +313,7 @@ describe("notion() tool surface", () => {
       "a non-empty purpose",
     );
     expect(() =>
-      notion("workspace", { purpose: "Docs", defaultPageSize: 500 }),
+      notion("workspace", { surface: "api", purpose: "Docs", defaultPageSize: 500 }),
     ).toThrow("defaultPageSize to be a whole number between 1 and 100");
   });
 
@@ -383,7 +383,7 @@ describe("notion() MCP interface", () => {
 describe("notion() request construction", () => {
   it("sends the pinned API version and the operator's bearer token", async () => {
     queue({ body: PAGE_FIXTURE });
-    await call(build(), "get_page", { page_id: "page-1" });
+    await call(build(), "integration_get_page", { page_id: "page-1" });
 
     expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/pages/page-1`);
     expect(calls[0]?.headers["Notion-Version"]).toBe(NOTION_API_VERSION);
@@ -392,7 +392,7 @@ describe("notion() request construction", () => {
   });
 
   it("fails with auth_required before touching the network", async () => {
-    const error = await call(build(), "get_self", {}, context(null)).catch(
+    const error = await call(build(), "integration_get_self", {}, context(null)).catch(
       (thrown) => thrown,
     );
     expect(error).toBeInstanceOf(ConnectorCallError);
@@ -407,7 +407,7 @@ describe("notion() request construction", () => {
 describe("notion() lean projections", () => {
   it("flattens every property shape and reports truncation", async () => {
     queue({ body: PAGE_FIXTURE });
-    const page: any = await call(build(), "get_page", { page_id: "page-1" });
+    const page: any = await call(build(), "integration_get_page", { page_id: "page-1" });
 
     expect(page.id).toBe("page-1");
     expect(page.title).toBe("Quarterly review");
@@ -448,7 +448,7 @@ describe("notion() lean projections", () => {
 
   it("narrows to the requested properties", async () => {
     queue({ body: PAGE_FIXTURE });
-    const page: any = await call(build(), "get_page", {
+    const page: any = await call(build(), "integration_get_page", {
       page_id: "page-1",
       properties: ["Name", "Status"],
     });
@@ -458,7 +458,7 @@ describe("notion() lean projections", () => {
 
   it("returns Notion's untouched payload through the raw escape hatch", async () => {
     queue({ body: PAGE_FIXTURE });
-    const page = await call(build(), "get_page", {
+    const page = await call(build(), "integration_get_page", {
       page_id: "page-1",
       raw: true,
     });
@@ -482,7 +482,7 @@ describe("notion() lean projections", () => {
         next_cursor: "cursor-2",
       },
     });
-    const found: any = await call(build(), "search", { query: "review" });
+    const found: any = await call(build(), "integration_search", { query: "review" });
 
     expect(found.results[0]).toEqual({
       id: "page-1",
@@ -562,7 +562,7 @@ describe("notion() lean projections", () => {
     };
 
     queue({ body: parent });
-    const shallow: any = await call(build(), "get_page_content", {
+    const shallow: any = await call(build(), "integration_get_page_content", {
       block_id: "page-1",
     });
     expect(calls).toHaveLength(1);
@@ -627,7 +627,7 @@ describe("notion() lean projections", () => {
       },
       { body: { results: [], has_more: false } },
     );
-    const deep: any = await call(build(), "get_page_content", {
+    const deep: any = await call(build(), "integration_get_page_content", {
       block_id: "page-1",
       depth: 1,
     });
@@ -670,7 +670,7 @@ describe("notion() lean projections", () => {
       });
     }
 
-    const walked: any = await call(build(), "get_page_content", {
+    const walked: any = await call(build(), "integration_get_page_content", {
       block_id: "page-1",
       depth: 1,
     });
@@ -722,7 +722,7 @@ describe("notion() lean projections", () => {
       },
     );
 
-    const walked: any = await call(build(), "get_page_content", {
+    const walked: any = await call(build(), "integration_get_page_content", {
       block_id: "page-1",
       depth: 1,
     });
@@ -747,7 +747,7 @@ describe("notion() lean projections", () => {
       next_cursor: null,
     };
     queue({ body });
-    const raw = await call(build(), "get_page_content", {
+    const raw = await call(build(), "integration_get_page_content", {
       block_id: "page-1",
       depth: 2,
       raw: true,
@@ -782,7 +782,7 @@ describe("notion() lean projections", () => {
         },
       },
     });
-    const schema: any = await call(build(), "get_data_source_schema", {
+    const schema: any = await call(build(), "integration_get_data_source_schema", {
       data_source_id: "ds-1",
     });
     expect(schema.database_id).toBe("db-1");
@@ -812,7 +812,7 @@ describe("notion() lean projections", () => {
         data_sources: [{ id: "ds-1", name: "Roadmap" }],
       },
     });
-    const database: any = await call(build(), "get_database", {
+    const database: any = await call(build(), "integration_get_database", {
       database_id: "db-1",
     });
     expect(database.data_sources).toEqual([{ id: "ds-1", name: "Roadmap" }]);
@@ -823,17 +823,17 @@ describe("notion() lean projections", () => {
 describe("notion() pagination", () => {
   it("defaults to a lean page size and passes cursors back verbatim", async () => {
     queue({ body: { results: [], has_more: false, next_cursor: null } });
-    await call(build(), "query_data_source", { data_source_id: "ds-1" });
+    await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
     expect(calls[0]?.body).toEqual({ page_size: 25 });
 
     calls.length = 0;
     queue({ body: { results: [], has_more: false, next_cursor: null } });
-    await call(build({ defaultPageSize: 50 }), "list_users", {});
+    await call(build({ defaultPageSize: 50 }), "integration_list_users", {});
     expect(calls[0]?.url).toContain("page_size=50");
 
     calls.length = 0;
     queue({ body: { results: [], has_more: false, next_cursor: null } });
-    await call(build(), "list_comments", {
+    await call(build(), "integration_list_comments", {
       block_id: "page-1",
       start_cursor: "opaque::cursor+value",
       page_size: 100,
@@ -845,7 +845,7 @@ describe("notion() pagination", () => {
   });
 
   it("rejects a page size Notion would reject, before the request", async () => {
-    const error = await call(build(), "query_data_source", {
+    const error = await call(build(), "integration_query_data_source", {
       data_source_id: "ds-1",
       page_size: 5_000,
     }).catch((thrown: any) => thrown);
@@ -859,7 +859,7 @@ describe("notion() pagination", () => {
 
   it("passes filters and sorts through unchanged", async () => {
     queue({ body: { results: [], has_more: false } });
-    await call(build(), "query_data_source", {
+    await call(build(), "integration_query_data_source", {
       data_source_id: "ds-1",
       filter: { property: "Status", status: { equals: "Done" } },
       sorts: [{ property: "Due", direction: "ascending" }],
@@ -880,7 +880,7 @@ describe("notion() pagination", () => {
     const connector = build();
     for (const value of ["verified", "expired", "none"]) {
       queue({ body: { results: [], has_more: false } });
-      await call(connector, "query_data_source", {
+      await call(connector, "integration_query_data_source", {
         data_source_id: "ds-1",
         filter: {
           property: "Verification",
@@ -906,7 +906,7 @@ describe("notion() pagination", () => {
 
   it("builds search filter and sort objects from flat arguments", async () => {
     queue({ body: { results: [], has_more: false } });
-    await call(build(), "search", {
+    await call(build(), "integration_search", {
       query: "roadmap",
       object_type: "data_source",
       sort: "last_edited_desc",
@@ -920,7 +920,7 @@ describe("notion() pagination", () => {
 
     calls.length = 0;
     queue({ body: { results: [], has_more: false } });
-    await call(build(), "search", { sort: "relevance" });
+    await call(build(), "integration_search", { sort: "relevance" });
     expect(calls[0]?.body?.sort).toEqual({ property: "relevance" });
   });
 });
@@ -965,7 +965,7 @@ describe("notion() property pagination", () => {
         { relation: { id: "page-3" } },
       ]),
     });
-    const property: any = await call(build(), "get_page_property", {
+    const property: any = await call(build(), "integration_get_page_property", {
       page_id: "page-1",
       property_id: "prop",
     });
@@ -990,7 +990,7 @@ describe("notion() property pagination", () => {
         { people: { object: "user", id: "user-10", name: "Ada" } },
       ]),
     });
-    const property: any = await call(build(), "get_page_property", {
+    const property: any = await call(build(), "integration_get_page_property", {
       page_id: "page-1",
       property_id: "prop",
     });
@@ -1025,7 +1025,7 @@ describe("notion() property pagination", () => {
           },
         ]),
       });
-      const property: any = await call(build(), "get_page_property", {
+      const property: any = await call(build(), "integration_get_page_property", {
         page_id: "page-1",
         property_id: "prop",
       });
@@ -1040,7 +1040,7 @@ describe("notion() property pagination", () => {
     queue({
       body: { object: "property_item", id: "num", type: "number", number: 42 },
     });
-    const property: any = await call(build(), "get_page_property", {
+    const property: any = await call(build(), "integration_get_page_property", {
       page_id: "page-1",
       property_id: "num",
     });
@@ -1050,7 +1050,7 @@ describe("notion() property pagination", () => {
   it("passes page size and cursor through, and offers the raw escape hatch", async () => {
     const body = propertyList("relation", [{ relation: { id: "page-2" } }]);
     queue({ body });
-    const raw = await call(build(), "get_page_property", {
+    const raw = await call(build(), "integration_get_page_property", {
       page_id: "page-1",
       property_id: "prop",
       page_size: 100,
@@ -1079,7 +1079,7 @@ describe("notion() error mapping", () => {
     headers: Record<string, string> = {},
   ): Promise<any> {
     queue({ status, body, headers });
-    return call(build(), "get_page", { page_id: "page-1" }).catch(
+    return call(build(), "integration_get_page", { page_id: "page-1" }).catch(
       (thrown) => thrown,
     );
   }
@@ -1192,7 +1192,7 @@ describe("notion() error mapping", () => {
     globalThis.fetch = vi.fn(
       async () => new Response("<html>gateway</html>", { status: 502 }),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "get_self", {}).catch((thrown: any) => thrown);
+    const error = await call(build(), "integration_get_self", {}).catch((thrown: any) => thrown);
     expect(error.code).toBe("unavailable");
     expect(error.message).toContain("HTTP 502");
   });
@@ -1206,7 +1206,7 @@ describe("notion() error mapping", () => {
       async () =>
         new Response(JSON.stringify({ blob: "x".repeat(5 * 1024 * 1024) })),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "get_self", {}).catch(
+    const error = await call(build(), "integration_get_self", {}).catch(
       (thrown: any) => thrown,
     );
     expect(error).toBeInstanceOf(ConnectorCallError);
@@ -1221,7 +1221,7 @@ describe("notion() error mapping", () => {
 describe("notion() successful response integrity", () => {
   it.each(["<html>synthetic gateway</html>", "", "null", "[]", '"text"'])("rejects unusable successful JSON without reporting an empty page: %s", async (body) => {
     globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
-    await expect(call(build(), "get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
+    await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
       code: "connector_call_failed", retryable: false,
     });
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
@@ -1239,7 +1239,7 @@ describe("notion() successful response integrity", () => {
     }]);
     const invocation = new InvocationService(registry, new CatalogService(registry, "https://connecta.example"));
     const outcome = await runEdge(invocation.pipeline(
-      "workspace.append_blocks", { block_id: "synthetic", text: ["hello"] },
+      "workspace.integration_append_blocks", { block_id: "synthetic", text: ["hello"] },
       { source: "call_destructive_tool" },
     ));
     expect(outcome.ok).toBe(false);
@@ -1255,7 +1255,7 @@ describe("notion() successful response integrity", () => {
 describe("notion() writes", () => {
   it("creates a data source row with a schema-named title property", async () => {
     queue({ body: PAGE_FIXTURE });
-    await call(build(), "create_page", {
+    await call(build(), "integration_create_page", {
       parent_data_source_id: "ds-1",
       title: "New row",
       title_property: "Name",
@@ -1275,7 +1275,7 @@ describe("notion() writes", () => {
   });
 
   it("requires exactly one parent and one body form", async () => {
-    const both = await call(build(), "create_page", {
+    const both = await call(build(), "integration_create_page", {
       parent_page_id: "page-1",
       parent_data_source_id: "ds-1",
       title: "x",
@@ -1284,12 +1284,12 @@ describe("notion() writes", () => {
     expect(both.message).toContain("exactly one");
     expect(both.message).toContain("never by a database_id");
 
-    const neither = await call(build(), "create_page", { title: "x" }).catch(
+    const neither = await call(build(), "integration_create_page", { title: "x" }).catch(
       (thrown) => thrown,
     );
     expect(neither.code).toBe("invalid_args");
 
-    const twoBodies = await call(build(), "create_page", {
+    const twoBodies = await call(build(), "integration_create_page", {
       parent_page_id: "page-1",
       markdown: "a",
       children: [{ object: "block" }],
@@ -1301,7 +1301,7 @@ describe("notion() writes", () => {
 
   it("keeps reviewed create-page expansions outside the maintained tool", () => {
     const properties = build().staticTools?.find(
-      (tool) => tool.name === "create_page",
+      (tool) => tool.name === "integration_create_page",
     )?.inputSchema?.["properties"];
     for (const declined of [
       "workspace",
@@ -1327,7 +1327,7 @@ describe("notion() writes", () => {
         ],
       },
     });
-    const appended: any = await call(build(), "append_blocks", {
+    const appended: any = await call(build(), "integration_append_blocks", {
       block_id: "page-1",
       text: ["first", "second"],
       position: "after_block",
@@ -1352,7 +1352,7 @@ describe("notion() writes", () => {
     });
     expect(appended.appended).toBe(1);
 
-    const missingAnchor = await call(build(), "append_blocks", {
+    const missingAnchor = await call(build(), "integration_append_blocks", {
       block_id: "page-1",
       text: ["x"],
       position: "after_block",
@@ -1363,7 +1363,7 @@ describe("notion() writes", () => {
 
   it("updates properties without being able to trash a page", async () => {
     queue({ body: PAGE_FIXTURE });
-    await call(build(), "update_page_properties", {
+    await call(build(), "integration_update_page_properties", {
       page_id: "page-1",
       title: "Renamed",
       title_property: "Name",
@@ -1377,17 +1377,17 @@ describe("notion() writes", () => {
     // in_trash is not in this tool's schema, so an update can never trash.
     expect(
       build().staticTools?.find(
-        (tool) => tool.name === "update_page_properties",
+        (tool) => tool.name === "integration_update_page_properties",
       )?.inputSchema?.["properties"],
     ).not.toHaveProperty("in_trash");
     const properties = build().staticTools?.find(
-      (tool) => tool.name === "update_page_properties",
+      (tool) => tool.name === "integration_update_page_properties",
     )?.inputSchema?.["properties"];
     expect(properties).not.toHaveProperty("is_locked");
     expect(properties).not.toHaveProperty("template");
     expect(properties).not.toHaveProperty("erase_content");
 
-    const empty = await call(build(), "update_page_properties", {
+    const empty = await call(build(), "integration_update_page_properties", {
       page_id: "page-1",
     }).catch((thrown: any) => thrown);
     expect(empty.code).toBe("invalid_args");
@@ -1395,7 +1395,7 @@ describe("notion() writes", () => {
 
   it("trashes and restores through the same tool", async () => {
     queue({ body: { ...PAGE_FIXTURE, in_trash: true } });
-    const trashed: any = await call(build(), "trash_page", {
+    const trashed: any = await call(build(), "integration_trash_page", {
       page_id: "page-1",
     });
     expect(calls[0]?.body).toEqual({ in_trash: true });
@@ -1403,7 +1403,7 @@ describe("notion() writes", () => {
 
     calls.length = 0;
     queue({ body: PAGE_FIXTURE });
-    await call(build(), "trash_page", { page_id: "page-1", restore: true });
+    await call(build(), "integration_trash_page", { page_id: "page-1", restore: true });
     expect(calls[0]?.body).toEqual({ in_trash: false });
   });
 
@@ -1417,7 +1417,7 @@ describe("notion() writes", () => {
         rich_text: [{ plain_text: "looks good" }],
       },
     });
-    const comment: any = await call(build(), "add_comment", {
+    const comment: any = await call(build(), "integration_add_comment", {
       page_id: "page-1",
       text: "looks good",
     });
@@ -1435,13 +1435,13 @@ describe("notion() writes", () => {
 
     calls.length = 0;
     queue({ body: { id: "comment-2", rich_text: [] } });
-    await call(build(), "add_comment", {
+    await call(build(), "integration_add_comment", {
       discussion_id: "disc-1",
       text: "reply",
     });
     expect(calls[0]?.body?.discussion_id).toBe("disc-1");
 
-    const ambiguous = await call(build(), "add_comment", {
+    const ambiguous = await call(build(), "integration_add_comment", {
       page_id: "page-1",
       discussion_id: "disc-1",
       text: "x",

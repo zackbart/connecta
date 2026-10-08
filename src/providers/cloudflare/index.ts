@@ -107,8 +107,8 @@ interface CloudflareCommonOptions {
 }
 
 export interface CloudflareApiOptions extends CloudflareCommonOptions {
-  /** Omit for backward compatibility; the hand-written API interface is default. */
-  surface?: "api";
+  /** Select the REST complement explicitly; hosted MCP is the default. */
+  surface: "api";
   /**
    * Default account id for account-scoped tools. When set, `accountId` becomes
    * an optional argument; when omitted, agents must pass one and can find it
@@ -132,7 +132,7 @@ export interface CloudflareApiOptions extends CloudflareCommonOptions {
 }
 
 export interface CloudflareMcpOptions extends CloudflareCommonOptions {
-  surface: "mcp";
+  surface?: "mcp";
   /** OAuth by default, or a scoped API token for a headless deployment. */
   auth?: RemoteMcpAuth;
   /** Optional per-runtime downstream call-admission policy. */
@@ -731,14 +731,6 @@ function projectKvBulkValues(value: unknown): JsonRecord {
   return compact({ values: result["values"] });
 }
 
-function projectKvBulkResult(value: unknown): JsonRecord {
-  const result = asRecord(value);
-  return compact({
-    successfulKeyCount: result["successful_key_count"],
-    unsuccessfulKeys: result["unsuccessful_keys"],
-  });
-}
-
 function projectR2Bucket(value: unknown): JsonRecord {
   const bucket = asRecord(value);
   return compact({
@@ -1081,22 +1073,6 @@ function requireString(args: JsonRecord, key: string): string {
   throw new ConnectorCallError("invalid_args", `${key} must not be blank.`);
 }
 
-
-function encodeObjectKey(value: string): string {
-  return value
-    .split("/")
-    .map((segment) => {
-      if (segment === "." || segment === "..") {
-        throw new ConnectorCallError(
-          "invalid_args",
-          "objectKey cannot contain '.' or '..' path segments because URL normalization would change the target resource.",
-        );
-      }
-      return encodeURIComponent(segment);
-    })
-    .join("/");
-}
-
 function cloudflareApiPath(value: unknown): string {
   if (typeof value !== "string") {
     throw new ConnectorCallError("invalid_args", "path must be a string.");
@@ -1203,6 +1179,19 @@ function rawSpec(
     query: queryFromArgs(args["query"]),
     headers: headersFromArgs(args["headers"]),
   }) as Pick<GuardedRequest, "path" | "query" | "headers">;
+}
+
+// The hosted helper accepts contentType/rawBody but no R2 jurisdiction header.
+// Ordinary headers such as Accept are not a reason to restore JSON duplicates.
+function needsMutationHeaders(spec: Pick<GuardedRequest, "path" | "headers">): boolean {
+  return /^\/accounts\/[^/]+\/r2\/buckets\/[^/]+(?:\/|$)/.test(spec.path) &&
+    Object.entries(spec.headers ?? {}).some(([name, value]) => name.toLowerCase() === "cf-r2-jurisdiction" && typeof value === "string" && value.trim().length > 0);
+}
+
+// Reviewed raw-body families, rather than a Content-Type assertion that could
+// send an ordinary JSON DNS/configuration mutation through the upload tool.
+function isUploadEndpoint(path: string): boolean {
+  return /^\/accounts\/[^/]+\/(?:workers\/scripts\/[^/]+|storage\/kv\/namespaces\/[^/]+\/values\/.+|r2\/buckets\/[^/]+\/objects\/.+|images\/v1|stream(?:\/.*)?|pages\/assets\/upload|pages\/projects\/[^/]+\/deployments)\/?$/.test(path);
 }
 
 function r2Headers(args: JsonRecord): Record<string, string | undefined> {
@@ -1367,14 +1356,6 @@ const KV_BULK_VALUES_SCHEMA: JsonSchema = {
   required: ["values"],
 };
 
-const KV_BULK_RESULT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    successfulKeyCount: { type: "number" },
-    unsuccessfulKeys: { type: "array", items: { type: "string" } },
-  },
-};
-
 const R2_CORS_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -1470,13 +1451,6 @@ const R2_JURISDICTION_PROPERTY: JsonSchema = {
     "Bucket jurisdiction. Omit for ordinary buckets; set eu, us, or fedramp for jurisdictional buckets.",
 };
 
-const KV_JURISDICTION_PROPERTY: JsonSchema = {
-  type: "string",
-  enum: ["eu", "fedramp", "us"],
-  description:
-    "Creation-only namespace jurisdiction. Omit for an ordinary namespace; it cannot be changed by rename_kv_namespace.",
-};
-
 const R2_BUCKET_NAME_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 3,
@@ -1518,30 +1492,6 @@ const WORKER_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
   description: "Deployment id from list_worker_deployments.",
-};
-
-const RETRY_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  description: "Deployment id to retry.",
-};
-
-const ROLLBACK_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  description: "Previous deployment id to promote.",
-};
-
-const DELETE_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  description: "Deployment id to delete.",
-};
-
-const DELETE_PROJECT_NAME_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  description: "Pages project name to delete.",
 };
 
 const SETTING_ID_PROPERTY: JsonSchema = {
@@ -1623,19 +1573,6 @@ function getResult(
   return async (args, ctx) => {
     const { result } = await callCloudflare(send, request(args), ctx);
     return project(result, args);
-  };
-}
-
-function deleteAck(
-  send: GuardedTransport,
-  key: string,
-  value: (args: JsonRecord) => string,
-  request: (args: JsonRecord, value: string) => GuardedRequest,
-): ApiTool["handler"] {
-  return async (args, ctx) => {
-    const id = value(args);
-    await callCloudflare(send, request(args, id), ctx);
-    return { deleted: true, [key]: id };
   };
 }
 
@@ -1783,7 +1720,7 @@ function buildTools(
     ),
     cfTool(
       "cloudflare_api_mutate",
-      "Call any JSON POST, PUT, PATCH, or DELETE endpoint under Cloudflare's v4 API with this connector's credential. The approval-gated write hatch for products the named surface does not reach. No multipart or binary uploads.",
+      "Call JSON mutations using an explicit Global API Key identity, or R2 bucket endpoints requiring cf-r2-jurisdiction. API-token ordinary JSON mutations belong to hosted MCP execute. No multipart or binary uploads.",
       { readOnlyHint: false, destructiveHint: true },
       undefined,
       undefined,
@@ -1825,6 +1762,9 @@ function buildTools(
       async (args: JsonRecord, ctx) => {
               const method = String(args["method"]) as GuardedRequest["method"];
               const spec = rawSpec(args);
+              if (authentication === "apiToken" && !needsMutationHeaders(spec)) {
+                throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for JSON mutations with an API token. This REST tool is reserved for Global API Key identity or R2 bucket operations requiring cf-r2-jurisdiction.");
+              }
               const { result, resultInfo } = await callCloudflare(
                 send,
                 compact({
@@ -1919,6 +1859,9 @@ function buildTools(
             },
       async (args: JsonRecord, ctx) => {
               const spec = rawSpec(args);
+              if (authentication === "apiToken" && !isUploadEndpoint(spec.path)) {
+                throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for this mutation. REST uploads are confined to Workers, KV values, R2 objects, Images, Stream and Pages upload endpoints.");
+              }
               const upload = uploadBody(args);
               const { result } = await callCloudflare(
                 send,
@@ -2063,36 +2006,6 @@ function buildTools(
                 }),
         (result, args) => args["raw"] === true ? result : projectZoneSetting(result),
       ),
-    ),
-    cfTool(
-      "update_zone_setting",
-      "Set one editable zone setting. Read it first: allowed value types and plan restrictions differ by setting.",
-      { readOnlyHint: false, destructiveHint: true },
-      "zoneId",
-      scope.zoneId,
-      {
-              settingId: SETTING_ID_PROPERTY,
-                value: {
-                  type: ["string", "number", "boolean", "array"],
-                  description:
-                    "New setting value in the type returned by get_zone_setting. Arrays must contain strings.",
-                  items: { type: "string" },
-                }
-            },
-      ["settingId", "value"],
-      ZONE_SETTING_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "PATCH",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/settings/${encodeURIComponent(requireString(args, "settingId"))}`,
-                  body: { value: args["value"] },
-                },
-                ctx,
-              );
-              return projectZoneSetting(result);
-            },
     ),
     cfTool(
       "list_zone_rulesets",
@@ -2350,40 +2263,6 @@ function buildTools(
       ),
     ),
     cfTool(
-      "delete_worker_script",
-      "Delete a Worker script and stop traffic served by that script. This cannot be undone from the API.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              scriptName: SCRIPT_NAME_PROPERTY,
-                force: {
-                  type: "boolean",
-                  description:
-                    "Pass Cloudflare's force=true option when the script has dependencies that permit forced removal.",
-                }
-            },
-      ["scriptName"],
-      {
-              type: "object",
-              properties: {
-                deleted: { type: "boolean" },
-                scriptName: { type: "string" },
-              },
-              required: ["deleted", "scriptName"],
-            },
-      deleteAck(
-        send,
-        "scriptName",
-        (args) => requireString(args, "scriptName"),
-        (args, scriptName) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(scriptName)}`,
-                  query: { force: typeof args["force"] === "boolean" ? args["force"] : undefined },
-                }),
-      ),
-    ),
-    cfTool(
       "list_kv_namespaces",
       "List Workers KV namespaces in an account, with the namespace ids bindings refer to.",
       readOnly,
@@ -2438,99 +2317,6 @@ function buildTools(
                   path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}`,
                 }),
         projectKvNamespace,
-      ),
-    ),
-    cfTool(
-      "create_kv_namespace",
-      "Create a Workers KV namespace.",
-      { readOnlyHint: false },
-      "accountId",
-      scope.accountId,
-      {
-              title: {
-                  type: "string",
-                  minLength: 1,
-                  maxLength: 512,
-                  description: "Human-readable namespace title.",
-                },
-                jurisdiction: KV_JURISDICTION_PROPERTY
-            },
-      ["title"],
-      KV_NAMESPACE_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces`,
-                  body: compact({
-                    title: requireString(args, "title"),
-                    jurisdiction: args["jurisdiction"],
-                  }),
-                },
-                ctx,
-              );
-              return projectKvNamespace(result);
-            },
-    ),
-    cfTool(
-      "rename_kv_namespace",
-      "Rename an existing Workers KV namespace without changing its id or keys.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              namespaceId: NAMESPACE_ID_PROPERTY,
-                title: {
-                  type: "string",
-                  minLength: 1,
-                  maxLength: 512,
-                  description: "Replacement namespace title.",
-                }
-            },
-      ["namespaceId", "title"],
-      KV_NAMESPACE_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "PUT",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}`,
-                  body: { title: requireString(args, "title") },
-                },
-                ctx,
-              );
-              return result
-                ? projectKvNamespace(result)
-                : { renamed: true, namespaceId: args["namespaceId"] };
-            },
-    ),
-    cfTool(
-      "delete_kv_namespace",
-      "Permanently delete a Workers KV namespace and every key stored in it.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              namespaceId: NAMESPACE_ID_PROPERTY
-            },
-      ["namespaceId"],
-      {
-              type: "object",
-              properties: {
-                deleted: { type: "boolean" },
-                namespaceId: { type: "string" },
-              },
-              required: ["deleted", "namespaceId"],
-            },
-      deleteAck(
-        send,
-        "namespaceId",
-        (args) => requireString(args, "namespaceId"),
-        (args, namespaceId) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(namespaceId)}`,
-                }),
       ),
     ),
     cfTool(
@@ -2639,102 +2425,6 @@ function buildTools(
             },
     ),
     cfTool(
-      "bulk_write_kv_values",
-      "Create or replace multiple Workers KV values, with optional expirations and JSON metadata.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              namespaceId: NAMESPACE_ID_PROPERTY,
-                entries: {
-                  type: "array",
-                  minItems: 1,
-                  maxItems: 10_000,
-                  description: "Key/value entries to write, up to Cloudflare's 10,000-key bulk limit.",
-                  items: {
-                    type: "object",
-                    properties: {
-                      key: {
-                        type: "string",
-                        minLength: 1,
-                        maxLength: 512,
-                        description: "Key name, up to Cloudflare's 512 bytes.",
-                      },
-                      value: {
-                        type: "string",
-                        maxLength: 26_214_400,
-                        description: "Value, up to Cloudflare's 25 MiB.",
-                      },
-                      expiration: {
-                        type: "number",
-                        description: "Absolute expiry as a Unix timestamp in seconds.",
-                      },
-                      expiration_ttl: {
-                        type: "number",
-                        minimum: 60,
-                        description: "Relative expiry in seconds; Cloudflare's floor is 60.",
-                      },
-                      metadata: {
-                        type: ["object", "array", "string", "number", "boolean", "null"],
-                        description: "JSON metadata returned beside the key by list_kv_keys.",
-                      },
-                      base64: {
-                        type: "boolean",
-                        description: "Treat value as base64 and store the decoded bytes.",
-                      },
-                    },
-                    required: ["key", "value"],
-                    additionalProperties: false,
-                  },
-                }
-            },
-      ["namespaceId", "entries"],
-      KV_BULK_RESULT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "PUT",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk`,
-                  body: args["entries"],
-                },
-                ctx,
-              );
-              return projectKvBulkResult(result);
-            },
-    ),
-    cfTool(
-      "bulk_delete_kv_values",
-      "Permanently delete multiple keys from a Workers KV namespace.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              namespaceId: NAMESPACE_ID_PROPERTY,
-                keys: {
-                  type: "array",
-                  minItems: 1,
-                  maxItems: 10_000,
-                  items: { type: "string", minLength: 1, maxLength: 512 },
-                  description: "Key names to delete, up to Cloudflare's 10,000-key bulk limit.",
-                }
-            },
-      ["namespaceId", "keys"],
-      KV_BULK_RESULT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk/delete`,
-                  body: args["keys"],
-                },
-                ctx,
-              );
-              return projectKvBulkResult(result);
-            },
-    ),
-    cfTool(
       "list_r2_buckets",
       "List R2 buckets in an account, with location and storage class.",
       readOnly,
@@ -2816,109 +2506,6 @@ function buildTools(
       ),
     ),
     cfTool(
-      "create_r2_bucket",
-      "Create an R2 bucket with an optional location hint and default storage class.",
-      { readOnlyHint: false },
-      "accountId",
-      scope.accountId,
-      {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY,
-                locationHint: {
-                  type: "string",
-                  enum: ["apac", "eeur", "enam", "weur", "wnam", "oc"],
-                  description: "Optional placement hint for the new bucket.",
-                },
-                storageClass: {
-                  type: "string",
-                  enum: ["Standard", "InfrequentAccess"],
-                  description: "Default storage class for new objects.",
-                }
-            },
-      ["bucketName"],
-      R2_BUCKET_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets`,
-                  headers: r2Headers(args),
-                  body: compact({
-                    name: requireString(args, "bucketName"),
-                    locationHint: args["locationHint"],
-                    storageClass: args["storageClass"],
-                  }),
-                },
-                ctx,
-              );
-              return projectR2Bucket(result);
-            },
-    ),
-    cfTool(
-      "update_r2_bucket",
-      "Change the default storage class used for newly uploaded objects in an R2 bucket.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY,
-                storageClass: {
-                  type: "string",
-                  enum: ["Standard", "InfrequentAccess"],
-                  description: "New default storage class for future uploads.",
-                }
-            },
-      ["bucketName", "storageClass"],
-      R2_BUCKET_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "PATCH",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}`,
-                  headers: {
-                    ...r2Headers(args),
-                    "cf-r2-storage-class": String(args["storageClass"]),
-                  },
-                },
-                ctx,
-              );
-              return projectR2Bucket(result);
-            },
-    ),
-    cfTool(
-      "delete_r2_bucket",
-      "Permanently delete an empty R2 bucket and all of its configuration. Cloudflare refuses non-empty buckets.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY
-            },
-      ["bucketName"],
-      {
-              type: "object",
-              properties: {
-                deleted: { type: "boolean" },
-                bucketName: { type: "string" },
-              },
-              required: ["deleted", "bucketName"],
-            },
-      deleteAck(
-        send,
-        "bucketName",
-        (args) => requireString(args, "bucketName"),
-        (args, bucketName) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(bucketName)}`,
-                  headers: r2Headers(args),
-                }),
-      ),
-    ),
-    cfTool(
       "list_r2_objects",
       "List object keys and metadata in an R2 bucket by prefix, with delimiter grouping and cursor pagination.",
       readOnly,
@@ -2987,41 +2574,6 @@ function buildTools(
                 truncated: resultInfo?.is_truncated === true,
               };
             },
-    ),
-    cfTool(
-      "delete_r2_object",
-      "Permanently delete one object from an R2 bucket by key.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY,
-                objectKey: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Exact object key. Slashes are preserved as path separators.",
-                }
-            },
-      ["bucketName", "objectKey"],
-      {
-              type: "object",
-              properties: {
-                deleted: { type: "boolean" },
-                objectKey: { type: "string" },
-              },
-              required: ["deleted", "objectKey"],
-            },
-      deleteAck(
-        send,
-        "objectKey",
-        (args) => requireString(args, "objectKey"),
-        (args, objectKey) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/objects/${encodeObjectKey(objectKey)}`,
-                  headers: r2Headers(args),
-                }),
-      ),
     ),
     // No `get_r2_metrics`, `set_r2_cors`, or `delete_r2_cors` on purpose (#350).
     // A named tool is a permanent line item in every deployment's catalog, and
@@ -3166,76 +2718,6 @@ function buildTools(
       ),
     ),
     cfTool(
-      "retry_pages_deployment",
-      "Retry a failed or cancelled Pages deployment using its existing source and build configuration.",
-      { readOnlyHint: false },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: PAGES_PROJECT_NAME_PROPERTY,
-                deploymentId: RETRY_DEPLOYMENT_ID_PROPERTY
-            },
-      ["projectName", "deploymentId"],
-      PAGES_DEPLOYMENT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}/retry`,
-                },
-                ctx,
-              );
-              return projectPagesDeployment(result);
-            },
-    ),
-    cfTool(
-      "rollback_pages_deployment",
-      "Promote a previous Pages deployment to production, replacing the currently served production deployment.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: PAGES_PROJECT_NAME_PROPERTY,
-                deploymentId: ROLLBACK_DEPLOYMENT_ID_PROPERTY
-            },
-      ["projectName", "deploymentId"],
-      PAGES_DEPLOYMENT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}/rollback`,
-                },
-                ctx,
-              );
-              return projectPagesDeployment(result);
-            },
-    ),
-    cfTool(
-      "delete_pages_deployment",
-      "Permanently delete a Pages deployment and its immutable deployment URL.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: PAGES_PROJECT_NAME_PROPERTY,
-                deploymentId: DELETE_DEPLOYMENT_ID_PROPERTY
-            },
-      ["projectName", "deploymentId"],
-      { type: "object", properties: { deleted: { type: "boolean" }, deploymentId: { type: "string" } }, required: ["deleted", "deploymentId"] },
-      deleteAck(
-        send,
-        "deploymentId",
-        (args) => requireString(args, "deploymentId"),
-        (args, deploymentId) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(deploymentId)}`,
-                }),
-      ),
-    ),
-    cfTool(
       "list_pages_domains",
       "List custom domains attached to a Pages project and their validation status.",
       readOnly,
@@ -3256,418 +2738,6 @@ function buildTools(
                 ctx,
               );
               return { domains: asArray(result).map(projectPagesDomain) };
-            },
-    ),
-    cfTool(
-      "add_pages_domain",
-      "Attach a custom domain to a Pages project. DNS ownership and validation still apply.",
-      { readOnlyHint: false },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: PAGES_PROJECT_NAME_PROPERTY,
-                domain: { type: "string", minLength: 1, description: "Fully qualified custom domain to attach." }
-            },
-      ["projectName", "domain"],
-      PAGES_DOMAIN_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains`,
-                  body: { name: requireString(args, "domain") },
-                },
-                ctx,
-              );
-              return projectPagesDomain(result);
-            },
-    ),
-    cfTool(
-      "delete_pages_domain",
-      "Detach a custom domain from a Pages project.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: PAGES_PROJECT_NAME_PROPERTY,
-                domain: { type: "string", minLength: 1, description: "Custom domain to detach." }
-            },
-      ["projectName", "domain"],
-      { type: "object", properties: { deleted: { type: "boolean" }, domain: { type: "string" } }, required: ["deleted", "domain"] },
-      deleteAck(
-        send,
-        "domain",
-        (args) => requireString(args, "domain"),
-        (args, domain) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains/${encodeURIComponent(domain)}`,
-                }),
-      ),
-    ),
-    cfTool(
-      "purge_pages_build_cache",
-      "Clear a Pages project's build cache so its next deployment rebuilds dependencies and artifacts from scratch.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: PAGES_PROJECT_NAME_PROPERTY
-            },
-      ["projectName"],
-      { type: "object", properties: { purged: { type: "boolean" } }, required: ["purged"] },
-      async (args: JsonRecord, ctx) => {
-              await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/purge_build_cache`,
-                },
-                ctx,
-              );
-              return { purged: true };
-            },
-    ),
-    cfTool(
-      "delete_pages_project",
-      "Permanently delete a Pages project, its deployments, and project configuration.",
-      { readOnlyHint: false, destructiveHint: true },
-      "accountId",
-      scope.accountId,
-      {
-              projectName: DELETE_PROJECT_NAME_PROPERTY
-            },
-      ["projectName"],
-      { type: "object", properties: { deleted: { type: "boolean" }, projectName: { type: "string" } }, required: ["deleted", "projectName"] },
-      deleteAck(
-        send,
-        "projectName",
-        (args) => requireString(args, "projectName"),
-        (args, projectName) => ({
-                  method: "DELETE",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(projectName)}`,
-                }),
-      ),
-    ),
-    cfTool(
-      // Additive: brings a record into being and destroys nothing, so
-      // `destructiveHint` stays unset. `readOnlyHint: false` already routes it
-      // through call_destructive_tool.
-      "create_dns_record",
-      "Create a content-based DNS record in a zone; the type enum lists the creatable types. Check list_dns_records first — Cloudflare rejects a duplicate rather than replacing it. Structured types like SRV and CAA are readable but not creatable.",
-      { readOnlyHint: false },
-      "zoneId",
-      scope.zoneId,
-      {
-              type: {
-                  type: "string",
-                  enum: [...CLOUDFLARE_CONTENT_DNS_RECORD_TYPES],
-                  description: "Record type.",
-                },
-                name: {
-                  type: "string",
-                  description:
-                    "Record name. Use the apex domain for the root, or a fully qualified subdomain, e.g. www.example.com.",
-                },
-                content: {
-                  type: "string",
-                  description:
-                    "Record value: an IPv4 address for A, IPv6 for AAAA, a hostname for CNAME/MX/NS, or the text body for TXT.",
-                },
-                ttl: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: 86400,
-                  description:
-                    "Time to live in seconds. 1 means automatic, which is what a proxied record must use; any other value must be at least 60 (30 on Enterprise zones). Defaults to 1.",
-                },
-                proxied: {
-                  type: "boolean",
-                  description:
-                    "Route through Cloudflare's proxy. Only A, AAAA, and CNAME records are proxiable. Defaults to false.",
-                },
-                priority: {
-                  type: "integer",
-                  minimum: 0,
-                  maximum: 65535,
-                  description: "Mail-server preference. MX records only.",
-                },
-                comment: {
-                  type: "string",
-                  description: "Operator-facing note stored with the record.",
-                },
-                tags: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Custom tags, available on paid plans.",
-                }
-            },
-      ["type", "name", "content"],
-      DNS_RECORD_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records`,
-                  body: compact({
-                    type: args["type"],
-                    name: args["name"],
-                    content: args["content"],
-                    ttl: optionalNumber(args, "ttl") ?? 1,
-                    proxied: args["proxied"],
-                    priority: args["priority"],
-                    comment: args["comment"],
-                    tags: args["tags"],
-                  }),
-                },
-                ctx,
-              );
-              return projectDnsRecord(result);
-            },
-    ),
-    cfTool(
-      // Destructive: it overwrites what a record already resolves to.
-      "update_dns_record",
-      "Update fields on an existing DNS record. Only the supplied fields change; everything else keeps its current value. Changing content on a live record repoints traffic immediately.",
-      { readOnlyHint: false, destructiveHint: true },
-      "zoneId",
-      scope.zoneId,
-      {
-              recordId: RECORD_ID_PROPERTY,
-                type: {
-                  type: "string",
-                  enum: [...CLOUDFLARE_CONTENT_DNS_RECORD_TYPES],
-                  description:
-                    "Record type. Send it whenever content changes; Cloudflare treats type and content as a pair.",
-                },
-                name: { type: "string", description: "Fully qualified record name." },
-                content: { type: "string", description: "New record value." },
-                ttl: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: 86400,
-                  description:
-                    "Seconds; 1 means automatic, otherwise at least 60 (30 on Enterprise zones).",
-                },
-                proxied: {
-                  type: "boolean",
-                  description:
-                    "Route through Cloudflare's proxy. Only A, AAAA, and CNAME records are proxiable, and a proxied record must use ttl 1.",
-                },
-                priority: {
-                  type: "integer",
-                  minimum: 0,
-                  maximum: 65535,
-                  description: "Mail-server preference. MX records only.",
-                },
-                comment: {
-                  type: "string",
-                  description:
-                    "Operator-facing note stored with the record. Replaces the existing note.",
-                },
-                tags: {
-                  type: "array",
-                  items: { type: "string" },
-                  description:
-                    "Custom tags, available on paid plans. Replaces the existing tag set rather than adding to it.",
-                }
-            },
-      ["recordId"],
-      DNS_RECORD_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const body: JsonRecord = {};
-              for (const key of [
-                "type",
-                "name",
-                "content",
-                "ttl",
-                "proxied",
-                "priority",
-                "comment",
-                "tags",
-              ]) {
-                if (args[key] !== undefined) body[key] = args[key];
-              }
-              if (Object.keys(body).length === 0) {
-                throw new ConnectorCallError(
-                  "invalid_args",
-                  "update_dns_record needs at least one field to change besides zoneId and recordId.",
-                  {
-                    validation: {
-                      issues: [
-                        {
-                          path: "/",
-                          code: "anyOf",
-                          expected: "at least one of type, name, content, ttl, proxied, priority, comment, tags",
-                        },
-                      ],
-                    },
-                  },
-                );
-              }
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "PATCH",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(
-                    String(args["recordId"]),
-                  )}`,
-                  body,
-                },
-                ctx,
-              );
-              return projectDnsRecord(result);
-            },
-    ),
-    cfTool(
-      "delete_dns_record",
-      "Delete a DNS record by id. The record stops resolving immediately and Cloudflare keeps no undo.",
-      { readOnlyHint: false, destructiveHint: true },
-      "zoneId",
-      scope.zoneId,
-      {
-              recordId: RECORD_ID_PROPERTY
-            },
-      ["recordId"],
-      {
-              type: "object",
-              properties: {
-                deleted: { type: "boolean" },
-                recordId: { type: "string" },
-              },
-              required: ["deleted", "recordId"],
-            },
-      deleteAck(
-        send,
-        "recordId",
-        (args) => String(args["recordId"]),
-        (args, recordId) => ({
-                  method: "DELETE",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(recordId)}`,
-                }),
-      ),
-    ),
-    cfTool(
-      "purge_cache",
-      "Purge Cloudflare's edge cache for a zone. Prefer files, tags, hosts, or prefixes; everything discards the entire zone cache and sends every subsequent request to the origin until the cache refills.",
-      { readOnlyHint: false, destructiveHint: true },
-      "zoneId",
-      scope.zoneId,
-      {
-              everything: {
-                  type: "boolean",
-                  description:
-                    "Purge the entire zone cache. Mutually exclusive with the targeted options below, and a real load event for the origin.",
-                },
-                files: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 1,
-                  maxItems: 100,
-                  description:
-                    "Absolute URLs to purge, e.g. https://example.com/style.css. Up to 100 per request (500 on Enterprise).",
-                },
-                tags: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 1,
-                  maxItems: 100,
-                  description:
-                    "Cache-Tag values to purge. Up to 100 per request; available on every plan.",
-                },
-                hosts: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 1,
-                  maxItems: 100,
-                  description:
-                    "Hostnames to purge. Up to 100 per request; available on every plan.",
-                },
-                prefixes: {
-                  type: "array",
-                  items: { type: "string" },
-                  minItems: 1,
-                  maxItems: 100,
-                  description:
-                    "URL prefixes to purge, e.g. example.com/assets. Up to 100 per request; available on every plan.",
-                }
-            },
-      [],
-      {
-              type: "object",
-              properties: {
-                purged: { type: "boolean" },
-                zoneId: { type: "string" },
-                scope: {
-                  type: "string",
-                  description:
-                    "Which variant ran: everything, files, tags, hosts, or prefixes.",
-                },
-              },
-              required: ["purged", "zoneId", "scope"],
-            },
-      async (args: JsonRecord, ctx) => {
-              const zoneId = zoneArg(args);
-              const targeted = (["files", "tags", "hosts", "prefixes"] as const).filter(
-                (key) => Array.isArray(args[key]) && (args[key] as unknown[]).length > 0,
-              );
-              const everything = args["everything"] === true;
-              // One variant per call is this connection's contract, not a
-              // documented API restriction: Cloudflare's schema models the body as
-              // `anyOf`, which does not forbid combining. Refusing locally gives an
-              // agent `invalid_args` naming the conflict instead of a purge whose
-              // actual scope is ambiguous. Combined purging would be a deliberate
-              // change here.
-              if (everything && targeted.length > 0) {
-                throw new ConnectorCallError(
-                  "invalid_args",
-                  "purge_cache takes either everything: true or one targeted list, never both.",
-                  {
-                    validation: {
-                      issues: [
-                        {
-                          path: "/everything",
-                          code: "oneOf",
-                          expected: "everything: true alone, or exactly one of files, tags, hosts, prefixes",
-                        },
-                      ],
-                    },
-                  },
-                );
-              }
-              if (!everything && targeted.length !== 1) {
-                throw new ConnectorCallError(
-                  "invalid_args",
-                  targeted.length === 0
-                    ? "purge_cache needs everything: true or one of files, tags, hosts, or prefixes."
-                    : `purge_cache takes exactly one targeted list; received ${targeted.join(", ")}.`,
-                  {
-                    validation: {
-                      issues: [
-                        {
-                          path: "/",
-                          code: "oneOf",
-                          expected: "everything: true, or exactly one of files, tags, hosts, prefixes",
-                        },
-                      ],
-                    },
-                  },
-                );
-              }
-              const variant = everything ? "everything" : targeted[0]!;
-              await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/zones/${encodeURIComponent(zoneId)}/purge_cache`,
-                  body: everything
-                    ? { purge_everything: true }
-                    : { [variant]: args[variant] },
-                },
-                ctx,
-              );
-              return { purged: true, zoneId, scope: variant };
             },
     ),
   ];
@@ -3868,7 +2938,7 @@ const CLOUDFLARE_OPTIONS = variants("surface", {
     ...keys("surface"),
     auth: REMOTE_MCP_AUTH,
   }).shape,
-}, "api");
+}, "mcp");
 
 /** A maintained Cloudflare connection using the selected provider interface. */
 export const cloudflare = defineProvider<CloudflareConnectionOptions>({
@@ -3889,9 +2959,9 @@ function cloudflareConnector(
   provider: ProviderContext,
 ): Connector {
   const purpose = options.purpose.trim();
-  return options.surface === "mcp"
-    ? cloudflareMcp(id, purpose, options, provider)
-    : cloudflareApi(id, purpose, options);
+  return options.surface === "api"
+    ? cloudflareApi(id, purpose, options)
+    : cloudflareMcp(id, purpose, options, provider);
 }
 
 /** @deprecated Read `cloudflare.definition.classify` instead. Kept for existing imports. */

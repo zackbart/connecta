@@ -1,0 +1,54 @@
+# Notion, Vercel and Cloudflare migration for 0.29
+
+This is the Phase 1 item 5d migration input for [Phase 5 release #709](https://github.com/zackbart/connecta/issues/709).
+Deploy it with the consolidated 0.29 release, not while the rework is in progress.
+BePresent and One&Many use Notion and Cloudflare; their actual grants and
+connector ids must be checked in deployment configuration before that release.
+The provider audit establishes available auth modes, not production OAuth grants.
+
+All three providers now default to hosted MCP. `surface: "api"` explicitly
+selects a REST complement and accepts only its API-specific options. The old
+Vercel/Cloudflare API modes are no longer complete alternatives; Notion retains
+all operations required by its distinct integration identity. Adding `surface: "api"` keeps
+REST reads/gaps but does not restore removed duplicates. For both sets of
+capabilities, configure both connectors under distinct ids and authorize each.
+
+```ts
+connectors: [
+  notion("notion", { purpose: "Workspace content" }),
+  notion("notion_rest", { surface: "api", purpose: "Internal integration content and exact REST operations" }),
+  cloudflare("cloudflare", { purpose: "Estate mutations", auth: { type: "credential" } }),
+  cloudflare("cloudflare_rest", { surface: "api", purpose: "Estate reads and byte/header operations", accountId: "account-id", zoneId: "zone-id" }),
+]
+```
+
+Notion preserves headless/internal-integration capabilities. Add explicit
+`surface: "api"` to retain that identity and migrate old REST names to
+`integration_*`, for example `search` to `integration_search`, `create_page`
+to `integration_create_page`, and `query_data_source` to
+`integration_query_data_source`. Its token/sharing boundary stays intact.
+Hosted MCP acts as an OAuth user, has its own grant, and cannot adopt an internal
+token. Use it for user-owned work and hosted-only capabilities; authorize it
+explicitly if those are needed. Do not replace a bot with a user as an auth fix.
+All REST pagination, exact JSON blocks/properties, trash/restore and bot-owned
+content writes remain available.
+
+For Cloudflare, migrate ordinary JSON writes to hosted `search` then `execute`.
+A scoped API token can authorize hosted MCP without interactive OAuth; configure
+that credential independently even if it has the same value as the REST token.
+Keep REST reads in read-only programs. Global API Key/email and R2 jurisdiction
+JSON mutations, plus byte/header-compatible uploads, stay in the explicit REST
+complement. `execute` remains a write even when its program only calls GET.
+Trusted pools may execute writes; read-only pools use direct host-approved writes.
+
+For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,
+domain listing/adding, deployment cancellation and file uploads to live MCP
+schemas, and keep the independently authorized REST complement for value-safe
+project environment variables (including `upsert: false` create-only writes), domain verification/removal and deployment
+promotion/deletion. Raw hatches refuse migrated paths. Do not copy REST argument
+shapes into vendor tools, even when a tool name is unchanged.
+
+The per-provider tables map every removed name and explain retained API tools:
+[Notion](https://github.com/zackbart/connecta/blob/main/src/providers/notion/reconciliation.md),
+[Vercel](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/reconciliation.md), and
+[Cloudflare](https://github.com/zackbart/connecta/blob/main/src/providers/cloudflare/reconciliation.md).
