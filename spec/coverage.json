@@ -119,7 +119,7 @@
       "id": "server-discovery",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/discover",
-      "notes": "server/discover advertises supported modern revisions, tools capability, the served extension map (currently empty), configured server identity, and private one-hour cache hints.",
+      "notes": "server/discover advertises supported modern revisions, tools and skill resources capabilities, the served Skills extension map, configured server identity, and private one-hour cache hints.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -391,6 +391,18 @@
         {
           "file": "test/skills-extension.test.ts",
           "title": "INV-8: rejects the complete listing when any opted-in catalog fails"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-11: exposes downstream Skills only for a boolean opt-in in the closed options"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-4 INV-5: fetches personal downstream skills with each principal's credential partition"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-5 INV-6 INV-10: proxies the real downstream MCP transport through the private Skills boundary"
         }
       ]
     },
@@ -664,6 +676,18 @@
         {
           "file": "test/skills-extension.test.ts",
           "title": "INV-8: rejects the complete listing when any opted-in catalog fails"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-11: exposes downstream Skills only for a boolean opt-in in the closed options"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-4 INV-5: fetches personal downstream skills with each principal's credential partition"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-5 INV-6 INV-10: proxies the real downstream MCP transport through the private Skills boundary"
         }
       ]
     },

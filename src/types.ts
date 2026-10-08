@@ -404,14 +404,16 @@ export interface Connector {
    * cannot describe correct use (for example a generic API wrapper or a
    * cross-operation sequencing rule).
    *
-   * Listed by `skills` as `connector:<id>` and returned verbatim by
-   * `skills({ name: "connector:<id>" })`. The guide remains deployment-owned
-   * configuration; no runtime registration or shared mutable copy exists.
+   * Served as `skill://connecta/connectors/<id>/SKILL.md`, with generated
+   * frontmatter followed by the unchanged guide body. `connector:<id>` is a
+   * one-release lookup alias. The guide remains deployment-owned configuration;
+   * no runtime registration or shared mutable copy exists.
    */
   usageGuide?: string | ConnectorUsageGuide;
   /**
    * Opted-in downstream Skills transport. The registry validates advertised
-   * URIs and file integrity before exposing these bytes to an agent. Neither
+   * URIs and manifest bounds before exposing these bytes to an agent. The host
+   * verifies preserved digests against the returned bytes. Neither
    * operation registers tools or retains a catalog across requests.
    */
   downstreamSkills?: {

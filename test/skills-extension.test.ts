@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { SkillsRegistry, downstreamSkillUri } from "../src/skills.js";
@@ -197,6 +198,45 @@ it("INV-8: rejects the complete listing when any opted-in catalog fails", async 
   await expect(registry.get(downstreamSkillUri("remote", URI))).rejects.toMatchObject({ code: "unavailable" });
   // Local known skills remain usable during a downstream outage.
   expect((await registry.read("skill://connecta/usage")).contents[0]?.text).toContain("# Connecta usage");
+});
+
+it("INV-5 INV-6 INV-10: proxies the real downstream MCP transport through the private Skills boundary", async () => {
+  const secret = "skills-transport-sent-credential";
+  const text = TEXT + "Authorization: example\n" + secret;
+  const digest = "sha256:" + [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  const methods: string[] = [];
+  const records: unknown[] = [];
+  const logger = { debug: (...args: unknown[]) => records.push(args), info: (...args: unknown[]) => records.push(args), warn: (...args: unknown[]) => records.push(args), error: (...args: unknown[]) => records.push(args) };
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    expect(request.headers.get("Authorization")).toBe(`Bearer ${secret}`);
+    const message = await request.json() as { id: number; method: string; params?: { uri?: string } };
+    methods.push(message.method);
+    const result = message.method === "server/discover"
+      ? { supportedVersions: ["2026-07-28"], capabilities: { resources: {}, extensions: { "io.modelcontextprotocol/skills": {} } }, _meta: { "io.modelcontextprotocol/serverInfo": { name: "test", version: "1" } } }
+      : message.method === "skills/list"
+        ? { skills: [{ uri: URI, frontmatter: { name: "review", description: "Review changes." }, resources: [{ uri: URI, digest, size: new TextEncoder().encode(text).length }] }] }
+        : { contents: [{ uri: message.params!.uri, text }] };
+    return Response.json({ jsonrpc: "2.0", id: message.id, result: { resultType: "complete", ttlMs: 0, cacheScope: "private", ...result } });
+  });
+  const connector = remoteMcp("remote", { url: "https://skills.test/mcp", skills: true, auth: { type: "headers", headers: { Authorization: `Bearer ${secret}` } }, logger });
+  const c = createTestConnecta({ connectors: [connector], logger });
+  try {
+    const uri = downstreamSkillUri("remote", URI);
+    const get = await rpc(c, "skills/get", { uri });
+    expect(get.result).toMatchObject({ cacheScope: "private", skill: { uri, resources: [{ uri, digest }] } });
+    const read = await rpc(c, "resources/read", { uri });
+    expect(read.result).toMatchObject({ cacheScope: "private", contents: [{ uri, text: TEXT + "Authorization: [redacted]\n[redacted]" }] });
+    const mt = await createMetaTools(makeRegistry([connector], { logger }), BASE).skills({ name: uri });
+    expect(mt.content[0]?.text).toBe(read.result.contents[0].text);
+    expect(methods).toContain("skills/list");
+    expect(methods).toContain("resources/read");
+    expect(JSON.stringify(records)).not.toContain(TEXT);
+    expect(JSON.stringify(records)).not.toContain(secret);
+  } finally {
+    await c.close();
+    vi.unstubAllGlobals();
+  }
 });
 
 it("INV-3 INV-4: serves only advertised skill files and keeps all four readers in parity", async () => {

@@ -79,8 +79,8 @@ const AVAILABLE_SKILLS = [
  * Namespace for operator-authored per-connector guides. Built-in skill names
  * are bare identifiers and never contain ":", so `connector:<id>` cannot
  * collide with one — not even when a connector's id is literally "usage".
- * The prefixed form is the ONLY way to reach a connector guide: a bare
- * connector id is never resolved, so nothing shadows anything silently.
+ * Canonical skill URIs and the prefixed compatibility alias reach connector
+ * guides. A bare connector id never resolves, so nothing shadows silently.
  */
 const CONNECTOR_SKILL_PREFIX = "connector:";
 
