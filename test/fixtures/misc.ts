@@ -1,3 +1,4 @@
+import { InvocationFailure } from "../../src/invocation.js";
 import { vi } from "vitest";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type {
@@ -67,6 +68,7 @@ export function scriptedExecutor(
         return {
           result: undefined,
           error: err instanceof Error ? err.message : String(err),
+          failure: { name: err instanceof Error ? err.name : "Error", ...(err instanceof InvocationFailure ? { call: err.details } : {}) },
         };
       }
     },
@@ -87,4 +89,34 @@ export function fakeExecutor(outcome: {
       };
     },
   };
+}
+
+/** Extract source from the host-authored runner for closure-based, non-evaluating test executors. */
+export function guestSource(code: string): string {
+  const start = "()(async (connecta) => await (\n";
+  const end = "\n)())";
+  const from = code.indexOf(start);
+  const to = code.lastIndexOf(end);
+  return from >= 0 && to > from ? code.slice(from + start.length, to).trim() : code.trim();
+}
+
+/** Simulate a guest Error while keeping host failure identity in private test state. */
+const guestFailures = new WeakMap<Error, InvocationFailure>();
+export function guestError(error: unknown): Error {
+  if (!(error instanceof InvocationFailure)) return error instanceof Error ? error : new Error(String(error));
+  const guest = Object.assign(new Error(error.message), {
+    code: error.details.code, retryable: error.details.retryable, details: error.details,
+  });
+  guestFailures.set(guest, error);
+  return guest;
+}
+
+export function guestErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Only a host-retained identity can supply typed failure facts. */
+export function guestFailureFacts(error: unknown) {
+  const failure = error instanceof InvocationFailure ? error : error instanceof Error ? guestFailures.get(error) : undefined;
+  return { name: error instanceof Error ? error.name : "Error", ...(failure ? { call: failure.details } : {}) };
 }

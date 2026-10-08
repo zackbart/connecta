@@ -81,7 +81,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
             try {
               await connecta.call!(address, {});
             } catch (error) {
-              refused.push(String((error as Error).message));
+              refused.push(String((error as Error & { code: string }).code));
             }
           }
           return refused;
@@ -166,7 +166,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
               try {
                 await connecta.call!(address, {});
               } catch (error) {
-                refused.push(String((error as Error).message));
+                refused.push(String((error as Error & { code: string }).code));
               }
             }
             return { readOnly: page.tools.map((tool: { address: string }) => tool.address), refused };

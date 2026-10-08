@@ -1,4 +1,4 @@
-// The one seven-tool surface (#273, #672): what every deployment advertises and
+// The one six-tool surface (#273, #672): what every deployment advertises and
 // the structural configuration mistakes construction refuses.
 
 import { describe, expect, it } from "vitest";
@@ -87,12 +87,11 @@ describe("the advertised surface", () => {
     "call_destructive_tool",
     "call_tool",
     "execute_code",
-    "get_result",
     "search_tools",
     "skills",
   ];
 
-  it("advertises exactly seven tools, whatever the storage", async () => {
+  it("advertises exactly six tools, whatever the storage", async () => {
     for (const storage of [memoryStorage()]) {
       const body = await readJsonRpc(await mcpRpc(
         makeDeployment({ ...deploymentConfig, storage }),

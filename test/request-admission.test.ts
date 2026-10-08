@@ -435,6 +435,7 @@ describe("request admission", () => {
         retryable: true,
         retryAfterMs: 400,
       },
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
     });
     expect(thirdBody.result.isError).toBe(true);
 

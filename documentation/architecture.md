@@ -115,12 +115,13 @@ An admitted non-preflight `/mcp` request then takes five steps in
 4. **Derive the registry view.** One `registry.scoped(...)` call with those
    connector ids, exact `connector.tool` addresses when the identity declares a
    narrower slice, and the subject and principal keys. Personal connectors use
-   the principal partition, result paging the subject partition, and no caller
-   parameter selects either (`test/identity-scope.test.ts`).
+   the principal partition and result paging the subject partition with principal,
+   endpoint/pool, origin, connector, and tool bindings. Paging rechecks current
+   grants, pool membership, and trust; no caller parameter selects a partition (`test/identity-scope.test.ts`).
 5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any
-   404 — then register the seven meta-tools on a fresh `McpServer`
+   404 — then register the six meta-tools on a fresh `McpServer`
    (`test/server.test.ts`, `test/code-first-surface.test.ts`).
 
 ### Modern request metadata and transport refusals

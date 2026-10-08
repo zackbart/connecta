@@ -335,9 +335,9 @@ describe("connector call admission integration", () => {
     await waitFor(() => releases.length === 2);
     releases.splice(0, 2).forEach((release) => release());
 
-    const results = (await parallel) as Array<{ index: number }>;
+    const results = (await parallel) as Array<{ data: { index: number }; format: "json" }>;
     expect(maxActive).toBe(2);
-    expect(results.map((entry) => entry.index)).toEqual([0, 1, 2, 3]);
+    expect(results.map((entry) => entry.data.index)).toEqual([0, 1, 2, 3]);
   });
 
   it("shares one base-registry limiter between direct and code-mode calls", async () => {
@@ -383,7 +383,7 @@ describe("connector call admission integration", () => {
     await direct;
     await waitFor(() => releases.length === 1);
     releases.shift()!();
-    await expect(codeMode).resolves.toEqual({ source: "code" });
+    await expect(codeMode).resolves.toEqual({ data: { source: "code" }, format: "json" });
     expect(maxActive).toBe(1);
   });
 

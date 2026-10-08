@@ -474,7 +474,7 @@ describe("GitHub App provider", () => {
     const direct = await connector.callTool("get_file_contents", args, context()).catch((error) => error);
     if (responseKind === "success") {
       expect(outcome).toMatchObject({ ok: true });
-      expect(guestResult).toEqual({ echo: "[redacted]" });
+      expect(guestResult).toEqual({ data: { echo: "[redacted]" }, format: "json" });
     } else {
       expect(outcome).toMatchObject({ ok: false }); expect(guestError).toBeInstanceOf(Error);
       if (!outcome.ok) {

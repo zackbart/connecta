@@ -62,30 +62,34 @@ function normalizeMoney(text: string): string {
 
 /**
  * Read a truncated one-block result through: its leading notice line, the
- * preview after it, then `get_result` from the notice's next action to the
+ * preview after it, then `connecta.result` through execute_code to the
  * end — what a careful agent does. A lone text block pages as its text, and
  * the preview is a byte prefix of it, so the pieces concatenate.
  */
 async function pageAll(call: ReferenceContext["call"], truncated: string): Promise<string> {
   const newline = truncated.indexOf("\n");
-  const notice = JSON.parse(truncated.slice(0, newline)) as {
-    nextAction: { arguments: { id: string; offset: number } };
-  };
-  const { id, offset: from } = notice.nextAction.arguments;
+  const notice = JSON.parse(truncated.slice(0, newline)) as { resultId: string; nextOffset: number };
+  const id = notice.resultId;
+  const from = notice.nextOffset;
   let text = from > 0 ? truncated.slice(newline + 1) : "";
   let offset: number | undefined = from;
   while (offset !== undefined) {
-    // A page is the same shape: a one-line JSON header, then raw text.
-    const page = (await call("get_result", { id, offset })).text;
-    const lineEnd = page.indexOf("\n");
-    const header = JSON.parse(page.slice(0, lineEnd)) as {
-      hasMore: boolean;
-      nextAction?: { arguments: { offset: number } };
+    const reply = await call("execute_code", {
+      code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${offset}, maxBytes: 3500 })`,
+    });
+    if (reply.isError) throw new Error(`Result paging failed: ${reply.text}`);
+    const envelope = (reply.structured ?? JSON.parse(reply.text)) as {
+      result: { text: string; hasMore: boolean; nextOffset?: number };
     };
-    text += page.slice(lineEnd + 1);
-    offset = header.hasMore ? header.nextAction?.arguments.offset : undefined;
+    const page = envelope.result;
+    text += page.text;
+    offset = page.hasMore ? page.nextOffset : undefined;
   }
   return text;
+}
+
+function resultPagingUses(trace: Parameters<typeof uses>[0]) {
+  return uses(trace, "execute_code").filter(use => String(use.input.code).includes("connecta.result("));
 }
 
 // ------------------------------------------------------------------ the tasks
@@ -116,14 +120,14 @@ const crossConnectorJoin: ActiveTask = {
   const bugs = [];
   let cursor;
   do {
-    const page = await connecta.call("tracker.search_issues", { status: "open", label: "bug", limit: 50, ...(cursor ? { cursor } : {}) });
+    const page = (await connecta.call("tracker.search_issues", { status: "open", label: "bug", limit: 50, ...(cursor ? { cursor } : {}) })).data;
     bugs.push(...page.issues);
     cursor = page.nextCursor;
   } while (cursor);
   const accounts = [];
   let next;
   do {
-    const page = await connecta.call("analytics.list_accounts", { limit: 25, ...(next ? { cursor: next } : {}) });
+    const page = (await connecta.call("analytics.list_accounts", { limit: 25, ...(next ? { cursor: next } : {}) })).data;
     accounts.push(...page.accounts);
     next = page.nextCursor;
   } while (next);
@@ -131,7 +135,7 @@ const crossConnectorJoin: ActiveTask = {
   for (const bug of bugs.filter((issue) => issue.customer)) {
     const account = accounts.find((candidate) => candidate.domain === bug.customer);
     if (!account) continue;
-    const metrics = await connecta.call("analytics.get_account_metrics", { accountId: account.id });
+    const metrics = (await connecta.call("analytics.get_account_metrics", { accountId: account.id })).data;
     rows.push({ key: bug.id, name: account.name, mrr: metrics.mrrUsd });
   }
   rows.sort((a, b) => b.mrr - a.mrr);
@@ -201,7 +205,7 @@ const staleCloseAndSummarize: ActiveTask = {
     const found = await call("execute_code", {
       code: `async () => {
   const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
-  const page = await connecta.call("tracker.search_issues", { project: "web", status: "open", updatedBefore: cutoff, limit: 50 });
+  const page = (await connecta.call("tracker.search_issues", { project: "web", status: "open", updatedBefore: cutoff, limit: 50 })).data;
   return page.issues.map((issue) => issue.id);
 }`,
     });
@@ -271,9 +275,9 @@ const authRequiredRecovery: ActiveTask = {
     await nextTurn();
     await call("execute_code", {
       code: `async () => {
-  const { customers } = await connecta.call("billing.find_customer", { query: "Northwind Traders" });
+  const { customers } = (await connecta.call("billing.find_customer", { query: "Northwind Traders" })).data;
   const customer = customers.find((candidate) => candidate.name === "Northwind Traders");
-  const { invoices } = await connecta.call("billing.list_invoices", { customerId: customer.id });
+  const { invoices } = (await connecta.call("billing.list_invoices", { customerId: customer.id })).data;
   return invoices.filter((invoice) => invoice.status === "open" || invoice.status === "past_due").reduce((sum, invoice) => sum + invoice.amountDue, 0);
 }`,
     });
@@ -288,10 +292,10 @@ const authRequiredRecovery: ActiveTask = {
 const truncatedReadPaging: ActiveTask = {
   status: "active",
   id: "truncated-read-paging",
-  title: "Truncated call_tool read, then get_result",
+  title: "Truncated call_tool read, then connecta.result",
   introducedIn: "baseline",
   measures:
-    "Handling a known-address read larger than the inline cap: paging with get_result (or reducing in a program) instead of answering from the preview.",
+    "Handling a known-address read larger than the inline cap: paging with connecta.result (or reducing in a program) instead of answering from the preview.",
   prompt:
     "CI run 4812 on main failed. Read its full log (address `ci.get_run_log`, argument `runId`) and find the test that actually failed the run — " +
     "not one that failed once and then passed on retry. Post it to #ci as `run 4812 failed: <test file path>`.",
@@ -303,7 +307,7 @@ const truncatedReadPaging: ActiveTask = {
       check("found-real-failure", "the post names test/payments/refund.test.ts", /payments\/refund\.test\.ts/.test(text), quote(text)),
       check("not-the-flake", "the post does not blame the flaky session test", !/session\.test\.ts/.test(text), quote(text), true),
       check("log-read-once", "the log was fetched at most twice", reads <= 2, `${reads} fetch(es)`, true),
-      check("paged", "used get_result to read past the preview", uses(trace, "get_result").length > 0, `${uses(trace, "get_result").length} get_result call(s)`, true),
+      check("paged", "used connecta.result to read past the preview", resultPagingUses(trace).length > 0, `${resultPagingUses(trace).length} paging program(s)`, true),
       onlyWrites(world, ["chat.post_message"]),
     ];
   },
@@ -325,7 +329,8 @@ const truncatedReadPaging: ActiveTask = {
 const truncatedWriteExport: ActiveTask = {
   status: "active",
   id: "truncated-write-export",
-  title: "Truncated write result, recovered with get_result, never re-sent",
+  deployment: { trust: "trusted" },
+  title: "Truncated write result, recovered with connecta.result, never re-sent",
   introducedIn: "baseline",
   measures:
     "Paging a large result from a non-read-only call instead of repeating the write; the export must land exactly once.",
@@ -340,7 +345,7 @@ const truncatedWriteExport: ActiveTask = {
       ...checks,
       check("found-deleter", "the post names dana.whitfield@example.com", /dana\.whitfield@example\.com/i.test(text), quote(text)),
       check("not-the-requester", "the post does not blame the requester", !/sam\.ortiz/i.test(text), quote(text), true),
-      check("paged", "used get_result to read past the preview", uses(trace, "get_result").length > 0, `${uses(trace, "get_result").length} get_result call(s)`, true),
+      check("paged", "used connecta.result to read past the preview", resultPagingUses(trace).length > 0, `${resultPagingUses(trace).length} paging program(s)`, true),
       onlyWrites(world, ["chat.post_message", "audit.export_events"]),
     ];
   },

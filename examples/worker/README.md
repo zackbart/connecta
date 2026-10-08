@@ -3,7 +3,7 @@
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
 API connector, guarded by Cloudflare Access. It uses three Cloudflare resources
 and nothing else: one D1 database (`CONNECTA_DB`) for every piece of state, the
-Worker Loader binding (`LOADER`) behind the seven-tool surface, which requires
+Worker Loader binding (`LOADER`) behind the six-tool surface, which requires
 the Workers Paid plan, and one secret (`CREDENTIAL_ENCRYPTION_KEY`).
 
 This is also the **starting template for a deployment**: a real deployment
@@ -334,7 +334,7 @@ from `@zackbart/connecta/d1`. See [Activity history](#activity-history-optional)
 Omit the module and store wiring to record no history and show no Activity tab. Diagnostics remain independent; `logger: "silent"` suppresses
 them explicitly.
 
-Verify MCP health and the exact seven tools with:
+Verify MCP health and the exact six tools with:
 
 ```sh
 CF_ACCESS_CLIENT_ID='REPLACE_WITH_ACCESS_CLIENT_ID' \
@@ -364,7 +364,7 @@ The required Worker Loader binding is checked into `wrangler.jsonc`:
 `@zackbart/connecta/worker`. The adapter constructs the upstream
 `DynamicWorkerExecutor` with only the loader and a deadline, and disposes each
 run's loader and RPC handles when its lease ends, even if the guest has not
-settled. It serves the seven-tool surface. Do not add `bindings`, `modules`, or
+settled. It serves the six-tool surface. Do not add `bindings`, `modules`, or
 `globalOutbound`; they grant guest code ambient authority. A copied deployment
 owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).

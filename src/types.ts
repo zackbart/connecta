@@ -1,3 +1,4 @@
+import type { CallErrorDetails } from "./errors.js";
 // Core contracts for connecta. Web-API only — no node: imports here.
 
 /** A JSON Schema object describing a tool's input. */
@@ -367,7 +368,7 @@ export interface Connector {
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before
-   * call_tool truncates and stashes the full text for get_result
+   * call_tool truncates and stashes the full text for connecta.result
    * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
    * omit to inherit it (which itself defaults to 24_000). Must be a whole
    * number of bytes >= 1; anything else refuses to construct.
@@ -610,6 +611,14 @@ export interface ConnectorUsageGuide {
 export interface ExecuteResult {
   result: unknown;
   error?: string;
+  /** Host-owned sandbox facts. Never derive these from guest result values or logs. */
+  failure?: {
+    name: string;
+    /** An uncaught typed host rejection, retained by guest Error identity. */
+    call?: CallErrorDetails;
+    line?: number;
+    timeout?: { elapsedMs: number; deadlineMs: number };
+  };
   logs?: string[];
 }
 
@@ -619,7 +628,7 @@ export interface ExecutorProvider {
   fns: Record<string, (...args: unknown[]) => Promise<unknown>>;
   /**
    * Optional trusted sandbox-side setup run after provider globals exist.
-   * Connecta uses this to restore typed host errors. This is host-authored code, never
+   * Connecta uses this for the immutable namespace and emission acknowledgements. This is host-authored code, never
    * model input. See documentation/code-mode.md#what-an-executor-must-implement.
    */
   prelude?: string;

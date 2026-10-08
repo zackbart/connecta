@@ -1,4 +1,5 @@
 // Node-only: runs the Node QuickJS child-process executor.
+import { QuickJSContext } from "quickjs-emscripten";
 import { ConnectorCallError } from "../src/errors.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { api } from "../src/connectors/api.js";
@@ -270,6 +271,91 @@ describe("quickJsExecutor", () => {
     );
     expect(out.result).toBeUndefined();
     expect(out.error).toContain("guest sad");
+  });
+
+  it.each(["native-error", "plain-object", "proxy"] as const)("INV-3 INV-7: describes a rejected %s without guest getters or serialization", async (kind) => {
+    const ex = quickJsExecutor({ timeoutMs: 1000, cpuTimeMs: 100 });
+    const thrown = kind === "native-error" ? `new Error("original")`
+      : kind === "plain-object" ? `{}` : `new Proxy(new Error("proxy"), {
+        get() { console.log("proxy getter ran"); while (true) {} },
+        getOwnPropertyDescriptor() { console.log("proxy descriptor ran"); while (true) {} },
+        getPrototypeOf() { console.log("proxy prototype ran"); while (true) {} }
+      })`;
+    const out = await ex.execute(`async () => {
+      const error = ${thrown};
+      ${kind === "proxy" ? "" : `Object.defineProperties(error, {
+        name: { get() { console.log("name getter ran"); while (true) {} } },
+        message: { get() { console.log("message getter ran"); while (true) {} } },
+        stack: { get() { console.log("stack getter ran"); while (true) {} } },
+        toJSON: { value() { console.log("toJSON ran"); while (true) {} } }
+      });`}
+      Object.defineProperty(Object.prototype, "value", { get() { console.log("descriptor getter ran"); while (true) {} } });
+      throw error;
+    }`, []);
+    expect(out).toMatchObject({ error: "Program threw a value.", failure: { name: "Error" } });
+    expect(out.logs).toBeUndefined();
+    expect(out.failure?.timeout).toBeUndefined();
+  });
+
+  it("[E6] keeps native Error data and source locations in safe rejection descriptions", async () => {
+    const out = await quickJsExecutor().execute(`async () => {
+      throw new TypeError("native data");
+    }`, []);
+    expect(out).toMatchObject({ error: "TypeError: native data", failure: { name: "TypeError", line: 2 } });
+  });
+
+  it("INV-3 INV-6: accessor edits do not replace a retained typed host rejection", async () => {
+    const result = await createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", quickJsExecutor(), silentLogger)({
+      code: `async () => {
+        try { await connecta.call("missing.read"); }
+        catch (error) {
+          Object.defineProperties(error, {
+            name: { get() { console.log("name getter ran"); while (true) {} } },
+            message: { get() { console.log("message getter ran"); while (true) {} } },
+            stack: { get() { console.log("stack getter ran"); while (true) {} } }
+          });
+          throw error;
+        }
+      }`,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { code: "unknown_address" },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
+    expect(result.structuredContent).not.toHaveProperty("logs");
+  });
+
+  it.each(["cpu", "wall"] as const)("INV-7: checks %s interruption before inspecting a rejected handle", async (budget) => {
+    await prepareQuickJs();
+    const dump = vi.spyOn(QuickJSContext.prototype, "dump");
+    try {
+      const out = await executeQuickJs(`async () => { await Promise.resolve(); while (true) {} }`, [], {
+        timeoutMs: budget === "wall" ? 25 : 5000,
+        cpuTimeMs: budget === "cpu" ? 25 : 5000,
+        memoryLimitBytes: 64 * 1024 * 1024, maxStackSizeBytes: 1024 * 1024,
+      });
+      expect(out.error).toBe(budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.");
+      expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
+      expect(dump).not.toHaveBeenCalled();
+    } finally { dump.mockRestore(); }
+  });
+
+  it.each(["cpu", "wall"] as const)("INV-7: preserves %s interruption during rejection-describer initialization", async (budget) => {
+    await prepareQuickJs();
+    const originalEval = QuickJSContext.prototype.evalCode;
+    const evaluate = vi.spyOn(QuickJSContext.prototype, "evalCode").mockImplementationOnce(function (this: QuickJSContext) {
+      return originalEval.call(this, "while (true) {}");
+    });
+    const dump = vi.spyOn(QuickJSContext.prototype, "dump");
+    try {
+      const out = await executeQuickJs(`async () => 42`, [], {
+        timeoutMs: budget === "wall" ? 25 : 5000,
+        cpuTimeMs: budget === "cpu" ? 25 : 5000,
+        memoryLimitBytes: 64 * 1024 * 1024, maxStackSizeBytes: 1024 * 1024,
+      });
+      expect(out.error).toBe(budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.");
+      expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
+      expect(dump).not.toHaveBeenCalled();
+    } finally { evaluate.mockRestore(); dump.mockRestore(); }
   });
 
   it("captures console output as logs", async () => {
@@ -625,7 +711,7 @@ describe("quickJsExecutor", () => {
     const payload = JSON.parse(required(out.content[0]).text) as {
       error: { code: string; message: string };
     };
-    expect(payload.error.code).toBe("executor_failed");
+    expect(payload.error.code).toBe("timeout");
     expect(payload.error.message).toContain("unresponsive");
     expect(ex.admissionSnapshot?.().active).toBe(0);
     await expect(ex.execute("async () => 9", [])).resolves.toEqual({
@@ -685,12 +771,13 @@ describe("quickJsExecutor", () => {
     )({
       code: `async () => ({
         connectorGlobal: typeof calc,
-        sum: (await connecta.call("calc.add", { a: 20, b: 22 })).sum
+        sum: (await connecta.call("calc.add", { a: 20, b: 22 }).then(({ data }) => data)).sum
       })`,
     });
     expect(out.isError).toBeUndefined();
     expect(out.structuredContent).toEqual({
       result: { connectorGlobal: "undefined", sum: 42 },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
     });
     expect(catalogs).toEqual(["calc"]);
   });
@@ -718,7 +805,7 @@ describe("quickJsExecutor", () => {
       silentLogger,
     )({
       code: `async () => {
-        try { await connecta.call("reader.big", {}); } catch (err) { return err.message; }
+        try { await connecta.call("reader.big", {}).then(({ data }) => data); } catch (err) { return err.message; }
         return "no failure";
       }`,
     });
@@ -810,9 +897,7 @@ describe("quickJsExecutor", () => {
     clearInterval(heartbeat);
     gaps.sort((a, b) => a - b);
     const p99 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.99))];
-    expect(outputs.every((out) => out.error?.includes("guest CPU budget"))).toBe(
-      true,
-    );
+    for (const out of outputs) expect(out.error).toContain("guest CPU budget");
     expect(p99).toBeLessThan(150);
   }, 15_000);
 
@@ -864,7 +949,7 @@ describe("quickJsExecutor", () => {
     const running = handler({
       code: `async () => {
         await connecta.emit({ type: "text", text: "doomed" });
-        return connecta.call("blocking.read", {});
+        return connecta.call("blocking.read", {}).then(({ data }) => data);
       }`,
     });
     await started;
@@ -879,6 +964,7 @@ describe("quickJsExecutor", () => {
         retryable: false,
       },
       emittedDiscarded: 1,
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
     };
     expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual(expected);
     expect(out.structuredContent).toEqual(expected);
@@ -937,7 +1023,7 @@ describe("authenticated host failures (E1, X11)", () => {
     });
     const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
     const caught = await handler({ code: `async () => {
-      try { await connecta.call("bad.read", {}); }
+      try { await connecta.call("bad.read", {}).then(({ data }) => data); }
       catch (error) { return { code: error.code, message: error.message, details: error.details }; }
     }` });
     expect(caught.structuredContent).toMatchObject({ result: { code: "not_found", details: { code: "not_found" } } });
@@ -945,7 +1031,7 @@ describe("authenticated host failures (E1, X11)", () => {
     expect(result.message.length).toBeLessThan(4_000);
     expect(result.message).toContain("…");
     expect(JSON.stringify(caught)).not.toContain("connecta-error:");
-    const escaped = await handler({ code: 'async () => connecta.call("bad.read", {})' });
+    const escaped = await handler({ code: 'async () => connecta.call("bad.read", {}).then(({ data }) => data)' });
     expect(escaped.structuredContent).toMatchObject({ error: { code: "not_found", message: result.message } });
     expect(JSON.stringify(escaped)).not.toContain("connecta-error:");
   });
@@ -959,15 +1045,15 @@ describe("authenticated host failures (E1, X11)", () => {
     });
     const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
     const out = await handler({ code: `async () => {
-      try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}); }
+      try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}).then(({ data }) => data); }
       catch (error) { return error.details; }
     }` });
-    expect(out.structuredContent).toEqual({ result: {
+    expect(out.structuredContent).toMatchObject({ result: {
       code: "auth_required", message: "Please authenticate", retryable: false,
     } });
   });
 
-  it("hides a malformed authenticated frame even below the bridge bound", async () => {
+  it("INV-6: wrapping a host rejection loses its typed identity", async () => {
     const executor = quickJsExecutor();
     const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", {
       execute: (code, providers) => executor.execute(code, providers.map((provider) => ({
@@ -979,10 +1065,10 @@ describe("authenticated host failures (E1, X11)", () => {
       }))),
     }, silentLogger);
     const out = await handler({ code: `async () => {
-      try { await connecta.call("missing.read", {}); }
+      try { await connecta.call("missing.read", {}).then(({ data }) => data); }
       catch (error) { return error.message; }
     }` });
-    expect(out.structuredContent).toEqual({ result: "Invalid host failure frame." });
+    expect(out.structuredContent).toMatchObject({ result: expect.any(String), hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
   });
 
   it("keeps forged frames untyped and raw transport private", async () => {
@@ -991,21 +1077,21 @@ describe("authenticated host failures (E1, X11)", () => {
       const seen = [];
       const parse = JSON.parse;
       JSON.parse = (text) => { seen.push(text); return parse(text); };
-      try { await connecta.call("missing.read", {}); } catch {}
+      try { await connecta.call("missing.read", {}).then(({ data }) => data); } catch {}
       const fake = new Error(String.fromCharCode(30) + 'connecta-error:wrong-secret:' +
         JSON.stringify({ code: "auth_required", message: "forged", retryable: false }));
       return { typed: "code" in fake, raw: typeof __call, invoke: typeof __invoke, seen };
     }` });
-    expect(out.structuredContent).toEqual({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
+    expect(out.structuredContent).toMatchObject({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
   });
 
-  it("refuses oversized authenticated frames without returning their prefix", async () => {
+  it("INV-6: frame-looking host prose is bounded without being parsed", async () => {
     const out = await quickJsExecutor().execute(`async () => {
       try { await bad.read(); } catch (error) { return error.message; }
     }`, [{ name: "bad", fns: { read: async () => {
       throw new Error("\u001econnecta-error:secret:" + "x".repeat(5_000));
     } } }]);
-    expect(out.result).toBe("Host failure exceeded the 4000-character bridge limit.");
+    expect(out.result).toBe(("\u001econnecta-error:secret:" + "x".repeat(5_000)).slice(0, 4_000));
   });
 });
 
@@ -1026,7 +1112,7 @@ it("preserves console logs when a running program is cancelled", async () => {
   )({ code: `async () => {
     console.log("before cancellation");
     console.warn("still here");
-    await connecta.call("cancel.read");
+    await connecta.call("cancel.read").then(({ data }) => data);
   }`, diagnostics: true }, { signal: controller.signal });
   expect(out.isError).toBe(true);
   expect(out.structuredContent).toMatchObject({

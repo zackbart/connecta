@@ -8,7 +8,7 @@
  *   worker-example  examples/worker, unmodified, under `wrangler dev`
  *   worker-fakes    the Worker example's composition over loopback fakes
  *
- * Each target: /health, MCP initialize, the exact seven-tool list, a read
+ * Each target: /health, MCP initialize, the exact six-tool list, a read
  * through execute_code, a call through call_destructive_tool (a verified
  * downstream write where the target has a write-capable tool), and the
  * operator UI loading in headless Chromium with a screenshot.
@@ -29,12 +29,11 @@ import { connectMcp, parseJson, type McpSession } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { freePort } from "./support/serve.js";
 
-const SEVEN = [
+const SIX = [
   "authorize_connector",
   "call_destructive_tool",
   "call_tool",
   "execute_code",
-  "get_result",
   "search_tools",
   "skills",
 ];
@@ -133,9 +132,9 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
   if (!session) return;
   const live = session;
   try {
-    await step(checks, "tools/list is exactly the seven meta-tools", async () => {
+    await step(checks, "tools/list is exactly the six meta-tools", async () => {
       const names = (await live.listTools()).map((tool) => tool.name).sort();
-      if (JSON.stringify(names) !== JSON.stringify(SEVEN)) throw new Error(`got ${names.join(", ")}`);
+      if (JSON.stringify(names) !== JSON.stringify(SIX)) throw new Error(`got ${names.join(", ")}`);
       return names.join(", ");
     });
     await step(checks, "read through execute_code", async () => {
@@ -247,7 +246,7 @@ async function nodeTemplate(): Promise<SmokeTarget> {
     await mcpBattery(checks, {
       origin,
       headers,
-      readCode: `async () => (await connecta.call("time.get_now", {})).now`,
+      readCode: `async () => (await connecta.call("time.get_now", {})).data.now`,
       expectRead: (result) => {
         if (typeof result !== "string" || Number.isNaN(Date.parse(result))) throw new Error(`unexpected ${JSON.stringify(result)}`);
         return `time.get_now → ${result}`;
@@ -283,7 +282,7 @@ async function nodeFakes(): Promise<SmokeTarget> {
     await mcpBattery(checks, {
       origin: deployment.origin,
       headers,
-      readCode: `async () => (await connecta.call("tracker.search_issues", { project: "web", status: "open" })).total`,
+      readCode: `async () => (await connecta.call("tracker.search_issues", { project: "web", status: "open" })).data.total`,
       expectRead: (result) => {
         if (result !== 13) throw new Error(`expected 13 open web issues, got ${JSON.stringify(result)}`);
         return "13 open web issues";
@@ -356,7 +355,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         ? {
             origin,
             headers: {},
-            readCode: `async () => (await connecta.call("echo.shout", { text: "hello" })).shouted`,
+            readCode: `async () => (await connecta.call("echo.shout", { text: "hello" })).data.shouted`,
             expectRead: (result) => {
               if (result !== "HELLO") throw new Error(`unexpected ${JSON.stringify(result)}`);
               return "echo.shout → HELLO (Dynamic Worker executor)";
@@ -370,7 +369,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
         : {
             origin,
             headers: {},
-            readCode: `async () => (await connecta.call("tracker.search_issues", { project: "web", status: "open" })).total`,
+            readCode: `async () => (await connecta.call("tracker.search_issues", { project: "web", status: "open" })).data.total`,
             expectRead: (result) => {
               if (result !== 13) throw new Error(`expected 13, got ${JSON.stringify(result)}`);
               return "13 open web issues (Dynamic Worker executor → loopback fake)";

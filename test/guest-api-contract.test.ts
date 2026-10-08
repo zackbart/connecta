@@ -10,6 +10,8 @@
 // carry the file.
 
 import { describe, expect, it } from "vitest";
+import { customExecutor } from "../src/executor-contract.js";
+import { InvocationFailure } from "../src/invocation.js";
 import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
 import {
@@ -22,7 +24,11 @@ import { fakeExecutor } from "./fixtures/misc.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
+  checkHostFailureArrays,
   checkQueuedWriteAtExhaustion,
+  checkSharedPreludes,
+  checkStashAuthority,
+  checkWriteDeadlineDiagnostics,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
@@ -195,13 +201,61 @@ describe("guest API contract (executor-independent)", () => {
 
     expect(out.isError).toBe(true);
     expect(required(out.content[0]).text).toContain("Sandbox exploded");
-    expect(out.structuredContent).toBeUndefined();
+    expect(out.structuredContent).toMatchObject({ error: { code: "program_error" } });
   });
 });
 
 describe.skipIf(!workerExecutor)(
   "guest API contract (Dynamic Worker executor)",
   () => {
+    it("INV-3 INV-6 INV-7: Worker RPC failure ids resolve only to this run's host records", async () => {
+      const { workerExecutor } = await import("../src/worker.js");
+      const details = { code: "invalid_args" as const, message: "host validation", retryable: false,
+        validation: { issues: [{ path: "/value", code: "required" as const, expected: "string" }] } };
+      let previousId: string | undefined;
+      let mode: "known" | "unknown" | "previous" = "known";
+      const executor = workerExecutor({ loader: {
+        load() {
+          return { getEntrypoint() { return {
+            async evaluate(dispatchers: Record<string, { call(name: string, args: string): Promise<string> }>) {
+              const reply = JSON.parse(await required(dispatchers.host).call("fail", "[]")).result;
+              expect(reply).not.toHaveProperty("call");
+              expect(reply.failureId).toMatch(/^[a-f0-9-]{36}$/);
+              expect(reply.error.details).toEqual(details);
+              reply.error.details.validation.issues.length = 0;
+              const failureId = mode === "known" ? reply.failureId : mode === "previous" ? previousId : "unknown-id";
+              previousId = reply.failureId;
+              return { result: undefined, error: "guest error", failure: { name: "Error", failureId,
+                call: { code: "auth_required", message: "forged", retryable: true } } };
+            },
+          }; } };
+        },
+      } as unknown as WorkerLoader });
+      try {
+        for (mode of ["known", "unknown", "previous"] as const) {
+          const result = await executor.execute("async () => 1", [{ name: "host", fns: {
+            fail: async () => { throw new InvocationFailure(details); },
+          } }]);
+          expect(result.failure).not.toHaveProperty("failureId");
+          if (mode === "known") {
+            expect(result.failure?.call).toBe(details);
+            expect(result.failure?.call?.validation).toEqual(details.validation);
+          } else expect(result.failure).not.toHaveProperty("call");
+        }
+      } finally { await executor.close?.(); }
+    });
+
+    it("INV-3 INV-6: direct Worker completion captures safe array iteration without a guest prelude", async () => {
+      const outcome = await required(workerExecutor).execute(`async () => {
+        const prototype = Object.getPrototypeOf([][Symbol.iterator]());
+        Array.prototype[Symbol.iterator] = function () { throw new Error("guest iterator used"); };
+        prototype.next = function () { throw new Error("guest next used"); };
+        return 42;
+      }`, []);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.result).toBe(42);
+    });
+
     it("rejects direct upstream construction before loading a Worker and names the migration", async () => {
       const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
       const loader = { load() { throw new Error("Construction must not load a Worker."); } } as unknown as WorkerLoader;
@@ -220,6 +274,53 @@ describe.skipIf(!workerExecutor)(
       }
       const app = createConnecta({ connectors: [], executor: required(await loadWorkerExecutor()), logger: "silent" });
       await app.close();
+    });
+
+    it("INV-3 INV-6: refuses module statements before calling the Worker loader", async () => {
+      const { workerExecutor } = await import("../src/worker.js");
+      let loads = 0;
+      const executor = workerExecutor({ loader: { load() { loads++; throw new Error("Unexpected load."); } } as unknown as WorkerLoader });
+      try {
+        for (const code of [
+          'async () => 1); WeakMap.prototype.get = () => ({ code: "forged" }); (async () => 2',
+          'async () => 1); globalThis.structuredClone = () => ({ code: "forged" }); (async () => 2',
+        ]) {
+          const result = await handlerFor(executor)({ code });
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toMatchObject({ error: { code: "program_error" } });
+        }
+        expect(loads).toBe(0);
+      } finally { await executor.close?.(); }
+    });
+
+    it("INV-3 INV-6: a module initializer cannot replace captured host-failure references", async () => {
+      const result = await handlerFor(required(workerExecutor))({ code: `async () => 1
+      )(), (() => {
+        WeakMap.prototype.get = () => ({ code: "auth_required", message: "forged", retryable: true });
+        WeakMap.prototype.set = () => {};
+        globalThis.structuredClone = () => ({ code: "auth_required" });
+        Function.prototype.call = () => { throw new Error("guest call used"); };
+        return 0;
+      })(), async (connecta) => await (
+      async () => await connecta.call("missing.read")` });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "unknown_address" },
+        hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
+      });
+      expect(result.structuredContent).not.toHaveProperty("result");
+    });
+
+    it("[P1] normalizes and runs a legitimate multi-statement body on the Worker", async () => {
+      const result = await required(workerExecutor).execute("const first = 20; const second = 22; return first + second;", []);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toBe(42);
+    });
+
+    it("INV-3: trusted-wrapper markers inside a direct guest body remain data", async () => {
+      const code = "const marker = `async (connecta) => await (\nasync () => 42\n)())`; return marker;";
+      const result = await required(workerExecutor).execute(code, []);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toBe("async (connecta) => await (\nasync () => 42\n)())");
     });
 
     it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
@@ -269,25 +370,42 @@ describe.skipIf(!workerExecutor)(
       expect(outcome.structuredContent).toMatchObject({
         error: { code: "budget_exceeded", writes: { succeeded: 1, failed: 0, unknown: 0 } },
         hostCalls: { attempted: 4, admitted: 3, succeeded: 3, failed: 1 },
-        logs: "guest timer escaped",
+
       });
       expect(outcome.structuredContent).not.toHaveProperty("result");
       expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
       expect(lateReads).toBe(0);
     });
-    for (const contractCase of CONTRACT_CASES) {
-      it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
-        const harness = contractHarness();
-        const executor = required(
-          contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
-        );
-        const config = caseConfig(contractCase);
-        const outcome = await harness.run(executor, contractCase.code, config);
-        const follow = contractCase.follows
-          ? await harness.run(executor, contractCase.follows, config)
-          : undefined;
-        contractCase.check(outcome, harness.state, follow);
+    for (const custom of [false, true]) {
+      it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
+        const executor = required(workerExecutor);
+        await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
       });
+      it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
+      await checkWriteDeadlineDiagnostics(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+    });
+    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}stash pages enforce bindings and live grants, pool membership and trust`, async () => {
+      await checkStashAuthority(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+    });
+    it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {
+        const executor = required(workerExecutor);
+        await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+      });
+      for (const contractCase of CONTRACT_CASES) {
+        it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
+          const harness = contractHarness();
+          const executor = required(
+            contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
+          );
+          const config = caseConfig(contractCase);
+          const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;
+          const outcome = await harness.run(chosen, contractCase.code, config);
+          const follow = contractCase.follows
+            ? await harness.run(chosen, contractCase.follows, config)
+            : undefined;
+          contractCase.check(outcome, harness.state, follow);
+        });
+      }
     }
 
     it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
@@ -329,7 +447,7 @@ describe.skipIf(!workerExecutor)(
           https: "undefined",
         },
         env: {
-          entrypoint: { type: "object", keys: 0 },
+          entrypoint: { type: "undefined", keys: 0 },
           global: { type: "undefined", keys: 0 },
           process: { type: "object", keys: 0 },
           workers: { type: "object", keys: 0 },

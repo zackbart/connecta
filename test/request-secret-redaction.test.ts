@@ -192,12 +192,12 @@ it("INV-5: listing credentials redact a later unauthenticated result before stas
   let body = "";
   let offset = 0;
   for (;;) {
-    const page = await createMetaTools(registry, BASE).getResult({ id: notice.resultId, offset });
+    const page = await createMetaTools(registry, BASE).readResult({ id: notice.resultId, offset });
     const [header, ...text] = page.content[0]!.text.split("\n");
     body += text.join("\n");
-    const paging = JSON.parse(header!) as { hasMore: boolean; nextAction?: { arguments: { offset: number } } };
+    const paging = JSON.parse(header!) as { hasMore: boolean; nextOffset?: number };
     if (!paging.hasMore) break;
-    offset = paging.nextAction!.arguments.offset;
+    offset = paging.nextOffset!;
   }
   expect(JSON.parse(body).echo).toBe("[redacted]");
   const later = await tools.callTool({ address: "catalog.read", resultMode: "value" });
@@ -266,7 +266,7 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
     searchTools: () => tools.searchTools({ connector: "contract", fullDescriptions: true }),
     callTool: () => tools.callTool({ address: "contract.read", resultMode: "value" }),
     callDestructiveTool: () => tools.callDestructiveTool({ address: "contract.read", reason: "Contract test", resultMode: "value" }),
-    getResult: () => tools.getResult({ id: TOKEN }),
+    readResult: () => tools.readResult({ id: TOKEN }),
     authorizeConnector: () => tools.authorizeConnector({ connector: "contract" }),
   };
   expect(Object.keys(tools).sort()).toEqual(Object.keys(outputs).sort());
@@ -278,6 +278,8 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
   const bridge = (await buildSandboxProviders(registry, BASE, silentLogger, undefined, { sentSecrets: secrets }))[0]!.fns;
   const entries: Record<string, () => Promise<unknown>> = {
     call: () => bridge.call!("contract.read", {}),
+    result: () => bridge.result!(TOKEN),
+    skill: () => bridge.skill!("connector:contract"),
     search: () => bridge.search!({ connector: "contract", fullDescriptions: true }),
     describe: () => bridge.describe!({ address: "contract.read", fullDescriptions: true }),
     emit: () => bridge.emit!({ type: TOKEN }),

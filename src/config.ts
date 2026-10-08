@@ -146,7 +146,7 @@ const calls = {
    */
   defaultTimeoutMs: whole({ min: 1 }),
   /**
-   * Max inline result size (bytes) before truncation and `get_result` paging.
+   * Max inline result size (bytes) before truncation and `connecta.result` paging.
    * A positive whole number; default 24_000. Connectors may override it
    * individually.
    */

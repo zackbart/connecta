@@ -51,7 +51,7 @@ and one this person cannot see fail alike — Google does not distinguish them.
 - Every read stays under `maxBytes` of JSON. The default is what one result
   can carry into `execute_code`, so a program always receives it. A larger
   `maxBytes` (up to 4 MiB — a binary of up to 1 MiB) reaches only a direct
-  `call_tool`, which pages it with `get_result`.
+  `call_tool`, which pages it with `connecta.result`.
 
 ## Writing
 

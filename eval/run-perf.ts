@@ -94,9 +94,9 @@ async function latency(): Promise<PerfResultFile["latency"]> {
           name: "execute_code",
           arguments: {
             code: `async () => {
-  const found = await connecta.search("search issues", { connector: "tracker" });
-  const open = await connecta.call("tracker.search_issues", { status: "open", label: "bug", limit: 50 });
-  const accounts = await connecta.call("analytics.list_accounts", { limit: 25 });
+  const found = await connecta.search({ query: "search issues", connector: "tracker" });
+  const open = (await connecta.call("tracker.search_issues", { status: "open", label: "bug", limit: 50 })).data;
+  const accounts = (await connecta.call("analytics.list_accounts", { limit: 25 })).data;
   return { tools: found.tools.length, bugs: open.issues.length, accounts: accounts.accounts.length };
 }`,
           },

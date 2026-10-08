@@ -875,6 +875,7 @@ describe("remoteMcp() connector", () => {
           return {
             result: undefined,
             error: error instanceof Error ? error.message : String(error),
+            failure: { name: error instanceof Error ? error.name : "Error", ...(error instanceof InvocationFailure ? { call: error.details } : {}) },
           };
         }
       },

@@ -1232,7 +1232,7 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
   // A host result reaches a QuickJS program only under 256 KiB serialized
   // (MAX_QUICKJS_HOST_RPC_BYTES). Defaults must fit with room to spare on the
   // worst input Drive can send; explicit maxima may exceed it and are
-  // documented as direct-call only, where get_result pages them.
+  // documented as direct-call only, where connecta.result pages them.
   const BUDGET = 196_608;
   // Four UTF-8 bytes each, and a control character JSON escapes to six.
   const worst = (chars: number) => "\u{1F600}\u0001".repeat(Math.ceil(chars / 2)).slice(0, chars * 2);

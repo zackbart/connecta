@@ -10,7 +10,7 @@ writing code instead of loading a thousand tool definitions.
 You ask your agent a question that touches a service — Linear, Stripe, an
 internal API, anything you have connected. Here is what happens:
 
-1. The agent talks to one endpoint, yours, and sees seven tools. Always seven,
+1. The agent talks to one endpoint, yours, and sees six tools. Always six,
    no matter how many services sit behind it.
 2. It writes a short JavaScript program. Connecta runs it in a sandbox next to
    your integrations. The program can search for tools, call them, chain the
@@ -29,7 +29,7 @@ does the agent.
 flowchart TB
     Client["Your MCP client<br/>Claude, Cursor, …"]
 
-    subgraph Connecta["Connecta — one endpoint, seven tools, your credentials"]
+    subgraph Connecta["Connecta — one endpoint, six tools, your credentials"]
         Sandbox["execute_code<br/>the agent's program runs here<br/>reads, plus writes<br/>in trusted pools"]
         Explicit["call_destructive_tool<br/>one visible call per write<br/>your client can ask you first"]
     end
@@ -46,7 +46,7 @@ This is the kind of thing the agent writes, not you:
 
 ```js
 async () => {
-  const { nodes } = await connecta.call("tracker.list_issues", { state: "started" });
+  const { data: { nodes } } = await connecta.call("tracker.list_issues", { state: "started" });
   const byOwner = {};
   for (const issue of nodes) {
     (byOwner[issue.assignee?.name ?? "unassigned"] ??= []).push(issue.identifier);
@@ -141,7 +141,7 @@ explain past choices.
 
 Setup is written for an agent. Point yours at [`AGENTS.md`](https://github.com/zackbart/connecta/blob/main/AGENTS.md) and
 ask it to set up a Connecta deployment; the
-[documentation](./documentation/) covers the architecture, the seven tools,
+[documentation](./documentation/) covers the architecture, the six tools,
 code mode, and inbound auth if you want to go deeper. When upgrading an
 existing deployment, each [changelog](./CHANGELOG.md) release opens with what
 breaks and what a deployment can ignore.

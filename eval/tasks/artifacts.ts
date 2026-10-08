@@ -136,14 +136,14 @@ const PAGE_PROGRAM = `async () => {
   const bugs = [];
   let cursor;
   do {
-    const page = await connecta.call("tracker.search_issues", Object.assign({ status: "open", label: "bug", limit: 50 }, cursor ? { cursor } : {}));
+    const page = (await connecta.call("tracker.search_issues", Object.assign({ status: "open", label: "bug", limit: 50 }, cursor ? { cursor } : {}))).data;
     bugs.push(...page.issues);
     cursor = page.nextCursor;
   } while (cursor);
   const accounts = [];
   let next;
   do {
-    const page = await connecta.call("analytics.list_accounts", Object.assign({ limit: 25 }, next ? { cursor: next } : {}));
+    const page = (await connecta.call("analytics.list_accounts", Object.assign({ limit: 25 }, next ? { cursor: next } : {}))).data;
     accounts.push(...page.accounts);
     next = page.nextCursor;
   } while (next);
@@ -151,7 +151,7 @@ const PAGE_PROGRAM = `async () => {
   const customers = [];
   for (const domain of domains) {
     const account = accounts.find((candidate) => candidate.domain === domain);
-    const metrics = await connecta.call("analytics.get_account_metrics", { accountId: account.id });
+    const metrics = (await connecta.call("analytics.get_account_metrics", { accountId: account.id })).data;
     customers.push({ domain, name: account.name, mrrUsd: metrics.mrrUsd });
   }
   const projects = ["web", "api", "mobile"].map((project) => ({
@@ -169,9 +169,9 @@ const PAGE_PROGRAM = `async () => {
     "document.getElementById('rows').innerHTML = rows.join('');",
     "</script></body></html>",
   ].join("\\n");
-  const made = await connecta.call("artifacts.create_artifact", {
+  const made = (await connecta.call("artifacts.create_artifact", {
     id: "open-bugs", title: "Open bugs by project", kind: "html", source, documents: { bugs: { projects } }
-  });
+  })).data;
   return made.url;
 }`;
 
@@ -181,7 +181,7 @@ const buildPage: ActiveTask = {
   title: "Build a page from this data",
   introducedIn: "P2",
   measures: "Publishing an artifact whose data lands in stored documents rather than inline in the HTML.",
-  deployment: { artifacts: {} },
+  deployment: { trust: "trusted", artifacts: {} },
   // Names its sources the way cross-connector-join does: which service holds
   // MRR is not what this task measures, and billing looks like the answer.
   prompt:
@@ -363,8 +363,8 @@ const WEEKLY_PROGRAM = `async () => {
   const issues = [];
   let cursor;
   do {
-    const page = await connecta.call("tracker.search_issues", Object.assign(
-      { status: "open", label: "bug", limit: 50 }, cursor ? { cursor } : {}));
+    const page = (await connecta.call("tracker.search_issues", Object.assign(
+      { status: "open", label: "bug", limit: 50 }, cursor ? { cursor } : {}))).data;
     issues.push(...page.issues);
     cursor = page.nextCursor;
   } while (cursor);

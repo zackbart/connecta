@@ -533,6 +533,7 @@ describe("Effect behind the published surface", () => {
       "@cfworker/json-schema",
       "@modelcontextprotocol/client",
       "@modelcontextprotocol/server",
+      "acorn",
       "effect",
       "zod",
     ]);

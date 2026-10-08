@@ -14,7 +14,7 @@ const actor = { kind: "test", id: "alice" };
 const owner = { identity: { actor, interactive: false } };
 const source = '<!doctype html><main id="artifact-root"><script>document.body.textContent=window.artifact.data.data.value</script></main>';
 
-function setup(execute: Executor["execute"], access?: () => readonly string[], renderCheck?: ArtifactRenderCheck, config: Pick<ConnectaConfig, "trust" | "admission" | "execute"> = {}) {
+function setup(execute: Executor["execute"], access?: () => readonly string[], renderCheck?: ArtifactRenderCheck, config: Pick<ConnectaConfig, "trust" | "admission" | "execute" | "calls"> = {}) {
   let writeCalls = 0;
   let readCalls = 0;
   const store = kvArtifactStore(memoryStorage());
@@ -56,11 +56,30 @@ function setup(execute: Executor["execute"], access?: () => readonly string[], r
 }
 
 const hostCall = (providers: ExecutorProvider[], address: string) =>
-  providers[0]!.fns.call!(address, {});
+  providers[0]!.fns.call!(address, {}).then((value) => (value as { data: unknown }).data);
 
 describe("artifact refresh", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("INV-7: refresh and MCP programs share the configured call deadline", async () => {
+    const { app, module, operations, create, configure } = setup(async (_code, providers) => {
+      return { result: await hostCall(providers, "shared.read") };
+    }, undefined, undefined, { calls: { defaultTimeoutMs: 500 }, execute: { hostCallTimeoutMs: 30 } });
+    try {
+      const original = app.registry.getConnector("shared")!.callTool;
+      app.registry.getConnector("shared")!.callTool = async (...args) => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return original(...args);
+      };
+      await create();
+      await configure('async () => (await connecta.call("shared.read")).data');
+      const reply = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "execute_code", arguments: { code: 'async () => (await connecta.call("shared.read")).data' } }));
+      expect(JSON.stringify(reply)).not.toContain('"isError":true');
+      expect(await module.refresh("weekly", actor)).toMatchObject({ status: "succeeded" });
+      expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 2 } });
+    } finally { await app.close(); }
   });
 
   it("INV-7: nested refresh refuses an occupied executor slot without queuing or publishing later", async () => {

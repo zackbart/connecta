@@ -12,9 +12,11 @@ export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 
 /** How a dispatched write ended, as far as anyone can know. */
 type WriteState = "ok" | "failed" | "unknown";
+type WriteDeadline = Pick<NonNullable<CallErrorDetails["details"]>, "operation" | "stage" | "elapsedMs" | "deadlineMs">;
 type WriteCompletion = WriteState | {
   state: "unknown";
   uncertainCall: NonNullable<CallErrorDetails["uncertainCall"]>;
+  deadline?: WriteDeadline;
 };
 
 /**
@@ -80,7 +82,14 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompleti
         },
   );
   return state === "unknown" && !outcome.ok && outcome.error.uncertainCall
-    ? { state, uncertainCall: outcome.error.uncertainCall } : state;
+    ? { state, uncertainCall: outcome.error.uncertainCall,
+        ...(outcome.error.details?.stage !== undefined ? { deadline: {
+          ...(outcome.error.details.operation !== undefined ? { operation: outcome.error.details.operation } : {}),
+          stage: outcome.error.details.stage,
+          ...(outcome.error.details.elapsedMs !== undefined ? { elapsedMs: outcome.error.details.elapsedMs } : {}),
+          ...(outcome.error.details.deadlineMs !== undefined ? { deadlineMs: outcome.error.details.deadlineMs } : {}),
+        } } : {}),
+      } : state;
 }
 
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
@@ -99,6 +108,7 @@ export class ProgramWrites {
   private readonly states: WriteState[] = [];
   private readonly uncertainCalls: NonNullable<CallErrorDetails["uncertainCall"]>[] = [];
   private uncertainCallsTruncated = false;
+  private readonly deadlines: WriteDeadline[] = [];
 
   /** Whether the program has settled: a write gated now is not sent. */
   get isClosed(): boolean {
@@ -124,6 +134,7 @@ export class ProgramWrites {
       if (typeof completion !== "string") {
         if (this.uncertainCalls.length < 10) this.uncertainCalls.push(completion.uncertainCall);
         else this.uncertainCallsTruncated = true;
+        if (completion.deadline && this.deadlines.length < 10) this.deadlines.push(completion.deadline);
       }
       this.states.push(state);
       this.inFlight.delete(settled);
@@ -151,6 +162,8 @@ export class ProgramWrites {
         code: "write_outcome_unknown",
         message: "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it.",
         retryable: false,
+        ...(this.deadlines.length > 0 ? { details: this.deadlines[0] } : {}),
+        ...(this.deadlines.length > 1 ? { timeouts: this.deadlines } : {}),
         ...(this.uncertainCalls.length === 1 ? { uncertainCall: this.uncertainCalls[0] }
           : this.uncertainCalls.length > 1 ? { uncertainCalls: this.uncertainCalls } : {}),
         ...(this.uncertainCallsTruncated ? { uncertainCallsTruncated: true } : {}),

@@ -1,3 +1,4 @@
+import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import {
@@ -404,14 +405,13 @@ function serveMcp(
       client,
       baseUrl,
       requestScope,
+      trust,
       canManageAuth,
       oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
       oauthConnectUnavailable: oauthConnectUnavailable(opts),
       credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
       ...(activity ? { activity } : {}),
-      ...(opts.config.calls.defaultTimeoutMs !== undefined
-        ? { defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs }
-        : {}),
+      defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
       probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
       discoveryConcurrency: opts.config.discovery.concurrency,
       requestSignal,
@@ -424,6 +424,7 @@ function serveMcp(
       baseUrl,
       requestScope,
       executor: opts.executor,
+      defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
       logger: opts.config.logger,
       ...(activity ? { activity } : {}),
       requestSignal,
@@ -712,6 +713,43 @@ export function createMcpRoute(
           ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}),
           ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+          endpoint: new URL(request.url).pathname,
+          origin: request.headers.get("Origin"),
+          currentResultAccess: async (address, classification, signal) => {
+            signal?.throwIfAborted();
+            const current = await authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, opts.config.identity);
+            if (!current.ok) {
+              await current.response.body?.cancel().catch(() => {});
+              return false;
+            }
+            if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey) return false;
+            validateAuthPermissions(current, opts.registry);
+            let currentAccess: ConnectorAccess = current;
+            let currentTrust = opts.config.trust;
+            if (poolName !== undefined) {
+              const pool = opts.pools.get(poolName);
+              if (!pool || await pool.grant(current.identity) !== true) return false;
+              currentAccess = intersectAccess(current, pool.access);
+              currentTrust = pool.trust;
+            }
+            const view = opts.registry.scoped({
+              ...currentAccess,
+              ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
+              ...(current.principalKey ? { principalKey: current.principalKey } : {}),
+            });
+            const resolved = view.resolveAddress(address);
+            if (!resolved) return false;
+            const requestScope = {};
+            try {
+              const tool = (await view.getTools(resolved.connector.id, baseUrl, requestScope, signal ? { signal } : {}))
+                .find(tool => tool.name === resolved.toolName);
+              signal?.throwIfAborted();
+              return Boolean(tool && ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"));
+            } finally {
+              await closeConnectorScope(resolved.connector, view.contextFor(resolved.connector.id, baseUrl, requestScope),
+                runtimeContext?.waitUntil?.bind(runtimeContext));
+            }
+          },
           caller: {
             identity: authz.identity,
             // `authorize` admits an open deployment's every request as the

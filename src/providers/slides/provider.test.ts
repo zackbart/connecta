@@ -1146,7 +1146,7 @@ describe("output schemas declare what the tools return (H8)", () => {
 describe("every result is deliverable, in a program and directly", { timeout: 60_000 }, () => {
   /**
    * A program's host call carries at most 256 KiB of serialized JSON
-   * (`MAX_HOST_RESULT_BYTES`); a direct call stashes more for get_result, up
+   * (`MAX_HOST_RESULT_BYTES`); a direct call stashes more for connecta.result, up
    * to 8 MiB by default. A page under the first is under both.
    */
   const BRIDGE_BYTES = 256 * 1024;
@@ -1674,7 +1674,7 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     expect(JSON.stringify(result)).not.toMatch(/nothing (was|is) changed/i);
   });
 
-  it("returns every reply's ids even when they outgrow one result, for get_result to page", async () => {
+  it("returns every reply's ids even when they outgrow one result, for connecta.result to page", async () => {
     const replies = Array.from({ length: 400 }, (_, index) => ({
       // Each one small enough to pass whole, but 400 of them are not.
       createShape: { objectId: `s${index}_${"z".repeat(900)}` },
@@ -1689,7 +1689,7 @@ describe("round three: content-bound cursors, the notes master, bounded replies 
     expect(result.replies.map((reply: any) => reply.createShape.objectId)).toEqual(replies.map((reply) => reply.createShape.objectId));
     expect(result.repliesNotShown).toBeUndefined();
     expect(result.note).toContain("more than execute_code can carry (262144)");
-    expect(result.note).toContain("page it with get_result");
+    expect(result.note).toContain("page it with connecta.result");
     expect(result.note).not.toMatch(/applied/);
   });
 
@@ -2454,7 +2454,7 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
       expect(result.note).not.toContain("execute_code");
     });
 
-    it("returns ids past the provider budget but under the 256 KiB bridge with no get_result caveat", async () => {
+    it("returns ids past the provider budget but under the 256 KiB bridge with no connecta.result caveat", async () => {
       const replies = Array.from({ length: 200 }, (_, index) => ({ createShape: { objectId: `s${index}_${"z".repeat(1_000)}` } }));
       route = () => ({ body: { presentationId: "deck1", replies } });
       const result = await call(connection(), "batch_update_presentation", batch({ createShape: {} }));

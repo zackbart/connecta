@@ -60,7 +60,8 @@ export type ClassificationCode =
   | "write_outcome_unknown"
   | "result_processing_failed"
   | "budget_exceeded"
-  | "executor_failed";
+  | "executor_failed"
+  | "program_error";
 
 const CLASSIFICATION_CODE_TABLE = {
   timeout: true, auth_required: true, downstream_oauth_required: true,
@@ -72,7 +73,7 @@ const CLASSIFICATION_CODE_TABLE = {
   ambiguous_tool_alias: true, catalog_lookup_failed: true,
   result_too_large: true, destructive_tool_requires_approval: true,
   write_outcome_unknown: true, result_processing_failed: true,
-  budget_exceeded: true, executor_failed: true,
+  budget_exceeded: true, executor_failed: true, program_error: true,
 } as const satisfies Record<ClassificationCode, true>;
 
 /** `value` when it is a code connecta assigns, else undefined. */
@@ -255,6 +256,15 @@ function boundedValidation(
 
 /** Optional transport diagnostics; never a URL path or raw runtime message. */
 interface UnavailableDetails {
+  /** Guest program diagnostics; returned to the agent, never operator records. */
+  name?: string;
+  line?: number | null;
+  hint?: string;
+  /** Host-measured call deadline diagnostics; operation may contain caller text. */
+  operation?: string;
+  stage?: string;
+  elapsedMs?: number;
+  deadlineMs?: number;
   /** HTTP(S) origin only, at most 253 UTF-8 bytes. */
   host?: string;
   /** Validated network errno or `timeout`, at most 32 bytes. */

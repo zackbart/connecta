@@ -1,5 +1,6 @@
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { z } from "zod";
 import type {
   ActivityCallSource,
@@ -20,7 +21,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { serializeResultText } from "./executor-result.js";
+import { MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import {
   InvocationService,
   type InvocationTiming,
@@ -30,6 +31,7 @@ import {
   MIN_MAX_RESULT_BYTES,
   resolveMaxResultBytes,
   type RegistryView,
+  type ResultIdentity,
 } from "./registry.js";
 import {
   hasConnectorGuides,
@@ -40,6 +42,7 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
+import { AUTHORIZE_OUTPUT, CALL_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 
@@ -74,7 +77,7 @@ export function jsonResult(obj: unknown, text = JSON.stringify(obj)): ToolResult
   };
 }
 
-export function errorResult(message: string): ToolResult {
+function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
@@ -119,7 +122,7 @@ function isContinuationByte(b: number | undefined): boolean {
   return b !== undefined && (b & 0xc0) === 0x80;
 }
 
-/** Smallest accepted `get_result` byte offset. */
+/** Smallest accepted `connecta.result` byte offset. */
 const MIN_RESULT_OFFSET = 0;
 
 /** Whole-byte offset accepted by the result representation documented in
@@ -171,19 +174,17 @@ export function alignEndToCharBoundary(
   return e;
 }
 
-/** Prefix of the chunked paging envelope; `v1`'s single inline key still reads. */
-const RESULT_ENVELOPE_V2 = "connecta-result-v2:";
+/** Every readable stash carries host-admitted bindings; older entries fail closed. */
+const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
+const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
 
-/**
- * The current envelope: v2's header plus the inline cap of the call that
- * stashed it, `<total>:<chunk>:<cap>:`, so get_result can clamp a page to the
- * connector's own cap without the stash carrying connector identity.
- */
-const RESULT_ENVELOPE_V3 = "connecta-result-v3:";
-const RESULT_ENVELOPE_V3_HEADER = new RegExp(`^${RESULT_ENVELOPE_V3}(\\d+):(\\d+):(\\d+):`);
-
-/** `<total bytes>:<bytes per chunk>:` follow the prefix, then chunk 0's base64. */
-const RESULT_ENVELOPE_V2_HEADER = new RegExp(`^${RESULT_ENVELOPE_V2}(\\d+):(\\d+):`);
+interface ResultBinding {
+  identity: ResultIdentity;
+  baseUrl: string;
+  connector: string;
+  tool: string;
+  classification: "read" | "write";
+}
 
 /**
  * Smallest chunk of result text stored under one key. A multiple of three so
@@ -223,7 +224,7 @@ function base64Of(bytes: Uint8Array): string {
   return out;
 }
 
-// --- result-size guard + get_result (feature 1) ---------------------------
+// --- result-size guard + connecta.result (feature 1) ---------------------------
 
 /**
  * The one serialization every result guard measures, stashes, and pages: JSON
@@ -242,7 +243,10 @@ function base64Of(bytes: Uint8Array): string {
  */
 interface ResultStash {
   secrets?: SentSecrets;
+  /** Write stashes require the same endpoint to admit trusted programs. */
+  pageable: boolean;
   set: RegistryView["stashResult"];
+  binding: ResultBinding;
   warn: () => void;
   /**
    * The call was not explicitly read-only, so it may have changed something
@@ -259,7 +263,7 @@ const WRITE_ALREADY_RAN =
   "This write already ran: do not call it again to see its result.";
 
 /**
- * How the inline preview relates to what `get_result` pages: a byte prefix of
+ * How the inline preview relates to what `connecta.result` pages: a byte prefix of
  * it, so paging continues where the preview stops; a readable rendering of a
  * different stashed text (several text blocks, whose envelope pages from 0);
  * or no preview at all.
@@ -292,14 +296,14 @@ function pagingHint(
         : preview.kind === "text-of-envelope"
           ? ["Its text follows.", `to read the full ${totalBytes}-byte content array as JSON, page it`]
           : [`The result is ${totalBytes} bytes.`, "to read it in full, page it"];
-    return `${shown} ${READ_REDUCE_FIRST}; ${full} with get_result using nextAction.`;
+    return `${shown} ${READ_REDUCE_FIRST}; ${full} with connecta.result using nextAction.`;
   }
   const body =
     preview.kind === "prefix"
-      ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest with get_result using nextAction.`
+      ? `Bytes 0-${preview.bytes} of ${totalBytes} follow; page the rest with connecta.result using nextAction.`
       : preview.kind === "text-of-envelope"
-        ? `Its text follows; page the full ${totalBytes}-byte content array as JSON with get_result using nextAction.`
-        : `Page all ${totalBytes} bytes with get_result using nextAction.`;
+        ? `Its text follows; page the full ${totalBytes}-byte content array as JSON with connecta.result using nextAction.`
+        : `Page all ${totalBytes} bytes with connecta.result using nextAction.`;
   return `${WRITE_ALREADY_RAN} ${body}`;
 }
 
@@ -319,14 +323,20 @@ async function stashResult(
   preview: PreviewShape,
 ) {
   const totalBytes = bytes.length;
+  if (!results.pageable) return {
+    truncated: true,
+    totalBytes,
+    hint: `${WRITE_ALREADY_RAN} Paging is unavailable for write results on read-only pools.`,
+  };
   const id = crypto.randomUUID();
   try {
     // Base64 permits byte-range decoding, and splitting the envelope across
     // keys keeps a page's storage read proportional to the page instead of to
-    // the whole result (issue #540). Chunk 0 carries the header; the get_result
+    // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
     // reader below maps a byte offset back to chunk index and base64 quad.
     const chunkBytes = resultChunkBytes(totalBytes);
-    const chunks = [`${RESULT_ENVELOPE_V3}${totalBytes}:${chunkBytes}:${results.cap}:`];
+    const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
+    const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
     for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
       const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
       if (offset === 0) chunks[0] += chunk;
@@ -356,9 +366,12 @@ async function stashResult(
     resultId: id,
     totalBytes,
     hint: pagingHint(results, totalBytes, preview),
+    nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
     nextAction: {
-      tool: "get_result",
-      arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
+      tool: "execute_code",
+      // A byte may cost six JSON characters when escaped. Leave room for the
+      // result id, page counters, and continuation metadata in the returned page.
+      arguments: { code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })` },
     },
   };
 }
@@ -375,12 +388,12 @@ function headOf(bytes: Uint8Array, cap: number): Uint8Array {
 
 /** One text block: the notice line, then the preview. */
 function noticeFirst(notice: object, preview: string): ToolResult {
-  return { content: [{ type: "text", text: `${JSON.stringify(notice)}\n${preview}` }] };
+  return { content: [{ type: "text", text: `${JSON.stringify(notice)}\n${preview}` }], structuredContent: { ...notice, format: "text" } };
 }
 
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
- * full text and return a JSON truncation notice pointing at get_result,
+ * full text and return a JSON truncation notice pointing at connecta.result,
  * followed by the first `cap` bytes. The preview is a byte prefix of what
  * pages, so the notice's next action continues where it stops. `bytes` is
  * `text` already encoded, so a caller that had to measure it to make this
@@ -476,10 +489,10 @@ function escapedHeadOf(bytes: Uint8Array, cap: number): string {
  *
  * Over the cap, what a client gets depends on whether a preview is usable.
  * Several text blocks preview as their text joined by newlines, while
- * get_result pages the envelope from offset 0, where the block boundaries
+ * connecta.result pages the envelope from offset 0, where the block boundaries
  * live. An envelope carrying non-text blocks is replaced by the notice alone:
  * the head of a half-written base64 image is of no use to anyone. Either way
- * the full envelope is stashed and pages through `get_result`.
+ * the full envelope is stashed and pages through `connecta.result`.
  */
 async function guardContent(
   content: TextContent[],
@@ -610,6 +623,8 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
+    /** Current endpoint trust for result stashing and paging. */
+    trust?: import("./tool-safety.js").PoolTrust | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number | undefined;
     /** Maximum simultaneous connector discovery operations. Default 4. */
@@ -624,13 +639,13 @@ function metaToolsForRequest(
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
     defer?: DeferredWork | undefined;
-    /** The HTTP request's shared credential-redaction identity. */
+    /** Request identity shared by credential redaction, paging, and downstream invocation. */
     requestScope?: object | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
   const globalCap = registry.maxResultBytes;
-  const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
+  const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs) ?? CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
   const discoveryConcurrency = resolveDiscoveryConcurrency(
@@ -689,7 +704,7 @@ function metaToolsForRequest(
           ? { requestSignal: opts.requestSignal }
           : {}),
         unwrapResult: call.resultMode === "value",
-        processResult: async (result, resolved, secrets) => {
+        processResult: async (result, resolved, secrets, format) => {
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
           // folded into `globalCap`). Resolved per call so one request can
@@ -702,6 +717,12 @@ function metaToolsForRequest(
           );
           const results: ResultStash = {
             secrets,
+            pageable: resolved.definition.classification === "read" || opts.trust === "trusted",
+            binding: {
+              identity: registry.resultIdentity(), baseUrl,
+              connector: resolved.connector.id, tool: resolved.definition.name,
+              classification: resolved.definition.classification === "read" ? "read" : "write",
+            },
             write: resolved.definition.classification !== "read",
             cap,
             set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
@@ -727,7 +748,7 @@ function metaToolsForRequest(
             const guarded = await guardValue(value, results, cap);
             value = guarded.result;
             return processed(
-              jsonResult({ ok: true, data: value }),
+              jsonResult({ ok: true, data: value, format }),
               guarded.truncated,
               { value },
             );
@@ -748,6 +769,7 @@ function metaToolsForRequest(
               }];
             }
             const guarded = await guardContent(content, results, cap);
+            guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
             return processed(guarded.result, guarded.truncated);
           }
           const value = result;
@@ -756,6 +778,7 @@ function metaToolsForRequest(
             results,
             cap,
           );
+          guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
           return processed(guarded.result, guarded.truncated, { value });
         },
         activityFriction: (processed) => processed.friction,
@@ -811,6 +834,7 @@ function metaToolsForRequest(
         ? jsonResult({
             ok: true,
             data: outcome.value.value,
+            format: outcome.format,
             durationMs: outcome.durationMs,
             attempts: outcome.attempts,
             ...(call.diagnostics ? { timing: outcome.timing } : {}),
@@ -832,6 +856,7 @@ function metaToolsForRequest(
       const connectors = registry.listConnectors();
       if (!args.name) {
         return {
+          structuredContent: { skills: listSkills(connectors) },
           content: [
             {
               type: "text",
@@ -846,7 +871,7 @@ function metaToolsForRequest(
       }
       const skill = resolveSkill(args.name, connectors);
       if (!skill.found) return errorResult(skill.message);
-      return { content: [{ type: "text", text: skill.content }] };
+      return { content: [{ type: "text", text: skill.content }], structuredContent: { name: args.name, format: "text", text: skill.content } };
     },
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
@@ -879,12 +904,9 @@ function metaToolsForRequest(
       ).toolResult;
     },
 
-    async getResult(args: GetResultArgs): Promise<ToolResult> {
-      // Client-supplied page size and offset: normal input-validation errors,
-      // not clamps. Callers arriving over MCP are rejected earlier by the
-      // registered zod schema and never reach these branches, so they exist for
-      // in-process callers of createMetaTools — which have no schema in front
-      // of them — and to keep the rules true of the handler on its own terms.
+    async readResult(args: GetResultArgs, options: { signal?: AbortSignal | undefined } = {}): Promise<ToolResult> {
+      // Defense for in-process callers too: guest paging validates these domains
+      // before calling here, while internal consumers may call readResult directly.
       if (
         args.maxBytes !== undefined &&
         !isValidMaxResultBytes(args.maxBytes)
@@ -915,42 +937,59 @@ function metaToolsForRequest(
       // is simply gone. Every key a page touches answers the same way, so a
       // backend that dies halfway through a multi-chunk page says so.
       const read = async (key: string): Promise<string | null | false> => {
-        try {
-          return await results.get(key) ?? null;
-        } catch {
-          return false;
-        }
+        options.signal?.throwIfAborted();
+        let value: string | null | false;
+        try { value = await results.get(key) ?? null; }
+        catch { value = false; }
+        // A storage driver may finish its pending read after cancellation. No
+        // subsequent chunk read or decode may start when that happens (INV-7).
+        options.signal?.throwIfAborted();
+        return value;
       };
       const stored = await read(resultKeys.chunk(args.id, 0));
       if (stored === false) return unavailableResult();
       if (stored === null) {
         return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
       }
+      const denied = () => errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+      const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
+      if (!header) return denied();
+      let binding: ResultBinding;
+      try { binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), char => char.charCodeAt(0)))); }
+      catch { return denied(); }
+      const identity = registry.resultIdentity();
+      if (!binding || binding.baseUrl !== baseUrl || !binding.identity ||
+        binding.identity.subject !== identity.subject || binding.identity.principal !== identity.principal ||
+        binding.identity.endpoint !== identity.endpoint || binding.identity.origin !== identity.origin ||
+        typeof binding.connector !== "string" || typeof binding.tool !== "string" ||
+        !["read", "write"].includes(binding.classification)) return denied();
+      const allowed = async (): Promise<boolean> => {
+        options.signal?.throwIfAborted();
+        try {
+          const address = `${binding.connector}.${binding.tool}`;
+          if (!await registry.recheckResultAccess(address, binding.classification, options.signal)) return false;
+          if (!registry.getConnector(binding.connector)) return false;
+          const tools = await registry.getTools(binding.connector, baseUrl, requestScope,
+            options.signal ? { signal: options.signal } : {});
+          const tool = tools.find(tool => tool.name === binding.tool);
+          return Boolean(tool && ((binding.classification === "read" && tool.classification === "read") || opts.trust === "trusted"));
+        } catch {
+          options.signal?.throwIfAborted();
+          return false;
+        }
+      };
+      if (!await allowed()) return denied();
       const requestedOffset = args.offset ?? 0;
-      // Read and decode only the chunks this page covers, plus a few bytes of
-      // UTF-8 boundary lookaround. Pre-upgrade entries stay readable for their
-      // short TTL: v2 is this format without the recorded cap, v1 inlined the
-      // whole envelope under one key, which is v2 with a single chunk as wide
-      // as the result, and raw text before that still pays one full encode
-      // per page.
-      const current = RESULT_ENVELOPE_V3_HEADER.exec(stored.slice(0, 96));
-      const chunked = current ?? RESULT_ENVELOPE_V2_HEADER.exec(stored.slice(0, 80));
-      const inline = chunked ? null : /^connecta-result-v1:(\d+):/.exec(stored.slice(0, 64));
-      const header = chunked ?? inline;
-      // A page never exceeds the inline cap of the call that stashed it — the
-      // connector's override when it had one — whatever maxBytes asks for.
-      // Clients cut an oversized page exactly as they cut the original result,
-      // so honouring a larger request would hand the agent an error in place
-      // of its data. Entries from before the cap was recorded use the
-      // deployment-wide one.
-      const cap = current ? Number(current[3]) : globalCap;
+      const cap = Number(header[4]);
+      if (!isValidMaxResultBytes(cap)) return denied();
       const maxBytes = Math.min(args.maxBytes ?? cap, cap);
       let bytes: Uint8Array;
       let total: number;
       let start = 0;
-      if (header) {
-        total = Number(header[1]);
-        const chunkBytes = chunked ? Number(chunked[2]) : Math.max(total, 1);
+      {
+        total = Number(header[2]);
+        const chunkBytes = Number(header[3]);
+        if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(chunkBytes) || chunkBytes < 3 || chunkBytes % 3 !== 0) return denied();
         start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
         const end = Math.min(total, requestedOffset + maxBytes + 4);
         bytes = new Uint8Array(Math.max(0, end - start));
@@ -975,9 +1014,6 @@ function metaToolsForRequest(
             bytes[chunkStart + at - start] = binary.charCodeAt(at - from);
           }
         }
-      } else {
-        bytes = enc.encode(stored);
-        total = bytes.length;
       }
       // Validated above, so no coercion is needed here — only alignment. A
       // client that computes its own offsets can land inside a multi-byte
@@ -1003,16 +1039,20 @@ function metaToolsForRequest(
       // then the page as raw text. A JSON `text` field escaped every quote and
       // newline in the page — a second layer over JSON payloads — which
       // inflated pages past the size clients accept and made them hard to read.
-      return noticeFirst({
+      const pageHeader = {
         resultId: args.id,
         offset,
         bytes: Math.max(0, end - offset),
         totalBytes: total,
         hasMore,
         ...(hasMore
-          ? { nextAction: { tool: "get_result", arguments: { id: args.id, offset: end } } }
+          ? { nextOffset: end }
           : {}),
-      }, slice);
+      };
+      if (!await allowed()) return denied();
+      const page = noticeFirst(pageHeader, slice);
+      page.structuredContent = { ...pageHeader, text: slice, format: "text" };
+      return page;
     },
 
     async authorizeConnector(args: AuthorizeArgs): Promise<ToolResult> {
@@ -1096,11 +1136,9 @@ function metaToolsForRequest(
 
 const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC =
-  'Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a get_result action.';
+  'Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a connecta.result action.';
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
-const GET_RESULT_DESC =
-  "Page a truncated direct-call result by id and byte offset. A program result is never paged; reduce it inside execute_code. Returns a one-line JSON header (offset, bytes, totalBytes, hasMore, nextAction) and then the page as raw text. maxBytes is an upper bound, clamped to the result's inline cap.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
@@ -1200,21 +1238,10 @@ const AUTHORIZE_INPUT = advertisedSchema(
   }),
 );
 
-const GET_RESULT_INPUT = advertisedSchema(
-  z.object({
-    id: z.string(),
-    // Both bounds are the shared rules (isValidResultOffset,
-    // isValidMaxResultBytes) expressed for the wire: spelling them against
-    // the same constants keeps the schema from drifting away from the
-    // in-handler checks if either floor ever moves.
-    offset: z.number().int().min(MIN_RESULT_OFFSET).optional(),
-    maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
-  }),
-);
 
 /**
- * Register the six explicit meta-tools onto an McpServer instance.
- * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
+ * Register the five explicit meta-tools onto an McpServer instance.
+ * `registerExecuteTool` adds the sixth, `execute_code`. Broad discovery and
  * multi-call work uses discovery and ordinary JavaScript promises inside a
  * program, which `execute_code` builds over the same
  * `CatalogService` and `InvocationService` these handlers use — one shared
@@ -1225,6 +1252,7 @@ export function registerMetaTools(
   registry: RegistryView,
   ctx: {
     baseUrl: string;
+    trust?: import("./tool-safety.js").PoolTrust | undefined;
     defaultToolTimeoutMs?: number | undefined;
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
@@ -1241,6 +1269,7 @@ export function registerMetaTools(
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     requestScope: ctx.requestScope,
+    trust: ctx.trust,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
@@ -1263,6 +1292,7 @@ export function registerMetaTools(
     {
       description: describedFor(registry, SKILLS_DESC, "skills"),
       inputSchema: SKILLS_INPUT,
+      outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,
     },
     async (args, request) => {
@@ -1280,6 +1310,7 @@ export function registerMetaTools(
         "search",
       ),
       inputSchema: SEARCH_INPUT,
+      outputSchema: SEARCH_OUTPUT,
       annotations: READ_ONLY_REMOTE,
     },
     async (args, request) => {
@@ -1293,6 +1324,7 @@ export function registerMetaTools(
     {
       description: CALL_DESC,
       inputSchema: CALL_INPUT,
+      outputSchema: CALL_OUTPUT,
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
@@ -1312,6 +1344,7 @@ export function registerMetaTools(
         "destructive",
       ),
       inputSchema: CALL_DESTRUCTIVE_INPUT,
+      outputSchema: CALL_OUTPUT,
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,
@@ -1335,6 +1368,7 @@ export function registerMetaTools(
     {
       description: AUTHORIZE_DESC,
       inputSchema: AUTHORIZE_INPUT,
+      outputSchema: AUTHORIZE_OUTPUT,
       // Starts (or with force, resets) a downstream OAuth flow — it changes
       // stored connector auth state, so it is deliberately not read-only.
       annotations: {
@@ -1349,16 +1383,5 @@ export function registerMetaTools(
     },
   );
 
-  server.registerTool(
-    "get_result",
-    {
-      description: GET_RESULT_DESC,
-      inputSchema: GET_RESULT_INPUT,
-      annotations: READ_ONLY_LOCAL,
-    },
-    async (args, request) => {
-      bindRequest(request);
-      return mt.getResult(args as GetResultArgs);
-    },
-  );
+
 }

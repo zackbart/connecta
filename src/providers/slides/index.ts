@@ -1230,14 +1230,14 @@ function summarizeReply(reply: JsonRecord): JsonRecord {
  * The most one host result may carry into an execute_code program
  * (`MAX_HOST_RESULT_BYTES` in `src/executors/quickjs-runtime.ts`). A write
  * result past the provider's own 192 KiB budget but under this still reaches
- * a program; past it, only a direct call does, paging with get_result.
+ * a program; past it, only a direct call does, paging with connecta.result.
  */
 const BRIDGE_BYTES = 256 * 1024;
 
 /**
  * The most a raw batch's result may be when the ids its replies carry
  * outgrow one result. Every id is still returned, never dropped: a direct
- * call stashes a result this size and pages it with get_result (the stash
+ * call stashes a result this size and pages it with connecta.result (the stash
  * holds 8 MiB by default). Past this, the ids are not returned at all, and
  * the result says where to read them.
  */
@@ -2971,7 +2971,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         if (bytes <= MAX_IDS_RESULT_BYTES) {
           return {
             ...result,
-            note: `${result.note ?? ""} At ${bytes} bytes this result is more than execute_code can carry (${BRIDGE_BYTES}): call the tool directly and page it with get_result.`.trim(),
+            note: `${result.note ?? ""} At ${bytes} bytes this result is more than execute_code can carry (${BRIDGE_BYTES}): call the tool directly and page it with connecta.result.`.trim(),
           };
         }
         // Past any result: the save state and how to recover the ids stay;

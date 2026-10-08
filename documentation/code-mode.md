@@ -14,8 +14,8 @@ identifiers (`A1`, `E3`, …) are stable and cited by [Verification](#verificati
 ## Deploy-time capability
 
 The `executor` passed to `createConnecta()` is required. `tools/list` is exactly
-seven — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
-`authorize_connector`, `get_result`, and `skills`. Construction fails when the
+six — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
+`authorize_connector` and `skills`. Construction fails when the
 executor is missing, and the removed `surface` option is rejected rather than
 ignored ([#273](https://github.com/zackbart/connecta/issues/273)), as are the
 pause-only `execute.resumableWrites` and `execute.pausedRunTtlSeconds`
@@ -79,6 +79,8 @@ interface ExecutorProvider {
 interface ExecuteResult {
   result: unknown;      // the program's resolved value
   error?: string;       // set instead of result when the run failed
+  failure?: { name: string; line?: number; call?: CallErrorDetails;
+    timeout?: { elapsedMs: number; deadlineMs: number } };
   logs?: string[];      // captured console output, in call order
 }
 ```
@@ -87,17 +89,25 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 
 1. **Expose each provider as a guest global** whose properties are its `fns`,
    called with the program's arguments and awaited. Connecta supplies `search`,
-   `describe`, `call`, and `emit`.
+   `describe`, `call`, `result`, `skill`, and `emit`.
 2. **Evaluate `prelude` after the provider globals exist and before the
-   program.** It is trusted host code; connecta uses it to restore typed host
-   errors without exposing the private error frame.
+   program.** It is trusted host code that installs the immutable namespace
+   and waits for emission acknowledgements. Capture runner intrinsics first;
+   privileged initialization must be single-use.
 3. **Marshal values as JSON** both directions (`P3`), and reject a host call
    whose function is not an own property of `fns` — the guest can ask for
    inherited members too.
-4. **Return, never throw, for a failed program**: set `error` to the guest's
-   message, leave `result` undefined. `createExecuteTool` reads `error` first and
-   matches it back to the failures recorded during the run, which is how an
-   uncaught tool failure keeps its type (`E1`).
+4. **Return, never throw, for a failed program.** Set `error` and leave
+   `result` undefined. Rebuild a rejected host `InvocationFailure` as a guest
+   Error with `code`, `retryable`, and `details`, and retain its identity in
+   executor-owned state. If that same Error escapes the program, return its
+   typed details in `failure.call`. A wrapped or copied Error is `program_error`.
+   Construct outcomes through the host-owned RPC return or QuickJS host bridge,
+   never by parsing guest stdout, prints, returned values, or thrown look-alikes.
+   No secret held in the guest realm authenticates anything. Guest module
+   specifiers must not resolve runner internals, including dynamic imports.
+   For compilation failures, return `failure: { name, line? }`. For a sandbox
+   timeout, add `failure.timeout: { elapsedMs, deadlineMs }`.
 5. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
    call order (`R5`), bounding what it retains.
 6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), within
@@ -125,7 +135,7 @@ statements, and bare statement bodies are outside host recovery. QuickJS may
 wrap a bare body when driven directly; that is outside the portable contract.
 
 **P2.** The only capabilities in the contract are `connecta.search`,
-`connecta.describe`, `connecta.call`, `connecta.emit`, and `console.log` /
+`connecta.describe`, `connecta.call`, `connecta.result`, `connecta.skill`, `connecta.emit`, and `console.log` /
 `console.warn` / `console.error`, captured and returned. Anything else a runtime
 exposes is outside the portable contract and must not be used. QuickJS grants
 none of it. A loader-only Dynamic Worker denies external egress and filesystem
@@ -168,10 +178,10 @@ belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
 
-Four functions, all `async`: `search`, `describe`, `call`, and `emit`. Nothing
-else works. Reading any other property yields a function — the guest namespace
-is a Proxy, so `typeof connecta.toString` is `"function"` — but *calling* it
-fails, because the host resolves only own members of the provider's `fns`.
+Six functions: `search`, `describe`, `call`, `result`, `skill`, and `emit`.
+All return awaitable values; emission also works without `await`. The namespace
+has no inherited members. Unknown properties are undefined, and calling them
+fails as a guest `TypeError`. The host also dispatches only own members of `fns`.
 
 ### connecta.search
 
@@ -240,7 +250,7 @@ use `format: "json"` or JSON search.
 `includeSchemas: "typescript"` spends those same bounds on a different
 rendering: one `signature` string in place of `inputSchema` and
 `outputSchema`, reading `(args: { runId: number }) => Promise<Run>` for the
-value `connecta.call` returns. It is documentation for the program's author —
+`data` value `connecta.call` returns. It is documentation for the program's author —
 the program itself is still JavaScript, and a type annotation copied into it
 is a syntax error (`P5`). Truncation keeps compact's flags and
 turns what compact would print as a name or raw JSON into a marked `unknown`;
@@ -312,14 +322,17 @@ says so inside its `Promise<…>`.
 ### connecta.call
 
 ```js
-const run = await connecta.call("ci.get_run", { runId: 42 });
+const { data: run, format } = await connecta.call("ci.get_run", { runId: 42 });
+// Equivalent: connecta.call({ address: "ci.get_run", args: { runId: 42 }, timeoutMs: 30_000 })
 ```
 
-**S5.** Takes a canonical address and one arguments object; returns the tool's
-value already unwrapped. For an MCP connector that means `structuredContent`
-when present, otherwise text content JSON-parsed when it parses and the raw text
-when it does not; a downstream result flagged `isError` throws. Omitted `args`
-is treated as `{}`.
+**S5.** Takes a canonical address, optional arguments, and optional
+`{ timeoutMs }`; the object form is `{ address, args?, timeoutMs? }`. A malformed
+signature fails with `invalid_args` and both exact signatures, before discovery.
+Returns `{ data, format: "json" | "text" }`. MCP `toolResult` or
+`structuredContent` is JSON; all-text content is JSON when it parses, otherwise
+text. API string values are text, other API values are JSON. Check `format`
+before treating `data` as an object. A downstream `isError` throws.
 
 **S6.** Every call goes through the same catalog, fail-closed read-only
 predicate, admission, credential containment, timeout classification, health
@@ -328,6 +341,27 @@ and config decide whether a call runs or is refused (`E4`, `W12`); nothing a
 program does decides it. The sandbox is an additional containment layer, not a
 second implementation of the boundary, and nothing a program does widens what
 it can reach.
+
+### connecta.result and connecta.skill
+
+`await connecta.result(id, { offset?, maxBytes? })` reads a stashed direct-call
+result bound to the admitted subject, principal, endpoint/pool, request origin,
+connector, and tool. It returns
+`{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?, format: "text", text }`.
+Offsets and sizes are UTF-8 bytes; the page cap is the original call's inline cap.
+Follow `nextOffset`, reassemble inside the program, and return a reduced value.
+Before returning a page, the host rechecks current authentication, connector/tool
+grants, pool membership, and endpoint trust against both the original and current
+tool classification. A read-only endpoint cannot page a write result, so a
+direct write there returns an inline truncation notice without stashing the
+result or advertising a paging action. Binding
+mismatches, revoked access, and old entries without bindings are `not_found`, as
+are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
+The `get_result` meta-tool is removed.
+
+`await connecta.skill(name)` resolves the same exact built-in or `connector:id`
+name as top-level `skills`, within the admitted connector view. It returns
+`{ name, format: "text", text }`; an unknown name is `not_found`.
 
 ### Parallel calls
 
@@ -378,18 +412,17 @@ access (`L4`); Workers guest computation may continue briefly until teardown (`X
 | --- | --- | --- |
 | A caught Connecta host failure | `Error` with `message`, `code`, `retryable`, and `details` | yes |
 | An uncaught **tool or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
-| Program or execution failure (`E5`, `E6`, a bridge bound in `L6`) | error text | no |
+| Program or execution failure (`E5`, `E6`, a bridge bound in `L6`) | `{ error: { code, message, retryable, details? } }` | yes |
 
-Both executor bridges reduce a rejected host call to `new Error(message)`, and
-connecta restores the typed failure in a trusted prelude with a per-execution
-authenticated frame (`X11`). `message` stays human text, capped at 2,000
+Both executor bridges rebuild typed host rejections as guest Errors and retain
+their identity in executor-owned state (`X11`). `message` stays human text, capped at 2,000
 JSON-serialized characters including quotes and an `…` marker when clipped.
 `code` and `retryable` are the stable branch fields; `details` carries the host
 classification and fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
 `retryable`, and `retryAfterMs`, because a clipped recovery address or argument
-describes a different call. This covers `call`, `search`, `describe`, `emit`, and
-write and emitted-output budgets. Program-authored errors stay untyped, and code must never
+describes a different call. This covers `call`, `search`, `describe`, `result`, `skill`, `emit`, and
+write and emitted-output budgets. Program-authored errors use `program_error`; code must never
 parse error prose. An `unavailable` classification may add `details.host`, an
 HTTP(S) origin of at most 253 UTF-8 bytes, and `details.code`, a validated
 network errno, undici transport code, or `timeout` of at most 32 bytes; neither
@@ -411,7 +444,8 @@ caller what to do next, and never invents a cause it was not told.
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose | true |
-| `timeout` | the per-call deadline (`execute.hostCallTimeoutMs`, default 15 s) expired | true |
+| `timeout` | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs | per operation |
+| `program_error` | guest JavaScript failed; `details.name`, `line`, and a fixed repair hint describe it | false |
 | `cancelled` | the run ended while this call was in flight (`E5`) | false |
 | `connector_call_failed` | anything else the connector threw | per message |
 | `catalog_lookup_failed` | the connector's catalog could not be loaded | per cause |
@@ -446,19 +480,33 @@ is cancelled fails with `cancelled`, catchable on the way out but never worth
 acting on (`Y3`). When shutdown tears down a program that had already started,
 accepted blocks are reported as discarded under `M4`; a failure before execution
 started carries no discard fields. A returned `error` field is a failure even
-when empty — an empty string reports `executor_failed` with
-`Error: Execution failed without an error message.`
+when empty. An empty string reports `program_error` with
+`Program Error: Execution failed without an error message.`
 
-**E6.** An error the program raises itself — a `TypeError`, a call to a
-`connecta` member that is not a provider function (an inherited one like
-`toString` included), a `throw` of its own — ends the run with an untyped error
-result carrying that message. One precedence rule: connecta recognizes an
-escaped tool failure by its message, exactly first and by containment second for
-messages of at least eight characters, so a program that *wraps* a failure's
-message still reports the underlying typed failure — keeping the type beats
-keeping the prose. Matching retains only the most recent 64 failures per
-execution, caught refusals included; an older escaped message stays an untyped
-execution failure. An empty terminal error uses the fixed message in `E5`.
+**E6.** A guest `TypeError`, `ReferenceError`, syntax error, invented API, or
+program-authored throw is `program_error`. `details.name` is a bounded engine
+error name; `details.line` is the source line when the runtime supplies one,
+otherwise null. Fixed hints repair imports/require/filesystem access, shadowed
+`connecta`, and invented globals such as `callTool` and `mixpanel`.
+
+An unchanged uncaught host error retains its classification through Error
+identity. A new error containing its message is a new program error. Copied
+public `code`/`details`, printed text, and returned outcome-shaped objects carry
+no authority. Host-call counts stay in host state. The guest JSON codec, Object
+prototype, and Promise prototype are immutable. Promise race and species are
+protected too. Host completion uses captured intrinsics so guest edits cannot
+change bridge decoding or async return adoption. Worker guest modules contain
+only the user callback and an import helper limited to runtime builtins.
+Relative and other guest module imports cannot reach runner code. Trusted
+wrappers and preludes remain outside the guest's lexical scope, and privileged
+initialization is single-use. A separate private runner module captures and
+freezes its references before the guest module evaluates, including the guest
+namespace initializer. The entrypoint imports that runner before its guest
+dependency. Before loading, the adapter parses the assembled guest export and
+requires exactly one expression with no additional statements. Normalized
+multi-statement bodies remain one async arrow expression.
+Program diagnostic fields are bounded before transport, including escaped text;
+a large custom error name cannot turn a failure into a truncated success.
 
 **E7.** `retryable` for `unknown_address`, `unknown_tool`, and
 `destructive_tool_requires_approval` is pinned false, never inferred from an
@@ -509,11 +557,12 @@ how many hops the value takes.
 much. Run a program that returns less; that is why the envelope says so.
 
 **R4 (verdict: no result paging for programs).** Program results have no
-`get_result` handle. A program can shrink its return; paging would reward
+`connecta.result` handle. A program can shrink its return; paging would reward
 unprojected data.
 
 For non-repeatable writes, inspect and reduce the full result before return,
-or page a direct `call_destructive_tool` result with `get_result`. Sampling a
+or page a direct `call_destructive_tool` result on a trusted endpoint with
+`connecta.result`. Sampling a
 program result may discard the only copy.
 
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call
@@ -526,11 +575,13 @@ non-string argument renders is not contract (`X4`). At terminal host-call
 budget exhaustion, QuickJS returns its streamed prefix; a Dynamic Worker
 has no host log stream and cannot supply logs from its suspended guest (`L4`).
 
-**R6.** Nothing else is added to a normal program result. `diagnostics: true`
-adds one request-local, payload-free `diagnostics` block; a program that emitted
-adds `emitted: N` and its blocks (`M2`). Omitted, `false`, and emit-free are
-byte-for-byte the ordinary response path
-([#247](https://github.com/zackbart/connecta/issues/247)).
+**R6.** Every run returns `hostCalls: { attempted, admitted, succeeded, failed }`,
+including admission failure, cancellation, budget refusal, and code-size refusal.
+Calls include search, describe, call, result, and skill. `emit` has separate budgets.
+An abandoned host call counts as failed when the run ends; guest catches do not
+change the counts. These numbers are outside the program's returned `result`.
+`diagnostics: true` adds the existing payload-free timing block. Emitting adds
+`emitted: N` and its content blocks.
 
 **R7.** Diagnostic timing separates admission, provider setup, total executor
 wall time, catalog work, and connector work. Catalog and connector values are
@@ -544,6 +595,10 @@ sizes are numbers, never previews. The collector exists only for the opted-in
 request; it is not activity, a session, or a stream.
 
 ## Emitted output
+
+Images accept only `image/png`, `image/jpeg`, `image/gif`, or `image/webp`
+and nonempty canonical base64. Whitespace, URL-safe alphabets, bad padding,
+and nonzero pad bits are rejected before collection. Size budgets still apply.
 
 MCP-native output a return value cannot carry: base64 is not projectable, so a
 block that survives intake uncapped (`S5`) must not die at the `R2` exit guard.
@@ -564,18 +619,25 @@ a successful result, appended to `content` after the JSON envelope, which gains
 response (`R6`). `structuredContent` stays the envelope alone — emission is
 presentation, not a second data channel.
 
-**M3.** Return value and emission are independent: `R2` never measures emitted
-bytes, a truncated return does not suppress delivered blocks, and blocks do not
-shrink the return budget.
+**M3.** Text emission shares `R2`'s 24,000 serialized-character cap. Its
+serialized block size reduces the return budget, and oversized text fails with
+`result_too_large`. Image/audio blocks use the separate transport budget and
+reach the model as real MCP media content, including when `emit` is not awaited.
+The trusted runner waits for emission acknowledgments before returning success.
+An unobserved emission failure fails the run; an awaited failure remains catchable.
+Rejections propagated through `then` or `finally` can be caught later in that
+chain. A separate unhandled branch still fails the run.
 
 **M4.** A failed program delivers no blocks. The error result reports
-`emittedDiscarded: N` when N > 0 — a field on the structured envelope, a
-trailing line on the plain-text paths — never silently.
+`emittedDiscarded: N` when N > 0 as a field on the structured envelope.
 
 **M5.** Two budgets (`ConnectaConfig.execute.maxEmittedBytes` /
 `.maxEmittedBlocks`, defaults 4,000,000 serialized bytes and 32 blocks) fail
 loudly at the `emit` call, naming the budget and the room remaining; nothing is
-partially accepted and prior blocks stand. No `get_result` stash: the program
+partially accepted and prior blocks stand. Accepted and rejected emission attempts
+also have a terminal limit of four times the configured block cap (at least 128),
+which bounds retained host failures and guest acknowledgement state without
+discarding an older error identity. No result stash for emitted blocks: the program
 learns while it can still choose differently. The byte default is a transport
 bound, not a context bound — emitted media reaches the model as media, not
 base64 text.
@@ -585,7 +647,7 @@ exactly as much as the return value. Preservation is re-emission of the raw
 downstream block, so `S5`'s uncapped fallthrough is contract.
 
 **M7.** `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
-and `call` share it. `M5`'s bounds are emission's only bounds.
+`call`, `result`, and `skill` share it. Text also observes `R2`.
 
 **M8.** `emit` is a provider function; blocks cross the guest boundary once as
 an argument. `ExecuteResult` remains compatible with upstream codemode's types;
@@ -637,6 +699,16 @@ a wedged executor or `acquire()` that ignores its signal. It releases the lease;
 a late-granted lease releases on arrival. Nothing request-bound survives the
 request. Whether guest computation stops is the executor's (`X3`).
 
+Programs and direct calls use the same invocation deadline and stages. A call's
+`timeoutMs` wins, then `calls.defaultTimeoutMs`, then `execute.hostCallTimeoutMs`
+(default 15,000). A guest may request a longer individual call, but the sandbox
+and request ceilings still bound the whole run. Timeout details are agent-facing;
+INV-6 operator records retain only checked classifications and numeric facts.
+A dispatched write timeout becomes `write_outcome_unknown` and retains its
+deadline details even when the program catches the failure. The final program
+error includes the first timeout in `details`; multiple write timeouts also
+appear in `timeouts`, bounded to ten entries.
+
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
 partial result; the deadline's length is executor configuration (`X1`). Above
@@ -644,7 +716,7 @@ it sits a ceiling connecta enforces outside the sandbox, `execute.watchdogMs`
 (120 s by default, above both executors' own deadlines), because an executor's
 deadline may live inside the sandbox it is meant to stop: a wedged Dynamic
 Worker never fires its in-isolate timer. A run whose executor has not settled
-by the ceiling ends as a non-retryable `executor_failed` whose message calls
+by the ceiling ends as a non-retryable `timeout` whose message calls
 the sandbox unresponsive, with no partial result, and its admission lease is
 released, so wedged runs cannot fill the code pool. Raising an executor's
 deadline past the ceiling means raising the ceiling too.
@@ -676,13 +748,14 @@ drain under `W9`; unknown outcomes retain precedence. The lease then releases:
 QuickJS terminates its child, and the Worker adapter disposes RPC and loader
 handles independently of the guest deadline. Workers guest computation may
 continue briefly, including a timer escaping the bridge (`X3`), with no host
-access. The upstream `Executor` shape remains unchanged.
+access. The Promise executor contract carries typed failures separately from guest values.
 
 The failure adds payload-free `hostCalls: { attempted, admitted, succeeded, failed }`
 without diagnostics. `attempted` includes the first refusal, normally 21; `admitted`
 counts the 20 calls past the gate, local refusals included. `succeeded` and `failed`
-count settlements at response time, the budget refusal as failed. Pending calls
-may be in neither count. `emit` and later attempts are excluded; no budget refills.
+count outcomes at response time, the budget refusal and abandoned pending calls
+as failed, so `succeeded + failed === attempted`. `emit` and later attempts are
+excluded; no budget refills.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
@@ -706,8 +779,9 @@ plus a bounded queue with a wait timeout. Overload is a retryable
 terminal. Admission happens *before* any catalog or provider is built, so a
 queued request holds no state.
 
-**L8.** Bounds are deployment configuration, not program inputs: a program
-cannot raise one by asking. `execute_code`'s description states the host-call
+**L8.** Result, log, host-call, and emission budgets are deployment configuration.
+A call may request `timeoutMs` just as a direct call does; the guest deadline is
+capped by the time remaining before the program watchdog. `execute_code`'s description states the host-call
 budget and the per-call deadline — the ones a program must plan around before it
 runs. The result and log caps live here and in the truncation notice itself
 (`R2`, `R5`).
@@ -859,12 +933,14 @@ explicit environment holding only `TZ=UTC`, so local time matches a Dynamic
 Worker's, rather than inheriting
 deployment variables or `NODE_OPTIONS`. A Dynamic Worker exposes runtime-only
 builtins through `import()` and `process.getBuiltinModule()`, including `node:path`,
-`node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and
+`node:crypto`, `node:net`, `node:tls`, `node:dns`, and
 `cloudflare:workers`; the upstream set drifts, so that is not an allowlist.
+The adapter refuses `node:module` and `node:process` imports and removes their
+builtin lookup routes, so `createRequire` cannot resolve runner modules.
 The supported adapter uses `new DynamicWorkerExecutor({ loader, timeout })`.
 `bindings`, `modules`, and `globalOutbound` each grant ambient configuration,
-code, or egress. Under it, `process.env`, lexical `this.env`, and
-`cloudflare:workers.env` are empty; `node:fs`, `node:http`, and `node:https` are
+code, or egress. Under it, `process.env` and `cloudflare:workers.env` are empty,
+and lexical `this.env` is undefined; `node:fs`, `node:http`, and `node:https` are
 unavailable through either access route; external `fetch`, `WebSocket`,
 `node:net`, and `node:tls` fail with workerd's outbound-denial error; DNS lookup
 ends unresolved; and `fetch("data:...")` resolves locally. `P2` is the portable
@@ -881,9 +957,9 @@ reasonable demand on a platform sandbox.
 values through a tagged envelope, so a `Uint8Array` may survive there. `P3` is
 the contract: JSON-serializable values, or the program is Workers-only.
 
-**X8. Unknown-property message.** An unknown `connecta` property throws
-`Unknown function connecta.x` on QuickJS and `Tool "x" not found` on the Dynamic
-Worker. Both satisfy `E6`; the text is not contract.
+**X8. Unknown properties.** The guest namespace exposes only the six documented
+functions. Unknown and inherited members are absent on both executors; calling
+one is a guest `TypeError` under `E6`. Engine message text is not contract.
 
 **X9. Refusing a value outside JSON.** The Dynamic Worker ends the run with an
 error when a program returns something its codec cannot carry. QuickJS converts
@@ -904,14 +980,25 @@ the program either way (`R1`).
 **X12** described a paused sandbox and left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)); the id stays retired.
 
-**X11. Typed host rejection.** Both executors rebuild Connecta's authenticated
-host-failure frame as a thrown guest `Error` (`E1`). The per-run secret stays in
-the trusted prelude closure and the prelude locks `globalThis.Error`, so guest
-code and connector prose cannot forge the frame. The host bounds details before
-framing (`E1`), JSON escapes included; QuickJS refuses an oversized frame whole
-rather than slicing through its JSON, hides one whose JSON is malformed, and
-keeps the raw bridge and its JSON decoder in a private closure so guest code
-cannot intercept a frame first. A mismatched frame is ordinary untyped prose.
+**X11. Typed host rejection.** QuickJS creates and retains guest Error handles
+in its host bridge and compares handles when the program rejects. The Worker
+adapter stores each typed failure in a per-run host map under a random UUID.
+Its private entrypoint associates that ID with the guest Error and returns only
+the ID through Worker Loader RPC. The host resolves it to its own record before
+upstream result shaping; unknown or forged IDs attach no typed details, and IDs
+from previous runs cannot resolve. Rethrowing an earlier call's Error retains
+that call's record. The guest receives a separate copy for catching errors.
+Both construct `failure.call` from host-retained values, never from a guest
+result, parsed guest-realm object, or printed text. The Worker codec checks own
+binary-envelope properties, and completion uses captured array iteration even
+when the executor runs without the Connecta guest prelude. Host failure details are
+bounded before bridging (`E1`), including JSON escapes. No frame parser or
+prose matching participates in classification. The guest cannot import runner
+modules or repeat privileged initialization. QuickJS checks host interrupt and
+deadline facts before describing a rejection. It retains a private native Error
+brand check and reads only own string data descriptors for diagnostics; guest
+accessors, serialization hooks, and Proxy traps do not run. Other thrown objects
+receive a fixed description.
 
 ## Verification
 
@@ -933,12 +1020,12 @@ rejection, and branded adapter acceptance across module copies.
 | `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5`, `S6` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
-| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged frames) |
+| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/program-writes.test.ts` (the refusal's `nextAction`, nothing sent, a caught refusal) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.node.test.ts` (mid-run shutdown) |
-| `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, wrapped-message precedence), `test/quickjs-executor.node.test.ts` |
+| `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, retained error identities), `test/quickjs-executor.node.test.ts` |
 | `E7` | `test/guest-api-contract.test.ts` (refusals about a `503`-named connector), `test/errors.test.ts` |
 | `R1`, `R2`, `R3` | `test/guest-api-contract.test.ts` (pass-through, truncation is success, envelope fits the cap and is idempotent) |
 | `R4`, `M6`, `M9` | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement |
@@ -964,6 +1051,6 @@ rejection, and branded adapter acceptance across module copies.
 | `X3`, `X6` | `test/quickjs-executor.node.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface itself is checked by `test/server.test.ts` (the exact seven-tool list),
+The surface itself is checked by `test/server.test.ts` (the exact six-tool list),
 `test/code-first-surface.test.ts` (construction, executor, removed tools, copy, and size),
 and `test/program-writes.test.ts` (the retired pause options refused at construction).

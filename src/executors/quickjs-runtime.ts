@@ -1,3 +1,4 @@
+import type { CallErrorDetails } from "../errors.js";
 // QuickJS-in-WebAssembly runtime used inside the disposable child process.
 //
 // Model-written code runs inside a QuickJS interpreter compiled to WASM:
@@ -12,8 +13,10 @@ import {
   getQuickJS,
   type QuickJSContext,
   type QuickJSDeferredPromise,
+  type QuickJSHandle,
 } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
+import { InvocationFailure } from "../invocation.js";
 import { msg } from "../errors.js";
 import { withoutProgramTerminator } from "../program-source.js";
 import {
@@ -105,8 +108,8 @@ export function normalizeCode(code: string): string {
  * and fail closed there.
  */
 function setupScript(providers: ExecutorProvider[]): string {
-  // X11: raw replies carry an authenticated frame. Capture the bridge and
-  // codec before guest code runs, and expose only the decoded provider calls.
+  // Capture the host bridge and codec before guest code runs.
+  // Rejections are native guest Errors created and retained by the host.
   const lines: string[] = [
     `(() => {
   const call = globalThis.__call;
@@ -125,7 +128,6 @@ function setupScript(providers: ExecutorProvider[]): string {
   })();
   const invoke = async (ns, fn, args) => {
     const r = parse(await call(ns, fn, stringify(args)));
-    if (!r.ok) throw new GuestError(r.error);
     return r.value;
   };
   const namespace = (ns) => freeze(new ProxyConstructor(create(null), {
@@ -139,16 +141,8 @@ function setupScript(providers: ExecutorProvider[]): string {
   for (const p of providers) {
     if (p.prelude) lines.push(p.prelude);
   }
-  lines.push(`const GuestError = globalThis.Error;
-})();`);
+  lines.push(`})();`);
   return lines.join("\n");
-}
-
-/** True when a dumped error is QuickJS's deadline-interrupt signal. */
-function isInterrupt(dumped: unknown): boolean {
-  if (!dumped || typeof dumped !== "object") return false;
-  const e = dumped as { name?: unknown; message?: unknown };
-  return e.name === "InternalError" && e.message === "interrupted";
 }
 
 function formatGuestError(dumped: unknown): string {
@@ -168,6 +162,7 @@ interface HostBridge {
   aborted: boolean;
   wake: () => void;
   waitForSettle: Promise<void>;
+  failures: Array<{ error: QuickJSHandle; call: CallErrorDetails }>;
 }
 
 function armWake(bridge: HostBridge): void {
@@ -206,6 +201,7 @@ function installBridge(
     aborted: false,
     wake: () => {},
     waitForSettle: Promise.resolve(),
+    failures: [],
   };
   armWake(bridge);
 
@@ -255,7 +251,7 @@ function installBridge(
     ns: string,
     fn: string,
     argsJson: string,
-  ): Promise<string> => {
+  ): Promise<{ json: string } | { error: unknown }> => {
     try {
       const provider = byName.get(ns);
       const f =
@@ -281,9 +277,9 @@ function installBridge(
           `Host result from ${label} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
         );
       }
-      return json;
+      return { json };
     } catch (err) {
-      return JSON.stringify({ ok: false, error: msg(err) });
+      return { error: err };
     }
   };
 
@@ -293,15 +289,35 @@ function installBridge(
     const argsJson = ctx.getString(argsH);
     const deferred: QuickJSDeferredPromise = ctx.newPromise();
     bridge.pending++;
-    void invoke(ns, fn, argsJson).then((json) => {
+    void invoke(ns, fn, argsJson).then((reply) => {
       bridge.pending--;
       if (bridge.aborted) {
         // Context is (about to be) torn down — settle nothing, free our handles.
         deferred.dispose();
       } else {
-        const h = ctx.newString(json);
-        deferred.resolve(h);
-        h.dispose();
+        if ("json" in reply) {
+          const h = ctx.newString(reply.json);
+          deferred.resolve(h);
+          h.dispose();
+        } else {
+          const error = ctx.newError();
+          const message = ctx.unwrapResult(ctx.evalCode(JSON.stringify(msg(reply.error).slice(0, 4_000))));
+          ctx.setProp(error, "message", message);
+          message.dispose();
+          if (reply.error instanceof InvocationFailure) {
+            const call = reply.error.details;
+            // The error identity and typed facts stay in host state. A guest
+            // may edit public fields without changing the retained failure.
+            bridge.failures.push({ error: error.dup(), call });
+            for (const [key, value] of Object.entries({ code: call.code, retryable: call.retryable, details: call })) {
+              const property = ctx.unwrapResult(ctx.evalCode(`(${JSON.stringify(value)})`));
+              ctx.setProp(error, key, property);
+              property.dispose();
+            }
+          }
+          deferred.reject(error);
+          error.dispose();
+        }
       }
       bridge.wake();
     });
@@ -365,10 +381,14 @@ export async function executeQuickJs(
         return wallInterrupted || cpuInterrupted;
       });
 
+      let describeError: QuickJSHandle | undefined;
       const logs: string[] = [];
       const bridge = installBridge(ctx, providers, logs, onLog);
       const finish = <T extends ExecuteResult>(r: T): T => {
         bridge.aborted = true;
+        describeError?.dispose();
+        for (const failure of bridge.failures) failure.error.dispose();
+        bridge.failures.length = 0;
         // Outstanding host calls still hold deferred-promise handles; their
         // callbacks free them and wake the drain, which disposes the context
         // once the last straggler settles. Re-arm before every wait so the
@@ -390,21 +410,90 @@ export async function executeQuickJs(
         }
         return logs.length > 0 ? { ...r, logs } : r;
       };
-      const fail = (error: string): ExecuteResult =>
-        finish({ result: undefined, error });
+      const rejected = (error: QuickJSHandle): QuickJsExecutionResult => {
+        // Interrupt/deadline facts are host state, never inferred by inspecting
+        // the thrown value. Do not reenter a guest whose budget has ended.
+        if (wallInterrupted || Date.now() >= deadline) return timedOut();
+        if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
+        const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
+        let description: unknown = { name: "Error", message: "Program threw a value." };
+        const type = ctx.typeof(error);
+        if (type === "string") description = ctx.getString(error).slice(0, 4000);
+        else if (type === "number") description = ctx.getNumber(error);
+        else if (type === "undefined") description = "undefined";
+        else if (type === "boolean") description = ctx.eq(error, ctx.true);
+        else if (ctx.eq(error, ctx.null)) description = null;
+        else if (describeError) {
+          const describe = describeError;
+          const described = runGuest(() => ctx.callFunction(describe, ctx.undefined, error));
+          if (described.error) described.error.dispose();
+          else {
+            description = JSON.parse(ctx.getString(described.value)) ?? description;
+            described.value.dispose();
+          }
+          if (wallInterrupted || Date.now() >= deadline) return timedOut();
+          if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
+        }
+        const name = description && typeof description === "object" && "name" in description && typeof description.name === "string" ? description.name : "Error";
+        const stack = description && typeof description === "object" && "stack" in description && typeof description.stack === "string" ? description.stack : "";
+        const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
+        return { result: undefined, error: formatGuestError(description).slice(0, 4000), failure: {
+          name, ...(call ? { call } : {}), ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}),
+        } };
+      };
       const timedOut = (): QuickJsExecutionResult => ({
         result: undefined,
         error: timeoutError,
+        failure: { name: "TimeoutError", timeout: { elapsedMs: Date.now() - (deadline - timeoutMs), deadlineMs: timeoutMs } },
         timedOut: true,
       });
 
+      // Keep this diagnostic function in a host-owned handle. Error.isError
+      // checks the native brand without Proxy traps. Own data descriptors of
+      // native Errors are safe to read; accessors and arbitrary thrown objects
+      // get a fixed description instead of dump's guest serialization/getters.
+      const described = runGuest(() => ctx.evalCode(`(() => {
+        const isError = Error.isError;
+        const descriptor = Object.getOwnPropertyDescriptor;
+        const prototypeOf = Object.getPrototypeOf;
+        const hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+        const slice = Function.prototype.call.bind(String.prototype.slice);
+        const stringify = JSON.stringify;
+        const prototypes = [
+          [Error.prototype, "Error"], [TypeError.prototype, "TypeError"],
+          [SyntaxError.prototype, "SyntaxError"], [ReferenceError.prototype, "ReferenceError"],
+          [RangeError.prototype, "RangeError"], [EvalError.prototype, "EvalError"],
+          [URIError.prototype, "URIError"], [AggregateError.prototype, "AggregateError"]
+        ];
+        return (error) => {
+          if (!isError(error)) return "null";
+          const text = (key, fallback, limit) => {
+            const own = descriptor(error, key);
+            return own && hasOwn(own, "value") && typeof own.value === "string"
+              ? slice(own.value, 0, limit) : fallback;
+          };
+          const prototype = prototypeOf(error);
+          let name = "Error";
+          for (let i = 0; i < prototypes.length; i++) {
+            if (prototype === prototypes[i][0]) { name = prototypes[i][1]; break; }
+          }
+          return stringify({ __proto__: null, name: text("name", name, 64),
+            message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
+        };
+      })()`));
+      if (described.error) {
+        const rejection = rejected(described.error);
+        described.error.dispose();
+        return finish(rejection);
+      }
+      describeError = described.value;
+
       const setup = runGuest(() => ctx.evalCode(setupScript(providers)));
       if (setup.error) {
-        const detail = formatGuestError(ctx.dump(setup.error));
+        const rejection = rejected(setup.error);
         setup.error.dispose();
-        if (wallInterrupted) return finish(timedOut());
-        if (cpuInterrupted) return fail(cpuTimeoutError);
-        return fail(`Sandbox setup failed: ${detail}`);
+        return finish(rejection.timedOut || cpuInterrupted ? rejection
+          : { ...rejection, error: `Sandbox setup failed: ${rejection.error}` });
       }
       setup.value.dispose();
 
@@ -412,11 +501,9 @@ export async function executeQuickJs(
         ctx.evalCode(`Promise.resolve((\n${normalizeCode(code)}\n)())`),
       );
       if (evaluated.error) {
-        const dumped = ctx.dump(evaluated.error);
+        const rejection = rejected(evaluated.error);
         evaluated.error.dispose();
-        if (isInterrupt(dumped) && wallInterrupted) return finish(timedOut());
-        if (isInterrupt(dumped) && cpuInterrupted) return fail(cpuTimeoutError);
-        return fail(formatGuestError(dumped));
+        return finish(rejection);
       }
       const promiseHandle = evaluated.value;
 
@@ -430,15 +517,9 @@ export async function executeQuickJs(
           }
           const jobs = runGuest(() => ctx.runtime.executePendingJobs());
           if (jobs.error) {
-            const dumped = ctx.dump(jobs.error);
+            const rejection = rejected(jobs.error);
             jobs.error.dispose();
-            if (isInterrupt(dumped) && wallInterrupted) {
-              return timedOut();
-            }
-            if (isInterrupt(dumped) && cpuInterrupted) {
-              return { result: undefined, error: cpuTimeoutError };
-            }
-            return { result: undefined, error: formatGuestError(dumped) };
+            return rejection;
           }
           const state = ctx.getPromiseState(promiseHandle);
           if (state.type === "fulfilled") {
@@ -447,15 +528,9 @@ export async function executeQuickJs(
             return { result };
           }
           if (state.type === "rejected") {
-            const dumped = ctx.dump(state.error);
+            const rejection = rejected(state.error);
             state.error.dispose();
-            if (isInterrupt(dumped) && wallInterrupted) {
-              return timedOut();
-            }
-            if (isInterrupt(dumped) && cpuInterrupted) {
-              return { result: undefined, error: cpuTimeoutError };
-            }
-            return { result: undefined, error: formatGuestError(dumped) };
+            return rejection;
           }
           if (bridge.pending === 0) {
             return {

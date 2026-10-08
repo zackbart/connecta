@@ -81,7 +81,7 @@ const MAX_PAGE_CELLS = 10_000;
  * allowance, maxBytes bounds the whole page, fields and cursor included. A
  * direct call_tool caller may ask for more, up to 4 MiB: base64 in the result
  * stash makes that about 5.6 MiB, under the stash's default 8 MiB, so an
- * oversized page still pages through get_result rather than being dropped.
+ * oversized page still pages through connecta.result rather than being dropped.
  */
 const DEFAULT_PAGE_BYTES = RESULT_BUDGET_BYTES;
 const MAX_PAGE_BYTES = 4 * 1024 * 1024;

@@ -323,6 +323,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       .map((connector) => connector.id);
     const refreshConfig = {
       ...executeLimits(resolved),
+      defaultToolTimeoutMs: resolved.calls.defaultTimeoutMs ?? resolved.execute.hostCallTimeoutMs,
       failOnInvocationFailure: true,
       trust: "read-only" as const,
     };

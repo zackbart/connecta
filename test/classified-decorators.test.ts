@@ -256,7 +256,7 @@ async function expectServed(
       try {
         await connecta.call!(`things.${name}`, {});
       } catch (error) {
-        refused.push(String((error as Error).message));
+        refused.push(String((error as Error & { code: string }).code));
       }
     }
     return {

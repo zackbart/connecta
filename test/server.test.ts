@@ -230,7 +230,7 @@ describe("server /mcp end-to-end", () => {
       await client.connect(transport);
       const result = await client.listTools();
 
-      expect(result.tools).toHaveLength(7);
+      expect(result.tools).toHaveLength(6);
       expect(client.getProtocolEra()).toBe("modern");
       expect(methods).toContain("server/discover");
       expect(methods).not.toContain("initialize");
@@ -244,19 +244,19 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("keeps the seven tools in registration order across requests", async () => {
+  it("keeps the six tools in registration order across requests", async () => {
     const c = makeDeployment();
     for (let i = 0; i < 2; i++) {
       const body = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
       expect(body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
         "skills", "search_tools", "call_tool", "call_destructive_tool",
-        "authorize_connector", "get_result", "execute_code",
+        "authorize_connector", "execute_code",
       ]);
     }
     await c.close();
   });
 
-  it("tools/list shows exactly the seven meta-tools", async () => {
+  it("tools/list shows exactly the six meta-tools", async () => {
     const c = makeDeployment();
     const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readJsonRpc(res);
@@ -266,7 +266,6 @@ describe("server /mcp end-to-end", () => {
       "call_destructive_tool",
       "call_tool",
       "execute_code",
-      "get_result",
       "search_tools",
       "skills",
     ]);
@@ -354,7 +353,7 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("serves a modern-era (2026-07-28) client the same seven-tool surface", async () => {
+  it("serves a modern-era (2026-07-28) client the same six-tool surface", async () => {
     // Every other test in this suite sends bare JSON-RPC, which the entry
     // classifies as legacy traffic — so this is the one automated proof that
     // the modern createMcpHandler leg of serveMcp works at all. PR B owns the
@@ -387,7 +386,6 @@ describe("server /mcp end-to-end", () => {
         "call_destructive_tool",
         "call_tool",
         "execute_code",
-        "get_result",
         "search_tools",
         "skills",
       ]);
@@ -599,14 +597,10 @@ describe("server /mcp end-to-end", () => {
     );
     expect(skill).toContain("`diagnostics: true` adds timing");
     expect(skill).toContain(
-      "`get_result({ id, offset?, maxBytes? })` returns a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, and then the page as raw text",
+      "`await connecta.result(id, { offset?, maxBytes? })` inside a program returns",
     );
-    expect(skill).toContain("`maxBytes` must be a whole number at least 1");
-    expect(skill).toContain("`offset` must be a whole number at least 0");
-    expect(skill).toContain(
-      "offset inside a multi-byte character moves back to its first byte",
-    );
-    expect(skill).toContain("unknown or expired id is an error");
+    expect(skill).toContain("Pages use UTF-8 bytes");
+    expect(skill).toContain("Unknown or expired ids fail");
     expect(skill).toContain("## Media output");
     expect(skill).not.toContain("connecta.ui");
     expect(skill).not.toContain("connecta.batch");
@@ -1289,55 +1283,14 @@ describe("server /mcp end-to-end", () => {
     });
   });
 
-  it("tools/call get_result rejects a page size that could not advance", async () => {
-    // Characterization, not regression: the registered zod schema already
-    // rejected a maxBytes of 0 before issue #32, and this passes unchanged
-    // against that earlier code. It is here to pin that pre-existing wire
-    // behavior in place, because the handler behind it used to answer such a
-    // page size with an empty slice whose nextOffset equalled the offset it
-    // was given — a client paging on nextOffset would never terminate. The
-    // schema is the only thing that kept that off the wire, so it should not
-    // be loosened without noticing.
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "get_result", arguments: { id: "any", maxBytes: 0 } },
-      { token: TOKEN },
-    );
-    const body = await readJsonRpc(res);
-    expect(body.result.isError).toBe(true);
-    expect(body.result.content[0].text).toContain("maxBytes");
-  });
-
-  it("tools/call get_result rejects an offset outside its domain", async () => {
-    // The wire half of issue #38: the registered schema and the handler now
-    // spell one rule (MIN_RESULT_OFFSET), so a negative or fractional offset is
-    // refused here as well as in process. The schema already carried
-    // `nonnegative().int()`, so this pins pre-existing wire behavior in place
-    // rather than changing it.
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    for (const offset of [-1, 1.5]) {
-      const res = await mcpRpc(
-        c,
-        "tools/call",
-        { name: "get_result", arguments: { id: "any", offset } },
-        { token: TOKEN },
-      );
-      const body = await readJsonRpc(res);
-      expect(body.result.isError, `offset ${offset}`).toBe(true);
-      expect(body.result.content[0].text).toContain("offset");
-    }
+  it("INV-3: get_result is removed from tools/call", async () => {
+    const c = makeDeployment();
+    const body = await readJsonRpc(await mcpRpc(c, "tools/call", {
+      name: "get_result", arguments: { id: "any" },
+    }, { token: TOKEN }));
+    expect(body.error?.message ?? body.result?.content[0]?.text).toContain("get_result");
+    expect(body.error !== undefined || body.result?.isError === true).toBe(true);
+    await c.close();
   });
 
   it("honors the deployment-wide maxResultBytes end to end", async () => {
@@ -1345,7 +1298,9 @@ describe("server /mcp end-to-end", () => {
     // the cap — `createMetaTools` takes no override (issue #44) — so this pins
     // that the configured value reaches call_tool through serve() and stashes a
     // pageable result.
+    let pagedId = "";
     const c = createTestConnecta({
+      executor: { async execute(_code, providers) { return { result: await providers[0]!.fns.result!(pagedId, { maxBytes: 1_000 }) }; } },
       connectors: [
         api("blob", {
           description: "Blobs",
@@ -1382,28 +1337,22 @@ describe("server /mcp end-to-end", () => {
     expect(notice.totalBytes).toBe(502);
     expect(lines.slice(1).join("\n")).toHaveLength(100);
 
+    pagedId = notice.resultId;
     const paged = await mcpRpc(
       c,
       "tools/call",
       {
-        name: "get_result",
-        arguments: { id: notice.resultId, maxBytes: 1_000 },
+        name: "execute_code",
+        arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { maxBytes: 1_000 })` },
       },
       { token: TOKEN },
     );
-    // A header line, then raw text; the 1,000-byte request is clamped to the
-    // deployment's 100-byte cap end to end.
-    const pageText = (await readJsonRpc(paged)).result.content[0].text as string;
-    const newline = pageText.indexOf("\n");
-    expect(JSON.parse(pageText.slice(0, newline))).toMatchObject({
-      resultId: notice.resultId,
-      offset: 0,
-      bytes: 100,
-      totalBytes: 502,
-      hasMore: true,
-      nextAction: { tool: "get_result", arguments: { id: notice.resultId, offset: 100 } },
+    const page = (await readJsonRpc(paged)).result.structuredContent.result;
+    expect(page).toMatchObject({
+      resultId: notice.resultId, offset: 0, bytes: 100, totalBytes: 502,
+      hasMore: true, nextOffset: 100, format: "text",
     });
-    expect(pageText.slice(newline + 1)).toBe(JSON.stringify("x".repeat(500)).slice(0, 100));
+    expect(page.text).toBe(JSON.stringify("x".repeat(500)).slice(0, 100));
   });
 
   it("forwards calls.defaultTimeoutMs into connector call context", async () => {
@@ -1810,7 +1759,7 @@ describe("clerk metadata routes (no network)", () => {
     const c = makeClerkConnecta();
     const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readJsonRpc(res);
-    expect(body.result.tools).toHaveLength(7);
+    expect(body.result.tools).toHaveLength(6);
   });
 });
 
@@ -1861,7 +1810,7 @@ describe("execute_code registration (code mode)", () => {
     expect(description).not.toContain("resume_execution");
   });
 
-  it("advertises and runs execute_code on the seven-tool surface", async () => {
+  it("advertises and runs execute_code on the six-tool surface", async () => {
     let executions = 0;
     const withExec = createTestConnecta({
       connectors: [calcApi()],
@@ -1885,7 +1834,6 @@ describe("execute_code registration (code mode)", () => {
       "call_destructive_tool",
       "call_tool",
       "execute_code",
-      "get_result",
       "search_tools",
       "skills",
     ]);
@@ -1917,7 +1865,7 @@ describe("execute_code registration (code mode)", () => {
     // address is "callable" without showing the parentheses teaches nothing,
     // and the sanitization rule two clauses later makes "as written" false.
     expect(executeTool.description).toContain(
-      "connecta.call(address, args)",
+      "connecta.call(address, args, { timeoutMs? })",
     );
     // #418 deliberately replaces the former 4.4 KiB ceiling. The detailed
     // selection rules and examples now live only in the on-demand usage skill.
@@ -1974,7 +1922,7 @@ describe("execute_code registration (code mode)", () => {
         arguments: {
           code: `async () => {
             const sums = await Promise.all(
-              [1, 2, 3].map((n) => connecta.call("calc.add", { a: n, b: n }))
+              [1, 2, 3].map((n) => connecta.call("calc.add", { a: n, b: n }).then(({ data }) => data))
             );
             console.log("done");
             return sums.map((s) => s.sum);
@@ -2018,7 +1966,7 @@ describe("execute_code registration (code mode)", () => {
             const value = await connecta.call(found.tools[0].address, {
               a: 4,
               b: 5
-            });
+            }).then(({ data }) => data);
             return {
               address: found.tools[0].address,
               schema: described.tools[0].inputSchema,

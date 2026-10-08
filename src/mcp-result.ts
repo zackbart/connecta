@@ -14,15 +14,15 @@ interface McpishResult {
  * JSON-parsed when possible. Downstream `isError` results become exceptions.
  * Non-MCP connectors already return plain values.
  */
-export function unwrapMcpResult(
+export function downstreamValue(
   kind: Connector["kind"],
   result: unknown,
-): unknown {
+): { data: unknown; format: "json" | "text" } {
   if (kind !== "mcp" || result == null || typeof result !== "object") {
-    return result;
+    return { data: result, format: typeof result === "string" ? "text" : "json" };
   }
   const r = result as McpishResult;
-  if ("toolResult" in r) return r.toolResult;
+  if ("toolResult" in r) return { data: r.toolResult, format: "json" };
   const content = Array.isArray(r.content) ? r.content : [];
   if (r.isError) {
     const text = content
@@ -31,14 +31,19 @@ export function unwrapMcpResult(
       .join("\n");
     throw new Error(boundedEchoText(text || "Tool call failed"));
   }
-  if (r.structuredContent !== undefined) return r.structuredContent;
+  if (r.structuredContent !== undefined) return { data: r.structuredContent, format: "json" };
   if (content.length > 0 && content.every((c) => c.type === "text")) {
     const text = content.map((c) => c.text ?? "").join("\n");
     try {
-      return JSON.parse(text);
+      return { data: JSON.parse(text), format: "json" };
     } catch {
-      return text;
+      return { data: text, format: "text" };
     }
   }
-  return result;
+  return { data: result, format: "json" };
+}
+
+/** Preserve the raw-value API for internal callers that already know its format. */
+export function unwrapMcpResult(kind: Connector["kind"], result: unknown): unknown {
+  return downstreamValue(kind, result).data;
 }

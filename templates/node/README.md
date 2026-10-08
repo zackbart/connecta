@@ -242,16 +242,16 @@ npm run typecheck
 CONNECTA_TOKEN='cta_REPLACE_WITH_RETURNED_SECRET' npm run doctor
 ```
 
-Doctor checks health, the executor, and the exact prescribed seven-tool
+Doctor checks health, the executor, and the exact prescribed six-tool
 model-facing surface by running a harmless sandbox program. It reads the bearer
 from `CONNECTA_TOKEN`; it never accepts the secret as a command-line argument.
 Remote URLs must use HTTPS.
 
 A fully-wired deployment reports exactly the same line as a bare one —
-connector count, QuickJS executed, seven tools, plus any catalog drift:
+connector count, QuickJS executed, six tools, plus any catalog drift:
 
 ```text
-Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed seven-tool surface.
+Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed six-tool surface.
 ```
 
 `QuickJS` is this deployment's sandbox, reported by the deployment itself —

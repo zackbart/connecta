@@ -117,7 +117,7 @@ silently never matching. A permitted origin still has to authenticate.
 ## Principals, visibility, and operators
 
 One authorization yields three roles: the **actor** identifies the caller in
-activity, the **subject** owns transient results such as `get_result` pages,
+activity, the **subject** owns transient results such as `connecta.result` pages,
 and the **principal** is the human owner of personal connector auth. An
 interactive Clerk or Access user supplies all three; Access service identities are refused; machines present `cta_` tokens. The principal is an explicit
 `principal: { namespace, id }` from `authorize`, accepted whenever it

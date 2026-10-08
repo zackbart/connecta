@@ -959,7 +959,7 @@ describe("control-character tool names at catalog intake", () => {
         for (const name of rejected) {
           await expect(fns.call!(`svc.${name}`, {})).rejects.toMatchObject({ code: "unknown_tool" });
         }
-        for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toBe("ok");
+        for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toEqual({ data: "ok", format: "text" });
         return { result: "ok" };
       },
     }, logger);

@@ -2,7 +2,7 @@ import type { ExecuteResult } from "./types.js";
 import { msg } from "./errors.js";
 
 /** ~6k tokens. Sandbox code should filter data down before returning. */
-const MAX_EXECUTE_RESULT_CHARS = 24_000;
+export const MAX_EXECUTE_RESULT_CHARS = 24_000;
 export const MAX_EXECUTE_LOG_CHARS = 4_000;
 
 export function serializeResultText(value: unknown): string {
@@ -24,7 +24,7 @@ const TRUNCATION_HINT =
  * of what the program returned, and truncation happens exactly once no matter
  * how many hops the value takes.
  */
-function truncationEnvelope(text: string): {
+function truncationEnvelope(text: string, maxChars: number, totalChars = text.length): {
   truncated: true;
   preview: string;
   totalChars: number;
@@ -33,31 +33,41 @@ function truncationEnvelope(text: string): {
   const base = {
     truncated: true as const,
     preview: "",
-    totalChars: text.length,
+    totalChars,
     hint: TRUNCATION_HINT,
   };
   let budget = Math.max(
     0,
-    MAX_EXECUTE_RESULT_CHARS - JSON.stringify(base).length,
+    maxChars - JSON.stringify(base).length,
   );
   for (let attempt = 0; attempt < 8 && budget > 0; attempt += 1) {
     const candidate = { ...base, preview: text.slice(0, budget) };
     const size = JSON.stringify(candidate).length;
-    if (size <= MAX_EXECUTE_RESULT_CHARS) return candidate;
+    if (size <= maxChars) return candidate;
     // Every character costs at least one serialized character, so scaling by
     // the overshoot ratio (minus a step) strictly shrinks the budget.
     budget = Math.max(
       0,
-      Math.floor(budget * (MAX_EXECUTE_RESULT_CHARS / size)) - 8,
+      Math.floor(budget * (maxChars / size)) - 8,
     );
   }
   return { ...base, preview: text.slice(0, budget) };
 }
 
-export function guardExecuteResultValue(value: unknown): unknown {
+export function guardExecuteResultValue(value: unknown, maxChars = MAX_EXECUTE_RESULT_CHARS): unknown {
   const text = serializeResultText(value);
-  if (text.length <= MAX_EXECUTE_RESULT_CHARS) return value;
-  return truncationEnvelope(text);
+  if (text.length <= maxChars) return value;
+  // A child may already have guarded this value at a larger transport cap.
+  // Shrink its preview once more without nesting notices or losing original size.
+  if (value !== null && typeof value === "object") {
+    const prior = value as { truncated?: unknown; preview?: unknown; totalChars?: unknown; hint?: unknown };
+    if (prior.truncated === true && prior.hint === TRUNCATION_HINT && typeof prior.preview === "string" &&
+      typeof prior.totalChars === "number" && Number.isSafeInteger(prior.totalChars) && prior.totalChars >= prior.preview.length &&
+      Object.keys(value).length === 4) {
+      return truncationEnvelope(prior.preview, maxChars, prior.totalChars);
+    }
+  }
+  return truncationEnvelope(text, maxChars);
 }
 
 export function truncateExecuteText(text: string, max: number): string {
@@ -83,6 +93,7 @@ export function prepareExecuteResultForTransport(
     return {
       result: undefined,
       error: outcome.error,
+      ...(outcome.failure ? { failure: outcome.failure } : {}),
       ...(logs ? { logs } : {}),
     };
   }

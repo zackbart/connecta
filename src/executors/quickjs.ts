@@ -22,6 +22,7 @@ import {
   ExecutorExecutionError,
 } from "../executor-admission.js";
 import { msg } from "../errors.js";
+import { InvocationFailure } from "../invocation.js";
 import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
@@ -196,16 +197,11 @@ function nonNegativeWhole(
   return resolved;
 }
 
-function errorPayload(error: string): string {
-  // X11: a partial authenticated frame exposes its secret instead of decoding.
-  // Refuse it whole if a host ever bypasses execute.ts's framing bound.
-  const message =
-    error.length > MAX_ERROR_CHARS && error.includes("\u001econnecta-error:")
-      ? `Host failure exceeded the ${MAX_ERROR_CHARS}-character bridge limit.`
-      : error.slice(0, MAX_ERROR_CHARS);
+function errorPayload(error: unknown): string {
   return JSON.stringify({
     ok: false,
-    error: message,
+    error: msg(error).slice(0, MAX_ERROR_CHARS),
+    ...(error instanceof InvocationFailure ? { call: error.details } : {}),
   } satisfies HostResultPayload);
 }
 
@@ -466,18 +462,22 @@ class QuickJsChildPool implements AdmittingExecutor {
           this.rejectActive(slot, error);
           this.recycle(slot);
         }).pipe(Effect.andThen(Effect.never));
+      const started = Date.now();
       const contenders: Array<Effect.Effect<ExecuteResult, Error>> = [
         Deferred.await(active.outcome),
         Effect.sleep(
           Duration.millis(this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS),
         ).pipe(
-          Effect.andThen(
-            endWith(
-              new Error(
-                `QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`,
-              ),
-            ),
-          ),
+          Effect.andThen(Effect.suspend(() => {
+            const elapsedMs = Date.now() - started;
+            const deadlineMs = this.runtimeOptions.timeoutMs;
+            return endWith(new InvocationFailure({
+              code: "timeout",
+              message: `Operation "execute_code" timed out during sandbox termination after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`,
+              retryable: false,
+              details: { operation: "execute_code", stage: "sandbox termination", elapsedMs, deadlineMs },
+            }));
+          })),
         ),
       ];
       if (signal) {
@@ -787,7 +787,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         payloadJson = errorPayload(detail);
       }
     } catch (err) {
-      payloadJson = errorPayload(msg(err));
+      payloadJson = errorPayload(err);
     }
     if (!child.connected || slot.active !== active) return;
     const response = {

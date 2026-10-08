@@ -1336,7 +1336,7 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
   it("routes large reads and uncertain creates the same way in schema, guide, and messages", async () => {
     const connector = connection();
     const tool = (await connector.listTools(context())).find((candidate) => candidate.name === "get_document")!;
-    expect((tool.inputSchema as any).properties.maxChars.description).toContain("call directly (call_tool, get_result to page)");
+    expect((tool.inputSchema as any).properties.maxChars.description).toContain("call directly (call_tool, connecta.result to page)");
     const content = guide(connector).content;
     expect(content).toContain("Read it with a direct `call_tool`, paged");
     expect(content).toContain("straight away only when\n  Google refused it; otherwise read the document first");

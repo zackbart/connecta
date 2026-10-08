@@ -62,6 +62,25 @@ describe("EmitCollector validation (M1)", () => {
     }
   });
 
+  it.each(["", "%%%invalid%%", "aGk", "aGk=\n", "a Gk=", "aGk===", "-_==", "AB==", "AAF=", "data:image/png;base64,aGk="])("INV-3: rejects malformed image base64 %j before collection", (data) => {
+    const sink = collector();
+    expect(() => sink.accept({ type: "image", data, mimeType: "image/png" })).toThrow(/strict base64/);
+    expect(sink.blocks).toEqual([]);
+    expect(sink.bytes).toBe(0);
+  });
+
+  it.each(["text/html", "image/svg+xml", "image/jpg", "IMAGE/PNG"])("INV-3: refuses unsupported image MIME %s", (mimeType) => {
+    const sink = collector();
+    expect(() => sink.accept({ type: "image", data: "aGk=", mimeType })).toThrow(/image mimeType/);
+    expect(sink.blocks).toEqual([]);
+  });
+
+  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])("INV-3: accepts supported image MIME %s with canonical base64", (mimeType) => {
+    const sink = collector();
+    sink.accept({ type: "image", data: "aGk=", mimeType });
+    expect(sink.blocks).toEqual([{ type: "image", data: "aGk=", mimeType }]);
+  });
+
   it("accepts exactly the three block shapes", () => {
     const sink = collector();
     sink.accept({ type: "text", text: "t" });
@@ -130,9 +149,7 @@ describe("connecta.emit provider (M7, M8)", () => {
     await emit({ type: "text", text: "a" });
     await emit({ type: "text", text: "b" });
     // The single host call is still available after two emits…
-    await expect(call("calc.add", { a: 1, b: 2 })).resolves.toEqual({
-      sum: 3,
-    });
+    await expect(call("calc.add", { a: 1, b: 2 })).resolves.toEqual({ data: { sum: 3 }, format: "json" });
     // The next call ends the host run instead of rejecting into the guest.
     let settled = false;
     void call("calc.add", { a: 1, b: 2 }).then(
@@ -162,8 +179,8 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     expect(out.isError).toBeUndefined();
     expect(out.content).toHaveLength(3);
     const envelope = JSON.parse(required(out.content[0]).text ?? "");
-    expect(envelope).toEqual({ result: { ok: true }, emitted: 2 });
-    expect(out.structuredContent).toEqual({ result: { ok: true }, emitted: 2 });
+    expect(envelope).toEqual({ result: { ok: true }, emitted: 2, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
+    expect(out.structuredContent).toEqual({ result: { ok: true }, emitted: 2, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
     expect(out.content[1]).toEqual({ type: "text", text: "caption" });
     expect(out.content[2]).toEqual({
       type: "image",
@@ -175,7 +192,7 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
   it("a program that never emits produces today's exact response", async () => {
     const handler = emitHandler(scriptedExecutor(async () => "plain"));
     expect(await handler({ code: "ignored" })).toEqual(
-      jsonResult({ result: "plain" }),
+      jsonResult({ result: "plain", hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } }),
     );
   });
 
@@ -225,7 +242,7 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     expect(plain.content).toHaveLength(1);
     const plainText = required(plain.content[0]).text ?? "";
     expect(plainText).toContain("after emitting");
-    expect(plainText).toContain("emittedDiscarded: 1");
+    expect(JSON.parse(plainText)).toMatchObject({ emittedDiscarded: 1 });
     expect(plainText).not.toContain("doomed");
 
     const structured = await emitHandler(failing)({
@@ -235,7 +252,7 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     expect(structured.isError).toBe(true);
     const envelope = JSON.parse(required(structured.content[0]).text ?? "");
     expect(envelope.emittedDiscarded).toBe(1);
-    expect(envelope.error.code).toBe("executor_failed");
+    expect(envelope.error.code).toBe("program_error");
   });
 
   it("reports the emitted aggregate in diagnostics, numbers only", async () => {

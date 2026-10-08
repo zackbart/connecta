@@ -104,7 +104,9 @@ describe("operator log calls", () => {
         problems.push(`src/${name}:${line}: logger method alias ${match[0].slice(0, 80)}`);
       }
     }
-    expect(calls).toBeGreaterThanOrEqual(49);
+    // Worker guest logging now calls its private captured console reference.
+    // This floor only checks that the scan ran; every matched call is checked above.
+    expect(calls).toBeGreaterThanOrEqual(48);
     expect(problems).toEqual([]);
   });
 

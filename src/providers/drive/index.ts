@@ -82,7 +82,7 @@ const BINARY_INLINE_BYTES = 1024 * 1024;
  * default is the shared Workspace budget, three quarters of the 256 KiB a
  * host result may carry into execute_code, so a program always receives a
  * default result. A direct call_tool caller may ask for up to 4 MiB, which the
- * result stash (8 MiB by default) still pages through get_result; execute_code
+ * result stash (8 MiB by default) still pages through connecta.result; execute_code
  * cannot receive that much.
  */
 const DEFAULT_RESULT_BYTES = RESULT_BUDGET_BYTES;

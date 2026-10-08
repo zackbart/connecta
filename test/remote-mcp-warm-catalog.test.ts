@@ -1,3 +1,4 @@
+import { guestFailureFacts } from "./fixtures/misc.js";
 import type { Tool } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -121,7 +122,7 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
         try {
           return { result: await required(provider.fns.call)(target.address, target.args) };
         } catch (err) {
-          return { result: undefined, error: (err as Error).message };
+          return { result: undefined, error: (err as Error).message, failure: guestFailureFacts(err) };
         }
       },
     };

@@ -1,0 +1,58 @@
+{
+  "docs": {
+    "padded-purpose": {
+      "guide": "f685536d855d559738f65142b0d0d9bbe17f8c75bdda0d2c3a290e9f14faf662",
+      "describe": "f0b715616671bdf2c13159c8f3a8dd079b9b66f5f9b894d46319db994806829f"
+    },
+    "empty-title": {
+      "guide": "f685536d855d559738f65142b0d0d9bbe17f8c75bdda0d2c3a290e9f14faf662",
+      "describe": "f0b715616671bdf2c13159c8f3a8dd079b9b66f5f9b894d46319db994806829f"
+    },
+    "blank-title": {
+      "guide": "f685536d855d559738f65142b0d0d9bbe17f8c75bdda0d2c3a290e9f14faf662",
+      "describe": "f0b715616671bdf2c13159c8f3a8dd079b9b66f5f9b894d46319db994806829f"
+    },
+    "default": {
+      "guide": "f685536d855d559738f65142b0d0d9bbe17f8c75bdda0d2c3a290e9f14faf662",
+      "describe": "f0b715616671bdf2c13159c8f3a8dd079b9b66f5f9b894d46319db994806829f"
+    },
+    "instructions": {
+      "guide": "ca8b7fb1934f4fce0de0b70a7de840357a98263a9d8b7581bca01a8a5c71ee5d",
+      "describe": "f0b715616671bdf2c13159c8f3a8dd079b9b66f5f9b894d46319db994806829f"
+    }
+  },
+  "drive": {
+    "padded-purpose": {
+      "guide": "2f73dbe1f00e2427dd2b401a0e2309e418fc5e91c77c1602b1bc92e33d3a77c5"
+    },
+    "empty-title": {
+      "guide": "2f73dbe1f00e2427dd2b401a0e2309e418fc5e91c77c1602b1bc92e33d3a77c5"
+    },
+    "blank-title": {
+      "guide": "2f73dbe1f00e2427dd2b401a0e2309e418fc5e91c77c1602b1bc92e33d3a77c5"
+    },
+    "default": {
+      "guide": "2f73dbe1f00e2427dd2b401a0e2309e418fc5e91c77c1602b1bc92e33d3a77c5"
+    },
+    "instructions": {
+      "guide": "393fdbaef73fcc16c0ecdf95086335f5623785aefbf2de7b3d582fa2fd3155a4"
+    }
+  },
+  "slides": {
+    "padded-purpose": {
+      "guide": "96f750ad5ae4e909df675bc55755469768324949c2253c1c036c5676eb584669"
+    },
+    "empty-title": {
+      "guide": "96f750ad5ae4e909df675bc55755469768324949c2253c1c036c5676eb584669"
+    },
+    "blank-title": {
+      "guide": "96f750ad5ae4e909df675bc55755469768324949c2253c1c036c5676eb584669"
+    },
+    "default": {
+      "guide": "96f750ad5ae4e909df675bc55755469768324949c2253c1c036c5676eb584669"
+    },
+    "instructions": {
+      "guide": "dd048def041679192a16e88b79321f79a8571a22a60f2e24f17d711c9fd3b110"
+    }
+  }
+}
