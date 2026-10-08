@@ -2398,8 +2398,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       description:
         "Create an empty Google Slides deck with one title slide in the user's My Drive root. It cannot place the deck in a folder or copy a template.",
       // Additive: a new file changes nothing that existed. Not read-only, so
-      // it crosses call_destructive_tool unless the deployment exempts it in
-      // `execute.approval`; the provider never exempts itself.
+      // program calls require a trusted pool; other writes use
+      // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: input(
         {
@@ -2625,8 +2625,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       description:
         "Comment on a slide, a notes page, an element, a range of its text, or a table cell, optionally assigning it. Adds a thread; Slides notifies as in the editor.",
       // Additive: a new thread changes nothing that existed. Not read-only,
-      // so it crosses call_destructive_tool unless the deployment exempts it
-      // in `execute.approval`; the provider never exempts itself.
+      // so program calls require a trusted pool; other writes use
+      // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: input(
         {
@@ -3033,7 +3033,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * Reads run in programs. `create_presentation`, `create_slide`,
  * `create_comment`, and `create_comment_reply` are additive writes the host
- * approves unless the deployment exempts them in `execute.approval`;
+ * approves through call_destructive_tool or a trusted program;
  * `replace_all_text`, `update_comment_thread`, `update_comment_post`,
  * `delete_comment`, `delete_comment_reply`, and `batch_update_presentation`
  * are destructive.

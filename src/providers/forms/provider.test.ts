@@ -226,7 +226,7 @@ describe("forms() identity and surface (H1, H14)", () => {
     expect(byName["create_form"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
     expect(byName["update_form_info"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
     expect(byName["batch_update_form"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-    // The provider never exempts a write from approval, and has no slot.
+    // The provider has no operator slot.
     expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();

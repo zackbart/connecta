@@ -113,7 +113,7 @@ describe("sheets() identity and surface (H1)", () => {
     expect(guide(connector).required).toBe(true);
   });
 
-  it("ships exactly its tools, each with its safety class, and never exempts itself", async () => {
+  it("ships exactly its tools, each with its safety class", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));

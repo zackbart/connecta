@@ -268,7 +268,7 @@ describe("docs() identity and surface (H1, H14)", () => {
     for (const destructive of ["replace_all_text", "batch_update_document"]) {
       expect(byName[destructive], destructive).toEqual({ readOnlyHint: false, destructiveHint: true });
     }
-    // Never self-exempt; no operator slot and no OAuth: the key is deployment config.
+    // No operator slot and no OAuth: the key is deployment config.
     expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();

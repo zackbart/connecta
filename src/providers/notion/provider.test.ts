@@ -26,7 +26,7 @@ import {
 import { CatalogService } from "../../catalog-service.js";
 import { InvocationService } from "../../invocation.js";
 import { runEdge } from "../../runtime/run.js";
-import { writeStateOf } from "../../exempt-writes.js";
+import { writeStateOf } from "../../program-writes.js";
 import { classifyTool } from "../../tool-safety.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";

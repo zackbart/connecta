@@ -206,7 +206,7 @@ describe("gmail() identity and surface (H1, H14)", () => {
     expect(tools.some((tool) => /send|delete|trash|label_|modify|gmail_api/.test(tool.name))).toBe(false);
   });
 
-  it("classifies reads as read-only and drafts as writes it never exempts itself", async () => {
+  it("classifies reads as read-only and drafts as writes", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name);

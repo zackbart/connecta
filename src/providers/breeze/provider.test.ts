@@ -194,21 +194,17 @@ describe("breeze() construction", () => {
     expect(usage.content).toContain("Never tag minors.");
   });
 
-  it("tells agents the additive writes still need approval unless config exempts them", async () => {
-    // add_person, assign_tag, and record_check_in declare readOnlyHint: false
-    // and nothing exempts them by default, so a program inside execute_code
-    // is refused them like any other write.
+  it("INV-2: explains write routing by pool trust without retired approval config", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     for (const name of ["add_person", "assign_tag", "record_check_in"]) {
       expect(tools.find((tool) => tool.name === name)!.annotations?.readOnlyHint).toBe(false);
     }
     const content = guide(connector).content.replace(/\s+/g, " ");
-    expect(content).not.toMatch(/approval-gated except/);
-    expect(content).toContain(
-      "Every write, `add_person`, `assign_tag`, and `record_check_in` included, is a `call_destructive_tool` call",
-    );
-    expect(content).toContain("unless the deployment exempts it in `execute.approval`");
+    expect(content).not.toContain("execute.approval");
+    expect(content).toContain("uses `call_destructive_tool` in a read-only pool");
+    expect(content).toContain("A trusted pool also permits writes inside `execute_code`");
+    expect(content).toContain("the host controls approval for the program");
   });
 
   it("declares a single-field credential and constructs without the network", () => {

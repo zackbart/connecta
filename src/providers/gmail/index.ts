@@ -1582,8 +1582,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       description:
         "Create a Gmail draft, optionally as a reply in an existing thread. It is saved, never sent: the user reviews and sends it in Gmail.",
       // Additive: a new draft changes nothing that existed. Not read-only, so
-      // it crosses call_destructive_tool unless the deployment exempts it in
-      // `execute.approval`; the provider never exempts itself.
+      // program calls require a trusted pool; other writes use
+      // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: input(
         {
@@ -1715,7 +1715,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * `gmail.compose` technically allows sending; this connection never does,
  * because no tool reaches a send method. Drafts are additive writes the host
- * approves unless the deployment exempts `create_draft` in `execute.approval`.
+ * approves through call_destructive_tool or a trusted program.
  */
 export const gmail = asProviderFactory<GmailOptions>({
   name: "gmail",

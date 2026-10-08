@@ -355,7 +355,7 @@ describe("slides() identity and surface (H1, H14)", () => {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
       expect(isRead(byName[name]!)).toBe(false);
     }
-    // The provider never exempts itself, and has no slot or OAuth of its own.
+    // The provider has no slot or OAuth of its own.
     expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();

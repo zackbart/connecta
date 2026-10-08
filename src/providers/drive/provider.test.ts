@@ -209,7 +209,7 @@ describe("drive() identity and surface (H1, H14)", () => {
     }
   });
 
-  it("classifies reads, additive writes, and destructive writes, and never exempts itself", async () => {
+  it("classifies reads, additive writes, and destructive writes", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
