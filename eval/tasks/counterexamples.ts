@@ -34,6 +34,10 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   if (task.id === "p5-known-read-routing") {
     cases.push({ name: "r1 exact wrong single-record mapping", trace: { ...trace,
       finalAnswer: "CI run 4812 passed at commit 71d0e3c. CI run 4811 failed at commit 9f2c1ab." } });
+    cases.push({ name: "r3 fabricated commit with negated true commit", trace: { ...trace,
+      finalAnswer: "CI run 4812 failed at commit deadbee. The expected commit 9f2c1ab was not used." } });
+    cases.push({ name: "r3 fabricated mixed-hex commit", trace: { ...trace,
+      finalAnswer: trace.finalAnswer + " It also ran on 4f00d12." } });
     for (const clause of ["Commit 9f2c1ab passed.", "Commit 71d0e3c failed.", "Run 4811 failed.",
       "Commit c0ffee1 passed.", "Commit 9f2c1ab belongs to feature/export."]) {
       cases.push({ name: `single-record conflicting pair: ${clause}`, trace: { ...trace,
@@ -63,6 +67,8 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   if (task.id === "p5-fanout-over-budget") {
     cases.push({ name: "r1 exact conflicting commits without run ids", trace: { ...trace,
       finalAnswer: trace.finalAnswer + " Commit 9f2c1ab passed; commit 71d0e3c failed." } });
+    cases.push({ name: "r3 fabricated commit for a fan-out run", trace: { ...trace,
+      finalAnswer: trace.finalAnswer + " Run 4810 passed at commit deadbee." } });
     for (const clause of ["Commit 9f2c1ab passed.", "Commit 71d0e3c failed.",
       "Commit c0ffee1 failed.", "Commit 9f2c1ab belongs to feature/export."]) {
       cases.push({ name: `fan-out conflicting pair: ${clause}`, trace: { ...trace,
