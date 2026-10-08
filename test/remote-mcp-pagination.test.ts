@@ -456,12 +456,12 @@ describe("remoteMcp() tools/list pagination", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(settled).toBe(true);
       const payload = JSON.parse(required((await pending).content[0]).text) as {
-        connectors: unknown[];
+        tools: unknown[];
         queryAnalysis?: { unavailableConnectorCount?: number };
       };
       // The stalled catalog is reported unavailable rather than searched, and
       // no partial page of it reaches the caller.
-      expect(payload.connectors).toEqual([]);
+      expect(payload.tools).toEqual([]);
       expect(payload.queryAnalysis).toMatchObject({
         unavailableConnectorCount: 1,
       });
@@ -483,11 +483,8 @@ describe("remoteMcp() tools/list pagination", () => {
     }).searchTools({});
 
     expect(
-      JSON.parse(required(searched.content[0]).text).connectors[0],
-    ).toMatchObject({
-      id: "paged",
-      tools: [{ address: "paged.only" }],
-    });
+      JSON.parse(required(searched.content[0]).text).tools,
+    ).toMatchObject([{ address: "paged.only" }]);
     expect(cursors).toEqual([undefined]);
   });
 
@@ -514,7 +511,7 @@ describe("remoteMcp() tools/list pagination", () => {
       BASE,
     ).searchTools({});
     expect(
-      JSON.parse(required(searched.content[0]).text).connectors[0].tools,
+      JSON.parse(required(searched.content[0]).text).tools,
     ).toHaveLength(3);
   });
 
@@ -814,7 +811,7 @@ describe("paginated catalogs through the discovery path", () => {
     const searched = await meta.searchTools({ query: "gamma" });
     const searchPayload = JSON.parse(required(searched.content[0]).text);
     expect(
-      searchPayload.connectors[0].tools.map(
+      searchPayload.tools.map(
         (t: { address: string }) => t.address,
       ),
     ).toContain("paged.gamma");

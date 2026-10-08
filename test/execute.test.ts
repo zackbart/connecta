@@ -669,22 +669,20 @@ describe("buildSandboxProviders", () => {
       "queryCoverage",
     );
     expect(required(mixedUnicode.tools[0])).not.toHaveProperty("score");
-    // Key metadata accompanies schemas; a search that asked for neither pays
-    // for neither.
-    expect(required(partial.tools[0])).not.toHaveProperty("inputKeys");
+    // JSON schemas and their key metadata are the program default.
+    expect(required(partial.tools[0])).toHaveProperty("inputKeys", ["a", "b"]);
 
     const described = (await required(connecta.fns.describe)({
       addresses: ["calc.add", "remote.echo"],
+      format: "compact",
     })) as { tools: Array<{ address: string; inputSchema: string }> };
     expect(described.tools.map((tool) => tool.address)).toEqual([
       "calc.add",
       "remote.echo",
     ]);
-    // format: "json" hands back the raw JSON Schema; the default renders the
-    // compact TypeScript-like shape.
+    // Omitted format hands back the raw JSON Schema; compact is explicit.
     const raw = (await required(connecta.fns.describe)({
       addresses: ["calc.add"],
-      format: "json",
     })) as { tools: Array<{ inputSchema: { properties: { a: { type: string } } } }> };
     expect(required(raw.tools[0]).inputSchema.properties.a.type).toBe("number");
     expect(required(described.tools[0]).inputSchema).toBe(

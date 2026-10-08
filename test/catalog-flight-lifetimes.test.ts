@@ -302,9 +302,7 @@ describe("each reader's own deadline and cancellation (#571)", () => {
       .search({ connector: "across" });
 
     await vi.advanceTimersByTimeAsync(10);
-    expect((await short).queryAnalysis?.catalogError?.message).toContain(
-      'search_tools probe of "across" timed out after 10ms',
-    );
+    expect((await short).queryAnalysis?.catalogError?.message).toBe('Connector "across" catalog lookup failed (timeout).');
 
     await vi.advanceTimersByTimeAsync(50);
     const page = await long;

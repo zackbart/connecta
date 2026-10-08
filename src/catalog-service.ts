@@ -59,6 +59,35 @@ const MAX_QUERY_TERM_LENGTH = 64;
 const MAX_IDENTITY_CONNECTORS = 3;
 const MAX_DESCRIBE_SUGGESTIONS = 3;
 
+// Recognized service names are query vocabulary, never a deployment inventory.
+// Unknown/custom services use the explicit connector scope. Keep this independent
+// of provider implementations so discovery cannot pull them into root imports.
+const SERVICE_NAMES = [
+  "GitHub", "GitLab", "Supabase", "PostHog", "Linear", "Mixpanel",
+  "RevenueCat", "Stripe", "Notion", "Slack", "Vercel", "Cloudflare",
+  "Basecamp", "Breeze", "Tithely", "Planning Center", "Google Drive",
+  "Google Docs", "Google Sheets", "Google Slides", "Gmail",
+];
+
+function normalizedPhrase(text: string): string {
+  return lexicalQueryTerms(text.toLowerCase()).join(" ");
+}
+
+function containsPhrase(query: string, phrase: string): boolean {
+  const normalized = normalizedPhrase(phrase);
+  return normalized.length > 0 && ` ${normalizedPhrase(query)} `.includes(` ${normalized} `);
+}
+
+function connectorNames(connector: Connector): string[] {
+  return [connector.id, ...(connector.title ? [connector.title] : [])];
+}
+
+function connectorMatchRank(query: string, connector: Connector): number {
+  if (connectorNames(connector).some((name) => containsPhrase(query, name))) return 2;
+  return SERVICE_NAMES.some((service) => containsPhrase(query, service) &&
+    connectorNames(connector).some((name) => containsPhrase(name, service))) ? 1 : 0;
+}
+
 const encoder = new TextEncoder();
 
 /** Clip one echoed query term without splitting a non-BMP code point. */
@@ -290,6 +319,7 @@ interface CatalogSearchEntry {
     inputSchema?: unknown;
     outputSchema?: unknown;
     signature?: string;
+    schemaFormat?: "json" | "text";
     outputSchemaSource?: "observed";
     inputSchemaTruncated?: true;
     outputSchemaTruncated?: true;
@@ -297,6 +327,7 @@ interface CatalogSearchEntry {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
+    classification?: ToolDef["classification"];
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
   };
@@ -373,8 +404,22 @@ interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
   suggestions?: string[];
 }
 
+interface CatalogSearchFailure extends CatalogFailureDetail {
+  connector: string;
+  recovery?: CallErrorDetails["recovery"];
+  nextAction?: Extract<NonNullable<CallErrorDetails["nextAction"]>, { tool: "authorize_connector" }>;
+  retry?: string;
+}
+
 export interface CatalogSearchPage {
   entries: CatalogSearchEntry[];
+  /** Failures from visible catalogs, with credential failures first. */
+  catalogErrors: CatalogSearchFailure[];
+  absence?: {
+    service: string;
+    message: string;
+    configuredConnectors: string[];
+  };
   total: number;
   offset: number;
   limit: number;
@@ -400,8 +445,142 @@ export interface CatalogSearchPage {
   };
 }
 
+/** The flat wire page shared by search_tools and connecta.search. */
+export type CatalogSearchResult = Omit<CatalogSearchPage, "entries"> & {
+  tools: Array<CatalogSearchEntry["tool"] & {
+    connectorTitle?: string;
+    guide?: string;
+    guideSummary?: string;
+  }>;
+};
+
+const stringListSchema = { type: "array", items: { type: "string" } } as const;
+const guideProperties = {
+  guide: { type: "string" },
+  guideSummary: { type: "string" },
+  guideRequired: { const: true },
+  guideRequiredReasons: {
+    type: "array",
+    items: { enum: ["connector_required", "approval_required", "schema_truncated"] },
+  },
+};
+const catalogFailureProperties = {
+  code: { type: "string" },
+  message: { type: "string" },
+  retryable: { type: "boolean" },
+  retryAfterMs: { type: "integer", minimum: 0 },
+};
+
+/**
+ * The outputSchema contract for either search adapter. Guest API registration
+ * can reuse this value instead of maintaining a second page definition.
+ */
+export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
+  type: "object",
+  required: ["catalogErrors", "tools", "total", "offset", "limit", "hasMore"],
+  additionalProperties: false,
+  properties: {
+    catalogErrors: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["connector", "code", "message", "retryable"],
+        additionalProperties: false,
+        properties: {
+          connector: { type: "string" },
+          ...catalogFailureProperties,
+          recovery: { enum: ["oauth", "operator_config", "unavailable"] },
+          retry: { type: "string" },
+          nextAction: {
+            type: "object",
+            required: ["tool", "arguments", "operatorHandoff"],
+            additionalProperties: false,
+            properties: {
+              tool: { const: "authorize_connector" },
+              arguments: {
+                type: "object",
+                required: ["connector"],
+                additionalProperties: false,
+                properties: { connector: { type: "string" } },
+              },
+              operatorHandoff: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    absence: {
+      type: "object",
+      required: ["service", "message", "configuredConnectors"],
+      additionalProperties: false,
+      properties: {
+        service: { type: "string" },
+        message: { type: "string" },
+        configuredConnectors: stringListSchema,
+      },
+    },
+    tools: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["name", "address"],
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          address: { type: "string" },
+          connectorTitle: { type: "string" },
+          description: { type: "string" },
+          inputSchema: {},
+          outputSchema: {},
+          signature: { type: "string" },
+          schemaFormat: { enum: ["json", "text"] },
+          outputSchemaSource: { const: "observed" },
+          inputSchemaTruncated: { const: true },
+          outputSchemaTruncated: { const: true },
+          inputKeys: stringListSchema,
+          requiredInputKeys: stringListSchema,
+          outputKeys: stringListSchema,
+          annotations: { type: "object" },
+          classification: { enum: ["read", "write"] },
+          ...guideProperties,
+        },
+      },
+    },
+    total: { type: "integer", minimum: 0 },
+    offset: { type: "integer", minimum: 0 },
+    limit: { type: "integer", minimum: 1, maximum: MAX_SEARCH_LIMIT },
+    hasMore: { type: "boolean" },
+    nextOffset: { type: "integer", minimum: 0 },
+    matchMode: { const: "partial" },
+    queryAnalysis: {
+      type: "object",
+      required: ["representedTerms", "otherResultTerms", "unmatchedTerms"],
+      additionalProperties: false,
+      properties: {
+        representedTerms: stringListSchema,
+        otherResultTerms: stringListSchema,
+        unmatchedTerms: stringListSchema,
+        truncated: { const: true },
+        connectorScope: { type: "string" },
+        unknownConnector: { const: true },
+        configuredConnectors: stringListSchema,
+        unavailableConnectorCount: { type: "integer", minimum: 0 },
+        catalogError: {
+          type: "object",
+          required: ["code", "message", "retryable"],
+          additionalProperties: false,
+          properties: catalogFailureProperties,
+        },
+        ...guideProperties,
+        guidance: { type: "string" },
+      },
+    },
+  },
+};
+
 export interface CatalogDescription {
   address: string;
+  schemaFormat?: "json" | "text";
   name?: string;
   description?: string;
   guide?: string;
@@ -760,14 +939,29 @@ export class CatalogService {
     const scopedConnector = args.connector
       ? this.registry.getConnector(args.connector)
       : undefined;
-    const connectors = args.connector
+    const visibleConnectors = this.registry.listConnectors();
+    const namedService = !args.connector
+      ? SERVICE_NAMES.find((name) => containsPhrase(query, name))
+      : undefined;
+    const absentService = args.connector && !scopedConnector
+      ? args.connector
+      : namedService && !visibleConnectors.some((connector) =>
+          connectorNames(connector).some((name) => containsPhrase(name, namedService)))
+        ? namedService
+        : undefined;
+    const absence = absentService
+      ? {
+          service: absentService,
+          message: `No connector for "${absentService}" is configured for this endpoint.`,
+          configuredConnectors: visibleConnectors.map((connector) => connector.id),
+        }
+      : undefined;
+    const connectors = absence ? [] : args.connector
       ? scopedConnector
         ? [scopedConnector]
         : []
-      : this.registry.listConnectors();
-    // Named for this service's route: a scoped search echoes a timed-out
-    // probe's message back as `queryAnalysis.catalogError`, and a program
-    // cannot call search_tools.
+      : visibleConnectors;
+    // Timeout messages name the route the caller used.
     const catalogs = await runEdge(
       this.discoveryCatalogs(
         connectors.map((connector) => connector.id),
@@ -783,6 +977,8 @@ export class CatalogService {
       score: number;
       order: number;
       exactName: boolean;
+      exactLookup: boolean;
+      connectorRank: number;
       matchedTermCount: number;
       complete: boolean;
     }> = [];
@@ -796,6 +992,7 @@ export class CatalogService {
     const trimmedQuery = query.trim();
     const isBrowse = trimmedQuery.length === 0;
     const queryTerms = lexicalQueryTerms(retrievalQuery);
+    const rawPhrase = lexicalQueryTerms(query).join(" ");
     const queryTermCount = queryTerms.length;
     const unsearchableQuery = !isBrowse && queryTermCount === 0;
     const analysisTerms = unsearchableQuery ? [trimmedQuery] : queryTerms;
@@ -813,9 +1010,33 @@ export class CatalogService {
           throw new Error("Catalog result has no corresponding connector");
         }
         if (Result.isSuccess(catalog)) {
+          const connectorRank = args.connector ? 0 : connectorMatchRank(query, connector);
+          const exactConnector = connectorRank > 0;
+          const connectorTerms = new Set([
+            ...connectorNames(connector).flatMap(lexicalQueryTerms),
+            ...(namedService && connectorNames(connector).some((name) => containsPhrase(name, namedService))
+              ? lexicalQueryTerms(namedService) : []),
+          ]);
+          const localStatistics = exactConnector
+            ? lexicalCorpusStatistics([catalog.success], retrievalQuery)
+            : undefined;
+          // An exact identity is a browse even when one tool repeats that
+          // identity in its name or description. Action queries still keep
+          // identity terms that also name an actual capability.
+          const identityBrowse = connectorNames(connector).some((name) =>
+            normalizedPhrase(query) === normalizedPhrase(name),
+          );
+          const toolQuery = identityBrowse ? "" : exactConnector
+            ? queryTerms.filter((term) =>
+                !connectorTerms.has(term) ||
+                (localStatistics?.nameMatches.get(term)?.size ?? 0) > 0 ||
+                (localStatistics?.descriptionMatches.get(term)?.size ?? 0) > 0,
+              ).join(" ")
+            : retrievalQuery;
+          const toolTermCount = lexicalQueryTerms(toolQuery).length;
           for (const ranked of rankTools(
             catalog.success,
-            retrievalQuery,
+            toolQuery,
             mode,
             statistics,
             query,
@@ -826,9 +1047,12 @@ export class CatalogService {
               score: ranked.score,
               order: orderBase + ranked.order,
               exactName: ranked.exactName,
+              exactLookup: rawPhrase === lexicalQueryTerms(ranked.tool.name).join(" ") ||
+                rawPhrase === lexicalQueryTerms(`${connector.id}.${ranked.tool.name}`).join(" "),
+              connectorRank,
               matchedTermCount: ranked.matchedTermCount,
               complete:
-                isBrowse || ranked.matchedTermCount === queryTermCount,
+                isBrowse || ranked.matchedTermCount === toolTermCount,
             });
           }
         }
@@ -851,20 +1075,23 @@ export class CatalogService {
           match.complete ||
           completeMatchCount === 0 ||
           match.exactName ||
+          match.connectorRank > 0 ||
           match.matchedTermCount >= 2,
       ),
     );
     if (!isBrowse && !unsearchableQuery && completeMatchCount === 0) {
       matchMode = "partial";
     }
-    // Complete matches and exact tool-name phrases share the first rank tier.
-    // This lets a strong action/object name beat a weak description-only
-    // decoy. Other partial matches fill the remaining page only after every
-    // complete match, regardless of a rare-term score spike.
+    // Exact tool names precede connector identity and lexical scoring. A
+    // longer name such as get_issue_status cannot beat an exact get_issue
+    // merely because its description repeats rare query terms.
     matches.sort((a, b) => {
       const aFirstTier = a.complete || a.exactName;
       const bFirstTier = b.complete || b.exactName;
       return (
+        Number(b.exactLookup) - Number(a.exactLookup) ||
+        Number(b.exactName) - Number(a.exactName) ||
+        b.connectorRank - a.connectorRank ||
         Number(bFirstTier) - Number(aFirstTier) ||
         b.score - a.score ||
         a.order - b.order
@@ -925,6 +1152,9 @@ export class CatalogService {
             ? {
                 inputSchema: renderedInput?.schema,
               }
+            : {}),
+          ...(withSchemas
+            ? { schemaFormat: withSchemas === "json" ? "json" as const : "text" as const }
             : {}),
           ...(signature ? { signature: signature.text } : {}),
           ...(renderedInput?.truncated
@@ -991,32 +1221,56 @@ export class CatalogService {
       }
     }
     const unavailableCatalogs = catalogs.filter(Result.isFailure).length;
-    // Named field by field rather than spread: `CallErrorDetails` also carries
-    // connector, operation, recovery, and nextAction, and a discovery read is
-    // not a call — widening the classifier must not silently widen what a
-    // catalog search hands back.
-    const scopedCatalogError = ((): CatalogFailureDetail | undefined => {
-      const scopedCatalog = catalogs[0];
-      if (
-        !scopedConnector ||
-        !scopedCatalog ||
-        Result.isSuccess(scopedCatalog)
-      ) {
-        return undefined;
-      }
-      const error = classifyCallError(
-        scopedCatalog.failure,
-        "catalog_lookup_failed",
-      );
-      return {
-        code: error.code,
-        message: boundedEchoText(error.message),
-        retryable: error.retryable,
-        ...(error.retryAfterMs === undefined
-          ? {}
-          : { retryAfterMs: error.retryAfterMs }),
+    const catalogErrors: CatalogSearchFailure[] = catalogs.flatMap((catalog, index) => {
+      if (Result.isSuccess(catalog)) return [];
+      const connector = connectors[index]!;
+      const classified = classifyCallError(catalog.failure, "catalog_lookup_failed");
+      const error: CatalogSearchFailure = {
+        connector: connector.id,
+        code: classified.code,
+        // Catalog discovery reports recovery facts, never connector-authored
+        // error text. Clipping a downstream message does not make it safe.
+        message: classified.code === "downstream_oauth_required"
+          ? `Connector "${connector.id}" requires downstream OAuth authorization. Call authorize_connector and give its handoff to the operator.`
+          : classified.code === "auth_required"
+            ? `Connector "${connector.id}" requires operator-managed credentials or configuration. Call authorize_connector and give its handoff to the operator.`
+            : classified.code === "provider_permission_denied"
+              ? `Connector "${connector.id}" requires permission from the provider's resource owner or administrator. Reconnecting alone will not grant access.`
+              : `Connector "${connector.id}" catalog lookup failed (${classified.code}).`,
+        retryable: classified.retryable,
+        ...(classified.retryAfterMs === undefined ? {} : { retryAfterMs: classified.retryAfterMs }),
       };
-    })();
+      if (error.code === "auth_required" || error.code === "downstream_oauth_required") {
+        error.recovery = connector.startAuth
+          ? "oauth"
+          : this.registry.credentialUiAvailable() && connector.credential &&
+              this.registry.contextFor(connector.id, this.baseUrl).credential
+            ? "operator_config"
+            : "unavailable";
+        error.nextAction = {
+          tool: "authorize_connector",
+          arguments: { connector: connector.id },
+          operatorHandoff: "Give the URL and instructions it returns to the operator.",
+        };
+        error.retry = `Retry discovery after the operator completes recovery for "${connector.id}".`;
+      } else if (error.code === "provider_permission_denied") {
+        error.retry = "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Reconnecting alone will not grant access.";
+      }
+      return [error];
+    });
+    const needsAuth = (error: CatalogSearchFailure) =>
+      error.code === "auth_required" || error.code === "downstream_oauth_required" ||
+      error.code === "provider_permission_denied";
+    catalogErrors.sort((a, b) => Number(needsAuth(b)) - Number(needsAuth(a)));
+    const scopedFailure = args.connector ? catalogErrors[0] : undefined;
+    const scopedCatalogError: CatalogFailureDetail | undefined = scopedFailure
+      ? {
+          code: scopedFailure.code,
+          message: scopedFailure.message,
+          retryable: scopedFailure.retryable,
+          ...(scopedFailure.retryAfterMs === undefined ? {} : { retryAfterMs: scopedFailure.retryAfterMs }),
+        }
+      : undefined;
     const safetyLabel =
       safety === "readOnly"
         ? "read-only "
@@ -1033,15 +1287,9 @@ export class CatalogService {
             required: connectorGuideRequired(scopedConnector),
           }
         : undefined;
-    // A connector's own id — the address prefix the caller already has — and
-    // the title it is displayed under are the most natural first query terms,
-    // and neither is a document in the lexical index. Indexing them would move
-    // ranking for every query that already matches tools, so instead a search
-    // that matched nothing asks the same lexical question of connector
-    // identity and corrects its own sentence: the deployment plainly has this
-    // capability, and one scoped browse away are its tools. Unscoped only —
-    // guidance for an explicit scope already names that connector rather than
-    // claiming the deployment has nothing.
+    // Partial identity words can still explain a miss. Exact identities are
+    // already ranking inputs above; this guidance handles a title word such
+    // as "warehouse" when the full title is "Warehouse stock".
     const identityConnectorIds =
       matches.length === 0 && !isBrowse && !unsearchableQuery && !scopedConnector
         ? connectors
@@ -1092,12 +1340,13 @@ export class CatalogService {
     // the exception, because an empty result alone looks like a connector that
     // correctly exposes no tools.
     const reportsQueryAnalysis =
-      unsearchableQuery ||
+      absence !== undefined || unsearchableQuery ||
       (queryTerms.length > 0
         ? matchMode === "partial"
         : unknownConnectorGuidance !== undefined || unavailableCatalogs > 0);
     const searchGuidance = (): string | undefined => {
       if (unknownConnectorGuidance) return unknownConnectorGuidance;
+      if (absence) return absence.message;
       if (unsearchableQuery) {
         return scopedConnector && unavailableCatalogs > 0
           ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
@@ -1107,7 +1356,7 @@ export class CatalogService {
         if (unavailableCatalogs === 0) return undefined;
         return scopedConnector
           ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
-          : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Scope by connector to see the typed reason.`;
+          : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Inspect catalogErrors for the typed reasons and recovery actions.`;
       }
       if (matches.length === 0) {
         if (scopedConnector) {
@@ -1133,6 +1382,8 @@ export class CatalogService {
     };
     const guidance = searchGuidance();
     return {
+      catalogErrors,
+      ...(absence ? { absence } : {}),
       entries,
       total: matches.length,
       offset,
@@ -1293,6 +1544,7 @@ export class CatalogService {
       const guideSummary = connectorGuideSummary(addressResolution.connector);
       return {
         address,
+        schemaFormat: format === "json" ? "json" : "text",
         name: tool.name,
         ...(description !== undefined ? { description } : {}),
         ...(connectorGuide(addressResolution.connector)
@@ -1337,42 +1589,10 @@ function pageTail(page: CatalogSearchPage) {
   };
 }
 
-export function groupedSearchResult(page: CatalogSearchPage) {
-  const groups: Array<{
-    id: string;
-    title?: string;
-    guide?: string;
-    guideSummary?: string;
-    tools: CatalogSearchEntry["tool"][];
-  }> = [];
-  const byConnector = new Map<string, (typeof groups)[number]>();
-  for (const entry of page.entries) {
-    const existing = byConnector.get(entry.connector.id);
-    if (existing) {
-      existing.tools.push(entry.tool);
-    } else {
-      const group: (typeof groups)[number] = {
-        id: entry.connector.id,
-        ...(entry.connector.title ? { title: entry.connector.title } : {}),
-        ...(entry.guide ? { guide: entry.guide } : {}),
-        ...(entry.guideSummary
-          ? { guideSummary: entry.guideSummary }
-          : {}),
-        tools: [],
-      };
-      byConnector.set(entry.connector.id, group);
-      groups.push(group);
-      group.tools.push(entry.tool);
-    }
-  }
+export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
   return {
-    connectors: groups,
-    ...pageTail(page),
-  };
-}
-
-export function flatSearchResult(page: CatalogSearchPage) {
-  return {
+    catalogErrors: page.catalogErrors,
+    ...(page.absence ? { absence: page.absence } : {}),
     tools: page.entries.map((entry) => ({
       ...entry.tool,
       ...(entry.connector.title

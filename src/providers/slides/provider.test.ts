@@ -2247,10 +2247,10 @@ describe("comments: writes (#696)", () => {
     const registry = makeRegistry([connector]);
     const args = { connector: "decks", query: "update_comment_thread", includeSchemas: "typescript" as const };
     const searched = await createMetaTools(registry, "https://connecta.example").searchTools(args);
-    const grouped = JSON.parse(required(searched.content[0]).text) as {
-      connectors: { tools: { name: string; signature: string; inputSchemaTruncated?: boolean }[] }[];
+    const page = JSON.parse(required(searched.content[0]).text) as {
+      tools: { name: string; signature: string; inputSchemaTruncated?: boolean }[];
     };
-    const topLevel = required(grouped.connectors.flatMap((entry) => entry.tools).find((tool) => tool.name === "update_comment_thread"));
+    const topLevel = required(page.tools.find((tool) => tool.name === "update_comment_thread"));
     const providers = await buildSandboxProviders(registry, "https://connecta.example", silentLogger);
     const program = await required(required(providers.find((provider) => provider.name === "connecta")).fns.search)(args) as {
       tools: { name: string; signature: string; inputSchemaTruncated?: boolean }[];

@@ -973,6 +973,34 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "S1, S2, S4",
+    name: "program discovery defaults to JSON and labels compact schemas as text",
+    code: `async () => {
+      const page = await connecta.search({ connector: "reader", query: "read value" });
+      const compact = await connecta.search({ connector: "reader", query: "read value", includeSchemas: "compact" });
+      const described = await connecta.describe({ address: "reader.read" });
+      return {
+        schema: page.tools.find(tool => tool.address === "reader.read").inputSchema,
+        format: page.tools.find(tool => tool.address === "reader.read").schemaFormat,
+        compactFormat: compact.tools.find(tool => tool.address === "reader.read").schemaFormat,
+        compactType: typeof compact.tools.find(tool => tool.address === "reader.read").inputSchema,
+        describeType: typeof described.tools[0].inputSchema,
+        describeFormat: described.tools[0].schemaFormat,
+        catalogErrors: page.catalogErrors
+      };
+    }`,
+    check(outcome) {
+      const result = record(outcome);
+      expect(result.schema).toMatchObject({ type: "object", properties: { value: { type: "string" } } });
+      expect(result.format).toBe("json");
+      expect(result.compactFormat).toBe("text");
+      expect(result.compactType).toBe("string");
+      expect(result.describeType).toBe("object");
+      expect(result.describeFormat).toBe("json");
+      expect(result.catalogErrors).toEqual([]);
+    },
+  },
+  {
     clauses: "S1, S2",
     name: "search returns guide and code-mode key metadata on flat rows",
     code: `async () => {
@@ -1001,6 +1029,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     check(outcome) {
       const result = record(outcome);
       expect(result.pageKeys).toEqual([
+        "catalogErrors",
         "hasMore",
         "limit",
         "offset",

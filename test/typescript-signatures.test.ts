@@ -350,7 +350,7 @@ describe("TypeScript signatures across the discovery surfaces", () => {
         includeSchemas: "typescript",
       }),
     ) as SearchResult;
-    const topRows = required(topLevel.connectors[0]).tools as Row[];
+    const topRows = topLevel.tools as Row[];
     const program = (await required((await programFns(registry)).search)({
       connector: "corpus",
       includeSchemas: "typescript",

@@ -1,7 +1,7 @@
 // The request-scoped catalog cache and the discovery probes above it
 // (P1-S11). Ranking, rendering, and the wire shapes are guarded by
 // catalog.test.ts, meta-tools-search.test.ts, and execute.test.ts; this suite
-// pins what the Effect port had to keep and the one label it corrected.
+// pins the request lifetime and fixed catalog failure contract.
 import { describe, expect, it } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { buildSandboxProviders } from "../src/execute.js";
@@ -32,7 +32,7 @@ function connectaProvider(providers: ExecutorProvider[]): ExecutorProvider {
 }
 
 describe("catalog probe deadlines", () => {
-  it("names connecta.search, not search_tools, in a scoped program search's timed-out catalogError", async () => {
+  it("returns fixed code-based text in a scoped program search's timed-out catalogError", async () => {
     const providers = await buildSandboxProviders(
       makeRegistry([hangingConnector()]),
       BASE,
@@ -46,23 +46,17 @@ describe("catalog probe deadlines", () => {
 
     const catalogError = required(page.queryAnalysis?.catalogError);
     expect(catalogError.code).toBe("timeout");
-    // A program cannot call search_tools; the message is echoed verbatim.
-    expect(catalogError.message).toContain(
-      'connecta.search probe of "hang" timed out after 25ms',
-    );
-    expect(catalogError.message).not.toContain("search_tools");
+    expect(catalogError.message).toBe('Connector "hang" catalog lookup failed (timeout).');
   });
 
-  it("keeps naming search_tools for the top-level route", async () => {
+  it("returns the same fixed timeout text for the top-level route", async () => {
     const page = await new CatalogService(
       makeRegistry([hangingConnector()]),
       BASE,
       { probeTimeoutMs: 25 },
     ).search({ connector: "hang" });
 
-    expect(page.queryAnalysis?.catalogError?.message).toContain(
-      'search_tools probe of "hang" timed out after 25ms',
-    );
+    expect(page.queryAnalysis?.catalogError?.message).toBe('Connector "hang" catalog lookup failed (timeout).');
   });
 
   it("ends only the timed-out asker's wait; a joiner still receives the shared read", async () => {
@@ -151,7 +145,7 @@ describe("request-scoped catalog cache", () => {
     const first = (await service.search({ connector: "flaky" })) as ScopedPage;
     expect(first.queryAnalysis?.unavailableConnectorCount).toBe(1);
     expect(first.queryAnalysis?.catalogError?.message).toBe(
-      "upstream unavailable",
+      'Connector "flaky" catalog lookup failed (catalog_lookup_failed).',
     );
 
     const [described] = await service.describe({ address: "flaky.read" });
