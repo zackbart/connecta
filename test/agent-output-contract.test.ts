@@ -191,7 +191,6 @@ it("INV-4 INV-5: every registered meta-tool binds the envelope and redacts its r
     call_tool: { address: "contract.read", resultMode: "value" },
     call_destructive_tool: { address: "contract.read", reason: "Contract test", resultMode: "value" },
     authorize_connector: { connector: "contract" },
-    get_result: { id: TOKEN },
   };
   expect([...handlers.keys()].sort()).toEqual(Object.keys(args).sort());
   const envelope = {
