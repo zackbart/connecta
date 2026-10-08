@@ -11,7 +11,7 @@ export function registerSkills(server: McpServer, view: RegistryView, baseUrl: s
   server.server.registerCapabilities({ resources: {} });
   const registry = new SkillsRegistry(view, baseUrl, options);
   const listParams = z.object({ cursor: z.string().max(128).optional() });
-  const getParams = z.object({ uri: z.string().min(1).max(32_768) });
+  const getParams = z.object({ uri: z.string().min(1).max(32_768).startsWith("skill://") });
   const result = z.record(z.string(), z.unknown());
   const safely = async (read: () => Promise<Record<string, unknown>>) => {
     try { return await read(); }

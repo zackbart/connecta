@@ -9,6 +9,7 @@ import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activ
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools, type ToolResult } from "../src/meta-tools.js";
+import { downstreamSkillUri } from "../src/skills.js";
 import { createConnecta } from "../src/index.js";
 import { customExecutor } from "../src/executor-contract.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -499,6 +500,10 @@ function contractConnectors(state: ContractState): Connector[] {
     id: "remote",
     kind: "mcp",
     description: "Remote echo",
+    downstreamSkills: {
+      async list() { return [{ uri: "skill://guest/SKILL.md", frontmatter: { name: "guest", description: "Guest skill." }, resources: "dynamic" }]; },
+      async read(uri) { return [{ uri, text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n" }]; },
+    },
     async listTools() {
       return [
         readOnly("echo", {
@@ -808,6 +813,20 @@ export const CONTRACT_CASES: ContractCase[] = [
     check(outcome) {
       expect(outcome.result).toMatchObject({ guide: { name: "connector:reader", format: "text", text: expect.stringContaining("Read one value") }, missing: "not_found" });
       expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 1, failed: 1 });
+    },
+  },
+  {
+    clauses: "R4",
+    name: "INV-3 INV-4: native skill URIs and aliases reach the same documents in real guests",
+    code: `async () => {
+      const alias = await connecta.skill("connector:reader");
+      const native = await connecta.skill("skill://connecta/connectors/reader/SKILL.md");
+      const downstream = await connecta.skill(${JSON.stringify(downstreamSkillUri("remote", "skill://guest/SKILL.md"))});
+      return { same: alias.text === native.text, format: downstream.format, text: downstream.text };
+    }`,
+    check(outcome) {
+      expect(outcome.result).toEqual({ same: true, format: "text", text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 3, admitted: 3, succeeded: 3, failed: 0 });
     },
   },
   {

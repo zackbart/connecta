@@ -485,7 +485,6 @@ function sandboxProvider(
     defer: limits.defer,
   });
   const invocation = new InvocationService(registry, catalog, activity);
-  const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: hostAccessSignal, probeTimeoutMs: limits.probeTimeoutMs, defer: limits.defer });
   const maxHostCalls = Math.max(
     1,
     Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS),
@@ -665,9 +664,10 @@ function sandboxProvider(
       },
       catch: (err) => err,
     }),
-    skill: (name) => Effect.tryPromise({
+    skill: (name, _options, utilitySignal) => Effect.tryPromise({
       try: async () => {
         if (typeof name !== "string") throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
+        const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: utilitySignal as AbortSignal | undefined ?? hostAccessSignal, probeTimeoutMs: limits.probeTimeoutMs, defer: limits.defer });
         return { name, format: "text", text: await skills.text(name) };
       },
       catch: (err) => err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
@@ -784,7 +784,7 @@ function sandboxProvider(
           const started = Date.now();
           const utility = name === "result" || name === "skill";
           const invoke = Effect.suspend(() => operation(...args));
-          const guarded = utility ? withDeadlineEffect((utilitySignal) => name === "result" ? Effect.suspend(() => operation(args[0], args[1], utilitySignal)) : invoke, {
+          const guarded = utility ? withDeadlineEffect((utilitySignal) => Effect.suspend(() => operation(args[0], args[1], utilitySignal)), {
             timeoutMs: hostCallTimeoutMs,
             ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
             timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),

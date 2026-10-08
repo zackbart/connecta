@@ -112,6 +112,11 @@ it("INV-7: cancels bounded skill work and closes its owned connector scope", asy
   await expect(new SkillsRegistry(makeRegistry([remote]), BASE, { probeTimeoutMs: 5 }).list()).rejects.toMatchObject({ code: "unavailable" });
   expect(signal?.aborted).toBe(true);
   expect(closeScope).toHaveBeenCalledTimes(1);
+  const guest = (await buildSandboxProviders(makeRegistry([remote]), BASE, silentLogger, undefined, { hostCallTimeoutMs: 5 }))[0]!.fns;
+  await expect(guest.skill!(downstreamSkillUri("remote", URI))).rejects.toMatchObject({ code: "timeout" });
+  expect(signal?.aborted).toBe(true);
+  // The outer utility deadline must reach the asynchronous downstream work.
+  await vi.waitFor(() => expect(closeScope).toHaveBeenCalledTimes(2));
 });
 
 it("INV-8: manifests local bytes and retains authority-rooted downstream skill names", async () => {
