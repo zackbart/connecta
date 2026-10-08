@@ -218,14 +218,26 @@ async function nodeTemplate(): Promise<SmokeTarget> {
     if (!ready) return target;
     const port = await freePort();
     const origin = `http://127.0.0.1:${port}`;
-    const token = randomBytes(18).toString("base64url");
+    const database = join(work, "connecta.sqlite");
+    let token = "";
+    const provisioned = await step(checks, "provision stored machine token", async () => {
+      const result = spawnSync(join(ROOT, "node_modules", ".bin", "tsx"),
+        ["src/provision-token.ts", "smoke-machine"], {
+          cwd: app, encoding: "utf8",
+          env: { ...process.env, CONNECTA_DATABASE: database },
+        });
+      if (result.status !== 0) throw new Error("trusted token provisioning failed");
+      token = result.stdout.trim();
+      if (!/^cta_[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("provisioning did not return a cta_ token");
+      return "stored token in the deployment's SQLite database";
+    });
+    if (!provisioned) return target;
     proc = startProcess(join(ROOT, "node_modules", ".bin", "tsx"), ["src/index.ts"], {
       cwd: app,
       env: {
-        CONNECTA_TOKEN: token,
         PORT: String(port),
         PUBLIC_URL: origin,
-        CONNECTA_DATABASE: join(work, "connecta.sqlite"),
+        CONNECTA_DATABASE: database,
       },
     });
     const running = proc;

@@ -75,8 +75,10 @@ attempt and add the narrowest matching entry rather than allowing its entire
 origin.
 
 Access then serves OAuth discovery and turns the client's opaque token into the
-trusted `ctx.access` identity connecta reads. A cron job or CI client uses an
-Access service token instead.
+trusted human `ctx.access` identity connecta reads. A cron job or CI client
+needs Access service headers to cross the edge and a stored `cta_` bearer to
+authenticate inside connecta. An Access service identity alone is refused.
+See [Machine tokens](#machine-tokens).
 
 Through the API, the relevant part of the application is:
 
@@ -221,13 +223,15 @@ Then point an MCP client at `<PUBLIC_URL>/mcp`. The example explicitly enables
 authentication controls. The page labels tool safety, offers fixed repair
 prompts for classified failures, and shows client setup commands for endpoints
 the signed-in person may use. Those commands contain no token. There is no
-separate Credentials or Tokens tab.
+separate Credentials tab. The Access tokens page is available to permitted
+interactive operators.
 
 ## Select optional modules
 
 `cloudflareAccessAuth()` reads trusted identity after Access admits the Worker
-request. Humans may use their code-derived connector view; service identities
-can use MCP but cannot manage personal or shared auth as an interactive human.
+request. Humans may use their code-derived connector view and operator pages.
+Machines authenticate with `accessTokens(storage)` over the same D1 database;
+Access service headers alone never grant MCP access or interactive authority.
 Keep users, groups, and admission in Access. Connector visibility and management
 permissions belong in `src/connecta.config.ts`.
 
@@ -238,7 +242,51 @@ account. Both management permissions default to none. Grant the intended
 owner's shared permissions explicitly, and grant users personal permissions
 only for connectors configured with `authScope: "personal"`. Static headers
 remain deployment configuration. `activityAccess` governs global history reads.
+`accessTokenManagement` separately allows interactive operators to create, rename,
+and revoke machine tokens. This example grants that permission to every signed-in
+human, matching its connector-management permissions; narrow all three for a team.
 See [inbound identity](../../documentation/auth.md#principals-visibility-and-operators).
+
+### Machine tokens
+
+`accessTokens(storage)` is always installed over `CONNECTA_DB`, with no new
+binding. Empty token storage admits no machine client. A human authenticated
+through Access can still sign in and bootstrap the first token. Open
+`<PUBLIC_URL>/`, select Access tokens, and create a named token. Save the
+returned `cta_` secret privately; it is returned once. UI-issued tokens retain
+the issuing human's principal, while connector and pool rules are evaluated
+on every request. They never grant interactive operator authority.
+
+A machine sends all three headers:
+
+```text
+CF-Access-Client-Id: <access-service-client-id>
+CF-Access-Client-Secret: <access-service-client-secret>
+Authorization: Bearer <stored-cta-token>
+```
+
+Permit the service credentials in the Worker-level Access application's policy.
+The service headers admit the request at the edge; connecta verifies the bearer
+against D1. Neither credential works alone for machine access. Doctor uses
+the same three credentials; see [Client authentication and activity](#client-authentication-and-activity).
+
+For programmatic bootstrap, trusted provisioning code that already holds this
+deployment's D1 binding can use the published API against that same storage:
+
+```ts
+import { AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
+import { d1Storage } from "@zackbart/connecta/d1";
+
+const manager = new AccessTokenManager(d1Storage(env.CONNECTA_DB));
+const { token } = await manager.create("ci-client", "trusted-provisioning");
+// Deliver token once to the client's secret store, outside logs and source control.
+```
+
+This creates a token without a human principal. The name is a label, never a
+grant. Provision only through trusted operator tooling; do not expose this
+code as a public route or mint a token at startup. Existing unrevoked `cta_`
+tokens survive a state migration into this same D1 namespace. Keep
+`accessTokens(storage)` configured and preserve the identity and pool rules.
 
 ### UI and encrypted credentials
 
@@ -274,13 +322,11 @@ does not create credentials or permissions by itself.
 
 ### Client authentication and activity
 
-Interactive MCP clients use Access Managed OAuth. Machine clients can use
-connecta-issued `cta_` tokens through the optional
-`@zackbart/connecta/auth/access-tokens` module. Configure `accessTokens(storage)`
-and explicit `identity.accessTokenManagement` permissions to enable token
-management. A Connecta token cannot cross the Access edge alone; unattended
-clients still need separate Access-edge admission, such as Access service
-credentials.
+Interactive MCP clients use Access Managed OAuth. Machine clients need both
+Access service credentials and a stored `cta_` bearer, provisioned as described
+in [Machine tokens](#machine-tokens). `accessTokens(storage)` is always enabled,
+and the example grants token management to every interactive Access operator.
+Keep token, connector, and pool grants in deployment code.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.CONNECTA_DB) })`,
 with `activityHistory` from `@zackbart/connecta/activity` and `d1ActivityStore`
@@ -291,8 +337,10 @@ them explicitly.
 Verify MCP health and the exact seven tools with:
 
 ```sh
-CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
-  npx connecta doctor --url "$PUBLIC_URL"
+CF_ACCESS_CLIENT_ID='REPLACE_WITH_ACCESS_CLIENT_ID' \
+CF_ACCESS_CLIENT_SECRET='REPLACE_WITH_ACCESS_CLIENT_SECRET' \
+CONNECTA_TOKEN='cta_REPLACE_WITH_STORED_SECRET' \
+connecta doctor --url "$PUBLIC_URL"
 ```
 
 Doctor reports the configured `DynamicWorkerExecutor`, not a presumed Node
@@ -438,7 +486,8 @@ then `wrangler login` and check the prepared deployment with a dry run.
    invalid entry or mismatch. Keep traffic and writers stopped until these
    counts are resolved. A verification pass does not rewrite copied entries.
 5. Deploy the D1 configuration with `wrangler deploy` while maintenance remains.
-   Run `connecta doctor` using Access service credentials. Verify an existing
+   Run `connecta doctor` using Access service credentials plus a stored `cta_`
+   bearer through `CONNECTA_TOKEN`. Verify an existing
    OAuth connector without re-consent, an existing `cta_` token, a connector
    using a vault credential, and prior activity in the Activity view. Run
    these controlled checks with other traffic and background writers blocked.

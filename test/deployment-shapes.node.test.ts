@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createConnecta, customExecutor } from "../src/index.js";
+import { AccessTokenManager } from "../src/access-tokens.js";
 import nodeConfig from "../templates/node/src/connecta.config.js";
 import workerConfig from "../examples/worker/src/connecta.config.js";
 
@@ -144,16 +145,18 @@ describe("deployment shapes", () => {
     const dir = mkdtempSync(join(tmpdir(), "connecta-template-"));
     // Each configuration opens its own database, as separate deployments would.
     let files = 0;
-    const base = () => ({ CONNECTA_TOKEN: "template-token", CONNECTA_DATABASE: join(dir, `state-${++files}.sqlite`) });
+    const base = () => ({ CONNECTA_DATABASE: join(dir, `state-${++files}.sqlite`) });
     try {
-      expect(() => nodeConfig({})).toThrow("Refusing to start without inbound auth");
       expect(() => nodeConfig({ ...base(), CLERK_SECRET_KEY: "sk_test_only" })).toThrow(
+        "needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
+      );
+      expect(() => nodeConfig({ ...base(), CLERK_PUBLISHABLE_KEY: PUBLISHABLE_KEY })).toThrow(
         "needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
       );
       // Compose passes an unset variable through as "", which is unset too.
       const off = createConnecta({ ...nodeConfig({ ...base(), CONNECTA_CREDENTIAL_KEY: "" }), logger: "silent" });
       const quiet = off.describeConfig();
-      expect(quiet.auth.map((provider) => provider.kind)).toEqual(["bearer", "access_token"]);
+      expect(quiet.auth.map((provider) => provider.kind)).toEqual(["access_token"]);
       expect(quiet.modules).toMatchObject({
         ui: { enabled: true },
         accessTokens: { enabled: true },
@@ -177,7 +180,7 @@ describe("deployment shapes", () => {
         logger: "silent",
       });
       const full = on.describeConfig();
-      expect(full.auth.map((provider) => provider.kind)).toEqual(["bearer", "access_token", "clerk"]);
+      expect(full.auth.map((provider) => provider.kind)).toEqual(["access_token", "clerk"]);
       expect(full.modules).toMatchObject({
         vault: { enabled: true, sealsOAuth: true },
         // Activity shares the one SQLite file, pruned on write.
@@ -210,7 +213,7 @@ describe("deployment shapes", () => {
     }
     expect(read("README.md")).toContain("## Select optional modules");
     // Storage and activity come from the package; the template copies no adapter.
-    expect(readdirSync(join(TEMPLATE, "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
+    expect(readdirSync(join(TEMPLATE, "src")).sort()).toEqual(["connecta.config.ts", "index.ts", "provision-token.ts"]);
   });
 
   it("switches every Worker example module on from its environment", async () => {
@@ -219,11 +222,17 @@ describe("deployment shapes", () => {
     const d1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] };
     const base = { CONNECTA_DB: d1, DOWNSTREAM_TOKEN: "downstream", PUBLIC_URL: "https://worker.example", LOADER: { get: () => ({}) } };
     const env = (extra: Record<string, unknown>) => ({ ...base, ...extra }) as unknown as Parameters<typeof workerConfig>[0];
-    const off = createConnecta({ ...workerConfig(env({})), logger: "silent" });
+    const config = workerConfig(env({}));
+    expect(config.identity?.accessTokenManagement?.({ interactive: true, actor: { kind: "cloudflare-access", id: "operator" } })).toBe(true);
+    const off = createConnecta({ ...config, logger: "silent" });
     const quiet = off.describeConfig();
-    expect(quiet.auth).toEqual([{ kind: "cloudflare-access", interactive: true, ui: "cloudflare-access" }]);
+    expect(quiet.auth).toEqual([
+      { kind: "access_token", interactive: false },
+      { kind: "cloudflare-access", interactive: true, ui: "cloudflare-access" },
+    ]);
     expect(quiet.modules).toMatchObject({
       ui: { enabled: true },
+      accessTokens: { enabled: true },
       vault: { enabled: false },
       activity: { enabled: false },
       artifacts: { enabled: false },
@@ -235,6 +244,7 @@ describe("deployment shapes", () => {
       logger: "silent",
     });
     expect(on.describeConfig().modules).toMatchObject({
+      accessTokens: { enabled: true },
       vault: { enabled: true },
       activity: { enabled: true, deploymentId: "production", store: { kind: "d1", retentionDays: 90 } },
       artifacts: { enabled: true },
@@ -255,24 +265,58 @@ describe("deployment shapes", () => {
     const workerReadme = readWorker("README.md");
     expect(workerReadme).toContain("## Select optional modules");
     expect(workerReadme).toContain("Connections");
+    expect(workerReadme).toContain("Authorization: Bearer <stored-cta-token>");
+    for (const variable of ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CONNECTA_TOKEN"]) {
+      expect(workerReadme).toContain(variable);
+      expect(readWorker("AGENTS.md")).toContain(variable);
+    }
     expect(workerReadme).not.toContain(
       "checking that Credentials, Tokens, and Activity are live",
     );
   });
 
-  // Compose's `:?` guard fires on unset-or-empty, so any placeholder value
-  // shipped in .env.example is a bearer token published in this repository
-  // that `docker compose up` will happily accept (#367).
-  it("ships a Node template that cannot start on its own .env.example", () => {
-    const env = read(".env.example");
-    expect(env).toMatch(/^CONNECTA_TOKEN=\s*$/m);
-    expect(read("docker-compose.yml")).toContain(
-      "CONNECTA_TOKEN: ${CONNECTA_TOKEN:?",
-    );
-    // Local `npm start` reads the same file and refuses for the same reason.
-    expect(read("src", "connecta.config.ts")).toContain(
-      "Refusing to start without inbound auth",
-    );
+  it("keeps empty storage fail-closed and admits only provisioned machine tokens (INV-4)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "connecta-template-auth-"));
+    const staticToken = `cta_${"A".repeat(43)}`;
+    const env = { CONNECTA_DATABASE: join(dir, "state.sqlite"), CONNECTA_TOKEN: staticToken };
+    const config = nodeConfig(env);
+    const app = createConnecta({ ...config, logger: "silent" });
+    const initialize = async (token?: string) => {
+      const response = await app.fetch(new Request("http://localhost:8787/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
+          protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "template-test", version: "1" },
+        } }),
+      }));
+      await response.body?.cancel();
+      return response;
+    };
+    try {
+      expect(app.describeConfig().auth.map(provider => provider.kind)).toEqual(["access_token"]);
+      expect((await app.fetch(new Request("http://localhost:8787/health"))).status).toBe(200);
+      expect((await initialize()).status).toBe(401);
+      expect((await initialize(staticToken)).status).toBe(401);
+      const manager = new AccessTokenManager(config.storage!);
+      const { token, accessToken } = await manager.create("template-machine", "local-provisioning");
+      expect(token).toMatch(/^cta_[A-Za-z0-9_-]{43}$/);
+      expect((await initialize(token)).status).toBe(200);
+      await manager.revoke(accessToken.id, "local-provisioning");
+      expect((await initialize(token)).status).toBe(401);
+    } finally {
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(read(".env.example")).toMatch(/^CONNECTA_TOKEN=\s*$/m);
+    expect(read("docker-compose.yml")).not.toMatch(/^\s+CONNECTA_TOKEN:/m);
+    expect(read("src", "connecta.config.ts")).not.toContain("CONNECTA_TOKEN");
+    expect(read("src", "provision-token.ts")).toContain('manager.create(name, "local-provisioning")');
+    expect(read("package.json")).toContain('"provision-token": "tsx src/provision-token.ts"');
+    expect(read("README.md")).toContain('docker compose run --rm --no-deps connecta npm run --silent provision-token -- "container-machine"');
   });
 
   // A copied deployment installs its own dependencies, and an optional peer

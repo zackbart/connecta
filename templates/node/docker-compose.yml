@@ -1,6 +1,8 @@
 # One service, no database server: state is one SQLite file on a named volume.
 #
-#   cp .env.example .env    # then set CONNECTA_TOKEN
+#   cp .env.example .env
+#   docker compose build
+#   docker compose run --rm --no-deps connecta npm run --silent provision-token -- "machine-name"
 #   docker compose up -d --build
 #
 # Compose reads `.env` from this directory, so one file configures both the
@@ -14,9 +16,8 @@ services:
     ports:
       - "${PORT:-8787}:${PORT:-8787}"
     environment:
-      # Refuse to start without inbound auth — the same rule
-      # src/connecta.config.ts enforces, stated early enough that `up` fails before the build.
-      CONNECTA_TOKEN: ${CONNECTA_TOKEN:?set CONNECTA_TOKEN in .env}
+      # accessTokens(storage) is always installed; an empty database is closed.
+      # CONNECTA_TOKEN belongs to clients and is never configured on this server.
       PORT: ${PORT:-8787}
       # Downstream OAuth calls back to this origin. Unset is fine until this
       # deployment is reachable from somewhere other than this machine.

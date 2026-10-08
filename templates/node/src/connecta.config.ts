@@ -13,7 +13,6 @@ import { api, defineConfig } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
 import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
 import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
-import { bearerToken } from "@zackbart/connecta/auth/bearer";
 import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
@@ -22,7 +21,6 @@ import { operatorUi } from "@zackbart/connecta/ui";
 
 /** The variables this file reads (see .env.example). */
 export interface Env {
-  CONNECTA_TOKEN?: string;
   PORT?: string;
   PUBLIC_URL?: string;
   CONNECTA_DATABASE?: string;
@@ -36,17 +34,11 @@ export interface Env {
 export default defineConfig((env: Env) => {
   // Empty is unset: an untouched `.env` passes through Compose as "".
   const set = (name: keyof Env) => env[name] || undefined;
-  const token = set("CONNECTA_TOKEN");
-  if (!token) {
-    throw new Error(
-      "CONNECTA_TOKEN is required. Refusing to start without inbound auth.",
-    );
-  }
   const publicUrl = set("PUBLIC_URL") ?? `http://localhost:${set("PORT") ?? 8787}`;
 
-  // Operator sign-in. The bearer token is a client key: it may call tools and
-  // read connector status, but only a Clerk-authenticated human may write a
-  // connector's credential. Both keys, or neither.
+  // Operator sign-in. Only a Clerk-authenticated human may manage connector
+  // credentials. Machine access tokens never grant interactive authority.
+  // Both keys, or neither.
   const clerkPublishableKey = set("CLERK_PUBLISHABLE_KEY");
   const clerkSecretKey = set("CLERK_SECRET_KEY");
   if (Boolean(clerkPublishableKey) !== Boolean(clerkSecretKey)) {
@@ -81,10 +73,11 @@ export default defineConfig((env: Env) => {
     publicUrl,
     // Required: model-written programs run in a bounded QuickJS child.
     executor: quickJsExecutor(),
-    auth: [bearerToken(token, { subjectId: "operator" }), ...(clerk ? [clerk] : [])],
-    // Connecta-issued `cta_` tokens for machine clients, kept in this storage
-    // (v0.23 client tokens survive `connecta migrate-state`). Minting them needs an
-    // interactive human granted `identity.accessTokenManagement`.
+    auth: clerk ? [clerk] : [],
+    // Always installed: an empty database refuses machine requests. Provision
+    // locally with `npm run provision-token -- "machine-name"`, or grant an
+    // interactive human `identity.accessTokenManagement` for later issuance.
+    // v0.23 client tokens survive `connecta migrate-state` on this storage.
     accessTokens: accessTokens(storage),
     // Connection management permissions default to none, so the template
     // grants them. Split members from operators with `connectorAccess`,

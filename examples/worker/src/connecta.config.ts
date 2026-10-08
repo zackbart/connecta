@@ -6,8 +6,8 @@
  * database (CONNECTA_DB) holding every piece of state, the Worker Loader
  * binding (LOADER) behind execute_code, and one secret
  * (CREDENTIAL_ENCRYPTION_KEY) sealing credentials in that database. Access
- * authenticates the request before this Worker runs and supplies the trusted
- * identity through ctx.access.
+ * admits the request before this Worker runs and supplies trusted human
+ * identity through ctx.access. Machines use stored cta_ tokens inside connecta.
  *
  * Optional modules are type-checked code switched by the environment: the
  * credential vault by the CREDENTIAL_ENCRYPTION_KEY secret, and activity
@@ -39,6 +39,7 @@
 import { api, defineConfig, remoteMcp } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
 import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
+import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { d1ActivityStore, d1Storage } from "@zackbart/connecta/d1";
@@ -46,7 +47,7 @@ import { operatorUi } from "@zackbart/connecta/ui";
 import { workerExecutor } from "@zackbart/connecta/worker";
 
 export interface Env {
-  /** The one D1 database: OAuth grants, sealed credentials, catalogs, activity. */
+  /** The one D1 database: OAuth grants, sealed credentials, catalogs, tokens, activity. */
   CONNECTA_DB: D1Database;
   /**
    * Base64 32-byte AES key encrypting operator-managed credentials in D1.
@@ -74,15 +75,23 @@ export default defineConfig((env: Env) => {
     storage,
     // Required adapter owns each run's handles; direct upstream construction throws.
     executor: workerExecutor({ loader: env.LOADER }),
-    // Access owns admission policy. A human identity may use MCP and the
-    // operator pages; a service token may use MCP but cannot mutate operator
-    // state. Neither path asks connecta to parse a JWT.
+    // Access owns edge admission and proves human identity for MCP and the
+    // operator pages. Machines need Access service headers at the edge plus a
+    // stored cta_ bearer inside connecta; a service identity alone is refused.
     auth: [cloudflareAccessAuth()],
+    // Always installed over the same D1 storage. Empty storage admits no
+    // machine client; an Access-authenticated operator can provision tokens.
+    accessTokens: accessTokens(storage),
     // Code-owned roster. Access proves the identity; connecta derives
     // connector visibility and management permissions from the stable id it
     // supplies. Add `connectorAccess` and `activityAccess` to split members
-    // from operators; here every signed-in human may manage every connector.
-    identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
+    // from operators; here every signed-in human may manage every connector
+    // and access token. Machine tokens never receive interactive authority.
+    identity: {
+      credentialAdministration: () => "all",
+      personalConnection: () => "all",
+      accessTokenManagement: () => true,
+    },
     // Connectors that declare a `credential` slot become editable by every
     // signed-in human who can see that connector, encrypted with this key
     // before anything reaches D1. A saved replacement takes effect on the

@@ -2,7 +2,8 @@
 # image installs @zackbart/connecta from the registry exactly like any other
 # consumer, so nothing here depends on the Connecta repository.
 #
-#   docker compose up -d --build
+# Provision a stored machine token on the volume first; README.md gives the
+# exact build, provisioning, and startup commands. Empty storage is fail-closed.
 FROM node:22-slim
 
 WORKDIR /app

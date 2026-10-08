@@ -1,11 +1,13 @@
 # Connecta deployment
 
-This is the prescribed Node deployment — the only one. It runs locally from
-source and, unchanged, as a container. Install and run it:
+This is the prescribed Node deployment. It runs locally from source and as
+a container. Install, provision a machine token, then start it:
 
 ```sh
 npm install
-CONNECTA_TOKEN=dev-token npm start
+npm run --silent provision-token -- "local-machine"
+# Save the returned cta_ token privately. It is shown only once.
+npm start
 ```
 
 The manifest approves only `esbuild@0.28.2` to run its install script. `tsx`
@@ -15,8 +17,39 @@ warning, and npm 12 does not block the script. A later esbuild version needs a
 new explicit review and approval; do not replace the pinned entry with a broad
 package-name approval.
 
-Then point an MCP client at `http://localhost:8787/mcp` with
-`Authorization: Bearer dev-token`.
+Point an MCP client at `http://localhost:8787/mcp` with
+`Authorization: Bearer <returned-cta-token>`. `CONNECTA_TOKEN` is a client and
+doctor variable only. Setting it never configures server authentication.
+
+`accessTokens(storage)` is always installed. With no stored tokens and no
+Clerk keys, the server can start and answer `/health`, but every MCP request
+is refused. There is no open startup or configured static bearer fallback.
+
+## Provision machine tokens
+
+Run `npm run --silent provision-token -- "machine-name"` from this project
+on a trusted machine. `src/provision-token.ts` imports the installed package's
+`AccessTokenManager`, then calls `manager.create(name, "local-provisioning")`
+on `sqliteStorage(openSqlite(process.env.CONNECTA_DATABASE || "./.connecta.sqlite"))`.
+The server uses that same database path. If you override it, use the same
+`CONNECTA_DATABASE` for provisioning and startup:
+
+```sh
+export CONNECTA_DATABASE=/absolute/path/connecta.sqlite
+npm run --silent provision-token -- "build-agent"
+npm start
+```
+
+The local commands read the process environment; they do not load `.env`.
+Compose reads `.env` for the container commands below. Keep the returned
+secret in a client secret store and out of source control and logs. Each run
+creates a new token; it cannot recover an old secret. Only the hash persists.
+The token is unbound to a human principal and has no interactive management
+authority. Its name is a label, and deployment identity and pool rules decide
+its access on every request. To revoke it locally, use `manager.list()` to
+find its id, then `manager.revoke(id, "local-provisioning")` against that same
+storage. An explicitly permitted Clerk operator can also manage tokens.
+Never expose this provisioning script as an HTTP route or run it at startup.
 
 ## Run it in Docker
 
@@ -24,14 +57,17 @@ Same source, same configuration, one long-lived service:
 
 ```sh
 cp .env.example .env
-# edit .env — set CONNECTA_TOKEN to a long random value
-
-docker compose up -d --build
+# edit .env for the database path and any optional modules
+docker compose build
+docker compose run --rm --no-deps connecta npm run --silent provision-token -- "container-machine"
+# Save the returned cta_ token privately for clients and doctor.
+docker compose up -d
 ```
 
-`CONNECTA_TOKEN` ships empty on purpose: `up` fails on it until you set it,
-rather than starting a deployment whose bearer is a value published in this
-template. Everything else in `.env.example` has a working default.
+The provisioning container writes through the installed package API into the
+same named volume and `CONNECTA_DATABASE` as the service. An empty volume
+admits no machine client. Compose never passes `CONNECTA_TOKEN` to the server;
+no environment value can substitute for a stored token.
 
 Compose reads `.env`, publishes `PORT` (8787 by default), and keeps state on
 the named volume `connecta-state`, mounted at `/data`. `docker compose down`
@@ -85,8 +121,9 @@ grants. Revoking refresh or pool access stops future runs. Failed runs leave the
 and mark the viewer stale.
 
 The template explicitly enables `ui: operatorUi()` from
-`@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply the configured
-bearer to inspect Connections. Omit that option and import for an API-only
+`@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply a
+stored machine token to inspect Connections. Sign in with Clerk for human
+connection management. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
 The page labels each tool as a read or write. Trusted programs may write;
@@ -102,8 +139,8 @@ five tokens — `accent`, `radius`, `fontFamily`, `monoFamily`, and
 the whole page. A value that fails its gate falls back to the default, and the
 startup warning names it. Pass it to `operatorUi()` in `src/connecta.config.ts`.
 
-Connection management needs an interactive identity. A configured bearer is a
-client key and never authorizes browser credential mutations. `@clerk/backend`
+Connection management needs an interactive identity. A machine access token
+never authorizes browser credential mutations. `@clerk/backend`
 ships as a dependency of this template. To enable Clerk, set both
 `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` (one without the other refuses to
 start) and set `PUBLIC_URL`.
@@ -129,8 +166,8 @@ explains configuration, verification, and fixed rejection reason codes.
 Machine clients use connecta-issued `cta_` access tokens
 through `accessTokens(storage)`, which `src/connecta.config.ts` configures on
 the database. Grant explicit `identity.accessTokenManagement` permissions to
-let a signed-in human mint them. The configured static bearer remains available
-until its Phase 3 retirement.
+let a signed-in human mint them. Trusted local provisioning above works without
+Clerk and never requires opening the server.
 
 Set the code-owned identity resolvers deliberately. `connectorAccess` governs
 use; `credentialAdministration` permits shared-auth changes, and
@@ -181,8 +218,8 @@ Diagnostics are independent. Keep the default logger or provide your own;
 `logger: "silent"` suppresses diagnostic output explicitly.
 
 The UI displays connections and current permissions. Configuration still owns
-the connector set, tool definitions, and access rules. There is no token tab,
-team roster, or policy editor.
+the connector set, tool definitions, and access rules. Access token management
+requires explicit Clerk operator permission. There is no team roster or policy editor.
 
 ## Deployment contract
 
@@ -202,7 +239,7 @@ Verify a change with:
 ```sh
 npm run typecheck
 # In another terminal, while the server is running (npm start or compose):
-CONNECTA_TOKEN=dev-token npm run doctor
+CONNECTA_TOKEN='cta_REPLACE_WITH_RETURNED_SECRET' npm run doctor
 ```
 
 Doctor checks health, the executor, and the exact prescribed seven-tool

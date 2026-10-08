@@ -1,8 +1,7 @@
 /**
- * The Node deployment the agent evals run against: the composition
- * `templates/node/src/index.ts` prescribes — bearer auth, file storage, the
- * QuickJS executor, the operator UI, `listen()` — plus the credential vault the
- * template ships commented, with the fakes wired in as `remoteMcp()`
+ * The Node deployment the agent evals run against uses the template's stored
+ * access-token auth, SQLite storage, QuickJS executor, operator UI, and
+ * `listen()`, plus its optional credential vault. The fakes are `remoteMcp()`
  * connectors over real loopback HTTP.
  *
  * This is the only file in the agent harness that speaks connecta's config
@@ -20,7 +19,7 @@ import {
   kvArtifactStore,
   type ArtifactStore,
 } from "@zackbart/connecta/artifacts";
-import { bearerToken } from "@zackbart/connecta/auth/bearer";
+import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { listen } from "@zackbart/connecta/node";
 import { sqliteStorage } from "@zackbart/connecta/sqlite";
@@ -133,15 +132,15 @@ export async function startNodeDeployment(
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
-  const token = randomBytes(18).toString("base64url");
   const storage = sqliteStorage(join(dir, "connecta.sqlite"));
+  const { token } = await new AccessTokenManager(storage).create("eval-machine", "eval-provisioning");
   const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
   const artifactStore = artifactOptions ? kvArtifactStore(storage) : undefined;
   const artifactsModule = artifactStore ? artifacts({ store: artifactStore }) : undefined;
   const connecta = createConnecta({
     storage,
-    auth: [bearerToken(token, { subjectId: "operator" })],
+    accessTokens: accessTokens(storage),
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",
