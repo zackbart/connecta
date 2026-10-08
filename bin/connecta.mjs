@@ -100,7 +100,10 @@ async function init() {
   console.log("Next:");
   console.log(`  ${shellCd(target)}`);
   console.log("  npm install");
-  console.log("  CONNECTA_TOKEN=dev-token npm start");
+  console.log('  npm run --silent provision-token -- "local-machine"');
+  console.log("  # Save the returned cta_ token privately for your MCP client and doctor.");
+  console.log("  npm start");
+  console.log("  # README.md covers database paths and Docker provisioning.");
 }
 
 function option(name, fallback) {

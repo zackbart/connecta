@@ -10,7 +10,7 @@
 // from nothing a call, a header, or a program sends (#678).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller } from "../src/connector-caller.js";
 import {
   googleOutcomeOf,
@@ -577,11 +577,11 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
     expect(apiCalls).toEqual([]);
   });
 
-  it("counts a bearer without a person behind it as authenticated", async () => {
-    const mapping = vi.fn((who: AuthenticatedIdentity) => (who.actor.kind === "bearer" ? "robot@org.example" : undefined));
+  it("counts a machine token without a person behind it as authenticated", async () => {
+    const mapping = vi.fn((who: AuthenticatedIdentity) => (who.actor.kind === "access_token" ? "robot@org.example" : undefined));
     const connecta = createTestConnecta({
       connectors: [mailbox({ subject: mapping })],
-      auth: bearerToken("service-secret"),
+      auth: machineAuth("service-secret"),
       logger: silentLogger,
     });
     const result = await labelsOver(connecta, "service-secret");

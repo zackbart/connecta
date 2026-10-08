@@ -15,7 +15,7 @@ import {
   type ArtifactStore,
 } from "../src/artifacts.js";
 import { runRenderCheck } from "../src/artifacts/connector.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { customExecutor, createConnecta, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor, ExecutorProvider } from "../src/types.js";
@@ -84,8 +84,8 @@ function deploy(setup: Setup = {}) {
     publicUrl: BASE,
     storage: memoryStorage(),
     auth: [
-      bearerToken(ALICE, { subjectId: "alice" }),
-      bearerToken(BOB, { subjectId: "bob" }),
+      machineAuth(ALICE, { subjectId: "alice" }),
+      machineAuth(BOB, { subjectId: "bob" }),
     ],
     activity: activityHistory({ store: { record: (event) => void events.push(event) } }),
     artifacts: artifacts({
@@ -320,11 +320,11 @@ describe("writing through the connector", () => {
     }, BOB);
     const read = json(await call("call_tool", { address: "artifacts.get_artifact", args: { id: "q3-bugs" } }));
     expect(read.history.map((entry: { by: unknown; op: string }) => [entry.op, entry.by])).toEqual([
-      ["patch", { kind: "bearer", id: "bob" }],
-      ["create", { kind: "bearer", id: "alice" }],
+      ["patch", { kind: "access_token", id: "bob" }],
+      ["create", { kind: "access_token", id: "alice" }],
     ]);
     const listed = json(await call("call_tool", { address: "artifacts.list_artifacts", args: {} }));
-    expect(listed.artifacts[0]).toMatchObject({ id: "q3-bugs", updatedBy: { kind: "bearer", id: "bob" }, viewVersion: 2 });
+    expect(listed.artifacts[0]).toMatchObject({ id: "q3-bugs", updatedBy: { kind: "access_token", id: "bob" }, viewVersion: 2 });
   });
 
   it("lists every validation error, with its line, in the refusal", async () => {

@@ -3,7 +3,15 @@ import { signJwt } from "@clerk/backend/jwt";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { createByteReadingClerkClient } from "../src/auth/clerk-transport.js";
 import { createClerkClient } from "@clerk/backend";
+import { authorize as authorizeIdentity, authorizeUiIdentity } from "../src/routes/shared.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { accessTokens, AccessTokenManager } from "../src/access-tokens.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { createTestConnecta } from "./helpers.js";
+import { activityHistory } from "../src/activity.js";
+import { failureRecord } from "../src/operator-record.js";
+import type { ConnectaPoolConfig } from "../src/config.js";
+import type { InboundAuth } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const FRONTEND = "https://clerk.example.com";
@@ -20,7 +28,7 @@ function output(spies: ReturnType<typeof captureOutput>) {
   return JSON.stringify(spies.flatMap(spy => spy.mock.calls));
 }
 
-async function session() {
+async function session(userId = "user_123") {
   const pair = await crypto.subtle.generateKey({
     name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
     publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256",
@@ -30,10 +38,10 @@ async function session() {
   const kid = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   const token = await signJwt({
-    sub: "user_123", sid: "sess_test", iss: FRONTEND, azp: BASE,
-    exp: now + 300, nbf: now - 5,
+    sub: userId, sid: "sess_test", iss: FRONTEND, azp: BASE,
+    exp: now + 300, nbf: now - 5, iat: now - 5,
   }, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
-  return { token, jwks: { keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] } };
+  return { token, privateKey, kid, jwks: { keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] } };
 }
 
 function auth() { return clerkAuth({ publishableKey, secretKey, publicUrl: BASE }); }
@@ -43,9 +51,243 @@ function browser(nonce?: string) {
   });
 }
 
+async function assertDenialSinks(
+  provider: InboundAuth,
+  request: Request,
+  status: number,
+  spies: ReturnType<typeof captureOutput>,
+  context?: { waitUntil(promise: Promise<unknown>): void; access: { aud: string; getIdentity(): Promise<Record<string, unknown>> } },
+  options: { pools?: Record<string, ConnectaPoolConfig>; reason?: string; canaries?: string[] } = {},
+) {
+  const lines: unknown[][] = [];
+  const sink = (...args: unknown[]) => { lines.push(args); };
+  const record = vi.fn();
+  const storage = memoryStorage();
+  const call = vi.fn(async () => null);
+  const app = createTestConnecta({ publicUrl: BASE, auth: provider, pools: options.pools,
+    connectors: [{ id: "service", kind: "mcp", description: "Service", listTools: async () => [],
+      callTool: call, status: async () => ({ state: "ok" }) }],
+    accessTokens: accessTokens(storage), activity: activityHistory({ store: { record, recordCatalogDrift: record } }),
+    logger: { debug: sink, info: sink, warn: sink, error: sink },
+  });
+  try {
+    const response = await app.fetch(request, undefined, context);
+    expect(response.status).toBe(status);
+    const health = await app.fetch(new Request(`${BASE}/health`));
+    const connectorStatus = await app.registry.statusFor("service", BASE);
+    const operatorData = JSON.stringify({ lines, activity: record.mock.calls, connectorStatus,
+      config: app.describeConfig(), health: await health.json(), refusal: await response.text() });
+    for (const canary of [SENTINEL, ...options.canaries ?? []]) {
+      expect(operatorData).not.toContain(canary);
+      expect(output(spies)).not.toContain(canary);
+    }
+    if (options.reason) expect(lines).toEqual([["[connecta] MCP pool request denied", { reason: options.reason }]]);
+    expect(record).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+}
+
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Clerk operator output with the real SDK", () => {
+  it("INV-6: checks inbound denial reasons against the operator record allowlist", () => {
+    expect(failureRecord({ reason: "email_domain_denied" })).toEqual({ reason: "email_domain_denied" });
+    expect(failureRecord({ reason: SENTINEL as never })).toEqual({});
+    for (const reason of ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"] as const) {
+      expect(failureRecord({ reason })).toEqual({ reason });
+    }
+    expect(failureRecord({ userId: "denied-canary@example.test" } as never)).toEqual({});
+  });
+
+  it.each(["domain-denied", "unverified-email", "missing-email", "malformed-email", "lookup-failed", "gate-denied", "gate-failed"])(
+    "INV-6: Clerk %s exposes no provider identity in logs, activity, or status", async denial => {
+      const spies = captureOutput();
+      const userId = `${SENTINEL}-user`;
+      const domain = `${SENTINEL}.example.com`;
+      const email = `${SENTINEL}@${domain}`;
+      const { token, privateKey, kid, jwks } = await session(userId);
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/jwks") return Response.json(jwks);
+        expect(url.pathname).toBe(`/v1/users/${userId}`);
+        if (denial === "lookup-failed") throw new Error(`${userId} ${email} ${domain}`);
+        return Response.json({ object: "user", id: userId, primary_email_address_id: "primary",
+          email_addresses: denial === "missing-email" ? [] : [{ object: "email_address", id: "primary",
+            linked_to: [],
+            email_address: denial === "malformed-email" ? `${email}\nforged` : email,
+            verification: { status: denial === "unverified-email" ? "unverified" : "verified" } }],
+          phone_numbers: [], web3_wallets: [], external_accounts: [],
+        });
+      }));
+      const provider = clerkAuth({ publishableKey, secretKey, publicUrl: BASE,
+        ...(denial.startsWith("gate-") ? { gate: () => {
+          if (denial === "gate-failed") throw new Error(`${userId} ${email} ${domain}`);
+          return false;
+        } } : { allowedDomains: ["allowed.example.com"] }),
+      });
+      await assertDenialSinks(provider, new Request(`${BASE}/ui/access-tokens`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }), 403, spies);
+      const now = Math.floor(Date.now() / 1000);
+      const oauthToken = await signJwt({ sub: userId, iss: FRONTEND, client_id: "client_connecta",
+        scope: "openid profile email", aud: `${BASE}/mcp`, exp: now + 300, nbf: now - 5, iat: now - 5,
+      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      await assertDenialSinks(provider, new Request(`${BASE}/mcp`, { method: "POST",
+        headers: { Authorization: `Bearer ${oauthToken}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }), 403, spies);
+      const reasons: Record<string, string> = { "domain-denied": "email_domain_denied",
+        "unverified-email": "verified_email_invalid", "missing-email": "verified_email_invalid",
+        "malformed-email": "verified_email_invalid", "lookup-failed": "email_lookup_failed",
+        "gate-denied": "gate_denied", "gate-failed": "gate_failed" };
+      expect(output(spies)).toContain(`"reason":"${reasons[denial]}"`);
+    },
+  );
+
+  it.each(["service", "missing-human", "identity-failed", "invalid-aud", "explicit-header"])(
+    "INV-6: Access %s exposes no provider identity in logs, activity, or status", async denial => {
+      const spies = captureOutput();
+      const identity = { user_uuid: `${SENTINEL}-user`, email: `${SENTINEL}@${SENTINEL}.example.com` };
+      const getIdentity = vi.fn(async () => {
+        if (denial === "identity-failed") throw new Error(JSON.stringify(identity));
+        if (denial === "missing-human") return { domain: `${SENTINEL}.example.com` };
+        return { ...identity, service_token_status: true, common_name: `${SENTINEL}.example.com` };
+      });
+      const context = { waitUntil() {}, access: { aud: denial === "invalid-aud" ? "" : "app", getIdentity } };
+      const request = new Request(`${BASE}/ui/access-tokens`, {
+        headers: denial === "explicit-header" ? { Authorization: `Basic ${SENTINEL}` } : {},
+      });
+      await assertDenialSinks(cloudflareAccessAuth(), request,
+        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403, spies, context);
+      await assertDenialSinks(cloudflareAccessAuth(), new Request(`${BASE}/mcp`, { method: "POST",
+        headers: { ...Object.fromEntries(request.headers), "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }), ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403, spies, context);
+      if (["invalid-aud", "explicit-header"].includes(denial)) expect(getIdentity).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["clerk", "access-uuid", "access-email"].flatMap(provider =>
+    ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"].map(reason => ({ provider, reason })),
+  ))("INV-4 INV-6: $provider $reason exposes no provider identity in pool refusal sinks", async ({ provider: kind, reason }) => {
+    const spies = captureOutput();
+    const userId = `${SENTINEL}-user`;
+    const email = "denied-canary@example.test";
+    const name = `${SENTINEL}-name`;
+    const identity = { ...(kind === "access-uuid" ? { user_uuid: userId } : {}), email, name };
+    const getIdentity = vi.fn(async () => identity);
+    const context = kind === "clerk" ? undefined : { waitUntil() {}, access: { aud: "app", getIdentity } };
+    const headers = new Headers({ "Content-Type": "application/json", Accept: "application/json, text/event-stream" });
+    if (kind === "clerk") {
+      const { privateKey, kid, jwks } = await session(userId);
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json(jwks)));
+      const now = Math.floor(Date.now() / 1000);
+      const token = await signJwt({ sub: userId, iss: FRONTEND, client_id: "client_connecta",
+        scope: "openid profile email", aud: `${BASE}/mcp/support`, exp: now + 300, nbf: now - 5, iat: now - 5,
+      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const grant = vi.fn((_caller: Parameters<NonNullable<ConnectaPoolConfig["grant"]>>[0]) => {
+      if (reason === "pool_grant_threw") throw new Error(`${userId} ${email} ${name}`);
+      return false;
+    });
+    await assertDenialSinks(kind === "clerk" ? auth() : cloudflareAccessAuth(), new Request(`${BASE}/mcp/support`, {
+      method: "POST", headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }), 404, spies, context, {
+      pools: reason === "pool_not_declared" ? {} : { support: { tools: ["service"], grant } },
+      reason, canaries: [userId, email, "example.test", name],
+    });
+    expect(grant).toHaveBeenCalledTimes(reason === "pool_not_declared" ? 0 : 1);
+    if (reason !== "pool_not_declared") expect(grant.mock.calls[0]![0].principal?.id).toBe(kind === "access-email" ? email : userId);
+    if (context) expect(getIdentity).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["/ui/access-tokens", "/connect/service", "/oauth/callback/service", "/mcp", "/mcp/support"])(
+    "INV-4: explicit Authorization owns %s with another user's real session cookie", async path => {
+      captureOutput();
+      const { token: cookie, privateKey, kid, jwks } = await session("cookie_user");
+      const now = Math.floor(Date.now() / 1000);
+      const isMcp = path.startsWith("/mcp");
+      const headerToken = await signJwt({
+        sub: "header_user", iss: FRONTEND, exp: now + 300, nbf: now - 5, iat: now - 5,
+        ...(isMcp ? { client_id: "client_connecta", scope: "openid profile email", aud: `${BASE}${path}` }
+          : { sid: "sess_header", azp: BASE }),
+      }, privateKey, { algorithm: "RS256", header: { typ: isMcp ? "at+jwt" : "JWT", kid } });
+      const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json(jwks));
+      vi.stubGlobal("fetch", fetcher);
+      const provider = auth();
+      const manager = new AccessTokenManager(memoryStorage());
+      const machine = await manager.create("machine", "operator");
+      const getIdentity = vi.fn(async () => ({ user_uuid: "ambient_access_user" }));
+      const context = { waitUntil() {}, access: { aud: "app", getIdentity } };
+      const providers = [manager.auth, cloudflareAccessAuth(), provider];
+      const verify = (request: Request) => isMcp ? authorizeIdentity(request, BASE, providers, context)
+        : authorizeUiIdentity(request, BASE, providers, "human route", context);
+      for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
+        const request = new Request(`${BASE}${path}`, { headers: { Authorization: `${scheme} ${headerToken}`, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` } });
+        const result = await verify(request);
+        expect(result.ok, scheme).toBe(true);
+        if (result.ok) expect(result.identity.principal).toEqual({ namespace: FRONTEND, id: "header_user" });
+        expect(await provider.authorize(request, BASE)).toEqual({ ok: true, userId: "header_user" });
+      }
+      for (const header of ["", "Basic unknown", "Unknown unknown", "Bearer", "Bearer ", `Bearer  ${headerToken}`,
+        `Bearer\t${headerToken}`, `Bearer ${headerToken}, Bearer ${cookie}`, "bearer invalid"] ) {
+        const request = new Request(`${BASE}${path}?__clerk_handshake_nonce=ambient`, {
+          headers: { Authorization: header, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+        });
+        const result = await verify(request);
+        expect(result.ok, header).toBe(false);
+        if (!result.ok) {
+          expect(result.response.status).toBe(401);
+          expect(result.response.headers.get("WWW-Authenticate")).toBe(provider.challenge!(request, BASE));
+        }
+        const direct = await provider.authorize(request, BASE);
+        expect(direct.ok).toBe(false);
+        if (!direct.ok) expect(direct.response.status).toBe(401);
+      }
+      const machineResult = await verify(new Request(`${BASE}${path}`, {
+        headers: { Authorization: `bEaReR ${machine.token}`, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+      }));
+      if (isMcp) {
+        expect(machineResult.ok).toBe(true);
+        if (machineResult.ok) expect(machineResult.actor).toMatchObject({ kind: "access_token", id: machine.accessToken.id });
+      } else {
+        expect(machineResult.ok).toBe(false);
+        if (!machineResult.ok) expect(machineResult.response.status).toBe(403);
+        const cookieResult = await authorizeUiIdentity(new Request(`${BASE}${path}`, {
+          headers: { Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+        }), BASE, [provider], "human route");
+        expect(cookieResult.ok).toBe(true);
+        if (cookieResult.ok) expect(cookieResult.identity.principal).toEqual({ namespace: FRONTEND, id: "cookie_user" });
+      }
+      expect(getIdentity).not.toHaveBeenCalled();
+      expect(fetcher.mock.calls.every(([input]) => new URL(String(input)).pathname === "/v1/jwks")).toBe(true);
+    },
+  );
+
+  it("INV-4: the real /ui/access-tokens route grants the header principal with a different cookie principal", async () => {
+    captureOutput();
+    const { token: cookie, privateKey, kid, jwks } = await session("cookie_user");
+    const now = Math.floor(Date.now() / 1000);
+    const headerToken = await signJwt({ sub: "header_user", sid: "sess_header", iss: FRONTEND,
+      azp: BASE, exp: now + 300, nbf: now - 5, iat: now - 5,
+    }, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(jwks)));
+    const storage = memoryStorage();
+    const permission = vi.fn(({ principal }) => principal?.id === "header_user");
+    const app = createTestConnecta({ connectors: [], publicUrl: BASE, auth: auth(),
+      accessTokens: accessTokens(storage), identity: { accessTokenManagement: permission }, logger: "silent" });
+    try {
+      const response = await app.fetch(new Request(`${BASE}/ui/access-tokens`, {
+        headers: { Authorization: `bEaReR ${headerToken}`,
+          Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+      }));
+      expect(response.status).toBe(200);
+      expect(permission).toHaveBeenCalledWith(expect.objectContaining({ principal: { namespace: FRONTEND, id: "header_user" } }));
+    } finally { await app.close(); }
+  });
+
   it("INV-6: withholds handshake HTTP 400 error code, message, long_message, and headers", async () => {
     const spies = captureOutput();
     const upstream = Response.json({
@@ -62,7 +304,7 @@ describe("Clerk operator output with the real SDK", () => {
     expect(nativeJson).not.toHaveBeenCalled();
     expect(output(spies)).not.toContain(SENTINEL);
     expect(output(spies)).toContain("[connecta] Clerk authentication failed");
-    expect(output(spies)).toContain("reason=authentication_failed");
+    expect(output(spies)).toContain('"reason":"authentication_failed"');
     expect(output(spies)).not.toContain("HandshakeService");
   });
 
@@ -94,7 +336,7 @@ describe("Clerk operator output with the real SDK", () => {
     request.headers.set("Authorization", `Bearer ${token}`);
     expect((await auth().authorize(request, BASE)).ok).toBe(false);
     expect(output(spies)).not.toContain(SENTINEL);
-    expect(output(spies)).toContain("reason=authentication_failed");
+    expect(output(spies)).toContain('"reason":"authentication_failed"');
   });
 
   it("INV-6: completes a successful nonce handshake and preserves its verified session cookies", async () => {
@@ -111,6 +353,42 @@ describe("Clerk operator output with the real SDK", () => {
     expect(await auth().authorize(browser("valid-nonce"), BASE)).toEqual({ ok: true, userId: "user_123", sessionCookies: [cookie] });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(output(spies)).toBe("[]");
+  });
+
+  it("INV-4 INV-6: verifies valid, invalid, expired and wrong-audience OAuth JWTs through the bundled SDK", async () => {
+    const spies = captureOutput();
+    const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    const privateKey = await crypto.subtle.exportKey("jwk", pair.privateKey) as JsonWebKey;
+    const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey) as JsonWebKey;
+    const kid = crypto.randomUUID();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] })));
+    const now = Math.floor(Date.now() / 1000);
+    const provider = auth();
+    for (const verdict of ["valid", "invalid", "expired", "wrong-audience"]) {
+      let token = await signJwt({ sub: "user_123", iss: FRONTEND, client_id: "client_connecta",
+        scope: "openid profile email", iat: now - 300, nbf: now - 300,
+        exp: verdict === "expired" ? now - 60 : now + 300,
+        aud: verdict === "wrong-audience" ? "https://other.test/mcp" : `${BASE}/mcp`,
+      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      if (verdict === "invalid") {
+        const parts = token.split(".");
+        parts[2] = (parts[2]!.startsWith("a") ? "b" : "a") + parts[2]!.slice(1);
+        token = parts.join(".");
+      }
+      const request = new Request(`${BASE}/mcp`, { headers: { Authorization: `Bearer ${token}` } });
+      const result = await authorizeIdentity(request, BASE, [provider]);
+      expect(result.ok, verdict).toBe(verdict === "valid");
+      if (result.ok) {
+        expect(result.identity.principal).toEqual({ namespace: FRONTEND, id: "user_123" });
+        expect(result.identity.subject).toEqual(result.identity.principal);
+        expect(result.identity.interactive).toBe(true);
+      } else {
+        expect(result.response.status).toBe(401);
+        expect(result.response.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
+      }
+      expect(output(spies)).not.toContain(token);
+    }
   });
 
   it("INV-6: byte-reads a fresh SDK opaque-verification client and preserves resource binding", async () => {

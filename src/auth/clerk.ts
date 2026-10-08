@@ -1,3 +1,4 @@
+import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
 // Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
 // ~60s identity caching.
@@ -6,11 +7,15 @@ import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 import { createByteReadingClerkClient } from "./clerk-transport.js";
 import { decodeJwt } from "@clerk/backend/jwt";
 import { byteReadResponse } from "../byte-read-response.js";
-import { failureRecord, logFailure } from "../operator-record.js";
+import { failureRecord, logFailure, type AuthDenialReason } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
 export type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
+
+function logDenial(reason: AuthDenialReason, failure?: unknown): void {
+  logFailure(console, "Clerk request denied", failureRecord({ reason }, failure));
+}
 
 export interface ClerkAuthOptions {
   publishableKey: string;
@@ -36,8 +41,8 @@ export interface ClerkAuthOptions {
    * `mail.acme.com` — spell a subdomain out to allow it. Entries must be ASCII
    * (punycode for an internationalized domain) and are validated at
    * construction. Absent ⇒ every authenticated user passes this check, as
-   * before the option existed. Governs Clerk sign-in only: a co-configured
-   * `bearerToken` has no email to read and is admitted without a domain check.
+   * before the option existed. Governs Clerk sign-in only: a co-configured machine
+   * access token has no email to read and is admitted without a domain check.
    */
   allowedDomains?: readonly string[];
   /** Optional allow-list hook using Connecta's bundled user lookup client. */
@@ -52,7 +57,7 @@ export interface ClerkAuthOptions {
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, mcp-protocol-version",
 };
@@ -328,23 +333,6 @@ async function opaqueOAuthClaims(
 }
 
 /**
- * Bounded, escaped form of the denied domain for the operator log — the same
- * treatment server logs give other caller-controlled values. An email domain is
- * caller-influenced (anyone who controls a mailbox controls its domain): the
- * bound is what a 253-byte domain needs, and the escaping — JSON.stringify plus
- * the hand-rolled U+2028/U+2029 pass it leaves raw — is defense in depth behind
- * `isDomain`, which has already ruled out the newline that would forge a line.
- */
-function loggableDomain(domain: string): string {
-  const bounded = domain.slice(0, 100);
-  const escaped = JSON.stringify(bounded).replace(
-    /[\u2028\u2029]/g,
-    (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
-  );
-  return escaped + (bounded.length < domain.length ? " (truncated)" : "");
-}
-
-/**
  * The domain of an email address, lowercased for comparison, or null when the
  * address does not have exactly one well-formed domain to read.
  *
@@ -385,7 +373,11 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   });
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
-  const scopes = opts.scopes ?? ["openid", "profile", "email"];
+  const requestedScopes = opts.scopes ?? ["openid", "profile", "email"];
+  if (!Array.isArray(requestedScopes) || requestedScopes.some(scope => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) {
+    throw new Error("clerkAuth: `scopes` must contain OAuth scope tokens without whitespace, quotes, or backslashes.");
+  }
+  const scopes = [...requestedScopes];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
   const activityLabelCache = new Map<
     string,
@@ -468,20 +460,25 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     return lookup;
   };
 
-  const unauthorized = (baseUrl: string, tokenPresent: boolean, request: Request): Response => {
+  const challenge = (request: Request, baseUrl: string): string => {
+    const tokenPresent = authorizationCredential(request).kind !== "absent";
     const error = tokenPresent ? `error="invalid_token", ` : "";
     // A pool endpoint is its own protected resource: the challenge names the
     // metadata document whose `resource` matches the URL the client used, or
     // RFC 9728 tells it to reject the mismatch.
     const pool = mcpPoolSuffix(new URL(request.url).pathname);
     const meta = `${resolveBase(baseUrl)}/.well-known/oauth-protected-resource${pool ? `/mcp${pool}` : ""}`;
+    const quote = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `Bearer ${error}resource_metadata="${quote(meta)}", scope="${scopes.join(" ")}"`;
+  };
+  const unauthorized = (baseUrl: string, _tokenPresent: boolean, request: Request): Response => {
     return new Response(
       JSON.stringify({ error: "unauthorized" }),
       {
         status: 401,
         headers: {
           "Content-Type": "application/json",
-          "WWW-Authenticate": `Bearer ${error}resource_metadata="${meta}"`,
+          "WWW-Authenticate": challenge(request, baseUrl),
         },
       },
     );
@@ -511,28 +508,16 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         email = primary.emailAddress;
       }
     } catch (error) {
-      logFailure(console, "Clerk email lookup failed; denying", failureRecord({ userId }, error));
+      logDenial("email_lookup_failed", error);
       return false;
     }
     const domain = email ? emailDomain(email) : null;
     if (!domain) {
-      // One line for three cases (no primary email, unverified, or an address
-      // with no readable domain) because the caller must not be able to tell
-      // them apart — but it must not claim the email is missing when it is
-      // there and malformed.
-      console.warn(
-        `[connecta] clerk user ${userId} has no verified primary email with a ` +
-          "well-formed domain — denying",
-      );
+      logDenial("verified_email_invalid");
       return false;
     }
     if (!allowedDomains.has(domain)) {
-      // The domain, never the address: this is an operator log, not a place to
-      // spill the local part of someone's email on every denied request.
-      console.warn(
-        `[connecta] clerk user ${userId} denied: email domain ` +
-          `${loggableDomain(domain)} is not on allowedDomains`,
-      );
+      logDenial("email_domain_denied");
       return false;
     }
     return true;
@@ -550,10 +535,12 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     if (hit) return hit.allowed;
     let allowed = false;
     try {
-      allowed =
-        (await checkDomain(userId)) &&
+      const domainAllowed = await checkDomain(userId);
+      allowed = domainAllowed &&
         (opts.gate ? await opts.gate(userId, clerk) : true);
+      if (domainAllowed && !allowed) logDenial("gate_denied");
     } catch {
+      logDenial("gate_failed");
       allowed = false;
     }
     writeIdentityCache(gateCache, userId, {
@@ -568,6 +555,12 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   return {
     kind: "clerk",
     interactiveOperator: true,
+    recognizesCredential: request => {
+      if (authorizationCredential(request).kind !== "absent") return !isMachineCredential(request);
+      return /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(request.headers.get("cookie") ?? "") ||
+        new URL(request.url).searchParams.has("__clerk_synced");
+    },
+    challenge,
     activityActorNamespace: frontendApiUrl,
     activityActorLabel: resolveActivityLabel,
     uiAuth: {
@@ -580,7 +573,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
     async handleMetadata(request, baseUrl) {
       const { pathname } = new URL(request.url);
-      if (!pathname.startsWith("/.well-known/")) return null;
+      const protectedResource = pathname === "/.well-known/oauth-protected-resource" ||
+        pathname === "/.well-known/oauth-protected-resource/mcp" ||
+        /^\/\.well-known\/oauth-protected-resource\/mcp\/[a-z0-9_-]+$/.test(pathname);
+      if (!protectedResource) return null;
+      if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
+        return new Response(null, { status: 405, headers: { ...CORS_HEADERS, Allow: "GET, HEAD, OPTIONS" } });
+      }
 
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -606,52 +605,37 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         );
       }
 
-      if (pathname === "/.well-known/oauth-authorization-server") {
-        try {
-          const upstream = await fetch(
-            `${frontendApiUrl}/.well-known/oauth-authorization-server`,
-          );
-          if (!upstream.ok) {
-            return Response.json(
-              { error: "upstream authorization server metadata unavailable" },
-              { status: 502, headers: CORS_HEADERS },
-            );
-          }
-          return Response.json(await byteReadResponse(upstream).json(), { headers: CORS_HEADERS });
-        } catch {
-          return Response.json(
-            { error: "upstream authorization server metadata unavailable" },
-            { status: 502, headers: CORS_HEADERS },
-          );
-        }
-      }
-
       return null;
     },
 
     async authorize(request, baseUrl): Promise<AuthResult> {
-      const tokenPresent = Boolean(request.headers.get("authorization"));
+      const credential = authorizationCredential(request);
+      const tokenPresent = credential.kind !== "absent";
+      if (credential.kind === "invalid" || isMachineCredential(request)) {
+        logDenial("authorization_header_invalid");
+        return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+      }
       const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
       let userId: string | undefined;
       let sessionCookies: string[] | undefined;
       try {
         const pathname = new URL(request.url).pathname;
         const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
-        const state = await clerk.authenticateRequest(request, {
+        const state = await clerk.authenticateRequest(authorizationRequest(request), {
           acceptsToken: isMcp ? "oauth_token" : "session_token",
         });
         const browserOAuth = !tokenPresent && browserOAuthRoute;
         // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
         // handshake, which returns here with a refreshed, verified session.
         if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
-          return { ok: false, final: true, response: new Response(null, {
+          return { ok: false, response: new Response(null, {
             status: 307, headers: state.headers,
           }) };
         }
         if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
         const auth = state.toAuth();
         if (!auth?.isAuthenticated) {
-          console.warn("[connecta] clerk rejected request: reason=authentication_failed");
+          logDenial("authentication_failed");
           return {
             ok: false,
             response: unauthorized(baseUrl, tokenPresent, request),
@@ -660,7 +644,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         if (isMcp) {
           const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
           if (auth.tokenType !== "oauth_token") {
-            console.warn("[connecta] clerk rejected request: reason=token_type_mismatch");
+            logDenial("token_type_mismatch");
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
           const token = await auth.getToken();
@@ -669,7 +653,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
             try {
               claims = await opaqueOAuthClaims(token, opts.secretKey, auth.userId, auth.clientId, request.signal);
             } catch {
-              console.warn("[connecta] clerk rejected request: reason=oauth_verification_failed");
+              logDenial("oauth_verification_failed");
               return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
             }
           } else {
@@ -677,29 +661,29 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           }
           const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
           if (rejection) {
-            console.warn(`[connecta] clerk rejected request: reason=${rejection}`);
+            logDenial(rejection);
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
         } else {
           if (auth.tokenType !== "session_token") {
-            console.warn("[connecta] clerk rejected request: reason=token_type_mismatch");
+            logDenial("token_type_mismatch");
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
           // Browser session origins retain their existing deployment pin.
           const azp = auth.sessionClaims?.azp;
           const origin = new URL(resolveBase(baseUrl)).origin;
           if (azp && azp !== origin) {
-            console.warn("[connecta] clerk rejected request: reason=session_origin_mismatch");
+            logDenial("session_origin_mismatch");
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
         }
         userId = auth.userId ?? undefined;
       } catch {
-        console.warn("[connecta] clerk rejected request: reason=authentication_failed");
+        logDenial("authentication_failed");
         return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
       if (!userId) {
-        console.warn("[connecta] clerk rejected request: reason=user_missing");
+        logDenial("user_missing");
         return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
       if (!(await checkGate(userId))) {

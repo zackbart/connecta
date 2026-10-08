@@ -1,7 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import {
   MAX_CATALOG_CHUNK_BYTES,
   MAX_SERIALIZED_CATALOG_BYTES,
@@ -136,7 +136,7 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
     const execute = createExecuteTool(callRegistry, BASE, executor, silentLogger);
     const deployment = view === "pool" ? createTestConnecta({
       connectors: [f.connector], storage, publicUrl: BASE, executor, logger: silentLogger,
-      auth: bearerToken("reader", { subjectId: "reader" }),
+      auth: machineAuth("reader", { subjectId: "reader" }),
       identity: { connectorAccess: () => allowed },
       pools: { readers: { tools: allowed, grant: () => true } },
     }) : undefined;

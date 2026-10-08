@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { test, expect } from "@playwright/test";
 import { artifacts, kvArtifactStore } from "../../src/artifacts.js";
 import { attachCaller } from "../../src/connector-caller.js";
-import { bearerToken } from "../../src/auth/bearer.js";
+import { machineAuth } from "../helpers/machine-auth.js";
 import { customExecutor, createConnecta } from "../../src/index.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { operatorUi } from "../../src/ui.js";
@@ -44,7 +44,7 @@ async function start(
     ...(scriptOrigins.length ? { allowlist: { scripts: scriptOrigins } } : {}) });
   const app = createConnecta({
     connectors: [], executor: customExecutor({ execute }, { lifecycle: "self-managed" }),
-    logger: "silent", publicUrl: origin, auth: bearerToken(TOKEN, { subjectId: "viewer" }),
+    logger: "silent", publicUrl: origin, auth: machineAuth(TOKEN, { subjectId: "viewer" }),
     ui: operatorUi(branding ? { branding } : {}), artifacts: module,
   });
   const context = { storage: memoryStorage(), logger: console, baseUrl: origin };
@@ -345,7 +345,7 @@ test("a dedicated origin boots the viewer but never serves operator or MCP route
   const dedicated = createConnecta({
     connectors: [], executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }), logger: "silent",
     publicUrl: main, artifactOrigin: pages,
-    auth: bearerToken(TOKEN, { subjectId: "viewer" }), ui: operatorUi(), artifacts: module,
+    auth: machineAuth(TOKEN, { subjectId: "viewer" }), ui: operatorUi(), artifacts: module,
   });
   const context = { storage: memoryStorage(), logger: console, baseUrl: main };
   const result = await module.connector.callTool("create_artifact", {

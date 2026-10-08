@@ -9,7 +9,7 @@ import { buildFrameDocument } from "../src/artifacts/document.js";
 import { resolveTheme } from "../src/branding.js";
 import { ArtifactOperations } from "../src/artifacts/operations.js";
 import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { customExecutor, createConnecta, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
@@ -33,7 +33,7 @@ async function deploy(config: Omit<Partial<ConnectaConfig>, "ui" | "artifacts"> 
     executor,
     logger: "silent",
     publicUrl: BASE,
-    auth: bearerToken(TOKEN, { subjectId: "viewer" }),
+    auth: machineAuth(TOKEN, { subjectId: "viewer" }),
     ui: operatorUi(),
     artifacts: module,
     ...config,
@@ -70,7 +70,7 @@ describe("artifact render-check theme", () => {
       return { ok: true };
     } });
     const app = createConnecta({
-      connectors: [], publicUrl: BASE, logger: "silent", auth: bearerToken(TOKEN), artifacts: module,
+      connectors: [], publicUrl: BASE, logger: "silent", auth: machineAuth(TOKEN), artifacts: module,
       executor: customExecutor({ execute: async () => ({ result: { value: 2 } }) }, { lifecycle: "self-managed" }),
       ui: operatorUi({ branding: { theme: { colorScheme: "dark", accent: "#0a7d55" } } }),
     });
@@ -205,7 +205,7 @@ describe("artifact pages follow the deployment's appearance", () => {
 describe("the artifact API", () => {
   it("lists artifacts privately, with fixed facts and a resolved actor label", async () => {
     const labelled: InboundAuth = {
-      ...bearerToken(TOKEN, { subjectId: "viewer" }),
+      ...machineAuth(TOKEN, { subjectId: "viewer" }),
       activityActorLabel: (id) => (id === "viewer" ? "Vera Viewer" : undefined),
     };
     const { get } = await deploy({ auth: labelled });
@@ -230,7 +230,7 @@ describe("the artifact API", () => {
 
   it("labels the person who last changed an artifact from their auth provider", async () => {
     const labelled: InboundAuth = {
-      ...bearerToken(TOKEN, { subjectId: "viewer" }),
+      ...machineAuth(TOKEN, { subjectId: "viewer" }),
       activityActorLabel: (id) => (id === "viewer" ? "Vera Viewer" : undefined),
     };
     const { app, get } = await deploy({ auth: labelled });
@@ -428,7 +428,7 @@ describe("historical snapshot route quotas", () => {
       pins.push(`d=${name}:1`);
     }
     const app = createConnecta({ connectors: [], executor, logger: "silent", publicUrl: BASE,
-      auth: bearerToken(TOKEN), ui: operatorUi(), artifacts: artifacts({ store }) });
+      auth: machineAuth(TOKEN), ui: operatorUi(), artifacts: artifacts({ store }) });
     const get = (query: string) => app.fetch(new Request(`${BASE}/artifacts/_api/view/history${query}`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
     }));
@@ -472,7 +472,7 @@ describe("reconfigured snapshot route rendering", () => {
     const bytes = new TextEncoder().encode(document).length;
     for (const renderedBytes of [bytes, bytes - 1]) {
       const app = createConnecta({ connectors: [], executor, logger: "silent", publicUrl: BASE,
-        auth: bearerToken(TOKEN), ui: operatorUi({ branding: { theme } }),
+        auth: machineAuth(TOKEN), ui: operatorUi({ branding: { theme } }),
         artifacts: artifacts({ store, limits: { renderedBytes } }),
       });
       const get = (query: string) => app.fetch(new Request(`${BASE}/artifacts/_api/view/themed-history${query}`, {

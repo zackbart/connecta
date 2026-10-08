@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { test, expect, type Page } from "@playwright/test";
 import { createTestConnecta } from "../helpers.js";
-import { bearerToken } from "../../src/auth/bearer.js";
+import { cloudflareAccessAuth } from "../../src/auth/cloudflare-access.js";
+import { machineAuth } from "../helpers/machine-auth.js";
 import { fakeClerkAuth } from "../fixtures/http.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { renderUiHtml, type UiData } from "../../src/ui.js";
@@ -25,14 +26,17 @@ const fixture: UiData = {
 };
 
 test.beforeAll(async () => {
-  const apps = [false, true].map(clerk => createTestConnecta({ connectors: [], auth: clerk ? fakeClerkAuth({ frontendApiUrl: CLERK }) : bearerToken(TOKEN), storage: memoryStorage() }));
+  const apps = [false, true].map(clerk => createTestConnecta({ connectors: [], auth: clerk ? fakeClerkAuth({ frontendApiUrl: CLERK }) : machineAuth(TOKEN), storage: memoryStorage() }));
+  const accessApp = createTestConnecta({ connectors: [], auth: cloudflareAccessAuth(), storage: memoryStorage() });
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", origin);
     const clerk = url.searchParams.has("clerk");
-    const result = await apps[clerk ? 1 : 0]!.fetch(new Request(url, { method: request.method ?? "GET", headers: request.headers as Record<string, string> }));
+    const access = url.searchParams.has("access") || new URL(request.headers.referer ?? origin).searchParams.has("access");
+    const result = await (access ? accessApp : apps[clerk ? 1 : 0]!).fetch(new Request(url, { method: request.method ?? "GET", headers: request.headers as Record<string, string> }), undefined,
+      access ? { waitUntil() {}, access: { aud: "app", getIdentity: async () => ({ user_uuid: "access-operator" }) } } : undefined);
     response.writeHead(result.status, Object.fromEntries(result.headers));
     // Stable fixture URL makes visual snapshots independent of the ephemeral port.
-    if (url.pathname === "/") response.end(renderUiHtml(clerk ? { kind: "clerk", publishableKey: CLERK_KEY, frontendApiUrl: CLERK } : undefined, "https://connecta.example/mcp"));
+    if (url.pathname === "/") response.end(renderUiHtml(access ? { kind: "cloudflare-access" } : clerk ? { kind: "clerk", publishableKey: CLERK_KEY, frontendApiUrl: CLERK } : undefined, "https://connecta.example/mcp"));
     else response.end(Buffer.from(await result.arrayBuffer()));
   });
   server.listen(0, "127.0.0.1");
@@ -49,6 +53,17 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
   await expect(page.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible();
   await page.evaluate("document.fonts.ready");
 }
+
+test("operator shell admits ambient Access without sending a stored token", async ({ page }) => {
+  await page.addInitScript("localStorage.setItem('connecta:token', 'stale-token');");
+  const dataRequest = page.waitForRequest(request => new URL(request.url()).pathname === "/ui/data");
+  await page.goto(`${origin}/?access`);
+  const request = await dataRequest;
+  expect(request.headers()["authorization"]).toBeUndefined();
+  await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+  await expect(page.getByText("Checking your session…")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
+});
 
 for (const scheme of ["light", "dark"]) {
   test(`operator shell ${scheme} visual fixture`, async ({ page }) => {

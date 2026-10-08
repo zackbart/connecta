@@ -1,3 +1,4 @@
+import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
 import type {
   AuthResult,
   IdentityReference,
@@ -189,6 +190,7 @@ export class AccessTokenManager {
     this.maxActive = maxActive;
     this.auth = {
       kind: "access_token",
+      recognizesCredential: isMachineCredential,
       activityActorNamespace: "connecta:access-tokens:v1",
       activityActorLabel: async (id) => {
         try {
@@ -332,9 +334,8 @@ export class AccessTokenManager {
   }
 
   private async authorize(request: Request): Promise<AuthResult> {
-    const header = request.headers.get("authorization") ?? "";
-    const match = /^Bearer\s+(.+)$/iu.exec(header);
-    const token = match?.[1];
+    const credential = authorizationCredential(request);
+    const token = credential.kind === "bearer" ? credential.token : undefined;
     if (!token || !TOKEN_VALUE_RE.test(token)) return unauthorized();
     const hash = await hashToken(token);
     const lookupRaw = await this.storage.get(lookupKey(hash));

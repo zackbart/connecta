@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { operatorUi } from "../src/ui.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 import { listen } from "../src/node.js";
@@ -61,7 +61,7 @@ async function doctorAgainst(
       }),
     ],
     executor: customExecutor(executor, { lifecycle: "self-managed" }),
-    auth: options.auth ?? bearerToken(TOKEN),
+    auth: options.auth ?? machineAuth(TOKEN),
     logger: "silent",
     ...(options.storage ? { storage: options.storage } : {}),
   });
@@ -237,7 +237,7 @@ describe("connecta doctor --config", () => {
     const url = await deploymentUrl(app);
     for (const args of [["--config", "--url", url], ["--url", url, "--config"]]) {
       const { stdout, stderr } = await run(process.execPath, [CLI, "doctor", ...args], {
-        env: { ...process.env, CONNECTA_TOKEN: SECRETS.bearerToken, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+        env: { ...process.env, CONNECTA_TOKEN: SECRETS.machineToken, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
       });
       expect(JSON.parse(stdout)).toEqual(app.describeConfig());
       expect(stderr).toBe("");
@@ -253,7 +253,7 @@ describe("connecta doctor --config", () => {
     const app = createConnecta({
       connectors: [api("visible", { tools: [{ name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null }] }), api("hidden", { tools: [{ name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null }] })],
       executor: customExecutor({ execute: async () => { executed++; return { result: null }; } }, { lifecycle: "self-managed" }),
-      auth: bearerToken(TOKEN), ui: operatorUi(), logger: "silent", identity: { connectorAccess: () => ["visible"] },
+      auth: machineAuth(TOKEN), ui: operatorUi(), logger: "silent", identity: { connectorAccess: () => ["visible"] },
     });
     const url = await deploymentUrl(app);
     const { stdout } = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], { env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" } });

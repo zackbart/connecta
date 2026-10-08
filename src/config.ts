@@ -84,9 +84,9 @@ function isExactOrigin(value: unknown): value is string {
   }
 }
 
-/** Bearer providers are checked before Clerk (per spec). */
+/** Explicit machine credentials take precedence over ambient browser identity. */
 function normalizeAuth(auth: readonly InboundAuth[]): readonly InboundAuth[] {
-  const rank = (provider: InboundAuth) => (provider.kind === "bearer" ? 0 : 1);
+  const rank = (provider: InboundAuth) => (provider.kind === "access_token" ? 0 : 1);
   return Object.freeze([...auth].sort((a, b) => rank(a) - rank(b)));
 }
 
@@ -341,10 +341,17 @@ const connectaConfig = {
       const list = Array.isArray(value) ? value : [value];
       list.forEach((provider, index) => {
         if (!isObject(provider) || typeof provider.kind !== "string" ||
-          typeof provider.authorize !== "function") {
+          typeof provider.authorize !== "function" ||
+          ["recognizesCredential", "handleMetadata", "challenge"].some(key => provider[key] !== undefined && typeof provider[key] !== "function")) {
           throw new ConfigError(
             `${Array.isArray(value) ? `${path}[${index}]` : path} must be an inbound auth adapter.`,
           );
+        }
+        if (provider.recognizesCredential !== undefined && Object.prototype.toString.call(provider.recognizesCredential) === "[object AsyncFunction]") {
+          throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.recognizesCredential must be synchronous.`);
+        }
+        if ("finalRefusals" in provider) {
+          throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.finalRefusals is retired; use synchronous recognizesCredential.`);
         }
       });
     },

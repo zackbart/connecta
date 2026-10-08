@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { htmlSecurityHeaders } from "../html-security.js";
+import { authorizationCredential } from "../inbound-credential.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { OAuthCallbackClaimedError, oauthStateDigest } from "../auth/downstream-oauth.js";
 import { failureRecord, logFailure } from "../operator-record.js";
@@ -203,6 +204,7 @@ async function finishOAuthCallback(
     const expectedPrincipalKey = callbackTarget?.principalKey;
     const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.config.auth, "OAuth callback", context.runtimeContext, opts.config.identity);
     if (!browserIdentity.ok) {
+      if (browserIdentity.response.status === 401 && authorizationCredential(context.request).kind !== "absent") return browserIdentity.response;
       // A Clerk browser handshake refreshes its session and returns to this
       // exact callback. It grants no identity and exchanges no code yet.
       if (browserIdentity.response.status === 307 && browserIdentity.response.headers.has("location")) return browserIdentity.response;

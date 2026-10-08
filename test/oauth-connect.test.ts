@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -34,7 +34,7 @@ function setup(provider: "clerk" | "access", authScope: "personal" | "shared", o
     verifyState: async (candidate, ctx) => candidate !== null && candidate === await ctx.storage.get("state"),
     disconnectAuth: async () => {},
   };
-  const auth = options.interactive === false ? bearerToken("machine") : provider === "access" ? cloudflareAccessAuth() : ["alice", "bob"].map(user => ({
+  const auth = options.interactive === false ? machineAuth("machine") : provider === "access" ? cloudflareAccessAuth() : ["alice", "bob"].map(user => ({
     ...fakeClerkAuth({ token: user, userId: user, ...(options.hostedSignIn === false ? {} : { signInUrl: "https://accounts.example/sign-in" }) }),
     activityActorNamespace: "https://clerk.example.test",
   }));
@@ -243,6 +243,34 @@ it("refuses browser OAuth when no inbound provider is configured", async () => {
 });
 
 describe("OAuth identity and signature boundaries", () => {
+  it.each(["clerk", "access"] as const)("INV-4: explicit header refusals stay 401 on %s connect and callback routes", async provider => {
+    const flow = setup(provider, "personal");
+    const { authorizationUrl } = await flow.authorize();
+    const headers = ["", "Basic unknown", "Unknown unknown", "Bearer", "Bearer  malformed", "bearer invalid", "Bearer a, Bearer b"];
+    const challenge = provider === "clerk" ? "Bearer" : 'Bearer scope="openid email"';
+    for (const authorization of headers) {
+      const response = await flow.app.fetch(new Request(authorizationUrl, {
+        headers: { Authorization: authorization, Cookie: "__session=alice" },
+      }), undefined, flow.runtime("alice"));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe(challenge);
+      expect(response.headers.has("location")).toBe(false);
+    }
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    const begun = await flow.browser(authorizationUrl, "alice");
+    expect(begun.status).toBe(302);
+    const state = new URL(begun.headers.get("Location")!).searchParams.get("state")!;
+    for (const authorization of headers) {
+      const response = await flow.app.fetch(new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, {
+        headers: { Authorization: authorization, Cookie: "__session=alice" },
+      }), undefined, flow.runtime("alice"));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe(challenge);
+    }
+    expect(flow.finishAuth).not.toHaveBeenCalled();
+    expect((await flow.callback("alice")).status).toBe(200);
+  });
+
   it.each(["personal", "shared"] as const)("refuses Access service identities for %s starts and callbacks", async scope => {
     const flow = setup("access", scope);
     const { authorizationUrl } = await flow.authorize();
@@ -285,11 +313,11 @@ describe("OAuth identity and signature boundaries", () => {
     deployments.push(app);
     const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token }));
     expect(JSON.parse(rpc.result.content[0].text).recovery).toBe("unavailable");
-    const humanRpc = await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "alice" }), undefined, runtime(true)));
+    const humanRpc = await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, provider === "clerk" ? { token: "alice" } : {}), undefined, runtime(true)));
     const link = JSON.parse(humanRpc.result.content[0].text).authorizationUrl;
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
       const response = await app.fetch(new Request(link, { method, headers: { Authorization: `Bearer ${token}` } }), undefined, runtime());
-      expect(response.status).toBe(method === "GET" ? provider === "clerk" ? 200 : 403 : 405);
+      expect(response.status).toBe(method === "GET" ? 403 : 405);
     }
     expect(startAuth).not.toHaveBeenCalled();
     expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }), undefined, runtime(true))).status).toBe(302);

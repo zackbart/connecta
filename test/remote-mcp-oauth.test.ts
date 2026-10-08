@@ -1637,15 +1637,15 @@ describe("/oauth/callback/<id> route", () => {
     expect(finish).not.toHaveBeenCalled();
   });
 
-  it("refuses a callback any provider refused with final, interactive or not", async () => {
+  it("refuses a callback carrying a recognized machine credential", async () => {
     const finish = vi.fn(async () => {});
     const connecta = createTestConnecta({
       publicUrl: BASE,
-      // A bearer's refused asserted principal (#679), and nothing interactive
+      // A recognized machine credential, and nothing interactive
       // whose 403 would otherwise be the only explicit denial.
-      auth: { kind: "bearer", finalRefusals: true,
+      auth: { kind: "access_token", recognizesCredential: request => Boolean(request.headers.get("authorization")),
         authorize: (request) => request.headers.has("authorization")
-          ? { ok: false, final: true, response: new Response(null, { status: 403 }) }
+          ? { ok: false, response: new Response(null, { status: 403 }) }
           : { ok: false, response: new Response(null, { status: 401 }) } },
       connectors: [callbackConnector("svc", finish, async (state) => state === "verified-state")],
     });
@@ -1677,8 +1677,8 @@ describe("/oauth/callback/<id> route", () => {
     return { storage, reads };
   }
 
-  // Human routes skip non-interactive providers unless they declare
-  // finalRefusals, so a managed access token is never looked up here: a bogus
+  // Human routes refuse recognized machines without verification, so
+  // a managed access token is never looked up here: a bogus
   // `cta_` token would otherwise add a read only where the connector exists.
   it("a bogus managed token adds no storage reads to a configured or unknown callback", async () => {
     const { storage: counting, reads } = countingStorage();

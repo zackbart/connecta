@@ -137,7 +137,7 @@ function warnInsecureConfig(config: ResolvedConfig): void {
         (hasCredentialConnector || oauthConnectors.length > 0
           ? "Configured credentials and downstream OAuth grants are exposed to those calls. "
           : "") +
-        "Configure `auth` (for example bearerToken(...) or Clerk) to gate access.",
+        "Configure Clerk, Cloudflare Access on Workers, or accessTokens(storage) to gate access.",
     );
   }
 

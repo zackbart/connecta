@@ -104,7 +104,7 @@ describe("operator log calls", () => {
         problems.push(`src/${name}:${line}: logger method alias ${match[0].slice(0, 80)}`);
       }
     }
-    expect(calls).toBeGreaterThan(50);
+    expect(calls).toBeGreaterThanOrEqual(49);
     expect(problems).toEqual([]);
   });
 

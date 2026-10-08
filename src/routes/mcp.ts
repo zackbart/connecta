@@ -29,7 +29,6 @@ import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
-  loggableValue,
   mayManageConnector,
   validateAuthPermissions,
   type RouteContext,
@@ -665,18 +664,15 @@ export function createMcpRoute(
       let trust = opts.config.trust;
       if (poolName !== undefined) {
         const pool = opts.pools?.get(poolName);
-        const verdict = !pool ? "undeclared" : yield* Effect.promise(async () => {
+        const denialReason = !pool ? "pool_not_declared" : yield* Effect.promise(async () => {
           try {
-            return (await pool.grant(authz.identity)) === true ? "granted" : "refused";
+            return (await pool.grant(authz.identity)) === true ? undefined : "pool_grant_denied" as const;
           } catch {
-            return "grant threw";
+            return "pool_grant_threw" as const;
           }
         });
-        if (!pool || verdict !== "granted") {
-          opts.config.logger.warn(
-            `[connecta] refused /mcp/${poolName} with 404: pool ${verdict}` +
-              (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
-          );
+        if (!pool || denialReason !== undefined) {
+          logFailure(opts.config.logger, "MCP pool request denied", failureRecord({ reason: denialReason ?? "pool_not_declared" }));
           // The server's own 404, so a browser sees the page every unserved
           // path shows and an MCP client (which never asks for text/html)
           // still reads a plain "Not Found".

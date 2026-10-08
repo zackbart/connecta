@@ -39,6 +39,14 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
   const toolUses: ToolUse[] = [];
   let turn = 1;
   try {
+    if (!/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
+      throw new Error("Node eval did not provision a managed machine token");
+    }
+    for (const headers of [{}, { Authorization: "Bearer eval-provisioning" }]) {
+      const response = await fetch(deployment.mcpUrl, { headers });
+      await response.body?.cancel();
+      if (response.status !== 401) throw new Error("Node eval admitted an unprovisioned client");
+    }
     if (mode === "reference") {
       await task.reference({
         world,

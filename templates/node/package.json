@@ -11,6 +11,7 @@
   },
   "scripts": {
     "doctor": "connecta doctor",
+    "provision-token": "tsx src/provision-token.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },

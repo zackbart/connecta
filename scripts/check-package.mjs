@@ -243,6 +243,7 @@ try {
     "templates/node/package.json",
     "templates/node/src/index.ts",
     "templates/node/src/connecta.config.ts",
+    "templates/node/src/provision-token.ts",
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
@@ -629,6 +630,7 @@ try {
     "CLAUDE.md",
     "src/index.ts",
     "src/connecta.config.ts",
+    "src/provision-token.ts",
     "tsconfig.json",
   ]) {
     if (!existsSync(join(work, "generated-deployment", generated))) {
@@ -723,7 +725,8 @@ try {
     generatedTsx,
     ["src/index.ts"],
     generatedRoot,
-    "CONNECTA_TOKEN is required",
+    "needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
+    { CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: "sk_test_incomplete" },
   );
   const generatedEntry = await readFile(
     join(generatedRoot, "src", "index.ts"),
@@ -760,7 +763,7 @@ try {
     [await writeVariant("no-executor", generatedConfig.replace(executorLine, ""))],
     generatedRoot,
     "ConnectaConfig.executor is required",
-    { CONNECTA_TOKEN: "package-smoke-token" },
+    { CONNECTA_DATABASE: join(generatedRoot, "invalid-config.sqlite"), CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: "" },
   );
   expectFailure(
     generatedTsx,
@@ -770,18 +773,48 @@ try {
     )],
     generatedRoot,
     "ConnectaConfig.surface",
-    { CONNECTA_TOKEN: "package-smoke-token" },
+    { CONNECTA_DATABASE: join(generatedRoot, "invalid-config.sqlite"), CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: "" },
   );
 
   const port = await freePort();
-  const smokeToken = "package-smoke-token";
+  const staticToken = "package-smoke-static-token";
+  const generatedDatabase = join(generatedRoot, "machine-state.sqlite");
+  const serverEnv = {
+    CONNECTA_TOKEN: staticToken,
+    CONNECTA_DATABASE: generatedDatabase,
+    CLERK_PUBLISHABLE_KEY: "",
+    CLERK_SECRET_KEY: "",
+    PUBLIC_URL: "",
+    CONNECTA_CREDENTIAL_KEY: "",
+    CONNECTA_ACTIVITY: "",
+    CONNECTA_ARTIFACTS: "",
+    PORT: String(port),
+  };
+  const provisionedToken = (output) => {
+    const token = output.trim();
+    if (!/^cta_[A-Za-z0-9_-]{43}$/.test(token)) {
+      throw new Error("Provisioning did not return one managed cta_ token");
+    }
+    return token;
+  };
+  const assertClosed = async (origin) => {
+    for (const token of [undefined, staticToken, `cta_${"A".repeat(43)}`]) {
+      const response = await fetch(`${origin}/mcp`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: AbortSignal.timeout(5_000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 401) {
+        throw new Error(`Generated deployment admitted an unprovisioned client: ${response.status}`);
+      }
+    }
+  };
   let serverOutput = "";
   const deployment = spawn(generatedTsx, ["src/index.ts"], {
     cwd: generatedRoot,
     env: {
       ...process.env,
-      CONNECTA_TOKEN: smokeToken,
-      PORT: String(port),
+      ...serverEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -813,6 +846,11 @@ try {
       ".bin",
       process.platform === "win32" ? "connecta.cmd" : "connecta",
     );
+    await assertClosed(`http://127.0.0.1:${port}`);
+    const smokeToken = provisionedToken(run(
+      generatedTsx, ["src/provision-token.ts", "package-smoke-machine"],
+      generatedRoot, serverEnv,
+    ));
     const doctorOutput = run(
       generatedConnecta,
       ["doctor", "--url", `http://127.0.0.1:${port}`],
@@ -827,9 +865,8 @@ try {
   }
 
   // Exercise the installed package and real QuickJS with an original v0.23
-  // secret. The configured static bearer is different, so only the template's
-  // access-token module, over the migrated database, can admit this
-  // doctor request.
+  // secret. Only the template's access-token module, over the migrated
+  // database, can admit this doctor request; CONNECTA_TOKEN has no server role.
   const legacyTokens = JSON.parse(await readFile(
     join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8",
   ));
@@ -853,7 +890,7 @@ try {
   let legacyOutput = "";
   const legacyDeployment = spawn(generatedTsx, ["src/index.ts"], {
     cwd: generatedRoot,
-    env: { ...process.env, CONNECTA_TOKEN: smokeToken, CONNECTA_DATABASE: legacyState, PORT: String(legacyPort) },
+    env: { ...process.env, ...serverEnv, CONNECTA_DATABASE: legacyState, PORT: String(legacyPort) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const retainLegacyOutput = chunk => { legacyOutput = (legacyOutput + chunk.toString()).slice(-8_000); };
@@ -861,6 +898,7 @@ try {
   legacyDeployment.stderr.on("data", retainLegacyOutput);
   try {
     await waitForHealth(`http://127.0.0.1:${legacyPort}/health`, legacyDeployment, () => legacyOutput);
+    await assertClosed(`http://127.0.0.1:${legacyPort}`);
     const doctorOutput = run(
       join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
       ["doctor", "--url", `http://127.0.0.1:${legacyPort}`], generatedRoot,
@@ -919,9 +957,16 @@ try {
     );
 
     const containerPort = await freePort();
-    const compose = ["compose", "-p", `connecta-smoke-${process.pid}`];
+    // Inject a static value only in the smoke fixture to prove even an
+    // inherited CONNECTA_TOKEN cannot become server authentication.
+    const staticEnvOverride = join(generatedRoot, "static-env.override.yml");
+    await writeFile(staticEnvOverride,
+      `services:\n  connecta:\n    environment:\n      CONNECTA_TOKEN: ${staticToken}\n`);
+    const compose = ["compose", "-p", `connecta-smoke-${process.pid}`,
+      "-f", "docker-compose.yml", "-f", staticEnvOverride];
     const composeEnv = {
-      CONNECTA_TOKEN: smokeToken,
+      ...serverEnv,
+      CONNECTA_DATABASE: "/data/connecta.sqlite",
       PORT: String(containerPort),
     };
     const composeLogs = () => {
@@ -943,6 +988,18 @@ try {
         120_000,
         composeLogs,
       );
+      await assertClosed(`http://127.0.0.1:${containerPort}`);
+      // A trusted one-shot container, using the installed package API and the
+      // service's named volume, exactly as the template documents.
+      const containerToken = provisionedToken(run("docker", [...compose,
+        "run", "--rm", "--no-deps", "-T", "connecta",
+        "npm", "run", "--silent", "provision-token", "--", "container-smoke-machine",
+      ], generatedRoot, composeEnv));
+      run("docker", [...compose, "restart", "connecta"], generatedRoot, composeEnv);
+      await waitForContainerHealth(
+        `http://127.0.0.1:${containerPort}/health`, 120_000, composeLogs,
+      );
+      await assertClosed(`http://127.0.0.1:${containerPort}`);
       const containerDoctor = run(
         join(
           generatedRoot,
@@ -952,7 +1009,7 @@ try {
         ),
         ["doctor", "--url", `http://127.0.0.1:${containerPort}`],
         generatedRoot,
-        { CONNECTA_TOKEN: smokeToken },
+        { CONNECTA_TOKEN: containerToken },
       );
       if (!containerDoctor.includes("QuickJS executed")) {
         throw new Error(

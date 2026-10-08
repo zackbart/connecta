@@ -6,9 +6,12 @@ This repository is deployment configuration, not a copy of Connecta itself.
   URL, and optional modules. `src/index.ts` only starts it. Set plain vars
   `CONNECTA_ACTIVITY="on"` for preserved activity and `CONNECTA_ARTIFACTS="on"`
   when artifacts are used.
-- Keep `cloudflareAccessAuth()` as the inbound auth provider. Cloudflare Access
-  authenticates the request before the Worker runs; do not add JWT parsing or a
-  second Worker-side identity gate.
+- Keep `cloudflareAccessAuth()` for human identity and `accessTokens(storage)`
+  always installed over the same `CONNECTA_DB` for machines. Cloudflare Access
+  admits the request before the Worker runs; a service identity alone is
+  refused inside connecta. Do not add JWT parsing or another identity gate.
+  Grant `identity.accessTokenManagement` explicitly to interactive operators;
+  this example permits every signed-in human to manage connectors and tokens.
 - Attach Access to the Worker itself, not only its hostname. Enable Managed
   OAuth on that Access application. CIMD is the spec's preferred client
   registration; enable DCR as the fallback Access currently requires.
@@ -49,9 +52,13 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
-- Use Access service credentials for `connecta doctor` and unattended clients.
-  Connecta-issued `cta_` tokens cover machine clients inside connecta; they
-  cannot cross the Access edge alone. UI, vault, and activity use explicit optional imports;
+- Unattended clients and `connecta doctor` need Access service credentials
+  plus a stored `cta_` bearer. Set `CF_ACCESS_CLIENT_ID`,
+  `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN` together for doctor.
+  Bootstrap tokens through the Access-authenticated operator page or trusted
+  `AccessTokenManager.create` tooling against this same D1 storage, as README
+  "Machine tokens" describes. Never configure a static bearer or open startup.
+  UI, vault, and activity use explicit optional imports;
   auth changes require code-derived shared or personal management permissions.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,

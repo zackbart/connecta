@@ -70,11 +70,13 @@ describe("OAuth browser token policy", () => {
       const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "mcp-oauth-token" }));
       const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
       const refusedStart = await app.fetch(new Request(link, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
-      expect(refusedStart.status).toBe(200);
-      expect(await refusedStart.text()).toContain("window.Clerk.mountSignIn");
+      expect(refusedStart.status).toBe(401);
+      expect(refusedStart.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
       expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }))).status).toBe(302);
       const callback = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
-      expect((await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }))).status).toBe(400);
+      const refusedCallback = await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
+      expect(refusedCallback.status).toBe(401);
+      expect(refusedCallback.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
       expect(finishAuth).not.toHaveBeenCalled();
       for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
         const result = await app.fetch(new Request(callback, { method, headers: { Authorization: "Bearer mcp-oauth-token" } }));
@@ -574,7 +576,7 @@ describe("clerkAuth inbound auth", () => {
       expect(response.status).toBe(401);
       const metadataPath = path === "/mcp" ? "" : path;
       expect(response.headers.get("WWW-Authenticate")).toBe(
-        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}"`,
+        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}", scope="openid profile email"`,
       );
       expect(await response.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
       const metadata = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource${metadataPath}`));
@@ -754,7 +756,7 @@ describe("clerkAuth inbound auth", () => {
         authenticateOAuth("oat_private");
         mocks.fetch.mockImplementation(response);
         await expectUnauthorized(deployment());
-        expect(warn.mock.calls).toEqual([["[connecta] clerk rejected request: reason=oauth_verification_failed"]]);
+        expect(warn.mock.calls).toEqual([["[connecta] Clerk request denied", { reason: "oauth_verification_failed" }]]);
       } finally {
         warn.mockRestore();
       }
@@ -768,8 +770,8 @@ describe("clerkAuth inbound auth", () => {
         authenticateOAuth(jwt({}), "private-client");
         await expectUnauthorized(deployment([]));
         expect(warn.mock.calls).toEqual([
-          ["[connecta] clerk rejected request: reason=oauth_binding_mismatch"],
-          ["[connecta] clerk rejected request: reason=oauth_client_not_allowed"],
+          ["[connecta] Clerk request denied", { reason: "oauth_binding_mismatch" }],
+          ["[connecta] Clerk request denied", { reason: "oauth_client_not_allowed" }],
         ]);
       } finally {
         warn.mockRestore();
@@ -787,8 +789,8 @@ describe("clerkAuth inbound auth", () => {
         mocks.authenticateRequest.mockRejectedValue(new Error("oat_private"));
         await expectUnauthorized(deployment());
         expect(warn.mock.calls).toEqual([
-          ["[connecta] clerk rejected request: reason=authentication_failed"],
-          ["[connecta] clerk rejected request: reason=authentication_failed"],
+          ["[connecta] Clerk request denied", { reason: "authentication_failed" }],
+          ["[connecta] Clerk request denied", { reason: "authentication_failed" }],
         ]);
         expect(mocks.fetch).not.toHaveBeenCalled();
       } finally {
@@ -812,6 +814,29 @@ describe("clerkAuth inbound auth", () => {
       controller.abort();
       expect((await result).ok).toBe(false);
       expect(mocks.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
+    });
+
+    it("INV-7: expires the raw opaque verification request at its ten-second deadline", async () => {
+      authenticateOAuth("oat_verified");
+      mocks.fetch.mockImplementation((_url, { signal }: RequestInit) => new Promise((_resolve, reject) => {
+        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+      }));
+      const started = Date.now();
+      const result = await clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).authorize(mcpRequest("/mcp"), BASE);
+      expect(result.ok).toBe(false);
+      expect(mocks.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(9_000);
+      expect(Date.now() - started).toBeLessThan(14_000);
+    }, 15_000);
+
+    it("INV-4: rechecks opaque revocation on every request without an audience cache", async () => {
+      authenticateOAuth("oat_verified");
+      mocks.fetch.mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp` })))
+        .mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp`, revoked: true })));
+      const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
+      expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(true);
+      expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(false);
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
     });
 
     it("defaults to bound tokens when allowedOAuthClientIds is omitted", async () => {
@@ -1067,33 +1092,21 @@ describe("clerkAuth inbound auth", () => {
       expect(gate).not.toHaveBeenCalled();
     });
 
-    it("logs the denied domain bounded, and never the address", async () => {
+    it("INV-6: logs checked domain denial reasons without user IDs, addresses, or domains", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      // A denial names the domain for the operator — bounded, so a 253-byte
-      // domain cannot flood the log — and never the local part.
-      mocks.getUser.mockResolvedValue(
-        userWithEmail(
-          `secret-person@${"a".repeat(60)}.${"b".repeat(60)}.example.com`,
-        ),
-      );
+      const domain = `${"a".repeat(60)}.${"b".repeat(60)}.example.com`;
+      mocks.getUser.mockResolvedValue(userWithEmail(`secret-person@${domain}`));
       await authorize({ allowedDomains: ["acme.com"] });
-      const denied = warn.mock.calls.map(String).join("\n");
-      expect(denied).toContain("user_123");
-      expect(denied).toContain("(truncated)");
-      expect(denied.length).toBeLessThan(250);
-      expect(denied).not.toContain("secret-person");
+      expect(warn.mock.calls).toEqual([["[connecta] Clerk request denied", { reason: "email_domain_denied" }]]);
+      const denied = JSON.stringify(warn.mock.calls);
+      for (const canary of ["user_123", "secret-person", domain]) expect(denied).not.toContain(canary);
 
-      // A malformed address never reaches that line at all, so a
-      // caller-controlled newline has nothing to forge a log line with.
       warn.mockClear();
-      mocks.getUser.mockResolvedValue(
-        userWithEmail("secret-person@evil.com\n[connecta] forged"),
-      );
+      mocks.getUser.mockResolvedValue(userWithEmail("secret-person@evil.com\n[connecta] forged"));
       await authorize({ allowedDomains: ["acme.com"] });
-      const malformed = warn.mock.calls.map(String).join("\n");
-      expect(malformed).toContain("no verified primary email");
-      expect(malformed).not.toContain("secret-person");
-      expect(malformed).not.toContain("forged");
+      expect(warn.mock.calls).toEqual([["[connecta] Clerk request denied", { reason: "verified_email_invalid" }]]);
+      const malformed = JSON.stringify(warn.mock.calls);
+      for (const canary of ["user_123", "secret-person", "evil.com", "forged"]) expect(malformed).not.toContain(canary);
       warn.mockRestore();
     });
 

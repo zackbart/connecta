@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
@@ -25,7 +25,7 @@ function rpc(era: "modern" | "legacy", method: string, params: Record<string, un
 function deployment() {
   return createTestConnecta({
     connectors: [calcConnector],
-    auth: bearerToken(TOKEN),
+    auth: machineAuth(TOKEN),
     publicUrl: BASE,
     logger: silentLogger,
     admission: {
@@ -119,7 +119,7 @@ describe("MCP subscriptions", () => {
           return { sum: 3 };
         },
       }],
-      auth: bearerToken(TOKEN), publicUrl: BASE, logger: silentLogger,
+      auth: machineAuth(TOKEN), publicUrl: BASE, logger: silentLogger,
       admission: { requests: { concurrency: 1, maxQueueSize: 0, maxDurationMs: 5_000 } },
     });
     const call = c.fetch(rpc("modern", "tools/call", {
@@ -201,7 +201,7 @@ describe("MCP subscriptions", () => {
   it("cancels a stalled listen body at the request deadline", async () => {
     let cancelled = false;
     const c = createTestConnecta({
-      connectors: [], auth: bearerToken(TOKEN), publicUrl: BASE, logger: silentLogger,
+      connectors: [], auth: machineAuth(TOKEN), publicUrl: BASE, logger: silentLogger,
       admission: { requests: { maxDurationMs: 100 } },
     });
     try {

@@ -1,6 +1,9 @@
 // What an operator may read about a failure: log records and status text.
 // Web-API only — no node: imports here.
 //
+// Inbound identity-provider text never enters operator logs or status, even
+// when it fits a grammar. Activity retains its separate typed actor fields.
+//
 // Threat model. INV-6 here covers records of calls and failures: logs,
 // activity rows, status and statusFor, health, doctor output, and any native
 // runtime output connecta triggers (workerd's console). Text a downstream
@@ -90,12 +93,37 @@ const STATUS_STATES: ReadonlySet<string> = new Set(["ok", "auth_required", "erro
 /** A status state, or `failed` for a status that could not be read at all. */
 const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
 
+/** Inbound denial facts, never identity text or provider diagnostics. */
+export type AuthDenialReason =
+  | "authentication_failed"
+  | "authorization_header_invalid"
+  | "token_type_mismatch"
+  | "oauth_verification_failed"
+  | "oauth_client_not_allowed"
+  | "oauth_binding_mismatch"
+  | "session_origin_mismatch"
+  | "user_missing"
+  | "email_lookup_failed"
+  | "verified_email_invalid"
+  | "email_domain_denied"
+  | "gate_denied"
+  | "gate_failed"
+  | "pool_not_declared"
+  | "pool_grant_denied"
+  | "pool_grant_threw";
+
+const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
+  "authentication_failed", "authorization_header_invalid", "token_type_mismatch",
+  "oauth_verification_failed", "oauth_client_not_allowed", "oauth_binding_mismatch",
+  "session_origin_mismatch", "user_missing", "email_lookup_failed",
+  "verified_email_invalid", "email_domain_denied", "gate_denied", "gate_failed",
+  "pool_not_declared", "pool_grant_denied", "pool_grant_threw",
+]);
+
 /** The registry's connector id grammar (src/registry.ts). */
 const CONNECTOR_ID_RE = /^[a-z0-9_-]{1,64}$/;
 /** MCP's tool name grammar (SEP-986). */
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
-/** An inbound identity's opaque id. */
-const USER_ID_RE = /^[A-Za-z0-9_.:@|-]{1,128}$/;
 const LABEL_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
 
 /** What stands in for a name connecta could not vouch for. */
@@ -258,6 +286,7 @@ export function carryFailureFacts<T>(from: unknown, to: T): T {
 
 /** What a failure record may be about. Only these fields are read. */
 export interface FailureSubject {
+  reason?: AuthDenialReason;
   /** A registered connector's id. */
   connector?: string;
   /**
@@ -266,8 +295,6 @@ export interface FailureSubject {
    */
   tool?: { readonly name: string } | undefined;
   source?: string;
-  /** An inbound identity's opaque id. */
-  userId?: string;
   /** A status state, for a status record. */
   state?: ConnectorStatus["state"] | "failed";
   /** Whether an OAuth start continued or restarted authorization. */
@@ -281,10 +308,10 @@ declare const recordBrand: unique symbol;
 /** One failure as an operator may read it. Only `failureRecord` makes one. */
 export interface FailureRecord {
   readonly [recordBrand]: true;
+  readonly reason?: AuthDenialReason;
   readonly connector?: string;
   readonly tool?: string;
   readonly source?: string;
-  readonly userId?: string;
   readonly state?: string;
   readonly mode?: string;
   readonly attempts?: number;
@@ -327,15 +354,12 @@ export function recordedToolName(entry: { readonly name: string }): string {
 function checkedSubject(subject: FailureSubject): object {
   const tool = subject.tool;
   return {
+    ...defined("reason", member(subject.reason, AUTH_DENIAL_REASONS)),
     ...defined("connector", connectorId(subject.connector)),
     ...("tool" in subject
       ? { tool: tool === null || typeof tool !== "object" ? UNLISTED_TOOL : recordedToolName(tool) }
       : {}),
     ...defined("source", member(subject.source, SOURCES)),
-    ...defined(
-      "userId",
-      typeof subject.userId === "string" && USER_ID_RE.test(subject.userId) ? subject.userId : undefined,
-    ),
     ...defined("state", member(subject.state, STATES)),
     ...defined("mode", member(subject.mode, MODES)),
     ...defined("attempts", count(subject.attempts, 1_000)),
@@ -424,11 +448,12 @@ export type FailureEvent =
   | "OAuth disconnect failed"
   | "OAuth callback verifyState threw; no authorization code was exchanged"
   | "OAuth callback handoff could not be consumed; no authorization code was exchanged"
+  | "MCP pool request denied"
   | "MCP handler error"
   | "operator status"
   | "result paging unavailable"
   | "request failed"
-  | "Clerk email lookup failed; denying"
+  | "Clerk request denied"
   | "Clerk authentication failed";
 
 /** What is logged in place of a record `failureRecord` did not build. */

@@ -1,5 +1,5 @@
 import { api } from "../../src/connectors/api.js";
-import { bearerToken } from "../../src/auth/bearer.js";
+import { machineAuth } from "../helpers/machine-auth.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type { ConnectaConfig } from "../../src/index.js";
 import type { Connector, InboundAuth } from "../../src/types.js";
@@ -104,8 +104,12 @@ export function fakeClerkAuth(options: {
   signUpUrl?: string;
   unauthorized?: () => Response;
 } = {}): InboundAuth {
+  const matches = (request: Request) => request.headers.has("authorization")
+    ? request.headers.get("authorization") === `Bearer ${options.token ?? "clerk-operator"}`
+    : Boolean(request.headers.get("cookie")?.split(/;\s*/).includes(`__session=${options.token ?? "clerk-operator"}`));
   return {
     kind: "clerk",
+    recognizesCredential: matches,
     activityActorNamespace: options.frontendApiUrl ?? "https://clerk.example.test",
     interactiveOperator: true,
     uiAuth: {
@@ -116,9 +120,7 @@ export function fakeClerkAuth(options: {
       ...(options.signUpUrl === undefined ? {} : { signUpUrl: options.signUpUrl }),
     },
     authorize(request) {
-      if (request.headers.get("authorization") ===
-        `Bearer ${options.token ?? "clerk-operator"}` ||
-        request.headers.get("cookie")?.split(/;\s*/).includes(`__session=${options.token ?? "clerk-operator"}`)) {
+      if (matches(request)) {
         return { ok: true, userId: options.userId ?? "user_operator" };
       }
       return {
@@ -171,7 +173,7 @@ export function makeDeployment(
   return createTestConnecta({
     ...config,
     connectors: config.connectors ?? [calcApi()],
-    auth: config.auth ?? bearerToken(TEST_TOKEN),
+    auth: config.auth ?? machineAuth(TEST_TOKEN),
     storage: config.storage ?? memoryStorage(),
     publicUrl: config.publicUrl ?? TEST_BASE,
   });

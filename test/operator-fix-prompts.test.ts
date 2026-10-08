@@ -10,7 +10,7 @@ import { FIX_PROMPT_KINDS, fixPrompt } from "../src/operator-ui/fix-prompts.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 
@@ -406,7 +406,7 @@ describe("OAuth callback page", () => {
     const split = createTestConnecta({
       publicUrl: BASE,
       artifactOrigin: pagesOrigin,
-      auth: bearerToken("favicon-test-token"),
+      auth: machineAuth("favicon-test-token"),
       storage: memoryStorage(),
       logger: silentLogger,
       artifacts: artifacts({ store: kvArtifactStore(memoryStorage()) }),

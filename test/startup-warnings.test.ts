@@ -4,7 +4,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import { createTestConnecta } from "./helpers.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
 import type { CredentialVault } from "../src/credential-contract.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -88,7 +88,7 @@ describe("open-mode credential-exposure warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthWithState],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
       });
@@ -110,7 +110,7 @@ describe("publicUrl-unset OAuth warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthWithState],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         logger,
       });
       expect(warnings(logger)).toContain("publicUrl is unset");
@@ -120,7 +120,7 @@ describe("publicUrl-unset OAuth warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthWithState],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
       });
@@ -131,7 +131,7 @@ describe("publicUrl-unset OAuth warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [plainConnector],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         logger,
       });
       expect(warnings(logger)).not.toContain("publicUrl is unset");
@@ -145,7 +145,7 @@ describe("dropped-branding-URL warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [plainConnector],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
         ui: operatorUi({ branding: {
@@ -163,7 +163,7 @@ describe("dropped-branding-URL warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [plainConnector],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
         ui: operatorUi({ branding: {
@@ -180,7 +180,7 @@ describe("dropped-branding-URL warning", () => {
       expect(() =>
         createTestConnecta({
           connectors: [plainConnector],
-          auth: bearerToken("secret"),
+          auth: machineAuth("secret"),
           publicUrl: BASE,
           logger,
           ui: operatorUi({ branding: {
@@ -199,7 +199,7 @@ describe("dropped-branding-URL warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [plainConnector],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
       });
@@ -324,7 +324,7 @@ describe("dropped uiAuth URL warnings", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [plainConnector],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
       });
@@ -339,7 +339,7 @@ describe("missing-verifyState CSRF warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthNoState],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
       });
@@ -353,7 +353,7 @@ describe("missing-verifyState CSRF warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthWithState],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
       });
@@ -386,7 +386,7 @@ describe("unsealed downstream OAuth state warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthDownstream],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: vaultWithoutSealing(),
         logger,
@@ -401,7 +401,7 @@ describe("unsealed downstream OAuth state warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [oauthDownstream],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
@@ -419,7 +419,7 @@ describe("unsealed downstream OAuth state warning", () => {
             auth: { type: "headers", headers: { Authorization: "Bearer x" } },
           }),
         ],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: vaultWithoutSealing(),
         logger,
@@ -460,7 +460,7 @@ describe("credential test-hook mismatch warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [fieldsWithSingleHook],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
@@ -475,7 +475,7 @@ describe("credential test-hook mismatch warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [singleWithFieldsHook],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
@@ -504,7 +504,7 @@ describe("credential test-hook mismatch warning", () => {
             },
           },
         ],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
@@ -536,7 +536,7 @@ describe("credential test-hook mismatch warning", () => {
           matchedFields,
           matchedSingle,
         ],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
@@ -553,7 +553,7 @@ describe("unusable maxResultBytes", () => {
       const logger = spyLogger();
       expect(() => createTestConnecta({
         connectors: [plainConnector],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger,
         calls: { maxResultBytes },
@@ -567,7 +567,7 @@ describe("unusable maxResultBytes", () => {
     (maxResultBytes) => {
       expect(() => createTestConnecta({
         connectors: [{ ...plainConnector, maxResultBytes }],
-        auth: bearerToken("secret"),
+        auth: machineAuth("secret"),
         publicUrl: BASE,
         logger: spyLogger(),
         calls: { maxResultBytes: 400 },
@@ -579,7 +579,7 @@ describe("unusable maxResultBytes", () => {
     const logger = spyLogger();
     createTestConnecta({
       connectors: [{ ...plainConnector, maxResultBytes }],
-      auth: bearerToken("secret"),
+      auth: machineAuth("secret"),
       publicUrl: BASE,
       logger,
       calls: { maxResultBytes },

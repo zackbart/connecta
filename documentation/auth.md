@@ -1,27 +1,51 @@
 # Inbound auth
 
-Inbound auth decides who may reach the MCP endpoint. Import `bearerToken` from
-`@zackbart/connecta/auth/bearer`, `clerkAuth` from `/auth/clerk`, or
-`cloudflareAccessAuth` from `/auth/cloudflare-access`; combined, static bearers
-go first, then other providers in configuration order. An `InboundAuth`
-provider's `authorize(request, baseUrl, runtimeContext)` returns
-`{ ok: true, userId?, subjectId?, principal? }` or a refusal carrying its own
-`Response`, so the provider owns its challenge. A refusal is normally a
-non-match and the next provider gets its turn; one marked `final: true` — a
-credential recognized and refused anyway — ends the walk on `/mcp` and the
-artifact pages. The human routes (operators, credentials, access tokens, OAuth
-connect links and callbacks) ask only interactive providers, so a slow or failing machine
-credential costs them nothing — except a provider that sets
-`finalRefusals: true`, consulted in order for its `final` refusal alone. An
-asserting bearer sets it; nothing else shipped does. Managed client tokens exist
-only when the optional `accessTokens` module is configured.
+Inbound auth decides who may reach the MCP endpoint. People use `clerkAuth`
+from `@zackbart/connecta/auth/clerk` or `cloudflareAccessAuth` from
+`/auth/cloudflare-access`. Machines use `accessTokens(storage)` from
+`/auth/access-tokens`, which installs the `cta_` adapter before human providers.
+Access is Workers-only; Node uses Clerk.
 
-The bearer adapter challenges with `WWW-Authenticate: Bearer` and deliberately
-omits `resource_metadata`: its credential is configured out of band, so it has no
-authorization server or registration endpoint to advertise. Interactive adapters
-or the edge own OAuth discovery. An open deployment with any connector warns at
-construction — including API connectors carrying static auth headers, and with
-sharper wording for credential and OAuth connectors.
+An `InboundAuth` provider recognizes credential syntax or trusted runtime
+context with synchronous `recognizesCredential(request, runtimeContext)`.
+Recognition does no verification or I/O. The first recognizing provider owns
+the request, including refusals, so an invalid machine credential cannot fall
+back to an ambient browser identity. An explicit Authorization header is
+decisive on every protected route. A shared parser normalizes the
+case-insensitive Bearer scheme; unsupported schemes, malformed spacing, empty
+values, combined duplicate headers, and verification failures return 401.
+Cookies, Clerk browser handshake credentials, and trusted Access context are
+excluded from that request. Access cannot verify caller headers and refuses
+them. If no provider recognizes a valid header, the first eligible provider
+owns its verdict. Without an Authorization header, providers are tried in
+configuration order until admission or a response other than 401.
+Browser OAuth starts and callbacks retain the 401 challenge for an explicit
+header refusal.
+Custom providers can omit recognition when they supply no distinct credential
+syntax; providers with credentials should implement it. A recognition throw
+refuses the request without logging the thrown text.
+
+The `cta_` syntax is reserved even without the optional token verifier: it
+refuses rather than becoming an ambient human or an open anonymous request.
+Async recognition hooks fail at construction; unexpected rejected promises
+are consumed before refusal so their text cannot reach runtime output.
+Human routes reject recognized machine credentials without consulting token
+storage, then ask only interactive providers. Replace custom `final` and
+`finalRefusals` handling with recognition; handshake redirects and admission
+policy refusals are provider verdicts too. Recognition grants no identity.
+
+`authorize` returns `{ ok: true, userId?, subjectId?, principal? }` or a refusal
+carrying a `Response`. On 401, routing and challenge selection use the first
+provider that actually answers the endpoint's protected-resource metadata
+request. Its `challenge(request, baseUrl)` supplies `WWW-Authenticate`, including
+`scope`; an unrelated metadata hook does not own resource discovery. Machine-only
+endpoints challenge with `Bearer` and advertise no authorization server. With
+Clerk, even a refused `cta_` token receives Clerk's resource metadata challenge.
+An open deployment with connectors warns at construction.
+
+Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
+addresses, and email domains stay out of denial logs, activity, and status,
+including email lookup failures and admission policy refusals.
 
 ## Managed client tokens and upgrading from v0.23
 
@@ -57,8 +81,7 @@ and stored principals carry over; a token without a principal stays unbound.
 Every request evaluates current identity, tool, and pool grants, and a token
 never becomes an interactive operator. Names are labels, never permissions. A
 UI-issued token belongs to the issuing human's principal, and any explicitly
-permitted token manager can list, rename, or revoke deployment tokens. Static
-and managed bearers manage neither tokens nor connection credentials; operators
+permitted token manager can list, rename, or revoke deployment tokens. Machine tokens manage neither tokens nor connection credentials; operators
 need an interactive provider.
 
 Issuance claims capacity with `compareAndSet`, because counting records before
@@ -96,8 +119,7 @@ silently never matching. A permitted origin still has to authenticate.
 One authorization yields three roles: the **actor** identifies the caller in
 activity, the **subject** owns transient results such as `get_result` pages,
 and the **principal** is the human owner of personal connector auth. An
-interactive Clerk or Access user supplies all three; a Cloudflare service
-identity has no principal. The principal is an explicit
+interactive Clerk or Access user supplies all three; Access service identities are refused; machines present `cta_` tokens. The principal is an explicit
 `principal: { namespace, id }` from `authorize`, accepted whenever it
 validates, or else one derived from `userId` and the provider's
 `activityActorNamespace`, so only the derived path needs a namespace.
@@ -113,7 +135,7 @@ Google Workspace domain-wide delegation — reads none of these roles on its own
 Its `subject` option, a deployment-config function from the admitted identity
 to a downstream account (a Clerk principal id to a Workspace address, say) or
 one fixed address, is applied once per call and only to a request an inbound
-provider authenticated: any `ok`, a subject-less bearer included, never an open
+provider authenticated: any `ok`, a subject-less custom credential included, never an open
 deployment's anonymous admission. Otherwise, or on `undefined`, the call fails
 `auth_required` before any request leaves. Arguments, headers, and programs
 never reach it; a deployment's own connectors still cannot read the caller.
@@ -136,7 +158,7 @@ as for a connector that does not exist. An ungranted tool fails exactly like one
 the connector never had: `unknown_tool`, with no hint that it exists. That is
 the whole security claim, in one place on purpose. There is no *caller-selected*
 tool set: a narrower slice is a branch in this resolver or a pool, and a bot
-needing its own is its own bearer subject. A request may never name its own
+needing its own is its own stored token subject. A request may never name its own
 scope.
 
 ### Team read sets
@@ -168,8 +190,7 @@ Engineering sees all `issues` tools and only `campaigns.list`; Marketing sees al
 `campaigns` tools and only `issues.search`. Neither sees `billing`; both memberships
 grant both connectors in full. Unknown or unprincipalled identities get `[]`.
 Use a stable authenticated principal or subject, never request headers or tool
-arguments. An [asserted principal](#a-trusted-agent-acting-for-its-users) is
-already vouched for by inbound auth. Pools narrow their endpoint, not plain `/mcp`.
+arguments. A token's stored principal is vouched for by inbound auth. Pools narrow their endpoint, not plain `/mcp`.
 
 | Catalog change | Guarded exact grant | Unrestricted exact string grant |
 | --- | --- | --- |
@@ -192,115 +213,38 @@ Failed remote loads are errors, not empty catalogs; valid stale catalogs may be
 served within their stale window. Personal OAuth ownership and credential
 administration are separate from visibility; program writes follow the endpoint's trust tier and host approval. `test/identity-scope.test.ts` exercises these boundaries.
 
-## A trusted agent acting for its users
+## Migrating static bearer clients
 
-An agent platform such as Eve serves a whole team over one service credential,
-so as a plain bearer subject they are all one bot: one view, one result
-partition, one activity actor, no principal for personal connectors.
-`assertedPrincipal` lets that secret say which user each request is for
-([#679](https://github.com/zackbart/connecta/issues/679)):
+The `/auth/bearer` export, `bearerToken`, and its `assertedPrincipal` header
+mode are removed. Existing static secrets cannot be converted into `cta_`
+secrets. Use a separate stored token for each machine or human owner:
 
-```ts
-import { bearerToken } from "@zackbart/connecta/auth/bearer";
-createConnecta({
-  auth: [
-    bearerToken(env.CONNECTA_AGENT_SECRET, {
-      assertedPrincipal: {
-        header: "X-Connecta-Principal",
-        namespace: "eve:example.com",
-        accept: (id) => /^[a-z0-9._%+-]+@example\.com$/.test(id),
-      },
-    }),
-    clerkAuth({ publishableKey, secretKey }),
-  ],
-  identity: { connectorAccess },
-  connectors, executor,
-});
-```
+1. Configure the existing D1 or SQLite store as `storage`, and install
+   `accessTokens(storage)`. Keep its existing keys and namespaces.
+2. Sign in through Clerk or Worker Access. Grant the intended token manager
+   `identity.accessTokenManagement`, then create a token on Access tokens.
+   It is bound to that human's principal. For a machine without a human owner,
+   provision `new AccessTokenManager(storage).create("machine-name", "deployment-provisioning")` from
+   trusted deployment code. The Node template provides `npm run provision-token -- machine-name`.
+3. Update `identity.connectorAccess` and pool grants to the returned token
+   metadata id with `actor.kind === "access_token"`. Names and `tokenPrefix`
+   are display labels. Keep existing human principal namespaces unchanged.
+4. Save the once-returned secret in the client's secret store and send
+   `Authorization: Bearer cta_…`. Behind Worker Access, also satisfy the edge
+   with Access service credentials; an Access-only machine no longer admits.
+5. Verify MCP initialization and the intended grants. Confirm the old static
+   secret refuses, then remove its environment secret and the old import.
+   Remove `X-Connecta-Principal`; a token's stored principal cannot vary by
+   request. Provision one human-bound token per represented user instead.
+   To retain an old asserted user's personal state, trusted provisioning must
+   call `manager.create(name, { namespace: existingNamespace, id: existingId })`
+   with the exact existing namespace and canonical id, after applying the old
+   admission policy. A Clerk UI token uses the Clerk principal instead and
+   cannot inherit a different asserted namespace's partitions.
 
-The header counts only beside the secret; without it the header is never read,
-and the bearer's ordinary 401 non-match lets the next provider decide. With
-it, the request must name someone: a missing or blank header is a 403
-`asserted principal required`, and an id that is not a valid identity reference
-(1–256 printable, non-space ASCII), or that `accept` (sync or async) declines,
-throws on, or answers with anything but a literal `true`, a 403
-`asserted principal refused`. Both are `final`, on `/mcp` and every human
-route: an Access identity riding the same request cannot admit what the
-assertion could not, not even to mint an access token, and the secret is never
-admitted as the bare service.
-
-An admitted request carries `principal: { namespace, id }`, and the same id is
-its subject, in the same namespace. `connectorAccess`, pool grants, personal
-connectors, and `callerOf(ctx)` see that user; `get_result` pages are
-partitioned per user, not shared by everyone the agent serves; activity records
-the actor as `{ kind: "bearer", id, namespace }` and nothing more. Like any
-bearer it is not interactive: no operator pages, credential administration, or
-personal OAuth start. `subjectId` is refused beside the option, since the
-asserted user is the subject. Construction throws on a header that is not an
-HTTP token or that another layer owns (`Authorization`, `Proxy-Authorization`,
-`Cookie`, `Host`, `Origin`), an invalid namespace, a missing `accept`, or an
-unknown key.
-
-Header names match case-insensitively; ids lose surrounding whitespace and
-nothing else. Connecta cannot know an id's grammar — emails here,
-case-sensitive directory ids there — so it does not case-fold, and since the id
-is a partition key, `Alice@example.com` and `alice@example.com` would be two
-people with two sets of personal state. Send canonical ids and have `accept`
-refuse the rest, as the lowercase-only pattern does, so a mixed-case address
-fails loudly instead of quietly splitting someone's history. A header sent
-twice arrives comma-joined, and trimming `alice` plus an empty repeat would
-leave the different id `alice,`, so any comma is refused before trimming; no
-email or directory id needs one. The asserted principal is its own: unless
-namespace and id equal what an interactive provider derives, the same person
-signed in through Clerk is a different principal with separate partitions.
-
-### From an Eve agent
-
-Eve resolves headers per caller inside the turn, beyond the model's reach:
-
-```ts
-// agent/connections/connecta.ts
-import { defineMcpClientConnection } from "eve/connections";
-import { slackEmail } from "../lib/slack-email";
-export default defineMcpClientConnection({
-  url: "https://connecta.example.com/mcp",
-  description: "Company tools through connecta.",
-  auth: {
-    principalType: "user",
-    getToken: async () => ({ token: process.env.CONNECTA_AGENT_SECRET! }),
-  },
-  headers: {
-    "X-Connecta-Principal": async ({ session }) => {
-      const caller = session.auth.current;
-      const slackUser = caller?.principalType === "user" ? caller.attributes.user_id : undefined;
-      if (typeof slackUser !== "string") throw new Error("no Slack user on this turn");
-      return (await slackEmail(slackUser)).toLowerCase();
-    },
-  },
-});
-```
-
-`principalType: "user"` makes Eve refuse a turn with no authenticated user — a
-schedule, a runtime caller — with `principal_required` rather than call
-connecta as nobody. Eve's Slack channel names the sender by Slack user id, not
-email, so `slackEmail` is a `users.info` lookup with the `users:read.email`
-scope; cache it, since Slack rate-limits it and an email rarely changes.
-
-### What the secret is worth
-
-Whoever holds the secret can act as any user `accept` admits. That is the
-feature, and the reason for the rest:
-
-- Keep the secret in the agent platform's secret store, never in a client,
-  a prompt, or a repository.
-- Scope `accept` as tightly as the deployment allows — one email domain, or an
-  explicit list — so a leaked secret reaches no one outside it.
-- Rotate it like any service credential. Nothing is cached, so a removed secret
-  stops on the next request; during a rollover configure two asserting bearers,
-  old and new, and drop the old one once the platform has moved.
-- Give it to one bearer only. Bearers are tried in configuration order, so a
-  plain `bearerToken` with the same secret listed first would admit it as the
-  bare service before the assertion was ever consulted.
+Revocation acts on the next request. Rotate by creating a replacement,
+updating the client, verifying it, and revoking the old token. Keep token text
+out of logs and reports.
 
 ## Pools
 
@@ -311,10 +255,9 @@ that sees one tool, both over the same credentials and catalog cache.
 
 ```ts
 createConnecta({
-  auth: [
-    bearerToken(botSecret, { subjectId: "calendar-bot" }),
-    clerkAuth({ publishableKey, secretKey }),
-  ],
+  storage,
+  accessTokens: accessTokens(storage),
+  auth: clerkAuth({ publishableKey, secretKey }),
   pools: {
     support: {
       tools: ["linear", "notion.search_pages", "notion.fetch_page"],
@@ -322,7 +265,7 @@ createConnecta({
     },
     calendar_bot: {
       tools: ["calendar.create_event"],
-      grant: ({ actor }) => actor.id === "calendar-bot",
+      grant: ({ actor }) => actor.kind === "access_token" && actor.id === calendarTokenId,
     },
   },
   identity: { connectorAccess },
@@ -723,20 +666,20 @@ import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access"
 createConnecta({ auth: cloudflareAccessAuth(), connectors, executor });
 ```
 
-The adapter trusts only `ctx.access`, which Cloudflare creates after Access
-authenticated a request that directly invokes the Worker, and reads identity
-through `ctx.access.getIdentity()`. A human yields `user_uuid` or `email` as
-user and subject; a *service* yields `service_token_id`, else `common_name`, so
-distinct service tokens normally get distinct attribution; either kind with no
-usable id is a 403. Only when Access returns no identity at all is the
-application audience the subject — the one case where an application's tokens
-share attribution. It never reads `Cf-Access-Jwt-Assertion`, fetches signing
-keys, or accepts a caller's JWT, and a missing context or throwing lookup fails
-closed, so it is deliberately no Node or `cloudflared` origin adapter and does
-not survive a Service Binding hop; those need their own trust boundary. Access
-decides admission and identity; connecta configuration decides connector
-access and management permissions, and a service identity, having no human
-principal, cannot mutate connection auth at all.
+The adapter trusts only `ctx.access`, which Cloudflare attaches after validating
+the token against the Worker-level Access application's AUD. A nonempty trusted
+`ctx.access.aud` is required; a caller cannot supply this context through HTTP.
+`ctx.access.getIdentity()` supplies `user_uuid`, with `email` as fallback, in the
+stable `cloudflare-access` principal namespace. Missing identity, service
+identity, or unusable user ids refuse. Access service credentials can admit the
+request at the edge, but connecta requires a `cta_` token for machine identity.
+
+It never reads `Cf-Access-Jwt-Assertion`, fetches signing keys, or accepts a
+caller's JWT. Missing context or a throwing lookup fails closed on both
+runtimes. It does not support Node, a `cloudflared` origin, or a Service Binding
+hop. [Decision 0003](https://github.com/zackbart/connecta/blob/main/decisions/0003-inbound-auth.md) records that boundary
+and replaces #506's provisional verdict with supported Worker Access.
+Connecta configuration still decides connector and management permissions.
 
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
@@ -766,7 +709,7 @@ Do not add a bypass for the discovery routes; a fully automated client uses a
 through `CF-Access-Client-Id` and `CF-Access-Client-Secret` instead. Worker-level
 Access runs before every connecta route, so `/health`, operator pages, downstream
 OAuth callbacks, and `/mcp` all require Access unless a more-specific policy says
-otherwise, and a static connecta bearer is not a standalone edge credential
+otherwise, and a `cta_` token is not a standalone edge credential
 because Cloudflare rejects the request before connecta sees it. Custom public
 webhooks live outside connecta and need their own Access routing policy. The
 [Worker example](../examples/worker/) carries the whole deployment shape.
@@ -797,7 +740,8 @@ For `/mcp`, `/.well-known/oauth-protected-resource` advertises
 `resource: "https://connecta.example.com/mcp"` and the Clerk Frontend API
 origin in `authorization_servers`. Pool metadata lives at
 `/.well-known/oauth-protected-resource/mcp/<pool>` and advertises that pool's
-exact URL. Connecta forwards Clerk's authorization-server metadata.
+exact URL. Clients fetch authorization-server metadata directly from that Clerk origin.
+Connecta serves no authorization-server metadata proxy.
 
 MCP hosts send that URL as the RFC 8707 `resource` parameter in standard OAuth
 authorization and token requests. Clerk's [Frontend API contract](https://github.com/clerk/openapi-specs/blob/f10fb179f42fc591f9d6f0221c089dd19483fd69/fapi/2026-05-12.yml)
@@ -906,7 +850,7 @@ without either it returns `unavailable`. The OAuth branch also checks management
 `unavailable` when refused.
 
 Core owns `/connect/<connector>` and the callback without the optional UI. Both require Clerk sessions or
-Cloudflare Access users; MCP OAuth tokens, machine bearers, `cta_` tokens, and Access service identities
+Cloudflare Access users; MCP OAuth tokens, `cta_` tokens, and Access service identities
 cannot authenticate them. Without an interactive provider, connection fails at runtime with `An interactive
 provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.` Machine-only deployments can
 still serve configured credentials. Both routes accept only GET, otherwise returning 405 with `Allow: GET`;

@@ -2,7 +2,7 @@
 // the structural configuration mistakes construction refuses.
 
 import { describe, expect, it } from "vitest";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { customExecutor, createConnecta } from "../src/index.js";
 import { CONNECTA_INSTRUCTIONS, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -33,7 +33,7 @@ function connectors() {
 
 const deploymentConfig = {
   connectors: connectors(),
-  auth: bearerToken(TOKEN),
+  auth: machineAuth(TOKEN),
   storage: memoryStorage(),
   publicUrl: BASE,
   executor: stubExecutor,

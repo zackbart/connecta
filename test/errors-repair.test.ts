@@ -3,7 +3,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 
@@ -122,7 +122,7 @@ describe("repairing error envelopes", () => {
   });
 
   it("INV-4: host authentication carries its own code and preserves the HTTP challenge", async () => {
-    const connecta = createTestConnecta({ connectors: [], auth: bearerToken("test-token"), publicUrl: BASE, logger: silentLogger });
+    const connecta = createTestConnecta({ connectors: [], auth: machineAuth("test-token"), publicUrl: BASE, logger: silentLogger });
     const response = await connecta.fetch(new Request(`${BASE}/mcp`));
     expect(response.status).toBe(401);
     expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");

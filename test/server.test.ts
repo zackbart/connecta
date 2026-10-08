@@ -36,7 +36,7 @@ async function loadQuickJsExecutor() {
   >;
 }
 import { api } from "../src/connectors/api.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -165,7 +165,7 @@ describe("server /mcp end-to-end", () => {
   it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
     const c = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       serverInfo: {
@@ -279,7 +279,7 @@ describe("server /mcp end-to-end", () => {
         name: "read", description: "Count reads",
         annotations: { readOnlyHint: true }, handler: call,
       }] })],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       publicUrl: BASE,
     });
     for (const name of ["call_tool", "call_destructive_tool"]) {
@@ -630,7 +630,7 @@ describe("server /mcp end-to-end", () => {
     async function skillsSurface(connectors: Connector[]) {
       const c = createTestConnecta({
         connectors,
-        auth: bearerToken(TOKEN),
+        auth: machineAuth(TOKEN),
         storage: memoryStorage(),
         publicUrl: BASE,
       });
@@ -706,7 +706,7 @@ describe("server /mcp end-to-end", () => {
     async function executeDescription(ids: string[]) {
       const c = createTestConnecta({
         connectors: ids.map(connector),
-        auth: bearerToken(TOKEN),
+        auth: machineAuth(TOKEN),
         storage: memoryStorage(),
         publicUrl: BASE,
       });
@@ -754,7 +754,7 @@ describe("server /mcp end-to-end", () => {
         { id: "billing_test", title: "Android sandbox", listTools, callTool },
         { id: "international", title: "日本語".repeat(40), listTools, callTool },
       ],
-      auth: bearerToken(TOKEN), storage: memoryStorage(), publicUrl: BASE,
+      auth: machineAuth(TOKEN), storage: memoryStorage(), publicUrl: BASE,
     });
     const listed = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
     const description = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description;
@@ -852,7 +852,7 @@ describe("server /mcp end-to-end", () => {
         };
         const c = createTestConnecta({
           connectors: [connector],
-          auth: bearerToken(TOKEN),
+          auth: machineAuth(TOKEN),
           storage: memoryStorage(),
           publicUrl: BASE,
           discovery: {
@@ -951,7 +951,7 @@ describe("server /mcp end-to-end", () => {
     };
     const c = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN, { subjectId: "cli-zack" }),
+      auth: machineAuth(TOKEN, { subjectId: "cli-zack" }),
       storage: memoryStorage(),
       publicUrl: BASE,
       activity: activityHistory({ store: activity, deploymentId: "test" }),
@@ -991,7 +991,7 @@ describe("server /mcp end-to-end", () => {
     expect(events).toHaveLength(3);
     expect(events[0]).toMatchObject({
       schemaVersion: 1,
-      actor: { kind: "bearer", id: "cli-zack" },
+      actor: { kind: "access_token", id: "cli-zack" },
       address: "calc.add",
       connectorId: "calc",
       toolName: "add",
@@ -1066,7 +1066,7 @@ describe("server /mcp end-to-end", () => {
     };
     const c = createTestConnecta({
       connectors: [failing],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       activity: activityHistory({
         store: {
           record(event) {
@@ -1086,7 +1086,7 @@ describe("server /mcp end-to-end", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      actor: { kind: "bearer" },
+      actor: { kind: "access_token" },
       address: "private.fail",
       outcome: "error",
       errorCode: "connector_call_failed",
@@ -1138,10 +1138,10 @@ describe("server /mcp end-to-end", () => {
     expect(payload.authorizationUrl).toContain(`${BASE}/connect/needsauth?h=`);
   });
 
-  it("gives a bearer-only deployment a safe handoff but keeps mutation interactive-only", async () => {
+  it("gives a machine-only deployment a safe handoff but keeps mutation interactive-only", async () => {
     const c = createTestConnecta({
       connectors: [recoverableStaticConnector()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -1182,10 +1182,10 @@ describe("server /mcp end-to-end", () => {
     });
   });
 
-  it("recovers a bearer agent after a Clerk operator update without redeploy", async () => {
+  it("recovers a machine agent after a Clerk operator update without redeploy", async () => {
     const c = createTestConnecta({
       connectors: [recoverableStaticConnector()],
-      auth: [bearerToken(TOKEN), fakeClerkAuth({ frontendApiUrl: "https://clerk.example.com", token: "operator-token", userId: "operator_1" })],
+      auth: [machineAuth(TOKEN), fakeClerkAuth({ frontendApiUrl: "https://clerk.example.com", token: "operator-token", userId: "operator_1" })],
       storage: memoryStorage(),
       publicUrl: BASE,
       vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -1300,7 +1300,7 @@ describe("server /mcp end-to-end", () => {
     // be loosened without noticing.
     const c = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -1323,7 +1323,7 @@ describe("server /mcp end-to-end", () => {
     // rather than changing it.
     const c = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -1360,7 +1360,7 @@ describe("server /mcp end-to-end", () => {
           ],
         }),
       ],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       calls: { maxResultBytes: 100 },
@@ -1431,7 +1431,7 @@ describe("server /mcp end-to-end", () => {
           ],
         }),
       ],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       publicUrl: BASE,
       calls: { defaultTimeoutMs: 1_234 },
     });
@@ -1460,7 +1460,7 @@ describe("server /mcp end-to-end", () => {
     };
     const c = createTestConnecta({
       connectors: [hanging, calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       publicUrl: BASE,
       discovery: { probeTimeoutMs: 10 },
     });
@@ -1516,7 +1516,7 @@ describe("server /mcp end-to-end", () => {
     );
     const c = createTestConnecta({
       connectors,
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       publicUrl: BASE,
       discovery: { concurrency: 2 },
     });
@@ -1734,7 +1734,7 @@ describe("clerk metadata routes (no network)", () => {
     return createTestConnecta({
       connectors: [calcApi()],
       auth: [
-        bearerToken(TOKEN),
+        machineAuth(TOKEN),
         clerkAuth({
           publishableKey: pk,
           secretKey: "sk_test_fake",
@@ -1806,7 +1806,7 @@ describe("clerk metadata routes (no network)", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
-  it("bearer token still admits /mcp when clerk is co-configured", async () => {
+  it("machine token still admits /mcp when clerk is co-configured", async () => {
     const c = makeClerkConnecta();
     const res = await mcpRpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readJsonRpc(res);
@@ -1825,7 +1825,7 @@ describe("execute_code registration (code mode)", () => {
     ): Promise<string> {
       const connecta = createTestConnecta({
         connectors: [calcApi()],
-        auth: bearerToken(TOKEN),
+        auth: machineAuth(TOKEN),
         storage: memoryStorage(),
         publicUrl: BASE,
         ...(execute ? { execute } : {}),
@@ -1865,7 +1865,7 @@ describe("execute_code registration (code mode)", () => {
     let executions = 0;
     const withExec = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       executor: {
@@ -1954,7 +1954,7 @@ describe("execute_code registration (code mode)", () => {
     const events: ToolCallActivityEvent[] = [];
     const c = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       executor: quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS }),
@@ -1996,7 +1996,7 @@ describe("execute_code registration (code mode)", () => {
     const { quickJsExecutor } = await loadQuickJsExecutor();
     const c = createTestConnecta({
       connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       executor: quickJsExecutor({ cpuTimeMs: GENEROUS_GUEST_CPU_MS }),
@@ -2058,7 +2058,7 @@ describe("execute_code registration (code mode)", () => {
       });
       const c = createTestConnecta({
         connectors: [calcApi()],
-        auth: bearerToken(TOKEN),
+        auth: machineAuth(TOKEN),
         storage: memoryStorage(),
         publicUrl: BASE,
         executor,

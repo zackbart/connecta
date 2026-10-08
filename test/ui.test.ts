@@ -6,7 +6,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { operatorUi } from "../src/ui.js";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withAbortableTimeout } from "../src/timeout.js";
@@ -75,7 +75,7 @@ function authUrlConnector(id: string, url: string): Connector {
 function uiDeploymentConfig(extra: Connector[] = []) {
   return {
     connectors: [calcApi(CALC_OPTIONS), broken(), ...extra],
-    auth: bearerToken(TOKEN),
+    auth: machineAuth(TOKEN),
     storage: memoryStorage(),
     publicUrl: BASE,
   };
@@ -158,7 +158,7 @@ describe("status UI", () => {
           tools: [],
         }),
       ],
-      auth: bearerToken(TOKEN, { subjectId: "SENTINEL_ACTOR" }),
+      auth: machineAuth(TOKEN, { subjectId: "SENTINEL_ACTOR" }),
       storage: memoryStorage(),
       publicUrl: BASE,
       deploymentInfo: { id: "SENTINEL_DEPLOYMENT" },
@@ -253,7 +253,7 @@ describe("status UI", () => {
   it("supports deployment-specific branding", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       ui: operatorUi({ branding: {
         ownerName: "Acme & Co.",
@@ -274,7 +274,7 @@ describe("status UI", () => {
   it("the Connections shell derives the MCP URL from the request origin", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
     });
     const origin = "https://request-origin.test";
@@ -292,7 +292,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [
-        bearerToken(TOKEN),
+        machineAuth(TOKEN),
         clerkAuth({
           publishableKey,
           secretKey: "sk_test_fake",
@@ -324,7 +324,7 @@ describe("status UI", () => {
   it("scopes Clerk CAPTCHA, images and workers to pages with a validated loader", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage: memoryStorage(), publicUrl: BASE,
     });
     const res = await c.fetch(new Request(`${BASE}/`));
@@ -353,7 +353,7 @@ describe("status UI", () => {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
         auth: [
-          bearerToken(TOKEN),
+          machineAuth(TOKEN),
           fakeClerkAuth({ ...CLERK_OPTIONS, frontendApiUrl }),
         ],
         storage: memoryStorage(),
@@ -375,7 +375,7 @@ describe("status UI", () => {
   it("still emits the loader for an https frontendApiUrl", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -398,7 +398,7 @@ describe("status UI", () => {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
         auth: [
-          bearerToken(TOKEN),
+          machineAuth(TOKEN),
           fakeClerkAuth({ ...CLERK_OPTIONS, signInUrl: url, signUpUrl: url }),
         ],
         storage: memoryStorage(),
@@ -422,7 +422,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [
-        bearerToken(TOKEN),
+        machineAuth(TOKEN),
         fakeClerkAuth({
           ...CLERK_OPTIONS,
           signInUrl: "https://accounts.example.com/sign-in",
@@ -445,7 +445,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [
-        bearerToken(TOKEN),
+        machineAuth(TOKEN),
         fakeClerkAuth({
           ...CLERK_OPTIONS,
           signInUrl: "javascript:alert(1)",
@@ -480,7 +480,7 @@ describe("status UI", () => {
     expect(res.headers.get("WWW-Authenticate")).toBeTruthy();
   });
 
-  it("/ui/data with a bearer returns connectors with tools and isolates a broken one", async () => {
+  it("/ui/data with a machine token returns connectors with tools and isolates a broken one", async () => {
     const c = makeDeployment(uiDeploymentConfig());
     const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
@@ -571,7 +571,7 @@ describe("status UI", () => {
     const storage = memoryStorage();
     const connecta = createTestConnecta({
       connectors: [connector],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage, vault: oauthVault(storage),
       publicUrl: BASE,
     });
@@ -676,7 +676,7 @@ describe("status UI", () => {
     };
     const connecta = createTestConnecta({
       connectors: [connector],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage: memoryStorage(), vault: oauthVault(memoryStorage()),
       publicUrl: BASE,
     });
@@ -695,7 +695,7 @@ describe("status UI", () => {
         headers: { Authorization: `Bearer ${TOKEN}`, Origin: BASE },
       }),
     );
-    expect(bearer.status).toBe(401);
+    expect(bearer.status).toBe(403);
 
     const unknown = await credentialRequest(
       connecta,
@@ -836,7 +836,7 @@ describe("status UI", () => {
     };
     const c = createTestConnecta({
       connectors: [connector],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -875,7 +875,7 @@ describe("status UI", () => {
     };
     const c = createTestConnecta({
       connectors: [connector],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -918,7 +918,7 @@ describe("status UI", () => {
     };
     const c = createTestConnecta({
       connectors: [connector],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -976,7 +976,7 @@ describe("status UI", () => {
     );
     const c = createTestConnecta({
       connectors,
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       publicUrl: BASE,
       discovery: { concurrency: 2 },
     });
@@ -1157,7 +1157,7 @@ describe("status UI", () => {
       event("event-1", { kind: "clerk", id: "user_123" }),
       event("event-2", { kind: "clerk", id: "user_123" }),
       event("event-3", { kind: "clerk", id: "user_offline" }),
-      event("event-4", { kind: "bearer", id: "ci-runner" }),
+      event("event-4", { kind: "access_token", id: "ci-runner" }),
     ];
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
@@ -1192,7 +1192,7 @@ describe("status UI", () => {
       id: "user_offline",
     });
     expect(required(page.events[3]).actor).toEqual({
-      kind: "bearer",
+      kind: "access_token",
       id: "ci-runner",
     });
     expect(actorLabel).toHaveBeenCalledTimes(2);
@@ -1219,6 +1219,7 @@ describe("status UI", () => {
       interactiveOperator: true,
       activityActorNamespace: "https://id-b.example",
       activityActorLabel: directoryB,
+      recognizesCredential: request => request.headers.get("authorization") === "Bearer operator",
       authorize(request) {
         return request.headers.get("authorization") === "Bearer operator"
           ? { ok: true, userId: "operator" }
@@ -1327,6 +1328,7 @@ describe("status UI", () => {
         kind: "oidc",
         activityActorNamespace: "https://id-b.example",
         activityActorLabel: wrongDirectory,
+        recognizesCredential: request => request.headers.get("authorization") === "Bearer operator",
         authorize(request) {
           return request.headers.get("authorization") === "Bearer operator"
             ? { ok: true, userId: "operator" }
@@ -1436,7 +1438,7 @@ describe("status UI", () => {
   it("supports a Clerk-only activity read gate", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       activity: activityHistory({
         store: {
           record() {},
