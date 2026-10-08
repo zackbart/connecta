@@ -20,7 +20,7 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import {
@@ -36,8 +36,7 @@ import {
 } from "./registry.js";
 import {
   hasConnectorGuides,
-  listSkills,
-  resolveSkill,
+  SkillsRegistry,
 } from "./skills.js";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
@@ -657,6 +656,7 @@ function metaToolsForRequest(
   // request without leaking request-bound I/O into the next one.
   const requestScope = opts.requestScope ?? {};
   const sentSecrets = sentSecretsForRequest(requestScope);
+  const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: opts.requestSignal, probeTimeoutMs, defer: opts.defer });
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
     probeTimeoutMs,
@@ -854,25 +854,28 @@ function metaToolsForRequest(
 
   return {
     async skills(args: SkillArgs = {}): Promise<ToolResult> {
-      const connectors = registry.listConnectors();
+      try {
       if (!args.name) {
+        const listing = await skills.summaries();
         return {
-          structuredContent: { skills: listSkills(connectors) },
+          structuredContent: { skills: listing },
           content: [
             {
               type: "text",
               text:
                 'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
-                listSkills(connectors)
+                listing
                   .map((skill) => `- \`${skill.name}\` — ${skill.description}`)
                   .join("\n"),
             },
           ],
         };
       }
-      const skill = resolveSkill(args.name, connectors);
-      if (!skill.found) return errorResult(skill.message);
-      return { content: [{ type: "text", text: skill.content }], structuredContent: { name: args.name, format: "text", text: skill.content } };
+      const text = await skills.text(args.name);
+      return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+      } catch (error) {
+        return errorResult(error instanceof ConnectorCallError ? error.message : "Skills are unavailable.");
+      }
     },
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {

@@ -24,6 +24,6 @@ it("INV-5: every agent-facing operation table and serializer retains the redacti
   // Both SDK transports meet at exchange before a Response is constructed.
   const response = mcp.slice(mcp.indexOf("const response = await exchange();"), mcp.indexOf("export function createMcpRoute"));
   expect(response).toContain("redactAgentOutput(sentSecrets, JSON.parse(body))");
-  expect(response).toContain("const text = redactAgentOutput(sentSecrets, body)");
+  expect(response).toContain("text ??= redactAgentOutput(sentSecrets, body)");
   expect(response).toContain("return new Response(text,");
 });

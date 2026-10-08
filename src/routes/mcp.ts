@@ -25,6 +25,7 @@ import type { RegistryView } from "../registry.js";
 import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
+import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
@@ -396,7 +397,7 @@ function serveMcp(
     const server = new McpServer(opts.config.serverInfo, {
       // A request-local server cannot publish catalog changes. Set this before
       // tool registration, whose SDK default otherwise advertises listChanged.
-      capabilities: { tools: { listChanged: false }, extensions: {} },
+      capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
       instructions: CONNECTA_INSTRUCTIONS,
       inputRequired: { legacyShim: false },
       requestState: { verify: (state, context) => authElicitation.verify(state, context) },
@@ -428,6 +429,12 @@ function serveMcp(
       : undefined;
     if (activity) bindActivityRequest(requestScope, activity);
     const client: McpClientContext = {};
+    registerSkills(server, registry, baseUrl, {
+      requestScope,
+      requestSignal,
+      probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
+      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+    });
     registerMetaTools(server, registry, {
       authElicitation,
       client,
@@ -511,14 +518,17 @@ function serveMcp(
     // Both SDK transports serialize here. This also covers SDK-generated
     // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
     if (!response.body) return response;
-    let body = await response.text();
+    const body = await response.text();
+    let text: string | undefined;
     if (response.headers.get("Content-Type")?.includes("application/json")) {
       // Structured redaction also joins text blocks before a secret split
       // across them can cross the serialization boundary.
-      try { body = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body))); }
+      try { text = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body))); }
       catch { /* Non-JSON diagnostics still pass through the text boundary. */ }
     }
-    const text = redactAgentOutput(sentSecrets, body);
+    // Parsed JSON already passes every string through the boundary. A second
+    // serialized pass would mistake a blob's encoding for credential bytes.
+    text ??= redactAgentOutput(sentSecrets, body);
     const headers = new Headers(response.headers);
     headers.delete("Content-Length");
     return new Response(text, { status: response.status, statusText: response.statusText, headers });

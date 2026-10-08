@@ -217,6 +217,8 @@ export interface RegistryView {
   /** Deployment-wide result-size cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
   listConnectors(): Connector[];
+  /** Whole-connector permission for downstream skill files, which have no tool grants. */
+  canReadConnectorSkills(id: string): boolean;
   getConnector(id: string): Connector | undefined;
   /** Only whole-connector grants authorize resource reads. */
   getResourceConnector(id: string): Connector | undefined;
@@ -709,6 +711,10 @@ export class Registry implements RegistryView {
 
   getResourceConnector(id: string): Connector | undefined {
     return this.getConnector(id);
+  }
+
+  canReadConnectorSkills(id: string): boolean {
+    return this.connectors.has(id);
   }
 
   contextFor(
@@ -1264,6 +1270,11 @@ class ScopedRegistryView implements RegistryView {
     return this.root.listConnectors().filter(
       (connector) => this.registryFor(connector.id) !== undefined,
     );
+  }
+
+  canReadConnectorSkills(id: string): boolean {
+    return this.registryFor(id) !== undefined &&
+      !this.scope.toolAccess?.has(id) && !this.scope.guardedToolAccess?.has(id);
   }
 
   getConnector(id: string): Connector | undefined {

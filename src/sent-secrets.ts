@@ -53,12 +53,14 @@ function base64(value: string): string {
 export class SentSecrets {
   private readonly values = new Set<string>();
   private matcher: RegExp | undefined;
+  private unicode = false;
   private readonly recipients = new Set<SentSecrets>();
 
   private form(value: string): void {
     if (this.values.has(value)) return;
     this.values.add(value);
     this.matcher = undefined;
+    this.unicode ||= [...value].some(char => char.charCodeAt(0) > 127);
     for (const recipient of this.recipients) recipient.form(value);
   }
 
@@ -144,6 +146,7 @@ export class SentSecrets {
 
   text(value: string): string {
     if (this.values.size === 0) return value;
+    const original = value;
     // Replace longer forms first so a raw token cannot leave its prefix or
     // encoded suffix behind. Literal matches only: ordinary diagnostics stay.
     this.matcher ??= new RegExp([
@@ -154,61 +157,114 @@ export class SentSecrets {
     // text. Protect existing placeholders when another boundary runs too.
     value = value.replace(this.matcher, REDACTED);
     if (value.includes("\\")) value = this.escapedText(value);
+    // Ordinary skill bytes, including example credential header names, stay
+    // exact. Header-line scrubbing belongs to an actual credential echo.
+    if (value === original) return value;
     return value.replace(
       /(^|[\r\n])([\t ]*(?:cookie|set-cookie|[a-z0-9-]*(?:key|token|secret|auth|signature|session)[a-z0-9-]*)\s*:\s*)[^\r\n]*/gi,
       `$1$2${REDACTED}`,
     );
   }
 
-  /** Decode a matching view, retaining source spans so replacements stay JSON-safe.
-   * Two passes also cover an escaped diagnostic inside a serialized envelope.
-   * This avoids exponentially large regexes for vault-backed private keys. */
+  /** Skill supporting files may contain arbitrary bytes, including credential echoes. */
+  private blob(value: string): string {
+    let binary: string;
+    try { binary = atob(value); } catch { return this.text(value); }
+    const forms = [...this.values].map(secret => Array.from(encoder.encode(secret), byte => String.fromCharCode(byte)).join(""));
+    const pattern = new RegExp(forms.sort((a, b) => b.length - a.length).map(literal).join("|"), "g");
+    let redacted = this.text(binary.replace(pattern, REDACTED));
+    if (this.unicode) {
+      // atob returns byte-valued code units. A UTF-8 view also detects mixed
+      // literal/JSON-escaped Unicode echoes. Never re-encode that view: an
+      // arbitrary supporting file may contain invalid UTF-8 or a leading BOM.
+      const view = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(Uint8Array.from(redacted, char => char.charCodeAt(0)));
+      if (this.text(view) !== view) redacted = REDACTED;
+    }
+    const encoded = redacted === binary ? value : btoa(redacted);
+    // A file's encoding can itself equal a credential. Withhold that file as
+    // a valid encoded placeholder, never insert prose into its base64 field.
+    if (this.text(encoded) === encoded) return encoded;
+    const withheld = btoa(REDACTED);
+    return this.text(withheld) === withheld ? withheld : "";
+  }
+
+  /** Decode bounded windows with source spans, including twice-escaped JSON.
+   * Scratch space follows credential length, never the whole skill file. */
   private escapedText(source: string): string {
-    let view = source;
-    let starts = Array.from({ length: source.length }, (_, i) => i);
-    let ends = starts.map((i) => i + 1);
-    const matches: { start: number; end: number }[] = [];
-    for (let pass = 0; pass < 2; pass++) {
-      const decoded: string[] = [];
-      const nextStarts: number[] = [];
-      const nextEnds: number[] = [];
-      let cursor = 0;
-      const copy = (end: number) => {
-        for (; cursor < end; cursor++) {
-          decoded.push(view[cursor]!);
-          nextStarts.push(starts[cursor]!);
-          nextEnds.push(ends[cursor]!);
+    const step = 65_536;
+    let longest = 0;
+    for (const value of this.values) longest = Math.max(longest, value.length);
+    // Each of two Unicode escape layers expands a code unit at most sixfold.
+    const overlap = 36 * longest + 12;
+    const output: string[] = [];
+    let copied = 0;
+    for (let offset = 0; offset < source.length;) {
+      let view = source.slice(offset, offset + step + overlap);
+      let starts: Uint32Array | undefined;
+      let ends: Uint32Array | undefined;
+      const matches: { start: number; end: number }[] = [];
+      for (let pass = 0; pass < 2 && view.includes("\\"); pass++) {
+        const parts: string[] = [];
+        const nextStarts = new Uint32Array(view.length);
+        const nextEnds = new Uint32Array(view.length);
+        let cursor = 0;
+        let length = 0;
+        const copy = (end: number) => {
+          if (cursor < end) parts.push(view.slice(cursor, end));
+          for (; cursor < end; cursor++, length++) {
+            nextStarts[length] = starts?.[cursor] ?? cursor;
+            nextEnds[length] = ends?.[cursor] ?? cursor + 1;
+          }
+        };
+        for (const match of view.matchAll(jsonEscape)) {
+          copy(match.index);
+          const code = match[0].slice(1);
+          parts.push(code.startsWith("u") ? String.fromCharCode(parseInt(code.slice(1), 16)) : shortEscape[code]!);
+          nextStarts[length] = starts?.[match.index] ?? match.index;
+          cursor = match.index + match[0].length;
+          nextEnds[length++] = ends?.[cursor - 1] ?? cursor;
         }
-      };
-      for (const match of view.matchAll(jsonEscape)) {
-        copy(match.index);
-        const code = match[0].slice(1);
-        decoded.push(code.startsWith("u") ? String.fromCharCode(parseInt(code.slice(1), 16)) : shortEscape[code]!);
-        nextStarts.push(starts[match.index]!);
-        cursor = match.index + match[0].length;
-        nextEnds.push(ends[cursor - 1]!);
+        if (cursor === 0) break;
+        copy(view.length);
+        view = parts.join("");
+        starts = nextStarts.subarray(0, length);
+        ends = nextEnds.subarray(0, length);
+        for (const match of view.matchAll(this.matcher!)) {
+          const start = starts[match.index]!;
+          if (match[0] !== REDACTED && start < step) matches.push({ start, end: ends[match.index + match[0].length - 1]! });
+        }
       }
-      if (cursor === 0) break;
-      copy(view.length);
-      view = decoded.join("");
-      starts = nextStarts;
-      ends = nextEnds;
-      for (const match of view.matchAll(this.matcher!)) {
-        if (match[0] !== REDACTED) matches.push({ start: starts[match.index]!, end: ends[match.index + match[0].length - 1]! });
+      matches.sort((a, b) => a.start - b.start || b.end - a.end);
+      let rewritten = "";
+      let cursor = 0;
+      for (let i = 0; i < matches.length; i++) {
+        const match = matches[i]!;
+        let end = match.end;
+        while (matches[i + 1] && matches[i + 1]!.start <= end) end = Math.max(end, matches[++i]!.end);
+        rewritten += source.slice(offset + cursor, offset + match.start) + REDACTED;
+        cursor = end;
       }
+      if (cursor) {
+        output.push(source.slice(copied, offset), rewritten);
+        copied = offset + cursor;
+      }
+      let boundary = step;
+      if (starts && ends) {
+        // Keep the next window at an original escape boundary. Starting at
+        // the second slash of a JSON pair changes its meaning and can leave
+        // an invalid escape immediately before a redaction placeholder.
+        let left = 0;
+        let right = ends.length;
+        while (left < right) {
+          const middle = (left + right) >>> 1;
+          if (ends[middle]! <= step) left = middle + 1;
+          else right = middle;
+        }
+        if (left < starts.length) boundary = Math.min(step, starts[left]!);
+      }
+      offset += Math.max(boundary, cursor);
     }
-    if (matches.length === 0) return source;
-    matches.sort((a, b) => a.start - b.start || b.end - a.end);
-    let result = "";
-    let cursor = 0;
-    for (let i = 0; i < matches.length; i++) {
-      const match = matches[i]!;
-      let end = match.end;
-      while (matches[i + 1] && matches[i + 1]!.start <= end) end = Math.max(end, matches[++i]!.end);
-      result += source.slice(cursor, match.start) + REDACTED;
-      cursor = end;
-    }
-    return result + source.slice(cursor);
+    return output.length ? output.join("") + source.slice(copied) : source;
   }
 
   /** Copy, including non-enumerable Error fields; never retain a raw cause. */
@@ -241,10 +297,12 @@ export class SentSecrets {
         // is not a safe way to expose a diagnostic to an agent.
         if (!("value" in descriptor)) { changed = true; continue; }
         const redactedKey = text(key);
-        const field = key === "content" ? this.joinedContent(descriptor.value) : descriptor.value;
+        const blob = key === "blob" && "uri" in item && typeof descriptor.value === "string";
+        const field = key === "content" ? this.joinedContent(descriptor.value)
+          : blob ? this.blob(descriptor.value as string) : descriptor.value;
         changed ||= field !== descriptor.value;
         Object.defineProperty(copy, redactedKey, {
-          ...descriptor, value: visit(field),
+          ...descriptor, value: blob ? field : visit(field),
           ...(redactedKey !== key ? { configurable: true } : {}),
         });
       }

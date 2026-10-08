@@ -149,10 +149,11 @@ Catalog changes emit discrete, payload-free activity events after accepted
 refreshes. Reviewed drift observations remain in authenticated connector status
 and the maintainer-run provider check; public health counts are removed.
 
-`server/discover` advertises the served extension map, currently empty, with
-private one-hour cache hints. It includes the configured identity, icons, title,
+`server/discover` advertises `io.modelcontextprotocol/skills` and `resources: {}`
+with private one-hour discovery cache hints. It includes the configured identity, icons, title,
 and website in `io.modelcontextprotocol/serverInfo` result metadata. The Skills
-meta-tool alone does not implement the official Skills extension. Both direct
+extension and its skill-only resources share `src/skills.ts` with the meta-tool
+and guest API. Both direct
 call tools declare `address` as `x-mcp-header: "Address"`, which the SDK mirrors
 and validates as `Mcp-Param-Address` on modern requests.
 

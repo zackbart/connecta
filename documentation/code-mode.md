@@ -363,8 +363,10 @@ mismatches, revoked access, and old entries without bindings are `not_found`, as
 are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
 The `get_result` meta-tool is removed.
 
-`await connecta.skill(name)` resolves the same exact built-in or `connector:id`
-name as top-level `skills`, within the admitted connector view. It returns
+`await connecta.skill(name)` resolves the same URI or compatibility name as
+top-level `skills`, within the admitted connector view. It reads the registry
+behind native `skills/get` and `resources/read`, including opted-in downstream
+skills. It returns
 `{ name, format: "text", text }`; an unknown name is `not_found`.
 
 ### Parallel calls

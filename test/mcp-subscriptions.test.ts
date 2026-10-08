@@ -51,7 +51,7 @@ describe("MCP subscriptions", () => {
       const response = await c.fetch(request);
       expect(response.status).toBe(200);
       const body = await readJsonRpc(response);
-      expect(body.result.capabilities).toEqual({ tools: { listChanged: false }, extensions: {} });
+      expect(body.result.capabilities).toEqual({ tools: { listChanged: false }, resources: {}, extensions: { "io.modelcontextprotocol/skills": {} } });
     } finally {
       await c.close();
     }

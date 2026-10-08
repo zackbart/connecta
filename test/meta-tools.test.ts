@@ -287,17 +287,17 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toContain('Connector "blank" has no usage guide');
   });
 
-  it("returns a connector guide verbatim", async () => {
+  it("preserves a connector guide body behind skill frontmatter", async () => {
     const mt = createMetaTools(
       makeRegistry([guided("notion", NOTION_GUIDE)]),
       BASE,
     );
     const fetched = await mt.skills({ name: "connector:notion" });
     expect(fetched.isError).toBeFalsy();
-    expect(textFrom(fetched)).toBe(NOTION_GUIDE);
+    expect(textFrom(fetched)).toContain(NOTION_GUIDE);
   });
 
-  it("uses a normalized explicit summary while returning guide content verbatim", async () => {
+  it("uses a normalized explicit summary while preserving the guide body", async () => {
     const content = "# Cloud API\n\nResolve operation aliases before calling.\n";
     const mt = createMetaTools(
       makeRegistry([
@@ -312,7 +312,7 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).toContain(
       "`connector:cloud` — Generic API aliases, argument units, and pagination.",
     );
-    expect(textFrom(await mt.skills({ name: "connector:cloud" }))).toBe(
+    expect(textFrom(await mt.skills({ name: "connector:cloud" }))).toContain(
       content,
     );
   });
@@ -376,18 +376,18 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(await second.skills({}))).toContain(
       "`connector:service` — Second deployment aliases.",
     );
-    expect(textFrom(await first.skills({ name: "connector:service" }))).toBe(
+    expect(textFrom(await first.skills({ name: "connector:service" }))).toContain(
       content,
     );
-    expect(textFrom(await second.skills({ name: "connector:service" }))).toBe(
+    expect(textFrom(await second.skills({ name: "connector:service" }))).toContain(
       content,
     );
   });
 
-  it("returns a guide with surrounding whitespace verbatim, padding included", async () => {
+  it("preserves guide body whitespace, padding included", async () => {
     const padded = "\n\n  # Padded\n\nBody.\n   ";
     const mt = createMetaTools(makeRegistry([guided("pad", padded)]), BASE);
-    expect(textFrom(await mt.skills({ name: "connector:pad" }))).toBe(padded);
+    expect(textFrom(await mt.skills({ name: "connector:pad" }))).toContain(padded);
     expect(textFrom(await mt.skills({}))).toContain("`connector:pad` — Body.");
   });
 
@@ -427,7 +427,7 @@ Prefer \`notion.search\` over listing databases.
       "`usage` — How to route work between one execute_code program",
     );
     expect(listed).not.toContain("connector:");
-    expect(new TextEncoder().encode(expected).length).toBeLessThan(5_500);
+    expect(new TextEncoder().encode(expected).length).toBeLessThan(5_750);
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
@@ -504,7 +504,7 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(await mt.skills({ name: "usage" }))).toBe(
       USAGE_SKILL,
     );
-    expect(textFrom(await mt.skills({ name: "connector:usage" }))).toBe(guide);
+    expect(textFrom(await mt.skills({ name: "connector:usage" }))).toContain(guide);
   });
 
   it("names the guide in search_tools output", async () => {
@@ -529,7 +529,7 @@ Prefer \`notion.search\` over listing databases.
       textFrom(
         await mt.skills({ name: required(required(required(byId.notion).tools[0]).guide) }),
       ),
-    ).toBe(NOTION_GUIDE);
+    ).toContain(NOTION_GUIDE);
   });
 
   it("requires guide review for approval-bound tools and connector-required conventions", async () => {

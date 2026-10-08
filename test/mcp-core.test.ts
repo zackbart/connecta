@@ -211,7 +211,7 @@ describe("2026-07-28 core", () => {
     });
     try {
       const body = await readJsonRpc(await c.fetch(modern("server/discover")));
-      expect(body.result).toMatchObject({ resultType: "complete", supportedVersions: [VERSION], capabilities: { tools: { listChanged: false }, extensions: {} }, ttlMs: 3_600_000, cacheScope: "private", _meta: { "io.modelcontextprotocol/serverInfo": { name: "acme", version: "1", title: "Acme", websiteUrl: "https://acme.example", icons: [{ src: "https://acme.example/icon.svg" }] } } });
+      expect(body.result).toMatchObject({ resultType: "complete", supportedVersions: [VERSION], capabilities: { tools: { listChanged: false }, resources: {}, extensions: { "io.modelcontextprotocol/skills": {} } }, ttlMs: 3_600_000, cacheScope: "private", _meta: { "io.modelcontextprotocol/serverInfo": { name: "acme", version: "1", title: "Acme", websiteUrl: "https://acme.example", icons: [{ src: "https://acme.example/icon.svg" }] } } });
     } finally { await c.close(); }
   });
 

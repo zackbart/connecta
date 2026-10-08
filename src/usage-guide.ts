@@ -1,5 +1,10 @@
 /** Self-contained content for the usage skill; independent of skill registration. */
-export const USAGE_SKILL = `# Connecta usage
+export const USAGE_SKILL = `---
+name: usage
+description: How to route work between one execute_code program and Connecta's explicit call, authorization, and result tools.
+---
+
+# Connecta usage
 
 ## Choose the route
 

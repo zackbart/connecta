@@ -464,6 +464,8 @@ export type {
   ConnectorDescription,
   ConnectorToolDescription,
   ConnectorUsageGuide,
+  ConnectorSkill,
+  ConnectorSkillResourceContents,
   DescribedEndpoint,
   ConnectorStatus,
   CredentialTestResult,

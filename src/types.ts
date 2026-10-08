@@ -356,6 +356,19 @@ export interface ConnectorStatus {
   catalogAccess?: CatalogAccessObservation;
 }
 
+/** A downstream skill's verbatim frontmatter and complete file manifest. */
+export interface ConnectorSkill {
+  uri: string;
+  frontmatter: Record<string, unknown>;
+  resources: "dynamic" | Array<{ uri: string; digest: string; size: number }>;
+}
+
+/** Resource bytes before the agent boundary, with exactly one encoding. */
+export type ConnectorSkillResourceContents = {
+  uri: string;
+  mimeType?: string;
+} & ({ text: string; blob?: never } | { blob: string; text?: never });
+
 /** The whole plugin contract — the one open seam. */
 export interface Connector {
   id: string; // address prefix; [a-z0-9_-]+
@@ -391,11 +404,22 @@ export interface Connector {
    * cannot describe correct use (for example a generic API wrapper or a
    * cross-operation sequencing rule).
    *
-   * Listed by `skills` as `connector:<id>` and returned verbatim by
-   * `skills({ name: "connector:<id>" })`. The guide remains deployment-owned
-   * configuration; no runtime registration or shared mutable copy exists.
+   * Served as `skill://connecta/connectors/<slug>/SKILL.md`, with generated
+   * frontmatter followed by the unchanged guide body. `connector:<id>` is a
+   * one-release lookup alias. The guide remains deployment-owned configuration;
+   * no runtime registration or shared mutable copy exists.
    */
   usageGuide?: string | ConnectorUsageGuide;
+  /**
+   * Opted-in downstream Skills transport. The registry validates advertised
+   * URIs and manifest bounds before exposing these bytes to an agent. The host
+   * verifies preserved digests against the returned bytes. Neither
+   * operation registers tools or retains a catalog across requests.
+   */
+  downstreamSkills?: {
+    list(ctx: ConnectorContext): Promise<ConnectorSkill[]>;
+    read(uri: string, ctx: ConnectorContext): Promise<ConnectorSkillResourceContents[]>;
+  };
   /** Optional human-managed credential slot rendered in the connection in the operator UI. */
   credential?: ConnectorCredentialConfig;
   /** Optional server-side check used by the connection's Test action in the operator UI. */

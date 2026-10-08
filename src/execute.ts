@@ -28,7 +28,7 @@ import {
   ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import {
   DEFAULT_MAX_WRITES,
   ProgramWrites,
@@ -54,7 +54,7 @@ import {
   connectorGuideRequired,
   connectorSkillName,
   hasConnectorGuides,
-  resolveSkill,
+  SkillsRegistry,
 } from "./skills.js";
 import type {
   AdmittingExecutor,
@@ -664,14 +664,13 @@ function sandboxProvider(
       },
       catch: (err) => err,
     }),
-    skill: (name) => Effect.try({
-      try: () => {
+    skill: (name, _options, utilitySignal) => Effect.tryPromise({
+      try: async () => {
         if (typeof name !== "string") throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
-        const skill = resolveSkill(name, registry.listConnectors());
-        if (!skill.found) throw guestFailure("not_found", skill.message);
-        return { name, format: "text", text: skill.content };
+        const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: utilitySignal as AbortSignal | undefined ?? hostAccessSignal, probeTimeoutMs: limits.probeTimeoutMs, defer: limits.defer });
+        return { name, format: "text", text: await skills.text(name) };
       },
-      catch: (err) => err,
+      catch: (err) => err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
     }),
     read: (uri) => Effect.suspend(() => {
       const started = Date.now();
@@ -785,7 +784,7 @@ function sandboxProvider(
           const started = Date.now();
           const utility = name === "result" || name === "skill";
           const invoke = Effect.suspend(() => operation(...args));
-          const guarded = utility ? withDeadlineEffect((utilitySignal) => name === "result" ? Effect.suspend(() => operation(args[0], args[1], utilitySignal)) : invoke, {
+          const guarded = utility ? withDeadlineEffect((utilitySignal) => Effect.suspend(() => operation(args[0], args[1], utilitySignal)), {
             timeoutMs: hostCallTimeoutMs,
             ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
             timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
