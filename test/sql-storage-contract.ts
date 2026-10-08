@@ -31,12 +31,25 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
 
   stashChargeContract(async () => {
     const db = await open();
-    const storage = db.storage();
-    await storage.get("warm");
+    const inner = db.storage();
+    await inner.get("warm");
+    let offset = 0;
+    const options = (opts?: Parameters<KVStorage["set"]>[2]) =>
+      opts?.expiresAtMs === undefined ? opts : { ...opts, expiresAtMs: opts.expiresAtMs - offset };
     return {
-      storage,
-      advance: (ms) =>
-        db.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms),
+      storage: {
+        ...inner,
+        set: (key, value, opts) => inner.set(key, value, options(opts)),
+        compareAndSet: (key, expected, next, opts) => inner.compareAndSet(key, expected, next, options(opts)),
+      },
+      advance: async (ms) => {
+        offset += ms;
+        await db.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms);
+      },
+      expiries: async () =>
+        (await db.rows<{ expires_at_ms: number | null }>("SELECT expires_at_ms FROM connecta_kv")).map((row) =>
+          row.expires_at_ms === null ? null : row.expires_at_ms + offset,
+        ),
     };
   });
 

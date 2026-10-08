@@ -268,12 +268,8 @@ const STASH_LEDGER_ATTEMPTS = 32;
 /** First backoff window after a lost swap; it doubles up to the cap. */
 const STASH_LEDGER_BACKOFF_MS = 4;
 const STASH_LEDGER_BACKOFF_CAP_MS = 250;
-/**
- * Slack past the latest possible chunk expiry before its charge leaves the
- * ledger, and the longest one chunk write may take before the stash fails.
- * A failed write can still persist, so its completion also bounds expiry.
- */
-const STASH_LEDGER_GRACE_MS = 30_000;
+/** Whole chunk-write phase, measured from booking, including the header. */
+const STASH_WRITE_TIMEOUT_MS = 30_000;
 
 /** One live stash charge: reservation id, bytes, and expiry (epoch ms). */
 type StashCharge = readonly [reservation: string, bytes: number, expiresAt: number];
@@ -299,21 +295,16 @@ function liveStashCharges(raw: string | null, now: number): StashCharge[] {
       typeof entry[0] === "string" &&
       Number.isSafeInteger(entry[1]) &&
       entry[1] >= 0 &&
-      typeof entry[2] === "number" &&
+      Number.isSafeInteger(entry[2]) &&
       entry[2] > now,
   );
 }
 
 type StashSwap<A> = { readonly status: "applied"; readonly result: A } | { readonly status: "exhausted" };
 
-/**
- * Rewrite the ledger, distinguishing a completed plan from exhausted retries.
- * Storage failures and lost comparisons share the bounded backoff. Booking
- * reconciles completed reservations when capacity would otherwise refuse it.
- */
+/** Rewrite the ledger with bounded retries; every stored charge already expires. */
 function swapStashLedger<A>(
   plan: (live: StashCharge[], now: number) => { readonly entries?: StashCharge[]; readonly result: A },
-  reconcile = false,
 ): Effect.Effect<StashSwap<A>, never, Storage> {
   return Effect.gen(function* () {
     const ledger = stashLedgerKeys.ledger;
@@ -325,43 +316,29 @@ function swapStashLedger<A>(
       const outcome = yield* Effect.gen(function* () {
         const raw = yield* storageGet(ledger);
         const now = yield* Clock.currentTimeMillis;
-        let live = liveStashCharges(raw, now);
-        let planned = plan(live, now);
-        const receipts: string[] = [];
-        if (reconcile && planned.entries === undefined) {
-          const recovered: StashCharge[] = [];
-          for (const entry of live) {
-            if (entry[2] === Number.MAX_SAFE_INTEGER) {
-              const key = stashLedgerKeys.completion(entry[0]);
-              const expiry = Number(yield* storageGet(key));
-              if (Number.isSafeInteger(expiry) && expiry > 0 && expiry < Number.MAX_SAFE_INTEGER) {
-                receipts.push(key);
-                if (expiry > now) recovered.push([entry[0], entry[1], expiry]);
-                continue;
-              }
-            }
-            recovered.push(entry);
-          }
-          if (receipts.length > 0) {
-            live = recovered;
-            planned = plan(live, now);
-            // Even a still-full ledger must record reconciled finite expiries
-            // before their receipts can be removed.
-            planned = { ...planned, entries: planned.entries ?? live };
-          }
+        const planned = plan(liveStashCharges(raw, now), now);
+        if (planned.entries !== undefined) {
+          const entries = planned.entries;
+          // The ledger row itself expires with its last charge. A delayed CAS
+          // cannot create an immortal row or restart any reservation's lifetime.
+          const next = entries.length ? jsonCodec.encode({ v: 1, entries }) : null;
+          const expiresAtMs = entries.reduce((latest, entry) => Math.max(latest, entry[2]), now);
+          if (!(yield* storageCompareAndSet(ledger, raw, next, { expiresAtMs }))) return undefined;
         }
-        if (
-          planned.entries !== undefined &&
-          !(yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({ v: 1, entries: planned.entries })))
-        ) {
-          return undefined;
-        }
-        for (const key of receipts) yield* storageDelete(key).pipe(Effect.ignore);
         return { status: "applied", result: planned.result } as const;
       }).pipe(Effect.catch(() => Effect.succeed(undefined)));
       if (outcome !== undefined) return outcome;
     }
-    return { status: "exhausted" } as const;
+    // The final CAS can commit and then throw too. Confirm a read-only plan
+    // once more, especially an already-booked reservation, without another CAS.
+    return yield* Effect.gen(function* () {
+      const raw = yield* storageGet(ledger);
+      const now = yield* Clock.currentTimeMillis;
+      const planned = plan(liveStashCharges(raw, now), now);
+      return planned.entries === undefined
+        ? ({ status: "applied", result: planned.result } as const)
+        : ({ status: "exhausted" } as const);
+    }).pipe(Effect.catch(() => Effect.succeed({ status: "exhausted" } as const)));
   });
 }
 
@@ -816,9 +793,9 @@ export class Registry implements RegistryView {
    * The bounds are the deployment's, not this isolate's. Every charge is a
    * row in one ledger record in storage, booked by compare-and-set before any
    * chunk is written, so every isolate and process sharing the store sees the
-   * same entries and bytes. A pending write keeps its charge reserved; after
-   * writing, the charge expires past every chunk's possible expiry. The
-   * storage TTL reclaims the rows themselves.
+   * same entries and bytes. A pending write keeps its finite charge reserved.
+   * Writes stop after 30 seconds; absolute chunk expiries cannot pass the
+   * booked deadline even on late commit. Storage TTL reclaims the rows.
    */
   stashResult(
     id: string,
@@ -834,49 +811,43 @@ export class Registry implements RegistryView {
         const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
         if (bytes > maxBytes || maxEntries === 0) return false;
         const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
-        // Keep the three-field ledger layout readable by older isolates. The
-        // opaque reservation id prevents stale receipts from matching reused
-        // result ids, including across partitions.
+        // IDs belong to reservations, not reusable result IDs or subjects.
         const charge = crypto.randomUUID();
-        // Chunk TTLs use one deadline. Reserve the charge while writes are
-        // pending: a slow write can persist after any precomputed expiry.
-        // Once every write settles, replace the reservation with a deadline
-        // covering the latest possible chunk expiry, including failed writes.
+        const ttlMs = ttlSeconds * 1000;
+        if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) return false;
         const booking = yield* swapStashLedger((live, now) => {
+          // A committed CAS with a lost response is already our booking, even
+          // at full capacity. Reuse its deadline instead of adding a second slot.
+          const own = live.find((entry) => entry[0] === charge);
+          if (own) return { result: own[2] };
           const used = live.reduce((sum, entry) => sum + entry[1], 0);
           if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
-          const end = now + ttlSeconds * 1000;
-          return { entries: [...live, [charge, bytes, Number.MAX_SAFE_INTEGER]], result: end };
-        }, true);
+          const deadline = now + STASH_WRITE_TIMEOUT_MS + ttlMs;
+          if (!Number.isSafeInteger(deadline)) return { result: undefined };
+          return { entries: [...live, [charge, bytes, deadline]], result: deadline };
+        });
         if (booking.status === "exhausted" || booking.result === undefined) return false;
         const deadline = booking.result;
-        let expiresAt = deadline + STASH_LEDGER_GRACE_MS;
-        const completion = stashLedgerKeys.completion(charge);
+        const writeDeadline = deadline - ttlMs;
+        const chunkExpiry = deadline - STASH_WRITE_TIMEOUT_MS;
         const owns = (entry: StashCharge) => entry[0] === charge;
-        const settle = Effect.gen(function* () {
-          // Persist completion independently of the contested ledger. It has
-          // no TTL until a ledger CAS consumes it: expiring it first would pin
-          // the reservation again. A fresh Registry can reconcile it on booking.
-          const recorded = yield* storageSet(completion, jsonCodec.encode(expiresAt)).pipe(
-            Effect.retry({ times: STASH_LEDGER_ATTEMPTS - 1 }),
-            Effect.map(() => true),
-            Effect.catch(() => Effect.succeed(false)),
-          );
-          const settled = yield* swapStashLedger((live) => ({
-            entries: live.map((entry) => (owns(entry) ? [charge, bytes, expiresAt] : entry)),
-            result: undefined,
-          }));
-          if (settled.status === "applied") yield* storageDelete(completion).pipe(Effect.ignore);
-          else if (!recorded) return yield* Effect.fail(new Error("Result stash settlement unavailable"));
-        });
-        // A failed write may still have persisted. Release only after every
-        // possible chunk is deleted. Failed or exhausted release falls back
-        // to a finite settlement, with its receipt available for reconciliation.
+        const settle = swapStashLedger((live) =>
+          live.some((entry) => owns(entry) && entry[2] > chunkExpiry)
+            ? {
+                entries: live.map((entry) => (owns(entry) ? [charge, bytes, Math.min(entry[2], chunkExpiry)] : entry)),
+                result: undefined,
+              }
+            : { result: undefined },
+        );
+        let pendingWrite = false;
+        // A timed-out driver call may still commit after deletion. Its absolute
+        // expiry stays capped, and its original reservation stays until deadline.
         const release = Effect.gen(function* () {
           const deleted = yield* Effect.gen(function* () {
             for (const key of keys) yield* storageDelete(key);
             return true;
           }).pipe(Effect.catch(() => Effect.succeed(false)));
+          if (pendingWrite) return;
           if (deleted) {
             const released = yield* swapStashLedger((live) =>
               live.some(owns)
@@ -887,28 +858,33 @@ export class Registry implements RegistryView {
           }
           yield* settle;
         });
-        // Trailing chunks first: the header chunk is what makes an id readable, so
-        // a write that fails midway leaves no envelope pointing at absent chunks.
+        // Trailing chunks first, then the header. The caller receives no result
+        // ID after failure or timeout, including a late header commit.
+        const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
         const written = yield* Effect.gen(function* () {
           for (let index = keys.length - 1; index >= 0; index--) {
             const before = yield* Clock.currentTimeMillis;
-            const remaining = Math.floor((deadline - before) / 1000);
-            // Zero would mean no expiry: a stash that outlasts its deadline fails.
-            if (remaining < 1) return false;
-            yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining }).pipe(
-              Effect.ensuring(
-                Effect.gen(function* () {
-                  // A relative TTL starts no later than the write settles. Keep
-                  // this bound even if the store persisted and then rejected.
-                  const after = yield* Clock.currentTimeMillis;
-                  expiresAt = Math.max(expiresAt, after + remaining * 1000 + STASH_LEDGER_GRACE_MS);
+            if (before >= writeDeadline || before >= chunkExpiry) return false;
+            pendingWrite = true;
+            yield* storageSet(keys[index]!, chunks[index]!, { expiresAtMs: chunkExpiry }).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  pendingWrite = false;
+                }),
+              ),
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  pendingWrite = false;
                 }),
               ),
             );
-            if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
+            if ((yield* Clock.currentTimeMillis) >= writeDeadline) return false;
           }
           return true;
-        }).pipe(Effect.onError(() => release.pipe(Effect.ignore)));
+        }).pipe(
+          Effect.timeoutOrElse({ duration: Duration.millis(remaining), orElse: () => Effect.succeed(false) }),
+          Effect.onError(() => release.pipe(Effect.ignore)),
+        );
         if (!written) yield* release;
         else yield* settle;
         return written;

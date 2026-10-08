@@ -4,10 +4,45 @@ import { resultKeys, scopes, stashLedgerKeys } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
-/** SQL uses its own clock, so age its rows alongside the mocked stash clock. */
+type Entry = [string, number, number];
+const entries = (raw: string | null): Entry[] => (raw === null ? [] : JSON.parse(raw).entries);
+const make = (storage: KVStorage, capacity = 1, maxBytes = capacity) =>
+  new Registry([], { storage, logger: silentLogger, results: { maxStashEntries: capacity, maxStashBytes: maxBytes } });
+const chunk = (id: string, index = 0) => scopes.results + resultKeys.chunk(id, index);
+const WRITE_MS = 30_000;
+const TTL_MS = 900_000;
+
+/** SQL fixtures age rows and translate new absolute expiries with the mocked clock. */
 export function stashChargeContract(
-  open: () => Promise<{ storage: KVStorage; advance?: (ms: number) => Promise<void> }>,
+  open: () => Promise<{
+    storage: KVStorage;
+    advance?: (ms: number) => Promise<void>;
+    expiries?: () => Promise<(number | null)[]>;
+  }>,
 ): void {
+  const clocked = async () => {
+    const fixture = await open();
+    let clock = Date.now();
+    const start = clock;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    return {
+      ...fixture,
+      start,
+      now: () => clock,
+      restore: () => spy.mockRestore(),
+      tick: async (ms: number) => {
+        clock += ms;
+        await fixture.advance?.(ms);
+      },
+      boundedRows: async (deadline: number) => {
+        for (const expiry of (await fixture.expiries?.()) ?? []) {
+          expect(expiry).not.toBeNull();
+          expect(expiry).toBeLessThanOrEqual(deadline);
+        }
+      },
+    };
+  };
+
   it.each([
     { name: "contention-exhausted settlement", slow: false, releaseLosses: 0, settlementLosses: 32, transient: false },
     { name: "single transient settlement error", slow: false, releaseLosses: 0, settlementLosses: 0, transient: true },
@@ -28,196 +63,296 @@ export function stashChargeContract(
   ])(
     "INV-7: recovers stash capacity after $name",
     async ({ slow, releaseLosses, settlementLosses, transient }) => {
-      const { storage: inner, advance } = await open();
-      let clock = Date.now();
-      const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
-      const tick = async (ms: number) => {
-        clock += ms;
-        await advance?.(ms);
-      };
-      const charge = scopes.results + resultKeys.chunk("victim", 0);
-      type Entry = [string, number, number];
+      const f = await clocked();
+      const inner = f.storage;
       let reservation: string | undefined;
-      const entries = (raw: string | null): Entry[] => (raw === null ? [] : JSON.parse(raw).entries);
+      let booked = 0;
       const capacity = releaseLosses + settlementLosses >= 64 ? 128 : transient ? 1 : 64;
-      const make = (storage: KVStorage) =>
-        new Registry([], {
-          storage,
-          logger: silentLogger,
-          results: { maxStashEntries: capacity, maxStashBytes: capacity },
-        });
-      const competitor = make(inner);
-      let competing = 0;
-      let lostRelease = 0;
-      let lostSettlement = 0;
-      let errors = 0;
+      const competitor = make(inner, capacity);
+      let competing = 0,
+        lostRelease = 0,
+        lostSettlement = 0,
+        errors = 0;
       const storage: KVStorage = {
         ...inner,
         async set(key, value, options) {
-          if (slow && key === charge) await tick(31_000);
+          if (slow && key === chunk("victim")) await f.tick(31_000);
           await inner.set(key, value, options);
         },
         async compareAndSet(key, expected, next, options) {
           if (key === stashLedgerKeys.ledger) {
-            reservation ??= entries(next).find((entry) => entry[2] === Number.MAX_SAFE_INTEGER)?.[0];
-          }
-          if (key === stashLedgerKeys.ledger && entries(expected).some((entry) => entry[0] === reservation)) {
-            const victim = entries(next).find((entry) => entry[0] === reservation);
-            if (transient && victim && victim[2] !== Number.MAX_SAFE_INTEGER && errors++ === 0) {
-              throw new Error("transient settlement failure");
+            const own = entries(next).find((entry) => !entries(expected).some((old) => old[0] === entry[0]));
+            if (reservation === undefined && own) {
+              reservation = own[0];
+              booked = own[2];
             }
-            if (
-              (!victim && lostRelease < releaseLosses) ||
-              (victim && victim[2] !== Number.MAX_SAFE_INTEGER && lostSettlement < settlementLosses)
-            ) {
-              // A healthy second Registry commits a real stash between the
-              // victim's read and CAS, reproducing the review's contention.
-              expect(await competitor.stashResult(`competitor-${competing++}`, ["x"], 900)).toBe(true);
-              if (victim) lostSettlement++;
-              else lostRelease++;
+            if (entries(expected).some((entry) => entry[0] === reservation)) {
+              const victim = entries(next).find((entry) => entry[0] === reservation);
+              if (transient && victim && victim[2] < booked && errors++ === 0)
+                throw new Error("transient settlement failure");
+              if (
+                (!victim && lostRelease < releaseLosses) ||
+                (victim && victim[2] < booked && lostSettlement < settlementLosses)
+              ) {
+                // A real competing stash commits between the victim's read and CAS.
+                expect(await competitor.stashResult(`competitor-${competing++}`, ["x"], 900)).toBe(true);
+                if (victim) lostSettlement++;
+                else lostRelease++;
+              }
             }
           }
           return inner.compareAndSet(key, expected, next, options);
         },
       };
       try {
-        expect(await make(storage).stashResult("victim", ["x"], 900)).toBe(!slow);
+        expect(await make(storage, capacity).stashResult("victim", ["x"], 900)).toBe(!slow);
         expect(lostRelease).toBe(releaseLosses);
         expect(lostSettlement).toBe(settlementLosses);
         if (transient) expect(errors).toBeGreaterThan(1);
-        expect(await inner.get(charge)).toBe(slow ? null : "x");
+        expect(await inner.get(chunk("victim"))).toBe(slow ? null : "x");
         const victim = entries(await inner.get(stashLedgerKeys.ledger)).find((entry) => entry[0] === reservation)!;
-        if (settlementLosses) {
-          expect(victim[2]).toBe(Number.MAX_SAFE_INTEGER);
-          expect(Number(await inner.get(stashLedgerKeys.completion(victim[0])))).toBeLessThan(Number.MAX_SAFE_INTEGER);
-        } else {
-          expect(victim[2]).toBeLessThan(Number.MAX_SAFE_INTEGER);
-        }
-        // A recovery read before expiry must keep every readable chunk charged.
+        expect(booked).toBe(f.start + WRITE_MS + TTL_MS);
+        expect(victim[2]).toBe(settlementLosses ? booked : f.start + TTL_MS);
         for (let index = competing + 1; index < capacity; index++) {
-          expect(await make(inner).stashResult(`before-expiry-${index}`, ["x"], 900)).toBe(true);
+          expect(await make(inner, capacity).stashResult(`before-expiry-${index}`, ["x"], 900)).toBe(true);
         }
-        expect(await make(inner).stashResult("still-full", ["x"], 900)).toBe(false);
-        expect(await inner.get(charge)).toBe(slow ? null : "x");
-        await tick(86_400_000);
-        expect(await inner.get(charge)).toBeNull();
-        // Recovery uses a new Registry and the unmodified underlying adapter.
-        // Every slot must return, including the victim's formerly pinned slot.
+        expect(await make(inner, capacity).stashResult("still-full", ["x"], 900)).toBe(false);
+        const latest = entries(await inner.get(stashLedgerKeys.ledger)).reduce(
+          (end, entry) => Math.max(end, entry[2]),
+          booked,
+        );
+        await f.boundedRows(latest);
+        await f.tick(booked - f.now() + 1);
+        expect(await inner.get(chunk("victim"))).toBeNull();
+        expect(
+          entries(await inner.get(stashLedgerKeys.ledger)).filter(
+            (entry) => entry[0] === reservation && entry[2] > f.now(),
+          ),
+        ).toEqual([]);
+        await f.tick(Math.max(0, latest - f.now() + 1));
+        expect(await inner.list("")).toEqual([]);
         for (let index = 0; index < capacity; index++) {
-          expect(await make(inner).stashResult(`recovered-${index}`, ["x"], 900)).toBe(true);
+          expect(await make(inner, capacity).stashResult(`recovered-${index}`, ["x"], 900)).toBe(true);
         }
-        expect(await make(inner).stashResult("full", ["x"], 900)).toBe(false);
+        expect(await make(inner, capacity).stashResult("full", ["x"], 900)).toBe(false);
         expect(entries(await inner.get(stashLedgerKeys.ledger))).toHaveLength(capacity);
-        expect(await inner.list(stashLedgerKeys.completion(""))).toEqual([]);
       } finally {
-        now.mockRestore();
+        f.restore();
       }
     },
     60_000,
   );
 
-  it("INV-7: retries a transient completion receipt error before settling", async () => {
-    const { storage: inner, advance } = await open();
-    let clock = Date.now();
-    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
-    let failures = 0;
-    const storage: KVStorage = {
-      ...inner,
-      async set(key, value, options) {
-        if (key.startsWith(stashLedgerKeys.completion("")) && failures++ === 0)
-          throw new Error("transient receipt failure");
-        await inner.set(key, value, options);
-      },
-    };
-    const make = (storage: KVStorage) =>
-      new Registry([], {
-        storage,
-        logger: silentLogger,
-        results: { maxStashEntries: 1, maxStashBytes: 1 },
-      });
-    try {
-      expect(await make(storage).stashResult("first", ["x"], 900)).toBe(true);
-      expect(failures).toBeGreaterThan(1);
-      clock += 960_000;
-      await advance?.(960_000);
-      expect(await make(inner).stashResult("second", ["x"], 900)).toBe(true);
-    } finally {
-      now.mockRestore();
-    }
-  });
+  it.each([
+    { capacity: 1, final: false, confirmFails: false },
+    { capacity: 2, final: false, confirmFails: false },
+    { capacity: 1, final: true, confirmFails: false },
+    { capacity: 2, final: true, confirmFails: false },
+    { capacity: 1, final: true, confirmFails: true },
+  ])(
+    "INV-7: books an ambiguous CAS once (capacity=$capacity, final=$final, confirmFails=$confirmFails)",
+    async ({ capacity, final, confirmFails }) => {
+      const f = await clocked();
+      const inner = f.storage;
+      let attempts = 0,
+        commits = 0;
+      let booked = 0;
+      let ambiguous = false;
+      const storage: KVStorage = {
+        ...inner,
+        async get(key) {
+          if (confirmFails && ambiguous && key === stashLedgerKeys.ledger) throw new Error("confirmation unavailable");
+          return inner.get(key);
+        },
+        async compareAndSet(key, expected, next, options) {
+          if (key === stashLedgerKeys.ledger && !ambiguous) {
+            if (final && ++attempts < 32) return false;
+            expect(await inner.compareAndSet(key, expected, next, options)).toBe(true);
+            commits++;
+            booked = entries(next)[0]![2];
+            ambiguous = true;
+            await f.tick(5_000);
+            throw new Error("committed but response failed");
+          }
+          return inner.compareAndSet(key, expected, next, options);
+        },
+      };
+      try {
+        expect(await make(storage, capacity).stashResult("first", ["x"], 900)).toBe(!confirmFails);
+        expect(commits).toBe(1);
+        expect(booked).toBe(f.start + WRITE_MS + TTL_MS);
+        const live = entries(await inner.get(stashLedgerKeys.ledger));
+        expect(live).toHaveLength(1);
+        expect(live[0]![2]).toBe(confirmFails ? booked : booked - WRITE_MS);
+        expect(await inner.get(chunk("first"))).toBe(confirmFails ? null : "x");
+        expect(await inner.list(stashLedgerKeys.family.prefixes[0])).toEqual([stashLedgerKeys.ledger]);
+        if (capacity === 2) expect(await make(inner, capacity).stashResult("second", ["x"], 900)).toBe(true);
+        expect(await make(inner, capacity).stashResult("full", ["x"], 900)).toBe(false);
+        await f.boundedRows(booked);
+        await f.tick(booked - f.now() + 1);
+        expect(await inner.list("")).toEqual([]);
+        expect(await make(inner, capacity).stashResult("recovered", ["x"], 900)).toBe(true);
+      } finally {
+        f.restore();
+      }
+    },
+    30_000,
+  );
+
+  it.each(["failed cleanup", "interrupted settlement"])(
+    "INV-7: leaves no completion rows after %s",
+    async (failure) => {
+      const f = await clocked();
+      const inner = f.storage;
+      let deletionAttempts = 0;
+      let interrupted = false;
+      const storage: KVStorage = {
+        ...inner,
+        async set(key, value, options) {
+          // No separate completion writes exist, even when their storage fails.
+          expect(key.startsWith(stashLedgerKeys.family.prefixes[0])).toBe(false);
+          await inner.set(key, value, options);
+        },
+        async get(key) {
+          if (interrupted && key === stashLedgerKeys.ledger)
+            throw new Error("process unavailable after settlement commit");
+          return inner.get(key);
+        },
+        async delete() {
+          deletionAttempts++;
+          throw new Error("cleanup failed");
+        },
+        async compareAndSet(key, expected, next, options) {
+          const applied = await inner.compareAndSet(key, expected, next, options);
+          if (failure === "interrupted settlement" && applied && entries(expected).length) {
+            interrupted = true;
+            throw new Error("interrupted after settlement commit");
+          }
+          return applied;
+        },
+      };
+      try {
+        expect(await make(storage).stashResult("first", ["x"], 900)).toBe(true);
+        expect(deletionAttempts).toBe(0);
+        expect(await inner.list(stashLedgerKeys.family.prefixes[0])).toEqual([stashLedgerKeys.ledger]);
+        await f.boundedRows(f.start + TTL_MS);
+        await f.tick(TTL_MS + WRITE_MS + 1);
+        expect(await inner.list("")).toEqual([]);
+        expect(await make(inner).stashResult("recovered", ["x"], 900)).toBe(true);
+      } finally {
+        f.restore();
+      }
+    },
+    30_000,
+  );
 
   it.each([
-    { delay: 31_000, hold: 0, rejects: false, maxStashEntries: 1, maxStashBytes: 100 },
-    { delay: 31_000, hold: 0, rejects: false, maxStashEntries: 100, maxStashBytes: 1 },
-    { delay: 90_000, hold: 0, rejects: true, maxStashEntries: 1, maxStashBytes: 100 },
-    { delay: 90_000, hold: 0, rejects: true, maxStashEntries: 100, maxStashBytes: 1 },
-    { delay: 31_000, hold: 930_250, rejects: false, maxStashEntries: 1, maxStashBytes: 100 },
+    { delay: 31_000, rejects: false, capacity: 1, maxBytes: 100 },
+    { delay: 31_000, rejects: false, capacity: 100, maxBytes: 1 },
+    { delay: 90_000, rejects: true, capacity: 1, maxBytes: 100 },
+    { delay: 90_000, rejects: true, capacity: 100, maxBytes: 1 },
   ])(
-    "INV-7: holds orphan capacity after a $delay ms write and failed cleanup (hold=$hold ms, $maxStashEntries entries, $maxStashBytes bytes, rejects=$rejects)",
-    async ({ delay, hold, rejects, maxStashEntries, maxStashBytes }) => {
-      const { storage: inner, advance } = await open();
-      const start = Date.now();
-      let clock = start;
-      const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
-      const tick = async (ms: number) => {
-        clock += ms;
-        await advance?.(ms);
+    "INV-7: holds orphan capacity after a $delay ms write and failed cleanup ($capacity entries, $maxBytes bytes, rejects=$rejects)",
+    async ({ delay, rejects, capacity, maxBytes }) => {
+      const f = await clocked();
+      const inner = f.storage;
+      const storage: KVStorage = {
+        ...inner,
+        async set(key, value, options) {
+          if (key === chunk("orphan")) await f.tick(delay);
+          await inner.set(key, value, options);
+          if (key === chunk("orphan") && rejects) throw new Error("write failed after persisting");
+        },
+        async delete() {
+          throw new Error("cleanup unavailable");
+        },
       };
-      let entered!: () => void;
-      let finish!: () => void;
+      try {
+        const first = make(storage, capacity, maxBytes).stashResult("orphan", ["x"], 900);
+        if (rejects) await expect(first).rejects.toThrow();
+        else expect(await first).toBe(false);
+        expect(await inner.get(chunk("orphan"))).toBe("x");
+        expect(await make(inner, capacity, maxBytes).stashResult("full", ["x"], 900)).toBe(false);
+        await f.boundedRows(f.start + WRITE_MS + TTL_MS);
+        await f.tick(f.start + TTL_MS - 1_000 - f.now());
+        expect(await inner.get(chunk("orphan"))).toBe("x");
+        expect(await make(inner, capacity, maxBytes).stashResult("still-full", ["x"], 900)).toBe(false);
+        await f.tick(WRITE_MS + 1_001);
+        expect(await inner.list("")).toEqual([]);
+        expect(await make(inner, capacity, maxBytes).stashResult("recovered", ["x"], 900)).toBe(true);
+      } finally {
+        f.restore();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "INV-7: aborts a pending write within 30 seconds and bounds its late commit (cleanupFails=%s)",
+    async (cleanupFails) => {
+      const f = await clocked();
+      const inner = f.storage;
+      let entered!: () => void, finish!: () => void;
       const writing = new Promise<void>((resolve) => {
         entered = resolve;
       });
       const gate = new Promise<void>((resolve) => {
         finish = resolve;
       });
-      const orphan = scopes.results + resultKeys.chunk("orphan", 0);
+      let committed!: () => void;
+      const late = new Promise<void>((resolve) => {
+        committed = resolve;
+      });
       const storage: KVStorage = {
         ...inner,
         async set(key, value, options) {
-          if (key === orphan) {
+          if (key === chunk("pending", 1)) {
             entered();
             await gate;
-            await tick(delay);
           }
           await inner.set(key, value, options);
-          if (key === orphan && rejects) throw new Error("write failed after persisting");
+          if (key === chunk("pending", 1)) committed();
         },
-        async delete() {
-          throw new Error("cleanup unavailable");
+        async delete(key) {
+          if (cleanupFails) throw new Error("cleanup unavailable");
+          await inner.delete(key);
         },
       };
-      const registry = () =>
-        new Registry([], {
-          storage,
-          logger: silentLogger,
-          results: { maxStashEntries, maxStashBytes },
-        });
-      const first = registry().stashResult("orphan", ["x"], 900);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const first = make(storage, 1, 2).stashResult("pending", ["h", "x"], 900);
       try {
         await writing;
-        // A pending write can persist later even after the original charge expires.
-        if (hold) {
-          await tick(hold);
-          expect(await registry().stashResult("pending", ["x"], 900)).toBe(false);
-        }
+        await f.tick(WRITE_MS - 1);
+        expect(await make(inner, 1, 2).stashResult("full", ["x"], 900)).toBe(false);
+        await f.tick(1);
+        await vi.advanceTimersByTimeAsync(WRITE_MS);
+        expect(await first).toBe(false);
+        expect(entries(await inner.get(stashLedgerKeys.ledger))[0]![2]).toBe(f.start + WRITE_MS + TTL_MS);
+        expect(await inner.get(chunk("pending"))).toBeNull();
+        expect(await make(inner, 1, 2).stashResult("still-full", ["x"], 900)).toBe(false);
+        await f.tick(TTL_MS + 1);
+        expect(await inner.list("")).toEqual([]);
         finish();
-        if (rejects) await expect(first).rejects.toThrow();
-        else expect(await first).toBe(false);
-        await tick(Math.max(0, start + 930_250 - clock));
-        expect(await inner.get(orphan)).toBe("x");
-        expect(await registry().stashResult("second", ["x"], 900)).toBe(false);
-        await tick(start + hold + delay + 899_500 - clock);
-        expect(await inner.get(orphan)).toBe("x");
-        expect(await registry().stashResult("second", ["x"], 900)).toBe(false);
-        await tick(32_000);
-        expect(await inner.get(orphan)).toBeNull();
-        expect(await registry().stashResult("second", ["x"], 900)).toBe(true);
+        await late;
+        expect(await inner.list("")).toEqual([]);
+        await f.boundedRows(f.start + WRITE_MS + TTL_MS);
+        expect(await make(inner, 1, 2).stashResult("recovered", ["x"], 900)).toBe(true);
       } finally {
         finish();
+        vi.useRealTimers();
         await first.catch(() => undefined);
-        now.mockRestore();
+        f.restore();
       }
     },
+    30_000,
   );
+
+  it("INV-7: admits exactly one of 16 concurrent bookings at capacity one", async () => {
+    const { storage } = await open();
+    const results = await Promise.all(
+      Array.from({ length: 16 }, (_, index) => make(storage).stashResult(`claim-${index}`, ["x"], 900)),
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(entries(await storage.get(stashLedgerKeys.ledger))).toHaveLength(1);
+    expect(await storage.list(scopes.results)).toHaveLength(1);
+  });
 }

@@ -1,13 +1,16 @@
 ---
 type: fixed
+breaking: true
 ---
 
-Keep a result stash's ledger charge reserved during writes, then retain it
-through the latest possible chunk expiry when cleanup fails, so slow writes
-cannot leave readable orphan chunks outside the byte and entry limits.
-Retry transient ledger errors, distinguish exhausted CAS retries, and persist
-completion receipts so later bookings recover completed reservations after
-contention prevents release or settlement.
+Book each result stash reservation once with a finite deadline of booking time
+plus a 30-second write budget plus the chunk TTL, normally 15 minutes. Stop the
+write loop on timeout and return no paging ID. Absolute chunk and ledger expiry
+prevents late or ambiguous writes from extending that bound. Custom KVStorage
+adapters must honor the new `expiresAtMs` option on set and compareAndSet.
+Settlement and cleanup shorten or remove charges when possible; after failure
+or exhausted retries, capacity may be over-held until the booked deadline.
+Remove durable completion receipts and their recovery path.
 State-file import and `migrate-state` report database failures with fixed
 step descriptions, preventing SQLite trigger errors from printing imported
 values (#726).

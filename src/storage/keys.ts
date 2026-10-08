@@ -126,14 +126,11 @@ export const stashLedgerKeys = {
     prefixes: ["result-stash:v1:"],
     version: { number: 1, in: "key" },
     codec: jsonCodec,
-    // Durable as a record, self-pruning by content: an entry leaves the
-    // ledger after settlement once every possible chunk TTL has passed.
-    ttl: { kind: "durable" },
+    // Every reservation is finite; the row expires with its latest charge.
+    ttl: { kind: "configured", by: "latest live stash reservation deadline" },
     durable: false,
   },
   ledger: "result-stash:v1:ledger",
-  /** Consumed by settlement or a later booking CAS; must survive until then. */
-  completion: (reservation: string) => validateStorageKey(`result-stash:v1:completion:${reservation}`),
 } as const satisfies Keyed;
 
 /**

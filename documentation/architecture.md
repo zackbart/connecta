@@ -346,9 +346,12 @@ marker refuses stale copies afterward.
 required, and `createConnecta` refuses storage missing one (INV-11).
 `compareAndSet(key, expected, next, options?)` is an atomic claim: `null` means
 absent (expired counts) on the way in and delete on the way out, and a
-successful write takes the same optional `ttlSeconds` as `set`. SQL TTLs are
-created and checked by the database clock inside each statement, so isolate
-clock skew cannot expire a live holder's record. Each SQL claim
+successful write takes the same expiry options as `set`. Relative `ttlSeconds`
+is created and checked by the database clock inside each statement, so isolate
+clock skew cannot expire a live holder's record. Absolute `expiresAtMs` is a
+safe-integer epoch-millisecond deadline stored verbatim and checked against the
+storage clock. Supply at most one option. Custom adapters must implement both;
+a delayed absolute-expiry write must not restart a relative TTL at commit time. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
 read-then-write fallback: access-token issuance and
@@ -454,24 +457,35 @@ Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge
 is a row in one ledger record, booked by compare-and-set before any chunk is
-written, so isolates and processes sharing the store see one count. A lost swap
-backs off and re-reads, up to 32 attempts; a full ledger or exhausted booking
-returns no result id. Each chunk's TTL is what
-remains of the stash's deadline when the write begins. The charge stays
-reserved while writes are pending, then expires 30 seconds past the latest
-possible chunk expiry, measured at write completion even when a write rejects.
-Failed cleanup retains that charge. Successful cleanup attempts release; if
-release exhausts its 32 retries, it falls back to the same finite settlement.
-Settlement retries transient storage errors and records a completion receipt
-independently of the ledger. If its CAS retries exhaust, a later booking that
-would otherwise refuse capacity consumes the receipt and reconciles the finite
-expiry. Receipts stay stored until a ledger CAS consumes them, so recovery works
-across Registry instances. Pending writes have no receipt and stay reserved.
-A crash before recording completion, or storage unavailable for both receipt
-and settlement, can still require ledger repair. A full
-stash returns the successful call's preview and a paging-unavailable notice
-rather than a result id. The shared storage cases live in
-`test/storage-contract.ts` and `test/sql-storage-contract.ts`.
+written, so isolates and processes sharing the store see one count. Every
+reservation starts with a finite deadline of booking time plus the 30-second
+write budget plus the chunk TTL, normally 15 minutes. Pending writes retain
+that charge until its deadline. Booking retries recognize their own reservation
+ID and reuse its stored deadline, including a final read after an ambiguous
+last CAS. A lost swap or transient storage error backs off and re-reads, up to
+32 attempts. A full ledger or unconfirmed exhausted booking returns no result id.
+
+The whole chunk-write phase has a 30-second timeout measured from booking, with
+a clock check before and after each write. Trailing chunks precede the header;
+failure or timeout returns no result id and stops the write loop. Chunks use an
+absolute expiry at booking time plus their TTL, so slow writes shorten the
+remaining paging window. Storage promises cannot guarantee cancellation of an
+already-dispatched database operation. Even a commit after timeout or process
+interruption keeps that absolute expiry, rather than starting another TTL.
+
+Settlement and release only shorten or remove a reservation. Successful writes
+attempt to shorten the charge to the fixed chunk expiry. Cleanup releases it
+only after all deletions succeed and no write remains in flight. Failed cleanup
+or exhausted release attempts finite settlement; a timed-out write keeps the
+original reservation because it may still commit after deletion. These ledger
+updates retry within the same 32-attempt budget. If they fail, crash, or exhaust,
+capacity may be over-held until the booked deadline, at most 15 minutes and
+30 seconds for the normal TTL. The ledger row itself has an absolute expiry at
+its latest live reservation deadline. There are no completion receipts or
+separate recovery rows. Expired data reads as absent and normal storage sweeps
+reclaim the physical rows. A full stash returns the successful call's preview
+and a paging-unavailable notice rather than a result id. Shared failure cases
+live in `test/stash-charge-contract.ts`, exercised by the memory and SQL suites.
 
 `src/credentials.ts` is the AES-GCM vault behind the root-exported
 `CredentialVault` contract, selected through the `vault` slot. It binds connector

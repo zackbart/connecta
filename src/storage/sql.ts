@@ -143,7 +143,15 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
   // SQLite and D1 evaluate 'now' in the database, never in a caller isolate.
   const now = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
   const live = `(expires_at_ms IS NULL OR expires_at_ms > ${now})`;
-  const expiryValue = `(${now} + ?)`;
+  const expiryOptions = (opts?: Parameters<KVStorage["set"]>[2]) => {
+    if (opts?.expiresAtMs !== undefined) {
+      if (!Number.isSafeInteger(opts.expiresAtMs) || opts.ttlSeconds !== undefined) {
+        throw new RangeError("expiresAtMs must be a safe integer epoch timestamp without ttlSeconds");
+      }
+      return { value: opts.expiresAtMs, expression: "?" };
+    }
+    return { value: ttlMillis(opts?.ttlSeconds), expression: `(${now} + ?)` };
+  };
   const current = async (key: string) => {
     const [row] = await driver.all<{ value: string; value_bytes: TextBytes | null }>(
       sql(`SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ? AND ${live}`, key),
@@ -160,7 +168,7 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
     async set(key, value, opts) {
       validateStorageKey(key);
       await ensure();
-      const expiry = ttlMillis(opts?.ttlSeconds);
+      const expiry = expiryOptions(opts);
       await driver.batch([
         sql(
           `DELETE FROM connecta_kv WHERE key IN (
@@ -169,12 +177,12 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
         ),
         sql(
           `INSERT INTO connecta_kv (key, value, expires_at_ms)
-           VALUES (?, ?, ${expiryValue})
+           VALUES (?, ?, ${expiry.expression})
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms`,
           key,
           value,
-          expiry,
+          expiry.value,
         ),
       ]);
     },
@@ -213,9 +221,9 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
           (await driver.run(sql(`DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`, key, expected))) > 0
         );
       }
-      let expiry: number | null;
+      let expiry: ReturnType<typeof expiryOptions>;
       try {
-        expiry = ttlMillis(opts?.ttlSeconds);
+        expiry = expiryOptions(opts);
       } catch (error) {
         // Invalid write options do not change a failed comparison's result.
         // Ordinary claims still use one atomic statement without this read.
@@ -229,14 +237,14 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
           (await driver.run(
             sql(
               `INSERT INTO connecta_kv (key, value, expires_at_ms)
-           VALUES (?, ?, ${expiryValue})
+           VALUES (?, ?, ${expiry.expression})
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms
            WHERE connecta_kv.expires_at_ms IS NOT NULL
              AND connecta_kv.expires_at_ms <= ${now}`,
               key,
               next,
-              expiry,
+              expiry.value,
             ),
           )) > 0
         );
@@ -244,10 +252,10 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
       return (
         (await driver.run(
           sql(
-            `UPDATE connecta_kv SET value = ?, expires_at_ms = ${expiryValue}
+            `UPDATE connecta_kv SET value = ?, expires_at_ms = ${expiry.expression}
          WHERE key = ? AND ${live} AND value = ?`,
             next,
-            expiry,
+            expiry.value,
             key,
             expected,
           ),
