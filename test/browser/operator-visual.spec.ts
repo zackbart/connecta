@@ -107,8 +107,8 @@ for (const [name, path, heading] of pages) {
       test(`${name}: ${state}, ${scheme}`, async ({ page }) => {
         const release = await installFixture(page, name, state, scheme);
         try {
-          // Empty/restricted fixtures keep only GitHub. The Auth tab then shows
-          // its deployment-managed state instead of referring to a missing slot.
+          // Empty detail fixtures keep GitHub. Its Auth tab shows deployment-
+          // managed state instead of referring to a missing credential slot.
           const href = name === "connector-auth" && state === "empty" ? "/connectors/github#auth" : path;
           await page.goto(VISUAL_ORIGIN + href);
           if (!["loading", "restricted"].includes(state) && !(name.startsWith("connector-") && state === "error") && !(name === "artifact" && (state === "empty" || state === "error"))) {
