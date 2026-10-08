@@ -438,10 +438,7 @@
           "mcp:people:write"
         ],
         "authorizationMetadata": "https://mcp.planningcenteronline.com/.well-known/oauth-authorization-server",
-        "advertisedGrantTypes": [
-          "refresh_token",
-          "authorization_code"
-        ]
+        "advertisedGrantTypes": ["refresh_token", "authorization_code"]
       }
     }
   ]

@@ -36,50 +36,138 @@ const D1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as n
 describe("built-in factory options", () => {
   it.each([
     ["api() top level", () => api("crm", loose({ tools: [tool], maxResultByte: 10 })), 'api("crm").maxResultByte'],
-    ["api() oauth", () => api("crm", loose({
-      tools: [tool],
-      oauth: { authorizationEndpoint: "https://a.example/a", tokenEndpoint: "https://a.example/t",
-        clientId: "c", apiOrigins: ["https://api.example"], pcke: false },
-    })), 'api("crm").oauth.pcke'],
+    [
+      "api() oauth",
+      () =>
+        api(
+          "crm",
+          loose({
+            tools: [tool],
+            oauth: {
+              authorizationEndpoint: "https://a.example/a",
+              tokenEndpoint: "https://a.example/t",
+              clientId: "c",
+              apiOrigins: ["https://api.example"],
+              pcke: false,
+            },
+          }),
+        ),
+      'api("crm").oauth.pcke',
+    ],
     ["api() tool", () => api("crm", loose({ tools: [{ ...tool, readOnly: true }] })), 'api("crm").tools[0].readOnly'],
-    ["api() call admission rule", () => api("crm", loose({
-      tools: [tool], callAdmission: { rules: [{ maxConcurency: 2 }] },
-    })), 'api("crm").callAdmission.rules[0].maxConcurency'],
-    ["api() credential field", () => api("crm", loose({
-      tools: [tool], credential: { label: "Key", fields: [{ name: "a", label: "A", type: "text" }] },
-    })), 'api("crm").credential.fields[0].type'],
-    ["api() usage guide", () => api("crm", loose({ tools: [tool], usageGuide: { content: "x", requird: true } })),
-      'api("crm").usageGuide.requird'],
-    ["remoteMcp() top level", () => remoteMcp("docs", loose({ url: "https://mcp.example/mcp", requireHTTPs: true })),
-      'remoteMcp("docs").requireHTTPs'],
-    ["remoteMcp() headers auth", () => remoteMcp("docs", loose({
-      url: "https://mcp.example/mcp", auth: { type: "headers", header: { "X-Key": "k" } },
-    })), 'remoteMcp("docs").auth.header'],
-    ["remoteMcp() oauth auth", () => remoteMcp("docs", loose({
-      url: "https://mcp.example/mcp", auth: { type: "oauth", scopes: "read" },
-    })), 'remoteMcp("docs").auth.scopes'],
-    ["a provider", () => linear("tracker", loose({ purpose: "Roadmap", access: "read-only", maxResultByte: 1 })),
-      'linear("tracker").maxResultByte'],
-    ["a hyphenated provider", () => planningCenter("pco", loose({ purpose: "People", pageSize: 5 })),
-      'planningCenter("pco").pageSize'],
-    ["a provider's other surface", () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", accountId: "a" })),
-      'cloudflare("cf").accountId'],
-    ["a provider surface default", () => notion("wiki", loose({ purpose: "Docs", defaultPageSize: 5 })),
-      'notion("wiki").defaultPageSize'],
-    ["a provider's narrowed auth", () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth", scope: "x" } })),
-      'stripe("billing").auth.scope'],
-    ["a Workspace service account", () => docs("docs", loose({
-      purpose: "Docs", subject: "a@example.com",
-      serviceAccount: { clientEmail: "a@example.com", privateKey: "k", private_key_id: "id" },
-    })), 'docs("docs").serviceAccount.private_key_id'],
+    [
+      "api() call admission rule",
+      () =>
+        api(
+          "crm",
+          loose({
+            tools: [tool],
+            callAdmission: { rules: [{ maxConcurency: 2 }] },
+          }),
+        ),
+      'api("crm").callAdmission.rules[0].maxConcurency',
+    ],
+    [
+      "api() credential field",
+      () =>
+        api(
+          "crm",
+          loose({
+            tools: [tool],
+            credential: { label: "Key", fields: [{ name: "a", label: "A", type: "text" }] },
+          }),
+        ),
+      'api("crm").credential.fields[0].type',
+    ],
+    [
+      "api() usage guide",
+      () => api("crm", loose({ tools: [tool], usageGuide: { content: "x", requird: true } })),
+      'api("crm").usageGuide.requird',
+    ],
+    [
+      "remoteMcp() top level",
+      () => remoteMcp("docs", loose({ url: "https://mcp.example/mcp", requireHTTPs: true })),
+      'remoteMcp("docs").requireHTTPs',
+    ],
+    [
+      "remoteMcp() headers auth",
+      () =>
+        remoteMcp(
+          "docs",
+          loose({
+            url: "https://mcp.example/mcp",
+            auth: { type: "headers", header: { "X-Key": "k" } },
+          }),
+        ),
+      'remoteMcp("docs").auth.header',
+    ],
+    [
+      "remoteMcp() oauth auth",
+      () =>
+        remoteMcp(
+          "docs",
+          loose({
+            url: "https://mcp.example/mcp",
+            auth: { type: "oauth", scopes: "read" },
+          }),
+        ),
+      'remoteMcp("docs").auth.scopes',
+    ],
+    [
+      "a provider",
+      () => linear("tracker", loose({ purpose: "Roadmap", access: "read-only", maxResultByte: 1 })),
+      'linear("tracker").maxResultByte',
+    ],
+    [
+      "a hyphenated provider",
+      () => planningCenter("pco", loose({ purpose: "People", pageSize: 5 })),
+      'planningCenter("pco").pageSize',
+    ],
+    [
+      "a provider's other surface",
+      () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", accountId: "a" })),
+      'cloudflare("cf").accountId',
+    ],
+    [
+      "a provider surface default",
+      () => notion("wiki", loose({ purpose: "Docs", defaultPageSize: 5 })),
+      'notion("wiki").defaultPageSize',
+    ],
+    [
+      "a provider's narrowed auth",
+      () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth", scope: "x" } })),
+      'stripe("billing").auth.scope',
+    ],
+    [
+      "a Workspace service account",
+      () =>
+        docs(
+          "docs",
+          loose({
+            purpose: "Docs",
+            subject: "a@example.com",
+            serviceAccount: { clientEmail: "a@example.com", privateKey: "k", private_key_id: "id" },
+          }),
+        ),
+      'docs("docs").serviceAccount.private_key_id',
+    ],
     ["operatorUi()", () => operatorUi(loose({ brandng: {} })), "operatorUi().brandng"],
-    ["operatorUi() theme", () => operatorUi(loose({ branding: { theme: { accentColor: "#fff" } } })),
-      "operatorUi().branding.theme.accentColor"],
-    ["operatorUi() favicon", () => operatorUi(loose({ branding: { favicon: { url: "/x.svg" } } })),
-      "operatorUi().branding.favicon.url"],
+    [
+      "operatorUi() theme",
+      () => operatorUi(loose({ branding: { theme: { accentColor: "#fff" } } })),
+      "operatorUi().branding.theme.accentColor",
+    ],
+    [
+      "operatorUi() favicon",
+      () => operatorUi(loose({ branding: { favicon: { url: "/x.svg" } } })),
+      "operatorUi().branding.favicon.url",
+    ],
     ["accessTokens()", () => accessTokens(memoryStorage(), loose({ maxActiv: 3 })), "accessTokens().maxActiv"],
-    ["activityHistory()", () => activityHistory(loose({ store: { record() {} }, deploymentID: "prod" })),
-      "activityHistory().deploymentID"],
+    [
+      "activityHistory()",
+      () => activityHistory(loose({ store: { record() {} }, deploymentID: "prod" })),
+      "activityHistory().deploymentID",
+    ],
     ["d1ActivityStore()", () => d1ActivityStore(D1, loose({ retentionDay: 30 })), "d1ActivityStore().retentionDay"],
   ] as const)("INV-11: refuses an unknown option in %s with its path", (_, build, path) => {
     expect(build).toThrow(`Unknown option: ${path}.`);
@@ -87,8 +175,9 @@ describe("built-in factory options", () => {
 
   it("INV-11: refuses an activity retention that is not a positive number of days", () => {
     for (const retentionDays of [0, -1, Number.NaN, Infinity, "30"]) {
-      expect(() => d1ActivityStore(D1, { retentionDays: retentionDays as never }))
-        .toThrow("d1ActivityStore().retentionDays must be a positive number of days.");
+      expect(() => d1ActivityStore(D1, { retentionDays: retentionDays as never })).toThrow(
+        "d1ActivityStore().retentionDays must be a positive number of days.",
+      );
     }
     expect(() => d1ActivityStore(D1, { retentionDays: 30 })).not.toThrow();
   });
@@ -123,28 +212,38 @@ describe("built-in factory options", () => {
     };
     expect(() => activityHistory({ store, deploymentId: "prod" })).not.toThrow();
     expect(storeReads).toBeGreaterThan(0);
-    expect(() => api("crm", {
-      title: "CRM",
-      description: "Customer records",
-      authScope: "shared",
-      maxResultBytes: 1_000,
-      callAdmission: { rules: [{ maxConcurrency: 1, budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1 } }] },
-      usageGuide: { content: "Use it.", summary: "Use it.", required: false },
-      credential: { label: "Key", fields: [{ name: "key", label: "Key", inputType: "password" }] },
-      validateArgs: true,
-      tools: [tool],
-    })).not.toThrow();
-    expect(() => remoteMcp("docs", {
-      url: "https://mcp.example/mcp",
-      auth: { type: "credential", credential: { label: "Key" }, header: "X-Key", scheme: null },
-      versionNegotiation: "legacy",
-      redirects: "same-origin",
-      requireHttps: true,
-    })).not.toThrow();
+    expect(() =>
+      api("crm", {
+        title: "CRM",
+        description: "Customer records",
+        authScope: "shared",
+        maxResultBytes: 1_000,
+        callAdmission: { rules: [{ maxConcurrency: 1, budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1 } }] },
+        usageGuide: { content: "Use it.", summary: "Use it.", required: false },
+        credential: { label: "Key", fields: [{ name: "key", label: "Key", inputType: "password" }] },
+        validateArgs: true,
+        tools: [tool],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      remoteMcp("docs", {
+        url: "https://mcp.example/mcp",
+        auth: { type: "credential", credential: { label: "Key" }, header: "X-Key", scheme: null },
+        versionNegotiation: "legacy",
+        redirects: "same-origin",
+        requireHttps: true,
+      }),
+    ).not.toThrow();
     expect(() => cloudflare("cf", { purpose: "Ops", surface: "mcp", callAdmission: { rules: [] } })).not.toThrow();
-    expect(() => operatorUi({
-      branding: { productName: "Ops", favicon: { href: "/x.svg" }, theme: { accent: "#123456", colorScheme: "dark" } },
-    })).not.toThrow();
+    expect(() =>
+      operatorUi({
+        branding: {
+          productName: "Ops",
+          favicon: { href: "/x.svg" },
+          theme: { accent: "#123456", colorScheme: "dark" },
+        },
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -159,34 +258,85 @@ describe("discriminated factory options", () => {
   // checked nothing and the factory, finding no known `type`, built the
   // connector with no authentication at all.
   it.each([
-    ["remoteMcp() auth with an unknown type", () => remoteMcp("docs", loose({
-      url, auth: { type: "header", headers, maxResultByte: 1 },
-    })), `remoteMcp("docs").auth.type must be one of ${MCP_AUTH}.`],
-    ["remoteMcp() auth with a non-string type", () => remoteMcp("docs", loose({ url, auth: { type: 1, headers } })),
-      `remoteMcp("docs").auth.type must be one of ${MCP_AUTH}.`],
-    ["remoteMcp() auth with an inherited type", () => remoteMcp("docs", loose({
-      url, auth: Object.assign(Object.create({ type: "headers" }), { headers }),
-    })), 'remoteMcp("docs").auth must be a plain object.'],
-    ["remoteMcp() auth without a type", () => remoteMcp("docs", loose({ url, auth: { headers } })),
-      `remoteMcp("docs").auth.type is required: one of ${MCP_AUTH}.`],
-    ["remoteMcp() auth that is a string", () => remoteMcp("docs", loose({ url, auth: "headers" })),
-      'remoteMcp("docs").auth must be an object.'],
-    ["remoteMcp() auth that is null", () => remoteMcp("docs", loose({ url, auth: null })),
-      'remoteMcp("docs").auth must be an object.'],
-    ["remoteMcp() auth that is an array", () => remoteMcp("docs", loose({ url, auth: [{ type: "headers", headers }] })),
-      'remoteMcp("docs").auth must be an object.'],
-    ["a provider's remote MCP auth", () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", auth: { headers } })),
-      `cloudflare("cf") requires auth.type is required: one of ${MCP_AUTH}.`],
-    ["a provider's narrowed auth", () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "OAuth" } })),
-      `stripe("billing") requires auth.type to be one of ${STRIPE_AUTH}.`],
-    ["a provider's narrowed auth without a type", () => stripe("billing", loose({ purpose: "Revenue", auth: {} })),
-      `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`],
-    ["notion() surface", () => notion("wiki", loose({ purpose: "Docs", surface: "MCP" })),
-      `notion("wiki") requires surface to be one of ${SURFACE}.`],
-    ["vercel() surface", () => vercel("deploys", loose({ purpose: "Deploys", surface: "hosted" })),
-      `vercel("deploys") requires surface to be one of ${SURFACE}.`],
-    ["cloudflare() surface", () => cloudflare("cf", loose({ purpose: "Ops", surface: null })),
-      `cloudflare("cf") requires surface to be one of ${SURFACE}.`],
+    [
+      "remoteMcp() auth with an unknown type",
+      () =>
+        remoteMcp(
+          "docs",
+          loose({
+            url,
+            auth: { type: "header", headers, maxResultByte: 1 },
+          }),
+        ),
+      `remoteMcp("docs").auth.type must be one of ${MCP_AUTH}.`,
+    ],
+    [
+      "remoteMcp() auth with a non-string type",
+      () => remoteMcp("docs", loose({ url, auth: { type: 1, headers } })),
+      `remoteMcp("docs").auth.type must be one of ${MCP_AUTH}.`,
+    ],
+    [
+      "remoteMcp() auth with an inherited type",
+      () =>
+        remoteMcp(
+          "docs",
+          loose({
+            url,
+            auth: Object.assign(Object.create({ type: "headers" }), { headers }),
+          }),
+        ),
+      'remoteMcp("docs").auth must be a plain object.',
+    ],
+    [
+      "remoteMcp() auth without a type",
+      () => remoteMcp("docs", loose({ url, auth: { headers } })),
+      `remoteMcp("docs").auth.type is required: one of ${MCP_AUTH}.`,
+    ],
+    [
+      "remoteMcp() auth that is a string",
+      () => remoteMcp("docs", loose({ url, auth: "headers" })),
+      'remoteMcp("docs").auth must be an object.',
+    ],
+    [
+      "remoteMcp() auth that is null",
+      () => remoteMcp("docs", loose({ url, auth: null })),
+      'remoteMcp("docs").auth must be an object.',
+    ],
+    [
+      "remoteMcp() auth that is an array",
+      () => remoteMcp("docs", loose({ url, auth: [{ type: "headers", headers }] })),
+      'remoteMcp("docs").auth must be an object.',
+    ],
+    [
+      "a provider's remote MCP auth",
+      () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", auth: { headers } })),
+      `cloudflare("cf") requires auth.type is required: one of ${MCP_AUTH}.`,
+    ],
+    [
+      "a provider's narrowed auth",
+      () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "OAuth" } })),
+      `stripe("billing") requires auth.type to be one of ${STRIPE_AUTH}.`,
+    ],
+    [
+      "a provider's narrowed auth without a type",
+      () => stripe("billing", loose({ purpose: "Revenue", auth: {} })),
+      `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,
+    ],
+    [
+      "notion() surface",
+      () => notion("wiki", loose({ purpose: "Docs", surface: "MCP" })),
+      `notion("wiki") requires surface to be one of ${SURFACE}.`,
+    ],
+    [
+      "vercel() surface",
+      () => vercel("deploys", loose({ purpose: "Deploys", surface: "hosted" })),
+      `vercel("deploys") requires surface to be one of ${SURFACE}.`,
+    ],
+    [
+      "cloudflare() surface",
+      () => cloudflare("cf", loose({ purpose: "Ops", surface: null })),
+      `cloudflare("cf") requires surface to be one of ${SURFACE}.`,
+    ],
   ] as const)("INV-11: refuses %s with its path and valid values", (_, build, message) => {
     let error: unknown;
     try {
@@ -216,8 +366,9 @@ describe("discriminated factory options", () => {
         throw new Error(SECRET);
       },
     });
-    expect(() => remoteMcp("docs", loose({ url, auth })))
-      .toThrow('remoteMcp("docs").auth.type must be a plain value, not a getter or setter.');
+    expect(() => remoteMcp("docs", loose({ url, auth }))).toThrow(
+      'remoteMcp("docs").auth.type must be a plain value, not a getter or setter.',
+    );
     expect(reads).toBe(0);
   });
 
@@ -244,10 +395,18 @@ describe("factory options read as plain data", () => {
     });
     let error: unknown;
     try {
-      api("crm", loose({
-        tools: [tool],
-        oauth: { authorizationEndpoint: "https://a.example/a", tokenEndpoint: "https://a.example/t", clientId: "c", apiOrigins },
-      }));
+      api(
+        "crm",
+        loose({
+          tools: [tool],
+          oauth: {
+            authorizationEndpoint: "https://a.example/a",
+            tokenEndpoint: "https://a.example/t",
+            clientId: "c",
+            apiOrigins,
+          },
+        }),
+      );
     } catch (caught) {
       error = caught;
     }
@@ -258,19 +417,23 @@ describe("factory options read as plain data", () => {
 
   it("INV-11: builds from descriptors alone, so an options Proxy's get trap never runs", () => {
     let gets = 0;
-    const hostile = <T extends object>(target: T): T => new Proxy(target, {
-      get() {
-        gets += 1;
-        throw new Error(SECRET);
-      },
-      has() {
-        throw new Error(SECRET);
-      },
-    });
-    const connector = remoteMcp("docs", hostile({
-      url: "https://mcp.example/mcp",
-      auth: hostile({ type: "headers", headers: { "X-Key": "k" } }),
-    }));
+    const hostile = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get() {
+          gets += 1;
+          throw new Error(SECRET);
+        },
+        has() {
+          throw new Error(SECRET);
+        },
+      });
+    const connector = remoteMcp(
+      "docs",
+      hostile({
+        url: "https://mcp.example/mcp",
+        auth: hostile({ type: "headers", headers: { "X-Key": "k" } }),
+      }),
+    );
     expect(connector.describe?.().auth?.mode).toBe("headers");
     // A tool carries behaviour and passes through as given; see the tool suite.
     expect(() => api("crm", hostile({ tools: [tool] }))).not.toThrow();
@@ -282,12 +445,42 @@ describe("factory options read as plain data", () => {
     const revocable = Proxy.revocable({ url: "https://mcp.example/mcp" }, {});
     revocable.revoke();
     const cases = [
-      [() => remoteMcp("docs", loose(new Proxy({}, { ownKeys() { throw new Error(SECRET); } }))), 'remoteMcp("docs")'],
+      [
+        () =>
+          remoteMcp(
+            "docs",
+            loose(
+              new Proxy(
+                {},
+                {
+                  ownKeys() {
+                    throw new Error(SECRET);
+                  },
+                },
+              ),
+            ),
+          ),
+        'remoteMcp("docs")',
+      ],
       [() => remoteMcp("docs", loose(revocable.proxy)), 'remoteMcp("docs")'],
-      [() => remoteMcp("docs", loose({
-        url: "https://mcp.example/mcp",
-        auth: new Proxy({ type: "headers" }, { getOwnPropertyDescriptor() { throw new Error(SECRET); } }),
-      })), 'remoteMcp("docs").auth'],
+      [
+        () =>
+          remoteMcp(
+            "docs",
+            loose({
+              url: "https://mcp.example/mcp",
+              auth: new Proxy(
+                { type: "headers" },
+                {
+                  getOwnPropertyDescriptor() {
+                    throw new Error(SECRET);
+                  },
+                },
+              ),
+            }),
+          ),
+        'remoteMcp("docs").auth',
+      ],
     ] as const;
     for (const [build, path] of cases) {
       let error: unknown;
@@ -303,7 +496,11 @@ describe("factory options read as plain data", () => {
 });
 
 describe("factory options keep behaviour in place", () => {
-  const ctx = loose<ConnectorContext>({ storage: memoryStorage(), logger: console, baseUrl: "https://connecta.example" });
+  const ctx = loose<ConnectorContext>({
+    storage: memoryStorage(),
+    logger: console,
+    baseUrl: "https://connecta.example",
+  });
   const call = (connector: Connector, name = "read") => connector.callTool!(name, {}, ctx);
   const annotations = { readOnlyHint: true };
 
@@ -338,7 +535,12 @@ describe("factory options keep behaviour in place", () => {
   });
 
   it("INV-11: calls bound and arrow handlers as written", async () => {
-    const owner = { secret: 7, read(this: { secret: number }) { return this.secret; } };
+    const owner = {
+      secret: 7,
+      read(this: { secret: number }) {
+        return this.secret;
+      },
+    };
     const connector = api("crm", {
       tools: [
         { name: "read", description: "Read.", annotations, handler: owner.read.bind(owner) },
@@ -380,8 +582,9 @@ describe("factory options keep behaviour in place", () => {
   });
 
   it("INV-11: refuses a tool without a handler at construction", () => {
-    expect(() => api("crm", loose({ tools: [{ name: "read", description: "Read.", annotations }] })))
-      .toThrow('api() tool "crm.read" needs a handler function.');
+    expect(() => api("crm", loose({ tools: [{ name: "read", description: "Read.", annotations }] }))).toThrow(
+      'api() tool "crm.read" needs a handler function.',
+    );
   });
 });
 
@@ -402,20 +605,65 @@ describe("factory options refuse arrays and instances where plain data belongs",
   });
 
   it.each([
-    ["an array call admission", () => api("crm", loose({ tools: [tool], callAdmission: [{ rules: [] }] })),
-      'api("crm").callAdmission must be an object.'],
-    ["an array usage guide", () => api("crm", loose({ tools: [tool], usageGuide: [{ content: "x" }] })),
-      'api("crm").usageGuide must be an object.'],
-    ["an array admission rule budget", () => api("crm", loose({
-      tools: [tool], callAdmission: { rules: [{ budget: [] }] },
-    })), 'api("crm").callAdmission.rules[0].budget must be an object.'],
-    ["an array of headers", () => remoteMcp("docs", loose({
-      url: "https://mcp.example/mcp", auth: { type: "headers", headers: [["X-Key", "k"]] },
-    })), 'remoteMcp("docs").auth.headers must be an object.'],
-    ["a class instance as options", () => linear("tracker", loose(new (class { purpose = "Roadmap"; })())),
-      'linear("tracker") requires a plain object.'],
-    ["a class instance as branding", () => operatorUi(loose({ branding: new (class { productName = "Ops"; })() })),
-      "operatorUi().branding must be a plain object."],
+    [
+      "an array call admission",
+      () => api("crm", loose({ tools: [tool], callAdmission: [{ rules: [] }] })),
+      'api("crm").callAdmission must be an object.',
+    ],
+    [
+      "an array usage guide",
+      () => api("crm", loose({ tools: [tool], usageGuide: [{ content: "x" }] })),
+      'api("crm").usageGuide must be an object.',
+    ],
+    [
+      "an array admission rule budget",
+      () =>
+        api(
+          "crm",
+          loose({
+            tools: [tool],
+            callAdmission: { rules: [{ budget: [] }] },
+          }),
+        ),
+      'api("crm").callAdmission.rules[0].budget must be an object.',
+    ],
+    [
+      "an array of headers",
+      () =>
+        remoteMcp(
+          "docs",
+          loose({
+            url: "https://mcp.example/mcp",
+            auth: { type: "headers", headers: [["X-Key", "k"]] },
+          }),
+        ),
+      'remoteMcp("docs").auth.headers must be an object.',
+    ],
+    [
+      "a class instance as options",
+      () =>
+        linear(
+          "tracker",
+          loose(
+            new (class {
+              purpose = "Roadmap";
+            })(),
+          ),
+        ),
+      'linear("tracker") requires a plain object.',
+    ],
+    [
+      "a class instance as branding",
+      () =>
+        operatorUi(
+          loose({
+            branding: new (class {
+              productName = "Ops";
+            })(),
+          }),
+        ),
+      "operatorUi().branding must be a plain object.",
+    ],
   ] as const)("INV-11: refuses %s with its path", (_, build, message) => {
     expect(build).toThrow(message);
   });
@@ -437,16 +685,41 @@ describe("factory string maps read as plain data", () => {
   });
 
   it.each([
-    ["api() authorizationParams", (map: object) => api("crm", loose({ tools: [tool], oauth: { ...oauth, authorizationParams: map } })),
-      'api("crm").oauth.authorizationParams.prompt'],
-    ["api() tokenRequestHeaders", (map: object) => api("crm", loose({ tools: [tool], oauth: { ...oauth, tokenRequestHeaders: map } })),
-      'api("crm").oauth.tokenRequestHeaders.prompt'],
-    ["remoteMcp() headers", (map: object) => remoteMcp("docs", loose({
-      url: "https://mcp.example/mcp", auth: { type: "headers", headers: map },
-    })), 'remoteMcp("docs").auth.headers.prompt'],
-    ["stripe() headers", (map: object) => stripe("billing", loose({
-      purpose: "Revenue", mode: "sandbox", auth: { type: "headers", headers: map },
-    })), 'stripe("billing") requires auth.headers.prompt'],
+    [
+      "api() authorizationParams",
+      (map: object) => api("crm", loose({ tools: [tool], oauth: { ...oauth, authorizationParams: map } })),
+      'api("crm").oauth.authorizationParams.prompt',
+    ],
+    [
+      "api() tokenRequestHeaders",
+      (map: object) => api("crm", loose({ tools: [tool], oauth: { ...oauth, tokenRequestHeaders: map } })),
+      'api("crm").oauth.tokenRequestHeaders.prompt',
+    ],
+    [
+      "remoteMcp() headers",
+      (map: object) =>
+        remoteMcp(
+          "docs",
+          loose({
+            url: "https://mcp.example/mcp",
+            auth: { type: "headers", headers: map },
+          }),
+        ),
+      'remoteMcp("docs").auth.headers.prompt',
+    ],
+    [
+      "stripe() headers",
+      (map: object) =>
+        stripe(
+          "billing",
+          loose({
+            purpose: "Revenue",
+            mode: "sandbox",
+            auth: { type: "headers", headers: map },
+          }),
+        ),
+      'stripe("billing") requires auth.headers.prompt',
+    ],
   ] as const)("INV-11: refuses an accessor or a non-string in %s by path, unrun and unechoed", (_, build, path) => {
     const counter = { reads: 0 };
     let error: unknown;

@@ -22,11 +22,19 @@ const SKILL = {
 };
 
 function stub(id: string, extra: Partial<Connector> = {}): Connector {
-  return { id, async listTools() { return []; }, async callTool() { return []; }, ...extra };
+  return {
+    id,
+    async listTools() {
+      return [];
+    },
+    async callTool() {
+      return [];
+    },
+    ...extra,
+  };
 }
 
-const createStub = () =>
-  vi.fn((id: string, _options: object, _provider: ProviderContext) => stub(id));
+const createStub = () => vi.fn((id: string, _options: object, _provider: ProviderContext) => stub(id));
 
 function sample(create = createStub()) {
   return {
@@ -57,17 +65,30 @@ describe("defineProvider()", () => {
   it("INV-11: checks the declared shape before reading options and preserves behaviour objects", () => {
     const { factory, create } = sample();
     const purpose = vi.fn(() => "Sales");
-    expect(() => factory("crm", { get purpose() { return purpose(); }, regoin: "eu" } as never))
-      .toThrow('Unknown option: acmeCrm("crm").regoin.');
+    expect(() =>
+      factory("crm", {
+        get purpose() {
+          return purpose();
+        },
+        regoin: "eu",
+      } as never),
+    ).toThrow('Unknown option: acmeCrm("crm").regoin.');
     expect(purpose).not.toHaveBeenCalled();
-    expect(() => factory("crm", { get purpose() { return purpose(); } }))
-      .toThrow('acmeCrm("crm") requires purpose to be a plain value');
+    expect(() =>
+      factory("crm", {
+        get purpose() {
+          return purpose();
+        },
+      }),
+    ).toThrow('acmeCrm("crm") requires purpose to be a plain value');
     expect(purpose).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
 
     class Handler {
       #value = "receiver";
-      read() { return this.#value; }
+      read() {
+        return this.#value;
+      }
     }
     type Options = ProviderOptions & { handler: Handler; data: { region: string } };
     const handler = new Handler();
@@ -83,7 +104,10 @@ describe("defineProvider()", () => {
         ...keys("handler"),
         data: optionsOf<Options["data"]>()(keys("region")),
       }),
-      create(id, options) { received = options; return stub(id); },
+      create(id, options) {
+        received = options;
+        return stub(id);
+      },
     });
     custom("crm", { purpose: "Sales", handler, data });
     expect(received?.handler).toBe(handler);
@@ -96,10 +120,17 @@ describe("defineProvider()", () => {
 
   it("stamps the definition name onto describe() and keeps the connector review", () => {
     const classification: ToolClassification = Object.freeze({ tools: Object.freeze({ list: "read" }) });
-    const factory = sample(vi.fn((id: string) => stub(id, {
-      classification,
-      describe: () => ({ source: { kind: "remote-mcp", provider: "old" }, endpoint: { origin: "https://api.example", path: "/mcp" } }),
-    }))).factory;
+    const factory = sample(
+      vi.fn((id: string) =>
+        stub(id, {
+          classification,
+          describe: () => ({
+            source: { kind: "remote-mcp", provider: "old" },
+            endpoint: { origin: "https://api.example", path: "/mcp" },
+          }),
+        }),
+      ),
+    ).factory;
     const connector = factory("crm", { purpose: "Sales" });
     expect(connector.describe?.()).toEqual({
       source: { kind: "remote-mcp", provider: "acme-crm" },
@@ -131,11 +162,20 @@ describe("defineProvider()", () => {
           const base: Connector = {
             id,
             classification: provider.classify,
-            async listTools() { expect(this.id).toBe(id); return tools; },
-            async callTool(name) { calls.push(`${this.id}.${name}`); return "listed"; },
+            async listTools() {
+              expect(this.id).toBe(id);
+              return tools;
+            },
+            async callTool(name) {
+              calls.push(`${this.id}.${name}`);
+              return "listed";
+            },
             describe() {
               expect(this.id).toBe(id);
-              return { source: { kind: "remote-mcp", provider: "old" }, endpoint: { origin: "https://api.example", path: "/mcp" } };
+              return {
+                source: { kind: "remote-mcp", provider: "old" },
+                endpoint: { origin: "https://api.example", path: "/mcp" },
+              };
             },
           };
           class PrivateConnector implements Connector {
@@ -143,22 +183,34 @@ describe("defineProvider()", () => {
             #result = "listed";
             readonly id = id;
             readonly classification = provider.classify;
-            async listTools() { return this.#tools; }
-            async callTool(name: string) { calls.push(`${this.id}.${name}`); return this.#result; }
+            async listTools() {
+              return this.#tools;
+            }
+            async callTool(name: string) {
+              calls.push(`${this.id}.${name}`);
+              return this.#result;
+            }
             describe(): ConnectorDescription {
               expect(this.#result).toBe("listed");
               return base.describe!();
             }
           }
           switch (shape) {
-            case "class instance": created = new PrivateConnector(); break;
-            case "Object.create decorator": created = Object.create(base) as Connector; break;
-            case "frozen object": created = Object.freeze(base); break;
+            case "class instance":
+              created = new PrivateConnector();
+              break;
+            case "Object.create decorator":
+              created = Object.create(base) as Connector;
+              break;
+            case "frozen object":
+              created = Object.freeze(base);
+              break;
             case "non-configurable describe":
               Object.defineProperty(base, "describe", { configurable: false, writable: false });
               created = base;
               break;
-            default: created = base;
+            default:
+              created = base;
           }
           return created;
         },
@@ -274,13 +326,18 @@ describe("defineProvider()", () => {
 
   it("refuses a create that returns a connector under another id", () => {
     const { factory } = sample(vi.fn(() => stub("other")));
-    expect(() => factory("crm", { purpose: "Sales" })).toThrow(
-      'create() must return a connector with id "crm"',
-    );
+    expect(() => factory("crm", { purpose: "Sales" })).toThrow('create() must return a connector with id "crm"');
   });
 
   it("INV-11: rejects a malformed definition when the provider module loads", () => {
-    const base = { name: "acme", title: "Acme", kind: "mcp" as const, skill: SKILL, options: optionsOf<ProviderOptions>()(PROVIDER_COMMON), create: stub };
+    const base = {
+      name: "acme",
+      title: "Acme",
+      kind: "mcp" as const,
+      skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+      create: stub,
+    };
     const cases: Array<[object, string]> = [
       [{ name: "Acme" }, "name must be lowercase words"],
       [{ name: "acme_crm" }, "name must be lowercase words"],
@@ -349,10 +406,18 @@ describe("defineProvider()", () => {
     const writable = classify as unknown as {
       tools: Record<string, string | { verdict: string }>;
     };
-    expect(() => { (writable.tools.save as { verdict: string }).verdict = "read"; }).toThrow(TypeError);
-    expect(() => { writable.tools.list = "write"; }).toThrow(TypeError);
-    expect(() => { writable.tools.purge = "read"; }).toThrow(TypeError);
-    expect(() => { writable.tools = {}; }).toThrow(TypeError);
+    expect(() => {
+      (writable.tools.save as { verdict: string }).verdict = "read";
+    }).toThrow(TypeError);
+    expect(() => {
+      writable.tools.list = "write";
+    }).toThrow(TypeError);
+    expect(() => {
+      writable.tools.purge = "read";
+    }).toThrow(TypeError);
+    expect(() => {
+      writable.tools = {};
+    }).toThrow(TypeError);
     factory("acme", { purpose: "Ops" });
     expect(create.mock.calls[0]?.[2]?.classify?.tools).toEqual(classify.tools);
   });
@@ -375,10 +440,10 @@ describe("defineProvider()", () => {
     expect(() => {
       mutable.definition = { ...definition, classify: { tools: { save: "read" } } };
     }).toThrow(TypeError);
-    expect(() => { delete mutable.definition; }).toThrow(TypeError);
-    expect(() =>
-      Object.defineProperty(factory, "definition", { value: { ...definition } }),
-    ).toThrow(TypeError);
+    expect(() => {
+      delete mutable.definition;
+    }).toThrow(TypeError);
+    expect(() => Object.defineProperty(factory, "definition", { value: { ...definition } })).toThrow(TypeError);
     expect(factory.definition).toBe(definition);
     expect(factory.definition.classify?.tools.save).toBe("destructive");
     factory("acme", { purpose: "Ops" });
@@ -403,16 +468,12 @@ function served(classify?: ToolClassification) {
       },
       async ({ name }) => ({ content: [{ type: "text", text: `made ${name}` }] }),
     );
-    mcp.registerTool(
-      "drop_thing",
-      { description: "Drop a thing", annotations: { readOnlyHint: true } },
-      async () => ({ content: [{ type: "text", text: "dropped" }] }),
-    );
-    mcp.registerTool(
-      "peek_new",
-      { description: "Unreviewed", annotations: { readOnlyHint: true } },
-      async () => ({ content: [] }),
-    );
+    mcp.registerTool("drop_thing", { description: "Drop a thing", annotations: { readOnlyHint: true } }, async () => ({
+      content: [{ type: "text", text: "dropped" }],
+    }));
+    mcp.registerTool("peek_new", { description: "Unreviewed", annotations: { readOnlyHint: true } }, async () => ({
+      content: [],
+    }));
     mcp.registerTool("poke_new", { description: "Unreviewed and silent" }, async () => ({
       content: [],
     }));
@@ -547,12 +608,12 @@ describe("remoteMcp({ classify })", () => {
       [{ tools: { list: { verdict: "read", schemaDigest: "md5:1" } } }, "schemaDigest must be"],
     ];
     for (const [classify, message] of cases) {
-      expect(() =>
-        remoteMcp("things", { url: "https://things.example/mcp", classify: classify as never }),
-      ).toThrow(`[connecta] connector "things" classify`);
-      expect(() =>
-        remoteMcp("things", { url: "https://things.example/mcp", classify: classify as never }),
-      ).toThrow(message);
+      expect(() => remoteMcp("things", { url: "https://things.example/mcp", classify: classify as never })).toThrow(
+        `[connecta] connector "things" classify`,
+      );
+      expect(() => remoteMcp("things", { url: "https://things.example/mcp", classify: classify as never })).toThrow(
+        message,
+      );
     }
   });
 });

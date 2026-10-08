@@ -1,15 +1,9 @@
 import { recordToolActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import {
-  buildSandboxProviders,
-  createExecuteTool,
-} from "../src/execute.js";
+import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
 import { ConnectorCallError } from "../src/errors.js";
-import {
-  AdmissionController,
-  withExecutorAdmission,
-} from "../src/executor-admission.js";
+import { AdmissionController, withExecutorAdmission } from "../src/executor-admission.js";
 import {
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
@@ -20,10 +14,7 @@ import { InvocationFailure } from "../src/invocation.js";
 import { unwrapMcpResult } from "../src/mcp-result.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
-import type {
-  ActivityRequestContext,
-  ToolCallActivityEvent,
-} from "../src/activity.js";
+import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import type {
   AdmittingExecutor,
   Connector,
@@ -32,13 +23,7 @@ import type {
   ExecutorLease,
   ExecutorProvider,
 } from "../src/types.js";
-import { required,
-  brokenConnector,
-  calcConnector,
-  makeRegistry,
-  remoteConnector,
-  silentLogger,
-} from "./helpers.js";
+import { required, brokenConnector, calcConnector, makeRegistry, remoteConnector, silentLogger } from "./helpers.js";
 import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
@@ -93,10 +78,9 @@ function callCanonical(
   toolName: string,
   args: unknown = {},
 ): Promise<unknown> {
-  return required(connectaProvider(providers).fns.call)(
-    `${connectorId}.${toolName}`,
-    args,
-  ).then((value) => (value as { data: unknown }).data);
+  return required(connectaProvider(providers).fns.call)(`${connectorId}.${toolName}`, args).then(
+    (value) => (value as { data: unknown }).data,
+  );
 }
 
 describe("execute_code intake", () => {
@@ -173,14 +157,12 @@ describe("unwrapMcpResult", () => {
 
 describe("buildSandboxProviders", () => {
   it("keeps connector guide identifiers on every flat search and describe shape", async () => {
-    const connector = (
-      id: string,
-      usageGuide?: Connector["usageGuide"],
-    ): Connector => (connectorWith({
-      id,
-      kind: "api",
-      ...(usageGuide ? { usageGuide } : {}),
-      tools: [
+    const connector = (id: string, usageGuide?: Connector["usageGuide"]): Connector =>
+      connectorWith({
+        id,
+        kind: "api",
+        ...(usageGuide ? { usageGuide } : {}),
+        tools: [
           {
             name: "find_alpha",
             description: "Find alpha records",
@@ -192,13 +174,10 @@ describe("buildSandboxProviders", () => {
             annotations: { readOnlyHint: true },
           },
         ],
-      call: async () => ({}),
-    }));
+        call: async () => ({}),
+      });
     const providers = await buildSandboxProviders(
-      makeRegistry([
-        connector("guided", "# Guided usage"),
-        connector("plain"),
-      ]),
+      makeRegistry([connector("guided", "# Guided usage"), connector("plain")]),
       BASE,
       silentLogger,
     );
@@ -207,20 +186,16 @@ describe("buildSandboxProviders", () => {
     const browse = (await search({ limit: 100 })) as {
       tools: Array<{ address: string; guide?: string; guideSummary?: string }>;
     };
+    expect(browse.tools.filter((tool) => tool.address.startsWith("guided.")).map((tool) => tool.guide)).toEqual([
+      "connector:guided",
+      "connector:guided",
+    ]);
+    expect(browse.tools.filter((tool) => tool.address.startsWith("guided.")).map((tool) => tool.guideSummary)).toEqual([
+      "Guided usage",
+      "Guided usage",
+    ]);
     expect(
-      browse.tools
-        .filter((tool) => tool.address.startsWith("guided."))
-        .map((tool) => tool.guide),
-    ).toEqual(["connector:guided", "connector:guided"]);
-    expect(
-      browse.tools
-        .filter((tool) => tool.address.startsWith("guided."))
-        .map((tool) => tool.guideSummary),
-    ).toEqual(["Guided usage", "Guided usage"]);
-    expect(
-      browse.tools
-        .filter((tool) => tool.address.startsWith("plain."))
-        .every((tool) => !Object.hasOwn(tool, "guide")),
+      browse.tools.filter((tool) => tool.address.startsWith("plain.")).every((tool) => !Object.hasOwn(tool, "guide")),
     ).toBe(true);
 
     const firstPage = (await search({
@@ -257,20 +232,14 @@ describe("buildSandboxProviders", () => {
     })) as { tools: unknown[] };
     expect(noMatch.tools).toEqual([]);
 
-    const described = (await required(
-      connectaProvider(providers).fns.describe,
-    )({
+    const described = (await required(connectaProvider(providers).fns.describe)({
       addresses: ["guided.find_alpha", "plain.find_alpha"],
     })) as { tools: Array<{ address: string; guide?: string }> };
     expect(required(described.tools[0]).guide).toBe("connector:guided");
     expect(described.tools[1]).not.toHaveProperty("guide");
 
     const searchBytes = async (usageGuide?: Connector["usageGuide"]) => {
-      const sized = await buildSandboxProviders(
-        makeRegistry([connector("sized", usageGuide)]),
-        BASE,
-        silentLogger,
-      );
+      const sized = await buildSandboxProviders(makeRegistry([connector("sized", usageGuide)]), BASE, silentLogger);
       return JSON.stringify(
         await required(connectaProvider(sized).fns.search)({
           connector: "sized",
@@ -280,51 +249,35 @@ describe("buildSandboxProviders", () => {
     };
     const guidedBytes = await searchBytes("# Sized usage");
     const plainBytes = await searchBytes();
-    expect(guidedBytes - plainBytes).toBe(
-      2 *
-        ',"guide":"connector:sized","guideSummary":"Sized usage"'.length,
-    );
+    expect(guidedBytes - plainBytes).toBe(2 * ',"guide":"connector:sized","guideSummary":"Sized usage"'.length);
     expect(guidedBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
   });
 
   it("touches no catalog at setup and only the requested connector at call time", async () => {
     const catalogCalls = new Map<string, number>();
-    const counted = (connector: Connector): Connector => connectorWith({
-      ...connector,
-      call: connector.callTool,
-      tools: async (ctx) => {
-        catalogCalls.set(
-          connector.id,
-          (catalogCalls.get(connector.id) ?? 0) + 1,
-        );
-        return connector.listTools(ctx);
-      },
-    });
-    const registry = makeRegistry(
-      [calcConnector, remoteConnector, brokenConnector].map(counted),
-    );
+    const counted = (connector: Connector): Connector =>
+      connectorWith({
+        ...connector,
+        call: connector.callTool,
+        tools: async (ctx) => {
+          catalogCalls.set(connector.id, (catalogCalls.get(connector.id) ?? 0) + 1);
+          return connector.listTools(ctx);
+        },
+      });
+    const registry = makeRegistry([calcConnector, remoteConnector, brokenConnector].map(counted));
     const observed = activityRecorder("lazy-request");
-    const providers = await buildSandboxProviders(
-      registry,
-      BASE,
-      silentLogger,
-      observed.activity,
-    );
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger, observed.activity);
     expect(providers.map((provider) => provider.name)).toEqual(["connecta"]);
     expect(catalogCalls.size).toBe(0);
     expect(required(providers[0]).prelude).not.toContain('globalThis["calc"]');
     expect(required(providers[0]).prelude).not.toContain('globalThis["broken"]');
 
-    expect(await callCanonical(providers, "calc", "add", { a: 2, b: 3 })).toEqual(
-      { sum: 5 },
-    );
+    expect(await callCanonical(providers, "calc", "add", { a: 2, b: 3 })).toEqual({ sum: 5 });
     expect(catalogCalls).toEqual(new Map([["calc", 1]]));
     expect(observed.events.some((event) => event.connectorId === "broken")).toBe(false);
 
     // MCP results are still unwrapped to plain values for sandbox code.
-    expect(
-      await callCanonical(providers, "remote", "echo", { text: "hi" }),
-    ).toBe("echo:hi");
+    expect(await callCanonical(providers, "remote", "echo", { text: "hi" })).toBe("echo:hi");
     expect(catalogCalls).toEqual(
       new Map([
         ["calc", 1],
@@ -334,7 +287,8 @@ describe("buildSandboxProviders", () => {
 
     const connecta = connectaProvider(providers);
     expect(await required(connecta.fns.call)("calc.add", { a: 1, b: 1 })).toEqual({
-      data: { sum: 2 }, format: "json",
+      data: { sum: 2 },
+      format: "json",
     });
     const failure = await required(connecta.fns.call)("nope.add", {}).then(
       () => undefined,
@@ -346,21 +300,16 @@ describe("buildSandboxProviders", () => {
   it("records health only after a broken connector is exercised", async () => {
     const registry = makeRegistry([calcConnector, brokenConnector]);
     const observed = activityRecorder("broken-request");
-    const providers = await buildSandboxProviders(
-      registry,
-      BASE,
-      silentLogger,
-      observed.activity,
-    );
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger, observed.activity);
     expect(observed.events).toHaveLength(0);
-    await expect(
-      callCanonical(providers, "broken", "anything"),
-    ).rejects.toThrow("boom");
-    expect(observed.events).toContainEqual(expect.objectContaining({
-      connectorId: "broken",
-      outcome: "error",
-      errorCode: "catalog_lookup_failed",
-    }));
+    await expect(callCanonical(providers, "broken", "anything")).rejects.toThrow("boom");
+    expect(observed.events).toContainEqual(
+      expect.objectContaining({
+        connectorId: "broken",
+        outcome: "error",
+        errorCode: "catalog_lookup_failed",
+      }),
+    );
     // A catalog that loaded is not a success signal of its own.
     expect(observed.events.some((event) => event.connectorId === "calc")).toBe(false);
   });
@@ -370,21 +319,13 @@ describe("buildSandboxProviders", () => {
       id: "expired",
       kind: "mcp",
       tools: async () => {
-        throw new ConnectorCallError(
-          "auth_required",
-          'Connector "expired" requires authorization',
-        );
+        throw new ConnectorCallError("auth_required", 'Connector "expired" requires authorization');
       },
       call: async () => null,
     });
     const registry = makeRegistry([expired]);
     const observed = activityRecorder("expired-request");
-    const providers = await buildSandboxProviders(
-      registry,
-      BASE,
-      silentLogger,
-      observed.activity,
-    );
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger, observed.activity);
     const error = await callCanonical(providers, "expired", "read").then(
       () => undefined,
       (cause: unknown) => cause as InvocationFailure,
@@ -406,24 +347,20 @@ describe("buildSandboxProviders", () => {
       id: "danger",
       kind: "api",
       tools: [
-          {
-            name: "erase",
-            annotations: {
-              destructiveHint: true,
-              readOnlyHint: false,
-            },
+        {
+          name: "erase",
+          annotations: {
+            destructiveHint: true,
+            readOnlyHint: false,
           },
-        ],
+        },
+      ],
       call: async () => {
         calls++;
         return { erased: true };
       },
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([dangerous]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([dangerous]), BASE, silentLogger);
     const connecta = connectaProvider(providers);
     const directError = await required(connecta.fns.call)("danger.erase", {}).then(
       () => undefined,
@@ -447,46 +384,32 @@ describe("buildSandboxProviders", () => {
       id: "ambiguous",
       kind: "api",
       tools: [
-          { name: "missing_annotations" },
-          {
-            name: "contradictory",
-            annotations: {
-              readOnlyHint: true,
-              destructiveHint: true,
-            },
+        { name: "missing_annotations" },
+        {
+          name: "contradictory",
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: true,
           },
-        ],
+        },
+      ],
       call: async () => {
         calls++;
         return "unsafe";
       },
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([ambiguous]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([ambiguous]), BASE, silentLogger);
     const connecta = connectaProvider(providers);
-    await expect(
-      required(connecta.fns.call)("ambiguous.missing_annotations", {}),
-    ).rejects.toThrow("is a write");
-    await expect(
-      required(connecta.fns.call)("ambiguous.contradictory", {}),
-    ).rejects.toThrow("is a write");
+    await expect(required(connecta.fns.call)("ambiguous.missing_annotations", {})).rejects.toThrow("is a write");
+    await expect(required(connecta.fns.call)("ambiguous.contradictory", {})).rejects.toThrow("is a write");
     expect(calls).toBe(0);
   });
 
   it("fails unknown connector and tool lookups canonically", async () => {
-    const providers = await buildSandboxProviders(
-      makeRegistry([calcConnector]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
     // A program cannot call search_tools, so both canonical misses route
     // recovery through the function it can actually reach.
-    await expect(
-      callCanonical(providers, "missing", "read"),
-    ).rejects.toMatchObject({
+    await expect(callCanonical(providers, "missing", "read")).rejects.toMatchObject({
       code: "unknown_address",
       nextAction: {
         function: "connecta.search",
@@ -494,9 +417,7 @@ describe("buildSandboxProviders", () => {
         purpose: "Find the configured canonical address before retrying.",
       },
     });
-    await expect(
-      callCanonical(providers, "calc", "missing"),
-    ).rejects.toMatchObject({
+    await expect(callCanonical(providers, "calc", "missing")).rejects.toMatchObject({
       code: "unknown_tool",
       nextAction: {
         function: "connecta.search",
@@ -511,11 +432,7 @@ describe("buildSandboxProviders", () => {
   });
 
   it("routes connecta.call address failures to connecta.search", async () => {
-    const providers = await buildSandboxProviders(
-      makeRegistry([calcConnector]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
     const call = required(connectaProvider(providers).fns.call);
     await expect(call("ghost.read_items", {})).rejects.toMatchObject({
       code: "unknown_address",
@@ -536,9 +453,7 @@ describe("buildSandboxProviders", () => {
       },
     });
     // The route a program cannot take never appears on the in-program surface.
-    await expect(call("calc.missing_sum", {})).rejects.not.toHaveProperty(
-      "nextAction.tool",
-    );
+    await expect(call("calc.missing_sum", {})).rejects.not.toHaveProperty("nextAction.tool");
   });
 
   it.each(["console", "arguments", "result", "undefined"])(
@@ -561,16 +476,14 @@ describe("buildSandboxProviders", () => {
       id: "proto",
       kind: "api",
       tools: [
-          { name: "hasOwnProperty", annotations: { readOnlyHint: true } },
-          { name: "toString", annotations: { readOnlyHint: true } },
-        ],
+        { name: "hasOwnProperty", annotations: { readOnlyHint: true } },
+        { name: "toString", annotations: { readOnlyHint: true } },
+      ],
       call: async (name) => ({ called: name }),
     });
     const registry = makeRegistry([proto]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    expect(
-      await callCanonical(providers, "proto", "hasOwnProperty"),
-    ).toEqual({ called: "hasOwnProperty" });
+    expect(await callCanonical(providers, "proto", "hasOwnProperty")).toEqual({ called: "hasOwnProperty" });
     expect(await callCanonical(providers, "proto", "toString")).toEqual({
       called: "toString",
     });
@@ -579,28 +492,45 @@ describe("buildSandboxProviders", () => {
   it("keeps account titles in program discovery without granting or calling a capability", async () => {
     let calls = 0;
     const tool = { name: "read", description: "Read a payment", annotations: { readOnlyHint: true } };
-    const providers = await buildSandboxProviders(makeRegistry([
-      connectorWith({ id: "a", title: "Android sandbox", tools: [tool], call: async () => { calls++; } }),
-      connectorWith({ id: "b", title: "Android production", tools: [tool], call: async () => { calls++; } }),
-      connectorWith({ id: "long", title: "日本語".repeat(80), tools: [tool] }),
-    ]), BASE, silentLogger);
-    const page = await required(connectaProvider(providers).fns.search)({ query: "read payment", safety: "readOnly" }) as {
+    const providers = await buildSandboxProviders(
+      makeRegistry([
+        connectorWith({
+          id: "a",
+          title: "Android sandbox",
+          tools: [tool],
+          call: async () => {
+            calls++;
+          },
+        }),
+        connectorWith({
+          id: "b",
+          title: "Android production",
+          tools: [tool],
+          call: async () => {
+            calls++;
+          },
+        }),
+        connectorWith({ id: "long", title: "日本語".repeat(80), tools: [tool] }),
+      ]),
+      BASE,
+      silentLogger,
+    );
+    const page = (await required(connectaProvider(providers).fns.search)({
+      query: "read payment",
+      safety: "readOnly",
+    })) as {
       tools: Array<{ address: string; connectorTitle: string }>;
     };
-    expect(page.tools.find(tool => tool.address === "a.read")?.connectorTitle).toBe("Android sandbox");
-    expect(page.tools.find(tool => tool.address === "b.read")?.connectorTitle).toBe("Android production");
-    const title = required(page.tools.find(tool => tool.address === "long.read")).connectorTitle;
+    expect(page.tools.find((tool) => tool.address === "a.read")?.connectorTitle).toBe("Android sandbox");
+    expect(page.tools.find((tool) => tool.address === "b.read")?.connectorTitle).toBe("Android production");
+    const title = required(page.tools.find((tool) => tool.address === "long.read")).connectorTitle;
     expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(120);
     expect(title).not.toContain("\uFFFD");
     expect(calls).toBe(0);
   });
 
   it("exposes tool-agnostic search and describe catalog helpers", async () => {
-    const providers = await buildSandboxProviders(
-      makeRegistry([calcConnector, remoteConnector]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector, remoteConnector]), BASE, silentLogger);
     const connecta = providers.find((p) => p.name === "connecta")!;
     const search = (await required(connecta.fns.search)({
       query: "add",
@@ -654,9 +584,7 @@ describe("buildSandboxProviders", () => {
       truncated: true,
       guidance: expect.stringContaining("no searchable lexical terms"),
     });
-    expect([
-      ...required(required(unicodeOnly.queryAnalysis).unmatchedTerms[0]),
-    ]).toHaveLength(64);
+    expect([...required(required(unicodeOnly.queryAnalysis).unmatchedTerms[0])]).toHaveLength(64);
 
     const mixedUnicode = (await required(connecta.fns.search)({
       query: `${"界".repeat(80)} add`,
@@ -667,9 +595,7 @@ describe("buildSandboxProviders", () => {
     expect(mixedUnicode.tools[0]).toMatchObject({
       address: "calc.add",
     });
-    expect(required(mixedUnicode.tools[0])).not.toHaveProperty(
-      "queryCoverage",
-    );
+    expect(required(mixedUnicode.tools[0])).not.toHaveProperty("queryCoverage");
     expect(required(mixedUnicode.tools[0])).not.toHaveProperty("score");
     // JSON schemas and their key metadata are the program default.
     expect(required(partial.tools[0])).toHaveProperty("inputKeys", ["a", "b"]);
@@ -678,18 +604,13 @@ describe("buildSandboxProviders", () => {
       addresses: ["calc.add", "remote.echo"],
       format: "compact",
     })) as { tools: Array<{ address: string; inputSchema: string }> };
-    expect(described.tools.map((tool) => tool.address)).toEqual([
-      "calc.add",
-      "remote.echo",
-    ]);
+    expect(described.tools.map((tool) => tool.address)).toEqual(["calc.add", "remote.echo"]);
     // Omitted format hands back the raw JSON Schema; compact is explicit.
     const raw = (await required(connecta.fns.describe)({
       addresses: ["calc.add"],
     })) as { tools: Array<{ inputSchema: { properties: { a: { type: string } } } }> };
     expect(required(raw.tools[0]).inputSchema.properties.a.type).toBe("number");
-    expect(required(described.tools[0]).inputSchema).toBe(
-      "{ a: number, b: number }",
-    );
+    expect(required(described.tools[0]).inputSchema).toBe("{ a: number, b: number }");
 
     // An address that resolves to nothing is one entry's error, not a throw
     // that costs the caller every other description it asked for.
@@ -702,16 +623,13 @@ describe("buildSandboxProviders", () => {
     const describedOne = (await required(connecta.fns.describe)({
       address: "calc.add",
     })) as { tools: Array<{ address: string }> };
-    expect(describedOne.tools.map((tool) => tool.address)).toEqual([
-      "calc.add",
-    ]);
+    expect(describedOne.tools.map((tool) => tool.address)).toEqual(["calc.add"]);
     await expect(
       required(connecta.fns.describe)({
         address: "calc.add",
         addresses: ["remote.echo"],
       }),
     ).rejects.toThrow("either address or addresses, not both");
-
   });
 
   it("lets programs discover only calls the sandbox can execute", async () => {
@@ -730,11 +648,7 @@ describe("buildSandboxProviders", () => {
       tools: [],
       call: async (name) => name,
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([mixed]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([mixed]), BASE, silentLogger);
     const connecta = connectaProvider(providers);
     const page = (await required(connecta.fns.search)({
       safety: "readOnly",
@@ -742,9 +656,10 @@ describe("buildSandboxProviders", () => {
     })) as { tools: Array<{ address: string }> };
 
     expect(page.tools.map((tool) => tool.address)).toEqual(["mixed.read"]);
-    expect(
-      await required(connecta.fns.call)(required(page.tools[0]).address, {}),
-    ).toEqual({ data: "read", format: "text" });
+    expect(await required(connecta.fns.call)(required(page.tools[0]).address, {})).toEqual({
+      data: "read",
+      format: "text",
+    });
   });
 
   it("resolves schema key metadata the way the compact schema renders", async () => {
@@ -757,60 +672,56 @@ describe("buildSandboxProviders", () => {
       kind: "api",
       description: "Schema shapes",
       tools: [
-          {
-            name: "referenced",
-            description: "Input behind a $ref",
-            annotations: { readOnlyHint: true },
-            inputSchema: {
-              $defs: {
-                GetRun: {
-                  type: "object",
-                  properties: { runId: { type: "integer" } },
-                  required: ["runId"],
-                },
+        {
+          name: "referenced",
+          description: "Input behind a $ref",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            $defs: {
+              GetRun: {
+                type: "object",
+                properties: { runId: { type: "integer" } },
+                required: ["runId"],
               },
-              $ref: "#/$defs/GetRun",
             },
-            outputSchema: {
-              allOf: [
-                {
-                  type: "object",
-                  properties: { runId: { type: "integer" } },
-                  required: ["runId"],
-                },
-                {
-                  type: "object",
-                  properties: { failedJobId: { type: "integer" } },
-                },
-              ],
-            },
+            $ref: "#/$defs/GetRun",
           },
-          {
-            name: "union",
-            description: "Input that is a union, not an object",
-            annotations: { readOnlyHint: true },
-            inputSchema: {
-              oneOf: [
-                { type: "object", properties: { a: { type: "string" } } },
-                { type: "object", properties: { b: { type: "string" } } },
-              ],
-            },
+          outputSchema: {
+            allOf: [
+              {
+                type: "object",
+                properties: { runId: { type: "integer" } },
+                required: ["runId"],
+              },
+              {
+                type: "object",
+                properties: { failedJobId: { type: "integer" } },
+              },
+            ],
           },
-          {
-            name: "argless",
-            description: "A tool that genuinely takes no fields",
-            annotations: { readOnlyHint: true },
-            inputSchema: { type: "object" },
-            outputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "union",
+          description: "Input that is a union, not an object",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            oneOf: [
+              { type: "object", properties: { a: { type: "string" } } },
+              { type: "object", properties: { b: { type: "string" } } },
+            ],
           },
-        ],
+        },
+        {
+          name: "argless",
+          description: "A tool that genuinely takes no fields",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object", properties: {} },
+        },
+      ],
       call: async () => ({}),
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([shapes]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([shapes]), BASE, silentLogger);
     const connecta = connectaProvider(providers);
     const byName = async (query: string, args: Record<string, unknown> = {}) => {
       const page = (await required(connecta.fns.search)({
@@ -818,9 +729,7 @@ describe("buildSandboxProviders", () => {
         includeSchemas: "compact",
         ...args,
       })) as { tools: Array<Record<string, unknown>> };
-      return Object.fromEntries(
-        page.tools.map((tool) => [tool.name as string, tool]),
-      );
+      return Object.fromEntries(page.tools.map((tool) => [tool.name as string, tool]));
     };
 
     const tools = await byName("referenced union argless");
@@ -828,9 +737,7 @@ describe("buildSandboxProviders", () => {
     expect(referenced.inputSchema).toBe("{ runId: integer }");
     expect(referenced.inputKeys).toEqual(["runId"]);
     expect(referenced.requiredInputKeys).toEqual(["runId"]);
-    expect(referenced.outputSchema).toBe(
-      "{ runId: integer } & { failedJobId?: integer }",
-    );
+    expect(referenced.outputSchema).toBe("{ runId: integer } & { failedJobId?: integer }");
     expect(referenced.outputKeys).toEqual(["runId", "failedJobId"]);
 
     // A union has no single key list. Absent says "read the schema"; [] would
@@ -855,9 +762,8 @@ describe("buildSandboxProviders", () => {
   it("bounds in-sandbox discovery fan-out", async () => {
     let active = 0;
     let maxActive = 0;
-    const connectors = Array.from(
-      { length: 7 },
-      (_, index): Connector => (connectorWith({
+    const connectors = Array.from({ length: 7 }, (_, index): Connector =>
+      connectorWith({
         id: `sandbox_${index}`,
         kind: "mcp",
         tools: async () => {
@@ -868,15 +774,11 @@ describe("buildSandboxProviders", () => {
           return [{ name: `read_${index}`, description: "Read sandbox data" }];
         },
         call: async () => null,
-      })),
+      }),
     );
-    const providers = await buildSandboxProviders(
-      makeRegistry(connectors),
-      BASE,
-      silentLogger,
-      undefined,
-      { discoveryConcurrency: 2 },
-    );
+    const providers = await buildSandboxProviders(makeRegistry(connectors), BASE, silentLogger, undefined, {
+      discoveryConcurrency: 2,
+    });
     const result = (await required(connectaProvider(providers).fns.search)({
       query: "sandbox",
       limit: 20,
@@ -898,26 +800,17 @@ describe("buildSandboxProviders", () => {
       tools: [],
       call: async () => null,
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([calcConnector, verbose]),
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector, verbose]), BASE, silentLogger);
     const connecta = providers.find((p) => p.name === "connecta")!;
 
-    await expect(
-      required(connecta.fns.search)({ limit: MAX_SEARCH_LIMIT + 1 }),
-    ).rejects.toThrow(`through ${MAX_SEARCH_LIMIT}`);
+    await expect(required(connecta.fns.search)({ limit: MAX_SEARCH_LIMIT + 1 })).rejects.toThrow(
+      `through ${MAX_SEARCH_LIMIT}`,
+    );
     await expect(
       required(connecta.fns.describe)({
-        addresses: Array.from(
-          { length: MAX_DESCRIBE_ADDRESSES + 1 },
-          () => "calc.add",
-        ),
+        addresses: Array.from({ length: MAX_DESCRIBE_ADDRESSES + 1 }, () => "calc.add"),
       }),
-    ).rejects.toThrow(
-      `at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across connecta.describe calls.`,
-    );
+    ).rejects.toThrow(`at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across connecta.describe calls.`);
     await expect(
       required(connecta.fns.search)({
         connector: "verbose",
@@ -925,9 +818,7 @@ describe("buildSandboxProviders", () => {
       }),
     ).rejects.toMatchObject({
       code: "result_too_large",
-      message: expect.stringContaining(
-        `${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`,
-      ),
+      message: expect.stringContaining(`${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`),
     });
     // The same ceiling applies to a full JSON schema, which is the other way a
     // single description can outgrow the discovery budget.
@@ -958,9 +849,7 @@ describe("buildSandboxProviders", () => {
       }),
     ).rejects.toMatchObject({
       code: "result_too_large",
-      message: expect.stringContaining(
-        `${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`,
-      ),
+      message: expect.stringContaining(`${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`),
     });
   });
 
@@ -971,13 +860,9 @@ describe("buildSandboxProviders", () => {
       tools: async () => new Promise<never>(() => {}),
       call: async () => null,
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([hanging]),
-      BASE,
-      silentLogger,
-      undefined,
-      { probeTimeoutMs: 25 },
-    );
+    const providers = await buildSandboxProviders(makeRegistry([hanging]), BASE, silentLogger, undefined, {
+      probeTimeoutMs: 25,
+    });
     const started = Date.now();
     const result = (await required(connectaProvider(providers).fns.describe)({
       addresses: ["hang.read"],
@@ -987,9 +872,7 @@ describe("buildSandboxProviders", () => {
     // 30s default instead of resolving in milliseconds.
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(required(result.tools[0]).address).toBe("hang.read");
-    expect(required(result.tools[0]).error).toContain(
-      'connecta.describe probe of "hang" timed out',
-    );
+    expect(required(result.tools[0]).error).toContain('connecta.describe probe of "hang" timed out');
     expect(required(result.tools[0]).error).not.toContain("describe_tools");
   });
 
@@ -1005,48 +888,63 @@ describe("buildSandboxProviders", () => {
       },
     });
     let terminal: InvocationFailure | undefined;
-    const providers = await buildSandboxProviders(
-      makeRegistry([safe]),
-      BASE,
-      silentLogger,
-      undefined,
-      { maxHostCalls: 2, onHostCallBudgetExceeded: (failure) => { terminal = failure; } },
-    );
+    const providers = await buildSandboxProviders(makeRegistry([safe]), BASE, silentLogger, undefined, {
+      maxHostCalls: 2,
+      onHostCallBudgetExceeded: (failure) => {
+        terminal = failure;
+      },
+    });
     await expect(callCanonical(providers, "safe", "read")).resolves.toBe(1);
     await expect(callCanonical(providers, "safe", "read")).resolves.toBe(2);
     let settled = false;
     void callCanonical(providers, "safe", "read").then(
-      () => { settled = true; }, () => { settled = true; },
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
     );
     await Promise.resolve();
     expect(settled).toBe(false);
     expect(terminal?.details.code).toBe("budget_exceeded");
     expect(calls).toBe(2);
-
   });
 
-  it.each(["search", "describe"] as const)("counts %s against the shared host-call budget (L4, M7)", async (operation) => {
-    const terminals: InvocationFailure[] = [];
-    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger, undefined, {
-      onHostCallBudgetExceeded: (failure) => { terminals.push(failure); },
-    });
-    const fns = connectaProvider(providers).fns;
-    for (let i = 0; i < 20; i++) {
-      await required(fns[operation])(operation === "search" ? {} : { address: "calc.add" });
-    }
-    for (const attempt of [
-      () => required(fns.call)("calc.add", { a: 1, b: 2 }),
-      () => required(fns.search)({}),
-      () => required(fns.describe)({ address: "calc.add" }),
-    ]) {
-      let settled = false;
-      void attempt().then(() => { settled = true; }, () => { settled = true; });
-      await Promise.resolve();
-      expect(settled).toBe(false);
-    }
-    expect(terminals).toHaveLength(1);
-    expect(terminals[0]?.details.code).toBe("budget_exceeded");
-  });
+  it.each(["search", "describe"] as const)(
+    "counts %s against the shared host-call budget (L4, M7)",
+    async (operation) => {
+      const terminals: InvocationFailure[] = [];
+      const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger, undefined, {
+        onHostCallBudgetExceeded: (failure) => {
+          terminals.push(failure);
+        },
+      });
+      const fns = connectaProvider(providers).fns;
+      for (let i = 0; i < 20; i++) {
+        await required(fns[operation])(operation === "search" ? {} : { address: "calc.add" });
+      }
+      for (const attempt of [
+        () => required(fns.call)("calc.add", { a: 1, b: 2 }),
+        () => required(fns.search)({}),
+        () => required(fns.describe)({ address: "calc.add" }),
+      ]) {
+        let settled = false;
+        void attempt().then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        await Promise.resolve();
+        expect(settled).toBe(false);
+      }
+      expect(terminals).toHaveLength(1);
+      expect(terminals[0]?.details.code).toBe("budget_exceeded");
+    },
+  );
 
   it("times out a host call even when the connector ignores cancellation", async () => {
     const never = new Promise<never>(() => {});
@@ -1056,16 +954,10 @@ describe("buildSandboxProviders", () => {
       tools: [{ name: "read", annotations: { readOnlyHint: true } }],
       call: async () => never,
     });
-    const providers = await buildSandboxProviders(
-      makeRegistry([slow]),
-      BASE,
-      silentLogger,
-      undefined,
-      { hostCallTimeoutMs: 10 },
-    );
-    await expect(
-      callCanonical(providers, "slow", "read"),
-    ).rejects.toThrow("effective deadline 10ms");
+    const providers = await buildSandboxProviders(makeRegistry([slow]), BASE, silentLogger, undefined, {
+      hostCallTimeoutMs: 10,
+    });
+    await expect(callCanonical(providers, "slow", "read")).rejects.toThrow("effective deadline 10ms");
   });
 });
 
@@ -1087,14 +979,9 @@ describe("execute_code host-call limits from configuration", () => {
         }
       },
     };
-    const out = await createExecuteTool(
-      makeRegistry([slow]),
-      BASE,
-      executor,
-      silentLogger,
-      undefined,
-      { hostCallTimeoutMs: 10 },
-    )({ code: "async () => null" });
+    const out = await createExecuteTool(makeRegistry([slow]), BASE, executor, silentLogger, undefined, {
+      hostCallTimeoutMs: 10,
+    })({ code: "async () => null" });
     expect(required(out.content[0]).text).toContain("effective deadline 10ms");
   });
 
@@ -1115,14 +1002,9 @@ describe("execute_code host-call limits from configuration", () => {
         return { result: outcomes };
       },
     };
-    const out = await createExecuteTool(
-      makeRegistry([calcConnector]),
-      BASE,
-      executor,
-      silentLogger,
-      undefined,
-      { maxHostCalls: 2 },
-    )({ code: "async () => null" });
+    const out = await createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined, {
+      maxHostCalls: 2,
+    })({ code: "async () => null" });
     expect(calls).toBe(2);
     expect(out.isError).toBe(true);
     expect(out.structuredContent).toMatchObject({
@@ -1152,11 +1034,7 @@ it("a synchronous unawaited burst cannot return success after exhausting its bud
 });
 
 describe("MCP and code-mode invocation parity", () => {
-  async function failuresFor(
-    connector: Connector,
-    address: string,
-    options: { timeoutMs?: number } = {},
-  ) {
+  async function failuresFor(connector: Connector, address: string, options: { timeoutMs?: number } = {}) {
     const mcpRegistry = makeRegistry([connector]);
     const mcpActivity = activityRecorder("mcp-request");
     const mcpResult = await createMetaTools(mcpRegistry, BASE, {
@@ -1180,14 +1058,13 @@ describe("MCP and code-mode invocation parity", () => {
       BASE,
       silentLogger,
       codeActivity.activity,
-      options.timeoutMs
-        ? { hostCallTimeoutMs: options.timeoutMs }
-        : undefined,
+      options.timeoutMs ? { hostCallTimeoutMs: options.timeoutMs } : undefined,
     );
     const connecta = providers.find((provider) => provider.name === "connecta")!;
-    const codeError = await required(connecta.fns
-      .call)(address, {})
-      .then(() => undefined, (error: unknown) => error);
+    const codeError = await required(connecta.fns.call)(address, {}).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
     expect(codeError).toBeInstanceOf(InvocationFailure);
     return {
       mcpError,
@@ -1215,40 +1092,37 @@ describe("MCP and code-mode invocation parity", () => {
       address: "parity.write",
       expectedCode: "destructive_tool_requires_approval",
     },
-  ])(
-    "uses the same code and wording for $label",
-    async ({ address, expectedCode }) => {
-      const connector: Connector = connectorWith({
-        id: "parity",
-        kind: "api",
-        tools: [
-            {
-              name: "read",
-              annotations: { readOnlyHint: true },
-            },
-            { name: "write" },
-          ],
-        call: async () => {
-          throw new Error("should not dispatch");
+  ])("uses the same code and wording for $label", async ({ address, expectedCode }) => {
+    const connector: Connector = connectorWith({
+      id: "parity",
+      kind: "api",
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
         },
-      });
-      const { mcpError, codeError } = await failuresFor(connector, address);
-      expect(codeError.code).toBe(expectedCode);
-      expect(codeError.details.message).toBe(mcpError.message);
-      expect(codeError.retryable).toBe(mcpError.retryable);
-    },
-  );
+        { name: "write" },
+      ],
+      call: async () => {
+        throw new Error("should not dispatch");
+      },
+    });
+    const { mcpError, codeError } = await failuresFor(connector, address);
+    expect(codeError.code).toBe(expectedCode);
+    expect(codeError.details.message).toBe(mcpError.message);
+    expect(codeError.retryable).toBe(mcpError.retryable);
+  });
 
   it("classifies timeouts and records matching activity fields", async () => {
     const connector: Connector = connectorWith({
       id: "parity",
       kind: "api",
       tools: [
-          {
-            name: "read",
-            annotations: { readOnlyHint: true },
-          },
-        ],
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+        },
+      ],
       call: async () => await new Promise<never>(() => {}),
     });
     const result = await failuresFor(connector, "parity.read", {
@@ -1284,11 +1158,11 @@ describe("MCP and code-mode invocation parity", () => {
       id: "parity",
       kind: "mcp",
       tools: [
-          {
-            name: "read",
-            annotations: { readOnlyHint: true },
-          },
-        ],
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+        },
+      ],
       call: async () => ({ content: [], isError: true }),
     });
     const { mcpError, codeError } = await failuresFor(connector, "parity.read");
@@ -1334,9 +1208,11 @@ describe("execute_code executor watchdog", () => {
     message: string;
     retryable: boolean;
   } {
-    return (JSON.parse(required(out.content[0]).text ?? "") as {
-      error: { code: string; message: string; retryable: boolean };
-    }).error;
+    return (
+      JSON.parse(required(out.content[0]).text ?? "") as {
+        error: { code: string; message: string; retryable: boolean };
+      }
+    ).error;
   }
 
   type RpcToolResult = { isError?: boolean; content: { text?: string }[] };
@@ -1354,140 +1230,113 @@ describe("execute_code executor watchdog", () => {
     return (await readJsonRpc(response)).result as RpcToolResult;
   }
 
-  it(
-    "ends a never-settling run as unresponsive and releases its lease",
-    { timeout: 8_000 },
-    async () => {
-      const admission = fallbackAdmission();
-      const out = await createExecuteTool(
-        makeRegistry([calcConnector]),
-        BASE,
-        withExecutorAdmission(wedgedExecutor(), admission),
-        silentLogger,
-        undefined,
-        { watchdogMs: 200 },
-      )({ code: "async () => null", diagnostics: true });
-      expect(out.isError).toBe(true);
-      const error = parsedError(out);
-      expect(error.code).toBe("timeout");
-      expect(error.message).toContain("unresponsive");
-      expect(error.retryable).toBe(false);
-      expect(admission.snapshot().active).toBe(0);
-    },
-  );
+  it("ends a never-settling run as unresponsive and releases its lease", { timeout: 8_000 }, async () => {
+    const admission = fallbackAdmission();
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      withExecutorAdmission(wedgedExecutor(), admission),
+      silentLogger,
+      undefined,
+      { watchdogMs: 200 },
+    )({ code: "async () => null", diagnostics: true });
+    expect(out.isError).toBe(true);
+    const error = parsedError(out);
+    expect(error.code).toBe("timeout");
+    expect(error.message).toContain("unresponsive");
+    expect(error.retryable).toBe(false);
+    expect(admission.snapshot().active).toBe(0);
+  });
 
-  it(
-    "keeps two wedged runs from starving the default code pool",
-    { timeout: 8_000 },
-    async () => {
-      // The production failure: the fallback pool defaults to two slots, so
-      // two wedged programs used to block every later execute_code.
-      let executions = 0;
-      const deployment = makeDeployment({
-        execute: { watchdogMs: 200 },
-        executor: {
-          execute: () => {
-            executions++;
-            return executions <= 2
-              ? new Promise<never>(() => {})
-              : Promise.resolve({ result: "third" });
-          },
+  it("keeps two wedged runs from starving the default code pool", { timeout: 8_000 }, async () => {
+    // The production failure: the fallback pool defaults to two slots, so
+    // two wedged programs used to block every later execute_code.
+    let executions = 0;
+    const deployment = makeDeployment({
+      execute: { watchdogMs: 200 },
+      executor: {
+        execute: () => {
+          executions++;
+          return executions <= 2 ? new Promise<never>(() => {}) : Promise.resolve({ result: "third" });
         },
-      });
-      const code = { code: "async () => null", diagnostics: true };
-      const wedged = await Promise.all([
-        callExecute(deployment, code),
-        callExecute(deployment, code),
-      ]);
-      for (const out of wedged) {
-        expect(out.isError).toBe(true);
-        expect(parsedError(out).code).toBe("timeout");
-        expect(parsedError(out).message).toContain("unresponsive");
-      }
-      const health = (await (
-        await deployment.fetch(new Request("https://connecta.test/health"))
-      ).json()) as { admission: { code: { active: number } } };
-      expect(health.admission.code.active).toBe(0);
-
-      const third = await callExecute(deployment, { code: "async () => null" });
-      expect(third.isError).toBeUndefined();
-      expect(JSON.parse(required(third.content[0]).text ?? "")).toEqual({
-        result: "third",
-        hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
-      });
-    },
-  );
-
-  it(
-    "returns promptly and releases the lease when a wedged run is cancelled",
-    { timeout: 8_000 },
-    async () => {
-      const admission = fallbackAdmission();
-      const executor = wedgedExecutor();
-      const controller = new AbortController();
-      const pending = createExecuteTool(
-        makeRegistry([calcConnector]),
-        BASE,
-        withExecutorAdmission(executor, admission),
-        silentLogger,
-      )(
-        { code: "async () => null", diagnostics: true },
-        { signal: controller.signal },
-      );
-      await executor.started;
-      expect(admission.snapshot().active).toBe(1);
-      const abortedAt = Date.now();
-      controller.abort();
-      const out = await pending;
-      // The default ceiling is two minutes, so settling this fast means the
-      // abort, not the watchdog, ended the wait.
-      expect(Date.now() - abortedAt).toBeLessThan(1_000);
+      },
+    });
+    const code = { code: "async () => null", diagnostics: true };
+    const wedged = await Promise.all([callExecute(deployment, code), callExecute(deployment, code)]);
+    for (const out of wedged) {
       expect(out.isError).toBe(true);
-      expect(parsedError(out)).toMatchObject({
-        code: "executor_cancelled",
-        retryable: false,
-      });
-      expect(admission.snapshot().active).toBe(0);
-    },
-  );
+      expect(parsedError(out).code).toBe("timeout");
+      expect(parsedError(out).message).toContain("unresponsive");
+    }
+    const health = (await (await deployment.fetch(new Request("https://connecta.test/health"))).json()) as {
+      admission: { code: { active: number } };
+    };
+    expect(health.admission.code.active).toBe(0);
 
-  it(
-    "leaves a slow run that finishes under the ceiling alone",
-    { timeout: 8_000 },
-    async () => {
-      const admission = fallbackAdmission();
-      const slow: Executor = {
-        execute: () =>
-          new Promise((resolve) => {
-            setTimeout(() => resolve({ result: "late", logs: ["kept"] }), 300);
-          }),
-      };
-      const out = await createExecuteTool(
-        makeRegistry([calcConnector]),
-        BASE,
-        withExecutorAdmission(slow, admission),
-        silentLogger,
-        undefined,
-        { watchdogMs: 2_000 },
-      )({ code: "async () => null" });
-      expect(out.isError).toBeUndefined();
-      expect(JSON.parse(required(out.content[0]).text)).toEqual({
-        result: "late",
-        logs: "kept",
-        hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
-      });
-      expect(admission.snapshot().active).toBe(0);
-    },
-  );
+    const third = await callExecute(deployment, { code: "async () => null" });
+    expect(third.isError).toBeUndefined();
+    expect(JSON.parse(required(third.content[0]).text ?? "")).toEqual({
+      result: "third",
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+    });
+  });
 
-  it.each([0, -1, 1.5, Number.NaN])(
-    "INV-11: refuses an unusable watchdogMs %s at construction",
-    (watchdogMs) => {
-      expect(() => makeDeployment({ execute: { watchdogMs } })).toThrow(
-        "ConnectaConfig.execute.watchdogMs must be a positive whole number",
-      );
-    },
-  );
+  it("returns promptly and releases the lease when a wedged run is cancelled", { timeout: 8_000 }, async () => {
+    const admission = fallbackAdmission();
+    const executor = wedgedExecutor();
+    const controller = new AbortController();
+    const pending = createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      withExecutorAdmission(executor, admission),
+      silentLogger,
+    )({ code: "async () => null", diagnostics: true }, { signal: controller.signal });
+    await executor.started;
+    expect(admission.snapshot().active).toBe(1);
+    const abortedAt = Date.now();
+    controller.abort();
+    const out = await pending;
+    // The default ceiling is two minutes, so settling this fast means the
+    // abort, not the watchdog, ended the wait.
+    expect(Date.now() - abortedAt).toBeLessThan(1_000);
+    expect(out.isError).toBe(true);
+    expect(parsedError(out)).toMatchObject({
+      code: "executor_cancelled",
+      retryable: false,
+    });
+    expect(admission.snapshot().active).toBe(0);
+  });
+
+  it("leaves a slow run that finishes under the ceiling alone", { timeout: 8_000 }, async () => {
+    const admission = fallbackAdmission();
+    const slow: Executor = {
+      execute: () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ result: "late", logs: ["kept"] }), 300);
+        }),
+    };
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      withExecutorAdmission(slow, admission),
+      silentLogger,
+      undefined,
+      { watchdogMs: 2_000 },
+    )({ code: "async () => null" });
+    expect(out.isError).toBeUndefined();
+    expect(JSON.parse(required(out.content[0]).text)).toEqual({
+      result: "late",
+      logs: "kept",
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+    });
+    expect(admission.snapshot().active).toBe(0);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])("INV-11: refuses an unusable watchdogMs %s at construction", (watchdogMs) => {
+    expect(() => makeDeployment({ execute: { watchdogMs } })).toThrow(
+      "ConnectaConfig.execute.watchdogMs must be a positive whole number",
+    );
+  });
 });
 
 describe("execute_code handler", () => {
@@ -1558,12 +1407,7 @@ describe("execute_code handler", () => {
         };
       },
     };
-    const out = await createExecuteTool(
-      registry,
-      BASE,
-      executor,
-      silentLogger,
-    )({ code: "async () => null" });
+    const out = await createExecuteTool(registry, BASE, executor, silentLogger)({ code: "async () => null" });
     const parsed = JSON.parse(required(out.content[0]).text) as {
       error: {
         code: string;
@@ -1637,11 +1481,7 @@ describe("execute_code handler", () => {
         catalogSignal = ctx.signal;
         catalogStarted();
         return new Promise((_, reject) => {
-          ctx.signal?.addEventListener(
-            "abort",
-            () => reject(ctx.signal?.reason),
-            { once: true },
-          );
+          ctx.signal?.addEventListener("abort", () => reject(ctx.signal?.reason), { once: true });
         });
       },
       call: async () => null,
@@ -1666,10 +1506,7 @@ describe("execute_code handler", () => {
       executor,
       silentLogger,
       observed.activity,
-    )(
-      { code: "async () => null" },
-      { signal: controller.signal },
-    );
+    )({ code: "async () => null" }, { signal: controller.signal });
     await started;
     controller.abort(new Error("request disconnected"));
     const out = await pending;
@@ -1677,13 +1514,15 @@ describe("execute_code handler", () => {
     expect(catalogSignal?.aborted).toBe(true);
     expect(execute).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
-    expect(observed.events).toContainEqual(expect.objectContaining({
-      connectorId: "catalog",
-      toolName: "read",
-      source: "execute_code",
-      outcome: "cancelled",
-      errorCode: "cancelled",
-    }));
+    expect(observed.events).toContainEqual(
+      expect.objectContaining({
+        connectorId: "catalog",
+        toolName: "read",
+        source: "execute_code",
+        outcome: "cancelled",
+        errorCode: "cancelled",
+      }),
+    );
   });
 
   it("passes code + providers to the executor and wraps the result", async () => {
@@ -1698,17 +1537,11 @@ describe("execute_code handler", () => {
     };
     expect(parsed.result).toEqual({ picked: [1, 2] });
     expect(out.structuredContent).toEqual(parsed);
-    expect(required(out.content[0]).text).toBe(
-      JSON.stringify(out.structuredContent),
-    );
+    expect(required(out.content[0]).text).toBe(JSON.stringify(out.structuredContent));
     expect(parsed.logs).toBe("hi");
     expect(required(executor.seen[0]).code).toContain("async () => 1");
-    expect(required(executor.seen[0]).providers.map((p) => p.name)).toEqual([
-      "connecta",
-    ]);
-    expect(required(required(executor.seen[0]).providers[0]).prelude).not.toContain(
-      'globalThis["calc"]',
-    );
+    expect(required(executor.seen[0]).providers.map((p) => p.name)).toEqual(["connecta"]);
+    expect(required(required(executor.seen[0]).providers[0]).prelude).not.toContain('globalThis["calc"]');
   });
 
   it("reports compact payload-free diagnostics for every guest operation", async () => {
@@ -1776,10 +1609,7 @@ describe("execute_code handler", () => {
       catalogMs: expect.any(Number),
       connectorMs: expect.any(Number),
     });
-    const operation = (name: string) =>
-      required(
-        parsed.diagnostics.operations.find((item) => item.operation === name),
-      );
+    const operation = (name: string) => required(parsed.diagnostics.operations.find((item) => item.operation === name));
     expect(operation("search")).toMatchObject({
       count: 1,
       failures: 0,
@@ -1828,7 +1658,10 @@ describe("execute_code handler", () => {
       code: "async () => null",
       diagnostics: false,
     });
-    expect(JSON.parse(required(omitted.content[0]).text)).toEqual({ result: { ok: true }, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
+    expect(JSON.parse(required(omitted.content[0]).text)).toEqual({
+      result: { ok: true },
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+    });
     expect(disabled).toEqual(omitted);
   });
 
@@ -1848,7 +1681,10 @@ describe("execute_code handler", () => {
           return {
             result: undefined,
             error: error instanceof Error ? error.message : String(error),
-            failure: { name: error instanceof Error ? error.name : "Error", ...(error instanceof InvocationFailure ? { call: error.details } : {}) },
+            failure: {
+              name: error instanceof Error ? error.name : "Error",
+              ...(error instanceof InvocationFailure ? { call: error.details } : {}),
+            },
           };
         }
       },
@@ -1892,7 +1728,10 @@ describe("execute_code handler", () => {
           return {
             result: undefined,
             error: error instanceof Error ? error.message : String(error),
-            failure: { name: error instanceof Error ? error.name : "Error", ...(error instanceof InvocationFailure ? { call: error.details } : {}) },
+            failure: {
+              name: error instanceof Error ? error.name : "Error",
+              ...(error instanceof InvocationFailure ? { call: error.details } : {}),
+            },
           };
         }
       },
@@ -1906,9 +1745,7 @@ describe("execute_code handler", () => {
       code: 'async () => "private source"',
       diagnostics: true,
     });
-    const parsedDiscovery = JSON.parse(
-      required(discovery.content[0]).text,
-    ) as {
+    const parsedDiscovery = JSON.parse(required(discovery.content[0]).text) as {
       error: { code: string };
       diagnostics: {
         operations: Array<{
@@ -1929,9 +1766,7 @@ describe("execute_code handler", () => {
         }),
       ]),
     );
-    expect(JSON.stringify(parsedDiscovery.diagnostics)).not.toContain(
-      "private",
-    );
+    expect(JSON.stringify(parsedDiscovery.diagnostics)).not.toContain("private");
 
     const executorFailure = await createExecuteTool(
       makeRegistry([calcConnector]),
@@ -1946,9 +1781,7 @@ describe("execute_code handler", () => {
       code: "async () => null",
       diagnostics: true,
     });
-    const parsedExecutor = JSON.parse(
-      required(executorFailure.content[0]).text,
-    ) as {
+    const parsedExecutor = JSON.parse(required(executorFailure.content[0]).text) as {
       error: { code: string; message: string };
       diagnostics: { timing: Record<string, number>; operations: unknown[] };
     };
@@ -2004,12 +1837,7 @@ describe("execute_code handler", () => {
     // measurement, and the envelope simply carries no `result` key, since JSON
     // has no undefined. `null` is carried as null.
     const registry = makeRegistry([calcConnector]);
-    const handler = createExecuteTool(
-      registry,
-      BASE,
-      fakeExecutor({}),
-      silentLogger,
-    );
+    const handler = createExecuteTool(registry, BASE, fakeExecutor({}), silentLogger);
     const out = await handler({ code: "async () => {}" });
     expect(out.isError).toBeUndefined();
     const parsed = JSON.parse(required(out.content[0]).text) as Record<string, unknown>;
@@ -2021,7 +1849,10 @@ describe("execute_code handler", () => {
       fakeExecutor({ result: null }),
       silentLogger,
     )({ code: "async () => null" });
-    expect(JSON.parse(required(nulled.content[0]).text)).toEqual({ result: null, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
+    expect(JSON.parse(required(nulled.content[0]).text)).toEqual({
+      result: null,
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+    });
   });
 
   it("truncates oversized results", async () => {
@@ -2051,12 +1882,7 @@ describe("execute_code handler", () => {
         return { result: "finished" };
       },
     };
-    const handler = createExecuteTool(
-      makeRegistry([hanging]),
-      BASE,
-      executor,
-      silentLogger,
-    );
+    const handler = createExecuteTool(makeRegistry([hanging]), BASE, executor, silentLogger);
     const result = await handler({ code: "async () => 'finished'" });
     expect(result.isError).toBeFalsy();
     await expect(pending).rejects.toThrow();
@@ -2066,9 +1892,12 @@ describe("execute_code handler", () => {
 // E6: a caught connector failure must not classify an unrelated program error.
 it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by containment", async (message) => {
   const connector = connectorWith({
-    id: "bad", kind: "api",
+    id: "bad",
+    kind: "api",
     tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-    call: async () => { throw new ConnectorCallError("not_found", message); },
+    call: async () => {
+      throw new ConnectorCallError("not_found", message);
+    },
   });
   const executor: Executor = {
     async execute(_code, providers) {
@@ -2076,7 +1905,12 @@ it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by co
       return { result: undefined, error: "TypeError: x failed independently" };
     },
   };
-  const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
+  const out = await createExecuteTool(
+    makeRegistry([connector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: "", diagnostics: true });
   expect(out.structuredContent).toMatchObject({ error: { code: "program_error" } });
 });
 
@@ -2087,12 +1921,23 @@ it.each([
 ])("counts refused %s attempts against the host-call budget", async (address, code) => {
   let terminal: InvocationFailure | undefined;
   const providers = await buildSandboxProviders(
-    makeRegistry([calcConnector, brokenConnector]), BASE, silentLogger, undefined,
-    { maxHostCalls: 2, onHostCallBudgetExceeded: (failure) => { terminal = failure; } },
+    makeRegistry([calcConnector, brokenConnector]),
+    BASE,
+    silentLogger,
+    undefined,
+    {
+      maxHostCalls: 2,
+      onHostCallBudgetExceeded: (failure) => {
+        terminal = failure;
+      },
+    },
   );
   const call = required(connectaProvider(providers).fns.call);
   for (let i = 0; i < 2; i++) {
-    const error = await call(address, {}).then(() => null, (err: InvocationFailure) => err);
+    const error = await call(address, {}).then(
+      () => null,
+      (err: InvocationFailure) => err,
+    );
     expect(error?.details.code).toBe(code);
   }
   for (const attempt of [
@@ -2101,38 +1946,51 @@ it.each([
     () => required(connectaProvider(providers).fns.emit)({ type: "text", text: "after" }),
   ]) {
     let settled = false;
-    void attempt().then(() => { settled = true; }, () => { settled = true; });
+    void attempt().then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
     await Promise.resolve();
     expect(settled).toBe(false);
     expect(terminal?.details.code).toBe("budget_exceeded");
   }
 });
 
-it.each([0, 1, 64])("INV-6: retains typed failures older than 64 without matching prose (failure %i)", async (escapedIndex) => {
-  const executor: Executor = {
-    async execute(_code, providers) {
-      const failures: InvocationFailure[] = [];
-      for (let i = 0; i < 65; i++) {
-        await required(connectaProvider(providers).fns.call)(`missing_${i}.read`, {})
-          .catch((err: InvocationFailure) => { failures.push(err); });
-      }
-      const failure = required(failures[escapedIndex]);
-      return { result: undefined, error: failure.message, failure: { name: failure.name, call: failure.details } };
-    },
-  };
-  const out = await createExecuteTool(
-    makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined,
-    { maxHostCalls: 100 },
-  )({ code: "", diagnostics: true });
-  expect(out.isError).toBe(true);
-  expect(out.structuredContent).toMatchObject({
-    error: { code: "unknown_address" },
-  });
-});
+it.each([0, 1, 64])(
+  "INV-6: retains typed failures older than 64 without matching prose (failure %i)",
+  async (escapedIndex) => {
+    const executor: Executor = {
+      async execute(_code, providers) {
+        const failures: InvocationFailure[] = [];
+        for (let i = 0; i < 65; i++) {
+          await required(connectaProvider(providers).fns.call)(`missing_${i}.read`, {}).catch(
+            (err: InvocationFailure) => {
+              failures.push(err);
+            },
+          );
+        }
+        const failure = required(failures[escapedIndex]);
+        return { result: undefined, error: failure.message, failure: { name: failure.name, call: failure.details } };
+      },
+    };
+    const out = await createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined, {
+      maxHostCalls: 100,
+    })({ code: "", diagnostics: true });
+    expect(out.isError).toBe(true);
+    expect(out.structuredContent).toMatchObject({
+      error: { code: "unknown_address" },
+    });
+  },
+);
 
 it("reports an empty terminal executor error as failure with a fixed message", async () => {
   const out = await createExecuteTool(
-    makeRegistry([calcConnector]), BASE,
+    makeRegistry([calcConnector]),
+    BASE,
     fakeExecutor({ result: "must not succeed", error: "", logs: ["before failure"] }),
     silentLogger,
   )({ code: "", diagnostics: true });
@@ -2145,9 +2003,12 @@ it("reports an empty terminal executor error as failure with a fixed message", a
 
 it("does not retype an empty terminal error as a previously caught empty failure", async () => {
   const connector = connectorWith({
-    id: "bad", kind: "api",
+    id: "bad",
+    kind: "api",
     tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-    call: async () => { throw new ConnectorCallError("not_found", ""); },
+    call: async () => {
+      throw new ConnectorCallError("not_found", "");
+    },
   });
   const executor: Executor = {
     async execute(_code, providers) {
@@ -2155,7 +2016,12 @@ it("does not retype an empty terminal error as a previously caught empty failure
       return { result: undefined, error: "" };
     },
   };
-  const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
+  const out = await createExecuteTool(
+    makeRegistry([connector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: "", diagnostics: true });
   expect(out.structuredContent).toMatchObject({
     error: { code: "program_error", message: "Program Error: Execution failed without an error message." },
   });
@@ -2205,21 +2071,21 @@ describe("host-call cancellation covers discovery (L2)", () => {
   it.each(["search", "describe"] as const)(
     "refuses %s once the run has ended, before any catalog is read",
     async (operation) => {
-      const catalog = countingCatalog(async () => [
-        { name: "read", annotations: { readOnlyHint: true } },
-      ]);
+      const catalog = countingCatalog(async () => [{ name: "read", annotations: { readOnlyHint: true } }]);
       const controller = new AbortController();
       controller.abort();
-      const providers = await buildSandboxProviders(
-        makeRegistry([catalog.connector]), BASE, silentLogger, undefined,
-        { signal: controller.signal },
-      );
+      const providers = await buildSandboxProviders(makeRegistry([catalog.connector]), BASE, silentLogger, undefined, {
+        signal: controller.signal,
+      });
       const fns = connectaProvider(providers).fns;
       const failure = await (
         operation === "search"
           ? required(fns.search)({ connector: "catalog" })
           : required(fns.describe)({ address: "catalog.read" })
-      ).then(() => null, (error: InvocationFailure) => error);
+      ).then(
+        () => null,
+        (error: InvocationFailure) => error,
+      );
       expect(failure?.details).toMatchObject({
         code: "cancelled",
         retryable: false,
@@ -2246,16 +2112,20 @@ describe("host-call cancellation covers discovery (L2)", () => {
       const executor: Executor = {
         async execute(_code, providers) {
           const fns = connectaProvider(providers).fns;
-          pending = operation === "search"
-            ? required(fns.search)({ connector: "catalog" })
-            : required(fns.describe)({ address: "catalog.read" });
+          pending =
+            operation === "search"
+              ? required(fns.search)({ connector: "catalog" })
+              : required(fns.describe)({ address: "catalog.read" });
           pending.catch(() => {});
           await started;
           return { result: "finished" };
         },
       };
       const out = await createExecuteTool(
-        makeRegistry([catalog.connector]), BASE, executor, silentLogger,
+        makeRegistry([catalog.connector]),
+        BASE,
+        executor,
+        silentLogger,
       )({ code: "async () => 'finished'" });
       expect(out.isError).toBeFalsy();
       const failure = await Promise.race([
@@ -2276,102 +2146,171 @@ describe("host-call cancellation covers discovery (L2)", () => {
 
 // L2/L7: cancellation returns without waiting on an admitting executor whose
 // acquire ignores the signal, and a lease granted afterwards is given back.
-it(
-  "returns a cancelled run promptly when acquire ignores the signal",
-  { timeout: 8_000 },
-  async () => {
-    let grant!: (lease: ExecutorLease) => void;
-    const release = vi.fn();
-    const execute = vi.fn(async () => ({ result: "never" }));
-    const executor: AdmittingExecutor = {
-      execute,
-      acquire: () =>
-        new Promise<ExecutorLease>((resolve) => {
-          grant = resolve;
-        }),
-    };
-    const controller = new AbortController();
-    const pending = createExecuteTool(
-      makeRegistry([calcConnector]), BASE, executor, silentLogger,
-    )({ code: "async () => null" }, { signal: controller.signal });
-    await Promise.resolve();
-    const abortedAt = Date.now();
-    controller.abort();
-    const settled = await Promise.race([
-      pending,
-      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000)),
-    ]);
-    expect(settled).not.toBe("hung");
-    expect(Date.now() - abortedAt).toBeLessThan(1_000);
-    const out = settled as Awaited<typeof pending>;
-    expect(out.isError).toBe(true);
-    expect(out.structuredContent).toMatchObject({
-      error: { code: "executor_cancelled", retryable: false },
+it("returns a cancelled run promptly when acquire ignores the signal", { timeout: 8_000 }, async () => {
+  let grant!: (lease: ExecutorLease) => void;
+  const release = vi.fn();
+  const execute = vi.fn(async () => ({ result: "never" }));
+  const executor: AdmittingExecutor = {
+    execute,
+    acquire: () =>
+      new Promise<ExecutorLease>((resolve) => {
+        grant = resolve;
+      }),
+  };
+  const controller = new AbortController();
+  const pending = createExecuteTool(
+    makeRegistry([calcConnector]),
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: "async () => null" }, { signal: controller.signal });
+  await Promise.resolve();
+  const abortedAt = Date.now();
+  controller.abort();
+  const settled = await Promise.race([
+    pending,
+    new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+  ]);
+  expect(settled).not.toBe("hung");
+  expect(Date.now() - abortedAt).toBeLessThan(1_000);
+  const out = settled as Awaited<typeof pending>;
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "executor_cancelled", retryable: false },
+  });
+  grant({ execute, release });
+  await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it.each([undefined, 30])(
+  "INV-7: direct and guest calls share default and requested deadlines (%s)",
+  async (requestedMs) => {
+    const connector = connectorWith({
+      id: "deadline",
+      kind: "api",
+      description: "Deadline fixture",
+      tools: [
+        {
+          name: "read",
+          description: "Wait until cancelled",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+        },
+      ],
+      call: async () => await new Promise<never>(() => {}),
     });
-    grant({ execute, release });
-    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
-    expect(execute).not.toHaveBeenCalled();
+    const executor: Executor = {
+      async execute(_code, providers) {
+        try {
+          return {
+            result: await required(connectaProvider(providers).fns.call)({
+              address: "deadline.read",
+              ...(requestedMs ? { timeoutMs: requestedMs } : {}),
+            }),
+          };
+        } catch (error) {
+          return { result: (error as InvocationFailure).details };
+        }
+      },
+    };
+    const app = makeDeployment({
+      connectors: [connector],
+      executor,
+      calls: { defaultTimeoutMs: 40 },
+      execute: { hostCallTimeoutMs: 10 },
+    });
+    try {
+      const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: "test-token-123" }));
+      const advertised = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+      expect(advertised.description).toContain("0.04s/host call");
+      const invoke = async (name: string, args: object) =>
+        (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: "test-token-123" })))
+          .result;
+      const direct = await invoke("call_tool", {
+        address: "deadline.read",
+        resultMode: "value",
+        ...(requestedMs ? { timeoutMs: requestedMs } : {}),
+      });
+      const guest = await invoke("execute_code", {
+        code: "async () => await connecta.call({ address: 'deadline.read' })",
+      });
+      const deadlineMs = requestedMs ?? 40;
+      for (const error of [direct.structuredContent.error, guest.structuredContent.result]) {
+        expect(error).toMatchObject({
+          code: "timeout",
+          details: { operation: "deadline.read", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs },
+        });
+        expect(error.details.elapsedMs).toBeGreaterThanOrEqual(deadlineMs - 1);
+        expect(error.message).toContain(`effective deadline ${deadlineMs}ms`);
+      }
+      expect(guest.structuredContent.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
+    } finally {
+      await app.close();
+    }
   },
 );
 
-
-it.each([undefined, 30])("INV-7: direct and guest calls share default and requested deadlines (%s)", async (requestedMs) => {
-  const connector = connectorWith({
-    id: "deadline", kind: "api", description: "Deadline fixture",
-    tools: [{ name: "read", description: "Wait until cancelled", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
-    call: async () => await new Promise<never>(() => {}),
-  });
-  const executor: Executor = {
-    async execute(_code, providers) {
-      try { return { result: await required(connectaProvider(providers).fns.call)({ address: "deadline.read", ...(requestedMs ? { timeoutMs: requestedMs } : {}) }) }; }
-      catch (error) { return { result: (error as InvocationFailure).details }; }
-    },
-  };
-  const app = makeDeployment({ connectors: [connector], executor, calls: { defaultTimeoutMs: 40 }, execute: { hostCallTimeoutMs: 10 } });
-  try {
-    const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: "test-token-123" }));
-    const advertised = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
-    expect(advertised.description).toContain("0.04s/host call");
-    const invoke = async (name: string, args: object) => (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: "test-token-123" }))).result;
-    const direct = await invoke("call_tool", { address: "deadline.read", resultMode: "value", ...(requestedMs ? { timeoutMs: requestedMs } : {}) });
-    const guest = await invoke("execute_code", { code: "async () => await connecta.call({ address: 'deadline.read' })" });
-    const deadlineMs = requestedMs ?? 40;
-    for (const error of [direct.structuredContent.error, guest.structuredContent.result]) {
-      expect(error).toMatchObject({ code: "timeout", details: { operation: "deadline.read", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs } });
-      expect(error.details.elapsedMs).toBeGreaterThanOrEqual(deadlineMs - 1);
-      expect(error.message).toContain(`effective deadline ${deadlineMs}ms`);
-    }
-    expect(guest.structuredContent.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
-  } finally { await app.close(); }
-});
-
-
 it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storage reads after %s", async (ending) => {
   const inner = memoryStorage();
-  let resultId = "", blocking = false;
+  let resultId = "",
+    blocking = false;
   let release!: () => void, entered!: () => void, completed!: () => void;
-  const blocked = new Promise<void>(resolve => { release = resolve; });
-  const ready = new Promise<void>(resolve => { entered = resolve; });
-  const done = new Promise<void>(resolve => { completed = resolve; });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const done = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
   const reads: string[] = [];
-  const storage = { ...inner, async get(key: string) {
-    if (blocking && key.includes(resultId)) {
-      reads.push(key);
-      if (reads.length === 1) { entered(); await blocked; completed(); }
-    }
-    return inner.get(key);
-  } };
-  const registry = makeRegistry([connectorWith({
-    id: "pages", kind: "api", description: "Large page fixture",
-    tools: [{ name: "read", description: "Read text", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
-    call: async () => "x".repeat(120_000),
-  })], { storage });
+  const storage = {
+    ...inner,
+    async get(key: string) {
+      if (blocking && key.includes(resultId)) {
+        reads.push(key);
+        if (reads.length === 1) {
+          entered();
+          await blocked;
+          completed();
+        }
+      }
+      return inner.get(key);
+    },
+  };
+  const registry = makeRegistry(
+    [
+      connectorWith({
+        id: "pages",
+        kind: "api",
+        description: "Large page fixture",
+        tools: [
+          {
+            name: "read",
+            description: "Read text",
+            inputSchema: { type: "object" },
+            annotations: { readOnlyHint: true },
+          },
+        ],
+        call: async () => "x".repeat(120_000),
+      }),
+    ],
+    { storage },
+  );
   const direct = await createMetaTools(registry, BASE).callTool({ address: "pages.read", resultMode: "value" });
   resultId = (required(direct.structuredContent).data as { resultId: string }).resultId;
   blocking = true;
   const controller = new AbortController();
-  const execute = createExecuteTool(registry, BASE,
-    scriptedExecutor((fns) => required(fns.result)(resultId, { offset: 48_000 })), silentLogger, undefined, { hostCallTimeoutMs: 50 });
+  const execute = createExecuteTool(
+    registry,
+    BASE,
+    scriptedExecutor((fns) => required(fns.result)(resultId, { offset: 48_000 })),
+    silentLogger,
+    undefined,
+    { hostCallTimeoutMs: 50 },
+  );
   const running = execute({ code: "async () => await connecta.result(id)" }, { signal: controller.signal });
   await ready;
   if (ending === "cancel") controller.abort();
@@ -2381,6 +2320,6 @@ it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storag
   expect(ending === "cancel" ? ["cancelled", "executor_cancelled"] : ["timeout"]).toContain(code);
   release();
   await done;
-  await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 5));
   expect(reads).toHaveLength(1);
 });

@@ -110,9 +110,7 @@ const SHEETS_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -120,9 +118,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -292,9 +288,10 @@ function raiseBytes(needed: number): string {
 
 /** Refuse a row no page of `budget` cells can hold, rather than overrun the cap. */
 function rowTooWide(range: string, row: number, width: number, budget: number): ConnectorCallError {
-  const fix = width <= MAX_PAGE_CELLS
-    ? `raise maxCells to at least ${width}, or narrow the range's columns`
-    : `narrow the range's columns; a page holds at most ${MAX_PAGE_CELLS} cells`;
+  const fix =
+    width <= MAX_PAGE_CELLS
+      ? `raise maxCells to at least ${width}, or narrow the range's columns`
+      : `narrow the range's columns; a page holds at most ${MAX_PAGE_CELLS} cells`;
   return new ConnectorCallError(
     "invalid_args",
     `Row ${row} of ${range} has ${width} cells, more than this page's maxCells of ${budget}; ${fix}.`,
@@ -334,27 +331,79 @@ function projectUpdate(value: unknown): JsonRecord {
  * so the drift check surfaces it for this list rather than letting it pass.
  */
 const REQUEST_KINDS: ReadonlySet<string> = new Set([
-  "addBanding", "addChart", "addCommentReply", "addConditionalFormatRule",
-  "addDataSource", "addDimensionGroup", "addFilterView", "addNamedRange",
-  "addProtectedRange", "addSheet", "addSlicer", "addTable", "appendCells",
-  "appendDimension", "autoFill", "autoResizeDimensions",
-  "cancelDataSourceRefresh", "clearBasicFilter", "copyPaste",
-  "createDeveloperMetadata", "cutPaste", "deleteBanding", "deleteComment",
-  "deleteCommentReply", "deleteConditionalFormatRule", "deleteDataSource",
-  "deleteDeveloperMetadata", "deleteDimension", "deleteDimensionGroup",
-  "deleteDuplicates", "deleteEmbeddedObject", "deleteFilterView",
-  "deleteNamedRange", "deleteProtectedRange", "deleteRange", "deleteSheet",
-  "deleteTable", "duplicateFilterView", "duplicateSheet", "findReplace",
-  "insertComment", "insertDimension", "insertRange", "mergeCells",
-  "moveDimension", "pasteData", "randomizeRange", "refreshDataSource",
-  "repeatCell", "setBasicFilter", "setDataValidation", "sortRange",
-  "textToColumns", "trimWhitespace", "unmergeCells", "updateBanding",
-  "updateBorders", "updateCells", "updateChartSpec", "updateCommentPost",
-  "updateConditionalFormatRule", "updateDataSource", "updateDeveloperMetadata",
-  "updateDimensionGroup", "updateDimensionProperties",
-  "updateEmbeddedObjectBorder", "updateEmbeddedObjectPosition",
-  "updateFilterView", "updateNamedRange", "updateProtectedRange",
-  "updateSheetProperties", "updateSlicerSpec", "updateSpreadsheetProperties",
+  "addBanding",
+  "addChart",
+  "addCommentReply",
+  "addConditionalFormatRule",
+  "addDataSource",
+  "addDimensionGroup",
+  "addFilterView",
+  "addNamedRange",
+  "addProtectedRange",
+  "addSheet",
+  "addSlicer",
+  "addTable",
+  "appendCells",
+  "appendDimension",
+  "autoFill",
+  "autoResizeDimensions",
+  "cancelDataSourceRefresh",
+  "clearBasicFilter",
+  "copyPaste",
+  "createDeveloperMetadata",
+  "cutPaste",
+  "deleteBanding",
+  "deleteComment",
+  "deleteCommentReply",
+  "deleteConditionalFormatRule",
+  "deleteDataSource",
+  "deleteDeveloperMetadata",
+  "deleteDimension",
+  "deleteDimensionGroup",
+  "deleteDuplicates",
+  "deleteEmbeddedObject",
+  "deleteFilterView",
+  "deleteNamedRange",
+  "deleteProtectedRange",
+  "deleteRange",
+  "deleteSheet",
+  "deleteTable",
+  "duplicateFilterView",
+  "duplicateSheet",
+  "findReplace",
+  "insertComment",
+  "insertDimension",
+  "insertRange",
+  "mergeCells",
+  "moveDimension",
+  "pasteData",
+  "randomizeRange",
+  "refreshDataSource",
+  "repeatCell",
+  "setBasicFilter",
+  "setDataValidation",
+  "sortRange",
+  "textToColumns",
+  "trimWhitespace",
+  "unmergeCells",
+  "updateBanding",
+  "updateBorders",
+  "updateCells",
+  "updateChartSpec",
+  "updateCommentPost",
+  "updateConditionalFormatRule",
+  "updateDataSource",
+  "updateDeveloperMetadata",
+  "updateDimensionGroup",
+  "updateDimensionProperties",
+  "updateEmbeddedObjectBorder",
+  "updateEmbeddedObjectPosition",
+  "updateFilterView",
+  "updateNamedRange",
+  "updateProtectedRange",
+  "updateSheetProperties",
+  "updateSlicerSpec",
+  "updateSpreadsheetProperties",
   "updateTable",
 ]);
 
@@ -480,7 +529,8 @@ const SPREADSHEET_ID_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: 256,
   pattern: "^[A-Za-z0-9_-]+$",
-  description: "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list.",
+  description:
+    "Spreadsheet id: the part of its URL between /d/ and /edit. Find one by name with a Drive search; Sheets cannot list.",
 };
 
 /**
@@ -506,7 +556,8 @@ const RANGES_PROPERTY: JsonSchema = {
 const VALUE_INPUT_PROPERTY: JsonSchema = {
   type: "string",
   enum: ["RAW", "USER_ENTERED"],
-  description: "RAW stores each value literally; USER_ENTERED parses it as if typed, so =SUM(A1:A3) is a formula and 2026-10-06 a date.",
+  description:
+    "RAW stores each value literally; USER_ENTERED parses it as if typed, so =SUM(A1:A3) is a formula and 2026-10-06 a date.",
 };
 
 const ROWS_PROPERTY: JsonSchema = {
@@ -592,8 +643,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
   // pool; other writes use call_destructive_tool. The host controls approval.
   const additive = { readOnlyHint: false, destructiveHint: false } as const;
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
-  const spreadsheetPath = (args: JsonRecord) =>
-    `/spreadsheets/${encodeURIComponent(String(args["spreadsheetId"]))}`;
+  const spreadsheetPath = (args: JsonRecord) => `/spreadsheets/${encodeURIComponent(String(args["spreadsheetId"]))}`;
 
   return [
     {
@@ -606,7 +656,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           spreadsheetId: SPREADSHEET_ID_PROPERTY,
           raw: {
             type: "boolean",
-            description: "Return Google's untouched spreadsheet metadata — formatting, protections, charts — instead of the projection. Never cell values.",
+            description:
+              "Return Google's untouched spreadsheet metadata — formatting, protections, charts — instead of the projection. Never cell values.",
           },
         },
         ["spreadsheetId"],
@@ -644,10 +695,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           );
         }
         const spreadsheet = asRecord(
-          await client.json(
-            { method: "GET", path: spreadsheetPath(args), query: { fields: SPREADSHEET_FIELDS } },
-            ctx,
-          ),
+          await client.json({ method: "GET", path: spreadsheetPath(args), query: { fields: SPREADSHEET_FIELDS } }, ctx),
         );
         const properties = asRecord(spreadsheet["properties"]);
         const sheets = asArray(spreadsheet["sheets"]).map(projectSheet);
@@ -660,19 +708,20 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           locale: text(properties["locale"]),
           timeZone: text(properties["timeZone"]),
           sheets,
-          namedRanges: named.length > 0
-            ? named.slice(0, MAX_NAMED_RANGES).map((value) => {
-                const entry = asRecord(value);
-                const range = asRecord(entry["range"]);
-                const sheetId = integer(range["sheetId"]) ?? 0;
-                return compact({
-                  namedRangeId: text(entry["namedRangeId"]),
-                  name: text(entry["name"]),
-                  sheetId,
-                  range: gridRangeA1(range, titles.get(sheetId)),
-                });
-              })
-            : undefined,
+          namedRanges:
+            named.length > 0
+              ? named.slice(0, MAX_NAMED_RANGES).map((value) => {
+                  const entry = asRecord(value);
+                  const range = asRecord(entry["range"]);
+                  const sheetId = integer(range["sheetId"]) ?? 0;
+                  return compact({
+                    namedRangeId: text(entry["namedRangeId"]),
+                    name: text(entry["name"]),
+                    sheetId,
+                    range: gridRangeA1(range, titles.get(sheetId)),
+                  });
+                })
+              : undefined,
           namedRangesOmitted: named.length > MAX_NAMED_RANGES ? named.length - MAX_NAMED_RANGES : undefined,
         });
       },
@@ -689,12 +738,14 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           valueRenderOption: {
             type: "string",
             enum: ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
-            description: "FORMATTED_VALUE (default) as displayed; UNFORMATTED_VALUE as raw numbers; FORMULA shows formulas instead of results.",
+            description:
+              "FORMATTED_VALUE (default) as displayed; UNFORMATTED_VALUE as raw numbers; FORMULA shows formulas instead of results.",
           },
           dateTimeRenderOption: {
             type: "string",
             enum: ["SERIAL_NUMBER", "FORMATTED_STRING"],
-            description: "Dates when valueRenderOption is not FORMATTED_VALUE: SERIAL_NUMBER (Google's default, days since 1899-12-30) or FORMATTED_STRING.",
+            description:
+              "Dates when valueRenderOption is not FORMATTED_VALUE: SERIAL_NUMBER (Google's default, days since 1899-12-30) or FORMATTED_STRING.",
           },
           maxCells: {
             type: "integer",
@@ -718,7 +769,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             type: "string",
             minLength: 1,
             maxLength: 1024,
-            description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same spreadsheetId, ranges, and render options.",
+            description:
+              "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same spreadsheetId, ranges, and render options.",
           },
         },
         ["spreadsheetId", "ranges"],
@@ -753,9 +805,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const byteBudget: number = args["maxBytes"] ?? DEFAULT_PAGE_BYTES;
         const cellChars: number = args["maxCellChars"] ?? DEFAULT_CELL_CHARS;
         const digest = await readDigest(args);
-        const resume = typeof args["cursor"] === "string"
-          ? decodeCursor(args["cursor"], ranges, digest)
-          : { d: digest, i: 0, s: 0 };
+        const resume =
+          typeof args["cursor"] === "string" ? decodeCursor(args["cursor"], ranges, digest) : { d: digest, i: 0, s: 0 };
         // Every range sent is the caller's own, or the caller's own rewritten
         // to start further down; nothing in the cursor names a range.
         const rewritten = rangeAfter(ranges[resume.i]!, resume.s);
@@ -814,14 +865,17 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             });
           // This range's own fields at their largest, and the comma before it;
           // an empty range costs them too.
-          const fields = jsonBytes(compact({
-            range: echoed,
-            rowOffset: dropped > 0 ? dropped : undefined,
-            values: [],
-            rowCount: rows.length,
-            truncated: true,
-            omittedRows: rows.length,
-          })) + 1;
+          const fields =
+            jsonBytes(
+              compact({
+                range: echoed,
+                rowOffset: dropped > 0 ? dropped : undefined,
+                values: [],
+                rowCount: rows.length,
+                truncated: true,
+                omittedRows: rows.length,
+              }),
+            ) + 1;
           if (bytes + fields > byteBudget) {
             if (valueRanges.length === 0) throw pageTooSmall(echoed, bytes + fields, byteBudget);
             next = { d: digest, i: resume.i + index, s: before };
@@ -1013,20 +1067,21 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // adds the rows twice.
           await uncertainWrite(
             "Appending again would add the rows a second time if the first append landed: read the table with get_values and append only what is missing.",
-            () => client.json(
-              {
-                method: "POST",
-                path: `${spreadsheetPath(args)}/values/${encodeURIComponent(String(args["range"]))}:append`,
-                query: {
-                  valueInputOption: args["valueInputOption"],
-                  // Pinned: OVERWRITE writes over whatever sits below the table.
-                  insertDataOption: "INSERT_ROWS",
-                  includeValuesInResponse: false,
+            () =>
+              client.json(
+                {
+                  method: "POST",
+                  path: `${spreadsheetPath(args)}/values/${encodeURIComponent(String(args["range"]))}:append`,
+                  query: {
+                    valueInputOption: args["valueInputOption"],
+                    // Pinned: OVERWRITE writes over whatever sits below the table.
+                    insertDataOption: "INSERT_ROWS",
+                    includeValuesInResponse: false,
+                  },
+                  body: { majorDimension: "ROWS", values: args["values"] },
                 },
-                body: { majorDimension: "ROWS", values: args["values"] },
-              },
-              ctx,
-            ),
+                ctx,
+              ),
           ),
         );
         return compact({
@@ -1042,7 +1097,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         "Clear the values in one or more A1 ranges, keeping formatting, notes, and validation. The values are gone; nothing is deleted or shifted.",
       annotations: destructive,
       inputSchema: input(
-        { spreadsheetId: SPREADSHEET_ID_PROPERTY, ranges: { ...RANGES_PROPERTY, description: `Ranges to clear, 1 to ${MAX_RANGES}.` } },
+        {
+          spreadsheetId: SPREADSHEET_ID_PROPERTY,
+          ranges: { ...RANGES_PROPERTY, description: `Ranges to clear, 1 to ${MAX_RANGES}.` },
+        },
         ["spreadsheetId", "ranges"],
       ),
       outputSchema: {
@@ -1079,13 +1137,25 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       annotations: additive,
       inputSchema: input(
         {
-          title: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\r\\n]*$", description: "The spreadsheet's file name." },
+          title: {
+            type: "string",
+            minLength: 1,
+            maxLength: 255,
+            pattern: "^[^\\r\\n]*$",
+            description: "The spreadsheet's file name.",
+          },
           sheetTitles: {
             type: "array",
             minItems: 1,
             maxItems: 50,
             uniqueItems: true,
-            items: { type: "string", minLength: 1, maxLength: 100, pattern: "^[^\\r\\n]*$", description: "One sheet tab's title." },
+            items: {
+              type: "string",
+              minLength: 1,
+              maxLength: 100,
+              pattern: "^[^\\r\\n]*$",
+              description: "One sheet tab's title.",
+            },
             description: "Sheet tabs to start with, in order; omit for Google's one sheet, Sheet1.",
           },
         },
@@ -1111,18 +1181,19 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           // can find it, and Sheets cannot search.
           await uncertainWrite(
             "Search Drive for this title before creating it again, or a second spreadsheet results.",
-            () => client.json(
-              {
-                method: "POST",
-                path: "/spreadsheets",
-                query: { fields: "spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title)" },
-                body: compact({
-                  properties: { title: args["title"] },
-                  sheets: titles?.map((title) => ({ properties: { title } })),
-                }),
-              },
-              ctx,
-            ),
+            () =>
+              client.json(
+                {
+                  method: "POST",
+                  path: "/spreadsheets",
+                  query: { fields: "spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title)" },
+                  body: compact({
+                    properties: { title: args["title"] },
+                    sheets: titles?.map((title) => ({ properties: { title } })),
+                  }),
+                },
+                ctx,
+              ),
           ),
         );
         return compact({
@@ -1144,14 +1215,39 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       inputSchema: input(
         {
           spreadsheetId: SPREADSHEET_ID_PROPERTY,
-          title: { type: "string", minLength: 1, maxLength: 100, pattern: "^[^\\r\\n]*$", description: "The new tab's title, unique in the spreadsheet." },
-          index: { type: "integer", minimum: 0, maximum: 1_000, description: "Tab position, 0 first; omit to add it last." },
-          rowCount: { type: "integer", minimum: 1, maximum: 1_000_000, description: "Rows in the grid; Google defaults to 1,000." },
-          columnCount: { type: "integer", minimum: 1, maximum: MAX_COLUMNS, description: "Columns in the grid; Google defaults to 26." },
+          title: {
+            type: "string",
+            minLength: 1,
+            maxLength: 100,
+            pattern: "^[^\\r\\n]*$",
+            description: "The new tab's title, unique in the spreadsheet.",
+          },
+          index: {
+            type: "integer",
+            minimum: 0,
+            maximum: 1_000,
+            description: "Tab position, 0 first; omit to add it last.",
+          },
+          rowCount: {
+            type: "integer",
+            minimum: 1,
+            maximum: 1_000_000,
+            description: "Rows in the grid; Google defaults to 1,000.",
+          },
+          columnCount: {
+            type: "integer",
+            minimum: 1,
+            maximum: MAX_COLUMNS,
+            description: "Columns in the grid; Google defaults to 26.",
+          },
         },
         ["spreadsheetId", "title"],
       ),
-      outputSchema: { type: "object", properties: { spreadsheetId: { type: "string" }, ...(SHEET_SCHEMA.properties as Record<string, JsonSchema>) }, required: ["spreadsheetId", "sheetId"] },
+      outputSchema: {
+        type: "object",
+        properties: { spreadsheetId: { type: "string" }, ...(SHEET_SCHEMA.properties as Record<string, JsonSchema>) },
+        required: ["spreadsheetId", "sheetId"],
+      },
       handler: async (args, ctx) => {
         const grid = compact({ rowCount: args["rowCount"], columnCount: args["columnCount"] });
         const response = asRecord(
@@ -1201,7 +1297,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
               type: "object",
               minProperties: 1,
               maxProperties: 1,
-              description: "One Sheets Request with exactly one kind set, as Google documents it: { repeatCell: {…} }, { deleteDimension: {…} }, { sortRange: {…} }.",
+              description:
+                "One Sheets Request with exactly one kind set, as Google documents it: { repeatCell: {…} }, { deleteDimension: {…} }, { sortRange: {…} }.",
             },
             description: `Sheets API Request objects, 1 to ${MAX_BATCH_REQUESTS}, applied in order; all succeed or none do.`,
           },
@@ -1292,7 +1389,12 @@ export const sheets = asProviderFactory<SheetsOptions>({
   title: "Google Sheets",
   kind: "api",
   readme: "Google Sheets",
-  bundle: {"baselineGzip":26026,"maxGzip":86026,"note":"./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 26026,
+    "maxGzip": 86026,
+    "note":
+      "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   create: sheetsConnector,
@@ -1320,7 +1422,8 @@ function sheetsConnector(id: string, options: SheetsOptions): Connector {
     description: `Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — ${connection.purpose}`,
     usageGuide: {
       content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
+      summary:
+        "Each caller's own spreadsheets by id: A1 ranges, cell-paged reads, RAW or USER_ENTERED writes, raw batchUpdate.",
       // Required: whose spreadsheets they are, that Drive finds them, and what
       // null and "" mean in a written row are conventions no schema carries.
       required: true,

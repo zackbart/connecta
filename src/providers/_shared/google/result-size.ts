@@ -30,11 +30,7 @@ export function jsonBytes(value: unknown): number {
  * anything was cut. The cut never splits a surrogate pair, and the marker is
  * counted inside the bound, so the result always fits.
  */
-export function clampText(
-  text: string,
-  maxBytes: number,
-  marker: (droppedCharacters: number) => string,
-): string {
+export function clampText(text: string, maxBytes: number, marker: (droppedCharacters: number) => string): string {
   if (jsonBytes(text) <= maxBytes) return text;
   const fits = (length: number) => {
     const cut = safePrefix(text, length);

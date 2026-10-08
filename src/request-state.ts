@@ -13,11 +13,20 @@ export function invalidRequestState(): never {
 
 /** Object order is immaterial; array order and every submitted value are bound. */
 export function canonicalState(value: unknown): string {
-  return JSON.stringify(value, (_key, item: unknown) => stateObject(item)
-    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+  return JSON.stringify(value, (_key, item: unknown) =>
+    stateObject(item)
+      ? Object.fromEntries(
+          Object.keys(item)
+            .sort()
+            .map((key) => [key, item[key]]),
+        )
+      : item,
+  );
 }
 
 export async function requestDigest(tool: string, args: Record<string, unknown>): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalState({ tool, args }));
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
 }

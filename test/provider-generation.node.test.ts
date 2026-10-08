@@ -1,6 +1,15 @@
 // Node-only: executes the generator against temporary provider folders.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +23,8 @@ const write = (root: string, path: string, content: string) => writeFileSync(joi
 
 function run(root: string, check = false) {
   return spawnSync(process.execPath, [script, "--root", root, ...(check ? ["--check"] : [])], {
-    encoding: "utf8", timeout: 30_000,
+    encoding: "utf8",
+    timeout: 30_000,
   });
 }
 
@@ -23,35 +33,83 @@ function repository() {
   directories.push(root);
   for (const folder of ["src/providers/_shared", "scripts", "test"]) mkdirSync(join(root, folder), { recursive: true });
   write(root, "src/providers/_shared/helpers.ts", "export const helper = true;\n");
-  write(root, "package.json", JSON.stringify({ name: "fixture", type: "module", exports: {
-    ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
-    "./providers/retired": { types: "./dist/providers/retired.d.ts", import: "./dist/providers/retired.js" },
-    "./worker": { types: "./dist/worker.d.ts", import: "./dist/worker.js" },
-  } }, null, 2) + "\n");
-  write(root, "knip.jsonc", '{\n  // Keep this comment and the Worker entry.\n  "entry": [\n    "src/index.ts",\n    "src/providers/retired.ts",\n    "src/worker.ts"\n  ],\n  "project": ["src/**/*.ts"]\n}\n');
-  write(root, "scripts/bundle-budget.json", JSON.stringify({
-    notes: ["Root note", "./providers/retired old note", "Worker note"],
-    entries: { ".": { baselineGzip: 50, maxGzip: 101 }, "./providers/retired": { baselineGzip: 10, maxGzip: 13 }, "./worker": { baselineGzip: 30, maxGzip: 75 } },
-  }, null, 2) + "\n");
-  write(root, "README.md", "# Fixture\n\n- **Use maintained connections** for Retired: known endpoints, auth defaults, and\n  vetted read/write classifications, imported one at a time.\n\nUnrelated text.\n");
+  write(
+    root,
+    "package.json",
+    JSON.stringify(
+      {
+        name: "fixture",
+        type: "module",
+        exports: {
+          ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+          "./providers/retired": { types: "./dist/providers/retired.d.ts", import: "./dist/providers/retired.js" },
+          "./worker": { types: "./dist/worker.d.ts", import: "./dist/worker.js" },
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  write(
+    root,
+    "knip.jsonc",
+    '{\n  // Keep this comment and the Worker entry.\n  "entry": [\n    "src/index.ts",\n    "src/providers/retired.ts",\n    "src/worker.ts"\n  ],\n  "project": ["src/**/*.ts"]\n}\n',
+  );
+  write(
+    root,
+    "scripts/bundle-budget.json",
+    JSON.stringify(
+      {
+        notes: ["Root note", "./providers/retired old note", "Worker note"],
+        entries: {
+          ".": { baselineGzip: 50, maxGzip: 101 },
+          "./providers/retired": { baselineGzip: 10, maxGzip: 13 },
+          "./worker": { baselineGzip: 30, maxGzip: 75 },
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  write(
+    root,
+    "README.md",
+    "# Fixture\n\n- **Use maintained connections** for Retired: known endpoints, auth defaults, and\n  vetted read/write classifications, imported one at a time.\n\nUnrelated text.\n",
+  );
   return root;
 }
 
 function provider(root: string, name: string, node = false) {
   const folder = `src/providers/${name}`;
   mkdirSync(join(root, folder));
-  write(root, `${folder}/index.ts`, `import { skill } from "./skill.generated.js";
+  write(
+    root,
+    `${folder}/index.ts`,
+    `import { skill } from "./skill.generated.js";
 export const factory = Object.assign((id: string, options: object) => ({ id, kind: "api", options, staticTools: [{ name: "list_items" }] }), {
   definition: { name: ${JSON.stringify(name)}, title: ${JSON.stringify(name.toUpperCase())}, readme: ${JSON.stringify(`Vendor ${name}`)}, kind: "api", skill,
     bundle: { baselineGzip: 17, maxGzip: 23, note: ${JSON.stringify(`./providers/${name} reviewed cap`)} } }
-});\n`);
-  write(root, `${folder}/SKILL.md`, `---\n${JSON.stringify({ name, instructionsHeading: "Deployment instructions" })}\n---\n\n<!-- fragment: content -->\n  Keep spaces.\n\n<!-- endfragment -->\n\n<!-- fragment: footer -->\nTail without final newline<!-- endfragment -->\n`);
-  write(root, `${folder}/fixtures.ts`, `import { factory } from "./index.js";
+});\n`,
+  );
+  write(
+    root,
+    `${folder}/SKILL.md`,
+    `---\n${JSON.stringify({ name, instructionsHeading: "Deployment instructions" })}\n---\n\n<!-- fragment: content -->\n  Keep spaces.\n\n<!-- endfragment -->\n\n<!-- fragment: footer -->\nTail without final newline<!-- endfragment -->\n`,
+  );
+  write(
+    root,
+    `${folder}/fixtures.ts`,
+    `import { factory } from "./index.js";
 export const fixture = { name: ${JSON.stringify(name)}, options: { purpose: "fixture" }, cases: [{ label: "default", options: {} }],
   create(id = "fixture", overrides = {}) { return factory(id, { purpose: "fixture", ...overrides }); }
-};\n`);
+};\n`,
+  );
   write(root, `${folder}/drift.json`, '{"kind":"manual","reason":"fixture"}\n');
-  write(root, `${folder}/provider${node ? ".node" : ""}.test.ts`, node ? "// Node-only: fixture.\n" : "// Portable fixture.\n");
+  write(
+    root,
+    `${folder}/provider${node ? ".node" : ""}.test.ts`,
+    node ? "// Node-only: fixture.\n" : "// Portable fixture.\n",
+  );
 }
 
 function snapshot(root: string, prefix = ""): Record<string, { content: string; mtime: number }> {
@@ -79,7 +137,10 @@ describe("provider folder generation", () => {
     expect(second.status, second.stderr).toBe(0);
     const manifest = json(root, "package.json");
     expect(Object.keys(manifest.exports)).toEqual([".", "./providers/alpha", "./providers/beta", "./worker"]);
-    expect(manifest.exports["./providers/beta"]).toEqual({ types: "./dist/providers/beta/index.d.ts", import: "./dist/providers/beta/index.js" });
+    expect(manifest.exports["./providers/beta"]).toEqual({
+      types: "./dist/providers/beta/index.d.ts",
+      import: "./dist/providers/beta/index.js",
+    });
     expect(manifest.exports["./worker"]).toEqual({ types: "./dist/worker.d.ts", import: "./dist/worker.js" });
     const knip = read(root, "knip.jsonc");
     expect(knip).toContain("// Keep this comment and the Worker entry.");
@@ -90,9 +151,14 @@ describe("provider folder generation", () => {
     expect(budgets.entries["./providers/beta"]).toEqual({ baselineGzip: 17, maxGzip: 23 });
     expect(budgets.entries["."]).toEqual({ baselineGzip: 50, maxGzip: 101 });
     expect(budgets.entries["./worker"]).toEqual({ baselineGzip: 30, maxGzip: 75 });
-    expect(budgets.notes).toEqual(["Root note", "Worker note", "./providers/alpha reviewed cap", "./providers/beta reviewed cap"]);
+    expect(budgets.notes).toEqual([
+      "Root note",
+      "Worker note",
+      "./providers/alpha reviewed cap",
+      "./providers/beta reviewed cap",
+    ]);
     const fixtures = read(root, "test/providers.generated.ts");
-    expect(fixtures).toContain('../src/providers/beta/fixtures.js');
+    expect(fixtures).toContain("../src/providers/beta/fixtures.js");
     expect(fixtures).toContain("export const providerFixtures");
     const smoke = read(root, "scripts/provider-smoke.generated.mjs");
     expect(smoke).toContain('"@zackbart/connecta/providers/beta"');
@@ -107,16 +173,34 @@ describe("provider folder generation", () => {
     // accidentally would make this fail even though the import smoke passed.
     const installed = join(root, "node_modules/@zackbart/connecta");
     mkdirSync(installed, { recursive: true });
-    writeFileSync(join(installed, "package.json"), JSON.stringify({ type: "module", exports: {
-      "./providers/alpha": "./alpha.mjs", "./providers/beta": "./beta.mjs",
-    } }));
+    writeFileSync(
+      join(installed, "package.json"),
+      JSON.stringify({
+        type: "module",
+        exports: {
+          "./providers/alpha": "./alpha.mjs",
+          "./providers/beta": "./beta.mjs",
+        },
+      }),
+    );
     for (const name of ["alpha", "beta"]) {
-      writeFileSync(join(installed, `${name}.mjs`), 'export const factory = (id, options) => ({ id, options, kind: "installed" });\n');
+      writeFileSync(
+        join(installed, `${name}.mjs`),
+        'export const factory = (id, options) => ({ id, options, kind: "installed" });\n',
+      );
     }
-    const packed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    const packed = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
       import { fixtures } from "./scripts/provider-smoke.generated.mjs";
       if (fixtures.length !== 2 || fixtures.some((fixture) => fixture.create("packed").kind !== "installed")) process.exit(1);
-    `], { cwd: root, encoding: "utf8", timeout: 10_000 });
+    `,
+      ],
+      { cwd: root, encoding: "utf8", timeout: 10_000 },
+    );
     expect(packed.status, packed.stderr).toBe(0);
   });
 
@@ -144,16 +228,21 @@ describe("provider folder generation", () => {
     expect(run(root, true).status).toBe(0);
   });
 
-  it.each(["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "provider.test.ts"])("rejects a missing required %s with a provider-specific error", (file) => {
-    const root = repository();
-    provider(root, "alpha");
-    unlinkSync(join(root, "src/providers/alpha", file));
-    const before = snapshot(root);
-    const result = run(root);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`src/providers/alpha: missing required file ${file === "provider.test.ts" ? "provider.node.test.ts" : file}`);
-    expect(snapshot(root)).toEqual(before);
-  });
+  it.each(["index.ts", "SKILL.md", "drift.json", "fixtures.ts", "provider.test.ts"])(
+    "rejects a missing required %s with a provider-specific error",
+    (file) => {
+      const root = repository();
+      provider(root, "alpha");
+      unlinkSync(join(root, "src/providers/alpha", file));
+      const before = snapshot(root);
+      const result = run(root);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        `src/providers/alpha: missing required file ${file === "provider.test.ts" ? "provider.node.test.ts" : file}`,
+      );
+      expect(snapshot(root)).toEqual(before);
+    },
+  );
 
   it("rejects malformed or duplicated skill fragments before writing outputs", () => {
     const root = repository();
@@ -176,12 +265,22 @@ describe("provider folder generation", () => {
     const source = read(root, "src/providers/alpha/skill.generated.ts");
     const skill = JSON.parse(source.slice(source.indexOf("= ") + 2, source.lastIndexOf(" as const")));
     expect(skill.content).toBe("  Keep spaces.\n\nTail without final newline");
-    const outputs = ["package.json", "knip.jsonc", "scripts/bundle-budget.json", "README.md", "test/providers.generated.ts", "scripts/provider-smoke.generated.mjs"];
+    const outputs = [
+      "package.json",
+      "knip.jsonc",
+      "scripts/bundle-budget.json",
+      "README.md",
+      "test/providers.generated.ts",
+      "scripts/provider-smoke.generated.mjs",
+    ];
     for (const output of outputs) {
       const original = read(root, output);
-      const changed = output === "knip.jsonc"
-        ? original.replace("src/providers/alpha/index.ts", "src/providers/retired.ts")
-        : output === "README.md" ? original.replace("Vendor alpha", "Retired") : original + "\n";
+      const changed =
+        output === "knip.jsonc"
+          ? original.replace("src/providers/alpha/index.ts", "src/providers/retired.ts")
+          : output === "README.md"
+            ? original.replace("Vendor alpha", "Retired")
+            : original + "\n";
       write(root, output, changed);
       const before = snapshot(root);
       const result = run(root, true);

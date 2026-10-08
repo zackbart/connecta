@@ -1,33 +1,12 @@
 import { failureRecord, logFailure } from "../operator-record.js";
 import { Effect } from "effect";
 import { claimConnectorScopeCleanup, closeConnectorScope } from "../connector-scope.js";
-import {
-  credentialTestRule,
-  describeCredentialTestMismatch,
-  storedCredentialShape,
-} from "../credential-rules.js";
-import type {
-  ConnectorCredentialConfig,
-  ConnectorCredentialValues,
-} from "../types.js";
-import {
-  authorizedPerson,
-  refuse,
-  serveOperator,
-  visibleRegistry,
-  type Answer,
-} from "./operator.js";
-import {
-  mayManageConnector,
-  isSameOrigin,
-  msg,
-  privateJson,
-  type RouteContext,
-} from "./shared.js";
+import { credentialTestRule, describeCredentialTestMismatch, storedCredentialShape } from "../credential-rules.js";
+import type { ConnectorCredentialConfig, ConnectorCredentialValues } from "../types.js";
+import { authorizedPerson, refuse, serveOperator, visibleRegistry, type Answer } from "./operator.js";
+import { mayManageConnector, isSameOrigin, msg, privateJson, type RouteContext } from "./shared.js";
 
-type CredentialInput =
-  | { kind: "single"; value: string }
-  | { kind: "multiple"; values: ConnectorCredentialValues };
+type CredentialInput = { kind: "single"; value: string } | { kind: "multiple"; values: ConnectorCredentialValues };
 
 /** The longest body, in characters, a credential write accepts. */
 const MAX_BODY_CHARS = 20_000;
@@ -78,18 +57,12 @@ function credentialInput(
     }
     return Effect.succeed({ kind: "single", value: body.value });
   }
-  if (
-    !body.values ||
-    typeof body.values !== "object" ||
-    Array.isArray(body.values)
-  ) {
+  if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) {
     return refuse("values must be an object", 400);
   }
   const rawValues = body.values as Record<string, unknown>;
   const expected = new Set(config.fields.map((field) => field.name));
-  const unexpected = Object.keys(rawValues).find(
-    (field) => !expected.has(field),
-  );
+  const unexpected = Object.keys(rawValues).find((field) => !expected.has(field));
   if (unexpected) {
     return refuse(`unexpected credential field "${unexpected}"`, 400);
   }
@@ -109,12 +82,7 @@ function readCredentialInput(
   config: ConnectorCredentialConfig,
 ): Effect.Effect<CredentialInput, Answer> {
   return Effect.gen(function* () {
-    if (
-      !request.headers
-        .get("content-type")
-        ?.toLowerCase()
-        .startsWith("application/json")
-    ) {
+    if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
       return yield* refuse("Content-Type must be application/json", 415);
     }
     const raw = yield* Effect.promise(() => boundedText(request));
@@ -157,7 +125,7 @@ function credentialRequest(
     const owner = personal ? authz.principalKey : undefined;
     const updatedBy = authz.identity.principal
       ? `${authz.identity.principal.namespace}:${authz.identity.principal.id}`
-      : authz.actor.id ?? authz.actor.kind;
+      : (authz.actor.id ?? authz.actor.kind);
 
     if (action === "test") {
       if (request.method !== "POST") return yield* refuse("method not allowed", 405);
@@ -168,8 +136,7 @@ function credentialRequest(
       if (!mode) {
         return yield* refuse(
           mismatch
-            ? "this connector cannot test its credential: " +
-                describeCredentialTestMismatch(mismatch)
+            ? "this connector cannot test its credential: " + describeCredentialTestMismatch(mismatch)
             : "this connector does not support credential testing",
           400,
         );
@@ -200,10 +167,7 @@ function credentialRequest(
             );
           }
           if (shape.state === "mismatch") {
-            return privateJson(
-              { error: shape.message, problem: "credential_mismatch" },
-              { status: 409 },
-            );
+            return privateJson({ error: shape.message, problem: "credential_mismatch" }, { status: 409 });
           }
           const storedValues = values!;
           const ctx = registry.contextFor(connectorId, baseUrl);
@@ -218,7 +182,12 @@ function credentialRequest(
                     ctx,
                   );
             const ok = result?.ok === true;
-            if (!ok) logFailure(opts.config.logger, "credential test failed", failureRecord({ connector: connectorId }, undefined));
+            if (!ok)
+              logFailure(
+                opts.config.logger,
+                "credential test failed",
+                failureRecord({ connector: connectorId }, undefined),
+              );
             return privateJson({ ok });
           } finally {
             releaseCleanup();
@@ -264,11 +233,8 @@ function credentialRequest(
   });
 }
 
-export async function routeCredentials(
-  context: RouteContext,
-): Promise<Response | null> {
-  const match =
-    /^\/ui\/credentials\/([a-z0-9_-]+)(?:\/([a-z]+))?$/.exec(context.path);
+export async function routeCredentials(context: RouteContext): Promise<Response | null> {
+  const match = /^\/ui\/credentials\/([a-z0-9_-]+)(?:\/([a-z]+))?$/.exec(context.path);
   if (!match) return null;
   const connectorId = match[1];
   if (!connectorId) return null;

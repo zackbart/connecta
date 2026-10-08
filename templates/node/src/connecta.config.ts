@@ -40,22 +40,21 @@ export default defineConfig((env: Env) => {
   const clerkPublishableKey = set("CLERK_PUBLISHABLE_KEY");
   const clerkSecretKey = set("CLERK_SECRET_KEY");
   if (Boolean(clerkPublishableKey) !== Boolean(clerkSecretKey)) {
-    throw new Error(
-      "Operator sign-in needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY.",
-    );
+    throw new Error("Operator sign-in needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY.");
   }
-  const clerk = clerkPublishableKey && clerkSecretKey
-    ? clerkAuth({
-        publishableKey: clerkPublishableKey,
-        secretKey: clerkSecretKey,
-        // Enable Clerk aud_claim_enabled; hosts request the MCP URL as
-        // resource. Bound JWT and opaque tokens are the default.
-        publicUrl,
-        // Restrict who may sign in with `allowedDomains: ["acme.com"]`, or
-        // `gate` for anything a domain cannot express. Absent, every
-        // authenticated Clerk user is admitted.
-      })
-    : undefined;
+  const clerk =
+    clerkPublishableKey && clerkSecretKey
+      ? clerkAuth({
+          publishableKey: clerkPublishableKey,
+          secretKey: clerkSecretKey,
+          // Enable Clerk aud_claim_enabled; hosts request the MCP URL as
+          // resource. Bound JWT and opaque tokens are the default.
+          publicUrl,
+          // Restrict who may sign in with `allowedDomains: ["acme.com"]`, or
+          // `gate` for anything a domain cannot express. Absent, every
+          // authenticated Clerk user is admitted.
+        })
+      : undefined;
   // Every piece of state — OAuth grants, sealed credentials, catalogs,
   // paging, access tokens, activity — lives in this one file.
   const database = openSqlite(set("CONNECTA_DATABASE") ?? "./.connecta.sqlite");
@@ -89,12 +88,13 @@ export default defineConfig((env: Env) => {
     // Payload-free activity history at /activity: who called what, when, how
     // long it took, and whether it worked. Each write prunes rows older than
     // `retentionDays`; the number is yours to choose.
-    activity: set("CONNECTA_ACTIVITY") === "on"
-      ? activityHistory({
-          store: sqliteActivityStore(database, { retentionDays: 90 }),
-          deploymentId: "production",
-        })
-      : undefined,
+    activity:
+      set("CONNECTA_ACTIVITY") === "on"
+        ? activityHistory({
+            store: sqliteActivityStore(database, { retentionDays: 90 }),
+            deploymentId: "production",
+          })
+        : undefined,
     // The operator UI at /. Branding is code too: operatorUi({ branding }).
     ui: operatorUi(),
     connectors: [

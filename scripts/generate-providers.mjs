@@ -15,9 +15,16 @@ export function parseSkill(source, name) {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
   if (!frontmatter) fail(name, "SKILL.md requires JSON frontmatter between --- lines");
   let metadata;
-  try { metadata = JSON.parse(frontmatter[1]); }
-  catch { fail(name, "SKILL.md frontmatter must be JSON (valid YAML)"); }
-  if (metadata.name !== name || typeof metadata.instructionsHeading !== "string" || !metadata.instructionsHeading.trim()) {
+  try {
+    metadata = JSON.parse(frontmatter[1]);
+  } catch {
+    fail(name, "SKILL.md frontmatter must be JSON (valid YAML)");
+  }
+  if (
+    metadata.name !== name ||
+    typeof metadata.instructionsHeading !== "string" ||
+    !metadata.instructionsHeading.trim()
+  ) {
     fail(name, "SKILL.md frontmatter requires matching name and non-empty instructionsHeading");
   }
   const body = source.slice(frontmatter[0].length);
@@ -65,17 +72,25 @@ function knipEntries(source, providers) {
   const before = entries[2].slice(0, position);
   const after = entries[2].slice(position).replace(membership, "");
   const additions = providers.map(({ name }) => `    "src/providers/${name}/index.ts",\n`).join("");
-  return source.replace(entries[0], entries[1] + before + (before.endsWith("\n") ? "" : "\n") + additions + after + entries[3]);
+  return source.replace(
+    entries[0],
+    entries[1] + before + (before.endsWith("\n") ? "" : "\n") + additions + after + entries[3],
+  );
 }
 
 function readmeList(source, providers) {
-  const names = providers.map(({ definition }) => definition.readme ?? definition.title)
+  const names = providers
+    .map(({ definition }) => definition.readme ?? definition.title)
     .sort((a, b) => a.localeCompare(b, "en"));
   const list = names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
   const start = "<!-- providers:start -->";
   const end = "<!-- providers:end -->";
   if (source.includes(start) || source.includes(end)) {
-    if (source.split(start).length !== 2 || source.split(end).length !== 2 || source.indexOf(end) < source.indexOf(start)) {
+    if (
+      source.split(start).length !== 2 ||
+      source.split(end).length !== 2 ||
+      source.indexOf(end) < source.indexOf(start)
+    ) {
       throw new Error("README provider list requires one ordered pair of providers:start/end markers");
     }
     return source.slice(0, source.indexOf(start) + start.length) + list + source.slice(source.indexOf(end));
@@ -90,54 +105,97 @@ function readmeList(source, providers) {
 // missing or stale, without a write or a stale-module import deadlock.
 async function loadDefinition(provider, skills) {
   const result = await build({
-    entryPoints: [provider.index], bundle: true, write: false,
-    platform: "node", format: "esm", packages: "external", logLevel: "silent",
-    plugins: [{
-      name: "current-provider-skills",
-      setup(buildContext) {
-        buildContext.onResolve({ filter: /skill\.generated\.(?:js|ts)$/ }, (args) => ({
-          path: join(args.resolveDir, "skill.generated.ts"), namespace: "skill",
-        }));
-        buildContext.onLoad({ filter: /.*/, namespace: "skill" }, ({ path }) => {
-          if (!skills.has(path)) throw new Error(`Unknown generated skill ${path}`);
-          return { contents: skills.get(path), loader: "ts" };
-        });
-        buildContext.onResolve({ filter: /^[^./]/ }, (args) => {
-          if (args.path.startsWith("node:")) return { path: args.path, external: true };
-          return { path: import.meta.resolve(args.path), external: true };
-        });
+    entryPoints: [provider.index],
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    logLevel: "silent",
+    plugins: [
+      {
+        name: "current-provider-skills",
+        setup(buildContext) {
+          buildContext.onResolve({ filter: /skill\.generated\.(?:js|ts)$/ }, (args) => ({
+            path: join(args.resolveDir, "skill.generated.ts"),
+            namespace: "skill",
+          }));
+          buildContext.onLoad({ filter: /.*/, namespace: "skill" }, ({ path }) => {
+            if (!skills.has(path)) throw new Error(`Unknown generated skill ${path}`);
+            return { contents: skills.get(path), loader: "ts" };
+          });
+          buildContext.onResolve({ filter: /^[^./]/ }, (args) => {
+            if (args.path.startsWith("node:")) return { path: args.path, external: true };
+            return { path: import.meta.resolve(args.path), external: true };
+          });
+        },
       },
-    }],
+    ],
   });
-  const exports = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
-  const factories = Object.values(exports).filter((value) => typeof value === "function" && value.definition !== undefined);
+  const exports = await import(
+    `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`
+  );
+  const factories = Object.values(exports).filter(
+    (value) => typeof value === "function" && value.definition !== undefined,
+  );
   if (factories.length !== 1) fail(provider.name, "index.ts must export exactly one factory with .definition");
   const definition = factories[0].definition;
-  if (definition.name !== provider.name || typeof definition.title !== "string" || !definition.title.trim() ||
-      !["api", "mcp", "composed"].includes(definition.kind)) fail(provider.name, "invalid factory definition");
+  if (
+    definition.name !== provider.name ||
+    typeof definition.title !== "string" ||
+    !definition.title.trim() ||
+    !["api", "mcp", "composed"].includes(definition.kind)
+  )
+    fail(provider.name, "invalid factory definition");
   const { baselineGzip, maxGzip, note } = definition.bundle ?? {};
-  if (!Number.isSafeInteger(baselineGzip) || baselineGzip < 0 || !Number.isSafeInteger(maxGzip) || maxGzip < baselineGzip ||
-      (note !== undefined && typeof note !== "string")) fail(provider.name, "definition requires valid bundle baselineGzip, maxGzip and optional note");
-  if (definition.readme !== undefined && (typeof definition.readme !== "string" || !definition.readme.trim() || /[\r\n]/.test(definition.readme))) {
+  if (
+    !Number.isSafeInteger(baselineGzip) ||
+    baselineGzip < 0 ||
+    !Number.isSafeInteger(maxGzip) ||
+    maxGzip < baselineGzip ||
+    (note !== undefined && typeof note !== "string")
+  )
+    fail(provider.name, "definition requires valid bundle baselineGzip, maxGzip and optional note");
+  if (
+    definition.readme !== undefined &&
+    (typeof definition.readme !== "string" || !definition.readme.trim() || /[\r\n]/.test(definition.readme))
+  ) {
     fail(provider.name, "definition.readme must be a non-empty single-line display name");
   }
   return definition;
 }
 
 async function smokeFixtures(root, providers) {
-  const imports = providers.map(({ fixtures }, index) =>
-    `import { fixture as fixture${index} } from ${JSON.stringify(fixtures)};`).join("\n");
+  const imports = providers
+    .map(({ fixtures }, index) => `import { fixture as fixture${index} } from ${JSON.stringify(fixtures)};`)
+    .join("\n");
   const providerIndices = new Map(providers.map(({ index, name }) => [index, name]));
   const result = await build({
-    stdin: { contents: `${imports}\nexport const fixtures = [${providers.map((_, index) => `fixture${index}`).join(", ")}];\n`, resolveDir: root, sourcefile: "provider-smoke.ts", loader: "ts" },
-    absWorkingDir: root, bundle: true, write: false, platform: "node", format: "esm", packages: "external", logLevel: "silent",
-    plugins: [{ name: "installed-providers", setup(buildContext) {
-      buildContext.onResolve({ filter: /^\./ }, (args) => {
-        const path = resolve(args.resolveDir, args.path.replace(/\.js$/, ".ts"));
-        const name = providerIndices.get(path);
-        return name ? { path: `@zackbart/connecta/providers/${name}`, external: true } : undefined;
-      });
-    } }],
+    stdin: {
+      contents: `${imports}\nexport const fixtures = [${providers.map((_, index) => `fixture${index}`).join(", ")}];\n`,
+      resolveDir: root,
+      sourcefile: "provider-smoke.ts",
+      loader: "ts",
+    },
+    absWorkingDir: root,
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    logLevel: "silent",
+    plugins: [
+      {
+        name: "installed-providers",
+        setup(buildContext) {
+          buildContext.onResolve({ filter: /^\./ }, (args) => {
+            const path = resolve(args.resolveDir, args.path.replace(/\.js$/, ".ts"));
+            const name = providerIndices.get(path);
+            return name ? { path: `@zackbart/connecta/providers/${name}`, external: true } : undefined;
+          });
+        },
+      },
+    ],
   });
   return generated + result.outputFiles[0].text;
 }
@@ -158,14 +216,19 @@ export async function generateProviders({ root = repositoryRoot, check = false }
   for (const provider of providers) {
     provider.definition = await loadDefinition(provider, skills);
     const skill = parseSkill(await readFile(provider.skill, "utf8"), provider.name);
-    if (JSON.stringify(provider.definition.skill) !== JSON.stringify(skill)) fail(provider.name, "definition.skill must read the generated SKILL.md module");
-    try { JSON.parse(await readFile(provider.drift, "utf8")); }
-    catch { fail(provider.name, "drift.json must contain valid JSON"); }
+    if (JSON.stringify(provider.definition.skill) !== JSON.stringify(skill))
+      fail(provider.name, "definition.skill must read the generated SKILL.md module");
+    try {
+      JSON.parse(await readFile(provider.drift, "utf8"));
+    } catch {
+      fail(provider.name, "drift.json must contain valid JSON");
+    }
   }
   const manifestPath = join(root, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   manifest.exports = replaceEntries(manifest.exports, providers, ({ name }) => ({
-    types: `./dist/providers/${name}/index.d.ts`, import: `./dist/providers/${name}/index.js`,
+    types: `./dist/providers/${name}/index.d.ts`,
+    import: `./dist/providers/${name}/index.js`,
   }));
   outputs.set(manifestPath, json(manifest));
   const knipPath = join(root, "knip.jsonc");
@@ -173,22 +236,35 @@ export async function generateProviders({ root = repositoryRoot, check = false }
   const budgetPath = join(root, "scripts", "bundle-budget.json");
   const budgets = JSON.parse(await readFile(budgetPath, "utf8"));
   budgets.entries = replaceEntries(budgets.entries, providers, ({ definition }) => ({
-    baselineGzip: definition.bundle.baselineGzip, maxGzip: definition.bundle.maxGzip,
+    baselineGzip: definition.bundle.baselineGzip,
+    maxGzip: definition.bundle.maxGzip,
   }));
-  budgets.notes = [...budgets.notes.filter((note) => !note.startsWith("./providers/")),
-    ...providers.flatMap(({ definition }) => definition.bundle.note === undefined ? [] : [definition.bundle.note])];
+  budgets.notes = [
+    ...budgets.notes.filter((note) => !note.startsWith("./providers/")),
+    ...providers.flatMap(({ definition }) => (definition.bundle.note === undefined ? [] : [definition.bundle.note])),
+  ];
   outputs.set(budgetPath, json(budgets));
   const readmePath = join(root, "README.md");
   outputs.set(readmePath, readmeList(await readFile(readmePath, "utf8"), providers));
-  outputs.set(join(root, "test", "providers.generated.ts"), generated + providers.map(({ name }, index) =>
-    `import { fixture as fixture${index} } from "../src/providers/${name}/fixtures.js";\n`).join("") +
-    `\nexport const providerFixtures = [${providers.map((_, index) => `fixture${index}`).join(", ")}];\n`);
+  outputs.set(
+    join(root, "test", "providers.generated.ts"),
+    generated +
+      providers
+        .map(
+          ({ name }, index) => `import { fixture as fixture${index} } from "../src/providers/${name}/fixtures.js";\n`,
+        )
+        .join("") +
+      `\nexport const providerFixtures = [${providers.map((_, index) => `fixture${index}`).join(", ")}];\n`,
+  );
   outputs.set(join(root, "scripts", "provider-smoke.generated.mjs"), await smokeFixtures(root, providers));
   const stale = [];
   for (const [path, source] of outputs) {
     let previous;
-    try { previous = await readFile(path, "utf8"); }
-    catch (error) { if (error.code !== "ENOENT") throw error; }
+    try {
+      previous = await readFile(path, "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
     if (previous === source) continue;
     stale.push(path.slice(root.length + 1));
     if (!check) await writeFile(path, source);
@@ -200,7 +276,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const args = process.argv.slice(2);
   const rootIndex = args.indexOf("--root");
   const root = rootIndex === -1 ? repositoryRoot : args[rootIndex + 1];
-  if (!root || args.some((arg, index) => arg !== "--check" && arg !== "--root" && (rootIndex === -1 || index !== rootIndex + 1))) {
+  if (
+    !root ||
+    args.some((arg, index) => arg !== "--check" && arg !== "--root" && (rootIndex === -1 || index !== rootIndex + 1))
+  ) {
     throw new Error("Usage: tsx scripts/generate-providers.mjs [--check] [--root directory]");
   }
   const check = args.includes("--check");

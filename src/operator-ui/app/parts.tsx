@@ -25,22 +25,18 @@ export function NoticeLine({
   // announced text stays the message alone.
   return (
     <>
-    <p
-      id={id}
-      className={
-        notice?.tone === "error"
-          ? `notice ${className} error-notice`
-          : `notice ${className}`
-      }
-      role={notice?.tone === "error" ? "alert" : "status"}
-      aria-live="polite"
-      tabIndex={-1}
-    >
-      {notice ? notice.message : null}
-    </p>
-    {notice?.tone === "error" && notice.fix ? (
-      <FixPrompt kind={notice.fix.kind} connectorId={notice.fix.connectorId} />
-    ) : null}
+      <p
+        id={id}
+        className={notice?.tone === "error" ? `notice ${className} error-notice` : `notice ${className}`}
+        role={notice?.tone === "error" ? "alert" : "status"}
+        aria-live="polite"
+        tabIndex={-1}
+      >
+        {notice ? notice.message : null}
+      </p>
+      {notice?.tone === "error" && notice.fix ? (
+        <FixPrompt kind={notice.fix.kind} connectorId={notice.fix.connectorId} />
+      ) : null}
     </>
   );
 }
@@ -52,15 +48,7 @@ export function NoticeLine({
  * disclosure: the sentence explaining what the prompt is sits inside the
  * preview, so a page of failing rows does not repeat it on every one.
  */
-export function FixPrompt({
-  kind,
-  connectorId,
-  name,
-}: {
-  kind: FixPromptKind;
-  connectorId: string;
-  name?: string;
-}) {
+export function FixPrompt({ kind, connectorId, name }: { kind: FixPromptKind; connectorId: string; name?: string }) {
   return (
     <div className="fix-prompt" data-fix-prompt={kind}>
       <FixPromptButton kind={kind} connectorId={connectorId} {...(name ? { name } : {})} />
@@ -114,13 +102,7 @@ export function FixPromptPreview({
 }
 
 /** A status word with a tone. The page's one piece of decoration. */
-export function Badge({
-  tone = "neutral",
-  children,
-}: {
-  tone?: Tone;
-  children: ReactNode;
-}) {
+export function Badge({ tone = "neutral", children }: { tone?: Tone; children: ReactNode }) {
   return <span className={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
 }
 
@@ -152,12 +134,7 @@ export function StateBlock({
       {title ? <p className="state-title">{title}</p> : null}
       {children ? <p className="state-copy">{children}</p> : null}
       {action ? (
-        <button
-          className="btn"
-          type="button"
-          onClick={action.onClick}
-          {...(action.id ? { id: action.id } : {})}
-        >
+        <button className="btn" type="button" onClick={action.onClick} {...(action.id ? { id: action.id } : {})}>
           {action.label}
         </button>
       ) : null}
@@ -224,12 +201,7 @@ export function ConfirmBar({
         <button className="btn danger" type="button" onClick={onConfirm}>
           {confirm}
         </button>
-        <button
-          id={`confirm-cancel-${id}`}
-          className="btn quiet"
-          type="button"
-          onClick={onCancel}
-        >
+        <button id={`confirm-cancel-${id}`} className="btn quiet" type="button" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -325,8 +297,7 @@ export function CopyButton({
       onClick={() => {
         // No clipboard at all — an insecure origin, an old browser — is a
         // failed copy too, and says so rather than doing nothing.
-        const write =
-          navigator.clipboard?.writeText(value) ?? Promise.reject(new Error("no clipboard"));
+        const write = navigator.clipboard?.writeText(value) ?? Promise.reject(new Error("no clipboard"));
         write.then(
           () => setStatus("copied"),
           () => setStatus("failed"),

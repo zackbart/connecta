@@ -337,9 +337,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "route": "raw",
       "mode": "heartbeat",
       "id": "raw-heartbeat-true",
@@ -406,9 +404,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "route": "raw",
       "mode": "idle-timer",
       "id": "raw-idle-timer-true",
@@ -460,9 +456,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "route": "raw",
       "mode": "stalled",
       "id": "raw-stalled-true",
@@ -511,9 +505,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "route": "mcp",
       "mode": "heartbeat",
       "id": "mcp-heartbeat-true",
@@ -590,9 +582,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "route": "mcp",
       "mode": "idle-timer",
       "id": "mcp-idle-timer-true",
@@ -654,9 +644,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "route": "mcp",
       "mode": "stalled",
       "id": "mcp-stalled-true",

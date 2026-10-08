@@ -130,7 +130,7 @@ distinct, and that fallback grants no personal-auth ownership and changes no
 activity attribution. An explicit principal alone is the subject too. Open
 deployments and providers returning no identity share one result partition.
 
-A maintained provider that acts *as* the caller downstream — `gmail()` through
+A maintained provider that acts _as_ the caller downstream — `gmail()` through
 Google Workspace domain-wide delegation — reads none of these roles on its own.
 Its `subject` option, a deployment-config function from the admitted identity
 to a downstream account (a Clerk principal id to a Workspace address, say) or
@@ -156,7 +156,7 @@ UI read one filtered list. Connector-level discovery, guides, and
 omits it, and `authorize_connector` returns the same "Unknown connector" refusal
 as for a connector that does not exist. An ungranted tool fails exactly like one
 the connector never had: `unknown_tool`, with no hint that it exists. That is
-the whole security claim, in one place on purpose. There is no *caller-selected*
+the whole security claim, in one place on purpose. There is no _caller-selected_
 tool set: a narrower slice is a branch in this resolver or a pool, and a bot
 needing its own is its own stored token subject. A request may never name its own
 scope.
@@ -192,12 +192,12 @@ grant both connectors in full. Unknown or unprincipalled identities get `[]`.
 Use a stable authenticated principal or subject, never request headers or tool
 arguments. A token's stored principal is vouched for by inbound auth. Pools narrow their endpoint, not plain `/mcp`.
 
-| Catalog change | Guarded exact grant | Unrestricted exact string grant |
-| --- | --- | --- |
-| New name | Excluded until reviewed and added | Excluded until reviewed and added |
-| Removed or renamed name | Unreachable; warned when the scoped view reads the catalog | Same |
+| Catalog change                                           | Guarded exact grant                                                                                      | Unrestricted exact string grant                                     |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| New name                                                 | Excluded until reviewed and added                                                                        | Excluded until reviewed and added                                   |
+| Removed or renamed name                                  | Unreachable; warned when the scoped view reads the catalog                                               | Same                                                                |
 | Stored write verdict after overrides and provider review | Removed from discovery and every invocation path, including `call_destructive_tool` and trusted programs | Still granted; `call_tool` refuses writes and write paths take over |
-| Schema change alone | Does not revoke, unless it breaks a reviewed digest: then it is a write, as above | Same as above |
+| Schema change alone                                      | Does not revoke, unless it breaks a reviewed digest: then it is a write, as above                        | Same as above                                                       |
 
 The example assumes both exact tools were reviewed as read-only; names imply no safety.
 Review schemas, annotations, and downstream behavior
@@ -279,14 +279,14 @@ createConnecta({
 Without configured `auth`, an open deployment has one anonymous, non-interactive
 identity; grants like these return false and every pool path 404s.
 
-| Rule | Contract |
-| --- | --- |
-| Scope | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` is unchanged; the resolver remains the security boundary. |
-| Grant | Defaults to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
-| Timing | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason. |
-| Construction | Malformed names, unknown options or connectors, empty pools, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
-| Discovery | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup. |
-| Drift | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO. |
+| Rule         | Contract                                                                                                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Scope        | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` is unchanged; the resolver remains the security boundary.                                                                                         |
+| Grant        | Defaults to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
+| Timing       | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason.                                                                                      |
+| Construction | Malformed names, unknown options or connectors, empty pools, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                                                                            |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                         |
+| Drift        | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                           |
 
 ## Shared and personal auth
 
@@ -361,12 +361,12 @@ namespace is left to clean up. They then delete each consent whose epoch is no
 longer live; one left behind cannot complete and expires with its link.
 `POST /ui/oauth/<id>` takes a `mode`:
 
-| Request | What it does |
-| --- | --- |
-| `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it. |
-| `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending consent can be reused; otherwise authorization begins in the current epoch. |
-| `GET /connect/<id>?h=...` | Verifies the signed handoff and, when signed in, browser identity, connector visibility and management permission. With the UI mounted, hands off to `/connectors/<id>?h=...#auth` without consuming the link or starting OAuth; Clerk sign-in uses that shell. The Auth tab continues with `start=1`, which repeats verification, consumes the link and calls `startAuth`. Without the UI, the original browser visit starts consent. Explicit `POST /ui/oauth/<id>` actions return a signed link with `start=1` when the UI is mounted. |
-| `DELETE /ui/oauth/<id>` | Disconnects and invalidates the cached catalog, even if the browser leaves. |
+| Request                                  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `?mode=continue`                         | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending consent can be reused; otherwise authorization begins in the current epoch.                                                                                                                                                                                                                                                                                                                                                          |
+| `GET /connect/<id>?h=...`                | Verifies the signed handoff and, when signed in, browser identity, connector visibility and management permission. With the UI mounted, hands off to `/connectors/<id>?h=...#auth` without consuming the link or starting OAuth; Clerk sign-in uses that shell. The Auth tab continues with `start=1`, which repeats verification, consumes the link and calls `startAuth`. Without the UI, the original browser visit starts consent. Explicit `POST /ui/oauth/<id>` actions return a signed link with `start=1` when the UI is mounted. |
+| `DELETE /ui/oauth/<id>`                  | Disconnects and invalidates the cached catalog, even if the browser leaves.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `authorize_connector` issues the same browser link, with `force` carried in the
 signed handoff. Status reads never call `startAuth` and never expose the
@@ -454,11 +454,11 @@ Copy these durable records during storage migration.
 
 Each fingerprint record names its dispatch epoch, holder, and resolution state:
 
-| State | Send gate |
-| --- | --- |
-| `outstanding` | Dispatched without a definitive outcome yet. Refuse the fingerprint in every epoch. |
-| `ambiguous` | The sent request's outcome is unknowable. Refuse the fingerprint in every epoch, including when re-consent returns it again. |
-| `resolved` | The tokens were committed or a definitive failure was recorded. Refuse another send in the same epoch. A later epoch may send once only when its code exchange completed after the resolution was recorded. |
+| State         | Send gate                                                                                                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `outstanding` | Dispatched without a definitive outcome yet. Refuse the fingerprint in every epoch.                                                                                                                         |
+| `ambiguous`   | The sent request's outcome is unknowable. Refuse the fingerprint in every epoch, including when re-consent returns it again.                                                                                |
+| `resolved`    | The tokens were committed or a definitive failure was recorded. Refuse another send in the same epoch. A later epoch may send once only when its code exchange completed after the resolution was recorded. |
 
 Resolution writes use CAS against the exact outstanding record and record a
 `resolvedAt` timestamp with a resolved outcome. When accepting a code response,
@@ -485,13 +485,13 @@ body contains tokens. Fetch has already sent the request body; a refresh
 fingerprint is resolved as a definitive failure and the grant requires re-consent. A
 redirected code exchange is refused and its SDK retry cannot resend the code.
 
-| Outcome after dispatch | Result |
-| --- | --- |
-| Valid tokens durably committed | Mark the fingerprint resolved and release waiters with committed tokens. Within the epoch only a new fingerprint can be dispatched next. |
-| Definitive provider failure | `auth_required`. Mark the fingerprint resolved and conditionally remove its grant tokens. Includes every 3xx without following it and complete failures such as 5xx, 408, 425, and 429. |
-| Network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Mark the fingerprint ambiguous and conditionally remove its grant tokens. Identical-token re-consent cannot reopen it. |
-| Valid rotation whose grant commit retries are exhausted | `auth_required`. Record the definitive commit failure as resolved and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK. |
-| Epoch changed during commit | Drop the response tokens and record the definitive failure as resolved. Restart, Disconnect, or issuer replacement determines the newer grant. A consent that completed before this resolution cannot reuse its fingerprint. |
+| Outcome after dispatch                                                                           | Result                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Valid tokens durably committed                                                                   | Mark the fingerprint resolved and release waiters with committed tokens. Within the epoch only a new fingerprint can be dispatched next.                                                                                     |
+| Definitive provider failure                                                                      | `auth_required`. Mark the fingerprint resolved and conditionally remove its grant tokens. Includes every 3xx without following it and complete failures such as 5xx, 408, 425, and 429.                                      |
+| Network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Mark the fingerprint ambiguous and conditionally remove its grant tokens. Identical-token re-consent cannot reopen it.                                                                                      |
+| Valid rotation whose grant commit retries are exhausted                                          | `auth_required`. Record the definitive commit failure as resolved and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK.                                                                     |
+| Epoch changed during commit                                                                      | Drop the response tokens and record the definitive failure as resolved. Restart, Disconnect, or issuer replacement determines the newer grant. A consent that completed before this resolution cannot reuse its fingerprint. |
 
 Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
 shared-storage record at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
@@ -656,7 +656,7 @@ Visibility grants no authentication-management permission. Two resolvers take
 `Readonly<AuthenticatedIdentity>` and return `"all"`, `"none"` (the default),
 or connector ids: `credentialAdministration` for shared credentials and OAuth
 grants, `personalConnection` for a human's own grants on personal connectors.
-Each action needs visibility *and* the permission; both run only for an
+Each action needs visibility _and_ the permission; both run only for an
 interactive identity, and personal actions also need a stable namespaced
 principal, whose partition they always use. Exceptions and unknown ids fail
 closed; permissions come from authenticated identity, never caller input.
@@ -868,7 +868,7 @@ deliberate adapter update and the real-SDK Node and Workers auth tests.
 `clerkAuth` reads its Frontend API origin out of `publishableKey`, so a key
 that is not `pk_test_`/`pk_live_` and a base64-encoded domain throws when
 `clerkAuth` is called, as `allowedDomains` does, naming the option without
-quoting the value — usually the *secret* key pasted into the publishable slot.
+quoting the value — usually the _secret_ key pasted into the publishable slot.
 A per-request deployment, as on Workers, sees that error on its first request
 instead of a base64 stack on every route.
 
@@ -1007,13 +1007,13 @@ The document contains its own URL as `client_id`, `serverInfo.name` as
 callbacks or change the client ID. The document, DCR submission, and saved-client
 configuration binding use one metadata builder.
 
-| Configuration and authorization server | Registration path |
-| --- | --- |
-| Pre-registered `auth.client` | `static`, restricted to its configured issuer |
-| Explicit `clientMetadataUrl`, server advertises CIMD support | `cimd`, using the external URL |
-| Public HTTPS `publicUrl`, server advertises CIMD support | `cimd`, using Connecta's document |
-| Server does not advertise CIMD support | `dcr` fallback |
-| Unset, HTTP, loopback, or private `publicUrl` | `dcr`, without a self-hosted document |
+| Configuration and authorization server                       | Registration path                             |
+| ------------------------------------------------------------ | --------------------------------------------- |
+| Pre-registered `auth.client`                                 | `static`, restricted to its configured issuer |
+| Explicit `clientMetadataUrl`, server advertises CIMD support | `cimd`, using the external URL                |
+| Public HTTPS `publicUrl`, server advertises CIMD support     | `cimd`, using Connecta's document             |
+| Server does not advertise CIMD support                       | `dcr` fallback                                |
+| Unset, HTTP, loopback, or private `publicUrl`                | `dcr`, without a self-hosted document         |
 
 `startAuth()` and operator connector status expose `registrationPath` after a
 client has been selected. The selected mechanism is stored alongside the client,
@@ -1092,15 +1092,15 @@ api("church", {
 No discovery or registration occurs; all URLs are configuration, so the
 [advertised-URL rule](#urls-a-downstream-advertises) does not apply.
 
-| Option or binding | Contract |
-| --- | --- |
-| Endpoints | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment. |
-| `pkce` | S256 by default; `false` omits challenge and verifier. |
-| `authorizationParams` | Adds provider parameters; cannot restate the grant's own. |
-| `tokenRequestHeaders` | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`. |
-| `tokenEndpointAuthMethod` | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction. |
-| Issuer/resource | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them. |
-| Client | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values. |
+| Option or binding         | Contract                                                                                                                                                                                                                                                                            |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoints                 | Checked at construction: HTTPS, HTTP only on loopback, no credentials or fragment.                                                                                                                                                                                                  |
+| `pkce`                    | S256 by default; `false` omits challenge and verifier.                                                                                                                                                                                                                              |
+| `authorizationParams`     | Adds provider parameters; cannot restate the grant's own.                                                                                                                                                                                                                           |
+| `tokenRequestHeaders`     | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`.                                                                                                                                                  |
+| `tokenEndpointAuthMethod` | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction.                                                                                                                                                                           |
+| Issuer/resource           | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them.                                                                           |
+| Client                    | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values. |
 
 Handlers never see the grant. `ctx.oauth.fetch(url, init)` sends the calling
 owner's access token as `Authorization: Bearer` with these rules:

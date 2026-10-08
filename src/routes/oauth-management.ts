@@ -2,35 +2,19 @@ import { OAuthRevocationError } from "../auth/downstream-revocation.js";
 import { Effect, Result } from "effect";
 import { closeScope } from "../runtime/connector-scope.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
-import {
-  authorizedPerson,
-  refuse,
-  serveOperator,
-  visibleRegistry,
-  Answer,
-} from "./operator.js";
+import { authorizedPerson, refuse, serveOperator, visibleRegistry, Answer } from "./operator.js";
 import { failureRecord, logFailure } from "../operator-record.js";
-import {
-  mayManageConnector,
-  isSameOrigin,
-  privateJson,
-  type RouteContext,
-} from "./shared.js";
+import { mayManageConnector, isSameOrigin, privateJson, type RouteContext } from "./shared.js";
 
 /** A UI action signs its requested mode; the verified /connect visit applies it. */
 function startMode(url: URL): "continue" | "restart" | null {
   const modes = url.searchParams.getAll("mode");
   if (modes.length === 0) return "restart";
   const [mode] = modes;
-  return modes.length === 1 && (mode === "continue" || mode === "restart")
-    ? mode
-    : null;
+  return modes.length === 1 && (mode === "continue" || mode === "restart") ? mode : null;
 }
 
-function oauthManagementRequest(
-  context: RouteContext,
-  connectorId: string,
-): Effect.Effect<Response, Answer> {
+function oauthManagementRequest(context: RouteContext, connectorId: string): Effect.Effect<Response, Answer> {
   const { request, baseUrl, defer, opts } = context;
   return Effect.gen(function* () {
     if (!isSameOrigin(request, baseUrl)) {
@@ -76,34 +60,43 @@ function oauthManagementRequest(
 
     let ctx: ReturnType<typeof registry.contextFor> | undefined;
     // The connector scope this request opened ends with it, however it ends.
-    yield* Effect.addFinalizer(() =>
-      ctx ? closeScope(connector, ctx, defer) : Effect.void,
-    );
+    yield* Effect.addFinalizer(() => (ctx ? closeScope(connector, ctx, defer) : Effect.void));
 
     // A disconnect commits through invalidation even if its hook rejects or
     // the browser leaves. It has no start deadline or request signal.
     ctx = registry.contextFor(connectorId, baseUrl);
-    const operation = yield* Effect.result(Effect.tryPromise({
-      try: () => disconnectAuth(ctx!), catch: error => error,
-    }));
-    const invalidated = yield* Effect.result(Effect.tryPromise({
-      try: () => registry.invalidateStored(connectorId), catch: error => error,
-    }));
+    const operation = yield* Effect.result(
+      Effect.tryPromise({
+        try: () => disconnectAuth(ctx!),
+        catch: (error) => error,
+      }),
+    );
+    const invalidated = yield* Effect.result(
+      Effect.tryPromise({
+        try: () => registry.invalidateStored(connectorId),
+        catch: (error) => error,
+      }),
+    );
     if (Result.isFailure(operation) || Result.isFailure(invalidated)) {
-      const error = Result.isFailure(operation) ? operation.failure : Result.isFailure(invalidated) ? invalidated.failure : undefined;
+      const error = Result.isFailure(operation)
+        ? operation.failure
+        : Result.isFailure(invalidated)
+          ? invalidated.failure
+          : undefined;
       logFailure(opts.config.logger, "OAuth disconnect failed", failureRecord({ connector: connectorId }, error));
       if (error instanceof OAuthRevocationError && !Result.isFailure(invalidated)) {
         return privateJson({ state: "auth_required", code: "oauth_revocation_failed" });
       }
       return yield* refuse("OAuth disconnect failed", 400);
     }
-    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+    return new Response(null, {
+      status: 204,
+      headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+    });
   }).pipe(Effect.scoped);
 }
 
-export async function routeOAuthManagement(
-  context: RouteContext,
-): Promise<Response | null> {
+export async function routeOAuthManagement(context: RouteContext): Promise<Response | null> {
   const match = /^\/ui\/oauth\/([a-z0-9_-]+)$/.exec(context.path);
   if (!match) return null;
   const connectorId = match[1];

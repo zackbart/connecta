@@ -5,13 +5,7 @@
 
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  detach,
-  fromSignal,
-  microtaskScheduler,
-  runEdge,
-  withDeadlineEffect,
-} from "../src/runtime/run.js";
+import { detach, fromSignal, microtaskScheduler, runEdge, withDeadlineEffect } from "../src/runtime/run.js";
 
 class LabelledError extends Error {
   override readonly name = "LabelledError";
@@ -52,9 +46,11 @@ describe("runEdge", () => {
     const defect = new TypeError("not a function");
     await expect(runEdge(Effect.die(defect))).rejects.toBe(defect);
     await expect(
-      runEdge(Effect.sync(() => {
-        throw defect;
-      })),
+      runEdge(
+        Effect.sync(() => {
+          throw defect;
+        }),
+      ),
     ).rejects.toBe(defect);
     const primitive = { reason: "not even an Error" };
     await expect(runEdge(Effect.die(primitive))).rejects.toBe(primitive);
@@ -71,9 +67,7 @@ describe("runEdge", () => {
 
   it("maps an interrupt to the reason of an already-aborted signal", async () => {
     const reason = { code: "gone" };
-    await expect(
-      runEdge(Effect.never, { signal: AbortSignal.abort(reason) }),
-    ).rejects.toBe(reason);
+    await expect(runEdge(Effect.never, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
   });
 
   it("preserves an explicit null abort reason on interruption", async () => {
@@ -87,10 +81,9 @@ describe("runEdge", () => {
   it("prefers the abort reason over a failure raised while interrupted", async () => {
     const controller = new AbortController();
     const reason = new LabelledError("caller left");
-    const running = runEdge(
-      Effect.never.pipe(Effect.onInterrupt(() => Effect.die(new Error("finalizer")))),
-      { signal: controller.signal },
-    );
+    const running = runEdge(Effect.never.pipe(Effect.onInterrupt(() => Effect.die(new Error("finalizer")))), {
+      signal: controller.signal,
+    });
     await drainMicrotasks();
     controller.abort(reason);
     await expect(running).rejects.toBe(reason);
@@ -162,9 +155,7 @@ describe("fromSignal", () => {
 
   it("fails at once for a signal that is already aborted", async () => {
     const reason = new LabelledError("already");
-    await expect(runEdge(fromSignal(AbortSignal.abort(reason)))).rejects.toBe(
-      reason,
-    );
+    await expect(runEdge(fromSignal(AbortSignal.abort(reason)))).rejects.toBe(reason);
   });
 
   it("preserves an explicit null abort reason", async () => {
@@ -173,9 +164,9 @@ describe("fromSignal", () => {
 
   it("lets the work win a race against a signal that never aborts", async () => {
     const controller = new AbortController();
-    await expect(
-      runEdge(Effect.raceFirst(Effect.succeed("done"), fromSignal(controller.signal))),
-    ).resolves.toBe("done");
+    await expect(runEdge(Effect.raceFirst(Effect.succeed("done"), fromSignal(controller.signal)))).resolves.toBe(
+      "done",
+    );
   });
 });
 
@@ -218,10 +209,7 @@ describe("withDeadlineEffect", () => {
     ).catch((error) => error);
     await vi.advanceTimersByTimeAsync(50);
     expect(await running).toBe(timeoutError);
-    expect(events).toEqual([
-      "abort:search_tools timed out after 50ms",
-      "interrupt:aborted=true",
-    ]);
+    expect(events).toEqual(["abort:search_tools timed out after 50ms", "interrupt:aborted=true"]);
   });
 
   it("fails with the caller's abort reason, forwarded to the operation", async () => {
@@ -263,10 +251,12 @@ describe("withDeadlineEffect", () => {
     const reason = new LabelledError("caller left before dispatch");
     const operation = vi.fn(() => Effect.succeed("dispatched"));
     await expect(
-      runEdge(withDeadlineEffect(operation, {
-        signal: AbortSignal.abort(reason),
-        timeoutError: new Error("unused"),
-      })),
+      runEdge(
+        withDeadlineEffect(operation, {
+          signal: AbortSignal.abort(reason),
+          timeoutError: new Error("unused"),
+        }),
+      ),
     ).rejects.toBe(reason);
     expect(operation).not.toHaveBeenCalled();
   });

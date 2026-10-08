@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  AdmissionController,
-  ExecutorAdmissionError,
-} from "../src/executor-admission.js";
+import { AdmissionController, ExecutorAdmissionError } from "../src/executor-admission.js";
 
 describe("AdmissionController", () => {
   it("reclaims an expired response lease before a new admission without releasing its successor", async () => {
@@ -16,7 +13,7 @@ describe("AdmissionController", () => {
         maxDurationMs: 50,
       });
       const old = await admission.acquire();
-            vi.setSystemTime(1_049);
+      vi.setSystemTime(1_049);
       await expect(admission.acquire()).rejects.toMatchObject({ code: "executor_overloaded" });
 
       // No timer or old-response callback runs. The incoming request itself
@@ -46,7 +43,7 @@ describe("AdmissionController", () => {
         maxDurationMs: 50,
       });
       const old = await admission.acquire();
-            const queued = admission.acquire();
+      const queued = admission.acquire();
       vi.setSystemTime(1_050);
       const newcomer = admission.acquire();
       const first = await queued;
@@ -73,7 +70,7 @@ describe("AdmissionController", () => {
         maxDurationMs: 50,
       });
       const old = await admission.acquire();
-            const queued = admission.acquire();
+      const queued = admission.acquire();
       await vi.advanceTimersByTimeAsync(50);
       const next = await queued;
       expect(admission.activeCount).toBe(1);
@@ -97,7 +94,7 @@ describe("AdmissionController", () => {
         maxDurationMs: 50,
       });
       const old = await admission.acquire();
-            const orphaned = admission.acquire();
+      const orphaned = admission.acquire();
       const refused = expect(orphaned).rejects.toMatchObject({
         code: "executor_overloaded",
         message: "Executor admission timed out after 40ms.",
@@ -120,7 +117,10 @@ describe("AdmissionController", () => {
     try {
       vi.setSystemTime(1_000);
       const admission = new AdmissionController({
-        concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 500, maxDurationMs: 50,
+        concurrency: 1,
+        maxQueueSize: 1,
+        queueTimeoutMs: 500,
+        maxDurationMs: 50,
       });
       const old = await admission.acquire();
       const orphaned = admission.acquire();

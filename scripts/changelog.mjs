@@ -30,13 +30,16 @@ function parseFragment(text, file) {
 }
 
 function fragments(directory) {
-  return readdirSync(directory).filter((name) => name !== ".gitkeep").sort().map((name) => {
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.md$/.test(name)) {
-      throw new Error(`${name}: fragments must be named <pr-or-slug>.md`);
-    }
-    const file = join(directory, name);
-    return { file, ...parseFragment(readFileSync(file, "utf8"), name) };
-  });
+  return readdirSync(directory)
+    .filter((name) => name !== ".gitkeep")
+    .sort()
+    .map((name) => {
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.md$/.test(name)) {
+        throw new Error(`${name}: fragments must be named <pr-or-slug>.md`);
+      }
+      const file = join(directory, name);
+      return { file, ...parseFragment(readFileSync(file, "utf8"), name) };
+    });
 }
 
 function main() {
@@ -46,10 +49,14 @@ function main() {
     const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
     const untracked = git(["ls-files", "--others", "--", "CHANGELOG.md", ".changes"]);
     if (untracked || !git(["ls-files", "--", "CHANGELOG.md"]).trim()) {
-      throw new Error("Commit CHANGELOG.md and every file under .changes/ before assembling; untracked inputs cannot be recovered with git.");
+      throw new Error(
+        "Commit CHANGELOG.md and every file under .changes/ before assembling; untracked inputs cannot be recovered with git.",
+      );
     }
     if (git(["status", "--porcelain", "--", "CHANGELOG.md", ".changes"])) {
-      throw new Error("Commit changes to CHANGELOG.md and .changes/ before assembling; inputs must be tracked and unmodified.");
+      throw new Error(
+        "Commit changes to CHANGELOG.md and .changes/ before assembling; inputs must be tracked and unmodified.",
+      );
     }
   }
   const entries = fragments(join(root, ".changes"));
@@ -61,7 +68,9 @@ function main() {
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i];
     if (!["--version", "--narrative", "--date"].includes(key) || !args[i + 1] || Object.hasOwn(options, key)) {
-      throw new Error("Usage: npm run changelog:assemble -- --version <version> --narrative <file> [--date YYYY-MM-DD]");
+      throw new Error(
+        "Usage: npm run changelog:assemble -- --version <version> --narrative <file> [--date YYYY-MM-DD]",
+      );
     }
     options[key] = args[i + 1];
   }
@@ -71,9 +80,14 @@ function main() {
   }
   if (!options["--narrative"]) throw new Error("--narrative must name the hand-written release opening");
   const narrative = readFileSync(options["--narrative"], "utf8").trim();
-  if (!narrative || /^#{1,6}\s/m.test(narrative)) throw new Error("The release narrative must contain paragraphs without headings");
+  if (!narrative || /^#{1,6}\s/m.test(narrative))
+    throw new Error("The release narrative must contain paragraphs without headings");
   const date = options["--date"] ?? new Date().toISOString().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !Number.isFinite(Date.parse(date)) ||
+    new Date(date).toISOString().slice(0, 10) !== date
+  ) {
     throw new Error("--date must be a real date in YYYY-MM-DD format");
   }
   if (!entries.length) throw new Error("No changelog fragments to assemble");
@@ -86,7 +100,9 @@ function main() {
   const sections = types.flatMap((type) => {
     const group = entries.filter((entry) => entry.type === type);
     if (!group.length) return [];
-    const bullets = group.map(({ breaking, body }) => `- ${breaking ? "**Breaking:** " : ""}${body.replaceAll("\n", "\n  ")}`);
+    const bullets = group.map(
+      ({ breaking, body }) => `- ${breaking ? "**Breaking:** " : ""}${body.replaceAll("\n", "\n  ")}`,
+    );
     return [`### ${type[0].toUpperCase()}${type.slice(1)}\n\n${bullets.join("\n")}`];
   });
   const section = `## ${version} — ${date}\n\n${narrative}\n\n${sections.join("\n\n")}\n\n`;
@@ -99,7 +115,9 @@ function main() {
   } catch (error) {
     throw new Error(`Changelog assembly failed: ${error.message}. Recover with: ${recovery}`);
   }
-  console.log(`Assembled ${entries.length} fragments into ${version}. Review and commit CHANGELOG.md and the deletions.`);
+  console.log(
+    `Assembled ${entries.length} fragments into ${version}. Review and commit CHANGELOG.md and the deletions.`,
+  );
 }
 
 try {

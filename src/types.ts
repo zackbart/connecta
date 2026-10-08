@@ -17,11 +17,7 @@ export interface KVStorage {
    * many seconds pass; omitted or zero means no expiry. Shared stores must
    * create and check expiry with a storage-owned clock, not each caller's clock.
    */
-  set(
-    key: string,
-    value: string,
-    opts?: { ttlSeconds?: number },
-  ): Promise<void>;
+  set(key: string, value: string, opts?: { ttlSeconds?: number }): Promise<void>;
   delete(key: string): Promise<void>;
   /** Live keys beginning with `prefix`, sorted by UTF-16 code unit. */
   list(prefix: string): Promise<string[]>;
@@ -139,9 +135,7 @@ export interface ConnectorCallAdmissionRule {
    * one connector-wide partition. Connecta retains the returned key only; it
    * never copies arguments into limiter state.
    */
-  partitionKey?(
-    input: Readonly<ConnectorCallAdmissionInput>,
-  ): string;
+  partitionKey?(input: Readonly<ConnectorCallAdmissionInput>): string;
 }
 
 /** Optional downstream call-admission policy declared by one connector. */
@@ -423,15 +417,9 @@ export interface Connector {
   /** Optional human-managed credential slot rendered in the connection in the operator UI. */
   credential?: ConnectorCredentialConfig;
   /** Optional server-side check used by the connection's Test action in the operator UI. */
-  testCredential?(
-    value: string,
-    ctx: ConnectorContext,
-  ): Promise<CredentialTestResult>;
+  testCredential?(value: string, ctx: ConnectorContext): Promise<CredentialTestResult>;
   /** Optional multi-field credential check used by the connection's Test action in the operator UI. */
-  testCredentials?(
-    values: ConnectorCredentialValues,
-    ctx: ConnectorContext,
-  ): Promise<CredentialTestResult>;
+  testCredentials?(values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult>;
   /**
    * Statically-known tool defs, exposed by in-code connectors (`api()`) for
    * startup convention checks. Remote connectors omit this — their tools are
@@ -518,10 +506,7 @@ export interface Connector {
    * downstream OAuth. Returns the resulting status — "auth_required" with an
    * authorizationUrl when there is a URL to open, "ok" when already authorized.
    */
-  startAuth?(
-    ctx: ConnectorContext,
-    opts?: { force?: boolean },
-  ): Promise<ConnectorStatus>;
+  startAuth?(ctx: ConnectorContext, opts?: { force?: boolean }): Promise<ConnectorStatus>;
   /**
    * Optional: remove every stored downstream OAuth credential and pending flow
    * without immediately starting a replacement flow. Present only on
@@ -552,11 +537,7 @@ export interface Connector {
    * programmatic calls and `api()` flows with PKCE disabled. Missing state
    * is refused before any downstream request.
    */
-  finishAuth?(
-    code: string,
-    ctx: ConnectorContext,
-    callbackParams: URLSearchParams,
-  ): Promise<void>;
+  finishAuth?(code: string, ctx: ConnectorContext, callbackParams: URLSearchParams): Promise<void>;
 }
 
 /** An endpoint as `describeConfig()` shows it: never a query, fragment, or userinfo. */
@@ -933,19 +914,14 @@ export interface InboundAuth {
    * while serving an authorized activity read, never during tool admission or
    * event writes. The result is display-only and cannot grant access.
    */
-  activityActorLabel?(
-    subjectId: string,
-  ): string | undefined | Promise<string | undefined>;
+  activityActorLabel?(subjectId: string): string | undefined | Promise<string | undefined>;
   /**
    * Optional browser sign-in configuration. When present, operator pages use
    * the provider's interactive sign-in flow.
    */
   uiAuth?: UiAuthConfig;
   /** Serve/short-circuit .well-known + OPTIONS. Return null when not handled. */
-  handleMetadata?(
-    request: Request,
-    baseUrl: string,
-  ): Response | null | Promise<Response | null>;
+  handleMetadata?(request: Request, baseUrl: string): Response | null | Promise<Response | null>;
   /** 401 challenge, selected only when this provider serves the resource metadata. */
   challenge?(request: Request, baseUrl: string): string;
   /** Attempt to authorize a request. */

@@ -82,9 +82,7 @@ export class SharedRead<A> {
         if (this.readers === 0) this.cancel(signal?.reason);
       });
       const answer = Deferred.await(this.outcome);
-      const own = signal
-        ? Effect.raceFirst(answer, this.leftBy(signal))
-        : answer;
+      const own = signal ? Effect.raceFirst(answer, this.leftBy(signal)) : answer;
       return Effect.ensuring(own, leave);
     });
   }

@@ -14,15 +14,21 @@ function executorBundles() {
   };
   return {
     name: "connecta-executor-bundles",
-    resolveId(id: string) { return id in sources ? `\0${id}` : undefined; },
+    resolveId(id: string) {
+      return id in sources ? `\0${id}` : undefined;
+    },
     load(id: string) {
       const source = sources[id.slice(1)];
       if (!source) return;
       return buildSync({
         stdin: { contents: source, resolveDir: fileURLToPath(new URL(".", import.meta.url)) },
-        bundle: true, format: "esm", platform: "neutral", minify: true,
+        bundle: true,
+        format: "esm",
+        platform: "neutral",
+        minify: true,
         conditions: ["workerd", "browser"],
-        external: ["cloudflare:workers"], write: false,
+        external: ["cloudflare:workers"],
+        write: false,
       }).outputFiles[0]?.text;
     },
   };
@@ -40,9 +46,18 @@ export default defineConfig({
         // whose target is not `src/<subpath>.ts` come first.
         resolve: {
           alias: [
-            { find: "@zackbart/connecta/quickjs", replacement: fileURLToPath(new URL("./src/executors/quickjs.ts", import.meta.url)) },
-            { find: "@zackbart/connecta/auth/access-tokens", replacement: fileURLToPath(new URL("./src/access-tokens.ts", import.meta.url)) },
-            { find: /^@zackbart\/connecta\/providers\/(.+)$/, replacement: `${fileURLToPath(new URL("./src/providers/", import.meta.url))}$1/index.ts` },
+            {
+              find: "@zackbart/connecta/quickjs",
+              replacement: fileURLToPath(new URL("./src/executors/quickjs.ts", import.meta.url)),
+            },
+            {
+              find: "@zackbart/connecta/auth/access-tokens",
+              replacement: fileURLToPath(new URL("./src/access-tokens.ts", import.meta.url)),
+            },
+            {
+              find: /^@zackbart\/connecta\/providers\/(.+)$/,
+              replacement: `${fileURLToPath(new URL("./src/providers/", import.meta.url))}$1/index.ts`,
+            },
             {
               find: /^@zackbart\/connecta\/(.+)$/,
               replacement: `${fileURLToPath(new URL("./src/", import.meta.url))}$1.ts`,

@@ -1,10 +1,5 @@
 import type { ConnectaBranding } from "./types.js";
-import type {
-  ActivityStore,
-  ActivityReadGate,
-  recordToolActivity,
-  recordCatalogChangeActivity,
-} from "./activity.js";
+import type { ActivityStore, ActivityReadGate, recordToolActivity, recordCatalogChangeActivity } from "./activity.js";
 import type { RouteContext } from "./routes/shared.js";
 /** Construction-time UI contract. Core never imports the implementation. */
 export interface OperatorSurface {

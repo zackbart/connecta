@@ -3,10 +3,13 @@ import { vettedSchemaDigest } from "./catalog-drift.js";
 
 // Only built-in factories register local credential checks. This hook is not
 // part of Connector, and a replacement callTool cannot inherit its proof.
-const checks = new WeakMap<Connector, {
-  callTool: Connector["callTool"];
-  check: (ctx: ConnectorContext) => Promise<void>;
-}>();
+const checks = new WeakMap<
+  Connector,
+  {
+    callTool: Connector["callTool"];
+    check: (ctx: ConnectorContext) => Promise<void>;
+  }
+>();
 
 export function registerInvocationAuth(connector: Connector, check: (ctx: ConnectorContext) => Promise<void>): void {
   checks.set(connector, { callTool: connector.callTool, check });
@@ -48,9 +51,13 @@ function requestFor(scope: object): RequestInvocations {
 export async function classificationDigest(definition: ToolDef): Promise<string> {
   try {
     const schema = await vettedSchemaDigest(definition);
-    const annotations = Object.entries(definition.annotations ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-    const bytes = new TextEncoder().encode(JSON.stringify({ classification: definition.classification, annotations, schema }));
-    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
+    const annotations = Object.entries(definition.annotations ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ classification: definition.classification, annotations, schema }),
+    );
+    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
   } catch {
     // A digest refusal blocks recovery, not an ordinary call.
     return "";
@@ -65,7 +72,7 @@ export function recordCallEntry(scope: object, call: Omit<EnteredCall, "definiti
 }
 
 export function bindReplayReads(scope: object, reads: ReplayRead[]): void {
-  requestFor(scope).retryReads = new Map(reads.map(read => [read.address, read.digest]));
+  requestFor(scope).retryReads = new Map(reads.map((read) => [read.address, read.digest]));
 }
 
 export function replayClassificationDigest(scope: object, address: string): string | undefined {
@@ -78,11 +85,17 @@ export function recordAuthFailure(scope: object, connector: string, eligible: bo
   failures.set(connector, eligible && failures.get(connector) !== false);
 }
 
-export async function authRecoveryFacts(scope: object, connector: string): Promise<{
-  writeEntered: boolean; unsafeEntered: boolean; eligible: boolean; reads: ReplayRead[];
+export async function authRecoveryFacts(
+  scope: object,
+  connector: string,
+): Promise<{
+  writeEntered: boolean;
+  unsafeEntered: boolean;
+  eligible: boolean;
+  reads: ReplayRead[];
 }> {
   const facts = requestFor(scope);
-  const writeEntered = facts.entered.some(call => call.classification === "write");
+  const writeEntered = facts.entered.some((call) => call.classification === "write");
   const reads = new Map<string, string>();
   let unsafeEntered = writeEntered;
   for (const call of facts.entered) {
@@ -90,6 +103,10 @@ export async function authRecoveryFacts(scope: object, connector: string): Promi
     unsafeEntered ||= !call.fresh || !digest || (reads.has(call.address) && reads.get(call.address) !== digest);
     reads.set(call.address, digest);
   }
-  return { writeEntered, unsafeEntered, eligible: !unsafeEntered && facts.authFailures.get(connector) === true,
-    reads: [...reads].map(([address, digest]) => ({ address, digest })) };
+  return {
+    writeEntered,
+    unsafeEntered,
+    eligible: !unsafeEntered && facts.authFailures.get(connector) === true,
+    reads: [...reads].map(([address, digest]) => ({ address, digest })),
+  };
 }

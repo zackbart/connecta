@@ -9,11 +9,7 @@ const MAX_SCHEMA_NODES = 128;
 const MAX_OBJECT_PROPERTIES = 48;
 const MAX_ARRAY_ITEMS = 32;
 const MAX_PROPERTY_NAME_BYTES = 128;
-const UNSAFE_PROPERTY_NAMES = new Set([
-  "__proto__",
-  "constructor",
-  "prototype",
-]);
+const UNSAFE_PROPERTY_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 const encoder = new TextEncoder();
 
 interface CacheEntry {
@@ -46,9 +42,7 @@ function broadType(value: unknown): string | undefined {
 function serializedSchema(schema: JsonSchema): string | undefined {
   try {
     const text = JSON.stringify(schema);
-    return encoder.encode(text).byteLength <= MAX_SCHEMA_BYTES
-      ? text
-      : undefined;
+    return encoder.encode(text).byteLength <= MAX_SCHEMA_BYTES ? text : undefined;
   } catch {
     return undefined;
   }
@@ -67,9 +61,7 @@ function cloneSchema(schema: JsonSchema): JsonSchema | undefined {
 function definitionIdentity(definition: ToolDef): string | undefined {
   try {
     const serialized = JSON.stringify(definition);
-    return encoder.encode(serialized).byteLength <= MAX_DEFINITION_BYTES
-      ? serialized
-      : undefined;
+    return encoder.encode(serialized).byteLength <= MAX_DEFINITION_BYTES ? serialized : undefined;
   } catch {
     return undefined;
   }
@@ -80,10 +72,7 @@ function schemaType(schema: JsonSchema): string | undefined {
 }
 
 function safePropertyName(name: string): boolean {
-  return (
-    !UNSAFE_PROPERTY_NAMES.has(name) &&
-    encoder.encode(name).byteLength <= MAX_PROPERTY_NAME_BYTES
-  );
+  return !UNSAFE_PROPERTY_NAMES.has(name) && encoder.encode(name).byteLength <= MAX_PROPERTY_NAME_BYTES;
 }
 
 function boundedPropertyNames(value: Record<string, unknown>): string[] {
@@ -97,15 +86,11 @@ function boundedPropertyNames(value: Record<string, unknown>): string[] {
 }
 
 function unionBranches(schema: JsonSchema): JsonSchema[] {
-  return Array.isArray(schema.anyOf)
-    ? (schema.anyOf as JsonSchema[])
-    : [schema];
+  return Array.isArray(schema.anyOf) ? (schema.anyOf as JsonSchema[]) : [schema];
 }
 
 function branchOrder(schema: JsonSchema): number {
-  return ["null", "boolean", "number", "string", "array", "object"].indexOf(
-    schemaType(schema) ?? "",
-  );
+  return ["null", "boolean", "number", "string", "array", "object"].indexOf(schemaType(schema) ?? "");
 }
 
 function mergeSchemas(left: JsonSchema, right: JsonSchema): JsonSchema {
@@ -113,44 +98,26 @@ function mergeSchemas(left: JsonSchema, right: JsonSchema): JsonSchema {
   const rightType = schemaType(right);
   if (leftType === "object" && rightType === "object") {
     const leftProperties =
-      left.properties && typeof left.properties === "object"
-        ? (left.properties as Record<string, JsonSchema>)
-        : {};
+      left.properties && typeof left.properties === "object" ? (left.properties as Record<string, JsonSchema>) : {};
     const rightProperties =
-      right.properties && typeof right.properties === "object"
-        ? (right.properties as Record<string, JsonSchema>)
-        : {};
+      right.properties && typeof right.properties === "object" ? (right.properties as Record<string, JsonSchema>) : {};
     const properties = Object.create(null) as Record<string, JsonSchema>;
-    for (const key of [...new Set([
-      ...Object.keys(leftProperties),
-      ...Object.keys(rightProperties),
-    ])].sort()) {
+    for (const key of [...new Set([...Object.keys(leftProperties), ...Object.keys(rightProperties)])].sort()) {
       const leftProperty = leftProperties[key];
       const rightProperty = rightProperties[key];
       properties[key] =
-        leftProperty && rightProperty
-          ? mergeSchemas(leftProperty, rightProperty)
-          : (leftProperty ?? rightProperty)!;
+        leftProperty && rightProperty ? mergeSchemas(leftProperty, rightProperty) : (leftProperty ?? rightProperty)!;
     }
     return { type: "object", properties };
   }
   if (leftType === "array" && rightType === "array") {
-    const leftItems =
-      left.items && typeof left.items === "object"
-        ? (left.items as JsonSchema)
-        : undefined;
-    const rightItems =
-      right.items && typeof right.items === "object"
-        ? (right.items as JsonSchema)
-        : undefined;
+    const leftItems = left.items && typeof left.items === "object" ? (left.items as JsonSchema) : undefined;
+    const rightItems = right.items && typeof right.items === "object" ? (right.items as JsonSchema) : undefined;
     return {
       type: "array",
       ...(leftItems || rightItems
         ? {
-            items:
-              leftItems && rightItems
-                ? mergeSchemas(leftItems, rightItems)
-                : (leftItems ?? rightItems),
+            items: leftItems && rightItems ? mergeSchemas(leftItems, rightItems) : (leftItems ?? rightItems),
           }
         : {}),
     };
@@ -164,17 +131,11 @@ function mergeSchemas(left: JsonSchema, right: JsonSchema): JsonSchema {
     const existing = byType.get(type);
     byType.set(type, existing ? mergeSchemas(existing, branch) : branch);
   }
-  const branches = [...byType.values()].sort(
-    (a, b) => branchOrder(a) - branchOrder(b),
-  );
+  const branches = [...byType.values()].sort((a, b) => branchOrder(a) - branchOrder(b));
   return branches.length === 1 ? branches[0]! : { anyOf: branches };
 }
 
-function inferSchema(
-  value: unknown,
-  budget: InferenceBudget,
-  depth = 0,
-): JsonSchema | undefined {
+function inferSchema(value: unknown, budget: InferenceBudget, depth = 0): JsonSchema | undefined {
   const type = broadType(value);
   if (!type || depth > MAX_SCHEMA_DEPTH || budget.nodes >= MAX_SCHEMA_NODES) {
     return undefined;
@@ -199,11 +160,7 @@ function inferSchema(
     const properties = Object.create(null) as Record<string, JsonSchema>;
     const record = value as Record<string, unknown>;
     for (const key of boundedPropertyNames(record)) {
-      const inferred = inferSchema(
-        record[key],
-        budget,
-        depth + 1,
-      );
+      const inferred = inferSchema(record[key], budget, depth + 1);
       if (inferred) properties[key] = inferred;
       if (budget.nodes >= MAX_SCHEMA_NODES) break;
     }
@@ -213,11 +170,7 @@ function inferSchema(
   }
 }
 
-function boundSchema(
-  schema: JsonSchema,
-  budget: { nodes: number },
-  depth = 0,
-): JsonSchema | undefined {
+function boundSchema(schema: JsonSchema, budget: { nodes: number }, depth = 0): JsonSchema | undefined {
   if (depth > MAX_SCHEMA_DEPTH || budget.nodes >= MAX_SCHEMA_NODES) {
     return undefined;
   }
@@ -225,9 +178,7 @@ function boundSchema(
   if (Array.isArray(schema.anyOf)) {
     const branches = schema.anyOf
       .slice(0, 6)
-      .map((branch) =>
-        boundSchema(branch as JsonSchema, budget, depth + 1)
-      )
+      .map((branch) => boundSchema(branch as JsonSchema, budget, depth + 1))
       .filter((branch): branch is JsonSchema => Boolean(branch));
     return branches.length >= 2 ? { anyOf: branches } : branches[0];
   }
@@ -249,10 +200,7 @@ function boundSchema(
     const properties = Object.create(null) as Record<string, JsonSchema>;
     let included = 0;
     for (const key of Object.keys(source).sort()) {
-      if (
-        included >= MAX_OBJECT_PROPERTIES ||
-        !safePropertyName(key)
-      ) {
+      if (included >= MAX_OBJECT_PROPERTIES || !safePropertyName(key)) {
         continue;
       }
       const property = boundSchema(source[key]!, budget, depth + 1);
@@ -270,9 +218,7 @@ function boundSchema(
 function observedSchema(value: unknown): JsonSchema | undefined {
   try {
     const inferred = inferSchema(value, { nodes: 0, seen: new WeakSet() });
-    const schema = inferred
-      ? boundSchema(inferred, { nodes: 0 })
-      : undefined;
+    const schema = inferred ? boundSchema(inferred, { nodes: 0 }) : undefined;
     return schema && serializedSchema(schema) ? schema : undefined;
   } catch {
     return undefined;
@@ -352,9 +298,7 @@ export class ObservedOutputSchemas {
 
       const current = this.entries.get(key);
       const merged = boundSchema(
-        current &&
-          current.definition === identity &&
-          current.expiresAt > Date.now()
+        current && current.definition === identity && current.expiresAt > Date.now()
           ? mergeSchemas(current.schema, inferred)
           : inferred,
         { nodes: 0 },

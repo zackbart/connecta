@@ -139,18 +139,11 @@ export interface OverflowOptions {
 }
 
 type JsonRecord = Record<string, any>;
-type QueryValue =
-  | string
-  | number
-  | boolean
-  | readonly (string | number | boolean)[]
-  | undefined;
+type QueryValue = string | number | boolean | readonly (string | number | boolean)[] | undefined;
 type Query = Record<string, QueryValue>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -158,17 +151,13 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 /** A `{ id, name }` reference, or undefined when Overflow sent none. */
 function reference(value: unknown): JsonRecord | undefined {
   const record = asRecord(value);
-  return Object.keys(record).length === 0
-    ? undefined
-    : compact({ id: record["id"], name: record["name"] });
+  return Object.keys(record).length === 0 ? undefined : compact({ id: record["id"], name: record["name"] });
 }
 
 // --- Credentials and transport ----------------------------------------------
@@ -201,9 +190,7 @@ const API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
  * bearer source — if Overflow ever offers one and `api()` grows the slot — is
  * a second function selected at construction, not a change to any tool.
  */
-async function apiKeyHeaders(
-  ctx: ConnectorContext,
-): Promise<Record<string, string>> {
+async function apiKeyHeaders(ctx: ConnectorContext): Promise<Record<string, string>> {
   const values = await ctx.credential?.getAll();
   const clientId = values?.["clientId"]?.trim();
   const apiKey = values?.["apiKey"]?.trim();
@@ -234,9 +221,7 @@ function detailFor(payload: unknown, status: number): string {
   const message = root["message"];
   if (typeof message === "string" && message.trim()) return message.trim();
   if (Array.isArray(message)) {
-    const lines = message.filter(
-      (line): line is string => typeof line === "string" && line.trim() !== "",
-    );
+    const lines = message.filter((line): line is string => typeof line === "string" && line.trim() !== "");
     if (lines.length > 0) return lines.join("; ");
   }
   if (typeof root["error"] === "string" && root["error"].trim()) {
@@ -259,9 +244,7 @@ function windowResetMs(headers: Headers): number | undefined {
   const raw = headers.get("x-ratelimit-reset");
   if (!raw) return undefined;
   const seconds = Number(raw.trim());
-  return Number.isFinite(seconds) && seconds >= 0
-    ? Math.trunc(seconds * 1_000)
-    : undefined;
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.trunc(seconds * 1_000) : undefined;
 }
 
 /**
@@ -309,10 +292,7 @@ function overflowFailure(
     );
   }
   if (status === 400) {
-    return new ConnectorCallError(
-      "invalid_args",
-      `Overflow rejected the request (HTTP 400): ${detail}`,
-    );
+    return new ConnectorCallError("invalid_args", `Overflow rejected the request (HTTP 400): ${detail}`);
   }
   if (status === 409 || status === 422) {
     return new ConnectorCallError(
@@ -336,11 +316,9 @@ function overflowFailure(
       wait === undefined ? {} : { retryAfterMs: wait },
     );
   }
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `Overflow request failed (HTTP ${status}): ${detail}`,
-    { retryable: false },
-  );
+  return new ConnectorCallError("connector_call_failed", `Overflow request failed (HTTP ${status}): ${detail}`, {
+    retryable: false,
+  });
 }
 
 function parseBody(text: string): unknown {
@@ -455,9 +433,7 @@ function projectContribution(value: unknown): JsonRecord {
         ? undefined
         : compact({ quantity: stocks["quantity"], tickers: stocks["tickers"] }),
     crypto:
-      Object.keys(crypto).length === 0
-        ? undefined
-        : compact({ quantity: crypto["quantity"], token: crypto["token"] }),
+      Object.keys(crypto).length === 0 ? undefined : compact({ quantity: crypto["quantity"], token: crypto["token"] }),
     dedication: contribution["dedication"] ?? undefined,
     donorNotes: contribution["donorNotes"] ?? undefined,
     metadata: contribution["metadata"] ?? undefined,
@@ -474,7 +450,7 @@ function projectDonor(value: unknown, full: boolean): JsonRecord {
     lastName: donor["lastName"],
     email: donor["email"],
     phone: full ? donor["phone"] : undefined,
-    address: full ? donor["address"] ?? undefined : undefined,
+    address: full ? (donor["address"] ?? undefined) : undefined,
     locationIds: donor["locationIds"],
     totalContributionsCount: donor["totalContributionsCount"],
     activeRecurringCount: donor["activeRecurringCount"],
@@ -596,7 +572,9 @@ function projectPaymentMethod(value: unknown): JsonRecord {
 function projectCampaign(value: unknown): JsonRecord {
   const campaign = asRecord(value);
   const refs = (list: unknown) => {
-    const rows = asArray(list).map(reference).filter((row) => row !== undefined);
+    const rows = asArray(list)
+      .map(reference)
+      .filter((row) => row !== undefined);
     return rows.length === 0 ? undefined : rows;
   };
   return compact({
@@ -691,10 +669,7 @@ function projectEventLog(value: unknown): JsonRecord {
 
 // --- Schema fragments --------------------------------------------------------
 
-function namedInput(
-  properties: Record<string, JsonSchema>,
-  required: string[] = [],
-): JsonSchema {
+function namedInput(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
 }
 
@@ -1029,10 +1004,7 @@ function rawQuery(value: unknown): Query {
     }
   }
   return Object.fromEntries(
-    Object.entries(query).map(([name, values]) => [
-      name,
-      values.length === 1 ? values[0] : values,
-    ]),
+    Object.entries(query).map(([name, values]) => [name, values.length === 1 ? values[0] : values]),
   );
 }
 
@@ -1067,18 +1039,13 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
   }
 
   /** One single-resource read: Overflow wraps it as `{ data }`. */
-  async function one(
-    path: string,
-    ctx: ConnectorContext,
-  ): Promise<JsonRecord> {
+  async function one(path: string, ctx: ConnectorContext): Promise<JsonRecord> {
     const payload = await callOverflow(send, { method: "GET", path }, ctx);
     const record = asRecord(payload)["data"];
     if (record === undefined || record === null) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        "Overflow answered without the requested record.",
-        { retryable: false },
-      );
+      throw new ConnectorCallError("connector_call_failed", "Overflow answered without the requested record.", {
+        retryable: false,
+      });
     }
     return asRecord(record);
   }
@@ -1164,7 +1131,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           type: "array",
           minItems: 1,
           uniqueItems: true,
-          items: { type: "string", enum: ["PENDING", "CONFIRMED", "FAILED", "CANCELED"], description: "Status bucket." },
+          items: {
+            type: "string",
+            enum: ["PENDING", "CONFIRMED", "FAILED", "CANCELED"],
+            description: "Status bucket.",
+          },
           description: "Overflow's coarse status buckets; matches any.",
         },
         campaignId: idProperty("list_campaigns"),
@@ -1205,10 +1176,9 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "Get one contribution by id with its status, amount, campaign, deposit, and donor name. Refunds and chargebacks are separate lists.",
       annotations: readOnly,
-      inputSchema: namedInput(
-        { contributionId: idProperty("list_contributions"), raw: RAW_PROPERTY },
-        ["contributionId"],
-      ),
+      inputSchema: namedInput({ contributionId: idProperty("list_contributions"), raw: RAW_PROPERTY }, [
+        "contributionId",
+      ]),
       outputSchema: CONTRIBUTION_SCHEMA,
       handler: async (args, ctx) => {
         const record = await one(`/contributions/${segment(args["contributionId"])}`, ctx);
@@ -1266,10 +1236,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "Get one deposit with its line items: each payment, refund, chargeback, adjustment, or transfer it settled, in cents. Totals are get_deposit_summary.",
       annotations: readOnly,
-      inputSchema: namedInput(
-        { depositId: idProperty("list_deposits"), raw: RAW_PROPERTY },
-        ["depositId"],
-      ),
+      inputSchema: namedInput({ depositId: idProperty("list_deposits"), raw: RAW_PROPERTY }, ["depositId"]),
       outputSchema: DEPOSIT_SCHEMA,
       handler: async (args, ctx) => {
         const record = await one(`/deposits/${segment(args["depositId"])}`, ctx);
@@ -1422,8 +1389,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       annotations: readOnly,
       inputSchema: namedInput({ donorId: idProperty("list_donors or a contribution's donor.id") }, ["donorId"]),
       outputSchema: DONOR_SCHEMA,
-      handler: async (args, ctx) =>
-        projectDonor(await one(`/donors/${segment(args["donorId"])}`, ctx), true),
+      handler: async (args, ctx) => projectDonor(await one(`/donors/${segment(args["donorId"])}`, ctx), true),
     },
     {
       name: "list_subscriptions",
@@ -1461,9 +1427,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         list(
           {
             args,
-            path: args["donorId"] === undefined
-              ? "/subscriptions"
-              : `/subscriptions/${segment(args["donorId"])}`,
+            path: args["donorId"] === undefined ? "/subscriptions" : `/subscriptions/${segment(args["donorId"])}`,
             key: "subscriptions",
             project: projectSubscription,
             query: {
@@ -1523,7 +1487,15 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         excludeInactive: { type: "boolean", description: "Exclude campaigns that have ended." },
         sortBy: {
           type: "string",
-          enum: ["startDate", "endDate", "name", "displayOrder", "totalContributionCount", "totalContributionValue", "uniqueDonorCount"],
+          enum: [
+            "startDate",
+            "endDate",
+            "name",
+            "displayOrder",
+            "totalContributionCount",
+            "totalContributionValue",
+            "uniqueDonorCount",
+          ],
           description: "Sort field. Defaults to startDate.",
         },
         sortDirection: { ...SORT_DIRECTION, description: "Defaults to DESC." },
@@ -1542,7 +1514,9 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             query: {
               isSubcampaign:
                 args["isSubcampaign"] === undefined
-                  ? args["parentCampaignId"] === undefined ? undefined : "true"
+                  ? args["parentCampaignId"] === undefined
+                    ? undefined
+                    : "true"
                   : String(args["isSubcampaign"]),
               parentCampaignId: args["parentCampaignId"],
               search: args["search"],
@@ -1562,7 +1536,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       annotations: readOnly,
       inputSchema: namedInput({
         includeArchived: { type: "boolean", description: "Include archived locations." },
-        sortBy: { type: "string", enum: ["displayOrder", "name", "createdAt"], description: "Sort field. Defaults to displayOrder." },
+        sortBy: {
+          type: "string",
+          enum: ["displayOrder", "name", "createdAt"],
+          description: "Sort field. Defaults to displayOrder.",
+        },
         sortDirection: { ...SORT_DIRECTION, description: "Defaults to ASC." },
         page: PAGE_PROPERTY,
         limit: LIMIT,
@@ -1708,10 +1686,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         const next = info["nextCursor"];
         return compact({
           attempts: args["raw"] === true ? rows : rows.map(projectEventLog),
-          nextCursor:
-            info["hasNextPage"] === true && typeof next === "string" && next !== ""
-              ? next
-              : undefined,
+          nextCursor: info["hasNextPage"] === true && typeof next === "string" && next !== "" ? next : undefined,
         });
       },
     },
@@ -1720,11 +1695,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
 
 // --- Guide ---------------------------------------------------------------------
 
-function usageGuide(
-  purpose: string,
-  environment: OverflowEnvironment,
-  instructions: string | undefined,
-): string {
+function usageGuide(purpose: string, environment: OverflowEnvironment, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   const environmentLine =
     environment === "production"
@@ -1735,17 +1706,17 @@ function usageGuide(
 ${environmentLine}
 
 Nonprofit purpose: ${purpose}${skill.fragments.guide_0}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
 // --- Construction --------------------------------------------------------------
 
-
 /** The closed options overflow() accepts; see `assertKnownOptions`. */
-const OVERFLOW_OPTIONS = optionsOf<OverflowOptions>()({ ...PROVIDER_COMMON, ...keys("environment", "defaultPageSize", "baseUrl") });
+const OVERFLOW_OPTIONS = optionsOf<OverflowOptions>()({
+  ...PROVIDER_COMMON,
+  ...keys("environment", "defaultPageSize", "baseUrl"),
+});
 
 /**
  * A maintained Overflow connection.
@@ -1768,7 +1739,12 @@ export const overflow = asProviderFactory<OverflowOptions>({
   title: "Overflow",
   kind: "api",
   readme: "Overflow",
-  bundle: {"baselineGzip":20410,"maxGzip":80410,"note":"./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 20410,
+    "maxGzip": 80410,
+    "note":
+      "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: OVERFLOW_OPTIONS,
   create: overflowConnector,
@@ -1786,18 +1762,10 @@ function overflowConnector(id: string, options: OverflowOptions): Connector {
     );
   }
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
-  if (
-    !Number.isInteger(defaultPageSize) ||
-    defaultPageSize < 1 ||
-    defaultPageSize > MAX_PAGE_SIZE
-  ) {
-    throw new Error(
-      `overflow() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`,
-    );
+  if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
+    throw new Error(`overflow() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
-  const send = overflowTransport(
-    options.baseUrl?.trim() || OVERFLOW_API_BASE_URLS[environment],
-  );
+  const send = overflowTransport(options.baseUrl?.trim() || OVERFLOW_API_BASE_URLS[environment]);
   const label = environment === "production" ? "production" : "staging";
 
   return api(id, {
@@ -1819,7 +1787,7 @@ function overflowConnector(id: string, options: OverflowOptions): Connector {
             {
               ...ctx,
               credential: {
-                get: async (field?: string) => (field ? values[field] ?? null : null),
+                get: async (field?: string) => (field ? (values[field] ?? null) : null),
                 getAll: async () => values,
               },
             },

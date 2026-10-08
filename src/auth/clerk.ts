@@ -58,8 +58,7 @@ export interface ClerkAuthOptions {
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, mcp-protocol-version",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-protocol-version",
 };
 
 /**
@@ -82,33 +81,22 @@ function fapiUrl(publishableKey: string): string {
     " Copy the publishable key from the Clerk dashboard: `pk_test_` or " +
     "`pk_live_` followed by the base64-encoded Frontend API domain.";
   if (typeof publishableKey !== "string" || publishableKey === "") {
-    throw new Error(
-      "clerkAuth: `publishableKey` is missing or not a string." + shape,
-    );
+    throw new Error("clerkAuth: `publishableKey` is missing or not a string." + shape);
   }
-  const encoded = /^pk_(?:test|live)_([A-Za-z0-9+/=]+)$/.exec(
-    publishableKey,
-  )?.[1];
+  const encoded = /^pk_(?:test|live)_([A-Za-z0-9+/=]+)$/.exec(publishableKey)?.[1];
   if (encoded === undefined) {
-    throw new Error(
-      "clerkAuth: `publishableKey` is not a Clerk publishable key." + shape,
-    );
+    throw new Error("clerkAuth: `publishableKey` is not a Clerk publishable key." + shape);
   }
   let decoded: string;
   try {
     decoded = atob(encoded);
   } catch {
-    throw new Error(
-      "clerkAuth: `publishableKey` does not carry decodable base64." + shape,
-    );
+    throw new Error("clerkAuth: `publishableKey` does not carry decodable base64." + shape);
   }
   // Clerk terminates the encoded domain with `$`; everything else is the host.
   const domain = decoded.replace(/\$$/, "");
   if (!isDomain(domain)) {
-    throw new Error(
-      "clerkAuth: `publishableKey` does not decode to a Frontend API domain." +
-        shape,
-    );
+    throw new Error("clerkAuth: `publishableKey` does not decode to a Frontend API domain." + shape);
   }
   return `https://${domain}`;
 }
@@ -126,10 +114,7 @@ const ACTIVITY_LABEL_MAX_IN_FLIGHT = 8;
 const GATE_CACHE_MAX_IDENTITIES = 1_024;
 const ACTIVITY_LABEL_MAX_LENGTH = 160;
 
-function readIdentityCache<K, V extends { exp: number }>(
-  cache: Map<K, V>,
-  key: K,
-): V | undefined {
+function readIdentityCache<K, V extends { exp: number }>(cache: Map<K, V>, key: K): V | undefined {
   const hit = cache.get(key);
   if (!hit) return undefined;
   cache.delete(key);
@@ -138,11 +123,7 @@ function readIdentityCache<K, V extends { exp: number }>(
   return hit;
 }
 
-function writeIdentityCache<K, V>(
-  cache: Map<K, V>,
-  key: K,
-  value: V,
-): void {
+function writeIdentityCache<K, V>(cache: Map<K, V>, key: K, value: V): void {
   cache.delete(key);
   cache.set(key, value);
   if (cache.size <= GATE_CACHE_MAX_IDENTITIES) return;
@@ -150,9 +131,7 @@ function writeIdentityCache<K, V>(
   if (!oldest.done) cache.delete(oldest.value);
 }
 
-function cleanActivityLabel(
-  value: string | null | undefined,
-): string | undefined {
+function cleanActivityLabel(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
   const compact = value.replace(/\s+/gu, " ").trim();
   if (!compact) return undefined;
@@ -161,19 +140,11 @@ function cleanActivityLabel(
 
 /** Prefer a person's name, then a verified primary email, then username. */
 function activityLabelForUser(user: ClerkUser): string | undefined {
-  const fullName =
-    user.fullName ??
-    [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const fullName = user.fullName ?? [user.firstName, user.lastName].filter(Boolean).join(" ");
   const primary = user.emailAddresses?.find(
-    (address) =>
-      address.id === user.primaryEmailAddressId &&
-      address.verification?.status === "verified",
+    (address) => address.id === user.primaryEmailAddressId && address.verification?.status === "verified",
   );
-  return (
-    cleanActivityLabel(fullName) ??
-    cleanActivityLabel(primary?.emailAddress) ??
-    cleanActivityLabel(user.username)
-  );
+  return cleanActivityLabel(fullName) ?? cleanActivityLabel(primary?.emailAddress) ?? cleanActivityLabel(user.username);
 }
 
 /**
@@ -208,9 +179,7 @@ function isDomain(domain: string): boolean {
  * throws rather than dropping the entry: an allowlist that does not say what
  * its author meant is invisible until the day it admits the wrong caller.
  */
-function normalizeAllowedDomains(
-  value: readonly string[] | undefined,
-): ReadonlySet<string> | undefined {
+function normalizeAllowedDomains(value: readonly string[] | undefined): ReadonlySet<string> | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     throw new Error("clerkAuth: `allowedDomains` must be an array of domains.");
@@ -227,18 +196,14 @@ function normalizeAllowedDomains(
   const domains = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") {
-      throw new Error(
-        `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a string.`,
-      );
+      throw new Error(`clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a string.`);
     }
     // Surrounding whitespace is the one thing forgiven, and only here: this is
     // operator config read at construction, where a stray space is a typo the
     // operator can see in the throw. Nothing is forgiven on the email side.
     const domain = entry.trim();
     if (!isDomain(domain)) {
-      const hint = domain.includes("@")
-        ? " Write the domain alone, with no `@` and no local part."
-        : "";
+      const hint = domain.includes("@") ? " Write the domain alone, with no `@` and no local part." : "";
       throw new Error(
         `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a ` +
           `domain (expected something like "acme.com").${hint}`,
@@ -261,8 +226,7 @@ function normalizeOAuthClientIds(value: readonly string[] | undefined): Readonly
   for (const id of value) {
     if (typeof id !== "string" || !/^[\x21-\x7e]+$/.test(id) || id === "*") {
       throw new Error(
-        "clerkAuth: `allowedOAuthClientIds` entries must be nonempty, " +
-          "non-wildcard client IDs without whitespace.",
+        "clerkAuth: `allowedOAuthClientIds` entries must be nonempty, " + "non-wildcard client IDs without whitespace.",
       );
     }
   }
@@ -276,9 +240,7 @@ function oauthBindingRejection(
   clientId: string,
   allowedClientIds: ReadonlySet<string>,
 ): "oauth_client_not_allowed" | "oauth_binding_mismatch" | null {
-  const bindings = ["aud", "resource"].filter((key) =>
-    Object.prototype.hasOwnProperty.call(claims, key),
-  );
+  const bindings = ["aud", "resource"].filter((key) => Object.prototype.hasOwnProperty.call(claims, key));
   if (bindings.length === 0) {
     return allowedClientIds.has(clientId) ? null : "oauth_client_not_allowed";
   }
@@ -320,12 +282,19 @@ async function opaqueOAuthClaims(
   if (!response.ok) throw new Error("Opaque OAuth verification failed");
   const claims: unknown = await byteReadResponse(response).json();
   if (
-    !claims || typeof claims !== "object" || Array.isArray(claims) ||
-    !("object" in claims) || claims.object !== "clerk_idp_oauth_access_token" ||
-    !("subject" in claims) || claims.subject !== userId ||
-    !("client_id" in claims) || claims.client_id !== clientId ||
-    !("revoked" in claims) || claims.revoked !== false ||
-    !("expired" in claims) || claims.expired !== false
+    !claims ||
+    typeof claims !== "object" ||
+    Array.isArray(claims) ||
+    !("object" in claims) ||
+    claims.object !== "clerk_idp_oauth_access_token" ||
+    !("subject" in claims) ||
+    claims.subject !== userId ||
+    !("client_id" in claims) ||
+    claims.client_id !== clientId ||
+    !("revoked" in claims) ||
+    claims.revoked !== false ||
+    !("expired" in claims) ||
+    claims.expired !== false
   ) {
     throw new Error("Opaque OAuth verification response invalid");
   }
@@ -374,39 +343,29 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
   const requestedScopes = opts.scopes ?? ["openid", "profile", "email"];
-  if (!Array.isArray(requestedScopes) || requestedScopes.some(scope => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) {
+  if (
+    !Array.isArray(requestedScopes) ||
+    requestedScopes.some((scope) => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))
+  ) {
     throw new Error("clerkAuth: `scopes` must contain OAuth scope tokens without whitespace, quotes, or backslashes.");
   }
   const scopes = [...requestedScopes];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
-  const activityLabelCache = new Map<
-    string,
-    { label?: string; exp: number }
-  >();
-  const pendingActivityLabels = new Map<
-    string,
-    Promise<string | undefined>
-  >();
+  const activityLabelCache = new Map<string, { label?: string; exp: number }>();
+  const pendingActivityLabels = new Map<string, Promise<string | undefined>>();
   const inFlightActivityLabelIds = new Set<string>();
   let activeActivityLabelLookups = 0;
 
   const resolveBase = (baseUrl: string) => opts.publicUrl ?? baseUrl;
 
-  const cacheActivityLabel = (
-    userId: string,
-    label: string | undefined,
-  ): void => {
+  const cacheActivityLabel = (userId: string, label: string | undefined): void => {
     writeIdentityCache(activityLabelCache, userId, {
       ...(label ? { label } : {}),
-      exp:
-        Date.now() +
-        (label ? ACTIVITY_LABEL_TTL_MS : ACTIVITY_LABEL_MISS_TTL_MS),
+      exp: Date.now() + (label ? ACTIVITY_LABEL_TTL_MS : ACTIVITY_LABEL_MISS_TTL_MS),
     });
   };
 
-  const resolveActivityLabel = async (
-    userId: string,
-  ): Promise<string | undefined> => {
+  const resolveActivityLabel = async (userId: string): Promise<string | undefined> => {
     const cached = readIdentityCache(activityLabelCache, userId);
     if (cached) return cached.label;
     const existing = pendingActivityLabels.get(userId);
@@ -415,10 +374,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     // concurrency bounded even when requests hang forever: do not queue more
     // identities in memory, and do not start a duplicate for an id whose raw
     // lookup outlived its caller-facing deadline.
-    if (
-      inFlightActivityLabelIds.has(userId) ||
-      activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT
-    ) {
+    if (inFlightActivityLabelIds.has(userId) || activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT) {
       cacheActivityLabel(userId, undefined);
       return undefined;
     }
@@ -472,23 +428,20 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     return `Bearer ${error}resource_metadata="${quote(meta)}", scope="${scopes.join(" ")}"`;
   };
   const unauthorized = (baseUrl: string, _tokenPresent: boolean, request: Request): Response => {
-    return new Response(
-      JSON.stringify({ error: "unauthorized" }),
-      {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json",
-          "WWW-Authenticate": challenge(request, baseUrl),
-        },
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": challenge(request, baseUrl),
       },
-    );
+    });
   };
 
   const forbidden = (): Response =>
-    new Response(
-      JSON.stringify({ error: "forbidden" }),
-      { status: 403, headers: { "Content-Type": "application/json" } },
-    );
+    new Response(JSON.stringify({ error: "forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
 
   /**
    * The domain half of admission. Fails CLOSED on every uncertainty — no
@@ -501,9 +454,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     let email: string | undefined;
     try {
       const user = await clerk.users.getUser(userId);
-      const primary = user.emailAddresses?.find(
-        (address) => address.id === user.primaryEmailAddressId,
-      );
+      const primary = user.emailAddresses?.find((address) => address.id === user.primaryEmailAddressId);
       if (primary?.verification?.status === "verified") {
         email = primary.emailAddress;
       }
@@ -536,8 +487,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     let allowed = false;
     try {
       const domainAllowed = await checkDomain(userId);
-      allowed = domainAllowed &&
-        (opts.gate ? await opts.gate(userId, clerk) : true);
+      allowed = domainAllowed && (opts.gate ? await opts.gate(userId, clerk) : true);
       if (domainAllowed && !allowed) logDenial("gate_denied");
     } catch {
       logDenial("gate_failed");
@@ -545,9 +495,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     }
     writeIdentityCache(gateCache, userId, {
       allowed,
-      exp:
-        Date.now() +
-        (allowed ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
+      exp: Date.now() + (allowed ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
     });
     return allowed;
   };
@@ -555,10 +503,12 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   return {
     kind: "clerk",
     interactiveOperator: true,
-    recognizesCredential: request => {
+    recognizesCredential: (request) => {
       if (authorizationCredential(request).kind !== "absent") return !isMachineCredential(request);
-      return /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(request.headers.get("cookie") ?? "") ||
-        new URL(request.url).searchParams.has("__clerk_synced");
+      return (
+        /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(request.headers.get("cookie") ?? "") ||
+        new URL(request.url).searchParams.has("__clerk_synced")
+      );
     },
     challenge,
     activityActorNamespace: frontendApiUrl,
@@ -573,7 +523,8 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
     async handleMetadata(request, baseUrl) {
       const { pathname } = new URL(request.url);
-      const protectedResource = pathname === "/.well-known/oauth-protected-resource" ||
+      const protectedResource =
+        pathname === "/.well-known/oauth-protected-resource" ||
         pathname === "/.well-known/oauth-protected-resource/mcp" ||
         /^\/\.well-known\/oauth-protected-resource\/mcp\/[a-z0-9_-]+$/.test(pathname);
       if (!protectedResource) return null;
@@ -628,9 +579,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
         // handshake, which returns here with a refreshed, verified session.
         if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
-          return { ok: false, response: new Response(null, {
-            status: 307, headers: state.headers,
-          }) };
+          return {
+            ok: false,
+            response: new Response(null, {
+              status: 307,
+              headers: state.headers,
+            }),
+          };
         }
         if (browserOAuth) sessionCookies = state.headers?.getSetCookie();
         const auth = state.toAuth();

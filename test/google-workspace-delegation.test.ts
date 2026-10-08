@@ -21,12 +21,7 @@ import {
 import { ConnectorCallError } from "../src/errors.js";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type {
-  AuthenticatedIdentity,
-  Connector,
-  ConnectorContext,
-  InboundAuth,
-} from "../src/types.js";
+import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -47,32 +42,38 @@ const keys = (await crypto.subtle.generateKey(
 function pem(der: ArrayBuffer): string {
   let binary = "";
   for (const byte of new Uint8Array(der)) binary += String.fromCharCode(byte);
-  const body = btoa(binary).match(/.{1,64}/g)!.join("\n");
+  const body = btoa(binary)
+    .match(/.{1,64}/g)!
+    .join("\n");
   return `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----\n`;
 }
 
-const PRIVATE_KEY = pem(
-  (await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer,
-);
+const PRIVATE_KEY = pem((await crypto.subtle.exportKey("pkcs8", keys.privateKey)) as ArrayBuffer);
 const DER_BASE64 = PRIVATE_KEY.replace(/-----[A-Z ]+-----|\s/g, "");
 
 /** A second, distinct RSA key, for rotation under one client email. */
 const ROTATED_KEY = pem(
   (await crypto.subtle.exportKey(
     "pkcs8",
-    ((await crypto.subtle.generateKey(
-      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-      true,
-      ["sign", "verify"],
-    )) as CryptoKeyPair).privateKey,
+    (
+      (await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign", "verify"],
+      )) as CryptoKeyPair
+    ).privateKey,
   )) as ArrayBuffer,
 );
 
 const EC_PRIVATE_KEY = pem(
   (await crypto.subtle.exportKey(
     "pkcs8",
-    ((await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])) as CryptoKeyPair)
-      .privateKey,
+    (
+      (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair
+    ).privateKey,
   )) as ArrayBuffer,
 );
 
@@ -129,11 +130,7 @@ function identity(id: string): AuthenticatedIdentity {
   };
 }
 
-function context(
-  caller?: AuthenticatedIdentity,
-  signal?: AbortSignal,
-  authenticated = true,
-): ConnectorContext {
+function context(caller?: AuthenticatedIdentity, signal?: AbortSignal, authenticated = true): ConnectorContext {
   const ctx: ConnectorContext = {
     storage: memoryStorage(),
     logger: silentLogger,
@@ -148,10 +145,7 @@ const DIRECTORY: Readonly<Record<string, string>> = {
   bob: "bob@org.example",
 };
 
-function mailbox(
-  overrides: Record<string, unknown> = {},
-  serviceAccount: unknown = account(),
-): Connector {
+function mailbox(overrides: Record<string, unknown> = {}, serviceAccount: unknown = account()): Connector {
   return gmail("mail", {
     purpose: "Staff email",
     serviceAccount,
@@ -314,17 +308,31 @@ describe("construction refuses a structural mistake", () => {
     ["no purpose", { purpose: " " }, /purpose/],
     ["no service account", { serviceAccount: undefined }, /serviceAccount/],
     ["a non-JSON string", { serviceAccount: "not json" }, /not JSON/],
-    ["a user credential file", { serviceAccount: JSON.stringify({ type: "authorized_user" }) }, /not a service_account/],
+    [
+      "a user credential file",
+      { serviceAccount: JSON.stringify({ type: "authorized_user" }) },
+      /not a service_account/,
+    ],
     ["no client email", { serviceAccount: { privateKey: PRIVATE_KEY } }, /clientEmail/],
     ["no private key", { serviceAccount: { clientEmail: "a@b.iam.gserviceaccount.com" } }, /privateKey/],
     [
       "a PKCS#1 key",
-      { serviceAccount: { clientEmail: "a@b.c", privateKey: "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----" } },
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----",
+        },
+      },
       /PKCS#1/,
     ],
     [
       "a key that is not PKCS#8",
-      { serviceAccount: { clientEmail: "a@b.c", privateKey: `-----BEGIN PRIVATE KEY-----\n${btoa("x".repeat(100))}\n-----END PRIVATE KEY-----` } },
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: `-----BEGIN PRIVATE KEY-----\n${btoa("x".repeat(100))}\n-----END PRIVATE KEY-----`,
+        },
+      },
       /PKCS#8/,
     ],
     [
@@ -344,7 +352,14 @@ describe("construction refuses a structural mistake", () => {
     ],
     [
       "rsaEncryption parameters that are not NULL",
-      { serviceAccount: { clientEmail: "a@b.c", privateKey: mutated((der) => { der[afterOid(der)] = 0xff; }) } },
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: mutated((der) => {
+            der[afterOid(der)] = 0xff;
+          }),
+        },
+      },
       /PKCS#8 RSA/,
     ],
     [
@@ -352,19 +367,29 @@ describe("construction refuses a structural mistake", () => {
       {
         serviceAccount: {
           clientEmail: "a@b.c",
-          privateKey: mutated((der) => {
-            // Grow the outer SEQUENCE by two and put a NULL after the key.
-            const length = (der[2]! << 8) + der[3]! + 2;
-            der[2] = length >> 8;
-            der[3] = length & 0xff;
-          }, [0x05, 0x00]),
+          privateKey: mutated(
+            (der) => {
+              // Grow the outer SEQUENCE by two and put a NULL after the key.
+              const length = (der[2]! << 8) + der[3]! + 2;
+              der[2] = length >> 8;
+              der[3] = length & 0xff;
+            },
+            [0x05, 0x00],
+          ),
         },
       },
       /PKCS#8 RSA/,
     ],
     [
       "a multi-prime RSAPrivateKey version with no other primes",
-      { serviceAccount: { clientEmail: "a@b.c", privateKey: mutated((der) => { der[rsaVersionAt(der)] = 0x01; }) } },
+      {
+        serviceAccount: {
+          clientEmail: "a@b.c",
+          privateKey: mutated((der) => {
+            der[rsaVersionAt(der)] = 0x01;
+          }),
+        },
+      },
       /PKCS#8 RSA/,
     ],
     ["no subject", { subject: undefined }, /subject/],
@@ -438,7 +463,10 @@ describe("whose account a call acts as", () => {
       mailbox({ subject: mapping }),
       context({ actor: { kind: "anonymous" }, interactive: false }, undefined, false),
     ).catch((error) => error);
-    expect(failure).toMatchObject({ code: "auth_required", message: expect.stringContaining("without authentication") });
+    expect(failure).toMatchObject({
+      code: "auth_required",
+      message: expect.stringContaining("without authentication"),
+    });
     expect(mapping).not.toHaveBeenCalled();
     expect(tokenCalls).toEqual([]);
     // A fixed subject is the deployment's explicit choice and still works.
@@ -536,10 +564,14 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
       logger: silentLogger,
     });
     const call = async (user: "alice" | "bob", args: Record<string, unknown>) => {
-      const request = mcpRpc("tools/call", {
-        name: "call_tool",
-        arguments: { address: "mail.list_labels", args },
-      }, { token: user });
+      const request = mcpRpc(
+        "tools/call",
+        {
+          name: "call_tool",
+          arguments: { address: "mail.list_labels", args },
+        },
+        { token: user },
+      );
       // A header naming someone else's mailbox is just a header.
       request.headers.set("X-Goog-Subject", "ceo@org.example");
       request.headers.set("X-Connecta-Subject", "ceo@org.example");
@@ -562,7 +594,11 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
   const labelsOver = async (connecta: { fetch(request: Request): Promise<Response> }, token?: string) =>
     readJsonRpc(
       await connecta.fetch(
-        mcpRpc("tools/call", { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } }, token ? { token } : {}),
+        mcpRpc(
+          "tools/call",
+          { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } },
+          token ? { token } : {},
+        ),
       ),
     );
 
@@ -578,7 +614,9 @@ describe("over MCP, the subject is the authorization's and nothing else's", () =
   });
 
   it("counts a machine token without a person behind it as authenticated", async () => {
-    const mapping = vi.fn((who: AuthenticatedIdentity) => (who.actor.kind === "access_token" ? "robot@org.example" : undefined));
+    const mapping = vi.fn((who: AuthenticatedIdentity) =>
+      who.actor.kind === "access_token" ? "robot@org.example" : undefined,
+    );
     const connecta = createTestConnecta({
       connectors: [mailbox({ subject: mapping })],
       auth: machineAuth("service-secret"),
@@ -641,11 +679,7 @@ describe("the in-memory token cache", () => {
     held.release(tokenResponse("shared"));
     await Promise.all(pending);
     expect(tokenCalls).toHaveLength(1);
-    expect(apiCalls.map((call) => call.authorization)).toEqual([
-      "Bearer shared",
-      "Bearer shared",
-      "Bearer shared",
-    ]);
+    expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer shared", "Bearer shared", "Bearer shared"]);
   });
 
   it("lets a follower in another request mint again, never reading the owner's signal", async () => {
@@ -707,11 +741,7 @@ describe("the in-memory token cache", () => {
     await first;
     // The 401 named token-1, which was already replaced: token-2 survives and
     // carries the replay, and nothing mints a third.
-    expect(apiCalls.map((call) => call.authorization)).toEqual([
-      "Bearer token-1",
-      "Bearer token-2",
-      "Bearer token-2",
-    ]);
+    expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2", "Bearer token-2"]);
     await labels(connector, context(identity("alice")));
     expect(tokenCalls).toHaveLength(2);
   });
@@ -727,9 +757,7 @@ describe("the in-memory token cache", () => {
     const held = deferred();
     tokenReplies.push(held.reply);
     const connector = mailbox();
-    const pending = [1, 2].map(() =>
-      labels(connector, context(identity("alice"))).catch((error) => error),
-    );
+    const pending = [1, 2].map(() => labels(connector, context(identity("alice"))).catch((error) => error));
     await vi.waitFor(() => expect(tokenCalls).toHaveLength(1));
     held.release(Response.json({ error: "unauthorized_client" }, { status: 401 }));
     const failures = await Promise.all(pending);
@@ -798,13 +826,16 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
     expect(failure.message).toContain("24 hours");
   });
 
-  it.each(["unauthorized_client", "access_denied", "invalid_scope", undefined])("INV-6: delegation refusal %s asks an administrator for the exact grant without token-endpoint text", async (error) => {
-    const { failure } = await refusedWith(403, { error, error_description: "downstream-text-sentinel" });
-    expect(failure).toMatchObject({ code: "provider_permission_denied", retryable: false });
-    expect(failure.message).toContain("Manage Domain Wide Delegation");
-    expect(failure.message).toContain(GMAIL_SCOPES.join(","));
-    expect(failure.message).not.toContain("downstream-text-sentinel");
-  });
+  it.each(["unauthorized_client", "access_denied", "invalid_scope", undefined])(
+    "INV-6: delegation refusal %s asks an administrator for the exact grant without token-endpoint text",
+    async (error) => {
+      const { failure } = await refusedWith(403, { error, error_description: "downstream-text-sentinel" });
+      expect(failure).toMatchObject({ code: "provider_permission_denied", retryable: false });
+      expect(failure.message).toContain("Manage Domain Wide Delegation");
+      expect(failure.message).toContain(GMAIL_SCOPES.join(","));
+      expect(failure.message).not.toContain("downstream-text-sentinel");
+    },
+  );
 
   it("explains invalid_grant: unknown or suspended user, deleted key, or clock skew", async () => {
     const { failure } = await refusedWith(400, {
@@ -832,7 +863,9 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
       [400, `${planted}_code`],
     ] as const) {
       const { failure } = await refusedWith(status, { error, error_description: `refused ${planted}` });
-      expect(failure.message).toContain(`The token request to https://oauth2.googleapis.com was answered HTTP ${status}`);
+      expect(failure.message).toContain(
+        `The token request to https://oauth2.googleapis.com was answered HTTP ${status}`,
+      );
       expect(`${String(failure)} ${failure.stack ?? ""} ${JSON.stringify({ ...failure })}`).not.toContain(planted);
     }
   });
@@ -861,33 +894,53 @@ describe("API refusals map by Google's reason codes", () => {
     return await labels(mailbox(), context(identity("alice"))).catch((failure) => failure);
   }
 
-  it.each([undefined, "mcp", "value"] as const)("INV-6: scope recovery reaches the agent in %s mode while Google prose stays out of operator sinks", async (resultMode) => {
-    apiReplies.push(() => Response.json({ error: {
-      code: 403, message: "downstream-text-sentinel",
-      details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
-    } }, { status: 403 }));
-    const warn = vi.fn();
-    const target = activitySink();
-    const registry = makeRegistry([mailbox({ subject: "alice@org.example" })], { logger: { ...silentLogger, warn } });
-    const result = await createMetaTools(registry, "https://connecta.example", { activity: target.activity }).callTool({
-      address: "mail.list_labels", ...(resultMode === undefined ? {} : { resultMode }),
-    });
-    const text = JSON.parse(result.content[0]!.text);
-    expect(result.isError).toBe(true);
-    expect(text).toEqual(result.structuredContent);
-    expect(text).toMatchObject({ ok: false, error: {
-      code: "provider_permission_denied", retryable: false,
-      message: expect.stringContaining(GMAIL_SCOPES.join(",")),
-      retry: expect.stringContaining("administrator"),
-    } });
-    expect(text.error.message).toContain("Admin console");
-    expect(text.error.message).toContain("downstream-text-sentinel");
-    expect(text.error).not.toHaveProperty("nextAction");
-    expect(apiCalls).toHaveLength(1);
-    expect(tokenCalls).toHaveLength(1);
-    expect(target.events).toHaveLength(1);
-    expect(JSON.stringify([warn.mock.calls, target.events, await registry.statusFor("mail", "https://connecta.example")])).not.toContain("downstream-text-sentinel");
-  });
+  it.each([undefined, "mcp", "value"] as const)(
+    "INV-6: scope recovery reaches the agent in %s mode while Google prose stays out of operator sinks",
+    async (resultMode) => {
+      apiReplies.push(() =>
+        Response.json(
+          {
+            error: {
+              code: 403,
+              message: "downstream-text-sentinel",
+              details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
+            },
+          },
+          { status: 403 },
+        ),
+      );
+      const warn = vi.fn();
+      const target = activitySink();
+      const registry = makeRegistry([mailbox({ subject: "alice@org.example" })], { logger: { ...silentLogger, warn } });
+      const result = await createMetaTools(registry, "https://connecta.example", {
+        activity: target.activity,
+      }).callTool({
+        address: "mail.list_labels",
+        ...(resultMode === undefined ? {} : { resultMode }),
+      });
+      const text = JSON.parse(result.content[0]!.text);
+      expect(result.isError).toBe(true);
+      expect(text).toEqual(result.structuredContent);
+      expect(text).toMatchObject({
+        ok: false,
+        error: {
+          code: "provider_permission_denied",
+          retryable: false,
+          message: expect.stringContaining(GMAIL_SCOPES.join(",")),
+          retry: expect.stringContaining("administrator"),
+        },
+      });
+      expect(text.error.message).toContain("Admin console");
+      expect(text.error.message).toContain("downstream-text-sentinel");
+      expect(text.error).not.toHaveProperty("nextAction");
+      expect(apiCalls).toHaveLength(1);
+      expect(tokenCalls).toHaveLength(1);
+      expect(target.events).toHaveLength(1);
+      expect(
+        JSON.stringify([warn.mock.calls, target.events, await registry.statusFor("mail", "https://connecta.example")]),
+      ).not.toContain("downstream-text-sentinel");
+    },
+  );
 
   it("names the exact scopes when the token lacks one", async () => {
     const failure = await apiFailure(403, {
@@ -951,7 +1004,10 @@ describe("API refusals map by Google's reason codes", () => {
       status: "PERMISSION_DENIED",
       errors: [{ reason, domain: "global" }],
     });
-    expect(failure).toMatchObject({ code: reason === "exportSizeLimitExceeded" ? "connector_call_failed" : "provider_permission_denied", retryable: false });
+    expect(failure).toMatchObject({
+      code: reason === "exportSizeLimitExceeded" ? "connector_call_failed" : "provider_permission_denied",
+      retryable: false,
+    });
     expect(failure.message).toContain(words);
     expect(googleReasonsOf(failure)).toEqual([reason, "PERMISSION_DENIED"]);
   });
@@ -1028,7 +1084,9 @@ describe("the shared client reads bytes and text for the products that need them
   }
 
   it("returns bytes with their content type, under the delegated token", async () => {
-    apiReplies.push(() => new Response(new Uint8Array([37, 80, 68, 70]), { headers: { "Content-Type": "application/pdf" } }));
+    apiReplies.push(
+      () => new Response(new Uint8Array([37, 80, 68, 70]), { headers: { "Content-Type": "application/pdf" } }),
+    );
     const result = await client().bytes(
       { method: "GET", path: "/files/f1", query: { alt: "media" } },
       context(),
@@ -1045,9 +1103,15 @@ describe("the shared client reads bytes and text for the products that need them
 
   it("decodes text in the charset the response declares", async () => {
     apiReplies.push(
-      () => new Response(new Uint8Array([67, 97, 102, 0xe9]), { headers: { "Content-Type": "text/plain; charset=iso-8859-1" } }),
+      () =>
+        new Response(new Uint8Array([67, 97, 102, 0xe9]), {
+          headers: { "Content-Type": "text/plain; charset=iso-8859-1" },
+        }),
     );
-    const result = await client().text({ method: "GET", path: "/files/f1/export", query: { mimeType: "text/plain" } }, context());
+    const result = await client().text(
+      { method: "GET", path: "/files/f1/export", query: { mimeType: "text/plain" } },
+      context(),
+    );
     expect(result).toEqual({
       text: "Café",
       contentType: "text/plain; charset=iso-8859-1",
@@ -1068,7 +1132,13 @@ describe("the shared client reads bytes and text for the products that need them
   describe("a revision-guarded write", () => {
     const stale = (status: number, reason: string) => () =>
       Response.json(
-        { error: { code: status, message: "The required revision ID 'r1' does not match the latest revision.", status: reason } },
+        {
+          error: {
+            code: status,
+            message: "The required revision ID 'r1' does not match the latest revision.",
+            status: reason,
+          },
+        },
         { status },
       );
     const write = { method: "POST" as const, path: "/documents/d1:batchUpdate", body: { requests: [] } };
@@ -1121,9 +1191,21 @@ describe("the shared client reads bytes and text for the products that need them
       ["RATE_LIMIT_EXCEEDED", 409, "ABORTED", "rate_limited", "wait before retrying"],
       ["ACCESS_TOKEN_SCOPE_INSUFFICIENT", 400, "FAILED_PRECONDITION", "provider_permission_denied", "lacks a scope"],
       ["insufficientPermissions", 409, "ABORTED", "provider_permission_denied", "lacks a scope"],
-      ["exportSizeLimitExceeded", 400, "FAILED_PRECONDITION", "connector_call_failed", "larger than Google will export"],
+      [
+        "exportSizeLimitExceeded",
+        400,
+        "FAILED_PRECONDITION",
+        "connector_call_failed",
+        "larger than Google will export",
+      ],
       ["domainPolicy", 409, "ABORTED", "provider_permission_denied", "domain policy forbids"],
-      ["insufficientFilePermissions", 400, "FAILED_PRECONDITION", "provider_permission_denied", "does not have the permission"],
+      [
+        "insufficientFilePermissions",
+        400,
+        "FAILED_PRECONDITION",
+        "provider_permission_denied",
+        "does not have the permission",
+      ],
       ["forbidden", 409, "ABORTED", "provider_permission_denied", "does not have the permission"],
     ])("lets %s outrank the guard on HTTP %i %s", async (reason, status, canonical, code, words) => {
       apiReplies.push(() =>
@@ -1148,7 +1230,10 @@ describe("the shared client reads bytes and text for the products that need them
 
     it("does not turn an unrelated refusal into a conflict", async () => {
       apiReplies.push(() =>
-        Response.json({ error: { code: 400, message: "Invalid requests[0]", status: "INVALID_ARGUMENT" } }, { status: 400 }),
+        Response.json(
+          { error: { code: 400, message: "Invalid requests[0]", status: "INVALID_ARGUMENT" } },
+          { status: 400 },
+        ),
       );
       await expect(client().json(write, context(), { revisionGuarded: true })).rejects.toMatchObject({
         code: "invalid_args",
@@ -1170,7 +1255,11 @@ describe("the shared client reads bytes and text for the products that need them
       );
     const write = { method: "POST" as const, path: "/files", body: { name: "Plan" } };
     const read = { method: "GET" as const, path: "/files/f1" };
-    const failing = (promise: Promise<unknown>) => promise.then(() => expect.unreachable(), (error) => error);
+    const failing = (promise: Promise<unknown>) =>
+      promise.then(
+        () => expect.unreachable(),
+        (error) => error,
+      );
 
     it("before-send: nothing left, nothing happened", async () => {
       const mapped = googleWorkspaceClient({
@@ -1267,7 +1356,11 @@ describe("the shared client reads bytes and text for the products that need them
     it("refused: Google's error status is a refusal, nothing applied", async () => {
       const rejected = () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 });
       apiReplies.push(
-        () => Response.json({ error: { code: 403, message: "No.", errors: [{ reason: "domainPolicy" }] } }, { status: 403 }),
+        () =>
+          Response.json(
+            { error: { code: 403, message: "No.", errors: [{ reason: "domainPolicy" }] } },
+            { status: 403 },
+          ),
         rejected,
         rejected,
       );
@@ -1284,9 +1377,7 @@ describe("the shared client reads bytes and text for the products that need them
     });
 
     it("refused: an error status stays a refusal when its body is past the ceiling", async () => {
-      apiReplies.push(() =>
-        new Response(new Uint8Array(4096), { status: 403, headers: { "Content-Length": "4096" } }),
-      );
+      apiReplies.push(() => new Response(new Uint8Array(4096), { status: 403, headers: { "Content-Length": "4096" } }));
       const failure = await failing(client(1024).json(write, context()));
       expect(failure.code).toBe("provider_permission_denied");
       expect(failure.message).not.toContain("probably applied");
@@ -1305,7 +1396,8 @@ describe("the shared client reads bytes and text for the products that need them
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
-      const malformed = () => new Response(`${planted} is not json`, { headers: { "Content-Type": "application/json" } });
+      const malformed = () =>
+        new Response(`${planted} is not json`, { headers: { "Content-Type": "application/json" } });
       apiReplies.push(quoting, quoting, malformed, malformed);
       const drive = client();
       const failures = [
@@ -1328,7 +1420,10 @@ describe("the shared client reads bytes and text for the products that need them
     });
 
     it("reading-body: a GET whose JSON body breaks off is retryable; malformed JSON is not", async () => {
-      apiReplies.push(brokenReply, () => new Response("{not json", { headers: { "Content-Type": "application/json" } }));
+      apiReplies.push(
+        brokenReply,
+        () => new Response("{not json", { headers: { "Content-Type": "application/json" } }),
+      );
       const drive = client();
       const broken = await failing(drive.json(read, context()));
       expect(broken).toMatchObject({ code: "unavailable", retryable: true });
@@ -1357,7 +1452,9 @@ describe("the shared client reads bytes and text for the products that need them
         apiReplies.push(upstream(status));
         const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(failure.message).toContain(`answered HTTP ${status} after receiving the request, so its outcome is unknown`);
+        expect(failure.message).toContain(
+          `answered HTTP ${status} after receiving the request, so its outcome is unknown`,
+        );
         expect(failure.message).toContain("Re-read its target before repeating it");
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "server-error" });
       });
@@ -1403,7 +1500,9 @@ describe("the shared client reads bytes and text for the products that need them
 
       it.each(
         WRITES.flatMap((method) =>
-          ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"].map((reason) => [method, reason] as const),
+          ["rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"].map(
+            (reason) => [method, reason] as const,
+          ),
         ),
       )("%s → 503 %s is still an unknown outcome: a 5xx proves nothing was turned away", async (method, reason) => {
         apiReplies.push(quota(503, reason));
@@ -1414,36 +1513,41 @@ describe("the shared client reads bytes and text for the products that need them
         expect(googleReasonsOf(failure)).toContain(reason);
       });
 
-      it.each(
-        WRITES.flatMap((method) => [301, 302, 303, 307, 308].map((status) => [method, status] as const)),
-      )("%s → %i redirect: outcome unknown, never probably applied", async (method, status) => {
-        apiReplies.push(() => new Response(null, { status, headers: { Location: "https://elsewhere.example/" } }));
-        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(failure.message).toContain(`answered HTTP ${status} with a redirect`);
-        expect(failure.message).not.toContain("probably applied");
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
-      });
+      it.each(WRITES.flatMap((method) => [301, 302, 303, 307, 308].map((status) => [method, status] as const)))(
+        "%s → %i redirect: outcome unknown, never probably applied",
+        async (method, status) => {
+          apiReplies.push(() => new Response(null, { status, headers: { Location: "https://elsewhere.example/" } }));
+          const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+          expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+          expect(failure.message).toContain(`answered HTTP ${status} with a redirect`);
+          expect(failure.message).not.toContain("probably applied");
+          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+        },
+      );
 
-      it.each(
-        WRITES.flatMap((method) => [300, 304, 305, 306].map((status) => [method, status] as const)),
-      )("%s → %i with a quota reason is still redirected, never a rate limit", async (method, status) => {
-        // 300, 304, 305, and 306 pass the transport's own redirect check, so
-        // they reach the mapper; a reason in the body must not turn them into
-        // a retryable refusal.
-        apiReplies.push(() =>
-          new Response(
-            status === 304
-              ? null
-              : JSON.stringify({ error: { code: status, message: "Slow down", errors: [{ reason: "rateLimitExceeded" }] } }),
-            { status, headers: { "Content-Type": "application/json" } },
-          ),
-        );
-        const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
-        expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-        expect(failure.message).toContain("whether the request was applied is unknown");
-        expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
-      });
+      it.each(WRITES.flatMap((method) => [300, 304, 305, 306].map((status) => [method, status] as const)))(
+        "%s → %i with a quota reason is still redirected, never a rate limit",
+        async (method, status) => {
+          // 300, 304, 305, and 306 pass the transport's own redirect check, so
+          // they reach the mapper; a reason in the body must not turn them into
+          // a retryable refusal.
+          apiReplies.push(
+            () =>
+              new Response(
+                status === 304
+                  ? null
+                  : JSON.stringify({
+                      error: { code: status, message: "Slow down", errors: [{ reason: "rateLimitExceeded" }] },
+                    }),
+                { status, headers: { "Content-Type": "application/json" } },
+              ),
+          );
+          const failure = await failing(client().json({ method, path: "/files/f1", body: {} }, context()));
+          expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+          expect(failure.message).toContain("whether the request was applied is unknown");
+          expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase: "redirected" });
+        },
+      );
 
       it("classifies a 300 the same whether its body is readable or past the ceiling", async () => {
         apiReplies.push(
@@ -1487,7 +1591,9 @@ describe("the shared client reads bytes and text for the products that need them
       });
 
       it("is unknown even when the 5xx body itself is past the ceiling", async () => {
-        apiReplies.push(() => new Response(new Uint8Array(4096), { status: 502, headers: { "Content-Length": "4096" } }));
+        apiReplies.push(
+          () => new Response(new Uint8Array(4096), { status: 502, headers: { "Content-Length": "4096" } }),
+        );
         const failure = await failing(client(1024).json(write, context()));
         expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 502, phase: "server-error" });
@@ -1505,7 +1611,8 @@ describe("the shared client reads bytes and text for the products that need them
     });
 
     it("answers auth_required, refused, when the replay's oversized 401 repeats", async () => {
-      const oversized401 = () => new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } });
+      const oversized401 = () =>
+        new Response(new Uint8Array(4096), { status: 401, headers: { "Content-Length": "4096" } });
       apiReplies.push(oversized401, oversized401);
       const failure = await failing(client(1024).json(write, context()));
       expect(failure.code).toBe("auth_required");
@@ -1547,7 +1654,9 @@ describe("the shared client reads bytes and text for the products that need them
         ["POST", 307, "redirected"],
       ] as const)("%s → %i records %s", async (method, status, phase) => {
         const ctx = cancelledOnAnswer(oversized(status));
-        const failure = await failing(client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx));
+        const failure = await failing(
+          client(1024).json({ method, path: "/files", ...(method === "GET" ? {} : { body: {} }) }, ctx),
+        );
         expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status, phase });
       });
 
@@ -1654,7 +1763,13 @@ describe("the shared client reads bytes and text for the products that need them
     it("reports a body that fits the bound as whole", async () => {
       apiReplies.push(() => new Response("hello", { headers: { "Content-Type": "text/plain" } }));
       const result = await client().text({ method: "GET", path: "/files/f1" }, context(), undefined, { maxBytes: 5 });
-      expect(result).toEqual({ text: "hello", contentType: "text/plain", truncated: false, status: 200, contentRange: undefined });
+      expect(result).toEqual({
+        text: "hello",
+        contentType: "text/plain",
+        truncated: false,
+        status: 200,
+        contentRange: undefined,
+      });
     });
 
     it("drops a code point the cut left incomplete", async () => {
@@ -1669,11 +1784,19 @@ describe("the shared client reads bytes and text for the products that need them
           status: 416,
           headers: { "Content-Range": "bytes */0", "Content-Type": "text/plain" },
         });
-      apiReplies.push(empty, empty, () =>
-        new Response("Requested range not satisfiable", { status: 416, headers: { "Content-Range": "bytes */100" } }),
+      apiReplies.push(
+        empty,
+        empty,
+        () =>
+          new Response("Requested range not satisfiable", { status: 416, headers: { "Content-Range": "bytes */100" } }),
       );
       const drive = client();
-      const request = { method: "GET" as const, path: "/files/f1", query: { alt: "media" }, headers: { Range: "bytes=0-99" } };
+      const request = {
+        method: "GET" as const,
+        path: "/files/f1",
+        query: { alt: "media" },
+        headers: { Range: "bytes=0-99" },
+      };
       await expect(drive.bytes(request, context(), undefined, { maxBytes: 100 })).resolves.toEqual({
         bytes: new Uint8Array(),
         truncated: false,
@@ -1716,7 +1839,10 @@ describe("the shared client reads bytes and text for the products that need them
       context(),
     );
     expect(apiCalls.map((call) => call.authorization)).toEqual(["Bearer token-1", "Bearer token-2"]);
-    expect(apiCalls.map((call) => call.body)).toEqual([[1, 2, 3, 4], [1, 2, 3, 4]]);
+    expect(apiCalls.map((call) => call.body)).toEqual([
+      [1, 2, 3, 4],
+      [1, 2, 3, 4],
+    ]);
   });
 
   it("refuses a stream body, which a replay could not resend, before anything leaves", async () => {
@@ -1726,9 +1852,9 @@ describe("the shared client reads bytes and text for the products that need them
         controller.close();
       },
     });
-    await expect(
-      client().json({ method: "POST", path: "/files", rawBody: stream }, context()),
-    ).rejects.toThrow(/replayable/);
+    await expect(client().json({ method: "POST", path: "/files", rawBody: stream }, context())).rejects.toThrow(
+      /replayable/,
+    );
     expect(tokenCalls).toEqual([]);
     expect(apiCalls).toEqual([]);
   });

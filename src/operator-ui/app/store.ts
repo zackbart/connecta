@@ -1,10 +1,7 @@
 import type { OperatorUiContract } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
-import type {
-  UiConnector,
-  UiData,
-} from "../model.js";
+import type { UiConnector, UiData } from "../model.js";
 import {
   actionFailedNotice,
   collectionFailureCopy,
@@ -75,10 +72,7 @@ function sessionToken(): Promise<string | null | undefined> {
     : Promise.resolve(localStorage.getItem(TOKEN_KEY));
 }
 
-function requestHeaders(
-  token: string | null | undefined,
-  body = false,
-): Record<string, string> {
+function requestHeaders(token: string | null | undefined, body = false): Record<string, string> {
   return {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(body ? { "Content-Type": "application/json" } : {}),
@@ -91,21 +85,27 @@ const NAV_HINT_KEY = "connecta:nav";
 function rememberNav(data: UiData): void {
   try {
     sessionStorage.setItem(NAV_HINT_KEY, JSON.stringify({ activity: data.activityEnabled }));
-  } catch { /* Storage may be unavailable. */ }
+  } catch {
+    /* Storage may be unavailable. */
+  }
 }
 
 function forgetNav(): void {
-  try { sessionStorage.removeItem(NAV_HINT_KEY); } catch { /* Nothing was stored. */ }
+  try {
+    sessionStorage.removeItem(NAV_HINT_KEY);
+  } catch {
+    /* Nothing was stored. */
+  }
 }
 
 /** A tab-local hint, erased on every identity change; it grants no API access. */
 export function navHint(): { activity: boolean } {
   try {
-    const hint = JSON.parse(sessionStorage.getItem(NAV_HINT_KEY) ?? "null") as
-      | { activity?: unknown }
-      | null;
+    const hint = JSON.parse(sessionStorage.getItem(NAV_HINT_KEY) ?? "null") as { activity?: unknown } | null;
     return { activity: hint?.activity === true };
-  } catch { return { activity: false }; }
+  } catch {
+    return { activity: false };
+  }
 }
 
 function gate(notice: Notice | null = null): void {
@@ -240,9 +240,7 @@ async function loadData(): Promise<void> {
       );
     }
     if (auth.kind === "cloudflare-access") {
-      return gate(
-        failure("Cloudflare Access let this browser in, but this identity isn't an operator here."),
-      );
+      return gate(failure("Cloudflare Access let this browser in, but this identity isn't an operator here."));
     }
     localStorage.removeItem(TOKEN_KEY);
     return gate(failure("That token wasn't accepted. Paste a valid operator token."));
@@ -275,18 +273,24 @@ export async function loadOperatorContract(): Promise<void> {
     const contract = await queryClient.fetchQuery({
       queryKey: ["operator-config", state.generation, revision],
       queryFn: async ({ signal }) => {
-        const response = await fetch("/ui/api/config", { headers: requestHeaders(token), credentials: "same-origin", signal });
+        const response = await fetch("/ui/api/config", {
+          headers: requestHeaders(token),
+          credentials: "same-origin",
+          signal,
+        });
         if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
         if (!response.ok) throw new RequestFailure("refused");
-        const value = await response.json() as OperatorUiContract;
-        if (value.schemaVersion !== 1 || !value.config || !value.you || !Array.isArray(value.live?.connectors)) throw new RequestFailure("refused");
+        const value = (await response.json()) as OperatorUiContract;
+        if (value.schemaVersion !== 1 || !value.config || !value.you || !Array.isArray(value.live?.connectors))
+          throw new RequestFailure("refused");
         return value;
       },
     });
     if (current()) set({ contract, contractPhase: "ready" });
   } catch (error) {
     if (!current()) return;
-    if (error instanceof RequestFailure && error.kind === "session") return gate(failure("Your session cannot read this configuration. Sign in again."));
+    if (error instanceof RequestFailure && error.kind === "session")
+      return gate(failure("Your session cannot read this configuration. Sign in again."));
     set({ contract: null, contractPhase: "error" });
   }
 }
@@ -296,9 +300,11 @@ export async function loadHealth(): Promise<void> {
   set({ health: "loading" });
   try {
     const response = await fetch("/health", { credentials: "same-origin" });
-    const facts = await response.json() as { status?: unknown };
+    const facts = (await response.json()) as { status?: unknown };
     if (current()) set({ health: response.ok && facts.status === "ok" ? "ok" : "unavailable" });
-  } catch { if (current()) set({ health: "unavailable" }); }
+  } catch {
+    if (current()) set({ health: "unavailable" });
+  }
 }
 
 /**
@@ -342,15 +348,16 @@ function setPage(page: OperatorPage, focus = false): void {
   if (focus) {
     state = {
       ...state,
-      pendingFocus:
-        state.session === "ready" ? `${page}Heading` : "gateHeading",
+      pendingFocus: state.session === "ready" ? `${page}Heading` : "gateHeading",
     };
   }
   for (const listener of listeners) listener();
 }
 
 let routerNavigate: ((href: string) => void) | undefined;
-export function configureNavigation(navigate: (href: string) => void): void { routerNavigate = navigate; }
+export function configureNavigation(navigate: (href: string) => void): void {
+  routerNavigate = navigate;
+}
 export function routeChanged(path: string): void {
   const page = pageForPath(path);
   if (state.page !== page) setPage(page, true);
@@ -508,10 +515,7 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
     // The route's words never reach this notice (see `refusedNotice`).
     failed: (facts) => {
       tab?.close();
-      return oauthNoticePatch(
-        connector,
-        actionFailedNotice("oauth_reconnect", connector, facts, productName),
-      );
+      return oauthNoticePatch(connector, actionFailedNotice("oauth_reconnect", connector, facts, productName));
     },
     reload: connector,
   });
@@ -519,8 +523,7 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
 
 export function disconnectOAuth(connector: string): Promise<void> {
   return mutate({
-    request: (current) =>
-      operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current),
+    request: (current) => operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current),
     busy: {
       oauthBusy: connector,
       oauthNotice: null,
@@ -544,10 +547,7 @@ export function disconnectOAuth(connector: string): Promise<void> {
       ...oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload)),
     }),
     failed: (facts) =>
-      oauthNoticePatch(
-        connector,
-        actionFailedNotice("oauth_disconnect", connector, facts, productName),
-      ),
+      oauthNoticePatch(connector, actionFailedNotice("oauth_disconnect", connector, facts, productName)),
     reload: connector,
   });
 }
@@ -585,8 +585,7 @@ function credentialMutation(
       confirming: null,
     },
     done: (payload) => land(done(payload)),
-    failed: (facts) =>
-      land({ credentialNotice: actionFailedNotice(action, connector, facts, productName) }),
+    failed: (facts) => land({ credentialNotice: actionFailedNotice(action, connector, facts, productName) }),
     reload: reload ? connector : undefined,
   });
 }
@@ -598,13 +597,7 @@ export function saveCredential(
   return credentialMutation(
     connector,
     "credential_save",
-    (current) =>
-      operatorRequest(
-        `/ui/credentials/${encodeURIComponent(connector)}`,
-        "PUT",
-        current,
-        body,
-      ),
+    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "PUT", current, body),
     () => ({ credentialEditing: null, credentialNotice: info("Credential saved.") }),
   );
 }
@@ -613,12 +606,7 @@ export function removeCredential(connector: string): Promise<void> {
   return credentialMutation(
     connector,
     "credential_remove",
-    (current) =>
-      operatorRequest(
-        `/ui/credentials/${encodeURIComponent(connector)}`,
-        "DELETE",
-        current,
-      ),
+    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}`, "DELETE", current),
     () => ({ credentialNotice: info("Credential removed.") }),
   );
 }
@@ -627,12 +615,7 @@ export function testCredential(connector: string): Promise<void> {
   return credentialMutation(
     connector,
     "credential_test",
-    (current) =>
-      operatorRequest(
-        `/ui/credentials/${encodeURIComponent(connector)}/test`,
-        "POST",
-        current,
-      ),
+    (current) => operatorRequest(`/ui/credentials/${encodeURIComponent(connector)}/test`, "POST", current),
     (payload) => ({ credentialNotice: credentialTestNotice(connector, payload) }),
     false,
   );
@@ -656,19 +639,12 @@ export async function loadActivity(reset: boolean): Promise<void> {
     params.set("cursor", state.activityCursor);
   }
   try {
-    const payload = await operatorRequest(
-      `/ui/api/activity?${params}`,
-      "GET",
-      current,
-    );
+    const payload = await operatorRequest(`/ui/api/activity?${params}`, "GET", current);
     if (!current()) return;
     if (!payload || !Array.isArray(payload.events)) throw new RequestFailure("refused");
     set({
       activityPhase: "ready",
-      activityEvents: [
-        ...(reset ? [] : state.activityEvents),
-        ...(payload?.events ?? []),
-      ],
+      activityEvents: [...(reset ? [] : state.activityEvents), ...(payload?.events ?? [])],
       activityCursor: payload?.nextCursor ?? null,
     });
   } catch (error) {
@@ -754,8 +730,7 @@ function recheckAuthorization(): void {
     // Only authorization that happens in another tab can change while this
     // one is away; a credential slot is filled on this page.
     const authorizesElsewhere =
-      connector.status === "auth_required" &&
-      (connector.oauth === true || Boolean(connector.authorizationUrl));
+      connector.status === "auth_required" && (connector.oauth === true || Boolean(connector.authorizationUrl));
     if (authorizesElsewhere || awaitingAuthorization.has(connector.id)) {
       void refreshConnector(connector.id, true);
     }
@@ -763,7 +738,9 @@ function recheckAuthorization(): void {
 }
 
 export async function boot(): Promise<void> {
-  const onPop = () => { if (!routerNavigate) routeChanged(window.location.pathname); };
+  const onPop = () => {
+    if (!routerNavigate) routeChanged(window.location.pathname);
+  };
   window.addEventListener("popstate", onPop);
   window.addEventListener("focus", onReturn);
   if (typeof document !== "undefined") {
@@ -886,7 +863,11 @@ function applyDetail(id: string, outcome: DetailOutcome): void {
 
 let detailGeneration = 0;
 const detailRevisions = new Map<string, number>();
-async function loadConnectorDetails(data: UiData, current: () => boolean, token: string | null | undefined): Promise<void> {
+async function loadConnectorDetails(
+  data: UiData,
+  current: () => boolean,
+  token: string | null | undefined,
+): Promise<void> {
   const generation = ++detailGeneration;
   let next = 0;
   const worker = async () => {
@@ -914,7 +895,10 @@ export async function refreshConnector(id: string, quiet = false): Promise<void>
   detailRevisions.set(id, revision);
   if (!quiet && state.data) {
     set({
-      data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "loading" } : c) },
+      data: {
+        ...state.data,
+        connectors: state.data.connectors.map((c) => (c.id === id ? { ...c, status: "loading" } : c)),
+      },
       connectorFailures: withoutKey(state.connectorFailures, id),
     });
   }
@@ -941,7 +925,7 @@ export async function loadAccessTokens(): Promise<void> {
   const identityCurrent = fence();
   const revision = ++tokenRevision;
   const current = () => identityCurrent() && revision === tokenRevision;
-  const existing = new Map(state.tokens.map(token => [token.id, token]));
+  const existing = new Map(state.tokens.map((token) => [token.id, token]));
   set({ tokenPhase: "loading", tokenNotice: null });
   try {
     const payload = await operatorRequest("/ui/access-tokens", "GET", current);
@@ -950,19 +934,14 @@ export async function loadAccessTokens(): Promise<void> {
     const tokens = payload.accessTokens;
     // Creation, rename and revoke replace record objects. Prefer records
     // changed locally since this read began over its possibly older snapshot.
-    const changed = state.tokens.filter(token => existing.get(token.id) !== token);
-    const changedIds = new Set(changed.map(token => token.id));
-    set({ tokenPhase: "ready", tokens: [
-      ...changed,
-      ...tokens.filter(token => !changedIds.has(token.id)),
-    ] });
+    const changed = state.tokens.filter((token) => existing.get(token.id) !== token);
+    const changedIds = new Set(changed.map((token) => token.id));
+    set({ tokenPhase: "ready", tokens: [...changed, ...tokens.filter((token) => !changedIds.has(token.id))] });
   } catch {
     if (!current()) return;
     set({
       tokenPhase: "error",
-      tokenNotice: failure(
-        "Access tokens could not be loaded.",
-      ),
+      tokenNotice: failure("Access tokens could not be loaded."),
     });
   }
 }
@@ -986,8 +965,7 @@ export function createAccessToken(name: string): Promise<boolean> {
   }
   let created = false;
   return mutate({
-    request: (current) =>
-      operatorRequest("/ui/access-tokens", "POST", current, { name }),
+    request: (current) => operatorRequest("/ui/access-tokens", "POST", current, { name }),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
       const issued = payload?.accessToken;
@@ -998,13 +976,10 @@ export function createAccessToken(name: string): Promise<boolean> {
       return {
         tokenBusy: false,
         tokenPhase: "ready",
-        tokens: [
-          issued,
-          ...state.tokens.filter((token) => token.id !== issued.id),
-        ],
-        createdToken: (state.page === "tokens" || state.page === "access") ? payload.token : null,
+        tokens: [issued, ...state.tokens.filter((token) => token.id !== issued.id)],
+        createdToken: state.page === "tokens" || state.page === "access" ? payload.token : null,
         tokenNotice: info("Access token created."),
-        pendingFocus: (state.page === "tokens" || state.page === "access") ? "tokenRevealHeading" : null,
+        pendingFocus: state.page === "tokens" || state.page === "access" ? "tokenRevealHeading" : null,
       };
     },
     failed: () => tokenFailure(failure("Access token could not be created. Check the name, capacity, and storage.")),
@@ -1027,13 +1002,7 @@ function accessTokenMutation(
   fallback: string,
 ): Promise<void> {
   return mutate({
-    request: (current) =>
-      operatorRequest(
-        `/ui/access-tokens/${encodeURIComponent(id)}`,
-        method,
-        current,
-        body,
-      ),
+    request: (current) => operatorRequest(`/ui/access-tokens/${encodeURIComponent(id)}`, method, current, body),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => ({
       tokenBusy: false,
@@ -1042,9 +1011,7 @@ function accessTokenMutation(
       pendingFocus: "tokenNotice",
       ...(payload?.accessToken
         ? {
-            tokens: state.tokens.map((token) =>
-              token.id === id ? payload.accessToken! : token,
-            ),
+            tokens: state.tokens.map((token) => (token.id === id ? payload.accessToken! : token)),
           }
         : {}),
     }),
@@ -1053,13 +1020,7 @@ function accessTokenMutation(
 }
 
 export function saveAccessTokenName(id: string, name: string): Promise<void> {
-  return accessTokenMutation(
-    id,
-    "PUT",
-    { name },
-    "Access token renamed.",
-    "Access token could not be renamed.",
-  );
+  return accessTokenMutation(id, "PUT", { name }, "Access token renamed.", "Access token could not be renamed.");
 }
 
 export function revokeAccessToken(id: string): Promise<void> {
@@ -1068,11 +1029,5 @@ export function revokeAccessToken(id: string): Promise<void> {
     `Revoke ${named?.name || "this access token"}? Its MCP client will immediately lose access.`,
   );
   if (!confirmed) return Promise.resolve();
-  return accessTokenMutation(
-    id,
-    "DELETE",
-    undefined,
-    "Access token revoked.",
-    "Access token could not be revoked.",
-  );
+  return accessTokenMutation(id, "DELETE", undefined, "Access token revoked.", "Access token could not be revoked.");
 }

@@ -22,7 +22,7 @@ const configPath = join(temp, "wrangler.json");
 const observations = [];
 const failures = [];
 const maxDurationMs = 2000;
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let deploymentAttempted = false;
 const sessions = [];
 
@@ -39,15 +39,18 @@ function h2Fetch(session, target, { method = "GET", headers = {}, body, signal }
       signal?.removeEventListener("abort", onAbort);
       if (!settled) reject(new Error("HTTP/2 stream closed before response"));
     });
-    request.on("error", error => { if (!settled) reject(error); });
-    request.on("response", responseHeaders => {
+    request.on("error", (error) => {
+      if (!settled) reject(error);
+    });
+    request.on("response", (responseHeaders) => {
       try {
         const responseHeadersWeb = new Headers();
         for (const [name, value] of Object.entries(responseHeaders)) {
           if (!name.startsWith(":")) responseHeadersWeb.set(name, String(value));
         }
         const response = new Response(Readable.toWeb(request), {
-          status: responseHeaders[":status"], headers: responseHeadersWeb,
+          status: responseHeaders[":status"],
+          headers: responseHeadersWeb,
         });
         settled = true;
         resolve(response);
@@ -126,70 +129,109 @@ try {
   await writeFile(join(temp, "worker.mjs"), source);
   for (const enabled of [false, true]) {
     const flags = enabled ? ["enable_request_signal"] : [];
-    await writeFile(configPath, JSON.stringify({ name, main: "worker.mjs",
-      compatibility_date: "2025-01-01", compatibility_flags: flags,
-      workers_dev: true, vars: { PROBE_KEY: key, PROBE_VERSION: String(enabled) }, observability: { enabled: false },
-    }), { mode: 0o600 });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        name,
+        main: "worker.mjs",
+        compatibility_date: "2025-01-01",
+        compatibility_flags: flags,
+        workers_dev: true,
+        vars: { PROBE_KEY: key, PROBE_VERSION: String(enabled) },
+        observability: { enabled: false },
+      }),
+      { mode: 0o600 },
+    );
     // A failed CLI response does not prove the remote deployment failed.
     deploymentAttempted = true;
     const deployment = await exec(wrangler, ["deploy", "--config", configPath], { cwd: root, maxBuffer: 2 ** 20 });
     const origin = deployment.stdout.match(new RegExp(`https://${name}\\.[a-zA-Z0-9-]+\\.workers\\.dev`))?.[0];
     if (!origin) throw new Error("Deployment returned no workers.dev URL");
-    console.log(`Deployed ${origin}, request signal ${enabled ? 'enabled' : 'default'}`);
+    console.log(`Deployed ${origin}, request signal ${enabled ? "enabled" : "default"}`);
     for (let attempt = 0; attempt < 30; attempt++) {
       const ready = await fetch(`${origin}/stats`, { headers: { authorization: `Bearer ${key}` } });
-      if (ready.headers.get('content-type')?.includes('application/json') &&
-          (await ready.json()).version === String(enabled)) break;
+      if (
+        ready.headers.get("content-type")?.includes("application/json") &&
+        (await ready.json()).version === String(enabled)
+      )
+        break;
       if (attempt === 29) throw new Error(`Worker route never became ready: ${ready.status}`);
       if (!ready.bodyUsed) await ready.body?.cancel();
       await wait(2000);
     }
     for (const route of ["raw", "mcp"]) {
-      for (const mode of ["heartbeat", "idle-timer", "stalled", ...(route === 'mcp' ? ['queued-handoff'] : [])]) {
+      for (const mode of ["heartbeat", "idle-timer", "stalled", ...(route === "mcp" ? ["queued-handoff"] : [])]) {
         const id = `${route}-${mode}-${enabled}`;
         // The queue case needs concurrent streams on one connection. Separate
         // HTTP/1.1 connections were routed to different Worker isolates.
-        const session = mode === 'queued-handoff' ? connect(origin) : undefined;
+        const session = mode === "queued-handoff" ? connect(origin) : undefined;
         if (session) {
           sessions.push(session);
-          session.on('error', error => { session.probeError = error; });
+          session.on("error", (error) => {
+            session.probeError = error;
+          });
         }
         const probeFetch = session ? (url, options) => h2Fetch(session, url, options) : fetch;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         const headers = { authorization: `Bearer ${key}` };
-        const listTools = (signal) => probeFetch(`${origin}/mcp?id=${id}`, { method: "POST", signal, headers: {
-          ...headers, "x-probe-pass": "yes", "content-type": "application/json",
-          accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-03-26",
-        }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
-        const suffix = mode === 'queued-handoff' ? 'mode=heartbeat&queue=1' : `mode=${mode}`;
-        const response = await probeFetch(`${origin}/${route}?id=${id}&${suffix}`, { headers, signal: controller.signal });
+        const listTools = (signal) =>
+          probeFetch(`${origin}/mcp?id=${id}`, {
+            method: "POST",
+            signal,
+            headers: {
+              ...headers,
+              "x-probe-pass": "yes",
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              "mcp-protocol-version": "2025-03-26",
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+          });
+        const suffix = mode === "queued-handoff" ? "mode=heartbeat&queue=1" : `mode=${mode}`;
+        const response = await probeFetch(`${origin}/${route}?id=${id}&${suffix}`, {
+          headers,
+          signal: controller.signal,
+        });
         const responseAt = Date.now();
         const isolate = response.headers.get("x-probe-isolate");
         const reader = response.body.getReader();
         let first;
-        try { first = await reader.read(); } catch (error) { first = { error: String(error) }; }
+        try {
+          first = await reader.read();
+        } catch (error) {
+          first = { error: String(error) };
+        }
         let clientEnd;
         const drained = (async () => {
-          try { while (!(await reader.read()).done) {} clientEnd = { kind: 'end' }; }
-          catch (error) { clientEnd = { kind: 'error', message: String(error) }; }
+          try {
+            while (!(await reader.read()).done) {}
+            clientEnd = { kind: "end" };
+          } catch (error) {
+            clientEnd = { kind: "error", message: String(error) };
+          }
         })();
         let whileLive;
         let abandonedQueue;
-        if (mode === 'queued-handoff') {
+        if (mode === "queued-handoff") {
           const orphanAbort = new AbortController();
           let orphanOutcome;
-          const orphan = listTools(orphanAbort.signal).then(r => {
-            orphanOutcome = { kind: 'response', status: r.status };
-            return r.body?.cancel();
-          }).catch(error => {
-            orphanOutcome ??= { kind: orphanAbort.signal.aborted ? 'client-abort' : 'error', message: String(error) };
-          });
+          const orphan = listTools(orphanAbort.signal)
+            .then((r) => {
+              orphanOutcome = { kind: "response", status: r.status };
+              return r.body?.cancel();
+            })
+            .catch((error) => {
+              orphanOutcome ??= { kind: orphanAbort.signal.aborted ? "client-abort" : "error", message: String(error) };
+            });
           try {
             for (let attempt = 0; attempt < 10; attempt++) {
-              const before = await probeFetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
-              abandonedQueue = { sameIsolate: before.isolate === isolate,
-                queued: before.health.admission.requests.queued, elapsedMs: Date.now() - responseAt };
+              const before = await probeFetch(`${origin}/stats?id=${id}`, { headers }).then((r) => r.json());
+              abandonedQueue = {
+                sameIsolate: before.isolate === isolate,
+                queued: before.health.admission.requests.queued,
+                elapsedMs: Date.now() - responseAt,
+              };
               if (abandonedQueue.sameIsolate && abandonedQueue.queued === 1) break;
               await wait(20);
             }
@@ -198,32 +240,42 @@ try {
             await orphan;
           }
           await wait(50);
-          const after = await probeFetch(`${origin}/stats?id=${id}`, { headers }).then(r => r.json());
+          const after = await probeFetch(`${origin}/stats?id=${id}`, { headers }).then((r) => r.json());
           abandonedQueue.orphanOutcome = orphanOutcome;
-          abandonedQueue.afterAbort = { sameIsolate: after.isolate === isolate,
-            queued: after.health.admission.requests.queued, elapsedMs: Date.now() - responseAt };
-          abandonedQueue.scenario = abandonedQueue.afterAbort.queued === 1
-            ? 'orphan-retained' : 'queue-cancellation-control';
-        } else if (route === 'mcp') {
+          abandonedQueue.afterAbort = {
+            sameIsolate: after.isolate === isolate,
+            queued: after.health.admission.requests.queued,
+            elapsedMs: Date.now() - responseAt,
+          };
+          abandonedQueue.scenario =
+            abandonedQueue.afterAbort.queued === 1 ? "orphan-retained" : "queue-cancellation-control";
+        } else if (route === "mcp") {
           const clientEndBeforeCheck = clientEnd ?? null;
           const competing = await listTools();
-          whileLive = { status: competing.status,
+          whileLive = {
+            status: competing.status,
             clientEndBeforeCheck,
-            sameIsolate: competing.headers.get('x-probe-isolate') === isolate,
+            sameIsolate: competing.headers.get("x-probe-isolate") === isolate,
             // Compare two server timestamps. The original lease can only be
             // granted after its Worker entry, and the competing decision ran
             // before its response returned. This is a conservative bound.
-            elapsedMs: Number(competing.headers.get('x-probe-finished-at') ?? NaN) -
-              Number(response.headers.get('x-probe-started-at') ?? NaN) };
+            elapsedMs:
+              Number(competing.headers.get("x-probe-finished-at") ?? NaN) -
+              Number(response.headers.get("x-probe-started-at") ?? NaN),
+          };
           const competingBody = await competing.text();
-          try { whileLive.toolCount = JSON.parse(competingBody).result?.tools?.length; } catch {}
+          try {
+            whileLive.toolCount = JSON.parse(competingBody).result?.tools?.length;
+          } catch {}
           whileLive.clientEndAtCheck = clientEnd ?? null;
         }
         await wait(750);
         const clientEndedBeforeAbort = clientEnd ?? null;
         controller.abort();
         clearTimeout(timeout);
-        try { await reader.cancel(); } catch {}
+        try {
+          await reader.cancel();
+        } catch {}
         await drained;
         // Do not read /health after expiry before this request. Admission must
         // recover from acquire itself, without a monitoring request sweeping it.
@@ -232,50 +284,93 @@ try {
         const followup = await listTools(AbortSignal.timeout(10000));
         const followupBody = await followup.text();
         let toolCount;
-        try { toolCount = JSON.parse(followupBody).result?.tools?.length; } catch {}
+        try {
+          toolCount = JSON.parse(followupBody).result?.tools?.length;
+        } catch {}
         const snapshots = [];
         for (let attempt = 0; attempt < 4; attempt++) {
           const statsResponse = await probeFetch(`${origin}/stats?id=${id}`, { headers });
           const statsText = await statsResponse.text();
           let stats;
-          try { stats = JSON.parse(statsText); }
-          catch { throw new Error(`Stats failed: ${statsResponse.status} ${statsText.slice(0, 1500)}`); }
+          try {
+            stats = JSON.parse(statsText);
+          } catch {
+            throw new Error(`Stats failed: ${statsResponse.status} ${statsText.slice(0, 1500)}`);
+          }
           snapshots.push(stats);
           if (stats.isolate === isolate) break;
           await wait(100);
         }
-        const same = snapshots.find(s => s.isolate === isolate);
-        const observation = { enabled, servedVersion: response.headers.get('x-probe-version'),
-          compatibilityDate: "2025-01-01", flags, maxDurationMs, route, mode, id, isolate,
-          transport: session ? 'h2' : 'fetch',
-          status: response.status, first: first?.value ? new TextDecoder().decode(first.value) : first,
-          clientEndedBeforeAbort, whileLive, abandonedQueue,
-          sameIsolate: Boolean(same), events: same?.events.filter(e => e.id === id),
+        const same = snapshots.find((s) => s.isolate === isolate);
+        const observation = {
+          enabled,
+          servedVersion: response.headers.get("x-probe-version"),
+          compatibilityDate: "2025-01-01",
+          flags,
+          maxDurationMs,
+          route,
+          mode,
+          id,
+          isolate,
+          transport: session ? "h2" : "fetch",
+          status: response.status,
+          first: first?.value ? new TextDecoder().decode(first.value) : first,
+          clientEndedBeforeAbort,
+          whileLive,
+          abandonedQueue,
+          sameIsolate: Boolean(same),
+          events: same?.events.filter((e) => e.id === id),
           admission: same?.health.admission.requests,
-          followup: { status: followup.status, sameIsolate: followup.headers.get("x-probe-isolate") === isolate,
-            toolCount, elapsedMs: Date.now() - followupStartedAt, body: followupBody.slice(0, 300) },
+          followup: {
+            status: followup.status,
+            sameIsolate: followup.headers.get("x-probe-isolate") === isolate,
+            toolCount,
+            elapsedMs: Date.now() - followupStartedAt,
+            body: followupBody.slice(0, 300),
+          },
         };
-        observation.passed = observation.servedVersion === String(enabled) &&
-          response.status === (route === 'mcp' ? 401 : 200) && observation.sameIsolate &&
-          observation.admission.active === 0 && observation.followup.status === 200 &&
-          observation.followup.sameIsolate && toolCount === 8 &&
-          (!abandonedQueue || (abandonedQueue.sameIsolate && abandonedQueue.queued === 1 &&
-            abandonedQueue.elapsedMs < maxDurationMs && abandonedQueue.afterAbort.sameIsolate &&
-            abandonedQueue.afterAbort.elapsedMs < maxDurationMs && abandonedQueue.orphanOutcome.kind === 'client-abort' &&
-            (enabled || abandonedQueue.afterAbort.queued === 1) && observation.followup.elapsedMs < maxDurationMs + 1000)) &&
-          (!whileLive || (whileLive.sameIsolate && whileLive.elapsedMs >= 0 && whileLive.elapsedMs < maxDurationMs &&
-            (whileLive.status === 503 || (whileLive.clientEndBeforeCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
-        observation.verdict = whileLive && (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs < 0 || whileLive.elapsedMs >= maxDurationMs)
-          ? 'inconclusive: contention arrived after the conservative deadline'
-          : whileLive?.status === 200 && !whileLive.clientEndBeforeCheck && whileLive.clientEndAtCheck
-          ? 'inconclusive: original stream ended during contention'
-          : abandonedQueue && (!abandonedQueue.sameIsolate || !abandonedQueue.afterAbort.sameIsolate ||
-            abandonedQueue.elapsedMs >= maxDurationMs || abandonedQueue.afterAbort.elapsedMs >= maxDurationMs)
-          ? 'inconclusive: queue evidence missed the original isolate or pre-expiry window'
-          : abandonedQueue && (abandonedQueue.orphanOutcome.kind !== 'client-abort' ||
-            (!enabled && abandonedQueue.afterAbort.queued !== 1))
-          ? 'inconclusive: abandoned queue was not reproduced'
-          : observation.passed ? 'pass' : 'fail';
+        observation.passed =
+          observation.servedVersion === String(enabled) &&
+          response.status === (route === "mcp" ? 401 : 200) &&
+          observation.sameIsolate &&
+          observation.admission.active === 0 &&
+          observation.followup.status === 200 &&
+          observation.followup.sameIsolate &&
+          toolCount === 8 &&
+          (!abandonedQueue ||
+            (abandonedQueue.sameIsolate &&
+              abandonedQueue.queued === 1 &&
+              abandonedQueue.elapsedMs < maxDurationMs &&
+              abandonedQueue.afterAbort.sameIsolate &&
+              abandonedQueue.afterAbort.elapsedMs < maxDurationMs &&
+              abandonedQueue.orphanOutcome.kind === "client-abort" &&
+              (enabled || abandonedQueue.afterAbort.queued === 1) &&
+              observation.followup.elapsedMs < maxDurationMs + 1000)) &&
+          (!whileLive ||
+            (whileLive.sameIsolate &&
+              whileLive.elapsedMs >= 0 &&
+              whileLive.elapsedMs < maxDurationMs &&
+              (whileLive.status === 503 ||
+                (whileLive.clientEndBeforeCheck && whileLive.status === 200 && whileLive.toolCount === 8))));
+        observation.verdict =
+          whileLive &&
+          (!Number.isFinite(whileLive.elapsedMs) || whileLive.elapsedMs < 0 || whileLive.elapsedMs >= maxDurationMs)
+            ? "inconclusive: contention arrived after the conservative deadline"
+            : whileLive?.status === 200 && !whileLive.clientEndBeforeCheck && whileLive.clientEndAtCheck
+              ? "inconclusive: original stream ended during contention"
+              : abandonedQueue &&
+                  (!abandonedQueue.sameIsolate ||
+                    !abandonedQueue.afterAbort.sameIsolate ||
+                    abandonedQueue.elapsedMs >= maxDurationMs ||
+                    abandonedQueue.afterAbort.elapsedMs >= maxDurationMs)
+                ? "inconclusive: queue evidence missed the original isolate or pre-expiry window"
+                : abandonedQueue &&
+                    (abandonedQueue.orphanOutcome.kind !== "client-abort" ||
+                      (!enabled && abandonedQueue.afterAbort.queued !== 1))
+                  ? "inconclusive: abandoned queue was not reproduced"
+                  : observation.passed
+                    ? "pass"
+                    : "fail";
         observations.push(observation);
         await mkdir(dirname(output), { recursive: true });
         await writeFile(output, JSON.stringify({ testedAt: new Date().toISOString(), name, observations }, null, 2));
@@ -284,7 +379,7 @@ try {
       }
     }
   }
-  if (observations.some(row => !row.passed)) throw new Error(`Disconnect regression not verified; see ${output}`);
+  if (observations.some((row) => !row.passed)) throw new Error(`Disconnect regression not verified; see ${output}`);
 } catch (error) {
   failures.push(error);
 } finally {
@@ -301,14 +396,19 @@ try {
         if (attempt < 2) await wait(500);
       }
     }
-    if (deletionError) failures.push(new Error(
-      `Could not delete disposable Worker ${name}. Run wrangler delete ${name} --force.`,
-      { cause: deletionError },
-    ));
+    if (deletionError)
+      failures.push(
+        new Error(`Could not delete disposable Worker ${name}. Run wrangler delete ${name} --force.`, {
+          cause: deletionError,
+        }),
+      );
     else console.log(`Deleted ${name}`);
   }
-  try { await rm(temp, { recursive: true, force: true }); }
-  catch (error) { failures.push(error); }
+  try {
+    await rm(temp, { recursive: true, force: true });
+  } catch (error) {
+    failures.push(error);
+  }
 }
 if (failures.length > 1) throw new AggregateError(failures, "Probe and cleanup failed");
 if (failures.length === 1) throw failures[0];

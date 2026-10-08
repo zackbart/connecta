@@ -13,20 +13,9 @@ import {
   type UiProblem,
   type UiToolSafety,
 } from "./operator-ui/model.js";
-import {
-  OPERATOR_UI_STYLE_PATH,
-  OPERATOR_UI_SCRIPT_PATH,
-  OPERATOR_UI_NOTICES_PATH,
-} from "./operator-ui/generated.js";
+import { OPERATOR_UI_STYLE_PATH, OPERATOR_UI_SCRIPT_PATH, OPERATOR_UI_NOTICES_PATH } from "./operator-ui/generated.js";
 import type { RegistryView } from "./registry.js";
-import type {
-  ConnectaBranding,
-  ConnectaTheme,
-  Connector,
-  ConnectorStatus,
-  ToolDef,
-  UiAuthConfig,
-} from "./types.js";
+import type { ConnectaBranding, ConnectaTheme, Connector, ConnectorStatus, ToolDef, UiAuthConfig } from "./types.js";
 
 export {
   filterUiConnectors,
@@ -35,18 +24,18 @@ export {
   type UiData,
 } from "./operator-ui/model.js";
 
-import {
-  escapeHtml,
-  isSafeHttpsUrl,
-  renderPage,
-  resolveBranding,
-} from "./branding.js";
+import { escapeHtml, isSafeHttpsUrl, renderPage, resolveBranding } from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
 export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
-  overview: "Overview", connections: "Connectors", connector: "Connector",
-  tools: "Tools", access: "Access", config: "Config", tokens: "Access tokens",
+  overview: "Overview",
+  connections: "Connectors",
+  connector: "Connector",
+  tools: "Tools",
+  access: "Access",
+  config: "Config",
+  tokens: "Access tokens",
   activity: "Activity",
 };
 
@@ -62,10 +51,7 @@ export function operatorPageForPath(path: string): OperatorPage | undefined {
   return undefined;
 }
 
-export function operatorPageTitle(
-  page: OperatorPage,
-  configuredTitle: string,
-): string {
+export function operatorPageTitle(page: OperatorPage, configuredTitle: string): string {
   return `${OPERATOR_PAGE_LABELS[page]} — ${configuredTitle}`;
 }
 
@@ -117,9 +103,7 @@ export async function buildUiData(
   serverInfo: { name: string; version: string },
   credentialVault?: CredentialVault,
   activityEnabled = false,
-  credentialManagement: CredentialManagementCapability = credentialVault
-    ? "available"
-    : "requires_operator",
+  credentialManagement: CredentialManagementCapability = credentialVault ? "available" : "requires_operator",
   defer?: DeferredWork,
   oauthManagement = false,
   discoveryConcurrency?: number,
@@ -146,10 +130,7 @@ export async function buildUiData(
 }
 
 function jsonForInlineScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e")
-    .replaceAll("&", "\\u0026");
+  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
 }
 
 /**
@@ -170,10 +151,7 @@ export function renderUiHtml(
   // reports that Clerk could not load, and the rest of the shell still renders —
   // the same fallback-and-warn posture the branding URLs take, with the drop
   // named in a startup warning (see `droppedUiAuthUrls`).
-  const clerkScriptOrigin =
-    clerk && isSafeHttpsUrl(clerk.frontendApiUrl)
-      ? clerk.frontendApiUrl
-      : undefined;
+  const clerkScriptOrigin = clerk && isSafeHttpsUrl(clerk.frontendApiUrl) ? clerk.frontendApiUrl : undefined;
   // Enumerated field by field, because this object is serialized into the page's
   // JSON config: a rejected frontendApiUrl must not reach the document through
   // `AUTH` after being kept out of the `<script src>`, and a rejected
@@ -185,12 +163,8 @@ export function renderUiHtml(
         kind: clerk.kind,
         publishableKey: clerk.publishableKey,
         ...(clerkScriptOrigin ? { frontendApiUrl: clerkScriptOrigin } : {}),
-        ...(isSafeHttpsUrl(clerk.signInUrl)
-          ? { signInUrl: clerk.signInUrl }
-          : {}),
-        ...(isSafeHttpsUrl(clerk.signUpUrl)
-          ? { signUpUrl: clerk.signUpUrl }
-          : {}),
+        ...(isSafeHttpsUrl(clerk.signInUrl) ? { signInUrl: clerk.signInUrl } : {}),
+        ...(isSafeHttpsUrl(clerk.signUpUrl) ? { signUpUrl: clerk.signUpUrl } : {}),
       }
     : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);
@@ -208,7 +182,9 @@ export function renderUiHtml(
     uiMounted: true,
     operatorShell: true,
     styles: "",
-    head: `<link rel="stylesheet" href="${OPERATOR_UI_STYLE_PATH}"><link rel="license" href="${OPERATOR_UI_NOTICES_PATH}">` + clerkScript,
+    head:
+      `<link rel="stylesheet" href="${OPERATOR_UI_STYLE_PATH}"><link rel="license" href="${OPERATOR_UI_NOTICES_PATH}">` +
+      clerkScript,
     skipTo: { id: "operatorContent", label: "Skip to operator page" },
     mastheadEnd: '<div id="operatorNav"></div>',
     body: `
@@ -224,9 +200,13 @@ export function renderUiHtml(
 </main>
 `,
     tail: `<script id="operatorConfig" type="application/json">${jsonForInlineScript({
-      auth, mcpUrl, initialPage: page, 
-      titleSuffix: brand.pageTitle, productName: brand.productName,
-      productDescription: brand.description, productOperatorLabel: brand.productName + " operator",
+      auth,
+      mcpUrl,
+      initialPage: page,
+      titleSuffix: brand.pageTitle,
+      productName: brand.productName,
+      productDescription: brand.description,
+      productOperatorLabel: brand.productName + " operator",
     })}</script><script defer src="${OPERATOR_UI_SCRIPT_PATH}"></script>`,
   });
 }
@@ -234,9 +214,7 @@ export function renderUiHtml(
 function ownsOperatorPath(reserved: readonly string[], path: string): boolean {
   if (path === "/activity" || path === "/tokens") return true;
   return reserved.some((pattern) =>
-    pattern.endsWith("/*")
-      ? path.startsWith(pattern.slice(0, -1))
-      : path === pattern,
+    pattern.endsWith("/*") ? path.startsWith(pattern.slice(0, -1)) : path === pattern,
   );
 }
 
@@ -250,11 +228,20 @@ const OPERATOR_UI_OPTIONS = optionsOf<{ branding?: ConnectaBranding }>()({
 });
 
 /** Mount the connection UI without enabling any storage or activity module. */
-export function operatorUi(
-  options: { branding?: ConnectaBranding } = {},
-): OperatorSurface {
+export function operatorUi(options: { branding?: ConnectaBranding } = {}): OperatorSurface {
   options = assertKnownOptions(options, "operatorUi()", OPERATOR_UI_OPTIONS);
-  const reservedPaths = ["/", "/connectors", "/connectors/*", "/tools", "/access", "/config", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"];
+  const reservedPaths = [
+    "/",
+    "/connectors",
+    "/connectors/*",
+    "/tools",
+    "/access",
+    "/config",
+    "/ui",
+    "/ui/*",
+    "/favicon.svg",
+    "/favicon.ico",
+  ];
   return {
     ...options,
     reservedPaths,
@@ -269,11 +256,7 @@ export function operatorUi(
       if (!ownsOperatorPath(reservedPaths, context.path)) return null;
       const tokenResponse = await context.opts.config.accessTokens?.handle(context);
       if (tokenResponse) return tokenResponse;
-      const routes = [
-        ...(context.opts.config.vault ? [routeCredentials] : []),
-        routeOAuthManagement,
-        routeUi,
-      ];
+      const routes = [...(context.opts.config.vault ? [routeCredentials] : []), routeOAuthManagement, routeUi];
       for (const route of routes) {
         const response = await route(context);
         if (response) {

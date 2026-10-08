@@ -33,13 +33,9 @@ function connectaProvider(providers: ExecutorProvider[]): ExecutorProvider {
 
 describe("catalog probe deadlines", () => {
   it("returns fixed code-based text in a scoped program search's timed-out catalogError", async () => {
-    const providers = await buildSandboxProviders(
-      makeRegistry([hangingConnector()]),
-      BASE,
-      silentLogger,
-      undefined,
-      { probeTimeoutMs: 25 },
-    );
+    const providers = await buildSandboxProviders(makeRegistry([hangingConnector()]), BASE, silentLogger, undefined, {
+      probeTimeoutMs: 25,
+    });
     const page = (await required(connectaProvider(providers).fns.search)({
       connector: "hang",
     })) as ScopedPage;
@@ -50,11 +46,9 @@ describe("catalog probe deadlines", () => {
   });
 
   it("returns the same fixed timeout text for the top-level route", async () => {
-    const page = await new CatalogService(
-      makeRegistry([hangingConnector()]),
-      BASE,
-      { probeTimeoutMs: 25 },
-    ).search({ connector: "hang" });
+    const page = await new CatalogService(makeRegistry([hangingConnector()]), BASE, { probeTimeoutMs: 25 }).search({
+      connector: "hang",
+    });
 
     expect(page.queryAnalysis?.catalogError?.message).toBe('Connector "hang" catalog lookup failed (timeout).');
   });
@@ -86,9 +80,7 @@ describe("catalog probe deadlines", () => {
     await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
     // The read the probe started now serves the rest of the request.
     const again = await service.search({ connector: "slow" });
-    expect(again.entries.map((entry) => entry.tool.address)).toEqual([
-      "slow.read",
-    ]);
+    expect(again.entries.map((entry) => entry.tool.address)).toEqual(["slow.read"]);
     expect(reads).toBe(1);
   });
 });
@@ -174,9 +166,7 @@ describe("request-scoped catalog cache", () => {
       service.resolveTool("counted.read"),
       service.loadConnector("counted"),
     ]);
-    expect(page.entries.map((entry) => entry.tool.address)).toEqual([
-      "counted.read",
-    ]);
+    expect(page.entries.map((entry) => entry.tool.address)).toEqual(["counted.read"]);
     expect(described[0]?.name).toBe("read");
     expect(resolved.ok).toBe(true);
     expect(loaded).toEqual([{ ...READ, classification: "read" }]);
@@ -184,9 +174,7 @@ describe("request-scoped catalog cache", () => {
   });
 
   it("rejects a synchronous getTools throw like an asynchronous one and does not cache it", async () => {
-    const registry = makeRegistry([
-      connectorWith({ id: "sync", kind: "api", tools: [READ] }),
-    ]);
+    const registry = makeRegistry([connectorWith({ id: "sync", kind: "api", tools: [READ] })]);
     let throws = true;
     const getTools = registry.getTools.bind(registry);
     const view = Object.assign(Object.create(registry) as typeof registry, {
@@ -197,9 +185,7 @@ describe("request-scoped catalog cache", () => {
     });
     const service = new CatalogService(view, BASE);
 
-    await expect(service.loadConnector("sync")).rejects.toThrow(
-      "synchronous failure",
-    );
+    await expect(service.loadConnector("sync")).rejects.toThrow("synchronous failure");
     throws = false;
     await expect(service.loadConnector("sync")).resolves.toEqual([{ ...READ, classification: "read" }]);
   });

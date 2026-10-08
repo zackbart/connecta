@@ -11,8 +11,17 @@ export function assertSuiteCollection({ node, workers, details }) {
   const files = [...new Set([...node, ...workers])];
   for (const file of files) {
     const { realFile = file, inWorktree = false } = details[file];
-    if ([file, realFile].some((path) => !(path.startsWith("test/") || /^src\/providers\/[^/]+\//.test(path)) || /(^|\/)(node_modules|dist|\.claude|worktrees)(\/|$)/.test(path)) || inWorktree) {
-      errors.push(`${file}: collected suites must be under test/ or src/providers/<name>/ and outside node_modules, dist, and nested worktrees`);
+    if (
+      [file, realFile].some(
+        (path) =>
+          !(path.startsWith("test/") || /^src\/providers\/[^/]+\//.test(path)) ||
+          /(^|\/)(node_modules|dist|\.claude|worktrees)(\/|$)/.test(path),
+      ) ||
+      inWorktree
+    ) {
+      errors.push(
+        `${file}: collected suites must be under test/ or src/providers/<name>/ and outside node_modules, dist, and nested worktrees`,
+      );
     }
     const nodeOnly = file.endsWith(".node.test.ts");
     if (nodeOnly !== (node.includes(file) && !workers.includes(file))) {
@@ -35,15 +44,25 @@ function main() {
     const collection = {};
     for (const project of ["node", "workers"]) {
       const output = join(temporary, `${project}.json`);
-      execFileSync(process.execPath, [join(root, "node_modules/vitest/vitest.mjs"), "list", "--project", project, "--filesOnly", `--json=${output}`], { cwd: root, stdio: "pipe" });
-      collection[project] = JSON.parse(readFileSync(output, "utf8")).map(({ file }) => relative(root, file).replaceAll("\\", "/"));
+      execFileSync(
+        process.execPath,
+        [join(root, "node_modules/vitest/vitest.mjs"), "list", "--project", project, "--filesOnly", `--json=${output}`],
+        { cwd: root, stdio: "pipe" },
+      );
+      collection[project] = JSON.parse(readFileSync(output, "utf8")).map(({ file }) =>
+        relative(root, file).replaceAll("\\", "/"),
+      );
     }
     collection.details = {};
     for (const file of new Set([...collection.node, ...collection.workers])) {
       const actual = realpathSync(join(root, file));
       let inWorktree = false;
       // A nested worktree can have any name and a .git file, not only .git/.
-      for (let directory = dirname(actual); directory !== root && directory !== dirname(directory); directory = dirname(directory)) {
+      for (
+        let directory = dirname(actual);
+        directory !== root && directory !== dirname(directory);
+        directory = dirname(directory)
+      ) {
         if (existsSync(join(directory, ".git"))) inWorktree = true;
       }
       collection.details[file] = {

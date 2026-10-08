@@ -11,12 +11,7 @@ import { customExecutor, createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { classifyTool, type PoolTrust } from "../src/tool-safety.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type {
-  Connector,
-  Executor,
-  ExecutorProvider,
-  ToolDef,
-} from "../src/types.js";
+import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
@@ -32,20 +27,23 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
       if (!program) return { result: undefined, error: `no program for ${code}` };
       const provider = required(providers[0]);
       const connecta = new Proxy({} as Guest, {
-        get: (_target, name: string) => async (...args: unknown[]) => {
-          try {
-            return await required(provider.fns[name])(...args);
-          } catch (error) {
-            throw guestError(error);
-          }
-        },
+        get:
+          (_target, name: string) =>
+          async (...args: unknown[]) => {
+            try {
+              return await required(provider.fns[name])(...args);
+            } catch (error) {
+              throw guestError(error);
+            }
+          },
       });
       try {
         return { result: await program(connecta) };
       } catch (error) {
         return {
           result: undefined,
-          error: guestErrorText(error), failure: guestFailureFacts(error),
+          error: guestErrorText(error),
+          failure: guestFailureFacts(error),
         };
       }
     },
@@ -107,17 +105,10 @@ function world(options: WorldOptions = {}) {
     logger: silentLogger,
   };
   const programs = new Map<string, Program>();
-  const execute = createExecuteTool(
-    registry,
-    BASE,
-    scriptedExecutor(programs),
-    silentLogger,
-    activity,
-    {
-      trust: options.trust,
-      ...(options.maxWrites !== undefined ? { maxWrites: options.maxWrites } : {}),
-    },
-  );
+  const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, activity, {
+    trust: options.trust,
+    ...(options.maxWrites !== undefined ? { maxWrites: options.maxWrites } : {}),
+  });
   let next = 0;
   return {
     registry,
@@ -156,13 +147,9 @@ describe("a program's write", () => {
     });
     expect(w.writes()).toEqual([]);
     // An ordinary refused attempt, recorded payload-free with its friction.
-    expect(w.events.map((event) => [event.address, event.outcome, event.errorCode, event.friction]))
-      .toEqual([[
-        "tracker.close_issue",
-        "error",
-        "destructive_tool_requires_approval",
-        "destructive_reroute",
-      ]]);
+    expect(w.events.map((event) => [event.address, event.outcome, event.errorCode, event.friction])).toEqual([
+      ["tracker.close_issue", "error", "destructive_tool_requires_approval", "destructive_reroute"],
+    ]);
   });
 
   it("is refused for an unannotated tool too, and a caught refusal lets the program go on", async () => {
@@ -186,8 +173,9 @@ describe("trusted-pool programs (#706)", () => {
     const w = world({ trust: "trusted" });
     expect(value(await w.run(closeOne)).result).toBe("closed");
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
-    expect(w.events.map((event) => [event.address, event.outcome, event.source]))
-      .toEqual([["tracker.close_issue", "success", "execute_code"]]);
+    expect(w.events.map((event) => [event.address, event.outcome, event.source])).toEqual([
+      ["tracker.close_issue", "success", "execute_code"],
+    ]);
   });
 
   it("INV-2: permits every write in a trusted pool", async () => {
@@ -202,7 +190,10 @@ describe("trusted-pool programs (#706)", () => {
       }
     });
     expect(value(done).result).toBe("posted");
-    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }, { address: "tracker.post", args: { text: "x" } }]);
+    expect(w.writes()).toEqual([
+      { address: "tracker.close_issue", args: { id: 1 } },
+      { address: "tracker.post", args: { text: "x" } },
+    ]);
   });
 
   it("spends the write budget", async () => {
@@ -223,37 +214,57 @@ describe("trusted-pool programs (#706)", () => {
     expect(w.writes()).toHaveLength(1);
   });
 
-  it.each(["succeeded", "failed", "unknown"] as const)("INV-9: program failures retain %s write accounting after caught host failures", async (state) => {
-    const w = world({
-      trust: "trusted",
-      read: () => { throw new ConnectorCallError("not_found", "Read refused"); },
-      write: () => {
-        if (state === "failed") throw new ConnectorCallError("invalid_args", "Write refused");
-        if (state === "unknown") throw new ConnectorCallError("timeout", "No write response");
-        return { ok: true };
-      },
-    });
-    const result = await w.run(async (connecta) => {
-      // A guest catching host failures still owns every write it dispatched.
-      try { await connecta.call!("reader.get", {}); } catch {}
-      try { await connecta.call!("tracker.close_issue", { id: 1 }); } catch {}
-      throw new Error("Guest failed after catching host failures");
-    });
-    expect(result.isError).toBe(true);
-    expect(value(result)).toMatchObject({
-      error: {
-        code: state === "unknown" ? "write_outcome_unknown" : "program_error",
-        writes: { succeeded: state === "succeeded" ? 1 : 0, failed: state === "failed" ? 1 : 0, unknown: state === "unknown" ? 1 : 0 },
-      },
-      hostCalls: { attempted: 2, admitted: 2, succeeded: state === "succeeded" ? 1 : 0, failed: state === "succeeded" ? 1 : 2 },
-    });
-    expect(w.writes()).toHaveLength(1);
-    expect(value(result)).not.toHaveProperty("result");
-  });
+  it.each(["succeeded", "failed", "unknown"] as const)(
+    "INV-9: program failures retain %s write accounting after caught host failures",
+    async (state) => {
+      const w = world({
+        trust: "trusted",
+        read: () => {
+          throw new ConnectorCallError("not_found", "Read refused");
+        },
+        write: () => {
+          if (state === "failed") throw new ConnectorCallError("invalid_args", "Write refused");
+          if (state === "unknown") throw new ConnectorCallError("timeout", "No write response");
+          return { ok: true };
+        },
+      });
+      const result = await w.run(async (connecta) => {
+        // A guest catching host failures still owns every write it dispatched.
+        try {
+          await connecta.call!("reader.get", {});
+        } catch {}
+        try {
+          await connecta.call!("tracker.close_issue", { id: 1 });
+        } catch {}
+        throw new Error("Guest failed after catching host failures");
+      });
+      expect(result.isError).toBe(true);
+      expect(value(result)).toMatchObject({
+        error: {
+          code: state === "unknown" ? "write_outcome_unknown" : "program_error",
+          writes: {
+            succeeded: state === "succeeded" ? 1 : 0,
+            failed: state === "failed" ? 1 : 0,
+            unknown: state === "unknown" ? 1 : 0,
+          },
+        },
+        hostCalls: {
+          attempted: 2,
+          admitted: 2,
+          succeeded: state === "succeeded" ? 1 : 0,
+          failed: state === "succeeded" ? 1 : 2,
+        },
+      });
+      expect(w.writes()).toHaveLength(1);
+      expect(value(result)).not.toHaveProperty("result");
+    },
+  );
 
   it("INV-9: lets an unawaited trusted-pool write finish, and says how it went", async () => {
     let writeStarted!: () => void;
-    let dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
+    let dispatched = new Promise<void>((resolve) => {
+      writeStarted = resolve;
+    });
     const w = world({
       trust: "trusted",
       read: async () => {
@@ -267,19 +278,24 @@ describe("trusted-pool programs (#706)", () => {
         return { ok: true };
       },
     });
-    const fireAndReturn = (id: number): Program => async (connecta) => {
-      connecta.call!("tracker.close_issue", { id }).catch(() => {});
-      await connecta.call!("reader.get", { id: 9 });
-      return "done";
-    };
+    const fireAndReturn =
+      (id: number): Program =>
+      async (connecta) => {
+        connecta.call!("tracker.close_issue", { id }).catch(() => {});
+        await connecta.call!("reader.get", { id: 9 });
+        return "done";
+      };
     // The write outlives the program, finishes, and is recorded as it ended.
     const done = await w.run(fireAndReturn(1));
     expect(value(done).result).toBe("done");
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
-    expect(w.events.filter((event) => event.address === "tracker.close_issue")
-      .map((event) => event.outcome)).toEqual(["success"]);
+    expect(w.events.filter((event) => event.address === "tracker.close_issue").map((event) => event.outcome)).toEqual([
+      "success",
+    ]);
     // One that turns unknown is the result, not a plain success.
-    dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
+    dispatched = new Promise<void>((resolve) => {
+      writeStarted = resolve;
+    });
     const unknown = await w.run(fireAndReturn(2));
     expect(unknown.isError).toBe(true);
     expect(value(unknown).error).toMatchObject({
@@ -292,41 +308,54 @@ describe("trusted-pool programs (#706)", () => {
     ]);
   });
 
-  it.each([false, true])("drains a dispatched write on terminal host-budget exhaustion (unknown: %s)", async (unknown) => {
-    let writeStarted!: () => void;
-    const dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
-    const w = world({
-      trust: "trusted",
-      read: async () => { await dispatched; return { id: 9 }; },
-      write: async () => {
-        writeStarted();
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        if (unknown) throw new ConnectorCallError("timeout", "gateway timed out");
-        return { ok: true };
-      },
-    });
-    const failed = await w.run(async (connecta) => {
-      void connecta.call!("tracker.close_issue", { id: 1 }).catch(() => {});
-      for (let i = 0; i < 213; i++) {
-        try { await connecta.call!("reader.get", { id: 9 }); }
-        catch { /* A budget refusal must never get here. */ }
-      }
-      return "must not be returned";
-    });
-    expect(failed.isError).toBe(true);
-    expect(value(failed)).toMatchObject({
-      error: {
-        code: unknown ? "write_outcome_unknown" : "budget_exceeded",
-        writes: { succeeded: unknown ? 0 : 1, failed: 0, unknown: unknown ? 1 : 0 },
-      },
-      hostCalls: {
-        attempted: 21, admitted: 20,
-        succeeded: unknown ? 19 : 20, failed: unknown ? 2 : 1,
-      },
-    });
-    expect(w.writes()).toHaveLength(1);
-    expect(value(failed)).not.toHaveProperty("result");
-  });
+  it.each([false, true])(
+    "drains a dispatched write on terminal host-budget exhaustion (unknown: %s)",
+    async (unknown) => {
+      let writeStarted!: () => void;
+      const dispatched = new Promise<void>((resolve) => {
+        writeStarted = resolve;
+      });
+      const w = world({
+        trust: "trusted",
+        read: async () => {
+          await dispatched;
+          return { id: 9 };
+        },
+        write: async () => {
+          writeStarted();
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          if (unknown) throw new ConnectorCallError("timeout", "gateway timed out");
+          return { ok: true };
+        },
+      });
+      const failed = await w.run(async (connecta) => {
+        void connecta.call!("tracker.close_issue", { id: 1 }).catch(() => {});
+        for (let i = 0; i < 213; i++) {
+          try {
+            await connecta.call!("reader.get", { id: 9 });
+          } catch {
+            /* A budget refusal must never get here. */
+          }
+        }
+        return "must not be returned";
+      });
+      expect(failed.isError).toBe(true);
+      expect(value(failed)).toMatchObject({
+        error: {
+          code: unknown ? "write_outcome_unknown" : "budget_exceeded",
+          writes: { succeeded: unknown ? 0 : 1, failed: 0, unknown: unknown ? 1 : 0 },
+        },
+        hostCalls: {
+          attempted: 21,
+          admitted: 20,
+          succeeded: unknown ? 19 : 20,
+          failed: unknown ? 2 : 1,
+        },
+      });
+      expect(w.writes()).toHaveLength(1);
+      expect(value(failed)).not.toHaveProperty("result");
+    },
+  );
 
   it("puts write counts on the error of a program that fails after writing", async () => {
     const w = world({ trust: "trusted" });
@@ -353,17 +382,21 @@ describe("trusted-pool programs (#706)", () => {
 
   it("INV-11: rejects removed exemptions and unknown classification keys", () => {
     const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
-    const notes = api("notes", { tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }] });
-    const construct = (options: unknown) => createConnecta({ connectors: [notes], executor, logger: "silent", ...options as object });
+    const notes = api("notes", {
+      tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }],
+    });
+    const construct = (options: unknown) =>
+      createConnecta({ connectors: [notes], executor, logger: "silent", ...(options as object) });
     expect(() => construct({ execute: { approval: { notes: "never" } } })).toThrow("ConnectaConfig.execute.approval");
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
     expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow('must be "read" or "write"');
     expect(() => construct({ trust: "ask" })).toThrow('must be "trusted" or "read-only"');
-    expect(() => construct({ pools: { named: { tools: ["notes"], trust: "ask" } } })).toThrow("ConnectaConfig.pools.named.trust");
+    expect(() => construct({ pools: { named: { tools: ["notes"], trust: "ask" } } })).toThrow(
+      "ConnectaConfig.pools.named.trust",
+    );
     expect(() => construct({ connectors: [{ ...notes, approval: "never" }] })).toThrow("approval was removed");
   });
-
 });
 
 describe("write outcomes", () => {
@@ -414,19 +447,21 @@ describe("retired pause configuration (#672)", () => {
   });
 
   it("lists no resume_execution and reports no resumableWrites on /health", async () => {
-    const connecta = createConnecta({ connectors: [], executor: customExecutor(executor, { lifecycle: "self-managed" }), logger: "silent" });
-    const listed = await readJsonRpc(await mcpRpc(connecta, "tools/list", {})) as {
+    const connecta = createConnecta({
+      connectors: [],
+      executor: customExecutor(executor, { lifecycle: "self-managed" }),
+      logger: "silent",
+    });
+    const listed = (await readJsonRpc(await mcpRpc(connecta, "tools/list", {}))) as {
       result: { tools: Array<{ name: string; annotations?: Record<string, unknown> }> };
     };
     expect(listed.result.tools.map((tool) => tool.name)).not.toContain("resume_execution");
-    expect(listed.result.tools.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint)
-      .toBe(true);
+    expect(listed.result.tools.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint).toBe(true);
     const health = await (await connecta.fetch(new Request("http://localhost/health"))).json();
     expect(health).not.toHaveProperty("resumableWrites");
     await connecta.close();
   });
 });
-
 
 describe("classification and pool endpoints (#706)", () => {
   it("INV-1: classifies by overrides, provider review, then fail-closed annotations", () => {
@@ -454,12 +489,12 @@ describe("classification and pool endpoints (#706)", () => {
     const registry = makeRegistry([connector], { storage, classification: overrides });
     overrides.test.mixed = "write" as never;
     const first = await registry.getTools("test", BASE, {});
-    expect(first.map(tool => tool.classification)).toEqual(["write", "read", "write"]);
+    expect(first.map((tool) => tool.classification)).toEqual(["write", "read", "write"]);
     first[0]!.classification = "read";
     first[1]!.annotations!.readOnlyHint = false;
     raw[0]!.annotations!.readOnlyHint = false;
     const second = await registry.getTools("test", BASE, {});
-    expect(second.map(tool => tool.classification)).toEqual(["write", "read", "write"]);
+    expect(second.map((tool) => tool.classification)).toEqual(["write", "read", "write"]);
     expect(second[1]!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     for (const key of await storage.list("")) {
       expect(await storage.get(key)).not.toContain('"classification"');
@@ -478,25 +513,40 @@ describe("classification and pool endpoints (#706)", () => {
       { name: "constructor" },
     ];
     const connector: Connector = {
-      id: "reviewed", listTools: async () => raw, callTool: async () => null,
-      classification: { tools: {
-        lapsed: { verdict: "read", schemaDigest: `sha256:${"0".repeat(64)}` },
-        mislabeled: "write", mixed: "write",
-      } },
+      id: "reviewed",
+      listTools: async () => raw,
+      callTool: async () => null,
+      classification: {
+        tools: {
+          lapsed: { verdict: "read", schemaDigest: `sha256:${"0".repeat(64)}` },
+          mislabeled: "write",
+          mixed: "write",
+        },
+      },
     };
-    const registry = makeRegistry([connector], { classification: {
-      reviewed: { lapsed: "read", mixed: "read", constructor: "read" as const },
-    } });
+    const registry = makeRegistry([connector], {
+      classification: {
+        reviewed: { lapsed: "read", mixed: "read", constructor: "read" as const },
+      },
+    });
     const tools = await registry.getTools("reviewed", BASE, {});
-    expect(tools.map(tool => tool.classification)).toEqual(["read", "write", "read", "read"]);
+    expect(tools.map((tool) => tool.classification)).toEqual(["read", "write", "read", "read"]);
     expect(tools[0]!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     const without = makeRegistry([connector]);
-    expect((await without.getTools("reviewed", BASE, {})).map(tool => tool.classification))
-      .toEqual(["write", "write", "write", "write"]);
+    expect((await without.getTools("reviewed", BASE, {})).map((tool) => tool.classification)).toEqual([
+      "write",
+      "write",
+      "write",
+      "write",
+    ]);
   });
 
   it("INV-11 INV-8: refuses an entire remote catalog with an unknown override", async () => {
-    const connector: Connector = { id: "remote", listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }], callTool: async () => null };
+    const connector: Connector = {
+      id: "remote",
+      listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+      callTool: async () => null,
+    };
     const registry = makeRegistry([connector], { classification: { remote: { missing: "read" } } });
     await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
     await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
@@ -504,54 +554,97 @@ describe("classification and pool endpoints (#706)", () => {
 
   it("INV-2 INV-4 INV-9: endpoint trust controls writes and execute_code annotations", async () => {
     let writes = 0;
-    const programs = new Map<string, Program>([["async () => write", async connecta => {
-      await connecta.call!("notes.write", {});
-      return "written";
-    }]]);
-    const notes = api("notes", { tools: [
-      { name: "write", description: "Write", annotations: { readOnlyHint: false }, handler: () => { writes++; return "written"; } },
-    ] });
-    const app = createConnecta({ connectors: [notes], logger: "silent", executor: customExecutor(scriptedExecutor(programs), { lifecycle: "self-managed" }),
+    const programs = new Map<string, Program>([
+      [
+        "async () => write",
+        async (connecta) => {
+          await connecta.call!("notes.write", {});
+          return "written";
+        },
+      ],
+    ]);
+    const notes = api("notes", {
+      tools: [
+        {
+          name: "write",
+          description: "Write",
+          annotations: { readOnlyHint: false },
+          handler: () => {
+            writes++;
+            return "written";
+          },
+        },
+      ],
+    });
+    const app = createConnecta({
+      connectors: [notes],
+      logger: "silent",
+      executor: customExecutor(scriptedExecutor(programs), { lifecycle: "self-managed" }),
       pools: {
         trusted: { tools: ["notes"], trust: "trusted", grant: () => true },
         readonly: { tools: ["notes"], grant: () => true },
       },
     });
-    const rpc = async (path: string, method: string, params: unknown) => readJsonRpc(await app.fetch(new Request(`http://localhost${path}`, {
-      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    }))) as Promise<any>;
+    const rpc = async (path: string, method: string, params: unknown) =>
+      readJsonRpc(
+        await app.fetch(
+          new Request(`http://localhost${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          }),
+        ),
+      ) as Promise<any>;
     try {
       for (const path of ["/mcp", "/mcp/readonly", "/mcp/trusted"]) {
         const trusted = path === "/mcp/trusted";
         const listing = await rpc(path, "tools/list", {});
-        expect(listing.result.tools.find((tool: { name: string }) => tool.name === "execute_code").annotations)
-          .toMatchObject({ readOnlyHint: !trusted, destructiveHint: trusted });
+        expect(
+          listing.result.tools.find((tool: { name: string }) => tool.name === "execute_code").annotations,
+        ).toMatchObject({ readOnlyHint: !trusted, destructiveHint: trusted });
         const run = await rpc(path, "tools/call", { name: "execute_code", arguments: { code: "async () => write" } });
         expect(run.result.isError === true).toBe(!trusted);
         const direct = await rpc(path, "tools/call", { name: "call_tool", arguments: { address: "notes.write" } });
         expect(direct.result.isError).toBe(true);
       }
       expect(writes).toBe(1);
-      const direct = await rpc("/mcp/readonly", "tools/call", { name: "call_destructive_tool", arguments: { address: "notes.write" } });
+      const direct = await rpc("/mcp/readonly", "tools/call", {
+        name: "call_destructive_tool",
+        arguments: { address: "notes.write" },
+      });
       expect(direct.result.isError).toBeFalsy();
       expect(writes).toBe(2);
-      expect(app.describeConfig()).toMatchObject({ trust: "read-only", pools: [
-        { name: "trusted", trust: "trusted" }, { name: "readonly", trust: "read-only" },
-      ] });
-    } finally { await app.close(); }
+      expect(app.describeConfig()).toMatchObject({
+        trust: "read-only",
+        pools: [
+          { name: "trusted", trust: "trusted" },
+          { name: "readonly", trust: "read-only" },
+        ],
+      });
+    } finally {
+      await app.close();
+    }
   });
 });
 
 it("INV-6 INV-9: caught write timeouts retain uncertain arguments in host-owned write accounting", async () => {
-  const w = world({ trust: "trusted", write: async () => { throw new ConnectorCallError("timeout", "deadline"); } });
+  const w = world({
+    trust: "trusted",
+    write: async () => {
+      throw new ConnectorCallError("timeout", "deadline");
+    },
+  });
   const result = await w.run(async (connecta) => {
-    try { await connecta.call!("tracker.close_issue", { id: 42, note: "argument-sentinel" }); }
-    catch { return "handled"; }
+    try {
+      await connecta.call!("tracker.close_issue", { id: 42, note: "argument-sentinel" });
+    } catch {
+      return "handled";
+    }
     return "unreachable";
   });
   expect(value(result).error).toMatchObject({
-    code: "write_outcome_unknown", retryable: false,
+    code: "write_outcome_unknown",
+    retryable: false,
     uncertainCall: { address: "tracker.close_issue", args: { id: 42, note: "argument-sentinel" } },
   });
   expect(w.writes()).toHaveLength(1);

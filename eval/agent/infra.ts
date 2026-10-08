@@ -2,21 +2,28 @@ import { toolId, type StreamEvent } from "./trace.js";
 
 export function infraError(events: StreamEvent[], exitCode: number | null, loadedTools: string[]): string | undefined {
   const results = events.filter((event) => event.type === "result");
-  const failed = results.find(event => event.subtype !== "success");
+  const failed = results.find((event) => event.subtype !== "success");
   const failureText = String(failed?.result ?? "");
   const info = failed?.codex_error_info;
-  const code = typeof info === "string" ? info :
-    info && typeof info === "object" ? Object.keys(info)[0] : undefined;
+  const code = typeof info === "string" ? info : info && typeof info === "object" ? Object.keys(info)[0] : undefined;
   if (["usageLimitExceeded", "rateLimitExceeded", "sessionBudgetExceeded"].includes(code ?? "")) {
     return `rate or usage limit (${code}): ${failureText.slice(0, 300)}`;
   }
   if (code === "unauthorized") return `authentication failure: ${failureText.slice(0, 300)}`;
-  if (["serverOverloaded", "internalServerError", "httpConnectionFailed",
-    "responseStreamConnectionFailed", "responseStreamDisconnected",
-    "responseTooManyFailedAttempts"].includes(code ?? "")) {
+  if (
+    [
+      "serverOverloaded",
+      "internalServerError",
+      "httpConnectionFailed",
+      "responseStreamConnectionFailed",
+      "responseStreamDisconnected",
+      "responseTooManyFailedAttempts",
+    ].includes(code ?? "")
+  ) {
     return `backend failure (${code}): ${failureText.slice(0, 300)}`;
   }
-  if (failed && /rate[ -]?limit|too many requests|\b429\b/i.test(failureText)) return `rate limited: ${failureText.slice(0, 300)}`;
+  if (failed && /rate[ -]?limit|too many requests|\b429\b/i.test(failureText))
+    return `rate limited: ${failureText.slice(0, 300)}`;
   if (failed && /authentication|unauthorized|invalid api key|please run \/login|\b401\b/i.test(failureText)) {
     return `authentication failure: ${failureText.slice(0, 300)}`;
   }
@@ -31,6 +38,7 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
 }
 
 export function stopsBatch(error: string | undefined): boolean {
-  return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(error ?? "");
+  return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(
+    error ?? "",
+  );
 }
-

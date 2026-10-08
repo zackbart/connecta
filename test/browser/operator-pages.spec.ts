@@ -21,15 +21,35 @@ let app: ReturnType<typeof createTestConnecta>;
 let starts = 0;
 
 const catalog = [
-  { name: "read", description: "Read repository metadata", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: { owner: { type: "string" } } }, outputSchema: { type: "array", items: { type: "string" } } },
+  {
+    name: "read",
+    description: "Read repository metadata",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: { owner: { type: "string" } } },
+    outputSchema: { type: "array", items: { type: "string" } },
+  },
   { name: "write", description: CATALOG_TEXT, inputSchema: { type: "object" } },
 ];
 const event = (id: string, requestId: string, toolName: string): ToolCallActivityEvent => ({
-  schemaVersion: 1, id, requestId, occurredAt: "2026-10-08T12:00:00.000Z", actor: { kind: "clerk", id: "pages-user", namespace: CLERK },
-  connectorId: "github", toolName, address: `github.${toolName}`, source: "call_tool", outcome: "success", durationMs: 8, attempts: 1,
-  serverName: "Production", serverVersion: "1",
-  classification: toolName === "read" ? "read" : "write", resultBytes: 42,
-  packageVersion: "0.28.1", clientName: "Claude Code", clientVersion: "2.1.0",
+  schemaVersion: 1,
+  id,
+  requestId,
+  occurredAt: "2026-10-08T12:00:00.000Z",
+  actor: { kind: "clerk", id: "pages-user", namespace: CLERK },
+  connectorId: "github",
+  toolName,
+  address: `github.${toolName}`,
+  source: "call_tool",
+  outcome: "success",
+  durationMs: 8,
+  attempts: 1,
+  serverName: "Production",
+  serverVersion: "1",
+  classification: toolName === "read" ? "read" : "write",
+  resultBytes: 42,
+  packageVersion: "0.28.1",
+  clientName: "Claude Code",
+  clientVersion: "2.1.0",
 });
 
 test.beforeAll(async () => {
@@ -37,39 +57,100 @@ test.beforeAll(async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
     const url = new URL(incoming.url ?? "/", origin);
-    if (url.pathname === "/consent") { outgoing.writeHead(200, { "Content-Type": "text/html" }); outgoing.end("<!doctype html><title>Consent</title>"); return; }
-    const response = await app.fetch(new Request(url, { method: incoming.method ?? "GET", headers: incoming.headers as HeadersInit,
-      ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
-    }));
+    if (url.pathname === "/consent") {
+      outgoing.writeHead(200, { "Content-Type": "text/html" });
+      outgoing.end("<!doctype html><title>Consent</title>");
+      return;
+    }
+    const response = await app.fetch(
+      new Request(url, {
+        method: incoming.method ?? "GET",
+        headers: incoming.headers as HeadersInit,
+        ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
+      }),
+    );
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     outgoing.end(Buffer.from(await response.arrayBuffer()));
   });
-  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
   origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const storage = memoryStorage();
-  const github: Connector = { id: "github", title: "GitHub", description: "Repositories and issues", staticTools: catalog,
-    listTools: async () => catalog, callTool: async () => null, status: async () => ({ state: "ok" }),
+  const github: Connector = {
+    id: "github",
+    title: "GitHub",
+    description: "Repositories and issues",
+    staticTools: catalog,
+    listTools: async () => catalog,
+    callTool: async () => null,
+    status: async () => ({ state: "ok" }),
   };
-  const slack: Connector = { id: "slack", title: "Slack", authScope: "personal", description: "Messages and channels",
-    listTools: async () => [], callTool: async () => null, status: async () => ({ state: "auth_required", message: RAW_ERROR }),
-    startAuth: async () => { starts++; return { state: "auth_required", authorizationUrl: `${origin}/consent?state=pages-flow` }; },
-    finishAuth: async () => {}, verifyState: async () => true, disconnectAuth: async () => {},
+  const slack: Connector = {
+    id: "slack",
+    title: "Slack",
+    authScope: "personal",
+    description: "Messages and channels",
+    listTools: async () => [],
+    callTool: async () => null,
+    status: async () => ({ state: "auth_required", message: RAW_ERROR }),
+    startAuth: async () => {
+      starts++;
+      return { state: "auth_required", authorizationUrl: `${origin}/consent?state=pages-flow` };
+    },
+    finishAuth: async () => {},
+    verifyState: async () => true,
+    disconnectAuth: async () => {},
   };
-  app = createTestConnecta({ connectors: [github, slack, { ...github, id: "slot", title: "Empty slot", credential: { label: "API key" } }, { ...github, id: "hidden", title: "Hidden connector" }], auth: fakeClerkAuth({ token: TOKEN, userId: "pages-user" }),
-    publicUrl: origin, storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="),
-    logger: "silent", serverInfo: { name: "Production", version: "1" }, calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
+  app = createTestConnecta({
+    connectors: [
+      github,
+      slack,
+      { ...github, id: "slot", title: "Empty slot", credential: { label: "API key" } },
+      { ...github, id: "hidden", title: "Hidden connector" },
+    ],
+    auth: fakeClerkAuth({ token: TOKEN, userId: "pages-user" }),
+    publicUrl: origin,
+    storage,
+    vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="),
+    logger: "silent",
+    serverInfo: { name: "Production", version: "1" },
+    calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
     identity: { connectorAccess: () => ["github", "slack", "slot"], accessTokenManagement: () => true },
-    pools: { support: { tools: ["github.read"], trust: "read-only", grant: () => true }, denied: { tools: ["hidden"], grant: () => false } },
+    pools: {
+      support: { tools: ["github.read"], trust: "read-only", grant: () => true },
+      denied: { tools: ["hidden"], grant: () => false },
+    },
     accessTokens: accessTokens(storage),
-    activity: activityHistory({ store: { record: () => {}, list: async () => ({ events: [event("a", "request-one", "read"), event("b", "request-one", "write"), event("c", "request-two", "read")] }) } }),
+    activity: activityHistory({
+      store: {
+        record: () => {},
+        list: async () => ({
+          events: [
+            event("a", "request-one", "read"),
+            event("b", "request-one", "write"),
+            event("c", "request-two", "read"),
+          ],
+        }),
+      },
+    }),
   });
 });
-test.afterAll(async () => { await app.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
+test.afterAll(async () => {
+  await app.close();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
 
 async function session(page: Page) {
   await page.context().addCookies([{ name: "__session", value: TOKEN, url: origin }]);
-  await page.route(`${CLERK}/**`, route => route.fulfill({ contentType: "text/javascript", body: `window.Clerk={user:{},session:{id:'fixture',getToken:async()=>${JSON.stringify(TOKEN)}},load:async()=>{},addListener:()=>{},signOut:async()=>{},redirectToSignIn:()=>{}};` }));
-  await page.addInitScript("window.__csp = []; document.addEventListener('securitypolicyviolation', event => window.__csp.push(event.effectiveDirective));");
+  await page.route(`${CLERK}/**`, (route) =>
+    route.fulfill({
+      contentType: "text/javascript",
+      body: `window.Clerk={user:{},session:{id:'fixture',getToken:async()=>${JSON.stringify(TOKEN)}},load:async()=>{},addListener:()=>{},signOut:async()=>{},redirectToSignIn:()=>{}};`,
+    }),
+  );
+  await page.addInitScript(
+    "window.__csp = []; document.addEventListener('securitypolicyviolation', event => window.__csp.push(event.effectiveDirective));",
+  );
 }
 async function clean(page: Page) {
   expect(await page.evaluate("window.__csp")).toEqual([]);
@@ -77,12 +158,23 @@ async function clean(page: Page) {
   await expect(page.locator("body")).not.toContainText("Hidden connector");
 }
 
-test("needs-attention links and signed authorize_connector hand off to the Auth tab without starting OAuth", async ({ page }) => {
-  await session(page); await page.goto(origin);
+test("needs-attention links and signed authorize_connector hand off to the Auth tab without starting OAuth", async ({
+  page,
+}) => {
+  await session(page);
+  await page.goto(origin);
   await page.getByRole("link", { name: /Slack.*Authorization needed/ }).click();
   await expect(page).toHaveURL(origin + "/connectors/slack#auth");
   await expect(page.getByRole("tab", { name: "Auth", exact: true })).toHaveAttribute("aria-selected", "true");
-  const rpc = await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "slack" } }, { token: TOKEN, baseUrl: origin })));
+  const rpc = await readJsonRpc(
+    await app.fetch(
+      mcpRpc(
+        "tools/call",
+        { name: "authorize_connector", arguments: { connector: "slack" } },
+        { token: TOKEN, baseUrl: origin },
+      ),
+    ),
+  );
   const link = JSON.parse(rpc.result.content[0].text).authorizationUrl as string;
   const before = starts;
   await page.goto(link);
@@ -91,13 +183,16 @@ test("needs-attention links and signed authorize_connector hand off to the Auth 
   expect(starts).toBe(before);
   const popup = page.waitForEvent("popup");
   await page.getByRole("link", { name: "Continue requested authorization" }).click();
-  const consent = await popup; await expect(consent).toHaveURL(origin + "/consent?state=pages-flow"); await consent.close();
+  const consent = await popup;
+  await expect(consent).toHaveURL(origin + "/consent?state=pages-flow");
+  await consent.close();
   expect(starts).toBe(before + 1);
   await clean(page);
 });
 
 test("tool filters use resolved classification and schema catalog text stays inert", async ({ page }) => {
-  await session(page); await page.goto(origin + "/tools");
+  await session(page);
+  await page.goto(origin + "/tools");
   await page.getByLabel("Filter tools", { exact: true }).fill("github.");
   await page.getByLabel("Tool classification").selectOption("read");
   await expect(page.getByRole("button", { name: "github.read", exact: true })).toBeVisible();
@@ -109,12 +204,14 @@ test("tool filters use resolved classification and schema catalog text stays ine
   await expect(dialog.locator("p").filter({ hasText: CATALOG_TEXT })).toBeVisible();
   await expect(page.locator('img[src="x"]')).toHaveCount(0);
   expect(await page.evaluate("window.__catalogExecuted")).toBeUndefined();
-  await page.keyboard.press("Escape"); await expect(page.getByRole("button", { name: "github.write", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "github.write", exact: true })).toBeFocused();
   await clean(page);
 });
 
 test("Activity keeps filters in history, groups requests, and leaves old rows ungrouped", async ({ page }) => {
-  await session(page); await page.goto(origin + "/activity?connector=github&q=read");
+  await session(page);
+  await page.goto(origin + "/activity?connector=github&q=read");
   await expect(page.getByLabel("Search loaded activity")).toHaveValue("read");
   await expect(page.locator(".request-group")).toHaveCount(2);
   await page.getByLabel("Search loaded activity").fill("");
@@ -129,12 +226,16 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await page.getByLabel("Activity outcome").selectOption("error");
   await expect(page).toHaveURL(/outcome=error/);
   await expect(page.getByText("No loaded activity matches this search.")).toBeVisible();
-  await page.goBack(); await expect(page.getByLabel("Activity outcome")).toHaveValue("");
-  await page.route("**/ui/api/activity*", route => {
+  await page.goBack();
+  await expect(page.getByLabel("Activity outcome")).toHaveValue("");
+  await page.route("**/ui/api/activity*", (route) => {
     const old = event("old", "", "read");
     delete (old as Partial<ToolCallActivityEvent>).requestId;
-    delete old.classification; delete old.resultBytes;
-    delete old.packageVersion; delete old.clientName; delete old.clientVersion;
+    delete old.classification;
+    delete old.resultBytes;
+    delete old.packageVersion;
+    delete old.clientName;
+    delete old.clientVersion;
     return route.fulfill({ json: { events: [old, { ...old, id: "older" }] } });
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -151,27 +252,40 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
 });
 
 test("Config provenance recognizes explicit defaults and excludes hidden keys", async ({ page }) => {
-  await session(page); await page.goto(origin + "/config");
-  await page.locator("summary").filter({ hasText: /^calls$/ }).click();
-  const explicit = page.locator(".snapshot-value").filter({ has: page.locator('code[title="config.limits.calls.maxResultBytes"]') });
+  await session(page);
+  await page.goto(origin + "/config");
+  await page
+    .locator("summary")
+    .filter({ hasText: /^calls$/ })
+    .click();
+  const explicit = page
+    .locator(".snapshot-value")
+    .filter({ has: page.locator('code[title="config.limits.calls.maxResultBytes"]') });
   await expect(explicit).toContainText("config");
-  const defaulted = page.locator(".snapshot-value").filter({ has: page.locator('code[title="config.limits.calls.defaultTimeoutMs"]') });
+  const defaulted = page
+    .locator(".snapshot-value")
+    .filter({ has: page.locator('code[title="config.limits.calls.defaultTimeoutMs"]') });
   await expect(defaulted).toContainText("default");
   const contract = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
-  const facts = await contract.json() as OperatorUiContract;
+  const facts = (await contract.json()) as OperatorUiContract;
   expect(facts.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
-  expect(facts.config.connectors.map(c => c.id)).not.toContain("hidden");
-  expect(Object.keys(facts.configSources ?? {}).some(path => path.startsWith("config.connectors.hidden."))).toBe(false);
+  expect(facts.config.connectors.map((c) => c.id)).not.toContain("hidden");
+  expect(Object.keys(facts.configSources ?? {}).some((path) => path.startsWith("config.connectors.hidden."))).toBe(
+    false,
+  );
   expect(JSON.stringify(facts)).not.toContain(RAW_ERROR);
   await clean(page);
 });
 
 test("connector tabs are keyboard friendly and preserve the selected tab on reload", async ({ page }) => {
-  await session(page); await page.goto(origin + "/connectors/github#tools");
+  await session(page);
+  await page.goto(origin + "/connectors/github#tools");
   await expect(page.getByRole("tab", { name: "Tools", exact: true })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("tab", { name: "Tools", exact: true }).focus(); await page.keyboard.press("ArrowRight");
+  await page.getByRole("tab", { name: "Tools", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(origin + "/connectors/github#auth");
   await expect(page.getByRole("tab", { name: "Auth", exact: true })).toBeFocused();
-  await page.reload(); await expect(page.getByRole("tab", { name: "Auth", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "Auth", exact: true })).toHaveAttribute("aria-selected", "true");
   await clean(page);
 });

@@ -57,12 +57,14 @@ function makeApi() {
 
 describe("api() connector", () => {
   it("refuses duplicate names before discovery and dispatch can disagree about safety", () => {
-    expect(() => api("ambiguous", {
-      tools: [
-        { name: "same", description: "Read a value", annotations: { readOnlyHint: true }, handler: () => null },
-        { name: "same", description: "Write a value", annotations: { readOnlyHint: false }, handler: () => null },
-      ],
-    })).toThrow('api() tool "ambiguous.same" is declared more than once');
+    expect(() =>
+      api("ambiguous", {
+        tools: [
+          { name: "same", description: "Read a value", annotations: { readOnlyHint: true }, handler: () => null },
+          { name: "same", description: "Write a value", annotations: { readOnlyHint: false }, handler: () => null },
+        ],
+      }),
+    ).toThrow('api() tool "ambiguous.same" is declared more than once');
   });
 
   it("kind is 'api' and description is preserved", () => {
@@ -146,11 +148,7 @@ describe("api() connector", () => {
   it("listTools returns the declared tool defs (name/description/schema)", async () => {
     const c = makeApi();
     const tools = await c.listTools(ctx());
-    expect(tools.map((t) => t.name)).toEqual([
-      "send_email",
-      "boom",
-      "async_boom",
-    ]);
+    expect(tools.map((t) => t.name)).toEqual(["send_email", "boom", "async_boom"]);
     const send = tools.find((t) => t.name === "send_email")!;
     expect(send.description).toBe("Send an email");
     expect((send.inputSchema as any).properties.to.type).toBe("string");
@@ -186,16 +184,17 @@ describe("api() connector", () => {
 
   it("unknown tool name throws a clear error", async () => {
     const c = makeApi();
-    await expect(c.callTool("nope", {}, ctx())).rejects.toThrow(
-      /Unknown tool "nope" on connector "resend"/,
-    );
+    await expect(c.callTool("nope", {}, ctx())).rejects.toThrow(/Unknown tool "nope" on connector "resend"/);
   });
 
   it("handler throw surfaces to the caller in connecta's words (call_tool wraps it as isError)", async () => {
     // A plain Error may be a runtime's account of what the handler read, so
     // its text is withheld; a handler means its words with ConnectorCallError.
     const c = makeApi();
-    const thrown = (await c.callTool("boom", {}, ctx()).then(() => null, (e: unknown) => e)) as Error;
+    const thrown = (await c.callTool("boom", {}, ctx()).then(
+      () => null,
+      (e: unknown) => e,
+    )) as Error;
     expect(thrown.message).toMatch(/Connector "resend" tool "boom" handler failed \(Error\)/);
     expect(thrown.message).not.toContain("handler exploded");
     expect(thrown.cause).toBeUndefined();
@@ -211,9 +210,10 @@ describe("api() connector", () => {
     // attaches a microtask later, which is the very gap under test — the same
     // guard test/credentials.test.ts uses for the same reason.
     const c = makeApi();
-    const thrown = await c
-      .callTool("async_boom", {}, ctx())
-      .then(() => null, (e: unknown) => e as Error);
+    const thrown = await c.callTool("async_boom", {}, ctx()).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
     expect(thrown?.message).toContain('tool "async_boom" handler failed');
   });
 });
@@ -229,15 +229,13 @@ describe("api() argument validation", () => {
     const typed = err as ConnectorCallError;
     expect(typed.code).toBe("invalid_args");
     expect(typed.retryable).toBe(false);
-    expect(typed.message).toContain('resend.send_email');
+    expect(typed.message).toContain("resend.send_email");
     expect(typed.message).toContain("/to");
   });
 
   it("rejects omitted args when the schema has required fields", async () => {
     const c = makeApi();
-    await expect(
-      c.callTool("send_email", undefined, ctx()),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(c.callTool("send_email", undefined, ctx())).rejects.toMatchObject({ code: "invalid_args" });
   });
 
   it("valid args reach the handler unchanged", async () => {
@@ -321,15 +319,110 @@ describe("api() argument validation", () => {
 
 describe("api() construction contract", () => {
   it.each([
-    ["refuses a tool with no description", () => api("acme", { tools: [{ name: "nameless", description: "", annotations: { readOnlyHint: true }, handler: () => null }] }), /acme\.nameless.*non-empty description/s],
-    ["refuses a tool whose description is only whitespace", () => api("acme", { tools: [{ name: "blank", description: "   \n", annotations: { readOnlyHint: true }, handler: () => null }] }), /acme\.blank/],
+    [
+      "refuses a tool with no description",
+      () =>
+        api("acme", {
+          tools: [{ name: "nameless", description: "", annotations: { readOnlyHint: true }, handler: () => null }],
+        }),
+      /acme\.nameless.*non-empty description/s,
+    ],
+    [
+      "refuses a tool whose description is only whitespace",
+      () =>
+        api("acme", {
+          tools: [{ name: "blank", description: "   \n", annotations: { readOnlyHint: true }, handler: () => null }],
+        }),
+      /acme\.blank/,
+    ],
     // A JS deployment can reach these; TypeScript refuses them outright.
-    ["refuses a tool with no explicit readOnlyHint", () => api("acme", { tools: [{ name: "unclassified", description: "Do something of unknown safety", annotations: { destructiveHint: true } as never, handler: () => null }] }), /acme\.unclassified.*annotations\.readOnlyHint/s],
-    ["never infers a classification from the tool name or description", () => api("acme", { tools: [{ name: "list_things", description: "List things. Reads only, honest.", annotations: {} as never, handler: () => [] }] }), /annotations\.readOnlyHint/],
-    ["refuses a schema the validator cannot compile", () => api("acme", { tools: [{ name: "clashing_ids", description: "Declares the same $id twice", annotations: { readOnlyHint: true }, inputSchema: { $id: "urn:connecta-test:api-clash", type: "object", $defs: { clash: { $id: "urn:connecta-test:api-clash" } } }, handler: () => null }] }), /acme\.clashing_ids.*validator cannot use/s],
+    [
+      "refuses a tool with no explicit readOnlyHint",
+      () =>
+        api("acme", {
+          tools: [
+            {
+              name: "unclassified",
+              description: "Do something of unknown safety",
+              annotations: { destructiveHint: true } as never,
+              handler: () => null,
+            },
+          ],
+        }),
+      /acme\.unclassified.*annotations\.readOnlyHint/s,
+    ],
+    [
+      "never infers a classification from the tool name or description",
+      () =>
+        api("acme", {
+          tools: [
+            {
+              name: "list_things",
+              description: "List things. Reads only, honest.",
+              annotations: {} as never,
+              handler: () => [],
+            },
+          ],
+        }),
+      /annotations\.readOnlyHint/,
+    ],
+    [
+      "refuses a schema the validator cannot compile",
+      () =>
+        api("acme", {
+          tools: [
+            {
+              name: "clashing_ids",
+              description: "Declares the same $id twice",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                $id: "urn:connecta-test:api-clash",
+                type: "object",
+                $defs: { clash: { $id: "urn:connecta-test:api-clash" } },
+              },
+              handler: () => null,
+            },
+          ],
+        }),
+      /acme\.clashing_ids.*validator cannot use/s,
+    ],
     // Opting out of enforcement is not opting out of the schema being real.
-    ["checks the schema even when validateArgs is off", () => api("acme", { validateArgs: false, tools: [{ name: "clashing_ids", description: "Declares the same $id twice", annotations: { readOnlyHint: true }, inputSchema: { $id: "urn:connecta-test:api-clash-loose", type: "object", $defs: { clash: { $id: "urn:connecta-test:api-clash-loose" } } }, handler: () => null }] }), /acme\.clashing_ids/],
-    ["accepts an explicit readOnlyHint: false as the destructive declaration", () => api("acme", { tools: [{ name: "delete_thing", description: "Delete a thing", annotations: { readOnlyHint: false, destructiveHint: true }, handler: () => ({ deleted: true }) }] }), null],
+    [
+      "checks the schema even when validateArgs is off",
+      () =>
+        api("acme", {
+          validateArgs: false,
+          tools: [
+            {
+              name: "clashing_ids",
+              description: "Declares the same $id twice",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                $id: "urn:connecta-test:api-clash-loose",
+                type: "object",
+                $defs: { clash: { $id: "urn:connecta-test:api-clash-loose" } },
+              },
+              handler: () => null,
+            },
+          ],
+        }),
+      /acme\.clashing_ids/,
+    ],
+    [
+      "accepts an explicit readOnlyHint: false as the destructive declaration",
+      () =>
+        api("acme", {
+          tools: [
+            {
+              name: "delete_thing",
+              description: "Delete a thing",
+              annotations: { readOnlyHint: false, destructiveHint: true },
+              handler: () => ({ deleted: true }),
+            },
+          ],
+        }),
+      null,
+    ],
   ] as const)("%s", (_name, construct, message) => {
     if (message) {
       expect(construct).toThrow(message);
@@ -340,30 +433,55 @@ describe("api() construction contract", () => {
   });
 });
 
-
 describe("api() transport diagnostics", () => {
-  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])("classifies structured %s without inventing a downstream host", async (code) => {
-    const connector = api("down", { tools: [{ name: "read", description: "Read downstream",
-      annotations: { readOnlyHint: true }, handler: async () => {
-        throw code === "AbortError" ? new DOMException("deadline", "AbortError")
-          : new TypeError("fetch failed", { cause: { code, hostname: "private.example" } });
-      },
-    }] });
-    const error = await connector.callTool("read", {}, ctx()).catch(error => error);
-    expect(classifyCallError(error)).toMatchObject({ code: "unavailable", retryable: true,
-      details: { code: code === "AbortError" ? "timeout" : code } });
-    expect(classifyCallError(error).details).not.toHaveProperty("host");
-  });
+  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])(
+    "classifies structured %s without inventing a downstream host",
+    async (code) => {
+      const connector = api("down", {
+        tools: [
+          {
+            name: "read",
+            description: "Read downstream",
+            annotations: { readOnlyHint: true },
+            handler: async () => {
+              throw code === "AbortError"
+                ? new DOMException("deadline", "AbortError")
+                : new TypeError("fetch failed", { cause: { code, hostname: "private.example" } });
+            },
+          },
+        ],
+      });
+      const error = await connector.callTool("read", {}, ctx()).catch((error) => error);
+      expect(classifyCallError(error)).toMatchObject({
+        code: "unavailable",
+        retryable: true,
+        details: { code: code === "AbortError" ? "timeout" : code },
+      });
+      expect(classifyCallError(error).details).not.toHaveProperty("host");
+    },
+  );
 
   it("preserves sanitized typed details and never types provider prose", async () => {
     const typed = new ConnectorCallError("unavailable", "unreachable", {
       details: { host: "https://user:secret@example.com:8443/private?token=secret", code: "ENOTFOUND" },
     });
     const thrownBy = async (cause: unknown) => {
-      const connector = api("down", { tools: [{ name: "read", description: "Read downstream",
-        annotations: { readOnlyHint: true }, handler: () => { throw cause; },
-      }] });
-      return (await connector.callTool("read", {}, ctx()).then(() => null, (error: unknown) => error)) as Error;
+      const connector = api("down", {
+        tools: [
+          {
+            name: "read",
+            description: "Read downstream",
+            annotations: { readOnlyHint: true },
+            handler: () => {
+              throw cause;
+            },
+          },
+        ],
+      });
+      return (await connector.callTool("read", {}, ctx()).then(
+        () => null,
+        (error: unknown) => error,
+      )) as Error;
     };
     expect(await thrownBy(typed)).toBe(typed);
     expect(classifyCallError(typed).details).toEqual({ host: "https://example.com:8443", code: "ENOTFOUND" });
@@ -382,26 +500,43 @@ describe("api() transport diagnostics", () => {
   });
 });
 
-
 it("serves guarded API diagnostics in value-mode tool results while activity stays payload-free", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-    new TypeError("https://user:secret@api.example/private?secret", { cause: { code: "ECONNREFUSED" } }),
-  );
-  const send = guardedFetch({ provider: "Example", baseUrl: "https://api.example/v1",
-    maxResponseBytes: 1024, authenticate: () => ({}),
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValue(
+      new TypeError("https://user:secret@api.example/private?secret", { cause: { code: "ECONNREFUSED" } }),
+    );
+  const send = guardedFetch({
+    provider: "Example",
+    baseUrl: "https://api.example/v1",
+    maxResponseBytes: 1024,
+    authenticate: () => ({}),
   });
-  const connector = api("example", { tools: [{ name: "read", description: "Read example",
-    annotations: { readOnlyHint: true },
-    handler: (_args, context) => send({ method: "GET", path: "/private" }, context, response => response.json()),
-  }] });
+  const connector = api("example", {
+    tools: [
+      {
+        name: "read",
+        description: "Read example",
+        annotations: { readOnlyHint: true },
+        handler: (_args, context) => send({ method: "GET", path: "/private" }, context, (response) => response.json()),
+      },
+    ],
+  });
   const sink = activitySink();
   const registry = makeRegistry([connector]);
   try {
-    const result = await createMetaTools(registry, BASE, { activity: sink.activity }).callTool({ address: "example.read", resultMode: "value" });
-    expect(result.structuredContent).toMatchObject({ ok: false, error: {
-      code: "unavailable", retryable: true,
-      details: { host: "https://api.example", code: "ECONNREFUSED" },
-    } });
+    const result = await createMetaTools(registry, BASE, { activity: sink.activity }).callTool({
+      address: "example.read",
+      resultMode: "value",
+    });
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: "unavailable",
+        retryable: true,
+        details: { host: "https://api.example", code: "ECONNREFUSED" },
+      },
+    });
     expect(JSON.stringify(result)).not.toMatch(/secret|private|user/);
     expect(sink.events).toHaveLength(1);
     expect(sink.events[0]).toMatchObject({ errorCode: "unavailable" });

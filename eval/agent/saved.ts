@@ -21,11 +21,19 @@ export interface SavedGradeInputs {
 }
 
 export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInputs {
-  return { version: 1, trace, world: {
-    ci: world.ci, tracker: world.tracker, chat: world.chat, audit: world.audit,
-    oauth: { connected: world.oauth.connected, starts: world.oauth.starts, visits: world.oauth.visits },
-    programs: world.programs, calls: world.ledger.calls,
-  } };
+  return {
+    version: 1,
+    trace,
+    world: {
+      ci: world.ci,
+      tracker: world.tracker,
+      chat: world.chat,
+      audit: world.audit,
+      oauth: { connected: world.oauth.connected, starts: world.oauth.starts, visits: world.oauth.visits },
+      programs: world.programs,
+      calls: world.ledger.calls,
+    },
+  };
 }
 
 export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; trace: AgentTrace } {

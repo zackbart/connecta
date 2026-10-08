@@ -15,35 +15,15 @@ import {
   typescriptSignature,
 } from "./catalog.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import {
-  boundedEchoText,
-  classifyCallError,
-  ConnectorCallError,
-  framingError,
-} from "./errors.js";
+import { boundedEchoText, classifyCallError, ConnectorCallError, framingError } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
-import type {
-  ConnectorOperationOptions,
-  RegistryView,
-} from "./registry.js";
+import type { ConnectorOperationOptions, RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
-import {
-  connectorGuide,
-  connectorGuideRequired,
-  connectorGuideSummary,
-  connectorSkillName,
-} from "./skills.js";
+import { connectorGuide, connectorGuideRequired, connectorGuideSummary, connectorSkillName } from "./skills.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
-import {
-  DEFAULT_PROBE_TIMEOUT_MS,
-  normalizeTimeoutMs,
-} from "./timeout.js";
-import type {
-  Connector,
-  JsonSchema,
-  ToolDef,
-} from "./types.js";
+import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
+import type { Connector, JsonSchema, ToolDef } from "./types.js";
 
 export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
@@ -63,10 +43,27 @@ const MAX_DESCRIBE_SUGGESTIONS = 3;
 // Unknown/custom services use the explicit connector scope. Keep this independent
 // of provider implementations so discovery cannot pull them into root imports.
 const SERVICE_NAMES = [
-  "GitHub", "GitLab", "Supabase", "PostHog", "Linear", "Mixpanel",
-  "RevenueCat", "Stripe", "Notion", "Slack", "Vercel", "Cloudflare",
-  "Basecamp", "Breeze", "Tithely", "Planning Center", "Google Drive",
-  "Google Docs", "Google Sheets", "Google Slides", "Gmail",
+  "GitHub",
+  "GitLab",
+  "Supabase",
+  "PostHog",
+  "Linear",
+  "Mixpanel",
+  "RevenueCat",
+  "Stripe",
+  "Notion",
+  "Slack",
+  "Vercel",
+  "Cloudflare",
+  "Basecamp",
+  "Breeze",
+  "Tithely",
+  "Planning Center",
+  "Google Drive",
+  "Google Docs",
+  "Google Sheets",
+  "Google Slides",
+  "Gmail",
 ];
 
 function normalizedPhrase(text: string): string {
@@ -84,8 +81,12 @@ function connectorNames(connector: Connector): string[] {
 
 function connectorMatchRank(query: string, connector: Connector): number {
   if (connectorNames(connector).some((name) => containsPhrase(query, name))) return 2;
-  return SERVICE_NAMES.some((service) => containsPhrase(query, service) &&
-    connectorNames(connector).some((name) => containsPhrase(name, service))) ? 1 : 0;
+  return SERVICE_NAMES.some(
+    (service) =>
+      containsPhrase(query, service) && connectorNames(connector).some((name) => containsPhrase(name, service)),
+  )
+    ? 1
+    : 0;
 }
 
 const encoder = new TextEncoder();
@@ -128,12 +129,7 @@ export class DiscoveryPolicyError extends Error {
 /** Validate before ranking so a huge page request does no proportional work. */
 function discoverySearchLimit(value: unknown): number {
   if (value === undefined) return DEFAULT_SEARCH_LIMIT;
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < 1 ||
-    value > MAX_SEARCH_LIMIT
-  ) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_SEARCH_LIMIT) {
     throw new DiscoveryPolicyError(
       "invalid_args",
       `limit must be a whole number from 1 through ${MAX_SEARCH_LIMIT}. Page through larger catalogs with offset.`,
@@ -145,17 +141,10 @@ function discoverySearchLimit(value: unknown): number {
 /** Normalize the single-address convenience form, then validate the bounded list. */
 function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
   if (args.address !== undefined && args.addresses !== undefined) {
-    throw new DiscoveryPolicyError(
-      "invalid_args",
-      "describe takes either address or addresses, not both.",
-    );
+    throw new DiscoveryPolicyError("invalid_args", "describe takes either address or addresses, not both.");
   }
   const value =
-    args.address !== undefined
-      ? typeof args.address === "string"
-        ? [args.address]
-        : undefined
-      : args.addresses;
+    args.address !== undefined ? (typeof args.address === "string" ? [args.address] : undefined) : args.addresses;
   if (!Array.isArray(value)) {
     throw new DiscoveryPolicyError(
       "invalid_args",
@@ -180,9 +169,7 @@ function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
 function recoveryQuery(address: string): string {
   const separator = address.indexOf(".");
   const candidate = separator >= 0 ? address.slice(separator + 1) : address;
-  return boundedEchoText(
-    candidate.replaceAll(/[._-]+/g, " ").trim() || address,
-  );
+  return boundedEchoText(candidate.replaceAll(/[._-]+/g, " ").trim() || address);
 }
 
 function editDistance(left: string, right: string): number {
@@ -194,8 +181,7 @@ function editDistance(left: string, right: string): number {
         Math.min(
           previous[rightIndex + 1]! + 1,
           current[rightIndex]! + 1,
-          previous[rightIndex]! +
-            (left[leftIndex] === right[rightIndex] ? 0 : 1),
+          previous[rightIndex]! + (left[leftIndex] === right[rightIndex] ? 0 : 1),
         ),
       );
     }
@@ -205,33 +191,29 @@ function editDistance(left: string, right: string): number {
 }
 
 /** Nearby names only; descriptions never influence describe-miss recovery. */
-function describeSuggestions(
-  connectorId: string,
-  attemptedName: string,
-  tools: ToolDef[],
-): string[] {
+function describeSuggestions(connectorId: string, attemptedName: string, tools: ToolDef[]): string[] {
   const attempted = attemptedName.toLowerCase();
-  return tools
-    .map((tool, order) => {
-      const name = tool.name.toLowerCase();
-      return { tool, order, distance: editDistance(attempted, name) };
-    })
-    .filter(({ tool, distance }) => {
-      const longest = Math.max(attempted.length, tool.name.length);
-      return (
-        attempted.includes(tool.name.toLowerCase()) ||
-        tool.name.toLowerCase().includes(attempted) ||
-        distance <= Math.max(2, Math.floor(longest * 0.4))
-      );
-    })
-    .sort((left, right) =>
-      left.distance - right.distance || left.order - right.order,
-    )
-    .map(({ tool }) => `${connectorId}.${tool.name}`)
-    // A clipped address would no longer be canonical. Omit an implausibly
-    // large catalog name instead of letting one suggestion erase the page.
-    .filter((address) => boundedEchoText(address) === address)
-    .slice(0, MAX_DESCRIBE_SUGGESTIONS);
+  return (
+    tools
+      .map((tool, order) => {
+        const name = tool.name.toLowerCase();
+        return { tool, order, distance: editDistance(attempted, name) };
+      })
+      .filter(({ tool, distance }) => {
+        const longest = Math.max(attempted.length, tool.name.length);
+        return (
+          attempted.includes(tool.name.toLowerCase()) ||
+          tool.name.toLowerCase().includes(attempted) ||
+          distance <= Math.max(2, Math.floor(longest * 0.4))
+        );
+      })
+      .sort((left, right) => left.distance - right.distance || left.order - right.order)
+      .map(({ tool }) => `${connectorId}.${tool.name}`)
+      // A clipped address would no longer be canonical. Omit an implausibly
+      // large catalog name instead of letting one suggestion erase the page.
+      .filter((address) => boundedEchoText(address) === address)
+      .slice(0, MAX_DESCRIBE_SUGGESTIONS)
+  );
 }
 
 /** Serialize once and count the exact bytes the MCP adapter would emit. */
@@ -272,32 +254,18 @@ export interface CatalogSearchArgs {
   includeSchemaKeys?: boolean;
 }
 
-function discoverySafety(
-  value: unknown,
-): "readOnly" | "approvalRequired" | "all" {
+function discoverySafety(value: unknown): "readOnly" | "approvalRequired" | "all" {
   if (value === undefined) return "all";
-  if (
-    value !== "readOnly" &&
-    value !== "approvalRequired" &&
-    value !== "all"
-  ) {
-    throw new DiscoveryPolicyError(
-      "invalid_args",
-      'safety must be "readOnly", "approvalRequired", or "all".',
-    );
+  if (value !== "readOnly" && value !== "approvalRequired" && value !== "all") {
+    throw new DiscoveryPolicyError("invalid_args", 'safety must be "readOnly", "approvalRequired", or "all".');
   }
   return value;
 }
 
-function toolsForSafety(
-  tools: ToolDef[],
-  safety: "readOnly" | "approvalRequired" | "all",
-): ToolDef[] {
+function toolsForSafety(tools: ToolDef[], safety: "readOnly" | "approvalRequired" | "all"): ToolDef[] {
   if (safety === "all") return tools;
   return tools.filter((tool) =>
-    safety === "readOnly"
-      ? tool.classification === "read"
-      : tool.classification !== "read",
+    safety === "readOnly" ? tool.classification === "read" : tool.classification !== "read",
   );
 }
 
@@ -333,10 +301,7 @@ interface CatalogSearchEntry {
   };
 }
 
-type GuideRequiredReason =
-  | "connector_required"
-  | "approval_required"
-  | "schema_truncated";
+type GuideRequiredReason = "connector_required" | "approval_required" | "schema_truncated";
 
 /**
  * Reasons discovery can determine without reading arguments or guessing at a
@@ -378,9 +343,7 @@ function schemaKeyMetadata(
           requiredInputKeys: inputKeys.required,
         }
       : {}),
-    ...(outputKeys && outputKeys.properties.length > 0
-      ? { outputKeys: outputKeys.properties }
-      : {}),
+    ...(outputKeys && outputKeys.properties.length > 0 ? { outputKeys: outputKeys.properties } : {}),
   };
 }
 
@@ -447,11 +410,13 @@ export interface CatalogSearchPage {
 
 /** The flat wire page shared by search_tools and connecta.search. */
 export type CatalogSearchResult = Omit<CatalogSearchPage, "entries"> & {
-  tools: Array<CatalogSearchEntry["tool"] & {
-    connectorTitle?: string;
-    guide?: string;
-    guideSummary?: string;
-  }>;
+  tools: Array<
+    CatalogSearchEntry["tool"] & {
+      connectorTitle?: string;
+      guide?: string;
+      guideSummary?: string;
+    }
+  >;
 };
 
 const stringListSchema = { type: "array", items: { type: "string" } } as const;
@@ -626,10 +591,7 @@ export type CatalogResolution =
       cause?: unknown;
     };
 
-function renderSearchSchema(
-  schema: JsonSchema,
-  format: "compact" | "json",
-): { schema: unknown; truncated: boolean } {
+function renderSearchSchema(schema: JsonSchema, format: "compact" | "json"): { schema: unknown; truncated: boolean } {
   if (format === "json") return { schema, truncated: false };
   const compact = compactDiscoverySchema(schema);
   return { schema: compact.text, truncated: compact.truncated };
@@ -679,8 +641,7 @@ export class CatalogService {
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
-    this.probeTimeoutMs =
-      normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
+    this.probeTimeoutMs = normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.searchRoute = options.searchRoute ?? "search_tools";
     this.requestSignal = options.requestSignal;
@@ -712,10 +673,7 @@ export class CatalogService {
       : { tool: "search_tools", arguments: searchArgs, purpose };
   }
 
-  loadConnector(
-    id: string,
-    callOptions: ConnectorOperationOptions = {},
-  ): Promise<ToolDef[]> {
+  loadConnector(id: string, callOptions: ConnectorOperationOptions = {}): Promise<ToolDef[]> {
     return runEdge(this.catalog(id, callOptions));
   }
 
@@ -726,21 +684,19 @@ export class CatalogService {
   // and deadline, so a short-deadline call that starts the read and a search
   // that joins it each end on their own terms, and the read is cancelled only
   // once every asker has gone (#571).
-  private catalog(
-    id: string,
-    callOptions: ConnectorOperationOptions,
-  ): Effect.Effect<ToolDef[], unknown> {
+  private catalog(id: string, callOptions: ConnectorOperationOptions): Effect.Effect<ToolDef[], unknown> {
     return Effect.suspend(() => {
       let read = this.catalogs.get(id);
       if (!read) {
         const started: SharedRead<ToolDef[]> = new SharedRead(
           (signal) =>
-            this.registry.getTools(
-              id,
-              this.baseUrl,
-              this.requestScope,
-              { signal, timeoutMs: this.probeTimeoutMs, ...(this.defer ? { defer: this.defer } : {}) },
-            ).then((tools) => carryCatalogFreshness(tools, structuredClone(tools))),
+            this.registry
+              .getTools(id, this.baseUrl, this.requestScope, {
+                signal,
+                timeoutMs: this.probeTimeoutMs,
+                ...(this.defer ? { defer: this.defer } : {}),
+              })
+              .then((tools) => carryCatalogFreshness(tools, structuredClone(tools))),
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
@@ -769,44 +725,30 @@ export class CatalogService {
       ids,
       (id) =>
         Effect.result(
-          withDeadlineEffect(
-            (signal) =>
-              this.catalog(id, { signal }),
-            {
-              ...(this.requestSignal ? { signal: this.requestSignal } : {}),
-              timeoutMs: this.probeTimeoutMs,
-              timeoutError: new ConnectorCallError("timeout",
-                `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
-              ),
-            },
-          ),
+          withDeadlineEffect((signal) => this.catalog(id, { signal }), {
+            ...(this.requestSignal ? { signal: this.requestSignal } : {}),
+            timeoutMs: this.probeTimeoutMs,
+            timeoutError: new ConnectorCallError(
+              "timeout",
+              `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
+            ),
+          }),
         ),
       { concurrency: this.concurrency },
     );
   }
 
-  private outputSchema(
-    connectorId: string,
-    tool: ToolDef,
-  ): OutputSchemaResolution {
+  private outputSchema(connectorId: string, tool: ToolDef): OutputSchemaResolution {
     if (tool.outputSchema) return { schema: tool.outputSchema };
-    const observed = this.registry.observedOutputSchema(
-      connectorId,
-      tool,
-    );
-    return observed
-      ? { schema: observed, source: "observed" }
-      : {};
+    const observed = this.registry.observedOutputSchema(connectorId, tool);
+    return observed ? { schema: observed, source: "observed" } : {};
   }
 
   private unknownAddressFailure(address: string, query: string): CatalogResolution {
     return {
       ok: false,
       error: {
-        ...framingError(
-          "unknown_address",
-          `Unknown address "${boundedEchoText(address)}"`,
-        ),
+        ...framingError("unknown_address", `Unknown address "${boundedEchoText(address)}"`),
         configuredConnectors: this.registry.listConnectors().map((connector) => connector.id),
         nextAction: this.searchRecovery(
           { query: recoveryQuery(query) },
@@ -833,11 +775,7 @@ export class CatalogService {
     };
   }
 
-  private unknownToolFailure(
-    toolName: string,
-    connector: Connector,
-    started: number,
-  ): CatalogResolution {
+  private unknownToolFailure(toolName: string, connector: Connector, started: number): CatalogResolution {
     return {
       ok: false,
       error: {
@@ -858,20 +796,14 @@ export class CatalogService {
     };
   }
 
-  resolveTool(
-    address: string,
-    callOptions: ConnectorOperationOptions = {},
-  ): Promise<CatalogResolution> {
+  resolveTool(address: string, callOptions: ConnectorOperationOptions = {}): Promise<CatalogResolution> {
     return runEdge(this.resolve(address, callOptions));
   }
 
   // resolveTool without the Promise, for InvocationService's pipeline, which
   // yields it inside the call's deadline rather than crossing an edge. Never
   // fails: an unloadable catalog is a resolution like any other refusal.
-  resolve(
-    address: string,
-    callOptions: ConnectorOperationOptions = {},
-  ): Effect.Effect<CatalogResolution> {
+  resolve(address: string, callOptions: ConnectorOperationOptions = {}): Effect.Effect<CatalogResolution> {
     return Effect.suspend(() => {
       const resolved = this.registry.resolveAddress(address);
       if (!resolved) {
@@ -880,8 +812,7 @@ export class CatalogService {
       const { connector, toolName } = resolved;
       const started = Date.now();
       return Effect.match(this.catalog(connector.id, callOptions), {
-        onFailure: (cause) =>
-          this.catalogLoadFailure(cause, started, connector, toolName),
+        onFailure: (cause) => this.catalogLoadFailure(cause, started, connector, toolName),
         onSuccess: (tools): CatalogResolution => {
           const definition = tools.find((tool) => tool.name === toolName);
           if (!definition) {
@@ -904,27 +835,18 @@ export class CatalogService {
         "query must be a string. Omit it or use an empty string to browse the catalog.",
       );
     }
-    if (
-      args.connector !== undefined &&
-      boundedEchoText(args.connector) !== args.connector
-    ) {
+    if (args.connector !== undefined && boundedEchoText(args.connector) !== args.connector) {
       // The scope is echoed back as `queryAnalysis.connectorScope`; a clipped
       // copy could name a different connector, so refuse instead of clamping.
-      throw new DiscoveryPolicyError(
-        "invalid_args",
-        "connector must be at most 512 UTF-8 bytes.",
-      );
+      throw new DiscoveryPolicyError("invalid_args", "connector must be at most 512 UTF-8 bytes.");
     }
     const query = args.query ?? "";
     const retrievalQuery = lexicalSearchQuery(query);
     const safety = discoverySafety(args.safety);
     const limit = discoverySearchLimit(args.limit);
     if (
-      args.offset !== undefined && (
-        typeof args.offset !== "number" ||
-        !Number.isInteger(args.offset) ||
-        args.offset < 0
-      )
+      args.offset !== undefined &&
+      (typeof args.offset !== "number" || !Number.isInteger(args.offset) || args.offset < 0)
     ) {
       throw new DiscoveryPolicyError(
         "invalid_args",
@@ -932,19 +854,18 @@ export class CatalogService {
       );
     }
     const offset = args.offset ?? 0;
-    const scopedConnector = args.connector
-      ? this.registry.getConnector(args.connector)
-      : undefined;
+    const scopedConnector = args.connector ? this.registry.getConnector(args.connector) : undefined;
     const visibleConnectors = this.registry.listConnectors();
-    const namedService = !args.connector
-      ? SERVICE_NAMES.find((name) => containsPhrase(query, name))
-      : undefined;
-    const absentService = args.connector && !scopedConnector
-      ? args.connector
-      : namedService && !visibleConnectors.some((connector) =>
-          connectorNames(connector).some((name) => containsPhrase(name, namedService)))
-        ? namedService
-        : undefined;
+    const namedService = !args.connector ? SERVICE_NAMES.find((name) => containsPhrase(query, name)) : undefined;
+    const absentService =
+      args.connector && !scopedConnector
+        ? args.connector
+        : namedService &&
+            !visibleConnectors.some((connector) =>
+              connectorNames(connector).some((name) => containsPhrase(name, namedService)),
+            )
+          ? namedService
+          : undefined;
     const absence = absentService
       ? {
           service: absentService,
@@ -952,11 +873,7 @@ export class CatalogService {
           configuredConnectors: visibleConnectors.map((connector) => connector.id),
         }
       : undefined;
-    const connectors = absence ? [] : args.connector
-      ? scopedConnector
-        ? [scopedConnector]
-        : []
-      : visibleConnectors;
+    const connectors = absence ? [] : args.connector ? (scopedConnector ? [scopedConnector] : []) : visibleConnectors;
     // Timeout messages name the route the caller used.
     const catalogs = await runEdge(
       this.discoveryCatalogs(
@@ -964,9 +881,7 @@ export class CatalogService {
         this.searchRoute,
       ),
     );
-    const searchableCatalogs = catalogs.map((catalog) =>
-      Result.map(catalog, (tools) => toolsForSafety(tools, safety)),
-    );
+    const searchableCatalogs = catalogs.map((catalog) => Result.map(catalog, (tools) => toolsForSafety(tools, safety)));
     const matches: Array<{
       connector: Connector;
       tool: ToolDef;
@@ -980,9 +895,7 @@ export class CatalogService {
     }> = [];
     let matchMode: "all" | "partial" = "all";
     const statistics = lexicalCorpusStatistics(
-      searchableCatalogs.flatMap((catalog) =>
-        Result.isSuccess(catalog) ? [catalog.success] : [],
-      ),
+      searchableCatalogs.flatMap((catalog) => (Result.isSuccess(catalog) ? [catalog.success] : [])),
       retrievalQuery,
     );
     const trimmedQuery = query.trim();
@@ -995,8 +908,7 @@ export class CatalogService {
     const analyzedTerms = analysisTerms.slice(0, MAX_QUERY_TERMS);
     const displayTerm = (term: string) => boundedQueryTerm(term).text;
     const queryMetadataTruncated =
-      analysisTerms.length > analyzedTerms.length ||
-      analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
+      analysisTerms.length > analyzedTerms.length || analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
     const collectMatches = (mode: "all" | "partial") => {
       const collected: typeof matches = [];
       let orderBase = 0;
@@ -1011,7 +923,8 @@ export class CatalogService {
           const connectorTerms = new Set([
             ...connectorNames(connector).flatMap(lexicalQueryTerms),
             ...(namedService && connectorNames(connector).some((name) => containsPhrase(name, namedService))
-              ? lexicalQueryTerms(namedService) : []),
+              ? lexicalQueryTerms(namedService)
+              : []),
           ]);
           const localStatistics = exactConnector
             ? lexicalCorpusStatistics([catalog.success], retrievalQuery)
@@ -1019,36 +932,35 @@ export class CatalogService {
           // An exact identity is a browse even when one tool repeats that
           // identity in its name or description. Action queries still keep
           // identity terms that also name an actual capability.
-          const identityBrowse = connectorNames(connector).some((name) =>
-            normalizedPhrase(query) === normalizedPhrase(name),
+          const identityBrowse = connectorNames(connector).some(
+            (name) => normalizedPhrase(query) === normalizedPhrase(name),
           );
-          const toolQuery = identityBrowse ? "" : exactConnector
-            ? queryTerms.filter((term) =>
-                !connectorTerms.has(term) ||
-                (localStatistics?.nameMatches.get(term)?.size ?? 0) > 0 ||
-                (localStatistics?.descriptionMatches.get(term)?.size ?? 0) > 0,
-              ).join(" ")
-            : retrievalQuery;
+          const toolQuery = identityBrowse
+            ? ""
+            : exactConnector
+              ? queryTerms
+                  .filter(
+                    (term) =>
+                      !connectorTerms.has(term) ||
+                      (localStatistics?.nameMatches.get(term)?.size ?? 0) > 0 ||
+                      (localStatistics?.descriptionMatches.get(term)?.size ?? 0) > 0,
+                  )
+                  .join(" ")
+              : retrievalQuery;
           const toolTermCount = lexicalQueryTerms(toolQuery).length;
-          for (const ranked of rankTools(
-            catalog.success,
-            toolQuery,
-            mode,
-            statistics,
-            query,
-          )) {
+          for (const ranked of rankTools(catalog.success, toolQuery, mode, statistics, query)) {
             collected.push({
               connector,
               tool: ranked.tool,
               score: ranked.score,
               order: orderBase + ranked.order,
               exactName: ranked.exactName,
-              exactLookup: rawPhrase === lexicalQueryTerms(ranked.tool.name).join(" ") ||
+              exactLookup:
+                rawPhrase === lexicalQueryTerms(ranked.tool.name).join(" ") ||
                 rawPhrase === lexicalQueryTerms(`${connector.id}.${ranked.tool.name}`).join(" "),
               connectorRank,
               matchedTermCount: ranked.matchedTermCount,
-              complete:
-                isBrowse || ranked.matchedTermCount === toolTermCount,
+              complete: isBrowse || ranked.matchedTermCount === toolTermCount,
             });
           }
         }
@@ -1059,12 +971,8 @@ export class CatalogService {
     // A non-empty query that normalizes to no lexical terms is not a browse.
     // Ranking an empty phrase would otherwise return every tool as an
     // unrelated zero-score match, with no coverage to explain the result.
-    const rankedMatches = unsearchableQuery
-      ? []
-      : collectMatches(isBrowse ? "all" : "partial");
-    const completeMatchCount = rankedMatches.filter(
-      (match) => match.complete,
-    ).length;
+    const rankedMatches = unsearchableQuery ? [] : collectMatches(isBrowse ? "all" : "partial");
+    const completeMatchCount = rankedMatches.filter((match) => match.complete).length;
     matches.push(
       ...rankedMatches.filter(
         (match) =>
@@ -1096,18 +1004,16 @@ export class CatalogService {
     const pageMatches = matches.slice(offset, offset + limit);
     const withSchemas = args.includeSchemas;
     const entries = pageMatches.map((match) => {
-      const output = withSchemas
-        ? this.outputSchema(match.connector.id, match.tool)
-        : {};
+      const output = withSchemas ? this.outputSchema(match.connector.id, match.tool) : {};
       const input = match.tool.inputSchema ?? { type: "object" };
-      const signature = withSchemas === "typescript"
-        ? typescriptSignature(input, output.schema, {
-            observed: output.source === "observed",
-            description: false,
-          })
-        : undefined;
-      const schemaFormat =
-        withSchemas === "typescript" ? undefined : withSchemas;
+      const signature =
+        withSchemas === "typescript"
+          ? typescriptSignature(input, output.schema, {
+              observed: output.source === "observed",
+              description: false,
+            })
+          : undefined;
+      const schemaFormat = withSchemas === "typescript" ? undefined : withSchemas;
       const renderedInput = signature
         ? { schema: undefined, truncated: signature.inputTruncated }
         : schemaFormat
@@ -1118,14 +1024,8 @@ export class CatalogService {
         : schemaFormat && output.schema
           ? renderSearchSchema(output.schema, schemaFormat)
           : undefined;
-      const schemaKeys =
-        withSchemas && args.includeSchemaKeys
-          ? schemaKeyMetadata(input, output.schema)
-          : undefined;
-      const description = summarizeDiscoveryDescription(
-        match.tool.description,
-        args.fullDescriptions === true,
-      );
+      const schemaKeys = withSchemas && args.includeSchemaKeys ? schemaKeyMetadata(input, output.schema) : undefined;
+      const description = summarizeDiscoveryDescription(match.tool.description, args.fullDescriptions === true);
       const requiredReasons = guideRequiredReasons(
         match.connector,
         match.tool,
@@ -1149,40 +1049,24 @@ export class CatalogService {
                 inputSchema: renderedInput?.schema,
               }
             : {}),
-          ...(withSchemas
-            ? { schemaFormat: withSchemas === "json" ? "json" as const : "text" as const }
-            : {}),
+          ...(withSchemas ? { schemaFormat: withSchemas === "json" ? ("json" as const) : ("text" as const) } : {}),
           ...(signature ? { signature: signature.text } : {}),
-          ...(renderedInput?.truncated
-            ? { inputSchemaTruncated: true as const }
-            : {}),
+          ...(renderedInput?.truncated ? { inputSchemaTruncated: true as const } : {}),
           ...(schemaFormat && output.schema
             ? {
                 outputSchema: renderedOutput?.schema,
               }
             : {}),
-          ...(withSchemas && output.source
-            ? { outputSchemaSource: output.source }
-            : {}),
-          ...(renderedOutput?.truncated
-            ? { outputSchemaTruncated: true as const }
-            : {}),
+          ...(withSchemas && output.source ? { outputSchemaSource: output.source } : {}),
+          ...(renderedOutput?.truncated ? { outputSchemaTruncated: true as const } : {}),
           ...(schemaKeys && !renderedInput?.truncated
             ? {
-                ...(schemaKeys.inputKeys
-                  ? { inputKeys: schemaKeys.inputKeys }
-                  : {}),
-                ...(schemaKeys.requiredInputKeys
-                  ? { requiredInputKeys: schemaKeys.requiredInputKeys }
-                  : {}),
+                ...(schemaKeys.inputKeys ? { inputKeys: schemaKeys.inputKeys } : {}),
+                ...(schemaKeys.requiredInputKeys ? { requiredInputKeys: schemaKeys.requiredInputKeys } : {}),
               }
             : {}),
-          ...(schemaKeys?.outputKeys && !renderedOutput?.truncated
-            ? { outputKeys: schemaKeys.outputKeys }
-            : {}),
-          ...(match.tool.annotations
-            ? { annotations: match.tool.annotations }
-            : {}),
+          ...(schemaKeys?.outputKeys && !renderedOutput?.truncated ? { outputKeys: schemaKeys.outputKeys } : {}),
+          ...(match.tool.annotations ? { annotations: match.tool.annotations } : {}),
           classification: match.tool.classification,
           ...(requiredReasons
             ? {
@@ -1193,16 +1077,10 @@ export class CatalogService {
         },
       };
     });
-    const nextOffset =
-      offset + entries.length < matches.length
-        ? offset + entries.length
-        : undefined;
+    const nextOffset = offset + entries.length < matches.length ? offset + entries.length : undefined;
     const pageTools = new Set(pageMatches.map((match) => match.tool));
     const matchingTools = (term: string) =>
-      new Set([
-        ...(statistics.nameMatches.get(term) ?? []),
-        ...(statistics.descriptionMatches.get(term) ?? []),
-      ]);
+      new Set([...(statistics.nameMatches.get(term) ?? []), ...(statistics.descriptionMatches.get(term) ?? [])]);
     const representedTerms: string[] = [];
     const otherResultTerms: string[] = [];
     const unmatchedTerms: string[] = [];
@@ -1226,20 +1104,22 @@ export class CatalogService {
         code: classified.code,
         // Catalog discovery reports recovery facts, never connector-authored
         // error text. Clipping a downstream message does not make it safe.
-        message: classified.code === "downstream_oauth_required"
-          ? `Connector "${connector.id}" requires downstream OAuth authorization. Call authorize_connector and give its handoff to the operator.`
-          : classified.code === "auth_required"
-            ? `Connector "${connector.id}" requires operator-managed credentials or configuration. Call authorize_connector and give its handoff to the operator.`
-            : classified.code === "provider_permission_denied"
-              ? `Connector "${connector.id}" requires permission from the provider's resource owner or administrator. Reconnecting alone will not grant access.`
-              : `Connector "${connector.id}" catalog lookup failed (${classified.code}).`,
+        message:
+          classified.code === "downstream_oauth_required"
+            ? `Connector "${connector.id}" requires downstream OAuth authorization. Call authorize_connector and give its handoff to the operator.`
+            : classified.code === "auth_required"
+              ? `Connector "${connector.id}" requires operator-managed credentials or configuration. Call authorize_connector and give its handoff to the operator.`
+              : classified.code === "provider_permission_denied"
+                ? `Connector "${connector.id}" requires permission from the provider's resource owner or administrator. Reconnecting alone will not grant access.`
+                : `Connector "${connector.id}" catalog lookup failed (${classified.code}).`,
         retryable: classified.retryable,
         ...(classified.retryAfterMs === undefined ? {} : { retryAfterMs: classified.retryAfterMs }),
       };
       if (error.code === "auth_required" || error.code === "downstream_oauth_required") {
         error.recovery = connector.startAuth
           ? "oauth"
-          : this.registry.credentialUiAvailable() && connector.credential &&
+          : this.registry.credentialUiAvailable() &&
+              connector.credential &&
               this.registry.contextFor(connector.id, this.baseUrl, this.requestScope).credential
             ? "operator_config"
             : "unavailable";
@@ -1250,12 +1130,14 @@ export class CatalogService {
         };
         error.retry = `Retry discovery after the operator completes recovery for "${connector.id}".`;
       } else if (error.code === "provider_permission_denied") {
-        error.retry = "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Reconnecting alone will not grant access.";
+        error.retry =
+          "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Reconnecting alone will not grant access.";
       }
       return [error];
     });
     const needsAuth = (error: CatalogSearchFailure) =>
-      error.code === "auth_required" || error.code === "downstream_oauth_required" ||
+      error.code === "auth_required" ||
+      error.code === "downstream_oauth_required" ||
       error.code === "provider_permission_denied";
     catalogErrors.sort((a, b) => Number(needsAuth(b)) - Number(needsAuth(a)));
     const scopedFailure = args.connector ? catalogErrors[0] : undefined;
@@ -1268,13 +1150,8 @@ export class CatalogService {
         }
       : undefined;
     const safetyLabel =
-      safety === "readOnly"
-        ? "read-only "
-        : safety === "approvalRequired"
-          ? "approval-required "
-          : "";
-    const filterRecovery =
-      safety === "all" ? "" : " Change safety to inspect the other tools.";
+      safety === "readOnly" ? "read-only " : safety === "approvalRequired" ? "approval-required " : "";
+    const filterRecovery = safety === "all" ? "" : " Change safety to inspect the other tools.";
     const scopedGuide =
       matches.length === 0 && scopedConnector && connectorGuide(scopedConnector)
         ? {
@@ -1297,8 +1174,7 @@ export class CatalogService {
               queryTerms.some(
                 (term) =>
                   matchesLexicalTerm(connector.id, term) ||
-                  (connector.title !== undefined &&
-                    matchesLexicalTerm(connector.title, term)),
+                  (connector.title !== undefined && matchesLexicalTerm(connector.title, term)),
               ),
             )
             .map((connector) => connector.id)
@@ -1307,8 +1183,7 @@ export class CatalogService {
       .slice(0, MAX_IDENTITY_CONNECTORS)
       .map((id) => `"${id}"`)
       .join(", ");
-    const unnamedIdentityConnectors =
-      identityConnectorIds.length - MAX_IDENTITY_CONNECTORS;
+    const unnamedIdentityConnectors = identityConnectorIds.length - MAX_IDENTITY_CONNECTORS;
     const identityGuidance =
       identityConnectorIds.length === 0
         ? undefined
@@ -1317,9 +1192,7 @@ export class CatalogService {
           }, but the query names configured connector${
             identityConnectorIds.length === 1 ? "" : "s"
           } ${namedIdentityConnectors}${
-            unnamedIdentityConnectors > 0
-              ? ` and ${unnamedIdentityConnectors} more`
-              : ""
+            unnamedIdentityConnectors > 0 ? ` and ${unnamedIdentityConnectors} more` : ""
           }. Scope by connector and browse with an empty query to list the tools there.${filterRecovery}`;
     // A scope that resolved to nothing is the same silence one step earlier in
     // the lookup: no connector resolved, so no catalog was even attempted, so
@@ -1327,7 +1200,12 @@ export class CatalogService {
     // only configured connectors in the current identity/pool registry view.
     const unknownConnectorGuidance =
       args.connector && !scopedConnector
-        ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools. Configured connectors for this endpoint: ${this.registry.listConnectors().map((connector) => connector.id).join(", ") || "none"}.`
+        ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools. Configured connectors for this endpoint: ${
+            this.registry
+              .listConnectors()
+              .map((connector) => connector.id)
+              .join(", ") || "none"
+          }.`
         : undefined;
     // Searchable queries report analysis when the scorer had to degrade. A
     // non-empty query with no searchable terms reports the bounded raw input
@@ -1336,7 +1214,8 @@ export class CatalogService {
     // the exception, because an empty result alone looks like a connector that
     // correctly exposes no tools.
     const reportsQueryAnalysis =
-      absence !== undefined || unsearchableQuery ||
+      absence !== undefined ||
+      unsearchableQuery ||
       (queryTerms.length > 0
         ? matchMode === "partial"
         : unknownConnectorGuidance !== undefined || unavailableCatalogs > 0);
@@ -1386,38 +1265,31 @@ export class CatalogService {
       limit,
       hasMore: nextOffset !== undefined,
       ...(nextOffset !== undefined ? { nextOffset } : {}),
-      ...(matchMode === "partial" && matches.length > 0
-        ? { matchMode }
-        : {}),
+      ...(matchMode === "partial" && matches.length > 0 ? { matchMode } : {}),
       ...(reportsQueryAnalysis
         ? {
             queryAnalysis: {
               representedTerms,
               otherResultTerms,
               unmatchedTerms,
-              ...(queryMetadataTruncated
-                ? { truncated: true as const }
-                : {}),
+              ...(queryMetadataTruncated ? { truncated: true as const } : {}),
               ...(args.connector ? { connectorScope: args.connector } : {}),
               ...(args.connector && !scopedConnector
-                ? { unknownConnector: true as const, configuredConnectors: this.registry.listConnectors().map((connector) => connector.id) }
+                ? {
+                    unknownConnector: true as const,
+                    configuredConnectors: this.registry.listConnectors().map((connector) => connector.id),
+                  }
                 : {}),
-              ...(unavailableCatalogs > 0
-                ? { unavailableConnectorCount: unavailableCatalogs }
-                : {}),
+              ...(unavailableCatalogs > 0 ? { unavailableConnectorCount: unavailableCatalogs } : {}),
               ...(scopedCatalogError ? { catalogError: scopedCatalogError } : {}),
               ...(scopedGuide
                 ? {
                     guide: scopedGuide.guide,
-                    ...(scopedGuide.guideSummary
-                      ? { guideSummary: scopedGuide.guideSummary }
-                      : {}),
+                    ...(scopedGuide.guideSummary ? { guideSummary: scopedGuide.guideSummary } : {}),
                     ...(scopedGuide.required
                       ? {
                           guideRequired: true as const,
-                          guideRequiredReasons: [
-                            "connector_required" as const,
-                          ],
+                          guideRequiredReasons: ["connector_required" as const],
                         }
                       : {}),
                   }
@@ -1437,18 +1309,10 @@ export class CatalogService {
       return { address, resolved: this.registry.resolveAddress(address) };
     });
     const connectorIds = [
-      ...new Set(
-        resolved
-          .map((entry) => entry.resolved?.connector.id)
-          .filter((id): id is string => Boolean(id)),
-      ),
+      ...new Set(resolved.map((entry) => entry.resolved?.connector.id).filter((id): id is string => Boolean(id))),
     ];
-    const loaded = await runEdge(
-      this.discoveryCatalogs(connectorIds, "connecta.describe"),
-    );
-    const catalogs = new Map(
-      connectorIds.map((id, index) => [id, loaded[index]]),
-    );
+    const loaded = await runEdge(this.discoveryCatalogs(connectorIds, "connecta.describe"));
+    const catalogs = new Map(connectorIds.map((id, index) => [id, loaded[index]]));
     return resolved.map(({ address, resolved: addressResolution }) => {
       if (!addressResolution) {
         const message = `Unknown address "${boundedEchoText(address)}"`;
@@ -1467,10 +1331,7 @@ export class CatalogService {
       }
       const catalog = catalogs.get(addressResolution.connector.id);
       if (catalog && Result.isFailure(catalog)) {
-        const classified = classifyCallError(
-          catalog.failure,
-          "catalog_lookup_failed",
-        );
+        const classified = classifyCallError(catalog.failure, "catalog_lookup_failed");
         const message = boundedEchoText(classified.message);
         return {
           address: boundedEchoText(address),
@@ -1479,23 +1340,15 @@ export class CatalogService {
             code: classified.code,
             message,
             retryable: classified.retryable,
-            ...(classified.retryAfterMs === undefined
-              ? {}
-              : { retryAfterMs: classified.retryAfterMs }),
+            ...(classified.retryAfterMs === undefined ? {} : { retryAfterMs: classified.retryAfterMs }),
           },
         };
       }
       const tools = catalog?.success ?? [];
-      const tool = tools.find(
-        (item) => item.name === addressResolution.toolName,
-      );
+      const tool = tools.find((item) => item.name === addressResolution.toolName);
       if (!tool) {
         const message = `Unknown tool "${boundedEchoText(addressResolution.toolName)}" on connector "${addressResolution.connector.id}"`;
-        const suggestions = describeSuggestions(
-          addressResolution.connector.id,
-          addressResolution.toolName,
-          tools,
-        );
+        const suggestions = describeSuggestions(addressResolution.connector.id, addressResolution.toolName, tools);
         return {
           address: boundedEchoText(address),
           error: message,
@@ -1514,24 +1367,18 @@ export class CatalogService {
       }
       const input = tool.inputSchema ?? { type: "object" };
       const output = this.outputSchema(addressResolution.connector.id, tool);
-      const description = summarizeDescription(
-        tool.description,
-        args.fullDescriptions === true,
-      );
-      const signature = format === "typescript"
-        ? typescriptSignature(input, output.schema, {
-            observed: output.source === "observed",
-            description: true,
-          })
-        : undefined;
-      const compactInput = format === "compact"
-        ? compactDescriptionSchema(input) : undefined;
-      const compactOutput = format === "compact" && output.schema
-        ? compactDescriptionSchema(output.schema) : undefined;
-      const inputTruncated =
-        compactInput?.truncated === true || signature?.inputTruncated === true;
-      const outputTruncated =
-        compactOutput?.truncated === true || signature?.outputTruncated === true;
+      const description = summarizeDescription(tool.description, args.fullDescriptions === true);
+      const signature =
+        format === "typescript"
+          ? typescriptSignature(input, output.schema, {
+              observed: output.source === "observed",
+              description: true,
+            })
+          : undefined;
+      const compactInput = format === "compact" ? compactDescriptionSchema(input) : undefined;
+      const compactOutput = format === "compact" && output.schema ? compactDescriptionSchema(output.schema) : undefined;
+      const inputTruncated = compactInput?.truncated === true || signature?.inputTruncated === true;
+      const outputTruncated = compactOutput?.truncated === true || signature?.outputTruncated === true;
       const requiredReasons = guideRequiredReasons(
         addressResolution.connector,
         tool,
@@ -1555,9 +1402,7 @@ export class CatalogService {
               guideRequiredReasons: requiredReasons,
             }
           : {}),
-        ...(signature
-          ? { signature: signature.text }
-          : { inputSchema: compactInput?.text ?? input }),
+        ...(signature ? { signature: signature.text } : { inputSchema: compactInput?.text ?? input }),
         ...(inputTruncated ? { inputSchemaTruncated: true as const } : {}),
         ...(outputTruncated ? { outputSchemaTruncated: true as const } : {}),
         ...(output.schema && !signature
@@ -1595,9 +1440,7 @@ export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
         ? { connectorTitle: boundedEchoText(entry.connector.title.replace(/\s+/g, " ").trim(), 117) }
         : {}),
       ...(entry.guide ? { guide: entry.guide } : {}),
-      ...(entry.guideSummary
-        ? { guideSummary: entry.guideSummary }
-        : {}),
+      ...(entry.guideSummary ? { guideSummary: entry.guideSummary } : {}),
     })),
     ...pageTail(page),
   };

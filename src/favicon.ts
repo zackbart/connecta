@@ -35,8 +35,7 @@ function buildIco(): Uint8Array {
       const dx = x - 15.5;
       const dy = y - 15.5;
       const radius = Math.sqrt(dx * dx + dy * dy);
-      const opaque = radius >= 8 && radius <= 13 &&
-        (x <= 18 || Math.abs(dy) >= 7);
+      const opaque = radius >= 8 && radius <= 13 && (x <= 18 || Math.abs(dy) >= 7);
       const row = size - 1 - y;
       const pixel = pixels + (row * size + x) * 4;
       ico[pixel + 3] = opaque ? 255 : 0;

@@ -100,9 +100,7 @@ const PAGE_RESERVE_BYTES = 4 * 1024;
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -110,9 +108,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -250,7 +246,10 @@ function projectQuestion(value: unknown, rowTitle?: string): JsonRecord {
     return compact({ ...base, type: CHOICE_TYPES[String(choice["type"])] ?? "unknown", ...choiceOptions(choice) });
   }
   if (question["textQuestion"]) {
-    return compact({ ...base, type: asRecord(question["textQuestion"])["paragraph"] === true ? "paragraph" : "short_text" });
+    return compact({
+      ...base,
+      type: asRecord(question["textQuestion"])["paragraph"] === true ? "paragraph" : "short_text",
+    });
   }
   if (question["scaleQuestion"]) {
     const scale = asRecord(question["scaleQuestion"]);
@@ -315,7 +314,7 @@ function projectItem(value: unknown): JsonRecord {
       ...base,
       kind: "question_group" satisfies ItemKind,
       // A grid's rows share its columns: the choices are stated once, here.
-      gridType: group["grid"] ? CHOICE_TYPES[String(columns["type"])] ?? "unknown" : undefined,
+      gridType: group["grid"] ? (CHOICE_TYPES[String(columns["type"])] ?? "unknown") : undefined,
       ...(group["grid"] ? choiceOptions(columns) : {}),
       questions: asArray(group["questions"]).map((question) =>
         projectQuestion(
@@ -469,7 +468,11 @@ function projectResponse(
     });
     const files = asArray(asRecord(answer["fileUploadAnswers"])["answers"]).map((entry) => {
       const file = asRecord(entry);
-      return compact({ fileId: text(file["fileId"]), fileName: text(file["fileName"]), mimeType: text(file["mimeType"]) });
+      return compact({
+        fileId: text(file["fileId"]),
+        fileName: text(file["fileName"]),
+        mimeType: text(file["mimeType"]),
+      });
     });
     return compact({
       questionId,
@@ -514,7 +517,11 @@ function fitResponse(
   }
   const answers = asArray(projected["answers"]).map(asRecord);
   const kept: JsonRecord[] = [];
-  let used = jsonBytes({ ...projected, answers: [], omittedQuestionIds: answers.map((answer) => answer["questionId"]) });
+  let used = jsonBytes({
+    ...projected,
+    answers: [],
+    omittedQuestionIds: answers.map((answer) => answer["questionId"]),
+  });
   for (const answer of answers) {
     const size = jsonBytes(answer) + 1;
     if (used + size > budget) break;
@@ -600,7 +607,8 @@ const REVISION_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: 256,
   pattern: "^\\S+$",
-  description: "revisionId from get_form, create_form, or the previous edit. Google refuses the edit if the form changed since; re-read it and retry.",
+  description:
+    "revisionId from get_form, create_form, or the previous edit. Google refuses the edit if the form changed since; re-read it and retry.",
 };
 
 function cursorProperty(same: string): JsonSchema {
@@ -722,7 +730,8 @@ const QUESTION_SCHEMA: JsonSchema = {
  */
 const FORM_SCHEMA: JsonSchema = {
   type: "object",
-  description: "The projection; with raw: true, Google's Form resource (formId, info, settings, publishSettings, items, revisionId), empty fields omitted.",
+  description:
+    "The projection; with raw: true, Google's Form resource (formId, info, settings, publishSettings, items, revisionId), empty fields omitted.",
   properties: {
     formId: { type: "string" },
     title: { type: "string" },
@@ -820,7 +829,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           formId: FORM_ID_PROPERTY,
           raw: {
             type: "boolean",
-            description: "Return Google's untouched Form resource (grading, images, section navigation) instead of the projection; read it before an updateItem that must keep them. Not paged: a form too large for one result is refused.",
+            description:
+              "Return Google's untouched Form resource (grading, images, section navigation) instead of the projection; read it before an updateItem that must keep them. Not paged: a form too large for one result is refused.",
           },
           cursor: cursorProperty("formId"),
         },
@@ -952,11 +962,13 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             type: "string",
             minLength: 1,
             maxLength: 1_000,
-            description: "File name in Drive; defaults to the title. It cannot be changed through this connection later.",
+            description:
+              "File name in Drive; defaults to the title. It cannot be changed through this connection later.",
           },
           unpublished: {
             type: "boolean",
-            description: "Create it not accepting responses. This connection cannot publish it later; the owner does, in Forms. Omit to publish.",
+            description:
+              "Create it not accepting responses. This connection cannot publish it later; the owner does, in Forms. Omit to publish.",
           },
         },
         ["title"],
@@ -1033,7 +1045,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           submittedAfter: {
             type: "string",
             pattern: RFC3339_UTC,
-            description: "Only responses submitted after this UTC instant (exclusive), e.g. 2026-10-01T00:00:00Z or the newest lastSubmittedTime already read.",
+            description:
+              "Only responses submitted after this UTC instant (exclusive), e.g. 2026-10-01T00:00:00Z or the newest lastSubmittedTime already read.",
           },
           limit: LIMIT_PROPERTY,
           cursor: cursorProperty("formId and submittedAfter"),
@@ -1061,21 +1074,22 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // neither a stable order nor a snapshot, so a reordered, grown, or
         // shrunk page could repeat, skip, or cycle, and is refused instead.
         // Moving to Google's next page needs none of this: its token is Google's.
-        const resume = typeof args["cursor"] === "string"
-          ? decodeCursor(
-              args["cursor"],
-              digest,
-              ["d", "t", "a", "h", "n"],
-              (c) =>
-                (c["t"] === null || typeof c["t"] === "string") &&
-                ((c["a"] === null && c["h"] === null) ||
-                  (typeof c["a"] === "string" && c["a"] !== "" && typeof c["h"] === "string")) &&
-                isIndex(c["n"]) &&
-                c["n"] >= 1 &&
-                c["n"] <= MAX_PAGE_SIZE,
-              "with the same formId and submittedAfter",
-            )
-          : undefined;
+        const resume =
+          typeof args["cursor"] === "string"
+            ? decodeCursor(
+                args["cursor"],
+                digest,
+                ["d", "t", "a", "h", "n"],
+                (c) =>
+                  (c["t"] === null || typeof c["t"] === "string") &&
+                  ((c["a"] === null && c["h"] === null) ||
+                    (typeof c["a"] === "string" && c["a"] !== "" && typeof c["h"] === "string")) &&
+                  isIndex(c["n"]) &&
+                  c["n"] >= 1 &&
+                  c["n"] <= MAX_PAGE_SIZE,
+                "with the same formId and submittedAfter",
+              )
+            : undefined;
         const token: string | null = resume?.["t"] ?? null;
         const size: number = resume?.["n"] ?? limit;
         const anchor: string | null = resume?.["a"] ?? null;
@@ -1384,7 +1398,12 @@ export const forms = asProviderFactory<FormsOptions>({
   title: "Google Forms",
   kind: "api",
   readme: "Google Forms",
-  bundle: {"baselineGzip":26161,"maxGzip":86161,"note":"./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 26161,
+    "maxGzip": 86161,
+    "note":
+      "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   create: formsConnector,

@@ -140,10 +140,22 @@ export function guestInitializer(): string {
 })()`;
 }
 
-const ERROR_NAMES = new Set(["Error", "TypeError", "SyntaxError", "ReferenceError", "RangeError", "EvalError", "URIError", "AggregateError"]);
+const ERROR_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "SyntaxError",
+  "ReferenceError",
+  "RangeError",
+  "EvalError",
+  "URIError",
+  "AggregateError",
+]);
 
 /** Fixed repair guidance, used only in agent-facing results. */
-export function programError(raw: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown; line?: unknown }, code: string) {
+export function programError(
+  raw: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown; line?: unknown },
+  code: string,
+) {
   const message = typeof raw.message === "string" ? raw.message : "Program failed.";
   const name = typeof raw.name === "string" && ERROR_NAMES.has(raw.name) ? raw.name : "Error";
   const stack = typeof raw.stack === "string" ? raw.stack : "";
@@ -153,16 +165,37 @@ export function programError(raw: { name?: unknown; message?: unknown; stack?: u
   // Workers publish only the user callback in this module, with one prefix line.
   // Its trusted wrapper and baseline live in a separate, private module scope.
   const workerLocation = /connecta-guest\.js:(\d+):\d+/.exec(stack);
-  const line = typeof raw.line === "number" && Number.isFinite(raw.line) ? Math.max(1, raw.line)
-    : workerLocation ? Math.max(1, Number(workerLocation[1]) - 1)
-    : location && baseline ? Math.max(1, Number(location[1]) - Number(baseline[1]) + code.split("\n").length + 1) : null;
+  const line =
+    typeof raw.line === "number" && Number.isFinite(raw.line)
+      ? Math.max(1, raw.line)
+      : workerLocation
+        ? Math.max(1, Number(workerLocation[1]) - 1)
+        : location && baseline
+          ? Math.max(1, Number(location[1]) - Number(baseline[1]) + code.split("\n").length + 1)
+          : null;
   let hint = "Use plain JavaScript in one async () => { ... } expression and the connecta global.";
-  if (/\brequire\b|\b[Ii]mports?\b|\bfs\b|filesystem|node:/.test(message) || name === "SyntaxError" && /\bimport\b/.test(code)) {
-    hint = "Imports, require, and filesystem access are outside the guest API. Use connecta.call to access configured services.";
-  } else if (["TypeError", "ReferenceError"].includes(name) && /(?:const|let|var|function|\()\s*connecta\b/.test(code)) {
+  if (
+    /\brequire\b|\b[Ii]mports?\b|\bfs\b|filesystem|node:/.test(message) ||
+    (name === "SyntaxError" && /\bimport\b/.test(code))
+  ) {
+    hint =
+      "Imports, require, and filesystem access are outside the guest API. Use connecta.call to access configured services.";
+  } else if (
+    ["TypeError", "ReferenceError"].includes(name) &&
+    /(?:const|let|var|function|\()\s*connecta\b/.test(code)
+  ) {
     hint = "Do not shadow connecta. Use the host-provided connecta global.";
-  } else if ((/callTool|mixpanel|\bskills\b|connecta\.(?:guide|skills)/.test(message) || ["TypeError", "ReferenceError"].includes(name) && /connecta\.(?:guide|skills)\b/.test(code))) {
-    hint = "Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill(name). Services are addressed by connector.tool, never guest globals.";
+  } else if (
+    /callTool|mixpanel|\bskills\b|connecta\.(?:guide|skills)/.test(message) ||
+    (["TypeError", "ReferenceError"].includes(name) && /connecta\.(?:guide|skills)\b/.test(code))
+  ) {
+    hint =
+      "Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill(name). Services are addressed by connector.tool, never guest globals.";
   }
-  return { code: "program_error", message: `Program ${name}: ${message}`, retryable: false, details: { name, line, hint } };
+  return {
+    code: "program_error",
+    message: `Program ${name}: ${message}`,
+    retryable: false,
+    details: { name, line, hint },
+  };
 }

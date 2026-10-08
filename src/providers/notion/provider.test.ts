@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import type { ToolDef } from "../../types.js";
-import {
-  itClassifiesLikeARelease,
-  mockRemoteMcp,
-} from "../../../test/fixtures/hosted-provider.js";
+import { itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -103,7 +100,8 @@ function context(token: string | null = "secret_token"): ConnectorContext {
 
 function build(overrides: Record<string, unknown> = {}): Connector {
   return notion("workspace", {
-    surface: "api", purpose: "Team knowledge base",
+    surface: "api",
+    purpose: "Team knowledge base",
     ...overrides,
   } as any);
 }
@@ -134,10 +132,7 @@ const PAGE_FIXTURE = {
     Name: {
       id: "title",
       type: "title",
-      title: [
-        { plain_text: "Quarterly ", annotations: { bold: true } },
-        { plain_text: "review" },
-      ],
+      title: [{ plain_text: "Quarterly ", annotations: { bold: true } }, { plain_text: "review" }],
     },
     Notes: {
       id: "abc",
@@ -183,9 +178,7 @@ const PAGE_FIXTURE = {
     Spec: {
       id: "fl",
       type: "files",
-      files: [
-        { name: "spec.pdf", type: "external", external: { url: "https://x/1" } },
-      ],
+      files: [{ name: "spec.pdf", type: "external", external: { url: "https://x/1" } }],
     },
     Missing: { id: "mt", type: "select", select: null },
     Invented: { id: "new", type: "brand_new_type", brand_new_type: "kept" },
@@ -217,9 +210,7 @@ describe("notion() tool surface", () => {
   it("pins the read/write partition against the fail-closed classifier", () => {
     const tools = build().staticTools ?? [];
     const reads = tools.filter(isRead).map((tool) => tool.name);
-    const writes = tools
-      .filter((tool) => !isRead(tool))
-      .map((tool) => tool.name);
+    const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name);
 
     // These are hand-written, so this is not a fill-in check like Mixpanel's —
     // it is the exact partition the release ships. Moving a name across this
@@ -246,9 +237,7 @@ describe("notion() tool surface", () => {
 
     // Only operations that replace or remove existing state claim destruction;
     // creates stay off the read path without inflating the approval copy.
-    const destructive = tools
-      .filter((tool) => tool.annotations?.destructiveHint === true)
-      .map((tool) => tool.name);
+    const destructive = tools.filter((tool) => tool.annotations?.destructiveHint === true).map((tool) => tool.name);
     expect(destructive).toEqual(["integration_update_page_properties", "integration_trash_page"]);
   });
 
@@ -294,9 +283,7 @@ describe("notion() tool surface", () => {
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guide.content).toContain("## Workspace instructions");
     expect(guide.content).not.toContain("+## Workspace instructions");
-    expect(guide.content).toContain(
-      "Use the Engineering wiki unless the request names another.",
-    );
+    expect(guide.content).toContain("Use the Engineering wiki unless the request names another.");
   });
 
   it("says in the guide that it deliberately has no escape hatch (H14)", () => {
@@ -309,19 +296,15 @@ describe("notion() tool surface", () => {
   });
 
   it("rejects a missing purpose or an out-of-range page size", () => {
-    expect(() => notion("workspace", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
+    expect(() => notion("workspace", { purpose: "  " })).toThrow("a non-empty purpose");
+    expect(() => notion("workspace", { surface: "api", purpose: "Docs", defaultPageSize: 500 })).toThrow(
+      "defaultPageSize to be a whole number between 1 and 100",
     );
-    expect(() =>
-      notion("workspace", { surface: "api", purpose: "Docs", defaultPageSize: 500 }),
-    ).toThrow("defaultPageSize to be a whole number between 1 and 100");
   });
 
   it("describes the integration token as an operator credential", () => {
     expect(build().credential?.label).toBe("Notion integration token");
-    expect(build({ credentialLabel: "Docs token" }).credential?.label).toBe(
-      "Docs token",
-    );
+    expect(build({ credentialLabel: "Docs token" }).credential?.label).toBe("Docs token");
     expect(build().credential?.description).toContain("shared with that integration");
   });
 });
@@ -353,9 +336,7 @@ describe("notion() MCP interface", () => {
     );
     expect(connector.kind).toBe("mcp");
     expect(connector.credential).toBeUndefined();
-    expect((connector.usageGuide as { content: string }).content).toContain(
-      "live server",
-    );
+    expect((connector.usageGuide as { content: string }).content).toContain("live server");
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -392,9 +373,7 @@ describe("notion() request construction", () => {
   });
 
   it("fails with auth_required before touching the network", async () => {
-    const error = await call(build(), "integration_get_self", {}, context(null)).catch(
-      (thrown) => thrown,
-    );
+    const error = await call(build(), "integration_get_self", {}, context(null)).catch((thrown) => thrown);
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error.code).toBe("auth_required");
     expect(error.retryable).toBe(false);
@@ -680,12 +659,8 @@ describe("notion() lean projections", () => {
     expect(calls).toHaveLength(20);
     expect(walked.truncated).toBe(true);
     // Truncation costs descendants, never the level that was already fetched.
-    expect(
-      walked.results.filter((block: any) => block.depth === 0),
-    ).toHaveLength(25);
-    expect(
-      walked.results.filter((block: any) => block.depth === 1),
-    ).toHaveLength(19);
+    expect(walked.results.filter((block: any) => block.depth === 0)).toHaveLength(25);
+    expect(walked.results.filter((block: any) => block.depth === 1)).toHaveLength(19);
   });
 
   it("reports truncation when a nested level has more than one page", async () => {
@@ -865,9 +840,7 @@ describe("notion() pagination", () => {
       sorts: [{ property: "Due", direction: "ascending" }],
       start_cursor: "c1",
     });
-    expect(calls[0]?.url).toBe(
-      `${NOTION_API_BASE_URL}/v1/data_sources/ds-1/query`,
-    );
+    expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/data_sources/ds-1/query`);
     expect(calls[0]?.body).toEqual({
       page_size: 25,
       filter: { property: "Status", status: { equals: "Done" } },
@@ -930,11 +903,7 @@ describe("notion() property pagination", () => {
   // holds an array; here each result holds a single object under it. Every
   // payload below is the documented shape from
   // developers.notion.com/reference/retrieve-a-page-property.
-  function propertyList(
-    type: string,
-    results: Array<Record<string, unknown>>,
-    extra: Record<string, unknown> = {},
-  ) {
+  function propertyList(type: string, results: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) {
     return {
       object: "list",
       results: results.map((result) => ({
@@ -960,10 +929,7 @@ describe("notion() property pagination", () => {
 
   it("unwraps a paginated relation into page ids", async () => {
     queue({
-      body: propertyList("relation", [
-        { relation: { id: "page-2" } },
-        { relation: { id: "page-3" } },
-      ]),
+      body: propertyList("relation", [{ relation: { id: "page-2" } }, { relation: { id: "page-3" } }]),
     });
     const property: any = await call(build(), "integration_get_page_property", {
       page_id: "page-1",
@@ -1073,15 +1039,9 @@ describe("notion() error mapping", () => {
     cases.push([name, run]);
   };
 
-  async function failWith(
-    status: number,
-    body: unknown,
-    headers: Record<string, string> = {},
-  ): Promise<any> {
+  async function failWith(status: number, body: unknown, headers: Record<string, string> = {}): Promise<any> {
     queue({ status, body, headers });
-    return call(build(), "integration_get_page", { page_id: "page-1" }).catch(
-      (thrown) => thrown,
-    );
+    return call(build(), "integration_get_page", { page_id: "page-1" }).catch((thrown) => thrown);
   }
 
   caseOf("routes an invalid token to auth_required", async () => {
@@ -1163,11 +1123,7 @@ describe("notion() error mapping", () => {
   });
 
   caseOf("backs off on overload and conflict, and retries upstream failures", async () => {
-    const overloaded = await failWith(
-      529,
-      { code: "service_overload", message: "overloaded" },
-      { "Retry-After": "2" },
-    );
+    const overloaded = await failWith(529, { code: "service_overload", message: "overloaded" }, { "Retry-After": "2" });
     expect(overloaded.code).toBe("unavailable");
     expect(overloaded.retryable).toBe(true);
     expect(overloaded.retryAfterMs).toBe(2_000);
@@ -1203,12 +1159,9 @@ describe("notion() error mapping", () => {
     // payload, an agent would read "this page has no properties" out of a
     // response nobody was allowed to read.
     globalThis.fetch = vi.fn(
-      async () =>
-        new Response(JSON.stringify({ blob: "x".repeat(5 * 1024 * 1024) })),
+      async () => new Response(JSON.stringify({ blob: "x".repeat(5 * 1024 * 1024) })),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "integration_get_self", {}).catch(
-      (thrown: any) => thrown,
-    );
+    const error = await call(build(), "integration_get_self", {}).catch((thrown: any) => thrown);
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error.code).toBe("connector_call_failed");
     expect(error.retryable).toBe(false);
@@ -1219,29 +1172,45 @@ describe("notion() error mapping", () => {
 });
 
 describe("notion() successful response integrity", () => {
-  it.each(["<html>synthetic gateway</html>", "", "null", "[]", '"text"'])("rejects unusable successful JSON without reporting an empty page: %s", async (body) => {
-    globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
-    await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
-      code: "connector_call_failed", retryable: false,
-    });
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-  });
+  it.each(["<html>synthetic gateway</html>", "", "null", "[]", '"text"'])(
+    "rejects unusable successful JSON without reporting an empty page: %s",
+    async (body) => {
+      globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
+      await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+      });
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("keeps a sent write's unreadable response unknown and does not expose body details", async () => {
-    globalThis.fetch = vi.fn(async () => new Response(new ReadableStream({
-      start(controller) { controller.error(new Error("synthetic body detail")); },
-    }))) as unknown as typeof fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("synthetic body detail"));
+            },
+          }),
+        ),
+    ) as unknown as typeof fetch;
     const provider = build();
     const { credential: _credential, ...local } = provider;
-    const registry = makeRegistry([{
-      ...local,
-      callTool: (name, args) => provider.callTool(name, args, context()),
-    }]);
+    const registry = makeRegistry([
+      {
+        ...local,
+        callTool: (name, args) => provider.callTool(name, args, context()),
+      },
+    ]);
     const invocation = new InvocationService(registry, new CatalogService(registry, "https://connecta.example"));
-    const outcome = await runEdge(invocation.pipeline(
-      "workspace.integration_append_blocks", { block_id: "synthetic", text: ["hello"] },
-      { source: "call_destructive_tool" },
-    ));
+    const outcome = await runEdge(
+      invocation.pipeline(
+        "workspace.integration_append_blocks",
+        { block_id: "synthetic", text: ["hello"] },
+        { source: "call_destructive_tool" },
+      ),
+    );
     expect(outcome.ok).toBe(false);
     if (outcome.ok) throw new Error("Expected failed write response");
     expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
@@ -1284,9 +1253,7 @@ describe("notion() writes", () => {
     expect(both.message).toContain("exactly one");
     expect(both.message).toContain("never by a database_id");
 
-    const neither = await call(build(), "integration_create_page", { title: "x" }).catch(
-      (thrown) => thrown,
-    );
+    const neither = await call(build(), "integration_create_page", { title: "x" }).catch((thrown) => thrown);
     expect(neither.code).toBe("invalid_args");
 
     const twoBodies = await call(build(), "integration_create_page", {
@@ -1300,16 +1267,10 @@ describe("notion() writes", () => {
   });
 
   it("keeps reviewed create-page expansions outside the maintained tool", () => {
-    const properties = build().staticTools?.find(
-      (tool) => tool.name === "integration_create_page",
-    )?.inputSchema?.["properties"];
-    for (const declined of [
-      "workspace",
-      "template",
-      "position",
-      "cover",
-      "file_upload",
-    ]) {
+    const properties = build().staticTools?.find((tool) => tool.name === "integration_create_page")?.inputSchema?.[
+      "properties"
+    ];
+    for (const declined of ["workspace", "template", "position", "cover", "file_upload"]) {
       expect(properties).not.toHaveProperty(declined);
     }
   });
@@ -1376,13 +1337,12 @@ describe("notion() writes", () => {
     });
     // in_trash is not in this tool's schema, so an update can never trash.
     expect(
-      build().staticTools?.find(
-        (tool) => tool.name === "integration_update_page_properties",
-      )?.inputSchema?.["properties"],
+      build().staticTools?.find((tool) => tool.name === "integration_update_page_properties")?.inputSchema?.[
+        "properties"
+      ],
     ).not.toHaveProperty("in_trash");
-    const properties = build().staticTools?.find(
-      (tool) => tool.name === "integration_update_page_properties",
-    )?.inputSchema?.["properties"];
+    const properties = build().staticTools?.find((tool) => tool.name === "integration_update_page_properties")
+      ?.inputSchema?.["properties"];
     expect(properties).not.toHaveProperty("is_locked");
     expect(properties).not.toHaveProperty("template");
     expect(properties).not.toHaveProperty("erase_content");

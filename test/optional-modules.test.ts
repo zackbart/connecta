@@ -13,11 +13,28 @@ const executor = customExecutor({ execute: async () => ({ result: null }) }, { l
 const auth = { ...fakeClerkAuth({ token: "human" }), activityActorNamespace: "test-humans" };
 const headers = { Authorization: "Bearer human", Origin: BASE, "Content-Type": "application/json" };
 function connector(id = "shared", personal = false): Connector {
-  return { id, authScope: personal ? "personal" : "shared", credential: { label: "API key" }, listTools: vi.fn(async () => []), callTool: async () => null, status: vi.fn(async () => ({ state: "ok" as const })) };
+  return {
+    id,
+    authScope: personal ? "personal" : "shared",
+    credential: { label: "API key" },
+    listTools: vi.fn(async () => []),
+    callTool: async () => null,
+    status: vi.fn(async () => ({ state: "ok" as const })),
+  };
 }
 function deployment(identity?: ConnectaIdentityConfig) {
   const storage = memoryStorage();
-  return createConnecta({ connectors: [connector(), connector("personal", true)], executor, logger: "silent", auth, publicUrl: BASE, storage, vault: encryptedCredentialVault(storage, btoa("a".repeat(32))), ui: operatorUi(), ...(identity ? { identity } : {}) });
+  return createConnecta({
+    connectors: [connector(), connector("personal", true)],
+    executor,
+    logger: "silent",
+    auth,
+    publicUrl: BASE,
+    storage,
+    vault: encryptedCredentialVault(storage, btoa("a".repeat(32))),
+    ui: operatorUi(),
+    ...(identity ? { identity } : {}),
+  });
 }
 
 describe("optional deployment modules", () => {
@@ -27,7 +44,16 @@ describe("optional deployment modules", () => {
 
   it("omits all UI routes while core health and OAuth callbacks remain available", async () => {
     const app = createConnecta({ connectors: [], executor, logger: "silent" });
-    for (const path of ["/", "/credentials", "/tokens", "/activity", "/ui", "/ui/data", "/ui/oauth/missing", "/favicon.svg"]) {
+    for (const path of [
+      "/",
+      "/credentials",
+      "/tokens",
+      "/activity",
+      "/ui",
+      "/ui/data",
+      "/ui/oauth/missing",
+      "/favicon.svg",
+    ]) {
       expect((await app.fetch(new Request(BASE + path))).status, path).toBe(404);
     }
     expect((await app.fetch(new Request(BASE + "/health"))).status).toBe(200);
@@ -48,17 +74,27 @@ describe("optional deployment modules", () => {
     { ui: false, vault: false },
     { ui: false, vault: true },
     { ui: true, vault: false },
-  ])("offers no credential handoff when a recovery module is missing (%j)", async modules => {
+  ])("offers no credential handoff when a recovery module is missing (%j)", async (modules) => {
     const storage = memoryStorage();
     const app = createConnecta({
-      connectors: [connector()], executor, auth, logger: "silent", publicUrl: BASE,
+      connectors: [connector()],
+      executor,
+      auth,
+      logger: "silent",
+      publicUrl: BASE,
       ...(modules.ui ? { ui: operatorUi() } : {}),
       ...(modules.vault ? { vault: encryptedCredentialVault(storage, btoa("a".repeat(32))) } : {}),
     });
-    const response = await mcpRpc(app, "tools/call", {
-      name: "authorize_connector", arguments: { connector: "shared" },
-    }, { baseUrl: BASE, token: "human" });
-    const body = await response.json() as any;
+    const response = await mcpRpc(
+      app,
+      "tools/call",
+      {
+        name: "authorize_connector",
+        arguments: { connector: "shared" },
+      },
+      { baseUrl: BASE, token: "human" },
+    );
+    const body = (await response.json()) as any;
     const recovery = JSON.parse(body.result.content[0].text);
     expect(recovery).toMatchObject({ connector: "shared", recovery: "unavailable" });
     expect(recovery).not.toHaveProperty("operatorUrl");
@@ -69,28 +105,42 @@ describe("optional deployment modules", () => {
     // A fake clock: the probe deadline is what ends the slow status, and on a
     // loaded host a real 20ms one could end the fast status first.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const slow = connector("slow"), fast = connector("fast");
-    delete slow.credential; delete fast.credential;
+    const slow = connector("slow"),
+      fast = connector("fast");
+    delete slow.credential;
+    delete fast.credential;
     slow.status = vi.fn(() => new Promise<never>(() => {}));
     slow.closeScope = vi.fn(async () => {});
-    const app = createConnecta({ connectors: [slow, fast], executor, auth, ui: operatorUi(), logger: "silent", discovery: { probeTimeoutMs: 20 } });
+    const app = createConnecta({
+      connectors: [slow, fast],
+      executor,
+      auth,
+      ui: operatorUi(),
+      logger: "silent",
+      discovery: { probeTimeoutMs: 20 },
+    });
     const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
-    expect((await list.json() as any).connectors.map((c: any) => c.status)).toEqual(["loading", "loading"]);
+    expect(((await list.json()) as any).connectors.map((c: any) => c.status)).toEqual(["loading", "loading"]);
     expect(slow.status).not.toHaveBeenCalled();
     expect(fast.listTools).not.toHaveBeenCalled();
     let settled = false;
     const pending = app.fetch(new Request(BASE + "/ui/connectors/slow", { headers }));
-    void pending.finally(() => { settled = true; });
+    void pending.finally(() => {
+      settled = true;
+    });
     const ready = await app.fetch(new Request(BASE + "/ui/connectors/fast", { headers }));
-    expect((await ready.json() as any).status).toBe("ok");
+    expect(((await ready.json()) as any).status).toBe("ok");
     // Identity hashing during authorization can let the fast request overtake
     // the slow one. Wait for its probe timer without moving the fake clock:
     // waitFor's default interval would advance it by 50ms on every poll.
     const beforeProbe = Date.now();
-    await vi.waitFor(() => {
-      expect(slow.status).toHaveBeenCalledOnce();
-      expect(vi.getTimerCount()).toBe(1);
-    }, { interval: 0 });
+    await vi.waitFor(
+      () => {
+        expect(slow.status).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(1);
+      },
+      { interval: 0 },
+    );
     expect(Date.now()).toBe(beforeProbe);
     await vi.advanceTimersByTimeAsync(19);
     expect(settled).toBe(false);
@@ -100,7 +150,7 @@ describe("optional deployment modules", () => {
     const response = await pending;
     expect(settled).toBe(true);
     expect(Date.now() - beforeProbe).toBe(20);
-    expect((await response.json() as any).status).toBe("error");
+    expect(((await response.json()) as any).status).toBe("error");
     expect(slow.closeScope).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -110,13 +160,25 @@ describe("optional deployment modules", () => {
     c.closeScope = vi.fn(async () => {});
     const vault = encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32)));
     let release!: () => void;
-    vault.getAll = () => new Promise(resolve => { release = () => resolve(null); });
-    const app = createConnecta({ connectors: [c], executor, auth, ui: operatorUi(), vault, logger: "silent", identity: { credentialAdministration: () => "all" }, discovery: { probeTimeoutMs: 10 } });
+    vault.getAll = () =>
+      new Promise((resolve) => {
+        release = () => resolve(null);
+      });
+    const app = createConnecta({
+      connectors: [c],
+      executor,
+      auth,
+      ui: operatorUi(),
+      vault,
+      logger: "silent",
+      identity: { credentialAdministration: () => "all" },
+      discovery: { probeTimeoutMs: 10 },
+    });
     const response = await app.fetch(new Request(BASE + "/ui/connectors/shared", { headers }));
-    expect((await response.json() as any).status).toBe("error");
+    expect(((await response.json()) as any).status).toBe("error");
     expect(c.closeScope).toHaveBeenCalledOnce();
     release();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(c.status).not.toHaveBeenCalled();
     expect(c.closeScope).toHaveBeenCalledOnce();
   });
@@ -124,7 +186,13 @@ describe("optional deployment modules", () => {
   it("defaults both auth management permissions to none and hides secret metadata", async () => {
     const app = deployment();
     for (const id of ["shared", "personal"]) {
-      const response = await app.fetch(new Request(`${BASE}/ui/credentials/${id}`, { method: "PUT", headers, body: JSON.stringify({ value: "private-key-value" }) }));
+      const response = await app.fetch(
+        new Request(`${BASE}/ui/credentials/${id}`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ value: "private-key-value" }),
+        }),
+      );
       expect(response.status).toBe(403);
       const detail = await app.fetch(new Request(`${BASE}/ui/connectors/${id}`, { headers }));
       expect(await detail.json()).not.toHaveProperty("credential");
@@ -133,7 +201,14 @@ describe("optional deployment modules", () => {
 
   it("grants shared and personal auth management independently of use", async () => {
     const app = deployment({ credentialAdministration: () => ["shared"] });
-    const put = (id: string) => app.fetch(new Request(`${BASE}/ui/credentials/${id}`, { method: "PUT", headers, body: JSON.stringify({ value: "private-key-value" }) }));
+    const put = (id: string) =>
+      app.fetch(
+        new Request(`${BASE}/ui/credentials/${id}`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ value: "private-key-value" }),
+        }),
+      );
     expect((await put("shared")).status).toBe(200);
     expect((await put("personal")).status).toBe(403);
     const invalid = deployment({ credentialAdministration: () => ["typo"] });
@@ -147,16 +222,47 @@ describe("optional deployment modules", () => {
     { activityAccess: () => ({}) },
     { personalConnection: () => undefined },
     { credentialAdministration: () => ["invalid.id"] },
-    { connectorAccess: () => { throw new Error("resolver failed"); } },
-  ])("fails closed on invalid resolver results", async identity => {
-    const result = await authorize(new Request(BASE, { headers }), BASE, [auth], undefined, identity as unknown as ConnectaIdentityConfig);
+    {
+      connectorAccess: () => {
+        throw new Error("resolver failed");
+      },
+    },
+  ])("fails closed on invalid resolver results", async (identity) => {
+    const result = await authorize(
+      new Request(BASE, { headers }),
+      BASE,
+      [auth],
+      undefined,
+      identity as unknown as ConnectaIdentityConfig,
+    );
     expect(result.ok).toBe(false);
   });
 
   it("allows authorized MCP OAuth initiation and completion with no UI", async () => {
-    const oauth: Connector = { ...connector("oauth"), startAuth: vi.fn(async () => ({ state: "auth_required" as const, authorizationUrl: BASE + "/consent?state=state" })), verifyState: async state => state === "state", finishAuth: vi.fn(async () => {}) };
-    const app = createConnecta({ connectors: [oauth], executor, auth, vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))), logger: "silent", publicUrl: BASE, identity: { credentialAdministration: () => "all" } });
-    const response = await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "oauth" } }, { baseUrl: BASE, token: "human" });
+    const oauth: Connector = {
+      ...connector("oauth"),
+      startAuth: vi.fn(async () => ({
+        state: "auth_required" as const,
+        authorizationUrl: BASE + "/consent?state=state",
+      })),
+      verifyState: async (state) => state === "state",
+      finishAuth: vi.fn(async () => {}),
+    };
+    const app = createConnecta({
+      connectors: [oauth],
+      executor,
+      auth,
+      vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))),
+      logger: "silent",
+      publicUrl: BASE,
+      identity: { credentialAdministration: () => "all" },
+    });
+    const response = await mcpRpc(
+      app,
+      "tools/call",
+      { name: "authorize_connector", arguments: { connector: "oauth" } },
+      { baseUrl: BASE, token: "human" },
+    );
     const rpc = await readJsonRpc(response);
     const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
     expect(link).toContain("/connect/oauth?h=");
@@ -169,41 +275,63 @@ describe("optional deployment modules", () => {
     expect(await callback.text()).not.toContain('href="/"');
   });
 
-  it.each([true, false])("keeps shared OAuth capability after details load for a namespaced human (admin=%s)", async admin => {
+  it.each([true, false])(
+    "keeps shared OAuth capability after details load for a namespaced human (admin=%s)",
+    async (admin) => {
+      const oauth: Connector = {
+        ...connector("oauth"),
+        startAuth: vi.fn(async () => ({ state: "ok" as const })),
+        disconnectAuth: vi.fn(async () => {}),
+      };
+      const app = createConnecta({
+        connectors: [oauth],
+        executor,
+        auth,
+        ui: operatorUi(),
+        logger: "silent",
+        identity: { credentialAdministration: () => (admin ? "all" : "none") },
+      });
+      const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
+      const configured = ((await list.json()) as any).connectors[0];
+      const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
+      const loaded = await details.json();
+      const expected = {
+        oauth: true,
+        permissions: { use: true, manageSharedAuth: admin, connectPersonal: false },
+      };
+      expect(configured).toMatchObject(expected);
+      expect(loaded).toMatchObject(expected);
+      expect(oauth.startAuth).not.toHaveBeenCalled();
+      expect(oauth.disconnectAuth).not.toHaveBeenCalled();
+    },
+  );
+
+  it("never starts OAuth for a use-only identity or a revoked browser grant", async () => {
     const oauth: Connector = {
       ...connector("oauth"),
       startAuth: vi.fn(async () => ({ state: "ok" as const })),
-      disconnectAuth: vi.fn(async () => {}),
+      verifyState: async () => true,
+      finishAuth: vi.fn(async () => {}),
     };
     const app = createConnecta({
       connectors: [oauth],
       executor,
       auth,
-      ui: operatorUi(),
+      vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))),
       logger: "silent",
-      identity: { credentialAdministration: () => admin ? "all" : "none" },
+      publicUrl: BASE,
     });
-    const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
-    const configured = (await list.json() as any).connectors[0];
-    const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
-    const loaded = await details.json();
-    const expected = {
-      oauth: true,
-      permissions: { use: true, manageSharedAuth: admin, connectPersonal: false },
-    };
-    expect(configured).toMatchObject(expected);
-    expect(loaded).toMatchObject(expected);
-    expect(oauth.startAuth).not.toHaveBeenCalled();
-    expect(oauth.disconnectAuth).not.toHaveBeenCalled();
-  });
-
-  it("never starts OAuth for a use-only identity or a revoked browser grant", async () => {
-    const oauth: Connector = { ...connector("oauth"), startAuth: vi.fn(async () => ({ state: "ok" as const })), verifyState: async () => true, finishAuth: vi.fn(async () => {}) };
-    const app = createConnecta({ connectors: [oauth], executor, auth, vault: encryptedCredentialVault(memoryStorage(), btoa("a".repeat(32))), logger: "silent", publicUrl: BASE });
-    const response = await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "oauth" } }, { baseUrl: BASE, token: "human" });
+    const response = await mcpRpc(
+      app,
+      "tools/call",
+      { name: "authorize_connector", arguments: { connector: "oauth" } },
+      { baseUrl: BASE, token: "human" },
+    );
     expect(await response.text()).toContain("not permitted");
     expect(oauth.startAuth).not.toHaveBeenCalled();
-    expect((await app.fetch(new Request(BASE + "/oauth/callback/oauth?code=code&state=state", { headers }))).status).toBe(400);
+    expect(
+      (await app.fetch(new Request(BASE + "/oauth/callback/oauth?code=code&state=state", { headers }))).status,
+    ).toBe(400);
     expect(oauth.finishAuth).not.toHaveBeenCalled();
   });
 
@@ -225,9 +353,24 @@ describe("optional deployment modules", () => {
   });
 
   it("mounts activity only with a reader and enforces interactive access", async () => {
-    const app = createConnecta({ connectors: [], executor, auth, ui: operatorUi(), activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }), logger: "silent" });
+    const app = createConnecta({
+      connectors: [],
+      executor,
+      auth,
+      ui: operatorUi(),
+      activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
+      logger: "silent",
+    });
     expect((await app.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(200);
-    const denied = createConnecta({ connectors: [], executor, auth, ui: operatorUi(), activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }), identity: { activityAccess: () => false }, logger: "silent" });
+    const denied = createConnecta({
+      connectors: [],
+      executor,
+      auth,
+      ui: operatorUi(),
+      activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
+      identity: { activityAccess: () => false },
+      logger: "silent",
+    });
     expect((await denied.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(403);
   });
 });

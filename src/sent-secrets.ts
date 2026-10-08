@@ -24,7 +24,10 @@ export function shortSecretWarning(): (value: string | undefined, logger: Logger
     if (warned || !value || value.length >= MIN_SECRET_LENGTH) return;
     warned = true;
     const fact: SecretWarning = { code: "short_secret_not_redacted" };
-    logger.warn("[connecta] Credentials shorter than 8 characters are not redacted from echoes; use longer secrets.", fact);
+    logger.warn(
+      "[connecta] Credentials shorter than 8 characters are not redacted from echoes; use longer secrets.",
+      fact,
+    );
   };
 }
 
@@ -34,15 +37,31 @@ function literal(value: string): string {
 
 /** Percent escapes are case insensitive; the credential's other bytes are not. */
 function wirePattern(value: string): string {
-  return value.split(/(%[0-9a-f]{2})/i).map((part) =>
-    /^%[0-9a-f]{2}$/i.test(part)
-      ? `%${part.slice(1).split("").map((char) => /[a-f]/i.test(char) ? `[${char.toUpperCase()}${char.toLowerCase()}]` : char).join("")}`
-      : literal(part),
-  ).join("");
+  return value
+    .split(/(%[0-9a-f]{2})/i)
+    .map((part) =>
+      /^%[0-9a-f]{2}$/i.test(part)
+        ? `%${part
+            .slice(1)
+            .split("")
+            .map((char) => (/[a-f]/i.test(char) ? `[${char.toUpperCase()}${char.toLowerCase()}]` : char))
+            .join("")}`
+        : literal(part),
+    )
+    .join("");
 }
 
 const jsonEscape = /\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g;
-const shortEscape: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+const shortEscape: Record<string, string> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+};
 
 function base64(value: string): string {
   let binary = "";
@@ -60,7 +79,7 @@ export class SentSecrets {
     if (this.values.has(value)) return;
     this.values.add(value);
     this.matcher = undefined;
-    this.unicode ||= [...value].some(char => char.charCodeAt(0) > 127);
+    this.unicode ||= [...value].some((char) => char.charCodeAt(0) > 127);
     for (const recipient of this.recipients) recipient.form(value);
   }
 
@@ -85,7 +104,9 @@ export class SentSecrets {
   }
 
   /** Explicit secrets use the same floor as every other credential. */
-  secret(value: string): void { this.add(value); }
+  secret(value: string): void {
+    this.add(value);
+  }
 
   /** Structural fields must be refused, never repaired into different URLs. */
   contains(value: string, ignoreCase = false): boolean {
@@ -94,8 +115,9 @@ export class SentSecrets {
 
   containsUrl(value: string): boolean {
     const { hosts, components, joined } = credentialUrlViews(value);
-    return hosts.some((host) => this.contains(host, true)) ||
-      [...components, ...joined].some((view) => this.contains(view));
+    return (
+      hosts.some((host) => this.contains(host, true)) || [...components, ...joined].some((view) => this.contains(view))
+    );
   }
 
   header(value: string): void {
@@ -112,7 +134,9 @@ export class SentSecrets {
           this.add(decoded.slice(0, colon));
           this.secret(decoded.slice(colon + 1));
         }
-      } catch { /* An invalid Basic value is still registered verbatim. */ }
+      } catch {
+        /* An invalid Basic value is still registered verbatim. */
+      }
     } else this.secret(framed[1]!);
   }
 
@@ -135,8 +159,10 @@ export class SentSecrets {
     }
     // The OAuth SDK sends token requests as form data. Do not read a body
     // stream or clone a Request: registration must not consume its payload.
-    if (headers.get("content-type")?.startsWith("application/x-www-form-urlencoded") &&
-        (typeof init?.body === "string" || init?.body instanceof URLSearchParams)) {
+    if (
+      headers.get("content-type")?.startsWith("application/x-www-form-urlencoded") &&
+      (typeof init?.body === "string" || init?.body instanceof URLSearchParams)
+    ) {
       for (const [name, value] of new URLSearchParams(init.body)) {
         if (/^(?:client_secret|password)$/i.test(name)) this.secret(value);
         else if (/^(?:refresh_token|code|client_assertion)$/i.test(name)) this.add(value);
@@ -149,10 +175,10 @@ export class SentSecrets {
     const original = value;
     // Replace longer forms first so a raw token cannot leave its prefix or
     // encoded suffix behind. Literal matches only: ordinary diagnostics stay.
-    this.matcher ??= new RegExp([
-      literal(REDACTED),
-      ...[...this.values].sort((a, b) => b.length - a.length).map(wirePattern),
-    ].join("|"), "gu");
+    this.matcher ??= new RegExp(
+      [literal(REDACTED), ...[...this.values].sort((a, b) => b.length - a.length).map(wirePattern)].join("|"),
+      "gu",
+    );
     // A single pass never scans a newly inserted placeholder as credential
     // text. Protect existing placeholders when another boundary runs too.
     value = value.replace(this.matcher, REDACTED);
@@ -169,15 +195,29 @@ export class SentSecrets {
   /** Skill supporting files may contain arbitrary bytes, including credential echoes. */
   private blob(value: string): string {
     let binary: string;
-    try { binary = atob(value); } catch { return this.text(value); }
-    const forms = [...this.values].map(secret => Array.from(encoder.encode(secret), byte => String.fromCharCode(byte)).join(""));
-    const pattern = new RegExp(forms.sort((a, b) => b.length - a.length).map(literal).join("|"), "g");
+    try {
+      binary = atob(value);
+    } catch {
+      return this.text(value);
+    }
+    const forms = [...this.values].map((secret) =>
+      Array.from(encoder.encode(secret), (byte) => String.fromCharCode(byte)).join(""),
+    );
+    const pattern = new RegExp(
+      forms
+        .sort((a, b) => b.length - a.length)
+        .map(literal)
+        .join("|"),
+      "g",
+    );
     let redacted = this.text(binary.replace(pattern, REDACTED));
     if (this.unicode) {
       // atob returns byte-valued code units. A UTF-8 view also detects mixed
       // literal/JSON-escaped Unicode echoes. Never re-encode that view: an
       // arbitrary supporting file may contain invalid UTF-8 or a leading BOM.
-      const view = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(Uint8Array.from(redacted, char => char.charCodeAt(0)));
+      const view = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+        Uint8Array.from(redacted, (char) => char.charCodeAt(0)),
+      );
       if (this.text(view) !== view) redacted = REDACTED;
     }
     const encoded = redacted === binary ? value : btoa(redacted);
@@ -231,7 +271,8 @@ export class SentSecrets {
         ends = nextEnds.subarray(0, length);
         for (const match of view.matchAll(this.matcher!)) {
           const start = starts[match.index]!;
-          if (match[0] !== REDACTED && start < step) matches.push({ start, end: ends[match.index + match[0].length - 1]! });
+          if (match[0] !== REDACTED && start < step)
+            matches.push({ start, end: ends[match.index + match[0].length - 1]! });
         }
       }
       matches.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -282,9 +323,11 @@ export class SentSecrets {
       if (item === null || typeof item !== "object") return item;
       const prior = seen.get(item);
       if (prior) return prior;
-      const copy = Array.isArray(item) ? [] : item instanceof Error
-        ? Object.create(Object.getPrototypeOf(item)) as object
-        : {};
+      const copy = Array.isArray(item)
+        ? []
+        : item instanceof Error
+          ? (Object.create(Object.getPrototypeOf(item)) as object)
+          : {};
       seen.set(item, copy);
       for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(item))) {
         // V8 lazily renders Error.stack through an own accessor. Snapshot it
@@ -295,14 +338,22 @@ export class SentSecrets {
         }
         // JSON and errors carry data properties. A downstream-authored getter
         // is not a safe way to expose a diagnostic to an agent.
-        if (!("value" in descriptor)) { changed = true; continue; }
+        if (!("value" in descriptor)) {
+          changed = true;
+          continue;
+        }
         const redactedKey = text(key);
         const blob = key === "blob" && "uri" in item && typeof descriptor.value === "string";
-        const field = key === "content" ? this.joinedContent(descriptor.value)
-          : blob ? this.blob(descriptor.value as string) : descriptor.value;
+        const field =
+          key === "content"
+            ? this.joinedContent(descriptor.value)
+            : blob
+              ? this.blob(descriptor.value as string)
+              : descriptor.value;
         changed ||= field !== descriptor.value;
         Object.defineProperty(copy, redactedKey, {
-          ...descriptor, value: blob ? field : visit(field),
+          ...descriptor,
+          value: blob ? field : visit(field),
           ...(redactedKey !== key ? { configurable: true } : {}),
         });
       }
@@ -335,7 +386,10 @@ export class SentSecrets {
 
 export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
   let secrets = contexts.get(ctx);
-  if (!secrets) { secrets = new SentSecrets(); contexts.set(ctx, secrets); }
+  if (!secrets) {
+    secrets = new SentSecrets();
+    contexts.set(ctx, secrets);
+  }
   sentSecretsForRequest(ctx.requestScope ?? ctx).include(secrets);
   return secrets;
 }
@@ -366,18 +420,20 @@ export function agentOutputOperations<T extends Record<string, (...args: never[]
   create: (scope: object) => T,
   requestScope?: object,
 ): T {
-  return Object.fromEntries(Object.keys(create(requestScope ?? {})).map((name) => [
-    name,
-    async (...args: never[]) => {
-      const scope = requestScope ?? {};
-      const secrets = sentSecretsForRequest(scope);
-      try {
-        return redactAgentOutput(secrets, await create(scope)[name]!(...args));
-      } catch (error) {
-        throw redactAgentOutput(secrets, error);
-      }
-    },
-  ])) as T;
+  return Object.fromEntries(
+    Object.keys(create(requestScope ?? {})).map((name) => [
+      name,
+      async (...args: never[]) => {
+        const scope = requestScope ?? {};
+        const secrets = sentSecretsForRequest(scope);
+        try {
+          return redactAgentOutput(secrets, await create(scope)[name]!(...args));
+        } catch (error) {
+          throw redactAgentOutput(secrets, error);
+        }
+      },
+    ]),
+  ) as T;
 }
 
 /** Slot reads cover custom handlers too, including keys put in query strings. */
@@ -417,9 +473,11 @@ export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext,
   sentSecretsFor(ctx);
   const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redact(tools);
   if (redacted.some((tool, index) => tool.name !== tools[index]!.name)) {
-    throw new ConnectorCallError("connector_call_failed",
+    throw new ConnectorCallError(
+      "connector_call_failed",
       "Downstream catalog contains a tool name that echoes a sent credential; refusing the complete catalog.",
-      { retryable: false });
+      { retryable: false },
+    );
   }
   return redacted;
 }

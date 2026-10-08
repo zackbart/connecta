@@ -23,14 +23,14 @@ visibility or tool grants. Every meta-tool advertises `outputSchema` for its
 structured content; raw downstream MCP content stays in `content`. Direct
 results declare `format: "json" | "text"`, and value mode places the value in `data`.
 
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `execute_code` | `code`, `diagnostics?` | `{ result?, error?, hostCalls }`, plus diagnostics when asked |
-| `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
-| `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
-| `call_destructive_tool` | the same, plus `reason?` | the same |
-| `authorize_connector` | `connector`, `force?` | the class-specific handoff in [authorization recovery](#authorization-recovery) |
-| `skills` | `name?` | the listing when `name` is absent, that skill's markdown when it is present |
+| Tool                    | Arguments                                                                                                                           | Returns                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `execute_code`          | `code`, `diagnostics?`                                                                                                              | `{ result?, error?, hostCalls }`, plus diagnostics when asked                                                 |
+| `search_tools`          | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
+| `call_tool`             | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?`                                                   | the downstream result, bounded as [result representation](#result-representation) describes                   |
+| `call_destructive_tool` | the same, plus `reason?`                                                                                                            | the same                                                                                                      |
+| `authorize_connector`   | `connector`, `force?`                                                                                                               | the class-specific handoff in [authorization recovery](#authorization-recovery)                               |
+| `skills`                | `name?`                                                                                                                             | the listing when `name` is absent, that skill's markdown when it is present                                   |
 
 `limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
 `connecta.result`'s `offset` is a whole number of bytes ≥ 0 defaulting to 0 and
@@ -112,14 +112,14 @@ Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
 discovery. Both take the same arguments.
 
-| Argument | What it does |
-| --- | --- |
-| `query` | two to four action/object terms; empty or whitespace-only browses |
-| `connector` | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous |
-| `safety` | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe host approval policy or pool trust. |
-| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small |
-| `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures)) |
-| `fullDescriptions` | unabridged tool purposes, at the obvious cost |
+| Argument           | What it does                                                                                                                                                                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`            | two to four action/object terms; empty or whitespace-only browses                                                                                                                                                                                                       |
+| `connector`        | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous                                                                        |
+| `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe host approval policy or pool trust. |
+| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                            |
+| `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                     |
+| `fullDescriptions` | unabridged tool purposes, at the obvious cost                                                                                                                                                                                                                           |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -208,11 +208,11 @@ Search and describe results carry a `guide: "connector:<id>"` pointer and a
 `guideSummary`. A matching tool also carries `guideRequired: true` and
 `guideRequiredReasons` when Connecta can prove review is necessary:
 
-| Reason | Raised by | Survives exact schema expansion |
-| --- | --- | --- |
-| `connector_required` | the explicit `required: true` above | yes |
-| `approval_required` | an unannotated or write-capable tool | yes |
-| `schema_truncated` | a requested compact shape was capped | no — the describe that returns the exact shape clears it |
+| Reason               | Raised by                            | Survives exact schema expansion                          |
+| -------------------- | ------------------------------------ | -------------------------------------------------------- |
+| `connector_required` | the explicit `required: true` above  | yes                                                      |
+| `approval_required`  | an unannotated or write-capable tool | yes                                                      |
+| `schema_truncated`   | a requested compact shape was capped | no — the describe that returns the exact shape clears it |
 
 Describe reports whatever reasons remain in the same two fields. The boolean is
 an instruction, not a server-side gate: nothing refuses the call, so the agent
@@ -319,13 +319,13 @@ Newly stashed JSON and downstream content envelopes use compact serialization,
 and a lone text block stashes as its own text, so `connecta.result` offsets and
 totals describe exactly that text.
 
-| Bound | Value |
-| --- | --- |
-| Stashed result TTL | 15 minutes |
-| `results.maxStashBytes` | 8 MiB per `createConnecta` runtime |
-| `results.maxStashEntries` | 64 per runtime |
-| Top-level discovery result ceiling | 256,000 UTF-8 bytes |
-| Downstream MCP `isError` text | 512 UTF-8 bytes plus an `…` marker |
+| Bound                              | Value                              |
+| ---------------------------------- | ---------------------------------- |
+| Stashed result TTL                 | 15 minutes                         |
+| `results.maxStashBytes`            | 8 MiB per `createConnecta` runtime |
+| `results.maxStashEntries`          | 64 per runtime                     |
+| Top-level discovery result ceiling | 256,000 UTF-8 bytes                |
+| Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker |
 
 The discovery ceiling counts text, `structuredContent`, and JSON escaping
 together, because measuring one copy would advertise half the bytes the adapter
@@ -780,12 +780,12 @@ invented address once produced a 200 KB refusal against a 1 KB result cap. Every
 caller-authored string a refusal repeats therefore gets 512 UTF-8 bytes, and
 what happens over budget differs by field.
 
-| Field | Over 512 UTF-8 bytes |
-| --- | --- |
-| `args` on `call_tool` and `connecta.call` | dropped whole; `purpose` says to re-send what was just sent |
-| the attempted address | clamped with a trailing `…` |
-| unknown `connecta.result(id)`, `authorize_connector.connector`, `skills.name` | clamped the same way |
-| `search_tools.connector` | rejected with `invalid_args` before catalog lookup |
+| Field                                                                         | Over 512 UTF-8 bytes                                        |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `args` on `call_tool` and `connecta.call`                                     | dropped whole; `purpose` says to re-send what was just sent |
+| the attempted address                                                         | clamped with a trailing `…`                                 |
+| unknown `connecta.result(id)`, `authorize_connector.connector`, `skills.name` | clamped the same way                                        |
+| `search_tools.connector`                                                      | rejected with `invalid_args` before catalog lookup          |
 
 Arguments go all or nothing because the agent already holds what it sent, and
 half of it would describe a call nobody made. The address gets the opposite rule
@@ -821,7 +821,6 @@ the compact schema is needed, routed like any other miss: a program to
 the listed arguments and reissue the original operation. Which keyword a finding
 names, and what the local validator declines to evaluate, is
 [code mode](./code-mode.md#errors)'s `E8`.
-
 
 `repair` adds agent-only detail from that tool's published schema: accepted
 keys, received JSON types, enum values, numeric/length/item bounds, and known

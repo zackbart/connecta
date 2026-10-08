@@ -43,7 +43,10 @@ async function bundleSize(): Promise<PerfResultFile["bundle"]> {
   const grouped = new Map<string, number>();
   for (const [path, info] of Object.entries(inputs)) {
     const key = path.startsWith("node_modules/")
-      ? path.split("/").slice(0, path.split("/")[1]!.startsWith("@") ? 3 : 2).join("/")
+      ? path
+          .split("/")
+          .slice(0, path.split("/")[1]!.startsWith("@") ? 3 : 2)
+          .join("/")
       : path;
     grouped.set(key, (grouped.get(key) ?? 0) + info.bytesInOutput);
   }
@@ -85,8 +88,15 @@ async function latency(): Promise<PerfResultFile["latency"]> {
   };
   const operations: [string, () => Promise<void>][] = [
     ["tools/list", () => rpc("tools/list", {})],
-    ["search_tools (compact schemas)", () => rpc("tools/call", { name: "search_tools", arguments: { query: "search issues", includeSchemas: "compact" } })],
-    ["call_tool (one read)", () => rpc("tools/call", { name: "call_tool", arguments: { address: "chat.list_channels", args: {} } })],
+    [
+      "search_tools (compact schemas)",
+      () =>
+        rpc("tools/call", { name: "search_tools", arguments: { query: "search issues", includeSchemas: "compact" } }),
+    ],
+    [
+      "call_tool (one read)",
+      () => rpc("tools/call", { name: "call_tool", arguments: { address: "chat.list_channels", args: {} } }),
+    ],
     [
       "execute_code (search + 2 reads + reduce)",
       () =>

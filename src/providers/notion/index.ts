@@ -2,11 +2,7 @@ import { skill } from "./skill.generated.js";
 import { apiConnector as api, type ApiTool } from "../../connectors/api-connector.js";
 import { remoteMcp } from "../../connectors/remote-mcp.js";
 import { reviewedCatalog } from "../../catalog-drift.js";
-import {
-  guardedFetch,
-  retryAfterMs,
-  type GuardedRequest,
-} from "../../connectors/guarded-fetch.js";
+import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
 import type {
   Connector,
@@ -125,10 +121,7 @@ export type NotionConnectionOptions = NotionOptions | NotionMcpOptions;
 // Transport and typed failures
 // ---------------------------------------------------------------------------
 
-type NotionRequest = Pick<
-  GuardedRequest,
-  "method" | "path" | "query" | "body"
->;
+type NotionRequest = Pick<GuardedRequest, "method" | "path" | "query" | "body">;
 
 /**
  * Map to what the caller should do next, not to what Notion's `code` says
@@ -171,11 +164,9 @@ function notionFailure(
   }
   if (status === 529) {
     // Notion documents 529 alongside 429: back off and respect Retry-After.
-    return new ConnectorCallError(
-      "unavailable",
-      `${labelled} Notion is overloaded; retry after the reported window.`,
-      { retryAfterMs: retryAfter ?? 5_000 },
-    );
+    return new ConnectorCallError("unavailable", `${labelled} Notion is overloaded; retry after the reported window.`, {
+      retryAfterMs: retryAfter ?? 5_000,
+    });
   }
   if (status === 401) {
     return new ConnectorCallError(
@@ -251,22 +242,12 @@ const send = guardedFetch({
   },
 });
 
-async function notionRequest(
-  ctx: ConnectorContext,
-  request: NotionRequest,
-): Promise<any> {
+async function notionRequest(ctx: ConnectorContext, request: NotionRequest): Promise<any> {
   return await send(request, ctx, async (response) => {
     const parsed = await response.jsonResult();
-    const payload =
-      "value" in parsed
-        ? (parsed.value as Record<string, unknown> | undefined)
-        : undefined;
+    const payload = "value" in parsed ? (parsed.value as Record<string, unknown> | undefined) : undefined;
     if (!response.ok) {
-      throw notionFailure(
-        response.status,
-        payload,
-        response.headers,
-      );
+      throw notionFailure(response.status, payload, response.headers);
     }
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
       throw new ConnectorCallError(
@@ -293,9 +274,7 @@ async function notionRequest(
 /** Concatenate a rich-text array to its plain text. Safe for every variant. */
 function plainText(value: unknown): string {
   if (!Array.isArray(value)) return "";
-  return value
-    .map((run: any) => (typeof run?.plain_text === "string" ? run.plain_text : ""))
-    .join("");
+  return value.map((run: any) => (typeof run?.plain_text === "string" ? run.plain_text : "")).join("");
 }
 
 /** Wrap a plain string as the single-run rich-text array Notion expects. */
@@ -430,16 +409,11 @@ interface ProjectedProperties {
   truncated: TruncatedProperty[];
 }
 
-function projectProperties(
-  source: unknown,
-  select: string[] | undefined,
-): ProjectedProperties {
+function projectProperties(source: unknown, select: string[] | undefined): ProjectedProperties {
   const properties: Record<string, unknown> = {};
   const truncated: TruncatedProperty[] = [];
   if (!source || typeof source !== "object") return { properties, truncated };
-  for (const [name, value] of Object.entries(
-    source as Record<string, unknown>,
-  )) {
+  for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
     if (select && !select.includes(name)) continue;
     properties[name] = projectPropertyValue(value);
     if ((value as any)?.has_more === true) {
@@ -513,8 +487,7 @@ function projectSearchHit(hit: any): Record<string, unknown> {
   return {
     id: hit?.id ?? null,
     object: hit?.object ?? "page",
-    title:
-      hit?.object === "page" ? pageTitle(hit?.properties) : plainText(hit?.title),
+    title: hit?.object === "page" ? pageTitle(hit?.properties) : plainText(hit?.title),
     url: hit?.url ?? null,
     parent: parentRef(hit?.parent),
     last_edited_time: hit?.last_edited_time ?? null,
@@ -616,16 +589,10 @@ function projectSchemaProperty(property: any): Record<string, unknown> {
   };
   const payload = type ? property?.[type] : undefined;
   if (type === "select" || type === "multi_select") {
-    projected["options"] = (payload?.options ?? []).map(
-      (option: any) => option?.name ?? null,
-    );
+    projected["options"] = (payload?.options ?? []).map((option: any) => option?.name ?? null);
   } else if (type === "status") {
-    projected["options"] = (payload?.options ?? []).map(
-      (option: any) => option?.name ?? null,
-    );
-    projected["groups"] = (payload?.groups ?? []).map(
-      (group: any) => group?.name ?? null,
-    );
+    projected["options"] = (payload?.options ?? []).map((option: any) => option?.name ?? null);
+    projected["groups"] = (payload?.groups ?? []).map((group: any) => group?.name ?? null);
   } else if (type === "relation") {
     // Requests must send data_source_id; responses carry both. Give the caller
     // the one it is allowed to write with.
@@ -654,8 +621,7 @@ function projectSchemaProperty(property: any): Record<string, unknown> {
 // live in the usage guide, which is fetched once rather than per tool.
 const RAW_PROPERTY: JsonSchema = {
   type: "boolean",
-  description:
-    "Return Notion's much larger unprojected response instead of the lean projection.",
+  description: "Return Notion's much larger unprojected response instead of the lean projection.",
 };
 
 const PAGE_SIZE_PROPERTY: JsonSchema = {
@@ -667,15 +633,13 @@ const PAGE_SIZE_PROPERTY: JsonSchema = {
 
 const START_CURSOR_PROPERTY: JsonSchema = {
   type: "string",
-  description:
-    "Opaque next_cursor from the previous response. Pass it back verbatim.",
+  description: "Opaque next_cursor from the previous response. Pass it back verbatim.",
 };
 
 const PROPERTY_SELECT: JsonSchema = {
   type: "array",
   items: { type: "string" },
-  description:
-    "Return only these property names. Omit for all. The cheapest way to shrink a result.",
+  description: "Return only these property names. Omit for all. The cheapest way to shrink a result.",
 };
 
 function listOutputSchema(itemSchema: JsonSchema): JsonSchema {
@@ -698,8 +662,7 @@ function listOutputSchema(itemSchema: JsonSchema): JsonSchema {
 
 const PAGE_OUTPUT_SCHEMA: JsonSchema = {
   type: "object",
-  description:
-    "Projected page. With raw: true this is Notion's full page object instead.",
+  description: "Projected page. With raw: true this is Notion's full page object instead.",
   properties: {
     id: { type: "string" },
     object: { type: "string" },
@@ -802,20 +765,14 @@ const COMMENT_OUTPUT_SCHEMA: JsonSchema = {
 // Tools
 // ---------------------------------------------------------------------------
 
-function resolvePageSize(
-  requested: unknown,
-  fallback: number,
-): number {
+function resolvePageSize(requested: unknown, fallback: number): number {
   if (typeof requested === "number" && Number.isFinite(requested)) {
     return Math.min(Math.max(Math.trunc(requested), 1), MAX_PAGE_SIZE);
   }
   return fallback;
 }
 
-function listEnvelope(
-  payload: any,
-  results: unknown[],
-): Record<string, unknown> {
+function listEnvelope(payload: any, results: unknown[]): Record<string, unknown> {
   return {
     results,
     has_more: payload?.has_more === true,
@@ -823,17 +780,11 @@ function listEnvelope(
   };
 }
 
-function mappedListEnvelope(
-  payload: any,
-  project: (item: any) => unknown,
-): Record<string, unknown> {
+function mappedListEnvelope(payload: any, project: (item: any) => unknown): Record<string, unknown> {
   return listEnvelope(payload, (payload?.results ?? []).map(project));
 }
 
-function pagination(
-  args: Record<string, any>,
-  defaultPageSize: number,
-): { page_size: number; start_cursor?: string } {
+function pagination(args: Record<string, any>, defaultPageSize: number): { page_size: number; start_cursor?: string } {
   return {
     page_size: resolvePageSize(args.page_size, defaultPageSize),
     ...(args.start_cursor ? { start_cursor: args.start_cursor } : {}),
@@ -841,19 +792,12 @@ function pagination(
 }
 
 /** Exactly-one-of validation, phrased so the agent knows what to send next. */
-function requireExactlyOne(
-  provided: Array<[string, unknown]>,
-  hint: string,
-): [string, unknown] {
-  const present = provided.filter(
-    ([, value]) => value !== undefined && value !== null && value !== "",
-  );
+function requireExactlyOne(provided: Array<[string, unknown]>, hint: string): [string, unknown] {
+  const present = provided.filter(([, value]) => value !== undefined && value !== null && value !== "");
   if (present.length !== 1) {
     throw new ConnectorCallError(
       "invalid_args",
-      `Provide exactly one of ${provided
-        .map(([name]) => name)
-        .join(", ")}. ${hint}`,
+      `Provide exactly one of ${provided.map(([name]) => name).join(", ")}. ${hint}`,
     );
   }
   return present[0] as [string, unknown];
@@ -873,14 +817,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         properties: {
           query: {
             type: "string",
-            description:
-              "Title substring to match. Omit to list everything shared with the integration.",
+            description: "Title substring to match. Omit to list everything shared with the integration.",
           },
           object_type: {
             type: "string",
             enum: ["page", "data_source"],
-            description:
-              "Restrict results to pages or to data sources. Omit for both.",
+            description: "Restrict results to pages or to data sources. Omit for both.",
           },
           sort: {
             type: "string",
@@ -973,8 +915,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         properties: {
           block_id: {
             type: "string",
-            description:
-              "Page id, or any block id to read that block's children. A page id is a valid block id.",
+            description: "Page id, or any block id to read that block's children. A page id is a valid block id.",
           },
           depth: {
             type: "integer",
@@ -996,10 +937,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       outputSchema: {
         ...listOutputSchema(BLOCK_OUTPUT_SCHEMA),
         properties: {
-          ...(listOutputSchema(BLOCK_OUTPUT_SCHEMA)["properties"] as Record<
-            string,
-            JsonSchema
-          >),
+          ...(listOutputSchema(BLOCK_OUTPUT_SCHEMA)["properties"] as Record<string, JsonSchema>),
           truncated: {
             type: "boolean",
             description:
@@ -1078,8 +1016,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         properties: {
           type: {
             type: ["string", "null"],
-            description:
-              "The property's own type, never the \"property_item\" envelope.",
+            description: 'The property\'s own type, never the "property_item" envelope.',
           },
           value: { description: "Flattened value for a single-value property." },
           results: {
@@ -1094,9 +1031,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       handler: async (args, ctx) => {
         const payload = await notionRequest(ctx, {
           method: "GET",
-          path: `/v1/pages/${encodeURIComponent(
-            args.page_id,
-          )}/properties/${encodeURIComponent(args.property_id)}`,
+          path: `/v1/pages/${encodeURIComponent(args.page_id)}/properties/${encodeURIComponent(args.property_id)}`,
           query: pagination(args, defaultPageSize),
         });
         if (args.raw) return payload;
@@ -1138,8 +1073,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           is_inline: { type: "boolean" },
           data_sources: {
             type: "array",
-            description:
-              "The queryable data sources. Most databases have exactly one.",
+            description: "The queryable data sources. Most databases have exactly one.",
             items: {
               type: "object",
               properties: { id: { type: "string" }, name: { type: "string" } },
@@ -1178,8 +1112,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         properties: {
           data_source_id: {
             type: "string",
-            description:
-              "Data source id from integration_get_database or integration_search, not a database id.",
+            description: "Data source id from integration_get_database or integration_search, not a database id.",
           },
           raw: RAW_PROPERTY,
         },
@@ -1194,13 +1127,11 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           database_id: { type: ["string", "null"] },
           title_property: {
             type: ["string", "null"],
-            description:
-              "Name of the title-typed property. integration_create_page needs this to title a row.",
+            description: "Name of the title-typed property. integration_create_page needs this to title a row.",
           },
           properties: {
             type: "object",
-            description:
-              "Property name to { id, type, options?, relation_data_source_id? }.",
+            description: "Property name to { id, type, options?, relation_data_source_id? }.",
           },
         },
         required: ["id", "name", "properties"],
@@ -1213,9 +1144,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         if (args.raw) return payload;
         const properties: Record<string, unknown> = {};
         let titleProperty: string | null = null;
-        for (const [name, property] of Object.entries(
-          (payload?.properties ?? {}) as Record<string, any>,
-        )) {
+        for (const [name, property] of Object.entries((payload?.properties ?? {}) as Record<string, any>)) {
           properties[name] = projectSchemaProperty(property);
           if (property?.type === "title") titleProperty = name;
         }
@@ -1284,15 +1213,11 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         if (args.sorts) body["sorts"] = args.sorts;
         const payload = await notionRequest(ctx, {
           method: "POST",
-          path: `/v1/data_sources/${encodeURIComponent(
-            args.data_source_id,
-          )}/query`,
+          path: `/v1/data_sources/${encodeURIComponent(args.data_source_id)}/query`,
           body,
         });
         if (args.raw) return payload;
-        return mappedListEnvelope(payload, (row: any) =>
-          projectPage(row, args.properties),
-        );
+        return mappedListEnvelope(payload, (row: any) => projectPage(row, args.properties));
       },
     },
     {
@@ -1402,8 +1327,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         properties: {
           parent_page_id: {
             type: "string",
-            description:
-              "Create as a child page of this page. Exactly one parent id, this or parent_data_source_id.",
+            description: "Create as a child page of this page. Exactly one parent id, this or parent_data_source_id.",
           },
           parent_data_source_id: {
             type: "string",
@@ -1419,18 +1343,16 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           properties: {
             type: "object",
             description:
-              "Additional Notion property values, keyed by property name and in Notion's own wrapped form, e.g. {\"Status\":{\"status\":{\"name\":\"Todo\"}}}. Read integration_get_data_source_schema first.",
+              'Additional Notion property values, keyed by property name and in Notion\'s own wrapped form, e.g. {"Status":{"status":{"name":"Todo"}}}. Read integration_get_data_source_schema first.',
           },
           markdown: {
             type: "string",
-            description:
-              "Page body as Notion-flavored Markdown. Mutually exclusive with children.",
+            description: "Page body as Notion-flavored Markdown. Mutually exclusive with children.",
           },
           children: {
             type: "array",
             maxItems: MAX_CHILDREN_PER_REQUEST,
-            description:
-              "Page body as raw Notion block objects. Mutually exclusive with markdown.",
+            description: "Page body as raw Notion block objects. Mutually exclusive with markdown.",
             items: { type: "object" },
           },
           icon: { type: "string", description: "Emoji to use as the page icon." },
@@ -1498,8 +1420,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
             type: "array",
             items: { type: "string" },
             maxItems: MAX_CHILDREN_PER_REQUEST,
-            description:
-              "Plain-text paragraphs, one block each. Mutually exclusive with children.",
+            description: "Plain-text paragraphs, one block each. Mutually exclusive with children.",
           },
           children: {
             type: "array",
@@ -1511,8 +1432,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           position: {
             type: "string",
             enum: ["end", "start", "after_block"],
-            description:
-              'Where to insert. Defaults to "end". "after_block" requires after_block_id.',
+            description: 'Where to insert. Defaults to "end". "after_block" requires after_block_id.',
           },
           after_block_id: {
             type: "string",
@@ -1550,19 +1470,13 @@ function buildTools(defaultPageSize: number): ApiTool[] {
               }))
             : (value as unknown[]);
         if (children.length === 0) {
-          throw new ConnectorCallError(
-            "invalid_args",
-            "Nothing to append: provide at least one block.",
-          );
+          throw new ConnectorCallError("invalid_args", "Nothing to append: provide at least one block.");
         }
 
         const body: Record<string, unknown> = { children };
         if (args.position === "after_block") {
           if (!args.after_block_id) {
-            throw new ConnectorCallError(
-              "invalid_args",
-              'position "after_block" requires after_block_id.',
-            );
+            throw new ConnectorCallError("invalid_args", 'position "after_block" requires after_block_id.');
           }
           body["position"] = {
             type: "after_block",
@@ -1577,9 +1491,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           path: `/v1/blocks/${encodeURIComponent(args.block_id)}/children`,
           body,
         });
-        const results = (payload?.results ?? []).map((block: any) =>
-          projectBlock(block, 0),
-        );
+        const results = (payload?.results ?? []).map((block: any) => projectBlock(block, 0));
         return { appended: results.length, results };
       },
     },
@@ -1625,10 +1537,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           };
         }
         if (Object.keys(properties).length === 0 && args.icon === undefined) {
-          throw new ConnectorCallError(
-            "invalid_args",
-            "Nothing to update: provide title, properties, or icon.",
-          );
+          throw new ConnectorCallError("invalid_args", "Nothing to update: provide title, properties, or icon.");
         }
         const body: Record<string, unknown> = {};
         if (Object.keys(properties).length > 0) body["properties"] = properties;
@@ -1655,8 +1564,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           page_id: { type: "string", description: "Notion page id." },
           restore: {
             type: "boolean",
-            description:
-              "Restore the page out of the trash instead of moving it in.",
+            description: "Restore the page out of the trash instead of moving it in.",
           },
         },
         required: ["page_id"],
@@ -1698,8 +1606,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           },
           discussion_id: {
             type: "string",
-            description:
-              "Reply to this existing discussion, from integration_list_comments.",
+            description: "Reply to this existing discussion, from integration_list_comments.",
           },
           text: { type: "string", description: "Comment body as plain text." },
         },
@@ -1716,16 +1623,11 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           "Comment on a page to start a discussion, or name a discussion_id to reply to one.",
         );
         if (!String(args.text).trim()) {
-          throw new ConnectorCallError(
-            "invalid_args",
-            "A comment needs non-empty text.",
-          );
+          throw new ConnectorCallError("invalid_args", "A comment needs non-empty text.");
         }
         const body: Record<string, unknown> = {
           rich_text: richText(args.text),
-          ...(kind === "page_id"
-            ? { parent: { type: "page_id", page_id: value } }
-            : { discussion_id: value }),
+          ...(kind === "page_id" ? { parent: { type: "page_id", page_id: value } } : { discussion_id: value }),
         };
         return projectComment(
           await notionRequest(ctx, {
@@ -1754,9 +1656,7 @@ function apiUsageGuide(purpose: string, instructions: string | undefined): strin
   return `# Notion usage
 
 Workspace purpose: ${purpose}${skill.fragments.guide_0}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
@@ -1768,61 +1668,144 @@ Workspace purpose: ${purpose}${skill.fragments.guide_0}${
  */
 const NOTION_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
-    "notion-search": {"verdict": "read", "reason": "Retrieves Notion  information without changing vendor state."},
-    "notion-search-skills": {"verdict": "read", "reason": "Retrieves Notion skills information without changing vendor state."},
-    "notion-fetch": {"verdict": "read", "reason": "Retrieves Notion fetch information without changing vendor state."},
-    "notion-download-attachment": {"verdict": "read", "reason": "Reads attachment content; creating uploads and attachments uses separate writes."},
-    "notion-query-data-sources": {"verdict": "read", "reason": "Retrieves Notion query data sources information without changing vendor state."},
-    "notion-query-meeting-notes": {"verdict": "read", "reason": "Retrieves Notion query meeting notes information without changing vendor state."},
-    "notion-search-agents": {"verdict": "read", "reason": "Retrieves Notion agents information without changing vendor state."},
-    "notion-list-agents": {"verdict": "read", "reason": "Retrieves Notion agents information without changing vendor state."},
-    "notion-query-sessions": {"verdict": "read", "reason": "Retrieves Notion query sessions information without changing vendor state."},
-    "notion-search-sessions": {"verdict": "read", "reason": "Retrieves Notion sessions information without changing vendor state."},
-    "notion-get-session-status": {"verdict": "read", "reason": "Retrieves Notion session status information without changing vendor state."},
-    "notion-wait-session": {"verdict": "read", "reason": "Waits for existing session state; it does not start or message a session."},
-    "notion-list-session-events": {"verdict": "read", "reason": "Retrieves Notion session events information without changing vendor state."},
-    "notion-read-session-event": {"verdict": "read", "reason": "Retrieves Notion read session event information without changing vendor state."},
-    "notion-get-comments": {"verdict": "read", "reason": "Retrieves Notion comments information without changing vendor state."},
-    "notion-get-teams": {"verdict": "read", "reason": "Retrieves Notion teams information without changing vendor state."},
-    "notion-get-users": {"verdict": "read", "reason": "Retrieves Notion users information without changing vendor state."},
-    "notion-get-async-task": {"verdict": "read", "reason": "Retrieves Notion async task information without changing vendor state."},
-    "notion-create-file-upload": {"verdict": "write", "reason": "Allocates upload state for a workspace file."},
-    "notion-create-attachment": {"verdict": "write", "reason": "create attachment creates or appends Notion state; it has side effects."},
-    "notion-create-pages": {"verdict": "write", "reason": "create pages creates or appends Notion state; it has side effects."},
-    "notion-duplicate-page": {"verdict": "write", "reason": "duplicate page creates or appends Notion state; it has side effects."},
-    "notion-create-database": {"verdict": "write", "reason": "create database creates or appends Notion state; it has side effects."},
-    "notion-create-folder": {"verdict": "write", "reason": "create folder creates or appends Notion state; it has side effects."},
-    "notion-create-view": {"verdict": "write", "reason": "create view creates or appends Notion state; it has side effects."},
-    "notion-spawn-session": {"verdict": "write", "reason": "Starts asynchronous agent work and creates session state."},
-    "notion-send-message-to-session": {"verdict": "write", "reason": "Appends a message to a running session and may trigger further work."},
-    "notion-create-comment": {"verdict": "write", "reason": "create comment creates or appends Notion state; it has side effects."},
-    "notion-update-page": {"verdict": "destructive", "reason": "update page changes existing Notion state or removes it."},
-    "notion-convert-page-to-skill": {"verdict": "destructive", "reason": "Changes the role and content of an existing workspace page."},
-    "notion-move-pages": {"verdict": "destructive", "reason": "move pages changes existing Notion state or removes it."},
-    "notion-update-data-source": {"verdict": "destructive", "reason": "update data source changes existing Notion state or removes it."},
-    "notion-update-view": {"verdict": "destructive", "reason": "update view changes existing Notion state or removes it."},
-    "notion-stop-session": {"verdict": "destructive", "reason": "Stops an existing session and interrupts its work."},
+    "notion-search": { "verdict": "read", "reason": "Retrieves Notion  information without changing vendor state." },
+    "notion-search-skills": {
+      "verdict": "read",
+      "reason": "Retrieves Notion skills information without changing vendor state.",
+    },
+    "notion-fetch": {
+      "verdict": "read",
+      "reason": "Retrieves Notion fetch information without changing vendor state.",
+    },
+    "notion-download-attachment": {
+      "verdict": "read",
+      "reason": "Reads attachment content; creating uploads and attachments uses separate writes.",
+    },
+    "notion-query-data-sources": {
+      "verdict": "read",
+      "reason": "Retrieves Notion query data sources information without changing vendor state.",
+    },
+    "notion-query-meeting-notes": {
+      "verdict": "read",
+      "reason": "Retrieves Notion query meeting notes information without changing vendor state.",
+    },
+    "notion-search-agents": {
+      "verdict": "read",
+      "reason": "Retrieves Notion agents information without changing vendor state.",
+    },
+    "notion-list-agents": {
+      "verdict": "read",
+      "reason": "Retrieves Notion agents information without changing vendor state.",
+    },
+    "notion-query-sessions": {
+      "verdict": "read",
+      "reason": "Retrieves Notion query sessions information without changing vendor state.",
+    },
+    "notion-search-sessions": {
+      "verdict": "read",
+      "reason": "Retrieves Notion sessions information without changing vendor state.",
+    },
+    "notion-get-session-status": {
+      "verdict": "read",
+      "reason": "Retrieves Notion session status information without changing vendor state.",
+    },
+    "notion-wait-session": {
+      "verdict": "read",
+      "reason": "Waits for existing session state; it does not start or message a session.",
+    },
+    "notion-list-session-events": {
+      "verdict": "read",
+      "reason": "Retrieves Notion session events information without changing vendor state.",
+    },
+    "notion-read-session-event": {
+      "verdict": "read",
+      "reason": "Retrieves Notion read session event information without changing vendor state.",
+    },
+    "notion-get-comments": {
+      "verdict": "read",
+      "reason": "Retrieves Notion comments information without changing vendor state.",
+    },
+    "notion-get-teams": {
+      "verdict": "read",
+      "reason": "Retrieves Notion teams information without changing vendor state.",
+    },
+    "notion-get-users": {
+      "verdict": "read",
+      "reason": "Retrieves Notion users information without changing vendor state.",
+    },
+    "notion-get-async-task": {
+      "verdict": "read",
+      "reason": "Retrieves Notion async task information without changing vendor state.",
+    },
+    "notion-create-file-upload": { "verdict": "write", "reason": "Allocates upload state for a workspace file." },
+    "notion-create-attachment": {
+      "verdict": "write",
+      "reason": "create attachment creates or appends Notion state; it has side effects.",
+    },
+    "notion-create-pages": {
+      "verdict": "write",
+      "reason": "create pages creates or appends Notion state; it has side effects.",
+    },
+    "notion-duplicate-page": {
+      "verdict": "write",
+      "reason": "duplicate page creates or appends Notion state; it has side effects.",
+    },
+    "notion-create-database": {
+      "verdict": "write",
+      "reason": "create database creates or appends Notion state; it has side effects.",
+    },
+    "notion-create-folder": {
+      "verdict": "write",
+      "reason": "create folder creates or appends Notion state; it has side effects.",
+    },
+    "notion-create-view": {
+      "verdict": "write",
+      "reason": "create view creates or appends Notion state; it has side effects.",
+    },
+    "notion-spawn-session": {
+      "verdict": "write",
+      "reason": "Starts asynchronous agent work and creates session state.",
+    },
+    "notion-send-message-to-session": {
+      "verdict": "write",
+      "reason": "Appends a message to a running session and may trigger further work.",
+    },
+    "notion-create-comment": {
+      "verdict": "write",
+      "reason": "create comment creates or appends Notion state; it has side effects.",
+    },
+    "notion-update-page": {
+      "verdict": "destructive",
+      "reason": "update page changes existing Notion state or removes it.",
+    },
+    "notion-convert-page-to-skill": {
+      "verdict": "destructive",
+      "reason": "Changes the role and content of an existing workspace page.",
+    },
+    "notion-move-pages": {
+      "verdict": "destructive",
+      "reason": "move pages changes existing Notion state or removes it.",
+    },
+    "notion-update-data-source": {
+      "verdict": "destructive",
+      "reason": "update data source changes existing Notion state or removes it.",
+    },
+    "notion-update-view": {
+      "verdict": "destructive",
+      "reason": "update view changes existing Notion state or removes it.",
+    },
+    "notion-stop-session": { "verdict": "destructive", "reason": "Stops an existing session and interrupts its work." },
   },
 };
 
-function mcpUsageGuide(
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function mcpUsageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `${skill.fragments.guide_1}${purpose}${skill.fragments.guide_2}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
-function notionMcp(
-  id: string,
-  purpose: string,
-  options: NotionMcpOptions,
-  provider: ProviderContext,
-): Connector {
+function notionMcp(id: string, purpose: string, options: NotionMcpOptions, provider: ProviderContext): Connector {
   const connector = remoteMcp(id, {
     url: NOTION_MCP_ENDPOINT,
     ...provider.connectorOptions,
@@ -1841,20 +1824,10 @@ function notionMcp(
   return connector;
 }
 
-function notionApi(
-  id: string,
-  purpose: string,
-  options: NotionApiOptions,
-): Connector {
+function notionApi(id: string, purpose: string, options: NotionApiOptions): Connector {
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
-  if (
-    !Number.isInteger(defaultPageSize) ||
-    defaultPageSize < 1 ||
-    defaultPageSize > MAX_PAGE_SIZE
-  ) {
-    throw new Error(
-      `notion() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`,
-    );
+  if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
+    throw new Error(`notion() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
 
   return api(id, {
@@ -1880,10 +1853,7 @@ function notionApi(
       } catch (error) {
         return {
           ok: false,
-          message:
-            error instanceof ConnectorCallError
-              ? error.message
-              : "Notion rejected the token.",
+          message: error instanceof ConnectorCallError ? error.message : "Notion rejected the token.",
         };
       }
     },
@@ -1895,21 +1865,22 @@ function notionApi(
       required: true,
     },
     tools: buildTools(defaultPageSize),
-    ...(options.maxResultBytes !== undefined
-      ? { maxResultBytes: options.maxResultBytes }
-      : {}),
+    ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
   });
 }
 
-
 /** The closed options notion() accepts; see `assertKnownOptions`. */
-const NOTION_OPTIONS = variants("surface", {
-  api: optionsOf<NotionApiOptions>()({
-    ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
-    ...keys("surface", "credentialLabel", "defaultPageSize"),
-  }).shape,
-  mcp: optionsOf<NotionMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
-}, "mcp");
+const NOTION_OPTIONS = variants(
+  "surface",
+  {
+    api: optionsOf<NotionApiOptions>()({
+      ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
+      ...keys("surface", "credentialLabel", "defaultPageSize"),
+    }).shape,
+    mcp: optionsOf<NotionMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
+  },
+  "mcp",
+);
 
 /** A maintained Notion connection using the selected provider interface. */
 export const notion = defineProvider<NotionConnectionOptions>({
@@ -1917,7 +1888,7 @@ export const notion = defineProvider<NotionConnectionOptions>({
   title: "Notion",
   kind: "composed",
   readme: "Notion",
-  bundle: {"baselineGzip":145300,"maxGzip":205300},
+  bundle: { "baselineGzip": 145300, "maxGzip": 205300 },
   skill,
   options: NOTION_OPTIONS,
   classify: NOTION_MCP_CLASSIFICATION,
@@ -1926,13 +1897,8 @@ export const notion = defineProvider<NotionConnectionOptions>({
 
 function notionConnector(id: string, options: NotionConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  return options.surface === "api"
-    ? notionApi(id, purpose, options)
-    : notionMcp(id, purpose, options, provider);
+  return options.surface === "api" ? notionApi(id, purpose, options) : notionMcp(id, purpose, options, provider);
 }
 
 /** @deprecated Read `notion.definition.classify` instead. Kept for existing imports. */
-export const NOTION_MCP_VETTED_CATALOG = reviewedCatalog(
-  notion.definition.classify!,
-  'defineProvider("notion")',
-);
+export const NOTION_MCP_VETTED_CATALOG = reviewedCatalog(notion.definition.classify!, 'defineProvider("notion")');

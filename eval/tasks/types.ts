@@ -58,7 +58,10 @@ export interface ReferenceContext {
   world: World;
   /** The reference's final answer, kept separate from tool output. */
   answer(text: string): void;
-  call(tool: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string; structured: unknown; content: Record<string, unknown>[] }>;
+  call(
+    tool: string,
+    args: Record<string, unknown>,
+  ): Promise<{ isError: boolean; text: string; structured: unknown; content: Record<string, unknown>[] }>;
   /** Run the next follow-up's operator step, as the runner would between turns. */
   nextTurn(): Promise<boolean>;
 }

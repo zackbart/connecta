@@ -102,9 +102,7 @@
         "format": "inline",
         "prefix": "notion-"
       },
-      "endpoints": [
-        "https://mcp.notion.com/mcp"
-      ],
+      "endpoints": ["https://mcp.notion.com/mcp"],
       "reviewed": [
         "notion-search",
         "notion-search-skills",

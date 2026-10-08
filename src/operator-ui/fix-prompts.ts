@@ -40,8 +40,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
     ],
   },
   credential_required: {
-    problem:
-      "A connector with an operator-managed credential slot has no usable credential stored.",
+    problem: "A connector with an operator-managed credential slot has no usable credential stored.",
     steps: [
       "An operator with credential administration can add the credential on the operator page; that needs no code change.",
       "If nobody can, grant credential administration through the deployment's identity config (credentialAdministration for shared auth, personalConnection for personal auth), which is denied by default.",
@@ -66,8 +65,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
     ],
   },
   credential_unreadable: {
-    problem:
-      "A stored credential exists but could not be read or decrypted.",
+    problem: "A stored credential exists but could not be read or decrypted.",
     steps: [
       "Check that the credential vault's encryption key in the deployment environment is the one the credential was stored with; a rotated or missing key makes every stored value unreadable.",
       "Check the storage adapter backing the vault is reachable from the deployment.",
@@ -83,8 +81,7 @@ const CATALOGUE: Readonly<Record<FixPromptKind, FixPromptSpec>> = {
     ],
   },
   oauth_action_failed: {
-    problem:
-      "Restarting or disconnecting a connector's downstream OAuth from the operator page failed.",
+    problem: "Restarting or disconnecting a connector's downstream OAuth from the operator page failed.",
     steps: [
       "Check that the connector implements startAuth and disconnectAuth, and that the storage holding its OAuth state is writable.",
       "Check the connector's OAuth client configuration, including the authorization server it discovers or is given.",

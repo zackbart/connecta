@@ -11,10 +11,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repositoryRoot = resolvePath(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
+const repositoryRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
 
 /**
@@ -36,15 +33,7 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
  * here too, but not ignored: it is recorded as its own field on the manifest
  * row so the check can report the transition rather than the state.
  */
-const PROSE_KEYS = new Set([
-  "description",
-  "summary",
-  "example",
-  "examples",
-  "externalDocs",
-  "title",
-  "deprecated",
-]);
+const PROSE_KEYS = new Set(["description", "summary", "example", "examples", "externalDocs", "title", "deprecated"]);
 
 function usage(message) {
   if (message) console.error(`drift:check: ${message}`);
@@ -103,11 +92,7 @@ function parseArguments(argv) {
     else if (argument === "--provider") options.providers.push(next());
     else if (argument === "--provider-dir" || argument === "--manifest-dir")
       options.providerDirectory = resolvePath(next());
-    else if (
-      argument === "--spec" ||
-      argument === "--tool-reference" ||
-      argument === "--setup-reference"
-    ) {
+    else if (argument === "--spec" || argument === "--tool-reference" || argument === "--setup-reference") {
       const value = next();
       const separator = value.indexOf("=");
       if (separator < 1 || separator === value.length - 1) usage(`${argument} expects <provider>=<file or url>`);
@@ -145,8 +130,12 @@ class EvidenceError extends Error {}
 
 function errorFinding(error) {
   return {
-    kind: error instanceof EvidenceError ? "evidence-invalid"
-      : error instanceof UnavailableError ? "unavailable" : "parser-error",
+    kind:
+      error instanceof EvidenceError
+        ? "evidence-invalid"
+        : error instanceof UnavailableError
+          ? "unavailable"
+          : "parser-error",
     detail: error instanceof Error ? error.message : String(error),
   };
 }
@@ -161,9 +150,10 @@ function checkMode(type) {
 /** Discover only direct provider folders carrying drift.json; shared code is absent. */
 async function discoverRecords(directory) {
   const providers = [];
-  const entries = directory === defaultProviderDirectory
-    ? (await discoverProviders(repositoryRoot)).map(({ name }) => ({ name, isDirectory: () => true }))
-    : await readdir(directory, { withFileTypes: true });
+  const entries =
+    directory === defaultProviderDirectory
+      ? (await discoverProviders(repositoryRoot)).map(({ name }) => ({ name, isDirectory: () => true }))
+      : await readdir(directory, { withFileTypes: true });
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
     const path = resolvePath(directory, entry.name, "drift.json");
@@ -172,17 +162,32 @@ async function discoverRecords(directory) {
       text = await readFile(path, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") continue;
-      providers.push({ provider: entry.name, path, error: new UnavailableError(`could not read ${path}: ${error.message}`) });
+      providers.push({
+        provider: entry.name,
+        path,
+        error: new UnavailableError(`could not read ${path}: ${error.message}`),
+      });
       continue;
     }
     try {
       const record = JSON.parse(text);
-      if (record?.version !== 1 || record.provider !== entry.name || !Array.isArray(record.checks) || record.checks.length === 0) {
-        throw new EvidenceError(`${entry.name}'s drift record requires version 1, matching provider, and non-empty checks`);
+      if (
+        record?.version !== 1 ||
+        record.provider !== entry.name ||
+        !Array.isArray(record.checks) ||
+        record.checks.length === 0
+      ) {
+        throw new EvidenceError(
+          `${entry.name}'s drift record requires version 1, matching provider, and non-empty checks`,
+        );
       }
       providers.push({ provider: entry.name, path, record });
     } catch (error) {
-      providers.push({ provider: entry.name, path, error: new EvidenceError(`invalid drift record at ${path}: ${error.message}`) });
+      providers.push({
+        provider: entry.name,
+        path,
+        error: new EvidenceError(`invalid drift record at ${path}: ${error.message}`),
+      });
     }
   }
   return providers;
@@ -190,8 +195,12 @@ async function discoverRecords(directory) {
 
 function validateSelection(options, providers) {
   const known = new Map(providers.map((entry) => [entry.provider, entry]));
-  const requested = [...options.providers, ...[...options.specSources.keys()].map((key) => key.split("/")[0]),
-    ...options.toolReferenceSources.keys(), ...options.setupReferenceSources.keys()];
+  const requested = [
+    ...options.providers,
+    ...[...options.specSources.keys()].map((key) => key.split("/")[0]),
+    ...options.toolReferenceSources.keys(),
+    ...options.setupReferenceSources.keys(),
+  ];
   for (const provider of requested) {
     const entry = known.get(provider);
     if (!entry) usage(`unknown provider: ${provider}`);
@@ -199,53 +208,75 @@ function validateSelection(options, providers) {
     const modes = new Set(entry.record.checks.map((check) => checkMode(check?.type)));
     if (modes.has("records")) continue;
     if (![...modes].some((mode) => options[mode])) {
-      usage(`${provider} is only checked by ${[...modes].map((mode) => `--${mode}`).join(" or ")}, which this run did not select. That combination would check nothing.`);
+      usage(
+        `${provider} is only checked by ${[...modes].map((mode) => `--${mode}`).join(" or ")}, which this run did not select. That combination would check nothing.`,
+      );
     }
   }
   for (const key of options.specSources.keys()) {
     const [provider, app, extra] = key.split("/");
     const entry = known.get(provider);
     if (entry.error) continue;
-    const check = entry.record.checks.find((item) => item?.type === "endpoints" || item?.type === "versioned-endpoints");
+    const check = entry.record.checks.find(
+      (item) => item?.type === "endpoints" || item?.type === "versioned-endpoints",
+    );
     if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
     if (!check) usage(`${provider} has no endpoint specification check`);
     if (check.type === "versioned-endpoints") {
-      if (!app || extra) usage(`${provider} publishes one specification per product; name it --spec ${provider}/<app>=<file|url>`);
+      if (!app || extra)
+        usage(`${provider} publishes one specification per product; name it --spec ${provider}/<app>=<file|url>`);
       if (!Object.hasOwn(check.specifications ?? {}, app)) usage(`unknown ${provider} product: ${app}`);
     } else if (app) usage(`${provider} publishes one specification; name it --spec ${provider}=<file|url>`);
   }
   for (const provider of new Set([...options.toolReferenceSources.keys(), ...options.setupReferenceSources.keys()])) {
     const entry = known.get(provider);
     if (entry.error) continue;
-    const check = entry.record.checks.find((item) => item?.type === "mcp-docs" || item?.type === "oauth-discovery" || item?.type === "mcp-catalog");
+    const check = entry.record.checks.find(
+      (item) => item?.type === "mcp-docs" || item?.type === "oauth-discovery" || item?.type === "mcp-catalog",
+    );
     if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
     if (!check) usage(`${provider} has no MCP reference check`);
-    if (options.setupReferenceSources.has(provider) && check.type === "mcp-catalog") usage(`${provider} has no setup reference check`);
-    if (options.toolReferenceSources.has(provider) && !check.inventory && check.type !== "mcp-catalog") usage(`${provider} has no public tool inventory`);
+    if (options.setupReferenceSources.has(provider) && check.type === "mcp-catalog")
+      usage(`${provider} has no setup reference check`);
+    if (options.toolReferenceSources.has(provider) && !check.inventory && check.type !== "mcp-catalog")
+      usage(`${provider} has no public tool inventory`);
   }
   if (options.record) {
     for (const provider of requested) {
-      if (!options.providers.includes(provider)) usage(`--record source overrides must name an explicitly selected --provider: ${provider}`);
+      if (!options.providers.includes(provider))
+        usage(`--record source overrides must name an explicitly selected --provider: ${provider}`);
     }
   }
 }
 
 /** Reject missing vendor evidence before network access; config is never guessed. */
 function validateCheck(check, allowUnrecorded) {
-  const require = (condition, detail) => { if (!condition) throw new EvidenceError(detail); };
+  const require = (condition, detail) => {
+    if (!condition) throw new EvidenceError(detail);
+  };
   const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
-  const strings = (value) => Array.isArray(value) && value.length > 0 && value.every(nonempty) && new Set(value).size === value.length;
+  const strings = (value) =>
+    Array.isArray(value) && value.length > 0 && value.every(nonempty) && new Set(value).size === value.length;
   require(check && typeof check === "object", "check must be an object");
   if (check.type === "mcp-catalog") {
     const url = new URL(check.endpoint);
-    require(url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash, "public catalog requires a credential-free HTTPS endpoint");
-    require(Array.isArray(check.reviewed) && check.reviewed.length > 0, "public catalog requires reviewed names and annotations");
+    require(url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash, "public catalog requires a credential-free HTTPS endpoint");
+    require(Array.isArray(check.reviewed) &&
+      check.reviewed.length > 0, "public catalog requires reviewed names and annotations");
     const names = new Set();
     for (const tool of check.reviewed) {
       require(nonempty(tool?.name) && !names.has(tool.name), "reviewed catalog requires unique non-empty names");
       names.add(tool.name);
-      require(tool.annotations && typeof tool.annotations === "object" && !Array.isArray(tool.annotations), "reviewed catalog requires annotations");
-      for (const key of CATALOG_HINTS) require(tool.annotations[key] === undefined || typeof tool.annotations[key] === "boolean", `invalid annotation ${key}`);
+      require(tool.annotations &&
+        typeof tool.annotations === "object" &&
+        !Array.isArray(tool.annotations), "reviewed catalog requires annotations");
+      for (const key of CATALOG_HINTS)
+        require(tool.annotations[key] === undefined ||
+          typeof tool.annotations[key] === "boolean", `invalid annotation ${key}`);
     }
     return;
   }
@@ -254,39 +285,71 @@ function validateCheck(check, allowUnrecorded) {
     return;
   }
   if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
-    require(nonempty(check.setup) && strings(check.endpoints) && strings(check.reviewed), "MCP check requires setup, endpoints, and reviewed vendor names");
-    if (check.type === "oauth-discovery") require(check.inventory === undefined, "OAuth discovery checks have no tool inventory");
+    require(nonempty(check.setup) &&
+      strings(check.endpoints) &&
+      strings(check.reviewed), "MCP check requires setup, endpoints, and reviewed vendor names");
+    if (check.type === "oauth-discovery")
+      require(check.inventory === undefined, "OAuth discovery checks have no tool inventory");
     if (check.inventory !== undefined) {
       const inventory = check.inventory;
-      require(nonempty(inventory.url) && ["headings", "inline", "inline-calls", "table"].includes(inventory.format), "inventory requires URL and supported parser format");
-      for (const key of ["start", "end", "prefix"]) require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
-      require(inventory.acknowledgedUnclassified === undefined || strings(inventory.acknowledgedUnclassified), "acknowledged unclassified names must be unique non-empty strings");
+      require(nonempty(inventory.url) &&
+        ["headings", "inline", "inline-calls", "table"].includes(
+          inventory.format,
+        ), "inventory requires URL and supported parser format");
+      for (const key of ["start", "end", "prefix"])
+        require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
+      require(inventory.acknowledgedUnclassified === undefined ||
+        strings(
+          inventory.acknowledgedUnclassified,
+        ), "acknowledged unclassified names must be unique non-empty strings");
     }
     return;
   }
-  require(check.type === "endpoints" || check.type === "versioned-endpoints", `unknown check type: ${String(check.type)}`);
+  require(check.type === "endpoints" ||
+    check.type === "versioned-endpoints", `unknown check type: ${String(check.type)}`);
   require(Array.isArray(check.endpoints) && check.endpoints.length > 0, "endpoint check requires touched endpoints");
   const seen = new Set();
   for (const endpoint of check.endpoints) {
-    require(endpoint && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(endpoint.method) && nonempty(endpoint.path) && endpoint.path.startsWith("/") && nonempty(endpoint.specRevision), "endpoint requires method, path, and reviewed revision");
+    require(endpoint &&
+      /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(endpoint.method) &&
+      nonempty(endpoint.path) &&
+      endpoint.path.startsWith("/") &&
+      nonempty(endpoint.specRevision), "endpoint requires method, path, and reviewed revision");
     const key = `${endpoint.method} ${endpoint.path}`;
     require(!seen.has(key), `duplicate endpoint: ${key}`);
     seen.add(key);
-    require((allowUnrecorded && endpoint.contract === undefined) || /^sha256:[0-9a-f]{64}$/.test(endpoint.contract), `invalid contract digest: ${key}`);
-    require(endpoint.deprecated === undefined || typeof endpoint.deprecated === "boolean", `invalid deprecation evidence: ${key}`);
+    require((allowUnrecorded && endpoint.contract === undefined) ||
+      /^sha256:[0-9a-f]{64}$/.test(endpoint.contract), `invalid contract digest: ${key}`);
+    require(endpoint.deprecated === undefined ||
+      typeof endpoint.deprecated === "boolean", `invalid deprecation evidence: ${key}`);
   }
   if (check.type === "endpoints") {
     require(nonempty(check.specification?.url), "endpoint check requires specification URL");
-    require(check.specification.format === undefined || ["openapi", "google-discovery", "readme-operation-pages"].includes(check.specification.format), "unknown specification format");
-    if (check.specification.format === "readme-operation-pages") require(strings(check.specification.pages), "operation-page check requires reference pages");
-    if (check.specification.format === "google-discovery") require(strings(check.scopes), "Google Discovery check requires requested scopes");
+    require(check.specification.format === undefined ||
+      ["openapi", "google-discovery", "readme-operation-pages"].includes(
+        check.specification.format,
+      ), "unknown specification format");
+    if (check.specification.format === "readme-operation-pages")
+      require(strings(check.specification.pages), "operation-page check requires reference pages");
+    if (check.specification.format === "google-discovery")
+      require(strings(check.scopes), "Google Discovery check requires requested scopes");
   } else {
-    require(check.specifications && typeof check.specifications === "object" && !Array.isArray(check.specifications) && Object.keys(check.specifications).length > 0, "versioned check requires per-product specifications");
+    require(check.specifications &&
+      typeof check.specifications === "object" &&
+      !Array.isArray(check.specifications) &&
+      Object.keys(check.specifications).length > 0, "versioned check requires per-product specifications");
     for (const [app, spec] of Object.entries(check.specifications)) {
-      require(nonempty(spec?.url) && nonempty(spec.documentation) && nonempty(spec.version), `product ${app} requires URL, documentation, and pin`);
-      require(spec.latestPublished === undefined || nonempty(spec.latestPublished), `product ${app} has invalid reviewed publication`);
+      require(nonempty(spec?.url) &&
+        nonempty(spec.documentation) &&
+        nonempty(spec.version), `product ${app} requires URL, documentation, and pin`);
+      require(spec.latestPublished === undefined ||
+        nonempty(spec.latestPublished), `product ${app} has invalid reviewed publication`);
     }
-    for (const endpoint of check.endpoints) require(Object.hasOwn(check.specifications, productOf(endpoint.path)), `no product specification for ${endpoint.path}`);
+    for (const endpoint of check.endpoints)
+      require(Object.hasOwn(
+        check.specifications,
+        productOf(endpoint.path),
+      ), `no product specification for ${endpoint.path}`);
   }
 }
 
@@ -312,9 +375,7 @@ async function loadOperationPages(provider, base, pages) {
     const markdown = await loadPublished(provider, "API reference page", source);
     const fence = markdown.match(/# OpenAPI definition\s+```json\n([\s\S]*?)\n```/);
     if (!fence) {
-      throw new ParserError(
-        `${provider}'s reference page ${source} no longer embeds an OpenAPI definition`,
-      );
+      throw new ParserError(`${provider}'s reference page ${source} no longer embeds an OpenAPI definition`);
     }
     let snippet;
     try {
@@ -354,19 +415,11 @@ async function loadSpecification(provider, manifest, options) {
   const source = options.specSources.get(provider) ?? manifest.specification.url;
   // A provider documented page by page reads a page base, URL or directory; a
   // `.json` override is a combined document like any other provider's.
-  if (
-    manifest.specification.format === "readme-operation-pages" &&
-    !source.endsWith(".json")
-  ) {
-    const base =
-      /^https?:\/\//.test(source) || source.endsWith("/") ? source : `${source}/`;
+  if (manifest.specification.format === "readme-operation-pages" && !source.endsWith(".json")) {
+    const base = /^https?:\/\//.test(source) || source.endsWith("/") ? source : `${source}/`;
     return {
       source,
-      document: await loadOperationPages(
-        provider,
-        base,
-        manifest.specification.pages ?? [],
-      ),
+      document: await loadOperationPages(provider, base, manifest.specification.pages ?? []),
     };
   }
   const document = await loadJson(`${provider}'s published specification`, source);
@@ -388,9 +441,7 @@ function discoveryRefs(value) {
     // Prose like `description`, which `inline` already drops wherever it sits.
     if (key === "enumDescriptions") continue;
     out[key] =
-      key === "$ref" && typeof item === "string" && !item.startsWith("#")
-        ? `#/schemas/${item}`
-        : discoveryRefs(item);
+      key === "$ref" && typeof item === "string" && !item.startsWith("#") ? `#/schemas/${item}` : discoveryRefs(item);
   }
   return out;
 }
@@ -410,9 +461,7 @@ function discoveryDocument(provider, discovery) {
     discovery.kind !== "discovery#restDescription" ||
     typeof discovery.resources !== "object"
   ) {
-    throw new ParserError(
-      `${provider}'s published specification is not a Google Discovery document`,
-    );
+    throw new ParserError(`${provider}'s published specification is not a Google Discovery document`);
   }
   const servicePath = discovery.servicePath ?? "";
   const paths = {};
@@ -425,9 +474,7 @@ function discoveryDocument(provider, discovery) {
       const verb = String(method.httpMethod).toLowerCase();
       paths[path] ??= {};
       if (paths[path][verb]) {
-        throw new ParserError(
-          `${provider}'s Discovery document defines ${verb.toUpperCase()} ${path} twice`,
-        );
+        throw new ParserError(`${provider}'s Discovery document defines ${verb.toUpperCase()} ${path} twice`);
       }
       paths[path][verb] = {
         ...(method.deprecated === true ? { deprecated: true } : {}),
@@ -480,7 +527,8 @@ async function loadJson(label, source) {
   const text = await loadPublished(label, "published specification", source);
   try {
     const document = JSON.parse(text);
-    if (document === null || typeof document !== "object" || Array.isArray(document)) throw new Error("expected a JSON object");
+    if (document === null || typeof document !== "object" || Array.isArray(document))
+      throw new Error("expected a JSON object");
     return document;
   } catch {
     throw new ParserError(`${label} at ${source} is not a JSON object`);
@@ -579,9 +627,7 @@ function contractDigest(document, operation) {
     requestBody: inline(document, operation.requestBody ?? null),
     responses: successes,
   });
-  return `sha256:${createHash("sha256")
-    .update(JSON.stringify(contract))
-    .digest("hex")}`;
+  return `sha256:${createHash("sha256").update(JSON.stringify(contract)).digest("hex")}`;
 }
 
 function operationFor(document, endpoint) {
@@ -621,7 +667,10 @@ function checkEndpoints(endpoints, documentFor) {
       specRevision: endpoint.specRevision,
     };
     const { document, path = endpoint.path, revision } = documentFor(endpoint);
-    if (!document) { recorded.push(endpoint); continue; } // Failed product already has a finding.
+    if (!document) {
+      recorded.push(endpoint);
+      continue;
+    } // Failed product already has a finding.
     const { missing, operation } = operationFor(document, { ...endpoint, path });
     if (missing) {
       findings.push({
@@ -684,10 +733,7 @@ function publishedVersions(index) {
   const versions = index?.data?.relationships?.versions?.data;
   if (!Array.isArray(versions)) throw new ParserError("documentation graph has no versions array");
   return versions
-    .filter(
-      (version) =>
-        typeof version?.id === "string" && version.attributes?.beta !== true,
-    )
+    .filter((version) => typeof version?.id === "string" && version.attributes?.beta !== true)
     .map((version) => version.id)
     .sort()
     .reverse();
@@ -704,16 +750,11 @@ async function checkVersionedProvider(provider, manifest, options) {
   const findings = [];
   const specifications = {};
   const documents = new Map();
-  const touched = new Set(
-    manifest.endpoints.map((endpoint) => productOf(endpoint.path)),
-  );
+  const touched = new Set(manifest.endpoints.map((endpoint) => productOf(endpoint.path)));
   for (const [app, specification] of Object.entries(manifest.specifications)) {
     specifications[app] = { ...specification };
     try {
-      const index = await loadJson(
-        `${provider}'s ${app} documentation graph`,
-        specification.documentation,
-      );
+      const index = await loadJson(`${provider}'s ${app} documentation graph`, specification.documentation);
       const versions = publishedVersions(index);
       const latest = versions[0];
       const reviewed = specification.latestPublished ?? specification.version;
@@ -743,8 +784,11 @@ async function checkVersionedProvider(provider, manifest, options) {
       const source = options.specSources.get(`${provider}/${app}`) ?? specification.url;
       const document = validateOpenApi(provider, await loadJson(`${provider}'s ${app} specification`, source));
       if (document.info?.version !== specification.version) {
-        findings.push({ app, kind: "version-mismatch",
-          detail: `the ${app} specification describes ${document.info?.version ?? "no version"}, not pinned ${specification.version}` });
+        findings.push({
+          app,
+          kind: "version-mismatch",
+          detail: `the ${app} specification describes ${document.info?.version ?? "no version"}, not pinned ${specification.version}`,
+        });
       }
       documents.set(app, document);
     } catch (error) {
@@ -777,7 +821,9 @@ async function checkVersionedProvider(provider, manifest, options) {
 // vendor-owned; this catalog review does not grant a runtime classification.
 const CATALOG_HINTS = ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"];
 function catalogHints(annotations) {
-  return Object.fromEntries(CATALOG_HINTS.filter((key) => annotations?.[key] !== undefined).map((key) => [key, annotations[key]]));
+  return Object.fromEntries(
+    CATALOG_HINTS.filter((key) => annotations?.[key] !== undefined).map((key) => [key, annotations[key]]),
+  );
 }
 
 async function checkPublicCatalog(provider, check, options) {
@@ -790,55 +836,87 @@ async function checkPublicCatalog(provider, check, options) {
     let text;
     if (/^https?:\/\//.test(source)) {
       const url = new URL(source);
-      if (url.username || url.password || url.search || url.hash) throw new EvidenceError("catalog source must not carry credentials or query parameters");
+      if (url.username || url.password || url.search || url.hash)
+        throw new EvidenceError("catalog source must not carry credentials or query parameters");
       let response;
       try {
         response = await fetch(url, {
-          method: "POST", redirect: "error", signal,
+          method: "POST",
+          redirect: "error",
+          signal,
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/list",
+            params: cursor === undefined ? {} : { cursor },
+          }),
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         text = await response.text();
       } catch (error) {
-        throw new UnavailableError(`could not read ${provider}'s public tools/list: ${error instanceof Error ? error.message : String(error)}`);
+        throw new UnavailableError(
+          `could not read ${provider}'s public tools/list: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     } else {
       text = await loadPublished(provider, "public catalog fixture", source);
     }
     let message;
-    try { message = JSON.parse(text); } catch { throw new ParserError(`${provider}'s public catalog is not JSON`); }
+    try {
+      message = JSON.parse(text);
+    } catch {
+      throw new ParserError(`${provider}'s public catalog is not JSON`);
+    }
     if (message?.jsonrpc !== "2.0" || message.id !== 1 || message.error || !Array.isArray(message.result?.tools)) {
       throw new ParserError(`${provider}'s public catalog is not a tools/list result`);
     }
     for (const tool of message.result.tools) {
-      if (typeof tool?.name !== "string" || !tool.name.trim() || tools.has(tool.name)) throw new ParserError(`${provider}'s public catalog has an invalid or duplicate name`);
-      if (tool.annotations !== undefined && (!tool.annotations || typeof tool.annotations !== "object" || Array.isArray(tool.annotations))) throw new ParserError(`${provider}'s public catalog has invalid annotations`);
+      if (typeof tool?.name !== "string" || !tool.name.trim() || tools.has(tool.name))
+        throw new ParserError(`${provider}'s public catalog has an invalid or duplicate name`);
+      if (
+        tool.annotations !== undefined &&
+        (!tool.annotations || typeof tool.annotations !== "object" || Array.isArray(tool.annotations))
+      )
+        throw new ParserError(`${provider}'s public catalog has invalid annotations`);
       for (const key of CATALOG_HINTS) {
-        if (tool.annotations?.[key] !== undefined && typeof tool.annotations[key] !== "boolean") throw new ParserError(`${provider}'s public catalog has an invalid ${key}`);
+        if (tool.annotations?.[key] !== undefined && typeof tool.annotations[key] !== "boolean")
+          throw new ParserError(`${provider}'s public catalog has an invalid ${key}`);
       }
       tools.set(tool.name, catalogHints(tool.annotations));
     }
     cursor = message.result.nextCursor;
     if (cursor === undefined) break;
-    if (typeof cursor !== "string" || !cursor || cursors.has(cursor) || page === 99 || !/^https?:\/\//.test(source)) throw new ParserError(`${provider}'s public catalog pagination did not complete`);
+    if (typeof cursor !== "string" || !cursor || cursors.has(cursor) || page === 99 || !/^https?:\/\//.test(source))
+      throw new ParserError(`${provider}'s public catalog pagination did not complete`);
     cursors.add(cursor);
   }
   const reviewed = new Map(check.reviewed.map((tool) => [tool.name, catalogHints(tool.annotations)]));
   const findings = [];
   for (const [name, annotations] of tools) {
     if (!reviewed.has(name)) findings.push({ kind: "catalog-added", detail: name });
-    else if (JSON.stringify(annotations) !== JSON.stringify(reviewed.get(name))) findings.push({ kind: "catalog-annotations", detail: `${name}: behavioral annotations changed` });
+    else if (JSON.stringify(annotations) !== JSON.stringify(reviewed.get(name)))
+      findings.push({ kind: "catalog-annotations", detail: `${name}: behavioral annotations changed` });
   }
   for (const name of reviewed.keys()) if (!tools.has(name)) findings.push({ kind: "catalog-removed", detail: name });
-  return { provider, source, catalogTools: tools.size, schemaAuthority: "live-tools-list", schemasVendored: false, findings };
+  return {
+    provider,
+    source,
+    catalogTools: tools.size,
+    schemaAuthority: "live-tools-list",
+    schemasVendored: false,
+    findings,
+  };
 }
 
 async function loadPublished(provider, label, source) {
   let text;
   try {
     if (/^https?:\/\//.test(source)) {
-      const response = await fetch(source, { signal: AbortSignal.timeout(15_000), headers: { "User-Agent": "connecta-drift-check (+https://github.com/zackbart/connecta)" } });
+      const response = await fetch(source, {
+        signal: AbortSignal.timeout(15_000),
+        headers: { "User-Agent": "connecta-drift-check (+https://github.com/zackbart/connecta)" },
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -878,21 +956,15 @@ function documentedToolNames(markdown, inventory) {
   if (inventory.format === "inline" || inventory.format === "inline-calls") {
     const names = [...section.matchAll(/`([^`]+)`/g)]
       .map((match) => match[1].trim())
-      .map((name) =>
-        inventory.format === "inline-calls" ? name.replace(/\(\)$/, "") : name,
-      )
+      .map((name) => (inventory.format === "inline-calls" ? name.replace(/\(\)$/, "") : name))
       .filter((name) => candidate.test(name))
-      .filter((name) =>
-        inventory.prefix === undefined ? true : name.startsWith(inventory.prefix),
-      );
+      .filter((name) => (inventory.prefix === undefined ? true : name.startsWith(inventory.prefix)));
     return [...new Set(names)].sort();
   }
   const names = [];
   for (const line of section.split("\n")) {
     if (!line.startsWith("|")) continue;
-    const name = [...line.matchAll(/`([^`]+)`/g)]
-      .map((match) => match[1])
-      .find((value) => candidate.test(value));
+    const name = [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1]).find((value) => candidate.test(value));
     if (name !== undefined) names.push(name);
   }
   return [...new Set(names)].sort();
@@ -946,11 +1018,7 @@ async function checkOAuthDiscovery(provider, runtime, resource) {
   const server = parseMetadata(
     provider,
     "authorization-server metadata",
-    await loadPublished(
-      provider,
-      "authorization-server metadata",
-      authorizationServerMetadataUrl(issuer),
-    ),
+    await loadPublished(provider, "authorization-server metadata", authorizationServerMetadataUrl(issuer)),
   );
   if (server.client_id_metadata_document_supported !== true) {
     findings.push({
@@ -974,8 +1042,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
   const runtime = defaults;
   const sources = {
     setup: options.setupReferenceSources.get(provider) ?? defaults.setup,
-    tools:
-      options.toolReferenceSources.get(provider) ?? defaults.inventory?.url,
+    tools: options.toolReferenceSources.get(provider) ?? defaults.inventory?.url,
   };
   const [setup, markdown] = await Promise.all([
     loadPublished(provider, "official MCP setup reference", sources.setup),
@@ -983,29 +1050,19 @@ async function checkDocumentedProvider(provider, defaults, options) {
       ? Promise.resolve(undefined)
       : loadPublished(provider, "MCP tool reference", sources.tools),
   ]);
-  const documented =
-    markdown === undefined
-      ? undefined
-      : documentedToolNames(markdown, defaults.inventory);
+  const documented = markdown === undefined ? undefined : documentedToolNames(markdown, defaults.inventory);
   if (documented !== undefined && documented.length === 0) {
-    throw new ParserError(
-      `${provider}'s MCP tool reference contained no recognizable tool names`,
-    );
+    throw new ParserError(`${provider}'s MCP tool reference contained no recognizable tool names`);
   }
   const reviewed = [...runtime.reviewed].sort();
   const reviewedSet = new Set(reviewed);
   const documentedSet = new Set(documented ?? []);
   const acknowledged = new Set(defaults.inventory?.acknowledgedUnclassified ?? []);
-  const added = (documented ?? []).filter(
-    (name) => !reviewedSet.has(name) && !acknowledged.has(name),
-  );
+  const added = (documented ?? []).filter((name) => !reviewedSet.has(name) && !acknowledged.has(name));
   const intentionallyUnclassified = (documented ?? []).filter(
     (name) => !reviewedSet.has(name) && acknowledged.has(name),
   );
-  const removed =
-    documented === undefined
-      ? []
-      : reviewed.filter((name) => !documentedSet.has(name));
+  const removed = documented === undefined ? [] : reviewed.filter((name) => !documentedSet.has(name));
 
   if (defaults.type === "oauth-discovery") {
     const discovery = await checkOAuthDiscovery(
@@ -1033,10 +1090,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
 
   const findings = [];
   for (const endpoint of runtime.endpoints) {
-    if (
-      !setup.includes(endpoint) &&
-      !setup.includes(endpoint.replace(/\/$/, ""))
-    ) {
+    if (!setup.includes(endpoint) && !setup.includes(endpoint.replace(/\/$/, ""))) {
       findings.push({
         kind: "mcp-endpoint",
         detail: `official setup documentation does not name Connecta's endpoint ${endpoint}`,
@@ -1076,9 +1130,7 @@ function printSpec(result, recorded) {
     } touched endpoints at revision ${result.revision}`,
   );
   for (const finding of result.findings) {
-    const subject = finding.method
-      ? `${finding.method} ${finding.path}`
-      : (finding.app ?? "check");
+    const subject = finding.method ? `${finding.method} ${finding.path}` : (finding.app ?? "check");
     console.log(`  ${finding.kind.padEnd(16)} ${subject} — ${finding.detail}`);
   }
   if (recorded) console.log(`  recorded     ${recorded}`);
@@ -1111,18 +1163,14 @@ function printDocs(result) {
   for (const finding of result.findings) {
     console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
   }
-  if (
-    result.added.length + result.findings.length === 0
-  ) {
+  if (result.added.length + result.findings.length === 0) {
     console.log(
       result.inventoryChecked
         ? "  documented additions are classified; connection metadata matches"
         : "  connection metadata matches",
     );
   }
-  console.log(
-    "  schemas      live tools/list remains authoritative; no MCP schema is vendored",
-  );
+  console.log("  schemas      live tools/list remains authoritative; no MCP schema is vendored");
 }
 
 function findingCount(report) {
@@ -1154,31 +1202,61 @@ async function main() {
         validateCheck(check, options.record);
         if (mode === "specs") {
           const versioned = check.type === "versioned-endpoints";
-          const specification = versioned ? { source: "per-product OpenAPI documents" } : await loadSpecification(provider, check, options);
-          const result = versioned ? await checkVersionedProvider(provider, check, options) : checkSpecProvider(provider, check, specification);
+          const specification = versioned
+            ? { source: "per-product OpenAPI documents" }
+            : await loadSpecification(provider, check, options);
+          const result = versioned
+            ? await checkVersionedProvider(provider, check, options)
+            : checkSpecProvider(provider, check, specification);
           // Failed parsing/network checks never write partial evidence or erase pins.
-          const recordable = !result.findings.some((finding) => ["parser-error", "unavailable", "version-mismatch"].includes(finding.kind));
+          const recordable = !result.findings.some((finding) =>
+            ["parser-error", "unavailable", "version-mismatch"].includes(finding.kind),
+          );
           if (options.record && recordable) {
-            record.checks[index] = { ...check, ...(result.specifications ? { specifications: result.specifications } : {}), endpoints: result.recorded };
+            record.checks[index] = {
+              ...check,
+              ...(result.specifications ? { specifications: result.specifications } : {}),
+              endpoints: result.recorded,
+            };
             changed = true;
           }
-          report.specs.push({ provider, check: index, specification: specification.source, revision: result.revision,
-            endpoints: check.endpoints.length, findings: result.findings,
-            ...(options.record && recordable ? { recordedTo: path } : {}) });
+          report.specs.push({
+            provider,
+            check: index,
+            specification: specification.source,
+            revision: result.revision,
+            endpoints: check.endpoints.length,
+            findings: result.findings,
+            ...(options.record && recordable ? { recordedTo: path } : {}),
+          });
         } else if (mode === "docs") {
-          const result = check.type === "mcp-catalog" ? await checkPublicCatalog(provider, check, options) : await checkDocumentedProvider(provider, check, options);
+          const result =
+            check.type === "mcp-catalog"
+              ? await checkPublicCatalog(provider, check, options)
+              : await checkDocumentedProvider(provider, check, options);
           report.docs.push({ ...result, check: index });
         } else {
-          report.manual.push({ provider, check: index, source: check.source, evidence: check.evidence,
-            findings: [{ kind: "manual-required", detail: check.rationale }] });
+          report.manual.push({
+            provider,
+            check: index,
+            source: check.source,
+            evidence: check.evidence,
+            findings: [{ kind: "manual-required", detail: check.rationale }],
+          });
         }
       } catch (error) {
         report[mode].push({ provider, check: index, findings: [errorFinding(error)] });
       }
     }
     if (changed) {
-      try { await writeFile(path, `${JSON.stringify(record, null, 2)}\n`); }
-      catch (error) { report.records.push({ provider, findings: [errorFinding(new UnavailableError(`could not record ${path}: ${error.message}`))] }); }
+      try {
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`);
+      } catch (error) {
+        report.records.push({
+          provider,
+          findings: [errorFinding(new UnavailableError(`could not record ${path}: ${error.message}`))],
+        });
+      }
     }
   }
   const findings = findingCount(report);
@@ -1190,15 +1268,24 @@ async function main() {
     }
     for (const result of report.docs) {
       if (result.catalogTools !== undefined) {
-        console.log(`${result.provider} public MCP catalog: ${result.catalogTools} tools; names and behavioral annotations checked`);
+        console.log(
+          `${result.provider} public MCP catalog: ${result.catalogTools} tools; names and behavioral annotations checked`,
+        );
         printFailure(result);
       } else if (result.added) printDocs(result);
       else printFailure(result);
     }
     for (const result of [...report.manual, ...report.records]) printFailure(result);
-    console.log(findings === 0 ? "\nNo drift against the reviewed evidence."
-      : `\n${findings} finding(s). Review them manually; this command never files issues.`);
-    console.log(options.strict ? "Strict drift gate: findings exit 1." : "Advisory report: findings exit 0. Use --strict for a drift gate.");
+    console.log(
+      findings === 0
+        ? "\nNo drift against the reviewed evidence."
+        : `\n${findings} finding(s). Review them manually; this command never files issues.`,
+    );
+    console.log(
+      options.strict
+        ? "Strict drift gate: findings exit 1."
+        : "Advisory report: findings exit 0. Use --strict for a drift gate.",
+    );
   }
   process.exitCode = options.strict && findings > 0 ? 1 : 0;
 }

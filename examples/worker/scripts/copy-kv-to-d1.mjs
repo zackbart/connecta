@@ -40,16 +40,30 @@ export function parseArgs(args) {
     else if (arg === "--confirm-stale-d1") options.confirmStale = true;
     else if (arg === "--i-know-this-is-stale") options.allowStale = true;
     else if (arg === "--help") options.help = true;
-    else if (!arg.startsWith("--") && !hasConfig) { options.configPath = arg; hasConfig = true; }
-    else throw new MigrationUsageError("Unknown argument; use --help");
+    else if (!arg.startsWith("--") && !hasConfig) {
+      options.configPath = arg;
+      hasConfig = true;
+    } else throw new MigrationUsageError("Unknown argument; use --help");
   }
   if (options.help) return options;
-  if (!options.maintenance) throw new MigrationUsageError("Traffic and writers must be stopped; pass --maintenance after draining and waiting for KV propagation");
-  if (options.overwriteFamilies.some((family) => family === "access-token" || family === "credential" || family.startsWith("oauth")) && !options.confirmStale) {
-    throw new MigrationUsageError("Token/OAuth/vault overwrite requires --confirm-stale-d1 after confirming D1 rows are stale");
+  if (!options.maintenance)
+    throw new MigrationUsageError(
+      "Traffic and writers must be stopped; pass --maintenance after draining and waiting for KV propagation",
+    );
+  if (
+    options.overwriteFamilies.some(
+      (family) => family === "access-token" || family === "credential" || family.startsWith("oauth"),
+    ) &&
+    !options.confirmStale
+  ) {
+    throw new MigrationUsageError(
+      "Token/OAuth/vault overwrite requires --confirm-stale-d1 after confirming D1 rows are stale",
+    );
   }
-  if ((options.verify || options.markLive) && options.overwriteFamilies.length) throw new MigrationUsageError("Verification and cutover marking cannot overwrite families");
-  if (options.verify && options.markLive) throw new MigrationUsageError("Verify before marking cutover in a separate command");
+  if ((options.verify || options.markLive) && options.overwriteFamilies.length)
+    throw new MigrationUsageError("Verification and cutover marking cannot overwrite families");
+  if (options.verify && options.markLive)
+    throw new MigrationUsageError("Verify before marking cutover in a separate command");
   return options;
 }
 
@@ -83,15 +97,18 @@ export async function runMigration(kv, db, options, operations, output = console
     output.log("Cutover sealed in D1. Reopen traffic after deployment verification; never copy stale KV afterward.");
     return 0;
   }
-  if (await sourceHash(kv) !== await sourceHash(kv)) {
+  if ((await sourceHash(kv)) !== (await sourceHash(kv))) {
     throw new MigrationUsageError("Workers KV source is not stable; keep maintenance active, wait, and repeat");
   }
   const families = {};
   let cursor;
   do {
     const result = await operations.copyKvToD1(kv, db, {
-      source: options.source, cursor, overwriteFamilies: options.overwriteFamilies,
-      verify: options.verify, allowStale: options.allowStale,
+      source: options.source,
+      cursor,
+      overwriteFamilies: options.overwriteFamilies,
+      verify: options.verify,
+      allowStale: options.allowStale,
     });
     for (const [family, counts] of Object.entries(result.families)) {
       const into = (families[family] ??= {});
@@ -101,7 +118,9 @@ export async function runMigration(kv, db, options, operations, output = console
   } while (cursor);
   output.table(families);
   if (Object.values(families).some((counts) => counts.invalid > 0 || counts.conflicts > 0 || counts.mismatches > 0)) {
-    output.error("Invalid entries, conflicts, or verification mismatches remain. Keep maintenance active and resolve the per-family counts.");
+    output.error(
+      "Invalid entries, conflicts, or verification mismatches remain. Keep maintenance active and resolve the per-family counts.",
+    );
     return 1;
   }
   return 0;
@@ -112,21 +131,28 @@ async function main() {
   let operations;
   try {
     const options = parseArgs(process.argv.slice(2));
-    if (options.help) { console.log(HELP); return; }
+    if (options.help) {
+      console.log(HELP);
+      return;
+    }
     const wranglerModule = "wrangler";
     const d1Module = "@zackbart/connecta/d1";
     const { getPlatformProxy, unstable_readConfig } = await import(/* @vite-ignore */ wranglerModule);
     operations = await import(/* @vite-ignore */ d1Module);
     const config = unstable_readConfig({ config: options.configPath });
     const source = config.kv_namespaces?.find((binding) => binding.binding === "CONNECTA_KV")?.id;
-    if (!source || source.startsWith("replace-")) throw new MigrationUsageError("Configure the CONNECTA_KV namespace id before copying");
+    if (!source || source.startsWith("replace-"))
+      throw new MigrationUsageError("Configure the CONNECTA_KV namespace id before copying");
     proxy = await getPlatformProxy({ configPath: options.configPath, persist: false });
     const { CONNECTA_KV: kv, CONNECTA_DB: db } = proxy.env;
     if (!kv || !db) throw new MigrationUsageError("Copy config must bind CONNECTA_KV and CONNECTA_DB");
     process.exitCode = await runMigration(kv, db, { ...options, source }, operations);
   } catch (error) {
-    console.error(error instanceof MigrationUsageError || (operations && error instanceof operations.KvToD1CopyError)
-      ? error.message : "Workers KV to D1 migration stopped; keep maintenance active and inspect the configuration");
+    console.error(
+      error instanceof MigrationUsageError || (operations && error instanceof operations.KvToD1CopyError)
+        ? error.message
+        : "Workers KV to D1 migration stopped; keep maintenance active and inspect the configuration",
+    );
     process.exitCode = 1;
   } finally {
     await proxy?.dispose();

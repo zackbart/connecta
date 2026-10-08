@@ -22,11 +22,9 @@ describe("Node listen adapter", () => {
         observedSignal = request.signal;
         markStarted();
         return new Promise<Response>((resolve) => {
-          request.signal.addEventListener(
-            "abort",
-            () => resolve(new Response("cancelled", { status: 499 })),
-            { once: true },
-          );
+          request.signal.addEventListener("abort", () => resolve(new Response("cancelled", { status: 499 })), {
+            once: true,
+          });
         });
       },
       close: async () => {},
@@ -76,11 +74,7 @@ describe("Node listen adapter", () => {
             observedSignal = ctx.signal;
             markStarted();
             return new Promise((_, reject) => {
-              ctx.signal?.addEventListener(
-                "abort",
-                () => reject(ctx.signal?.reason),
-                { once: true },
-              );
+              ctx.signal?.addEventListener("abort", () => reject(ctx.signal?.reason), { once: true });
             });
           },
         },
@@ -88,9 +82,10 @@ describe("Node listen adapter", () => {
     });
     const executor: Executor = {
       async execute(_code, providers) {
-        const value = await required(providers
-          .find((provider) => provider.name === "connecta")!
-          .fns.call)("slow.wait", {});
+        const value = await required(providers.find((provider) => provider.name === "connecta")!.fns.call)(
+          "slow.wait",
+          {},
+        );
         return { result: value };
       },
     };
@@ -128,7 +123,7 @@ describe("Node listen adapter", () => {
         method: "tools/call",
         params: {
           name: "execute_code",
-          arguments: { code: "async () => connecta.call(\"slow.wait\", {})" },
+          arguments: { code: 'async () => connecta.call("slow.wait", {})' },
         },
       }),
     );
@@ -137,14 +132,9 @@ describe("Node listen adapter", () => {
     await viWaitForAbort(() => observedSignal?.aborted === true);
     expect(observedSignal?.reason).toBeInstanceOf(Error);
     await viWaitForAbort(async () => {
-      const health = await connecta.fetch(
-        new Request("http://127.0.0.1/health"),
-      );
+      const health = await connecta.fetch(new Request("http://127.0.0.1/health"));
       const body = (await health.json()) as any;
-      return (
-        body.admission.requests.active === 0 &&
-        body.admission.code.active === 0
-      );
+      return body.admission.requests.active === 0 && body.admission.code.active === 0;
     });
     await connecta.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -154,9 +144,7 @@ describe("Node listen adapter", () => {
   });
 });
 
-async function viWaitForAbort(
-  predicate: () => boolean | Promise<boolean>,
-): Promise<void> {
+async function viWaitForAbort(predicate: () => boolean | Promise<boolean>): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error("Request signal was not aborted.");

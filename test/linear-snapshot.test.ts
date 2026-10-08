@@ -19,18 +19,12 @@ const downstream = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../src/connectors/remote-mcp.js")>();
+  const actual = await importOriginal<typeof import("../src/connectors/remote-mcp.js")>();
   // The real connector, with only its transport pointed in-process.
   return {
     ...actual,
     remoteMcp: (id: string, options: Parameters<typeof actual.remoteMcp>[1]) =>
-      actual.remoteMcp(
-        id,
-        downstream.transport
-          ? { ...options, _transportFactory: downstream.transport }
-          : options,
-      ),
+      actual.remoteMcp(id, downstream.transport ? { ...options, _transportFactory: downstream.transport } : options),
   };
 });
 
@@ -52,11 +46,9 @@ async function listThroughLinear(
 ): Promise<{ connector: Connector; tools: Awaited<ReturnType<Connector["listTools"]>> }> {
   const server = httpDownstream((mcp) => {
     for (const name of names) {
-      mcp.registerTool(
-        name,
-        { description: `d ${name}`, ...(annotations ? { annotations } : {}) },
-        async () => ({ content: [] }),
-      );
+      mcp.registerTool(name, { description: `d ${name}`, ...(annotations ? { annotations } : {}) }, async () => ({
+        content: [],
+      }));
     }
   });
   downstream.transport = server.transport;
@@ -108,9 +100,14 @@ describe("linear() before and after defineProvider", () => {
     });
     expect(connector.describe?.()).toEqual({
       optionSources: {
-        "source.kind": "default", "auth.mode": "config", "auth.header": "default",
-        "auth.scheme": "default", "credential.label": "default",
-        "transport.versionNegotiation": "default", "transport.redirects": "default", "transport.requireHttps": "config",
+        "source.kind": "default",
+        "auth.mode": "config",
+        "auth.header": "default",
+        "auth.scheme": "default",
+        "credential.label": "default",
+        "transport.versionNegotiation": "default",
+        "transport.redirects": "default",
+        "transport.requireHttps": "config",
       },
       source: { kind: "remote-mcp", provider: "linear" },
       endpoint: { origin: "https://mcp.linear.app", path: "/mcp/readonly" },
@@ -172,22 +169,14 @@ describe("linear() before and after defineProvider", () => {
     // were reads in 0.28 and are writes now.
     expect(corrected).toHaveLength(20);
     expect(wereReads).toHaveLength(15);
-    const cases = (list: readonly string[]) =>
-      additive.flatMap((name) => list.map((v) => `${name}:${v}`)).sort();
-    expect(wereReads.sort()).toEqual(
-      cases(["read", "readIdempotent", "readNotDestructive"]),
-    );
-    expect(corrected.sort()).toEqual(
-      cases(["read", "readIdempotent", "readNotDestructive", "readAndDestructive"]),
-    );
+    const cases = (list: readonly string[]) => additive.flatMap((name) => list.map((v) => `${name}:${v}`)).sort();
+    expect(wereReads.sort()).toEqual(cases(["read", "readIdempotent", "readNotDestructive"]));
+    expect(corrected.sort()).toEqual(cases(["read", "readIdempotent", "readNotDestructive", "readAndDestructive"]));
   });
 
   it("reports the same drift counts against the reviewed names", async () => {
     const reviewed = Object.keys(before.verdicts);
-    const { connector } = await listThroughLinear(
-      [...reviewed.slice(1), "summon_new_thing"],
-      null,
-    );
+    const { connector } = await listThroughLinear([...reviewed.slice(1), "summon_new_thing"], null);
     const { observedAt, ...counts } = observedCatalogDrift(connector) ?? {
       observedAt: "",
     };

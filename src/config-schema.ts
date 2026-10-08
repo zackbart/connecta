@@ -60,9 +60,7 @@ type Simplify<T> = { [K in keyof T]: T[K] } & {};
  */
 export type ConfigInput<S extends Shape> = Simplify<
   {
-    -readonly [K in keyof S as S[K]["optional"] extends true ? K : never]?:
-      | InputOf<S[K]>
-      | undefined;
+    -readonly [K in keyof S as S[K]["optional"] extends true ? K : never]?: InputOf<S[K]> | undefined;
   } & {
     -readonly [K in keyof S as S[K]["optional"] extends true ? never : K]: InputOf<S[K]>;
   }
@@ -87,9 +85,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function ownValue(value: object, key: string): unknown {
-  return Object.prototype.hasOwnProperty.call(value, key)
-    ? (value as Record<string, unknown>)[key]
-    : undefined;
+  return Object.prototype.hasOwnProperty.call(value, key) ? (value as Record<string, unknown>)[key] : undefined;
 }
 
 interface WholeOptions {
@@ -104,9 +100,7 @@ interface WholeOptions {
 /** A safe integer at or above `min`; the default applies only when omitted. */
 export function whole(options: WholeOptions & { default: number }): Field<number, number, true>;
 export function whole(options: WholeOptions): Field<number, number | undefined, true>;
-export function whole(
-  options: WholeOptions & { default?: number },
-): Field<number, number | undefined, true> {
+export function whole(options: WholeOptions & { default?: number }): Field<number, number | undefined, true> {
   const kind = options.min === 1 ? "positive" : "non-negative";
   return {
     optional: true,
@@ -116,8 +110,7 @@ export function whole(
       }
       if (options.max !== undefined && value > options.max) {
         fail(
-          `${path} must be at most ${options.max.toLocaleString("en-US")}` +
-            (options.unit ? ` ${options.unit}.` : "."),
+          `${path} must be at most ${options.max.toLocaleString("en-US")}` + (options.unit ? ` ${options.unit}.` : "."),
         );
       }
       return value;
@@ -157,10 +150,12 @@ export function text(): Field<string, string | undefined, true> {
  * `resolve` maps the accepted value (or `undefined`, when omitted) to what
  * core reads.
  */
-export function opaque<In, Out = In | undefined>(options: {
-  check?: (value: unknown, path: string) => void;
-  resolve?: (value: In | undefined) => Out;
-} = {}): Field<In, Out, true> {
+export function opaque<In, Out = In | undefined>(
+  options: {
+    check?: (value: unknown, path: string) => void;
+    resolve?: (value: In | undefined) => Out;
+  } = {},
+): Field<In, Out, true> {
   const resolve = options.resolve ?? ((value: In | undefined) => value as Out);
   return {
     optional: true,
@@ -206,8 +201,7 @@ export function object<S extends Shape>(
     const out: Record<string, unknown> = {};
     for (const [key, field] of Object.entries(shape)) {
       const child = value === undefined ? undefined : ownValue(value, key);
-      const resolved =
-        child === undefined ? field.absent(`${path}.${key}`) : field.parse(child, `${path}.${key}`);
+      const resolved = child === undefined ? field.absent(`${path}.${key}`) : field.parse(child, `${path}.${key}`);
       // An unset field without a default stays absent, as it was configured.
       if (resolved !== undefined) out[key] = resolved;
     }
@@ -445,7 +439,9 @@ function inspectRecord(value: object, path: string, field: AnyField): Inspected 
  */
 function selectShape(inspected: Inspected, path: string, variants: Variants): Shape {
   const at = `${path}.${variants.key}`;
-  const valid = Object.keys(variants.cases).map((name) => JSON.stringify(name)).join(", ");
+  const valid = Object.keys(variants.cases)
+    .map((name) => JSON.stringify(name))
+    .join(", ");
   const descriptor = inspected.own.find(([key]) => key === variants.key)?.[1];
   if (descriptor && isAccessor(descriptor)) fail(`${at} must be a plain value, not a getter or setter.`);
   const discriminant: unknown = descriptor?.value;
@@ -489,8 +485,11 @@ export function readPlain(value: unknown, path: string, field: AnyField): { unkn
 }
 
 function walk(value: unknown, path: string, field: AnyField, state: WalkState): unknown {
-  if (field.variants && value !== undefined &&
-    (typeof value !== "object" || value === null || isArrayAt(value, path))) {
+  if (
+    field.variants &&
+    value !== undefined &&
+    (typeof value !== "object" || value === null || isArrayAt(value, path))
+  ) {
     return fail(`${path} must be an object.`);
   }
   if (typeof value !== "object" || value === null) return value;

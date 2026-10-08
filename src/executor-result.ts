@@ -10,8 +10,7 @@ export function serializeResultText(value: unknown): string {
   return serialized === undefined ? String(value) : serialized;
 }
 
-const TRUNCATION_HINT =
-  "filter/map/slice data inside execute_code and return only what you need";
+const TRUNCATION_HINT = "filter/map/slice data inside execute_code and return only what you need";
 
 /**
  * Shape the over-cap notice so the **serialized envelope** fits the same cap
@@ -24,7 +23,11 @@ const TRUNCATION_HINT =
  * of what the program returned, and truncation happens exactly once no matter
  * how many hops the value takes.
  */
-function truncationEnvelope(text: string, maxChars: number, totalChars = text.length): {
+function truncationEnvelope(
+  text: string,
+  maxChars: number,
+  totalChars = text.length,
+): {
   truncated: true;
   preview: string;
   totalChars: number;
@@ -36,20 +39,14 @@ function truncationEnvelope(text: string, maxChars: number, totalChars = text.le
     totalChars,
     hint: TRUNCATION_HINT,
   };
-  let budget = Math.max(
-    0,
-    maxChars - JSON.stringify(base).length,
-  );
+  let budget = Math.max(0, maxChars - JSON.stringify(base).length);
   for (let attempt = 0; attempt < 8 && budget > 0; attempt += 1) {
     const candidate = { ...base, preview: text.slice(0, budget) };
     const size = JSON.stringify(candidate).length;
     if (size <= maxChars) return candidate;
     // Every character costs at least one serialized character, so scaling by
     // the overshoot ratio (minus a step) strictly shrinks the budget.
-    budget = Math.max(
-      0,
-      Math.floor(budget * (maxChars / size)) - 8,
-    );
+    budget = Math.max(0, Math.floor(budget * (maxChars / size)) - 8);
   }
   return { ...base, preview: text.slice(0, budget) };
 }
@@ -61,9 +58,15 @@ export function guardExecuteResultValue(value: unknown, maxChars = MAX_EXECUTE_R
   // Shrink its preview once more without nesting notices or losing original size.
   if (value !== null && typeof value === "object") {
     const prior = value as { truncated?: unknown; preview?: unknown; totalChars?: unknown; hint?: unknown };
-    if (prior.truncated === true && prior.hint === TRUNCATION_HINT && typeof prior.preview === "string" &&
-      typeof prior.totalChars === "number" && Number.isSafeInteger(prior.totalChars) && prior.totalChars >= prior.preview.length &&
-      Object.keys(value).length === 4) {
+    if (
+      prior.truncated === true &&
+      prior.hint === TRUNCATION_HINT &&
+      typeof prior.preview === "string" &&
+      typeof prior.totalChars === "number" &&
+      Number.isSafeInteger(prior.totalChars) &&
+      prior.totalChars >= prior.preview.length &&
+      Object.keys(value).length === 4
+    ) {
       return truncationEnvelope(prior.preview, maxChars, prior.totalChars);
     }
   }
@@ -79,14 +82,11 @@ export function truncateExecuteText(text: string, max: number): string {
  * Apply the public execute_code result/log policy before a child result enters
  * IPC. The parent repeats the guard for third-party Executor implementations.
  */
-export function prepareExecuteResultForTransport(
-  outcome: ExecuteResult,
-): ExecuteResult {
+export function prepareExecuteResultForTransport(outcome: ExecuteResult): ExecuteResult {
   // QuickJS already bounds captured logs at source (entries + cumulative
   // characters). Preserve that Executor-level shape; createExecuteTool applies
   // the smaller model-facing 4k presentation cap in the parent.
-  const logs =
-    outcome.logs && outcome.logs.length > 0 ? outcome.logs : undefined;
+  const logs = outcome.logs && outcome.logs.length > 0 ? outcome.logs : undefined;
   // An empty string is still a failure (E5): the parent renders a fixed
   // message for it, but this transport must not turn it into a success.
   if (outcome.error !== undefined) {

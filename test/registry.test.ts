@@ -1,25 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import {
-  MAX_CATALOG_TOOLS,
-  MAX_SERIALIZED_CATALOG_BYTES,
-} from "../src/catalog-limits.js";
+import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../src/catalog-limits.js";
 import { api } from "../src/connectors/api.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type {
-  Connector,
-  KVStorage,
-  Logger,
-  ToolDef,
-} from "../src/types.js";
-import {
-  brokenConnector,
-  calcConnector,
-  makeRegistry,
-  remoteConnector,
-  silentLogger,
-} from "./helpers.js";
+import type { Connector, KVStorage, Logger, ToolDef } from "../src/types.js";
+import { brokenConnector, calcConnector, makeRegistry, remoteConnector, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -30,9 +16,7 @@ describe("Registry construction", () => {
   });
 
   it("rejects duplicate connector ids", () => {
-    expect(() => makeRegistry([calcConnector, { ...calcConnector }])).toThrow(
-      /Duplicate connector id/,
-    );
+    expect(() => makeRegistry([calcConnector, { ...calcConnector }])).toThrow(/Duplicate connector id/);
   });
 });
 
@@ -53,7 +37,9 @@ describe("personal OAuth handoffs", () => {
     const backing = memoryStorage();
     let reads = 0;
     let release!: () => void;
-    const bothRead = new Promise<void>(resolve => { release = resolve; });
+    const bothRead = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const storage: KVStorage = {
       ...backing,
       async get(key) {
@@ -66,14 +52,15 @@ describe("personal OAuth handoffs", () => {
       },
     };
     const registry = new Registry([{ ...calcConnector, authScope: "personal" }], {
-      storage, logger: silentLogger,
+      storage,
+      logger: silentLogger,
     });
     const results = await Promise.allSettled([
       registry.storeOAuthHandoff("calc", "reused-state", "alice"),
       registry.storeOAuthHandoff("calc", "reused-state", "bob"),
     ]);
-    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
-    const failure = results.find(result => result.status === "rejected") as PromiseRejectedResult;
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const failure = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
     expect(failure.reason.message).toContain("reused one OAuth state across principals");
     const winner = results[0]?.status === "fulfilled" ? "alice" : "bob";
     expect((await registry.oauthCallbackView("calc", "reused-state"))?.principalKey).toBe(winner);
@@ -113,11 +100,7 @@ describe("startup convention warnings", () => {
       call: async () => null,
     });
     new Registry([noDesc], { storage: memoryStorage(), logger });
-    expect(
-      warnings.some((w) =>
-        w.includes('connector "nodesc" has no description'),
-      ),
-    ).toBe(true);
+    expect(warnings.some((w) => w.includes('connector "nodesc" has no description'))).toBe(true);
   });
 
   it("warns on static tools missing description or inputSchema", () => {
@@ -134,12 +117,8 @@ describe("startup convention warnings", () => {
       call: async () => ({}),
     });
     new Registry([conn], { storage: memoryStorage(), logger });
-    expect(
-      warnings.some((w) => w.includes('tool "bare.go" has no description')),
-    ).toBe(true);
-    expect(
-      warnings.some((w) => w.includes('tool "bare.go" has no inputSchema')),
-    ).toBe(true);
+    expect(warnings.some((w) => w.includes('tool "bare.go" has no description'))).toBe(true);
+    expect(warnings.some((w) => w.includes('tool "bare.go" has no inputSchema'))).toBe(true);
   });
 
   it("stays silent when conventions are met", () => {
@@ -165,11 +144,14 @@ describe("normalized result-cap state", () => {
   it.each([0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     "INV-11: refuses unusable deployment cap %s at construction",
     (maxResultBytes) => {
-      expect(() => new Registry([calcConnector], {
-        storage: memoryStorage(),
-        logger: silentLogger,
-        maxResultBytes,
-      })).toThrow("calls.maxResultBytes");
+      expect(
+        () =>
+          new Registry([calcConnector], {
+            storage: memoryStorage(),
+            logger: silentLogger,
+            maxResultBytes,
+          }),
+      ).toThrow("calls.maxResultBytes");
     },
   );
 
@@ -257,9 +239,7 @@ describe("request-local catalogs", () => {
       logger: silentLogger,
     });
     const requestScope = {};
-    const pending = Array.from({ length: 25 }, () =>
-      registry.getTools("coalesced", BASE, requestScope),
-    );
+    const pending = Array.from({ length: 25 }, () => registry.getTools("coalesced", BASE, requestScope));
     await firstStarted;
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(catalogLoads).toBe(1);
@@ -284,15 +264,10 @@ describe("request-local catalogs", () => {
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
-
     });
     const scope = {};
-    await expect(
-      registry.getTools("retry_load", BASE, scope),
-    ).rejects.toThrow("temporary failure");
-    await expect(
-      registry.getTools("retry_load", BASE, scope),
-    ).resolves.toMatchObject([{ name: "read" }]);
+    await expect(registry.getTools("retry_load", BASE, scope)).rejects.toThrow("temporary failure");
+    await expect(registry.getTools("retry_load", BASE, scope)).resolves.toMatchObject([{ name: "read" }]);
     expect(catalogLoads).toBe(2);
   });
   it("refuses complete catalogs over the tool or serialized-byte ceiling", async () => {
@@ -316,51 +291,51 @@ describe("request-local catalogs", () => {
     const registry = new Registry([tooMany, tooLarge], {
       storage: memoryStorage(),
       logger,
-
     });
 
-    await expect(registry.getTools("too_many", BASE)).rejects.toThrow(
-      "complete-catalog ceiling",
-    );
-    await expect(registry.getTools("too_large", BASE)).rejects.toThrow(
-      "complete-catalog ceiling",
-    );
-
+    await expect(registry.getTools("too_many", BASE)).rejects.toThrow("complete-catalog ceiling");
+    await expect(registry.getTools("too_large", BASE)).rejects.toThrow("complete-catalog ceiling");
   });
 
-  it.each(["tools", "bytes"])("refuses an over-ceiling %s catalog even when invalidation prevents publication", async (limit) => {
-    const storage = memoryStorage();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    let reached!: () => void;
-    const started = new Promise<void>((resolve) => { reached = resolve; });
-    let calls = 0;
-    const connector = connectorWith({
-      id: "invalidated_limit",
-      kind: "mcp",
-      tools: async () => {
-        if (++calls > 1) return [{ name: "fresh" }];
-        reached();
-        await gate;
-        return limit === "tools"
-          ? Array(MAX_CATALOG_TOOLS + 1).fill({ name: "same" }) as ToolDef[]
-          : [{ name: "x".repeat(MAX_SERIALIZED_CATALOG_BYTES) }];
-      },
-      call: async () => null,
-    });
-    const registry = makeRegistry([connector], { storage });
-    const pending = registry.getTools(connector.id, BASE);
-    const refused = expect(pending).rejects.toThrow(
-      limit === "tools" ? "catalog ceiling" : "complete-catalog ceiling",
-    );
-    await started;
-    await registry.invalidateStored(connector.id);
-    release();
-    await refused;
-    expect(await storage.get(`catalog:${connector.id}`)).toBeNull();
-    await expect(registry.getTools(connector.id, BASE)).resolves.toMatchObject([{ name: "fresh" }]);
-  });
-
+  it.each(["tools", "bytes"])(
+    "refuses an over-ceiling %s catalog even when invalidation prevents publication",
+    async (limit) => {
+      const storage = memoryStorage();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let reached!: () => void;
+      const started = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let calls = 0;
+      const connector = connectorWith({
+        id: "invalidated_limit",
+        kind: "mcp",
+        tools: async () => {
+          if (++calls > 1) return [{ name: "fresh" }];
+          reached();
+          await gate;
+          return limit === "tools"
+            ? (Array(MAX_CATALOG_TOOLS + 1).fill({ name: "same" }) as ToolDef[])
+            : [{ name: "x".repeat(MAX_SERIALIZED_CATALOG_BYTES) }];
+        },
+        call: async () => null,
+      });
+      const registry = makeRegistry([connector], { storage });
+      const pending = registry.getTools(connector.id, BASE);
+      const refused = expect(pending).rejects.toThrow(
+        limit === "tools" ? "catalog ceiling" : "complete-catalog ceiling",
+      );
+      await started;
+      await registry.invalidateStored(connector.id);
+      release();
+      await refused;
+      expect(await storage.get(`catalog:${connector.id}`)).toBeNull();
+      await expect(registry.getTools(connector.id, BASE)).resolves.toMatchObject([{ name: "fresh" }]);
+    },
+  );
 });
 
 describe("broken-connector isolation", () => {
@@ -396,7 +371,10 @@ describe("memory storage expiry", () => {
       for (let i = 1; i < 20; i++) await storage.set(`later-${i}`, "keep");
       expect(deleted.mock.calls.filter(([key]) => String(key).startsWith("expired-"))).toHaveLength(100);
       expect(await storage.get("live")).toBe("keep");
-    } finally { deleted.mockRestore(); now.mockRestore(); }
+    } finally {
+      deleted.mockRestore();
+      now.mockRestore();
+    }
   });
 });
 
@@ -423,9 +401,7 @@ describe("personal registry eviction", () => {
       call: async () => null,
     });
     const root = new Registry([connector], { storage, logger: silentLogger });
-    const refreshing = root
-      .scoped({ connectorIds: "all", principalKey: "0" })
-      .getTools("mine", BASE);
+    const refreshing = root.scoped({ connectorIds: "all", principalKey: "0" }).getTools("mine", BASE);
     await vi.waitFor(() => expect(calls).toBe(1));
 
     // Fill the personal-registry bound while principal 0's listing is live,
@@ -433,18 +409,14 @@ describe("personal registry eviction", () => {
     for (let i = 1; i <= 1_024; i++) {
       root.scoped({ connectorIds: "all", principalKey: String(i) });
     }
-    await root
-      .scoped({ connectorIds: "all", principalKey: "0" })
-      .invalidateStored("mine");
+    await root.scoped({ connectorIds: "all", principalKey: "0" }).invalidateStored("mine");
     release();
 
-    await expect(refreshing).resolves.toMatchObject([
-      { name: "before_reauthorization" },
-    ]);
+    await expect(refreshing).resolves.toMatchObject([{ name: "before_reauthorization" }]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(await storage.get("principal:0:catalog:mine")).toBeNull();
-    await expect(
-      root.scoped({ connectorIds: "all", principalKey: "0" }).getTools("mine", BASE),
-    ).resolves.toMatchObject([{ name: "after_reauthorization" }]);
+    await expect(root.scoped({ connectorIds: "all", principalKey: "0" }).getTools("mine", BASE)).resolves.toMatchObject(
+      [{ name: "after_reauthorization" }],
+    );
   });
 });

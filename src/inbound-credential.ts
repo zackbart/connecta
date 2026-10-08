@@ -13,9 +13,12 @@ export function authorizationCredential(request: Request): AuthorizationCredenti
   // Exactly one separator and one token68 value. Reject combined duplicate
   // headers and malformed spacing rather than letting an SDK repair them.
   const match = header === null ? null : /^Bearer ([A-Za-z0-9._~+/-]+=*)$/i.exec(header);
-  const credential: AuthorizationCredential = header === null ? { kind: "absent" }
-    : match ? { kind: "bearer", token: match[1]!, value: `Bearer ${match[1]!}` }
-    : { kind: "invalid" };
+  const credential: AuthorizationCredential =
+    header === null
+      ? { kind: "absent" }
+      : match
+        ? { kind: "bearer", token: match[1]!, value: `Bearer ${match[1]!}` }
+        : { kind: "invalid" };
   parsed.set(request, { header, credential });
   return credential;
 }
@@ -31,11 +34,18 @@ export function authorizationRequest(request: Request): Request {
   for (const key of new Set(url.searchParams.keys())) {
     if (key.startsWith("__clerk") || key === "__session" || key === "__dev_session") url.searchParams.delete(key);
   }
-  if (url.href === request.url && !request.headers.has("cookie") && headers.get("authorization") === request.headers.get("authorization")) return request;
+  if (
+    url.href === request.url &&
+    !request.headers.has("cookie") &&
+    headers.get("authorization") === request.headers.get("authorization")
+  )
+    return request;
   // Share the body without cloning/teeing or transferring the original
   // request: the route must still be able to read it after authentication.
   const normalized = new Request(url, {
-    method: request.method, headers, signal: request.signal,
+    method: request.method,
+    headers,
+    signal: request.signal,
     ...(request.body ? { body: request.body, duplex: "half" } : {}),
   });
   parsed.set(normalized, { header: headers.get("authorization"), credential });

@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../../types.js";
-import {
-  guideOf,
-  itClassifiesLikeARelease,
-  mockRemoteMcp,
-} from "../../../test/fixtures/hosted-provider.js";
+import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -19,11 +15,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import {
-  REVENUECAT_MCP_ENDPOINT,
-  REVENUECAT_VETTED_CATALOG,
-  revenuecat,
-} from "./index.js";
+import { REVENUECAT_MCP_ENDPOINT, REVENUECAT_VETTED_CATALOG, revenuecat } from "./index.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 const KEY_AUTH = {
@@ -57,17 +49,12 @@ describe("revenuecat()", () => {
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guideOf(connector)).toContain("## Project instructions");
     expect(guideOf(connector)).not.toContain("+## Project instructions");
-    expect(guideOf(connector)).toContain(
-      "Never grant a promotional entitlement without a ticket.",
-    );
+    expect(guideOf(connector)).toContain("Never grant a promotional entitlement without a ticket.");
   });
 
   it("declares no admission budget, because six domain limits cannot be one rule (P12)", () => {
     revenuecat("revenuecat", { purpose: "Subscription questions" });
-    const options = mocks.remoteMcp.mock.calls[0]?.[1] as Record<
-      string,
-      unknown
-    >;
+    const options = mocks.remoteMcp.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(options).not.toHaveProperty("callAdmission");
     expect(options).not.toHaveProperty("maxResultBytes");
   });
@@ -109,9 +96,7 @@ describe("revenuecat()", () => {
       "Call `list-projects` first and carry the exact `project_id` it returned into every project-scoped call.",
     );
     expect(guide).toContain("Connecta does not pick a project");
-    expect(guide).toContain(
-      "If more than one project fits the request, stop and ask; never guess a `project_id`.",
-    );
+    expect(guide).toContain("If more than one project fits the request, stop and ask; never guess a `project_id`.");
   });
 
   it("binds a static key to one project and says a second project is a second connector", () => {
@@ -135,12 +120,8 @@ describe("revenuecat()", () => {
     expect(guide.split("\n")[2]).toBe(
       "Single-project connection: Subscription state for the BePresent iOS project. RevenueCat secret API keys are project-wide, so this key reaches exactly one project and nothing outside it. A second project is a second connector with its own key and its own id — never a `project_id` argument pointed somewhere else.",
     );
-    expect(guide).toContain(
-      "`list-projects` returns the one project this key can see",
-    );
-    expect(guide).toContain(
-      "An empty or unexpected result means wrong connector, not missing data.",
-    );
+    expect(guide).toContain("`list-projects` returns the one project this key can see");
+    expect(guide).toContain("An empty or unexpected result means wrong connector, not missing data.");
   });
 
   it("takes the same single-project scope from an operator-managed key", () => {
@@ -165,12 +146,8 @@ describe("revenuecat()", () => {
     );
     // Where the key came from changes nothing about scope, so the guide is the
     // single-project one, not the account-wide one.
-    expect(guideOf(connector)).toContain(
-      "`list-projects` returns the one project this key can see",
-    );
-    expect(connectorGuideSummary(connector)).toBe(
-      "One project only: Subscription state for the BePresent iOS project",
-    );
+    expect(guideOf(connector)).toContain("`list-projects` returns the one project this key can see");
+    expect(connectorGuideSummary(connector)).toBe("One project only: Subscription state for the BePresent iOS project");
   });
 
   it("lets a deployment override the slot copy it renders", () => {
@@ -205,9 +182,7 @@ describe("revenuecat()", () => {
     expect(guide).toContain(
       "It does not filter writes for a read-only key: every write is offered, reaches RevenueCat, and fails there in RevenueCat's own words.",
     );
-    expect(guide).toContain(
-      "route the write to a connector configured with a write-enabled key",
-    );
+    expect(guide).toContain("route the write to a connector configured with a write-enabled key");
   });
 
   it("tells two static connectors apart in the one field search returns (P3)", () => {
@@ -221,12 +196,8 @@ describe("revenuecat()", () => {
     });
     const first = connectorGuideSummary(ios);
     const second = connectorGuideSummary(scroll);
-    expect(first).toBe(
-      "One project only: Subscription state for the BePresent iOS project",
-    );
-    expect(second).toBe(
-      "One project only: Subscription state for the BibleScroll project",
-    );
+    expect(first).toBe("One project only: Subscription state for the BePresent iOS project");
+    expect(second).toBe("One project only: Subscription state for the BibleScroll project");
     expect(first).not.toEqual(second);
     for (const summary of [first, second]) {
       expect(summary?.length).toBeLessThanOrEqual(120);
@@ -246,9 +217,7 @@ describe("revenuecat()", () => {
   });
 
   it("carries the reduction, async, and catalog-varies advice (P6, P7)", () => {
-    const guide = guideOf(
-      revenuecat("revenuecat", { purpose: "Subscription questions" }),
-    );
+    const guide = guideOf(revenuecat("revenuecat", { purpose: "Subscription questions" }));
     expect(guide).toContain("not a fixed set");
     expect(guide).toContain("reduce inside `execute_code`");
     expect(guide).toContain("`gives_access` on each subscription");
@@ -260,15 +229,11 @@ describe("revenuecat()", () => {
     expect(guide).toContain("authorize_connector");
     expect(guide).toContain('skills({ name: "usage" })');
     // The unclassified tool is named rather than left to be discovered.
-    expect(guide).toContain(
-      "`render-paywall-screenshot` is unclassified on purpose because",
-    );
+    expect(guide).toContain("`render-paywall-screenshot` is unclassified on purpose because");
   });
 
   it("states RevenueCat's own per-domain rate limits in the guide (P12)", () => {
-    const guide = guideOf(
-      revenuecat("revenuecat", { purpose: "Subscription questions" }),
-    );
+    const guide = guideOf(revenuecat("revenuecat", { purpose: "Subscription questions" }));
     expect(guide).toContain(
       "480 requests per minute for customer information and virtual currencies, 60 for project configuration and audiences, 25 for charts and metrics",
     );
@@ -287,9 +252,7 @@ describe("revenuecat()", () => {
       expect(guide).toContain("`list-projects` yields the `project_id`");
       expect(guide).toContain("list-apps");
       expect(guide).toContain("list-customers");
-      expect(guide).toContain(
-        "A plausible-looking id belongs to another project or to nobody.",
-      );
+      expect(guide).toContain("A plausible-looking id belongs to another project or to nobody.");
     }
   });
 
@@ -305,9 +268,7 @@ describe("revenuecat()", () => {
       destructive: 42,
     });
     expect(verdicts.size).toBe(114);
-    expect(verdicts.get("get-refund-request-preferences")?.verdict).toBe(
-      "read-only",
-    );
+    expect(verdicts.get("get-refund-request-preferences")?.verdict).toBe("read-only");
     expect(verdicts.has("render-paywall-screenshot")).toBe(false);
     // No digests: the scoped live catalog cannot provide a complete set (#351).
     for (const record of verdicts.values()) {
@@ -316,8 +277,7 @@ describe("revenuecat()", () => {
   });
 
   it("keeps the argued borderline verdicts where the release put them", () => {
-    const verdictFor = (name: string) =>
-      REVENUECAT_VETTED_CATALOG.tools.get(name)?.verdict;
+    const verdictFor = (name: string) => REVENUECAT_VETTED_CATALOG.tools.get(name)?.verdict;
     // Additive despite reading like a mutation: nothing existing is replaced.
     expect(verdictFor("equalize-subscription-prices")).toBe("additive");
     expect(verdictFor("validate-app-credentials")).toBe("additive");
@@ -352,20 +312,12 @@ describe("revenuecat()", () => {
     expect(verdictFor("detach-products-from-package")).toBe("destructive");
   });
 
-  itClassifiesLikeARelease(
-    () => revenuecat("revenuecat", { purpose: "Rehearsal" }),
-    mocks,
-    {
-      read: [
-        "list-projects",
-        "get-customer",
-        "get-refund-request-preferences",
-      ],
-      write: "create-offering",
-      destructive: "grant-customer-entitlement",
-      unknown: ["render-paywall-screenshot", "list-new-thing", "wreck-new-thing"],
-    },
-  );
+  itClassifiesLikeARelease(() => revenuecat("revenuecat", { purpose: "Rehearsal" }), mocks, {
+    read: ["list-projects", "get-customer", "get-refund-request-preferences"],
+    write: "create-offering",
+    destructive: "grant-customer-entitlement",
+    unknown: ["render-paywall-screenshot", "list-new-thing", "wreck-new-thing"],
+  });
 
   it("declares no operator credential slot or credential test (P10)", () => {
     const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
@@ -375,9 +327,7 @@ describe("revenuecat()", () => {
   });
 
   it("rejects an empty purpose at construction (P2)", () => {
-    expect(() => revenuecat("revenuecat", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
-    );
+    expect(() => revenuecat("revenuecat", { purpose: "  " })).toThrow("a non-empty purpose");
   });
 
   it("lets a deployment override the title without losing the guide's scoping", () => {

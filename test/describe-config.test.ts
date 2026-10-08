@@ -167,12 +167,14 @@ describe("describeConfig", () => {
       executor,
       logger: "silent",
     });
-    expect(app.describeConfig().connectors).toEqual([{
-      id: "bare",
-      authScope: "shared",
-      source: { kind: "custom" },
-      maxResultBytes: { value: 24_000, source: "deployment" },
-    }]);
+    expect(app.describeConfig().connectors).toEqual([
+      {
+        id: "bare",
+        authScope: "shared",
+        source: { kind: "custom" },
+        maxResultBytes: { value: 24_000, source: "deployment" },
+      },
+    ]);
     await app.close();
   });
 
@@ -192,7 +194,12 @@ describe("describeConfig", () => {
       expect(snapshot).toMatchObject({
         schemaVersion: 1,
         connectaVersion: CONNECTA_VERSION,
-        server: { name: "connecta", version: CONNECTA_VERSION, websiteUrl: { origin: "https://about.example", path: "/connecta" }, icons: 1 },
+        server: {
+          name: "connecta",
+          version: CONNECTA_VERSION,
+          websiteUrl: { origin: "https://about.example", path: "/connecta" },
+          icons: 1,
+        },
         urls: { publicUrl: { origin: BASE, path: "/" }, mcpPath: "/mcp", allowedOrigins: "default" },
         executor: { admission: { concurrency: { value: 2, source: "default" } } },
         trust: "trusted",
@@ -259,10 +266,13 @@ describe("describeConfig", () => {
   });
 
   it("reports an unset default timeout as null and an executor-owned code pool", async () => {
-    const admitting = customExecutor({
-      execute: async () => ({ result: null }),
-      acquire: async () => ({ execute: async () => ({ result: null }), release() {} }),
-    } as never, { lifecycle: "self-managed" });
+    const admitting = customExecutor(
+      {
+        execute: async () => ({ result: null }),
+        acquire: async () => ({ execute: async () => ({ result: null }), release() {} }),
+      } as never,
+      { lifecycle: "self-managed" },
+    );
     const app = createConnecta({ connectors: [], executor: admitting, logger: "silent" });
     const snapshot = app.describeConfig();
     expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: null, source: "default" });
@@ -339,11 +349,12 @@ describe("non-web URL schemes", () => {
         id: `pair_${index}`,
         listTools: async () => [],
         callTool: async () => null,
-        describe: () => ({
-          source: { kind: "custom" },
-          endpoint: { origin: url, path: "/p" },
-          auth: { mode: "oauth", authorizationEndpoint: url, tokenEndpoint: url, clientMetadataUrl: url },
-        }) as never,
+        describe: () =>
+          ({
+            source: { kind: "custom" },
+            endpoint: { origin: url, path: "/p" },
+            auth: { mode: "oauth", authorizationEndpoint: url, tokenEndpoint: url, clientMetadataUrl: url },
+          }) as never,
       },
     ]);
     const [, blob] = URLS[0];

@@ -56,35 +56,52 @@ const test = base.extend<{ deployment: Deployment }>({
         consents.push(url);
         const code = `flows-code-${consents.length}`;
         codes.set(code, url);
-        return new Response(`<!doctype html><title>Provider consent</title>
+        return new Response(
+          `<!doctype html><title>Provider consent</title>
           <h1>Allow Connecta to read records?</h1><form action="${escapeAttribute(url.searchParams.get("redirect_uri")!)}">
           <input type="hidden" name="state" value="${escapeAttribute(url.searchParams.get("state")!)}">
           <input type="hidden" name="code" value="${code}"><button>Allow access</button></form>`,
-          { headers: { "Content-Type": "text/html", "Content-Security-Policy": "script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" } });
+          {
+            headers: {
+              "Content-Type": "text/html",
+              "Content-Security-Policy":
+                "script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            },
+          },
+        );
       }
       if (url.href === `${providerOrigin}/token`) {
         const params = new URLSearchParams(await request.text());
         exchanges.push(params);
         const consent = codes.get(params.get("code") ?? "");
-        const challenge = Buffer.from(await crypto.subtle.digest(
-          "SHA-256", new TextEncoder().encode(params.get("code_verifier") ?? ""),
-        )).toString("base64url");
-        if (request.method !== "POST" || !consent ||
-            params.get("grant_type") !== "authorization_code" ||
-            params.get("client_id") !== "flows-client" ||
-            params.get("redirect_uri") !== consent.searchParams.get("redirect_uri") ||
-            challenge !== consent.searchParams.get("code_challenge")) {
+        const challenge = Buffer.from(
+          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(params.get("code_verifier") ?? "")),
+        ).toString("base64url");
+        if (
+          request.method !== "POST" ||
+          !consent ||
+          params.get("grant_type") !== "authorization_code" ||
+          params.get("client_id") !== "flows-client" ||
+          params.get("redirect_uri") !== consent.searchParams.get("redirect_uri") ||
+          challenge !== consent.searchParams.get("code_challenge")
+        ) {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
         codes.delete(params.get("code")!);
-        return Response.json({ access_token: ACCESS_TOKEN, refresh_token: REFRESH_TOKEN,
-          token_type: "Bearer", expires_in: 3600 });
+        return Response.json({
+          access_token: ACCESS_TOKEN,
+          refresh_token: REFRESH_TOKEN,
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
       }
       if (url.href === `${providerOrigin}/credential-check`) {
         const authorization = request.headers.get("authorization") ?? "";
         downstream.push(authorization);
-        return Response.json({ ok: authorization === `Bearer ${SECRET}` },
-          { status: authorization === `Bearer ${SECRET}` ? 200 : 401 });
+        return Response.json(
+          { ok: authorization === `Bearer ${SECRET}` },
+          { status: authorization === `Bearer ${SECRET}` ? 200 : 401 },
+        );
       }
       unexpectedNetwork.push(request.url);
       return Response.json({ error: "Unexpected provider request" }, { status: 404 });
@@ -93,17 +110,21 @@ const test = base.extend<{ deployment: Deployment }>({
     const providerServer = createServer(async (incoming, outgoing) => {
       const chunks: Buffer[] = [];
       for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
-      const response = await providerFetch(new Request(new URL(incoming.url ?? "/", providerOrigin), {
-        method: incoming.method ?? "GET", headers: incoming.headers as HeadersInit,
-        ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
-      }));
+      const response = await providerFetch(
+        new Request(new URL(incoming.url ?? "/", providerOrigin), {
+          method: incoming.method ?? "GET",
+          headers: incoming.headers as HeadersInit,
+          ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
+        }),
+      );
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
       outgoing.end(Buffer.from(await response.arrayBuffer()));
     });
     providerServer.listen(0, "127.0.0.1");
     await once(providerServer, "listening");
     const providerAddress = providerServer.address();
-    if (!providerAddress || typeof providerAddress === "string") throw new Error("Provider stub did not bind a TCP port");
+    if (!providerAddress || typeof providerAddress === "string")
+      throw new Error("Provider stub did not bind a TCP port");
     providerOrigin = `http://127.0.0.1:${providerAddress.port}`;
     globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
@@ -113,30 +134,47 @@ const test = base.extend<{ deployment: Deployment }>({
     };
 
     const app = createTestConnecta({
-      auth: fakeClerkAuth({ token: TOKEN, userId: "flows-operator",
-        frontendApiUrl: CLERK, publishableKey: CLERK_KEY }),
-      storage, vault, logger: "silent",
+      auth: fakeClerkAuth({ token: TOKEN, userId: "flows-operator", frontendApiUrl: CLERK, publishableKey: CLERK_KEY }),
+      storage,
+      vault,
+      logger: "silent",
       connectors: [
         api("oauth", {
           title: "OAuth service",
-          oauth: { authorizationEndpoint: `${providerOrigin}/authorize`, tokenEndpoint: `${providerOrigin}/token`,
-            clientId: "flows-client", scope: "records:read", apiOrigins: [providerOrigin] },
-          tools: [{ name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null }],
+          oauth: {
+            authorizationEndpoint: `${providerOrigin}/authorize`,
+            tokenEndpoint: `${providerOrigin}/token`,
+            clientId: "flows-client",
+            scope: "records:read",
+            apiOrigins: [providerOrigin],
+          },
+          tools: [
+            { name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null },
+          ],
         }),
         api("vaulted", {
-          title: "Vaulted service", credential: { label: "API token" },
-          testCredential: async value => {
-            const response = await fetch(`${providerOrigin}/credential-check`, { headers: { Authorization: `Bearer ${value}` } });
+          title: "Vaulted service",
+          credential: { label: "API token" },
+          testCredential: async (value) => {
+            const response = await fetch(`${providerOrigin}/credential-check`, {
+              headers: { Authorization: `Bearer ${value}` },
+            });
             return { ok: response.ok };
           },
-          tools: [{ name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null }],
+          tools: [
+            { name: "read", description: "Read records", annotations: { readOnlyHint: true }, handler: () => null },
+          ],
         }),
       ],
     });
     const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
-    server.prependListener("request", request => requests.push({
-      method: request.method ?? "GET", path: request.url ?? "/", authorization: request.headers.authorization,
-    }));
+    server.prependListener("request", (request) =>
+      requests.push({
+        method: request.method ?? "GET",
+        path: request.url ?? "/",
+        authorization: request.headers.authorization,
+      }),
+    );
     await once(server, "listening");
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Node server did not bind a TCP port");
@@ -144,19 +182,26 @@ const test = base.extend<{ deployment: Deployment }>({
 
     try {
       // The binding preserves violations across reloads and the OAuth popup.
-      await context.exposeBinding("recordFlowCspViolation", (_source, violation) => { violations.push(violation); });
+      await context.exposeBinding("recordFlowCspViolation", (_source, violation) => {
+        violations.push(violation);
+      });
       await context.addInitScript(`document.addEventListener('securitypolicyviolation', event => {
         void window.recordFlowCspViolation({ url: location.href, directive: event.effectiveDirective, blockedURI: event.blockedURI });
       });`);
-      await context.route(url => ["http:", "https:"].includes(url.protocol) && url.origin !== origin && url.origin !== providerOrigin, route => {
-        unexpectedNetwork.push(route.request().url());
-        return route.abort("blockedbyclient");
-      });
-      await context.route(`${CLERK}/**`, async route => {
+      await context.route(
+        (url) => ["http:", "https:"].includes(url.protocol) && url.origin !== origin && url.origin !== providerOrigin,
+        (route) => {
+          unexpectedNetwork.push(route.request().url());
+          return route.abort("blockedbyclient");
+        },
+      );
+      await context.route(`${CLERK}/**`, async (route) => {
         const url = new URL(route.request().url());
         if (url.pathname === "/npm/@clerk/clerk-js@6/dist/clerk.browser.js") {
           clerkLoads.push(url.href);
-          return route.fulfill({ contentType: "text/javascript", body: `
+          return route.fulfill({
+            contentType: "text/javascript",
+            body: `
             if (document.currentScript.dataset.clerkPublishableKey !== ${JSON.stringify(CLERK_KEY)}) throw new Error('Wrong test publishable key');
             const signedIn = document.cookie.split('; ').includes('__session=${TOKEN}');
             window.Clerk = {
@@ -170,18 +215,26 @@ const test = base.extend<{ deployment: Deployment }>({
               },
               signOut: async options => { document.cookie = '__session=; Max-Age=0; Path=/'; location.assign(options.redirectUrl); },
             };
-          ` });
+          `,
+          });
         }
         const returnUrl = url.searchParams.get("redirect_url");
-        if ((url.pathname === "/sign-in" || url.pathname === "/fixture/session") && returnUrl && new URL(returnUrl).origin === origin) {
+        if (
+          (url.pathname === "/sign-in" || url.pathname === "/fixture/session") &&
+          returnUrl &&
+          new URL(returnUrl).origin === origin
+        ) {
           if (url.pathname === "/fixture/session") {
             await context.addCookies([{ name: "__session", value: TOKEN, url: origin, sameSite: "Lax" }]);
             return route.fulfill({ status: 302, headers: { Location: returnUrl }, body: "" });
           }
-          return route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Test Clerk sign-in</title>
+          return route.fulfill({
+            contentType: "text/html",
+            body: `<!doctype html><title>Test Clerk sign-in</title>
             <h1>Test Clerk sign-in</h1><form action="/fixture/session">
             <input type="hidden" name="redirect_url" value="${escapeAttribute(returnUrl)}">
-            <button>Sign in as test operator</button></form>` });
+            <button>Sign in as test operator</button></form>`,
+          });
         }
         unexpectedNetwork.push(url.href);
         return route.abort("blockedbyclient");
@@ -194,8 +247,8 @@ const test = base.extend<{ deployment: Deployment }>({
       try {
         await Promise.all([
           app.close(),
-          new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
-          new Promise<void>((resolve, reject) => providerServer.close(error => error ? reject(error) : resolve())),
+          new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+          new Promise<void>((resolve, reject) => providerServer.close((error) => (error ? reject(error) : resolve()))),
         ]);
       } finally {
         globalThis.fetch = originalFetch;
@@ -208,18 +261,22 @@ async function openShell(page: Page, deployment: Deployment, path: string, signe
   if (signedIn) await page.context().addCookies([{ name: "__session", value: TOKEN, url: deployment.origin }]);
   const response = await page.goto(deployment.origin + path);
   expect(response!.status()).toBe(200);
-  expect(response!.headers()["content-security-policy"]).toContain(`script-src 'self' ${CLERK} https://challenges.cloudflare.com;`);
-  expect(response!.headers()["content-security-policy"]).toContain("object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  expect(response!.headers()["content-security-policy"]).toContain(
+    `script-src 'self' ${CLERK} https://challenges.cloudflare.com;`,
+  );
+  expect(response!.headers()["content-security-policy"]).toContain(
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  );
   // Fonts come from the unmodified hashed asset routes, never a CDN.
   await page.evaluate("document.fonts.ready");
-  expect(deployment.requests.some(request => /^\/ui\/assets\/inter-.+\.woff2$/.test(request.path))).toBe(true);
+  expect(deployment.requests.some((request) => /^\/ui\/assets\/inter-.+\.woff2$/.test(request.path))).toBe(true);
 }
 
 test("INV-4: Clerk sign-in admits a session before loading real operator data", async ({ page, deployment }) => {
   await openShell(page, deployment, "/connectors", false);
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toHaveCount(0);
-  expect(deployment.requests.some(request => request.path === "/ui/data")).toBe(false);
+  expect(deployment.requests.some((request) => request.path === "/ui/data")).toBe(false);
   expect((await page.request.get(deployment.origin + "/ui/api/config")).status()).toBe(401);
 
   await page.getByRole("button", { name: "Team sign in", exact: true }).click();
@@ -229,7 +286,11 @@ test("INV-4: Clerk sign-in admits a session before loading real operator data", 
   await expect(page).toHaveURL(deployment.origin + "/connectors");
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toBeVisible();
   expect(deployment.requests).toContainEqual({ method: "GET", path: "/ui/data", authorization: `Bearer ${TOKEN}` });
-  expect(deployment.requests).toContainEqual({ method: "GET", path: "/ui/api/config", authorization: `Bearer ${TOKEN}` });
+  expect(deployment.requests).toContainEqual({
+    method: "GET",
+    path: "/ui/api/config",
+    authorization: `Bearer ${TOKEN}`,
+  });
   expect(deployment.clerkLoads).toHaveLength(2);
   await page.reload();
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toBeVisible();
@@ -240,14 +301,19 @@ test("INV-4: Clerk sign-in admits a session before loading real operator data", 
   expect((await page.request.get(deployment.origin + "/ui/api/config")).status()).toBe(401);
 });
 
-test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and callback then rereads connected state", async ({ page, deployment }) => {
+test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and callback then rereads connected state", async ({
+  page,
+  deployment,
+}) => {
   await openShell(page, deployment, "/connectors/oauth#auth");
   await expect(page.getByRole("button", { name: "Connect OAuth service", exact: true })).toBeVisible();
   expect(deployment.consents).toEqual([]);
   expect(deployment.exchanges).toEqual([]);
 
   const popup = page.waitForEvent("popup");
-  const started = page.waitForResponse(response => new URL(response.url()).pathname === "/ui/oauth/oauth" && response.request().method() === "POST");
+  const started = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/ui/oauth/oauth" && response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Connect OAuth service", exact: true }).click();
   const consentPage = await popup;
   const startResponse = await started;
@@ -258,7 +324,7 @@ test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and ca
   expect(handoff.searchParams.get("h")).toBeTruthy();
   expect(handoff.searchParams.get("start")).toBe("1");
   await expect(consentPage.getByRole("heading", { name: "Allow Connecta to read records?" })).toBeVisible();
-  expect(deployment.requests.some(request => request.path === handoff.pathname + handoff.search)).toBe(true);
+  expect(deployment.requests.some((request) => request.path === handoff.pathname + handoff.search)).toBe(true);
   expect(deployment.consents).toHaveLength(1);
   const consent = deployment.consents[0]!;
   expect(consent.searchParams.get("redirect_uri")).toBe(deployment.origin + "/oauth/callback/oauth");
@@ -267,17 +333,21 @@ test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and ca
   expect(deployment.exchanges).toEqual([]);
   expect(await consentPage.evaluate("window.opener")).toBeNull();
 
-  const callback = consentPage.waitForResponse(response => new URL(response.url()).pathname === "/oauth/callback/oauth");
+  const callback = consentPage.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/oauth/callback/oauth",
+  );
   await consentPage.getByRole("button", { name: "Allow access" }).click();
   const callbackResponse = await callback;
   expect(callbackResponse.status()).toBe(200);
-  expect(callbackResponse.headers()["content-security-policy"]).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  expect(callbackResponse.headers()["content-security-policy"]).toBe(
+    "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  );
   await expect(consentPage.locator('[data-oauth-callback="connected"]')).toBeVisible();
   expect(deployment.exchanges).toHaveLength(1);
   expect(deployment.exchanges[0]!.get("code_verifier")).toBeTruthy();
   await expect(consentPage.locator("body")).not.toContainText(ACCESS_TOKEN);
 
-  const reread = page.waitForResponse(response => new URL(response.url()).pathname === "/ui/connectors/oauth");
+  const reread = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/connectors/oauth");
   await consentPage.close();
   await page.bringToFront();
   // Headless Chromium does not reliably emit focus when closing a popup.
@@ -289,21 +359,29 @@ test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and ca
   expect(JSON.stringify(facts)).not.toContain(REFRESH_TOKEN);
   await expect(page.getByRole("button", { name: "Disconnect OAuth service", exact: true })).toBeVisible();
   await expect(page.locator("#oauthNotice-oauth")).toHaveText("Connected.");
-  expect(deployment.requests.filter(request => request.path.startsWith("/ui/oauth/"))).toHaveLength(1);
-  const stored = (await Promise.all((await deployment.storage.list("")).map(key => deployment.storage.get(key)))).join("\n");
+  expect(deployment.requests.filter((request) => request.path.startsWith("/ui/oauth/"))).toHaveLength(1);
+  const stored = (
+    await Promise.all((await deployment.storage.list("")).map((key) => deployment.storage.get(key)))
+  ).join("\n");
   expect(stored).not.toContain(ACCESS_TOKEN);
   expect(stored).not.toContain(REFRESH_TOKEN);
   await page.reload();
   await expect(page.getByRole("button", { name: "Disconnect OAuth service", exact: true })).toBeVisible();
 });
 
-test("INV-5: credential save encrypts the vault value and Test sends the saved secret downstream", async ({ page, deployment }) => {
+test("INV-5: credential save encrypts the vault value and Test sends the saved secret downstream", async ({
+  page,
+  deployment,
+}) => {
   await openShell(page, deployment, "/connectors/vaulted#auth");
   const card = page.locator("#credential-vaulted");
   await expect(page.getByText("Credential needed", { exact: true }).first()).toBeVisible();
   await card.getByRole("button", { name: "Add credential", exact: true }).click();
   await card.getByLabel("API token", { exact: true }).fill(SECRET);
-  const saved = page.waitForResponse(response => new URL(response.url()).pathname === "/ui/credentials/vaulted" && response.request().method() === "PUT");
+  const saved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/ui/credentials/vaulted" && response.request().method() === "PUT",
+  );
   await card.getByRole("button", { name: "Save", exact: true }).click();
   const saveResponse = await saved;
   expect(saveResponse.status()).toBe(200);
@@ -317,7 +395,9 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   expect(await deployment.vault.get("vaulted")).toBe(SECRET);
   expect(deployment.downstream).toEqual([]);
 
-  const tested = page.waitForResponse(response => new URL(response.url()).pathname === "/ui/credentials/vaulted/test");
+  const tested = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/ui/credentials/vaulted/test",
+  );
   await card.getByRole("button", { name: "Test", exact: true }).click();
   const testResponse = await tested;
   expect(testResponse.status()).toBe(200);
@@ -326,14 +406,16 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   expect(deployment.downstream).toEqual([`Bearer ${SECRET}`]);
   await expect(page.locator("body")).not.toContainText(SECRET);
   expect(await page.content()).not.toContain(SECRET);
-  expect(deployment.requests.filter(request => request.path.startsWith("/ui/credentials/"))).toEqual([
+  expect(deployment.requests.filter((request) => request.path.startsWith("/ui/credentials/"))).toEqual([
     { method: "PUT", path: "/ui/credentials/vaulted", authorization: `Bearer ${TOKEN}` },
     { method: "POST", path: "/ui/credentials/vaulted/test", authorization: `Bearer ${TOKEN}` },
   ]);
   await page.reload();
   await expect(card.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
   await expect(page.getByText("Credential needed", { exact: true })).toHaveCount(0);
-  const facts = await page.request.get(deployment.origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
+  const facts = await page.request.get(deployment.origin + "/ui/api/config", {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  });
   expect(facts.status()).toBe(200);
   expect(await facts.text()).not.toContain(SECRET);
   await card.getByRole("button", { name: "Replace", exact: true }).click();
@@ -344,10 +426,20 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   expect(await deployment.vault.get("vaulted")).toBe(replacement);
   expect(await page.content()).not.toContain(replacement);
   const dialogs: string[] = [];
-  page.on("dialog", dialog => { dialogs.push(dialog.message()); void dialog.dismiss(); });
+  page.on("dialog", (dialog) => {
+    dialogs.push(dialog.message());
+    void dialog.dismiss();
+  });
   await card.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(card.getByRole("group", { name: /Remove Vaulted service's credential/ }).getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
-  await card.getByRole("group", { name: /Remove Vaulted service's credential/ }).getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(
+    card
+      .getByRole("group", { name: /Remove Vaulted service's credential/ })
+      .getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  await card
+    .getByRole("group", { name: /Remove Vaulted service's credential/ })
+    .getByRole("button", { name: "Remove", exact: true })
+    .click();
   await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential removed.");
   expect(await deployment.vault.get("vaulted")).toBeNull();
   expect(dialogs).toEqual([]);

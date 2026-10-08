@@ -1,10 +1,5 @@
 import { authorizationCredential, isMachineCredential } from "./inbound-credential.js";
-import type {
-  AuthResult,
-  IdentityReference,
-  InboundAuth,
-  KVStorage,
-} from "./types.js";
+import type { AuthResult, IdentityReference, InboundAuth, KVStorage } from "./types.js";
 import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeAccessTokens } from "./routes/access-tokens.js";
 import type { AccessTokensModule } from "./module-contracts.js";
@@ -58,22 +53,15 @@ const ACTIVE_KEY = accessTokenKeys.active;
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
 function bytesToHex(bytes: Uint8Array): string {
-  return [...bytes]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function hashToken(token: string): Promise<string> {
-  return bytesToHex(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(token))),
-  );
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(token))));
 }
 
 function normalizeName(value: unknown): string {
@@ -83,9 +71,7 @@ function normalizeName(value: unknown): string {
   const compact = value.replace(/\s+/gu, " ").trim();
   if (!compact) throw new Error("Token name cannot be empty");
   if (Array.from(compact).length > MAX_NAME_CHARACTERS) {
-    throw new Error(
-      `Token name cannot exceed ${MAX_NAME_CHARACTERS} characters`,
-    );
+    throw new Error(`Token name cannot exceed ${MAX_NAME_CHARACTERS} characters`);
   }
   return compact;
 }
@@ -107,12 +93,10 @@ function parseRecord(raw: string): StoredAccessToken {
       typeof value.createdAt !== "string" ||
       !Number.isFinite(Date.parse(value.createdAt)) ||
       typeof value.createdBy !== "string" ||
-      (value.principal !== undefined &&
-        !validIdentityReference(value.principal)) ||
+      (value.principal !== undefined && !validIdentityReference(value.principal)) ||
       (value.revokedAt !== undefined &&
         (typeof value.revokedAt !== "string" || !value.revokedAt || !Number.isFinite(Date.parse(value.revokedAt)))) ||
-      (value.revokedBy !== undefined &&
-        typeof value.revokedBy !== "string")
+      (value.revokedBy !== undefined && typeof value.revokedBy !== "string")
     ) {
       throw new Error("invalid token record");
     }
@@ -178,14 +162,8 @@ export class AccessTokenManager {
       );
     }
     const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
-    if (
-      !Number.isInteger(maxActive) ||
-      maxActive < 1 ||
-      maxActive > MAX_CONFIGURED_ACTIVE
-    ) {
-      throw new Error(
-        `accessTokens.maxActive must be a whole number from 1 to ${MAX_CONFIGURED_ACTIVE}`,
-      );
+    if (!Number.isInteger(maxActive) || maxActive < 1 || maxActive > MAX_CONFIGURED_ACTIVE) {
+      throw new Error(`accessTokens.maxActive must be a whole number from 1 to ${MAX_CONFIGURED_ACTIVE}`);
     }
     this.maxActive = maxActive;
     this.auth = {
@@ -225,10 +203,7 @@ export class AccessTokenManager {
       .map(metadata);
   }
 
-  async create(
-    name: unknown,
-    createdBy: string | IdentityReference,
-  ): Promise<CreatedAccessToken> {
+  async create(name: unknown, createdBy: string | IdentityReference): Promise<CreatedAccessToken> {
     const normalizedName = normalizeName(name);
     if (typeof createdBy !== "string" && !validIdentityReference(createdBy)) {
       throw new Error("Invalid token owner");
@@ -246,12 +221,8 @@ export class AccessTokenManager {
       tokenHash: hash,
       tokenPrefix: token.slice(0, 12),
       createdAt: new Date().toISOString(),
-      createdBy: typeof createdBy === "string"
-        ? createdBy
-        : `${createdBy.namespace}:${createdBy.id}`,
-      ...(typeof createdBy === "string"
-        ? {}
-        : { principal: { ...createdBy } }),
+      createdBy: typeof createdBy === "string" ? createdBy : `${createdBy.namespace}:${createdBy.id}`,
+      ...(typeof createdBy === "string" ? {} : { principal: { ...createdBy } }),
     };
     try {
       await this.updateActive(record.id, true);
@@ -266,34 +237,31 @@ export class AccessTokenManager {
     }
     // A failed lookup write may have committed. Keep its reservation and
     // metadata, so a manager can revoke it without ever returning the secret.
-    await this.storage.set(
-      lookupKey(hash),
-      JSON.stringify({ version: 1, id: record.id } satisfies TokenLookup),
-    );
+    await this.storage.set(lookupKey(hash), JSON.stringify({ version: 1, id: record.id } satisfies TokenLookup));
     return { token, accessToken: metadata(record) };
   }
 
-  async rename(
-    id: string,
-    name: unknown,
-  ): Promise<AccessTokenMetadata | null> {
+  async rename(id: string, name: unknown): Promise<AccessTokenMetadata | null> {
     const normalized = normalizeName(name);
-    const record = await this.updateRecord(id, current => ({ ...current, name: normalized }));
+    const record = await this.updateRecord(id, (current) => ({ ...current, name: normalized }));
     return record ? metadata(record) : null;
   }
 
-  async revoke(
-    id: string,
-    revokedBy: string,
-  ): Promise<AccessTokenMetadata | null> {
+  async revoke(id: string, revokedBy: string): Promise<AccessTokenMetadata | null> {
     const record = await this.read(id);
     if (!record) return null;
     // Remove admission first. A metadata failure cannot leave a successful
     // revocation's lookup alive. Retry deletion even if already marked revoked.
     await this.storage.delete(lookupKey(record.tokenHash));
-    const updated = await this.updateRecord(id, current => current.revokedAt ? current : {
-      ...current, revokedAt: new Date().toISOString(), revokedBy,
-    });
+    const updated = await this.updateRecord(id, (current) =>
+      current.revokedAt
+        ? current
+        : {
+            ...current,
+            revokedAt: new Date().toISOString(),
+            revokedBy,
+          },
+    );
     await this.updateActive(id, false);
     return updated ? metadata(updated) : null;
   }
@@ -311,7 +279,7 @@ export class AccessTokenManager {
       const next = update(record);
       // A rename racing revocation must retain revokedAt, including when
       // an in-flight create has not yet published its lookup.
-      if (!await this.storage.compareAndSet(recordKey(id), raw, JSON.stringify(next))) continue;
+      if (!(await this.storage.compareAndSet(recordKey(id), raw, JSON.stringify(next)))) continue;
       return next;
     }
     throw new Error("Access token metadata is busy; retry the operation");
@@ -320,14 +288,20 @@ export class AccessTokenManager {
   private async updateActive(id: string, adding: boolean): Promise<void> {
     for (let attempt = 0; attempt < 32; attempt++) {
       const raw = await this.storage.get(ACTIVE_KEY);
-      const ids: unknown = raw === null
-        ? (await this.list()).filter(token => !token.revokedAt).map(token => token.id)
-        : JSON.parse(raw);
-      if (!Array.isArray(ids) || !ids.every(value => typeof value === "string" && ID_RE.test(value)) || new Set(ids).size !== ids.length) {
+      const ids: unknown =
+        raw === null
+          ? (await this.list()).filter((token) => !token.revokedAt).map((token) => token.id)
+          : JSON.parse(raw);
+      if (
+        !Array.isArray(ids) ||
+        !ids.every((value) => typeof value === "string" && ID_RE.test(value)) ||
+        new Set(ids).size !== ids.length
+      ) {
         throw new Error("Stored access token capacity is invalid");
       }
-      if (adding && ids.length >= this.maxActive) throw new Error(`This deployment already has the maximum of ${this.maxActive} active access tokens`);
-      const next = adding ? [...ids, id] : ids.filter(value => value !== id);
+      if (adding && ids.length >= this.maxActive)
+        throw new Error(`This deployment already has the maximum of ${this.maxActive} active access tokens`);
+      const next = adding ? [...ids, id] : ids.filter((value) => value !== id);
       if (await this.storage.compareAndSet(ACTIVE_KEY, raw, JSON.stringify(next))) return;
     }
     throw new Error("Access token capacity is busy; retry the operation");
@@ -362,10 +336,12 @@ export function accessTokens(storage: KVStorage, options: { maxActive?: number }
   options = assertKnownOptions(options, "accessTokens()", ACCESS_TOKENS_OPTIONS);
   const manager = new AccessTokenManager(storage, options);
   const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
-  const optionSources = Object.freeze({ maxActive: options.maxActive === undefined ? "default" as const : "config" as const });
+  const optionSources = Object.freeze({
+    maxActive: options.maxActive === undefined ? ("default" as const) : ("config" as const),
+  });
   return {
     auth: manager.auth,
-    handle: context => routeAccessTokens(context, manager),
+    handle: (context) => routeAccessTokens(context, manager),
     describe: () => ({ maxActive, optionSources }),
   };
 }

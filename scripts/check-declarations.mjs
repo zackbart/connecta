@@ -98,9 +98,7 @@ export function reachableDeclarations(entries, read) {
       for (const match of source.matchAll(pattern)) {
         const specifier = match[1];
         if (!specifier.startsWith(".")) continue;
-        const target = candidates(file, specifier).find(
-          (candidate) => read(candidate) !== undefined,
-        );
+        const target = candidates(file, specifier).find((candidate) => read(candidate) !== undefined);
         if (target === undefined) {
           missing.push({
             from: file,
@@ -129,9 +127,7 @@ export function effectLeaks(file, source) {
 
 /** The top-level directories the exports map publishes declarations from. */
 export function declarationRoots(entries) {
-  return [...new Set(entries.map((entry) => entry.split("/")[0]))].filter(
-    (root) => !root.endsWith(".d.ts"),
-  );
+  return [...new Set(entries.map((entry) => entry.split("/")[0]))].filter((root) => !root.endsWith(".d.ts"));
 }
 
 /** Every .d.ts under `root/dir`, as root-relative posix paths. */
@@ -198,9 +194,7 @@ async function emitInMemory(root) {
 /** Run the check; returns the list of problems (empty when clean). */
 export async function checkDeclarations({ root, dist }) {
   const packageRoot = dist ? resolve(dist) : root;
-  const manifest = JSON.parse(
-    readFileSync(join(packageRoot, "package.json"), "utf8"),
-  );
+  const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   const entries = declarationEntries(manifest);
   if (entries.length === 0) {
     return { problems: ["package.json exports no `types` targets"], reachable: new Set() };
@@ -215,15 +209,11 @@ export async function checkDeclarations({ root, dist }) {
   const { reachable, missing } = reachableDeclarations(entries, read);
   const problems = [];
   for (const { from, line, specifier } of missing) {
-    problems.push(
-      `${from}:${line}: references ${specifier}, which has no declaration`,
-    );
+    problems.push(`${from}:${line}: references ${specifier}, which has no declaration`);
   }
   for (const file of [...reachable].sort()) {
     if (file.split("/").includes("runtime")) {
-      problems.push(
-        `${file}: an internal runtime module is reachable from the published types`,
-      );
+      problems.push(`${file}: an internal runtime module is reachable from the published types`);
     }
   }
   const scanned = new Set(reachable);
@@ -232,9 +222,7 @@ export async function checkDeclarations({ root, dist }) {
       for (const file of listDeclarations(packageRoot, dir)) {
         scanned.add(file);
         if (!reachable.has(file)) {
-          problems.push(
-            `${file}: orphan declaration — no exports types target reaches it`,
-          );
+          problems.push(`${file}: orphan declaration — no exports types target reaches it`);
         }
       }
     }
@@ -248,8 +236,7 @@ export async function checkDeclarations({ root, dist }) {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 
 if (invokedDirectly) {
   const args = process.argv.slice(2);

@@ -12,7 +12,7 @@
   // when "on"; its data stays in CONNECTA_DB.
   "vars": {
     // "CONNECTA_ACTIVITY": "on",
-    "PUBLIC_URL": "https://connecta.example.workers.dev"
+    "PUBLIC_URL": "https://connecta.example.workers.dev",
   },
 
   // Local-only Access identity. Remove this block to exercise the
@@ -21,8 +21,8 @@
   "access": {
     "dev": {
       "aud": "connecta-local",
-      "identity": { "email": "operator@example.com" }
-    }
+      "identity": { "email": "operator@example.com" },
+    },
   },
 
   // The one database. Create with `wrangler d1 create connecta` and paste
@@ -31,10 +31,10 @@
     {
       "binding": "CONNECTA_DB",
       "database_name": "connecta",
-      "database_id": "replace-with-d1-database-id"
-    }
+      "database_id": "replace-with-d1-database-id",
+    },
   ],
 
   // Required by execute_code; Dynamic Workers use the Workers Paid plan.
-  "worker_loaders": [{ "binding": "LOADER" }]
+  "worker_loaders": [{ "binding": "LOADER" }],
 }

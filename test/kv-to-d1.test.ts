@@ -38,9 +38,7 @@ const bindings = await (async () => {
     const { env } = (await import(/* @vite-ignore */ testModule)) as {
       env: { KV_COPY_SOURCE?: KVNamespace; KV_COPY_TARGET?: D1Database };
     };
-    return env.KV_COPY_SOURCE && env.KV_COPY_TARGET
-      ? { kv: env.KV_COPY_SOURCE, db: env.KV_COPY_TARGET }
-      : undefined;
+    return env.KV_COPY_SOURCE && env.KV_COPY_TARGET ? { kv: env.KV_COPY_SOURCE, db: env.KV_COPY_TARGET } : undefined;
   } catch {
     return undefined;
   }
@@ -53,7 +51,14 @@ const copyKvToD1 = (kv: KVNamespaceBinding, db: D1DatabaseBinding, options: Part
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const zero: KvToD1Counts = {
-  copied: 0, unchanged: 0, conflicts: 0, overwritten: 0, expired: 0, invalid: 0, verified: 0, mismatches: 0,
+  copied: 0,
+  unchanged: 0,
+  conflicts: 0,
+  overwritten: 0,
+  expired: 0,
+  invalid: 0,
+  verified: 0,
+  mismatches: 0,
 };
 
 /** Every count summed across families. */
@@ -68,11 +73,7 @@ function totals(families: Record<string, KvToD1Counts>): KvToD1Counts {
 }
 
 /** Run the copy to completion, one bounded call at a time. */
-async function copyAll(
-  kv: KVNamespaceBinding,
-  db: D1DatabaseBinding,
-  options: Partial<KvToD1CopyOptions> = {},
-) {
+async function copyAll(kv: KVNamespaceBinding, db: D1DatabaseBinding, options: Partial<KvToD1CopyOptions> = {}) {
   const calls: Awaited<ReturnType<typeof copyKvToD1>>[] = [];
   let cursor: string | undefined;
   do {
@@ -117,10 +118,13 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
 
   /** A row as D1 holds it, bytes and expiry included. */
   async function row(key: string) {
-    return db.prepare(
-      `SELECT length(CAST(value AS BLOB)) AS bytes, expires_at_ms
+    return db
+      .prepare(
+        `SELECT length(CAST(value AS BLOB)) AS bytes, expires_at_ms
        FROM connecta_kv WHERE key = ?`,
-    ).bind(key).first<{ bytes: number; expires_at_ms: number | null }>();
+      )
+      .bind(key)
+      .first<{ bytes: number; expires_at_ms: number | null }>();
   }
 
   it("keeps a live dispatched refresh across D1 adapters with skewed isolate clocks (INV-5)", async () => {
@@ -143,7 +147,10 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
       [`${scopes.connector("svc")}${oauthGrantKeys.grant}`, "grant"],
       [`${scopes.connector("svc")}${oauthFlowKeys.flow("digest")}`, "consent", 900],
       [`${scopes.connector("svc")}${oauthRefreshKeys.lease("epoch", "digest")}`, "lease"],
-      [`${scopes.connector("svc")}${oauthRefreshSpentKeys.spent("digest")}`, '{"connectaOAuthRefreshSpent":1,"epoch":"epoch","holder":"holder","activeKey":"oauth:refresh-active:epoch:holder","state":"ambiguous"}'],
+      [
+        `${scopes.connector("svc")}${oauthRefreshSpentKeys.spent("digest")}`,
+        '{"connectaOAuthRefreshSpent":1,"epoch":"epoch","holder":"holder","activeKey":"oauth:refresh-active:epoch:holder","state":"ambiguous"}',
+      ],
       [`${scopes.connector("svc")}${oauthRefreshActiveKeys.holder("epoch", "holder")}`, "active", 120],
       [`${scopes.connector("svc")}custom:thing`, "mine"],
       [oauthHandoffKeys.handoff("svc", "hash"), "principal", 900],
@@ -213,8 +220,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
   });
 
   it("pages past 1,000 keys and resumes from a returned cursor", async () => {
-    const keys = Array.from({ length: 1_234 }, (_, index) =>
-      accessTokenKeys.record(String(index).padStart(5, "0")));
+    const keys = Array.from({ length: 1_234 }, (_, index) => accessTokenKeys.record(String(index).padStart(5, "0")));
     for (let start = 0; start < keys.length; start += 100) {
       await Promise.all(keys.slice(start, start + 100).map((key) => kv.put(key, `v${key}`)));
     }
@@ -247,10 +253,11 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(totals((await copyKvToD1(kv, db)).families)).toEqual({ ...zero, copied: 20 });
     const before = await db.prepare("SELECT * FROM connecta_kv ORDER BY key").all();
     expect(totals((await copyKvToD1(kv, db)).families)).toEqual({ ...zero, unchanged: 20 });
-    expect(totals((await copyKvToD1(kv, db, { overwriteFamilies: ["credential", "access-token"] })).families))
-      .toEqual({ ...zero, unchanged: 20 });
-    expect((await db.prepare("SELECT * FROM connecta_kv ORDER BY key").all()).results)
-      .toEqual(before.results);
+    expect(totals((await copyKvToD1(kv, db, { overwriteFamilies: ["credential", "access-token"] })).families)).toEqual({
+      ...zero,
+      unchanged: 20,
+    });
+    expect((await db.prepare("SELECT * FROM connecta_kv ORDER BY key").all()).results).toEqual(before.results);
   });
 
   it("keeps a different D1 value unless asked to overwrite it", async () => {
@@ -288,7 +295,8 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     }
     const result = await copyKvToD1(kv, db, { overwriteFamilies: ["credential"] });
     expect(result.families).toEqual({
-      credential: { ...zero, overwritten: 1 }, "access-token": { ...zero, conflicts: 1 },
+      credential: { ...zero, overwritten: 1 },
+      "access-token": { ...zero, conflicts: 1 },
     });
     expect(await d1Storage(db).get(token)).toBe("d1");
     expect(await d1Storage(db).get(credential)).toBe("kv");
@@ -375,8 +383,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
         return kv.get(key, "text");
       },
     };
-    expect((await copyKvToD1(vanishing, db)).families)
-      .toEqual({ "access-token": { ...zero, expired: 1 } });
+    expect((await copyKvToD1(vanishing, db)).families).toEqual({ "access-token": { ...zero, expired: 1 } });
   });
 
   it("refuses a bad maxKeys before reading anything", async () => {
@@ -396,8 +403,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     await kv.put(secretKey, secretValue);
 
     const leaks = (text: string) =>
-      text.includes("SECRETKEYTEXT") || text.includes("SECRETVALUETEXT") ||
-      text.includes("lookup:");
+      text.includes("SECRETKEYTEXT") || text.includes("SECRETVALUETEXT") || text.includes("lookup:");
 
     // A result is counts only.
     const result = await copyKvToD1(kv, db, { maxKeys: 10 });
@@ -416,8 +422,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
         return kv.get(key, "text");
       },
     };
-    const readError = await copyKvToD1(failingRead, db, { maxKeys: 1_000 })
-      .catch((error: unknown) => error);
+    const readError = await copyKvToD1(failingRead, db, { maxKeys: 1_000 }).catch((error: unknown) => error);
     expect(readError).toBeInstanceOf(KvToD1CopyError);
     expect((readError as Error).message).toBe(
       "Workers KV to D1 copy stopped: reading an entry of the access-token family from Workers KV failed (Error)",
@@ -439,8 +444,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     // The secret key sorts after every record, in the second page of 30.
     const first = await copyKvToD1(kv, failingDb, { maxKeys: 30 }).catch((error: unknown) => error);
     expect(first).toBeInstanceOf(KvToD1CopyError);
-    expect((first as Error).message)
-      .toBe("Workers KV to D1 copy stopped: writing to D1 failed (Error)");
+    expect((first as Error).message).toBe("Workers KV to D1 copy stopped: writing to D1 failed (Error)");
     expect(leaks(`${(first as Error).message}${(first as Error).stack}`)).toBe(false);
     // The first page has no resume point but the start.
     expect((first as KvToD1CopyError).cursor).toBeUndefined();
@@ -465,8 +469,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
         return db.batch(statements as unknown as D1PreparedStatement[]);
       },
     };
-    const later = await copyKvToD1(kv, failingSecond, { cursor: firstPage.cursor! })
-      .catch((error: unknown) => error);
+    const later = await copyKvToD1(kv, failingSecond, { cursor: firstPage.cursor! }).catch((error: unknown) => error);
     expect(later).toBeInstanceOf(KvToD1CopyError);
     const token = (later as KvToD1CopyError).cursor;
     expect(token).toMatch(UUID);
@@ -489,8 +492,10 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(first.cursor).toMatch(UUID);
     expect(first.cursor).not.toBe(raw);
     // The cursor itself is held in D1, as a short-lived kv-copy entry.
-    const stored = await db.prepare("SELECT value, expires_at_ms FROM connecta_kv WHERE key = ?")
-      .bind(kvCopyKeys.cursor(first.cursor!)).first<{ value: string; expires_at_ms: number }>();
+    const stored = await db
+      .prepare("SELECT value, expires_at_ms FROM connecta_kv WHERE key = ?")
+      .bind(kvCopyKeys.cursor(first.cursor!))
+      .first<{ value: string; expires_at_ms: number }>();
     expect(JSON.parse(stored!.value)).toEqual({ source: SOURCE, cursor: raw });
     expect(stored!.expires_at_ms - Date.now()).toBeGreaterThan(6 * 24 * 3600 * 1000);
     expect(await copyKvToD1(kv, db, { cursor: first.cursor! })).toEqual({
@@ -502,9 +507,11 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     // A spent, unknown, malformed, or raw KV cursor is refused without echoing it.
     for (const cursor of [first.cursor!, raw, crypto.randomUUID(), "", `${first.cursor}\0`]) {
       const error = await copyKvToD1(kv, db, { cursor }).catch((caught: unknown) => caught);
-      expect(error).toEqual(new TypeError(
-        "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance",
-      ));
+      expect(error).toEqual(
+        new TypeError(
+          "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance",
+        ),
+      );
     }
   });
 
@@ -529,7 +536,8 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
             params.set(bound, values);
             return bound;
           },
-          all: statement.all.bind(statement), run: statement.run.bind(statement),
+          all: statement.all.bind(statement),
+          run: statement.run.bind(statement),
         };
       },
       async batch(statements) {
@@ -585,8 +593,11 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     await expect(copy(kv, db, {} as KvToD1CopyOptions)).rejects.toThrow("copyKvToD1 source must be a namespace id");
     for (let n = 0; n < 3; n++) await kv.put(accessTokenKeys.record(String(n)), "x");
     const first = await copyKvToD1(kv, db, { maxKeys: 1 });
-    const unknown = "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance";
-    await expect(copyKvToD1(kv, db, { source: "SECRETVALUETEXT", cursor: first.cursor! })).rejects.toThrow(new TypeError(unknown));
+    const unknown =
+      "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance";
+    await expect(copyKvToD1(kv, db, { source: "SECRETVALUETEXT", cursor: first.cursor! })).rejects.toThrow(
+      new TypeError(unknown),
+    );
     // The wrong source did not spend the real source's token.
     const results = await Promise.allSettled([
       copyKvToD1(kv, db, { cursor: first.cursor! }),
@@ -609,7 +620,10 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     await db.prepare("UPDATE connecta_kv SET expires_at_ms = expires_at_ms + 1000 WHERE key = ?").bind(key).run();
     await d1Storage(db).delete(missing);
     const mismatch = await copyKvToD1(kv, db, { verify: true });
-    expect(mismatch.families).toEqual({ credential: { ...zero, mismatches: 1 }, "access-token": { ...zero, mismatches: 1 } });
+    expect(mismatch.families).toEqual({
+      credential: { ...zero, mismatches: 1 },
+      "access-token": { ...zero, mismatches: 1 },
+    });
     expect(JSON.stringify(mismatch)).not.toContain("same");
     expect((await row(key))?.expires_at_ms).toBe(before!.expires_at_ms! + 1000);
     // Identical values with a different expiry conflict, and can be resolved explicitly.
@@ -625,11 +639,12 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     await copyKvToD1(kv, db);
     await markKvToD1Live(db, SOURCE);
     await d1Storage(db).set(key, "rotated");
-    await expect(copyKvToD1(kv, db, { overwriteFamilies: ["credential"] })).rejects.toThrow("copyKvToD1 refuses stale KV after cutover");
+    await expect(copyKvToD1(kv, db, { overwriteFamilies: ["credential"] })).rejects.toThrow(
+      "copyKvToD1 refuses stale KV after cutover",
+    );
     expect(await d1Storage(db).get(key)).toBe("rotated");
     expect((await copyKvToD1(kv, db, { allowStale: true })).families.credential?.conflicts).toBe(1);
   });
-
 
   it("runs the script flow under maintenance, reporting invalid and mismatch counts with non-zero status", async () => {
     const path = "../examples/worker/scripts/copy-kv-to-d1.mjs";
@@ -648,11 +663,24 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(output.table.mock.lastCall?.[0].credential.invalid).toBe(1);
     expect(() => parseArgs(["--overwrite"])).toThrow("Unknown argument");
     expect(() => parseArgs([])).toThrow("Traffic and writers must be stopped");
-    for (const family of ["credential", "access-token", "oauth-v2", "oauth-grant", "oauth-flow", "oauth-refresh", "oauth-handoff", "oauth-connect"]) {
+    for (const family of [
+      "credential",
+      "access-token",
+      "oauth-v2",
+      "oauth-grant",
+      "oauth-flow",
+      "oauth-refresh",
+      "oauth-handoff",
+      "oauth-connect",
+    ]) {
       expect(() => parseArgs(["--maintenance", "--overwrite-family", family])).toThrow("requires --confirm-stale-d1");
-      expect(parseArgs(["--maintenance", "--overwrite-family", family, "--confirm-stale-d1"]).overwriteFamilies).toEqual([family]);
+      expect(
+        parseArgs(["--maintenance", "--overwrite-family", family, "--confirm-stale-d1"]).overwriteFamilies,
+      ).toEqual([family]);
     }
-    expect(parseArgs(["--maintenance", "--overwrite-family", "catalog", "--overwrite-family", "result"]).overwriteFamilies).toEqual(["catalog", "result"]);
+    expect(
+      parseArgs(["--maintenance", "--overwrite-family", "catalog", "--overwrite-family", "result"]).overwriteFamilies,
+    ).toEqual(["catalog", "result"]);
     expect(HELP).toContain("at least 60 seconds");
     expect(HELP).toContain("BEFORE switching traffic");
     await runMigration(kv, db, { ...options, markLive: true }, operations, output);
@@ -668,21 +696,31 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     let reads = 0;
     const changing: KVNamespaceBinding = {
       list: (options) => kv.list(options),
-      async get() { return reads++ === 0 ? "SECRETVALUETEXT" : "second"; },
+      async get() {
+        return reads++ === 0 ? "SECRETVALUETEXT" : "second";
+      },
     };
     const output = { log: vi.fn(), table: vi.fn(), error: vi.fn() };
-    const error = await runMigration(changing, db, { source: SOURCE, maintenance: true }, { copyKvToD1: copy }, output)
-      .catch((caught: unknown) => caught);
+    const error = await runMigration(
+      changing,
+      db,
+      { source: SOURCE, maintenance: true },
+      { copyKvToD1: copy },
+      output,
+    ).catch((caught: unknown) => caught);
     expect(error.message).toBe("Workers KV source is not stable; keep maintenance active, wait, and repeat");
     expect(output.table).not.toHaveBeenCalled();
     expect(await d1Storage(db).get(key)).toBeNull();
   });
 
-
   it("INV-6: validates raw cursors before failing D1 access and sanitizes foreign copy errors", async () => {
     const failing: D1DatabaseBinding = {
-      prepare() { throw new Error("SECRETVALUETEXT"); },
-      async batch() { throw new Error("SECRETVALUETEXT"); },
+      prepare() {
+        throw new Error("SECRETVALUETEXT");
+      },
+      async batch() {
+        throw new Error("SECRETVALUETEXT");
+      },
     };
     await expect(copyKvToD1(kv, failing, { cursor: "SECRETKEYTEXT" })).rejects.toThrow(
       "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance",
@@ -700,20 +738,24 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
             params.set(bound, values);
             return bound;
           },
-          all: statement.all.bind(statement), run: statement.run.bind(statement),
+          all: statement.all.bind(statement),
+          run: statement.run.bind(statement),
         };
       },
       async batch(statements) {
-        if (statements.some((statement) => String(params.get(statement)?.[0] ?? "").startsWith(kvCopyKeys.cursor("")))) {
+        if (
+          statements.some((statement) => String(params.get(statement)?.[0] ?? "").startsWith(kvCopyKeys.cursor("")))
+        ) {
           throw new KvToD1CopyError("SECRETVALUETEXT", "SECRETKEYTEXT");
         }
         return db.batch(statements as unknown as D1PreparedStatement[]);
       },
     };
-    const error = await copyKvToD1(kv, foreignError, { maxKeys: 1 }).catch((caught: unknown) => caught) as KvToD1CopyError;
+    const error = (await copyKvToD1(kv, foreignError, { maxKeys: 1 }).catch(
+      (caught: unknown) => caught,
+    )) as KvToD1CopyError;
     expect(error.message).toBe("Workers KV to D1 copy stopped: recording the resume point in D1 failed (Error)");
     expect(error.cursor).toBeUndefined();
     expect(`${error.message}${error.stack}`).not.toContain("SECRET");
   });
-
 });

@@ -1,15 +1,7 @@
 import { skill } from "./skill.generated.js";
-import {
-  remoteMcp,
-  withCredentialDefaults,
-  type RemoteMcpAuth,
-} from "../../connectors/remote-mcp.js";
+import { remoteMcp, withCredentialDefaults, type RemoteMcpAuth } from "../../connectors/remote-mcp.js";
 import { reviewedCatalog } from "../../catalog-drift.js";
-import type {
-  Connector,
-  ToolClassification,
-  ConnectorCallAdmissionPolicy,
-} from "../../types.js";
+import type { Connector, ToolClassification, ConnectorCallAdmissionPolicy } from "../../types.js";
 import { optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../../connectors/option-shapes.js";
 import { defineProvider, type ProviderContext } from "../../provider.js";
@@ -67,120 +59,457 @@ export interface RevenueCatOptions {
  */
 const REVENUECAT_CLASSIFICATION: ToolClassification = {
   tools: {
-    "get-account-billing": {"verdict": "read", "reason": "Retrieves RevenueCat account billing information without changing vendor state."},
-    "get-app": {"verdict": "read", "reason": "Retrieves RevenueCat app information without changing vendor state."},
-    "get-project-ui-config": {"verdict": "read", "reason": "Retrieves RevenueCat project ui config information without changing vendor state."},
-    "list-account-billing-invoices": {"verdict": "read", "reason": "Retrieves RevenueCat account billing invoices information without changing vendor state."},
-    "list-app-public-api-keys": {"verdict": "read", "reason": "Retrieves RevenueCat app public api keys information without changing vendor state."},
-    "list-apps": {"verdict": "read", "reason": "Retrieves RevenueCat apps information without changing vendor state."},
-    "list-audit-logs": {"verdict": "read", "reason": "Retrieves RevenueCat audit logs information without changing vendor state."},
-    "list-collaborators": {"verdict": "read", "reason": "Retrieves RevenueCat collaborators information without changing vendor state."},
-    "list-projects": {"verdict": "read", "reason": "Retrieves RevenueCat projects information without changing vendor state."},
-    "get-product": {"verdict": "read", "reason": "Retrieves RevenueCat product information without changing vendor state."},
-    "get-product-store-state": {"verdict": "read", "reason": "Retrieves RevenueCat product store state information without changing vendor state."},
-    "get-product-store-state-operation": {"verdict": "read", "reason": "Retrieves RevenueCat product store state operation information without changing vendor state."},
-    "get-product-store-state-plan": {"verdict": "read", "reason": "Retrieves RevenueCat product store state plan information without changing vendor state."},
-    "list-product-store-state-plans": {"verdict": "read", "reason": "Retrieves RevenueCat product store state plans information without changing vendor state."},
-    "list-products": {"verdict": "read", "reason": "Retrieves RevenueCat products information without changing vendor state."},
-    "get-entitlement": {"verdict": "read", "reason": "Retrieves RevenueCat entitlement information without changing vendor state."},
-    "get-products-from-entitlement": {"verdict": "read", "reason": "Retrieves RevenueCat products from entitlement information without changing vendor state."},
-    "list-entitlements": {"verdict": "read", "reason": "Retrieves RevenueCat entitlements information without changing vendor state."},
-    "get-offering": {"verdict": "read", "reason": "Retrieves RevenueCat offering information without changing vendor state."},
-    "get-offering-prices": {"verdict": "read", "reason": "Retrieves RevenueCat offering prices information without changing vendor state."},
-    "list-offerings": {"verdict": "read", "reason": "Retrieves RevenueCat offerings information without changing vendor state."},
-    "list-packages": {"verdict": "read", "reason": "Retrieves RevenueCat packages information without changing vendor state."},
-    "get-audience": {"verdict": "read", "reason": "Retrieves RevenueCat audience information without changing vendor state."},
-    "get-audience-filter-options": {"verdict": "read", "reason": "Retrieves RevenueCat audience filter options information without changing vendor state."},
-    "get-targeting-rule": {"verdict": "read", "reason": "Retrieves RevenueCat targeting rule information without changing vendor state."},
-    "list-audiences": {"verdict": "read", "reason": "Retrieves RevenueCat audiences information without changing vendor state."},
-    "list-targeting-rules": {"verdict": "read", "reason": "Retrieves RevenueCat targeting rules information without changing vendor state."},
-    "get-paywall": {"verdict": "read", "reason": "Retrieves RevenueCat paywall information without changing vendor state."},
-    "list-paywalls": {"verdict": "read", "reason": "Retrieves RevenueCat paywalls information without changing vendor state."},
-    "get-customer": {"verdict": "read", "reason": "Retrieves RevenueCat customer information without changing vendor state."},
-    "get-customer-center-config": {"verdict": "read", "reason": "Retrieves RevenueCat customer center config information without changing vendor state."},
-    "get-refund-request-preferences": {"verdict": "read", "reason": "Retrieves RevenueCat refund request preferences information without changing vendor state."},
-    "get-subscription": {"verdict": "read", "reason": "Retrieves RevenueCat subscription information without changing vendor state."},
-    "list-customer-events": {"verdict": "read", "reason": "Retrieves RevenueCat customer events information without changing vendor state."},
-    "list-customers": {"verdict": "read", "reason": "Retrieves RevenueCat customers information without changing vendor state."},
-    "list-purchases": {"verdict": "read", "reason": "Retrieves RevenueCat purchases information without changing vendor state."},
-    "list-subscriptions": {"verdict": "read", "reason": "Retrieves RevenueCat subscriptions information without changing vendor state."},
-    "list-virtual-currencies-balances": {"verdict": "read", "reason": "Retrieves RevenueCat virtual currencies balances information without changing vendor state."},
-    "get-virtual-currency": {"verdict": "read", "reason": "Retrieves RevenueCat virtual currency information without changing vendor state."},
-    "list-virtual-currencies": {"verdict": "read", "reason": "Retrieves RevenueCat virtual currencies information without changing vendor state."},
-    "get-benchmarks": {"verdict": "read", "reason": "Retrieves RevenueCat benchmarks information without changing vendor state."},
-    "get-chart-data": {"verdict": "read", "reason": "Retrieves RevenueCat chart data information without changing vendor state."},
-    "get-chart-options-schema": {"verdict": "read", "reason": "Retrieves RevenueCat chart options schema information without changing vendor state."},
-    "get-experiment": {"verdict": "read", "reason": "Retrieves RevenueCat experiment information without changing vendor state."},
-    "get-experiment-results": {"verdict": "read", "reason": "Retrieves RevenueCat experiment results information without changing vendor state."},
-    "get-overview-metrics": {"verdict": "read", "reason": "Retrieves RevenueCat overview metrics information without changing vendor state."},
-    "get-revenue-metric": {"verdict": "read", "reason": "Retrieves RevenueCat revenue metric information without changing vendor state."},
-    "list-experiments": {"verdict": "read", "reason": "Retrieves RevenueCat experiments information without changing vendor state."},
-    "get-webhook-integration": {"verdict": "read", "reason": "Retrieves RevenueCat webhook integration information without changing vendor state."},
-    "list-webhook-integrations": {"verdict": "read", "reason": "Retrieves RevenueCat webhook integrations information without changing vendor state."},
-    "list-sdk-feature-gates": {"verdict": "read", "reason": "Retrieves RevenueCat sdk feature gates information without changing vendor state."},
-    "list-sdk-versions": {"verdict": "read", "reason": "Retrieves RevenueCat sdk versions information without changing vendor state."},
-    "get-paywall-ai-task": {"verdict": "read", "reason": "Retrieves RevenueCat paywall ai task information without changing vendor state."},
-    "create-app": {"verdict": "write", "reason": "create app creates or appends RevenueCat state; it has side effects."},
-    "create-project": {"verdict": "write", "reason": "create project creates or appends RevenueCat state; it has side effects."},
-    "update-app": {"verdict": "destructive", "reason": "update app changes existing RevenueCat state or removes it."},
-    "update-project-ui-config": {"verdict": "destructive", "reason": "update project ui config changes existing RevenueCat state or removes it."},
-    "validate-app-credentials": {"verdict": "write", "reason": "validate app credentials creates or appends RevenueCat state; it has side effects."},
-    "archive-product": {"verdict": "destructive", "reason": "archive product changes existing RevenueCat state or removes it."},
-    "create-product": {"verdict": "write", "reason": "create product creates or appends RevenueCat state; it has side effects."},
-    "create-product-prices": {"verdict": "destructive", "reason": "create product prices changes existing RevenueCat state or removes it."},
-    "equalize-subscription-prices": {"verdict": "write", "reason": "equalize subscription prices creates or appends RevenueCat state; it has side effects."},
-    "set-product-store-state": {"verdict": "destructive", "reason": "set product store state changes existing RevenueCat state or removes it."},
-    "submit-products-to-store": {"verdict": "destructive", "reason": "submit products to store changes existing RevenueCat state or removes it."},
-    "unarchive-product": {"verdict": "destructive", "reason": "unarchive product changes existing RevenueCat state or removes it."},
-    "update-product": {"verdict": "destructive", "reason": "update product changes existing RevenueCat state or removes it."},
-    "upload-product-store-state-screenshot": {"verdict": "write", "reason": "upload product store state screenshot creates or appends RevenueCat state; it has side effects."},
-    "create-product-store-state-plan": {"verdict": "write", "reason": "create product store state plan creates or appends RevenueCat state; it has side effects."},
-    "plan-product-store-state-plan": {"verdict": "destructive", "reason": "Advances a store-state plan workflow and can create asynchronous task state."},
-    "apply-product-store-state-plan": {"verdict": "destructive", "reason": "Applies a plan to store configuration and can change existing products."},
-    "update-product-store-state-plan": {"verdict": "destructive", "reason": "update product store state plan changes existing RevenueCat state or removes it."},
-    "discard-product-store-state-plan": {"verdict": "destructive", "reason": "discard product store state plan changes existing RevenueCat state or removes it."},
-    "archive-entitlement": {"verdict": "destructive", "reason": "archive entitlement changes existing RevenueCat state or removes it."},
-    "attach-products-to-entitlement": {"verdict": "write", "reason": "attach products to entitlement creates or appends RevenueCat state; it has side effects."},
-    "create-entitlement": {"verdict": "write", "reason": "create entitlement creates or appends RevenueCat state; it has side effects."},
-    "detach-products-from-entitlement": {"verdict": "destructive", "reason": "detach products from entitlement changes existing RevenueCat state or removes it."},
-    "unarchive-entitlement": {"verdict": "destructive", "reason": "unarchive entitlement changes existing RevenueCat state or removes it."},
-    "update-entitlement": {"verdict": "destructive", "reason": "update entitlement changes existing RevenueCat state or removes it."},
-    "archive-offering": {"verdict": "destructive", "reason": "archive offering changes existing RevenueCat state or removes it."},
-    "attach-products-to-package": {"verdict": "write", "reason": "attach products to package creates or appends RevenueCat state; it has side effects."},
-    "create-offering": {"verdict": "write", "reason": "create offering creates or appends RevenueCat state; it has side effects."},
-    "create-packages": {"verdict": "write", "reason": "create packages creates or appends RevenueCat state; it has side effects."},
-    "delete-package-from-offering": {"verdict": "destructive", "reason": "delete package from offering changes existing RevenueCat state or removes it."},
-    "detach-products-from-package": {"verdict": "destructive", "reason": "detach products from package changes existing RevenueCat state or removes it."},
-    "unarchive-offering": {"verdict": "destructive", "reason": "unarchive offering changes existing RevenueCat state or removes it."},
-    "update-offering": {"verdict": "destructive", "reason": "update offering changes existing RevenueCat state or removes it."},
-    "create-audience": {"verdict": "write", "reason": "create audience creates or appends RevenueCat state; it has side effects."},
-    "update-audience": {"verdict": "destructive", "reason": "update audience changes existing RevenueCat state or removes it."},
-    "create-targeting-rule": {"verdict": "write", "reason": "create targeting rule creates or appends RevenueCat state; it has side effects."},
-    "update-targeting-rule": {"verdict": "destructive", "reason": "update targeting rule changes existing RevenueCat state or removes it."},
-    "delete-targeting-rule": {"verdict": "destructive", "reason": "delete targeting rule changes existing RevenueCat state or removes it."},
-    "attach-offering-to-paywall": {"verdict": "destructive", "reason": "attach offering to paywall changes existing RevenueCat state or removes it."},
-    "detach-offering-from-paywall": {"verdict": "destructive", "reason": "detach offering from paywall changes existing RevenueCat state or removes it."},
-    "duplicate-paywall": {"verdict": "write", "reason": "duplicate paywall creates or appends RevenueCat state; it has side effects."},
-    "publish-paywall": {"verdict": "destructive", "reason": "publish paywall changes existing RevenueCat state or removes it."},
-    "unpublish-paywall": {"verdict": "destructive", "reason": "unpublish paywall changes existing RevenueCat state or removes it."},
-    "duplicate-offering": {"verdict": "write", "reason": "duplicate offering creates or appends RevenueCat state; it has side effects."},
-    "create-experiment": {"verdict": "write", "reason": "create experiment creates or appends RevenueCat state; it has side effects."},
-    "pause-experiment": {"verdict": "destructive", "reason": "pause experiment changes existing RevenueCat state or removes it."},
-    "resume-experiment": {"verdict": "destructive", "reason": "resume experiment changes existing RevenueCat state or removes it."},
-    "start-experiment": {"verdict": "destructive", "reason": "start experiment changes existing RevenueCat state or removes it."},
-    "stop-experiment": {"verdict": "destructive", "reason": "stop experiment changes existing RevenueCat state or removes it."},
-    "update-experiment": {"verdict": "destructive", "reason": "update experiment changes existing RevenueCat state or removes it."},
-    "assign-customer-offering": {"verdict": "destructive", "reason": "assign customer offering changes existing RevenueCat state or removes it."},
-    "grant-customer-entitlement": {"verdict": "destructive", "reason": "grant customer entitlement changes existing RevenueCat state or removes it."},
-    "archive-virtual-currency": {"verdict": "destructive", "reason": "archive virtual currency changes existing RevenueCat state or removes it."},
-    "create-virtual-currency": {"verdict": "write", "reason": "create virtual currency creates or appends RevenueCat state; it has side effects."},
-    "unarchive-virtual-currency": {"verdict": "destructive", "reason": "unarchive virtual currency changes existing RevenueCat state or removes it."},
-    "update-virtual-currency": {"verdict": "destructive", "reason": "update virtual currency changes existing RevenueCat state or removes it."},
-    "create-webhook-integration": {"verdict": "destructive", "reason": "Starts delivering customer events to a caller-supplied URL; omitted filters deliver every customer event in the project. Destructive by consequence even though it creates a new integration."},
-    "delete-webhook-integration": {"verdict": "destructive", "reason": "delete webhook integration changes existing RevenueCat state or removes it."},
-    "update-webhook-integration": {"verdict": "destructive", "reason": "update webhook integration changes existing RevenueCat state or removes it."},
-    "create-paywall-ai": {"verdict": "write", "reason": "create paywall ai creates or appends RevenueCat state; it has side effects."},
-    "edit-paywall-ai": {"verdict": "destructive", "reason": "edit paywall ai changes existing RevenueCat state or removes it."},
+    "get-account-billing": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat account billing information without changing vendor state.",
+    },
+    "get-app": { "verdict": "read", "reason": "Retrieves RevenueCat app information without changing vendor state." },
+    "get-project-ui-config": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat project ui config information without changing vendor state.",
+    },
+    "list-account-billing-invoices": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat account billing invoices information without changing vendor state.",
+    },
+    "list-app-public-api-keys": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat app public api keys information without changing vendor state.",
+    },
+    "list-apps": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat apps information without changing vendor state.",
+    },
+    "list-audit-logs": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat audit logs information without changing vendor state.",
+    },
+    "list-collaborators": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat collaborators information without changing vendor state.",
+    },
+    "list-projects": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat projects information without changing vendor state.",
+    },
+    "get-product": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat product information without changing vendor state.",
+    },
+    "get-product-store-state": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat product store state information without changing vendor state.",
+    },
+    "get-product-store-state-operation": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat product store state operation information without changing vendor state.",
+    },
+    "get-product-store-state-plan": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat product store state plan information without changing vendor state.",
+    },
+    "list-product-store-state-plans": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat product store state plans information without changing vendor state.",
+    },
+    "list-products": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat products information without changing vendor state.",
+    },
+    "get-entitlement": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat entitlement information without changing vendor state.",
+    },
+    "get-products-from-entitlement": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat products from entitlement information without changing vendor state.",
+    },
+    "list-entitlements": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat entitlements information without changing vendor state.",
+    },
+    "get-offering": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat offering information without changing vendor state.",
+    },
+    "get-offering-prices": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat offering prices information without changing vendor state.",
+    },
+    "list-offerings": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat offerings information without changing vendor state.",
+    },
+    "list-packages": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat packages information without changing vendor state.",
+    },
+    "get-audience": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat audience information without changing vendor state.",
+    },
+    "get-audience-filter-options": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat audience filter options information without changing vendor state.",
+    },
+    "get-targeting-rule": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat targeting rule information without changing vendor state.",
+    },
+    "list-audiences": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat audiences information without changing vendor state.",
+    },
+    "list-targeting-rules": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat targeting rules information without changing vendor state.",
+    },
+    "get-paywall": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat paywall information without changing vendor state.",
+    },
+    "list-paywalls": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat paywalls information without changing vendor state.",
+    },
+    "get-customer": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat customer information without changing vendor state.",
+    },
+    "get-customer-center-config": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat customer center config information without changing vendor state.",
+    },
+    "get-refund-request-preferences": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat refund request preferences information without changing vendor state.",
+    },
+    "get-subscription": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat subscription information without changing vendor state.",
+    },
+    "list-customer-events": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat customer events information without changing vendor state.",
+    },
+    "list-customers": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat customers information without changing vendor state.",
+    },
+    "list-purchases": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat purchases information without changing vendor state.",
+    },
+    "list-subscriptions": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat subscriptions information without changing vendor state.",
+    },
+    "list-virtual-currencies-balances": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat virtual currencies balances information without changing vendor state.",
+    },
+    "get-virtual-currency": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat virtual currency information without changing vendor state.",
+    },
+    "list-virtual-currencies": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat virtual currencies information without changing vendor state.",
+    },
+    "get-benchmarks": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat benchmarks information without changing vendor state.",
+    },
+    "get-chart-data": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat chart data information without changing vendor state.",
+    },
+    "get-chart-options-schema": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat chart options schema information without changing vendor state.",
+    },
+    "get-experiment": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat experiment information without changing vendor state.",
+    },
+    "get-experiment-results": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat experiment results information without changing vendor state.",
+    },
+    "get-overview-metrics": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat overview metrics information without changing vendor state.",
+    },
+    "get-revenue-metric": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat revenue metric information without changing vendor state.",
+    },
+    "list-experiments": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat experiments information without changing vendor state.",
+    },
+    "get-webhook-integration": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat webhook integration information without changing vendor state.",
+    },
+    "list-webhook-integrations": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat webhook integrations information without changing vendor state.",
+    },
+    "list-sdk-feature-gates": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat sdk feature gates information without changing vendor state.",
+    },
+    "list-sdk-versions": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat sdk versions information without changing vendor state.",
+    },
+    "get-paywall-ai-task": {
+      "verdict": "read",
+      "reason": "Retrieves RevenueCat paywall ai task information without changing vendor state.",
+    },
+    "create-app": {
+      "verdict": "write",
+      "reason": "create app creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-project": {
+      "verdict": "write",
+      "reason": "create project creates or appends RevenueCat state; it has side effects.",
+    },
+    "update-app": { "verdict": "destructive", "reason": "update app changes existing RevenueCat state or removes it." },
+    "update-project-ui-config": {
+      "verdict": "destructive",
+      "reason": "update project ui config changes existing RevenueCat state or removes it.",
+    },
+    "validate-app-credentials": {
+      "verdict": "write",
+      "reason": "validate app credentials creates or appends RevenueCat state; it has side effects.",
+    },
+    "archive-product": {
+      "verdict": "destructive",
+      "reason": "archive product changes existing RevenueCat state or removes it.",
+    },
+    "create-product": {
+      "verdict": "write",
+      "reason": "create product creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-product-prices": {
+      "verdict": "destructive",
+      "reason": "create product prices changes existing RevenueCat state or removes it.",
+    },
+    "equalize-subscription-prices": {
+      "verdict": "write",
+      "reason": "equalize subscription prices creates or appends RevenueCat state; it has side effects.",
+    },
+    "set-product-store-state": {
+      "verdict": "destructive",
+      "reason": "set product store state changes existing RevenueCat state or removes it.",
+    },
+    "submit-products-to-store": {
+      "verdict": "destructive",
+      "reason": "submit products to store changes existing RevenueCat state or removes it.",
+    },
+    "unarchive-product": {
+      "verdict": "destructive",
+      "reason": "unarchive product changes existing RevenueCat state or removes it.",
+    },
+    "update-product": {
+      "verdict": "destructive",
+      "reason": "update product changes existing RevenueCat state or removes it.",
+    },
+    "upload-product-store-state-screenshot": {
+      "verdict": "write",
+      "reason": "upload product store state screenshot creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-product-store-state-plan": {
+      "verdict": "write",
+      "reason": "create product store state plan creates or appends RevenueCat state; it has side effects.",
+    },
+    "plan-product-store-state-plan": {
+      "verdict": "destructive",
+      "reason": "Advances a store-state plan workflow and can create asynchronous task state.",
+    },
+    "apply-product-store-state-plan": {
+      "verdict": "destructive",
+      "reason": "Applies a plan to store configuration and can change existing products.",
+    },
+    "update-product-store-state-plan": {
+      "verdict": "destructive",
+      "reason": "update product store state plan changes existing RevenueCat state or removes it.",
+    },
+    "discard-product-store-state-plan": {
+      "verdict": "destructive",
+      "reason": "discard product store state plan changes existing RevenueCat state or removes it.",
+    },
+    "archive-entitlement": {
+      "verdict": "destructive",
+      "reason": "archive entitlement changes existing RevenueCat state or removes it.",
+    },
+    "attach-products-to-entitlement": {
+      "verdict": "write",
+      "reason": "attach products to entitlement creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-entitlement": {
+      "verdict": "write",
+      "reason": "create entitlement creates or appends RevenueCat state; it has side effects.",
+    },
+    "detach-products-from-entitlement": {
+      "verdict": "destructive",
+      "reason": "detach products from entitlement changes existing RevenueCat state or removes it.",
+    },
+    "unarchive-entitlement": {
+      "verdict": "destructive",
+      "reason": "unarchive entitlement changes existing RevenueCat state or removes it.",
+    },
+    "update-entitlement": {
+      "verdict": "destructive",
+      "reason": "update entitlement changes existing RevenueCat state or removes it.",
+    },
+    "archive-offering": {
+      "verdict": "destructive",
+      "reason": "archive offering changes existing RevenueCat state or removes it.",
+    },
+    "attach-products-to-package": {
+      "verdict": "write",
+      "reason": "attach products to package creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-offering": {
+      "verdict": "write",
+      "reason": "create offering creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-packages": {
+      "verdict": "write",
+      "reason": "create packages creates or appends RevenueCat state; it has side effects.",
+    },
+    "delete-package-from-offering": {
+      "verdict": "destructive",
+      "reason": "delete package from offering changes existing RevenueCat state or removes it.",
+    },
+    "detach-products-from-package": {
+      "verdict": "destructive",
+      "reason": "detach products from package changes existing RevenueCat state or removes it.",
+    },
+    "unarchive-offering": {
+      "verdict": "destructive",
+      "reason": "unarchive offering changes existing RevenueCat state or removes it.",
+    },
+    "update-offering": {
+      "verdict": "destructive",
+      "reason": "update offering changes existing RevenueCat state or removes it.",
+    },
+    "create-audience": {
+      "verdict": "write",
+      "reason": "create audience creates or appends RevenueCat state; it has side effects.",
+    },
+    "update-audience": {
+      "verdict": "destructive",
+      "reason": "update audience changes existing RevenueCat state or removes it.",
+    },
+    "create-targeting-rule": {
+      "verdict": "write",
+      "reason": "create targeting rule creates or appends RevenueCat state; it has side effects.",
+    },
+    "update-targeting-rule": {
+      "verdict": "destructive",
+      "reason": "update targeting rule changes existing RevenueCat state or removes it.",
+    },
+    "delete-targeting-rule": {
+      "verdict": "destructive",
+      "reason": "delete targeting rule changes existing RevenueCat state or removes it.",
+    },
+    "attach-offering-to-paywall": {
+      "verdict": "destructive",
+      "reason": "attach offering to paywall changes existing RevenueCat state or removes it.",
+    },
+    "detach-offering-from-paywall": {
+      "verdict": "destructive",
+      "reason": "detach offering from paywall changes existing RevenueCat state or removes it.",
+    },
+    "duplicate-paywall": {
+      "verdict": "write",
+      "reason": "duplicate paywall creates or appends RevenueCat state; it has side effects.",
+    },
+    "publish-paywall": {
+      "verdict": "destructive",
+      "reason": "publish paywall changes existing RevenueCat state or removes it.",
+    },
+    "unpublish-paywall": {
+      "verdict": "destructive",
+      "reason": "unpublish paywall changes existing RevenueCat state or removes it.",
+    },
+    "duplicate-offering": {
+      "verdict": "write",
+      "reason": "duplicate offering creates or appends RevenueCat state; it has side effects.",
+    },
+    "create-experiment": {
+      "verdict": "write",
+      "reason": "create experiment creates or appends RevenueCat state; it has side effects.",
+    },
+    "pause-experiment": {
+      "verdict": "destructive",
+      "reason": "pause experiment changes existing RevenueCat state or removes it.",
+    },
+    "resume-experiment": {
+      "verdict": "destructive",
+      "reason": "resume experiment changes existing RevenueCat state or removes it.",
+    },
+    "start-experiment": {
+      "verdict": "destructive",
+      "reason": "start experiment changes existing RevenueCat state or removes it.",
+    },
+    "stop-experiment": {
+      "verdict": "destructive",
+      "reason": "stop experiment changes existing RevenueCat state or removes it.",
+    },
+    "update-experiment": {
+      "verdict": "destructive",
+      "reason": "update experiment changes existing RevenueCat state or removes it.",
+    },
+    "assign-customer-offering": {
+      "verdict": "destructive",
+      "reason": "assign customer offering changes existing RevenueCat state or removes it.",
+    },
+    "grant-customer-entitlement": {
+      "verdict": "destructive",
+      "reason": "grant customer entitlement changes existing RevenueCat state or removes it.",
+    },
+    "archive-virtual-currency": {
+      "verdict": "destructive",
+      "reason": "archive virtual currency changes existing RevenueCat state or removes it.",
+    },
+    "create-virtual-currency": {
+      "verdict": "write",
+      "reason": "create virtual currency creates or appends RevenueCat state; it has side effects.",
+    },
+    "unarchive-virtual-currency": {
+      "verdict": "destructive",
+      "reason": "unarchive virtual currency changes existing RevenueCat state or removes it.",
+    },
+    "update-virtual-currency": {
+      "verdict": "destructive",
+      "reason": "update virtual currency changes existing RevenueCat state or removes it.",
+    },
+    "create-webhook-integration": {
+      "verdict": "destructive",
+      "reason":
+        "Starts delivering customer events to a caller-supplied URL; omitted filters deliver every customer event in the project. Destructive by consequence even though it creates a new integration.",
+    },
+    "delete-webhook-integration": {
+      "verdict": "destructive",
+      "reason": "delete webhook integration changes existing RevenueCat state or removes it.",
+    },
+    "update-webhook-integration": {
+      "verdict": "destructive",
+      "reason": "update webhook integration changes existing RevenueCat state or removes it.",
+    },
+    "create-paywall-ai": {
+      "verdict": "write",
+      "reason": "create paywall ai creates or appends RevenueCat state; it has side effects.",
+    },
+    "edit-paywall-ai": {
+      "verdict": "destructive",
+      "reason": "edit paywall ai changes existing RevenueCat state or removes it.",
+    },
   },
 };
 
@@ -206,32 +535,21 @@ function sharedUsageGuide(): string {
   return skill.fragments.guide_0;
 }
 
-function oauthUsageGuide(
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function oauthUsageGuide(purpose: string, instructions: string | undefined): string {
   const projectInstructions = instructions?.trim();
   return `${skill.fragments.guide_1}${purpose}${skill.fragments.guide_2}${sharedUsageGuide()}${
-    projectInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${projectInstructions}\n`
-      : ""
+    projectInstructions ? `\n## ${skill.instructionsHeading}\n\n${projectInstructions}\n` : ""
   }`;
 }
 
-function keyUsageGuide(
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function keyUsageGuide(purpose: string, instructions: string | undefined): string {
   const projectInstructions = instructions?.trim();
   return `# RevenueCat usage
 
 Single-project connection: ${purpose}${skill.fragments.guide_3}${sharedUsageGuide()}${
-    projectInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${projectInstructions}\n`
-      : ""
+    projectInstructions ? `\n## ${skill.instructionsHeading}\n\n${projectInstructions}\n` : ""
   }`;
 }
-
 
 /** The closed options revenuecat() accepts; see `assertKnownOptions`. */
 const REVENUECAT_OPTIONS = optionsOf<RevenueCatOptions>()({ ...PROVIDER_COMMON, auth: REMOTE_MCP_AUTH });
@@ -242,7 +560,7 @@ export const revenuecat = defineProvider<RevenueCatOptions>({
   title: "RevenueCat",
   kind: "mcp",
   readme: "RevenueCat",
-  bundle: {"baselineGzip":128548,"maxGzip":188548},
+  bundle: { "baselineGzip": 128548, "maxGzip": 188548 },
   skill,
   options: REVENUECAT_OPTIONS,
   classify: REVENUECAT_CLASSIFICATION,
@@ -278,9 +596,7 @@ function revenuecatConnector(id: string, options: RevenueCatOptions, provider: P
     requireHttps: true,
     classify: provider.classify,
     usageGuide: {
-      content: scoped
-        ? keyUsageGuide(purpose, options.instructions)
-        : oauthUsageGuide(purpose, options.instructions),
+      content: scoped ? keyUsageGuide(purpose, options.instructions) : oauthUsageGuide(purpose, options.instructions),
       // Explicit rather than derived, and purpose-bearing rather than static:
       // the derived summary would cut the scoping sentence mid-clause at 120
       // characters, and two static summaries would leave two `sk_` connectors

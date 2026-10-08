@@ -18,7 +18,10 @@ async function load(spec: string | undefined): Promise<ResultFile[]> {
   const files: ResultFile[] = [];
   for (const part of spec.split(",").map((entry) => resolve(entry.trim()))) {
     const paths = (await stat(part)).isDirectory()
-      ? (await readdir(part)).filter((name) => name.endsWith(".json")).sort().map((name) => join(part, name))
+      ? (await readdir(part))
+          .filter((name) => name.endsWith(".json"))
+          .sort()
+          .map((name) => join(part, name))
       : [part];
     for (const path of paths) {
       const parsed = JSON.parse(await readFile(path, "utf8")) as { kind?: unknown };

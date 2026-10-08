@@ -61,12 +61,7 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
-import type {
-  Connector,
-  ConnectorCallAdmissionPolicy,
-  ConnectorContext,
-  JsonSchema,
-} from "../../types.js";
+import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
@@ -122,9 +117,7 @@ export interface BreezeOptions {
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -132,9 +125,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 /** Breeze writes "no time" as MySQL's zero date; a projection says null. */
@@ -152,9 +143,7 @@ function flag(value: unknown): boolean | undefined {
 }
 
 function idString(value: unknown): string | undefined {
-  return value === undefined || value === null || value === ""
-    ? undefined
-    : String(value);
+  return value === undefined || value === null || value === "" ? undefined : String(value);
 }
 
 // --- Transport and failures ---------------------------------------------------
@@ -197,11 +186,7 @@ function bodyDetail(text: string): string {
 }
 
 /** Map a non-2xx Breeze response by the caller's next move. */
-function breezeFailure(
-  status: number,
-  headers: Headers,
-  text: string,
-): ConnectorCallError {
+function breezeFailure(status: number, headers: Headers, text: string): ConnectorCallError {
   const detail = bodyDetail(text);
   if (status === 429) {
     const wait = retryAfterMs(headers);
@@ -229,10 +214,7 @@ function breezeFailure(
     );
   }
   if (status === 400 || status === 422) {
-    return new ConnectorCallError(
-      "invalid_args",
-      `Breeze rejected the request (HTTP ${status}).${detail}`,
-    );
+    return new ConnectorCallError("invalid_args", `Breeze rejected the request (HTTP ${status}).${detail}`);
   }
   if (status >= 500) {
     const wait = retryAfterMs(headers);
@@ -242,11 +224,9 @@ function breezeFailure(
       wait === undefined ? {} : { retryAfterMs: wait },
     );
   }
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `Breeze request failed (HTTP ${status}).${detail}`,
-    { retryable: false },
-  );
+  return new ConnectorCallError("connector_call_failed", `Breeze request failed (HTTP ${status}).${detail}`, {
+    retryable: false,
+  });
 }
 
 function shortText(value: unknown): string | undefined {
@@ -308,11 +288,9 @@ async function callBreeze(
       // Breeze labels JSON text/html, so the content type proves nothing;
       // only the parse does. A hatch hands back what arrived.
       if (options.raw) return text;
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        "Breeze returned a non-JSON successful response.",
-        { retryable: false },
-      );
+      throw new ConnectorCallError("connector_call_failed", "Breeze returned a non-JSON successful response.", {
+        retryable: false,
+      });
     }
     const failure = reportedFailure(payload);
     if (failure) throw failure;
@@ -360,7 +338,23 @@ const READ_ENDPOINTS: ReadonlyMap<string, readonly string[]> = new Map([
   ["/account/summary", []],
   ["/account/list_log", ["action", "start", "end", "user_id", "details", "limit"]],
   // Undocumented since ~2023-09; parameters from the 2023-06-07 reference.
-  ["/giving/list", ["start", "end", "person_id", "include_family", "amount_min", "amount_max", "method_ids", "fund_ids", "envelope_number", "batches", "forms", "pledge_ids"]],
+  [
+    "/giving/list",
+    [
+      "start",
+      "end",
+      "person_id",
+      "include_family",
+      "amount_min",
+      "amount_max",
+      "method_ids",
+      "fund_ids",
+      "envelope_number",
+      "batches",
+      "forms",
+      "pledge_ids",
+    ],
+  ],
   ["/giving/view", ["payment_id"]],
   ["/funds/list", ["include_totals"]],
   ["/pledges/list_campaigns", []],
@@ -410,8 +404,7 @@ function queryPairs(value: unknown): Record<string, QueryValue> {
       );
     }
     const item = pair["value"];
-    query[name] =
-      item !== null && typeof item === "object" ? JSON.stringify(item) : item;
+    query[name] = item !== null && typeof item === "object" ? JSON.stringify(item) : item;
   }
   return query;
 }
@@ -450,10 +443,7 @@ function projectPerson(value: unknown): JsonRecord {
     nickName: person["nick_name"] || undefined,
     middleName: person["middle_name"] || undefined,
     maidenName: person["maiden_name"] || undefined,
-    details:
-      details && typeof details === "object" && !Array.isArray(details)
-        ? details
-        : undefined,
+    details: details && typeof details === "object" && !Array.isArray(details) ? details : undefined,
     family: family.length ? family.map(projectFamilyMember) : undefined,
   });
 }
@@ -552,10 +542,7 @@ function parsedObject(value: unknown): unknown {
 
 // --- Schemas -----------------------------------------------------------------
 
-function namedInput(
-  properties: Record<string, JsonSchema>,
-  required: string[] = [],
-): JsonSchema {
+function namedInput(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
 }
 
@@ -694,7 +681,8 @@ const FIELDS_PROPERTY: JsonSchema = {
       },
       details: {
         type: "object",
-        description: "email {address}; phone {phone_mobile|phone_home|phone_work}; address {street_address,city,state,zip}; family_role {person_id,role_id 1-5}.",
+        description:
+          "email {address}; phone {phone_mobile|phone_home|phone_work}; address {street_address,city,state,zip}; family_role {person_id,role_id 1-5}.",
       },
     },
     required: ["fieldId", "type"],
@@ -784,8 +772,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: {
         type: "object",
         properties: {
-          id: { type: "string" }, name: { type: "string" }, subdomain: { type: "string" },
-          timezone: { type: "string" }, country: { type: "string" }, currency: { type: "string" },
+          id: { type: "string" },
+          name: { type: "string" },
+          subdomain: { type: "string" },
+          timezone: { type: "string" },
+          country: { type: "string" },
+          currency: { type: "string" },
         },
         required: ["name"],
       },
@@ -812,11 +804,17 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         tagId: idProperty("Only people carrying this tag id from list_tags."),
         filter: {
           type: "object",
-          description: "Breeze filter_json: profile fieldId to option ids joined by '-', e.g. {\"2000138015\":\"226-227\"}.",
+          description:
+            'Breeze filter_json: profile fieldId to option ids joined by \'-\', e.g. {"2000138015":"226-227"}.',
         },
-        includeDetails: { type: "boolean", description: "Include every profile field (slower, larger). Defaults to false." },
+        includeDetails: {
+          type: "boolean",
+          description: "Include every profile field (slower, larger). Defaults to false.",
+        },
         limit: {
-          type: "integer", minimum: 1, maximum: MAX_PAGE_SIZE,
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_PAGE_SIZE,
           description: `People per page, 1 to connecta's ${MAX_PAGE_SIZE}. Defaults to ${defaultPageSize}.`,
         },
         cursor: { type: "string", pattern: ID_PATTERN, description: "Opaque nextCursor from the previous page." },
@@ -837,12 +835,18 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         }
         const limit: number = args["limit"] ?? defaultPageSize;
         const offset = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
-        const rows = asArray(await get("/people", {
-          details: args["includeDetails"] === true ? 1 : 0,
-          filter_json: Object.keys(filter).length ? JSON.stringify(filter) : undefined,
-          limit,
-          offset,
-        }, ctx));
+        const rows = asArray(
+          await get(
+            "/people",
+            {
+              details: args["includeDetails"] === true ? 1 : 0,
+              filter_json: Object.keys(filter).length ? JSON.stringify(filter) : undefined,
+              limit,
+              offset,
+            },
+            ctx,
+          ),
+        );
         // Breeze returns no total, so a full page is the only "maybe more"
         // signal it gives; the page after an exact multiple comes back empty.
         const hasMore = rows.length >= limit;
@@ -857,16 +861,23 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "Get one person by Breeze id with profile details keyed by fieldId and family members. Decode fieldIds with list_profile_fields.",
       annotations: readOnly,
-      inputSchema: namedInput({
-        personId: PERSON_ID,
-        includeDetails: { type: "boolean", description: "Include profile details. Defaults to true." },
-        raw: RAW_PROPERTY,
-      }, ["personId"]),
+      inputSchema: namedInput(
+        {
+          personId: PERSON_ID,
+          includeDetails: { type: "boolean", description: "Include profile details. Defaults to true." },
+          raw: RAW_PROPERTY,
+        },
+        ["personId"],
+      ),
       outputSchema: PERSON_SCHEMA,
       handler: async (args, ctx) => {
-        const payload = await get(`/people/${args["personId"]}`, {
-          details: args["includeDetails"] === false ? 0 : 1,
-        }, ctx);
+        const payload = await get(
+          `/people/${args["personId"]}`,
+          {
+            details: args["includeDetails"] === false ? 0 : 1,
+          },
+          ctx,
+        );
         // An account-wide key cannot be refused a person, so an empty answer
         // is an absence rather than a permission gap.
         if (!asRecord(payload)["id"]) {
@@ -892,8 +903,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                fieldId: { type: "string" }, name: { type: "string" }, type: { type: "string" },
-                section: { type: "string" }, options: { type: "array", items: { type: "object" } },
+                fieldId: { type: "string" },
+                name: { type: "string" },
+                type: { type: "string" },
+                section: { type: "string" },
+                options: { type: "array", items: { type: "object" } },
               },
               required: ["fieldId", "name", "type"],
             },
@@ -945,7 +959,9 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         end: dateProperty("Last day, YYYY-MM-DD. Defaults to the end of this month."),
         calendarId: idProperty("Only events on this calendar from list_calendars."),
         limit: {
-          type: "integer", minimum: 1, maximum: MAX_EVENT_LIMIT,
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_EVENT_LIMIT,
           description: `Instances returned, 1 to Breeze's ${MAX_EVENT_LIMIT}. Defaults to ${DEFAULT_EVENT_LIMIT}.`,
         },
         raw: RAW_PROPERTY,
@@ -958,9 +974,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                id: { type: "string", description: "Instance id." }, eventId: { type: "string", description: "Series id." },
-                name: { type: "string" }, calendarId: { type: "string" },
-                startsAt: { type: ["string", "null"] }, endsAt: { type: ["string", "null"] },
+                id: { type: "string", description: "Instance id." },
+                eventId: { type: "string", description: "Series id." },
+                name: { type: "string" },
+                calendarId: { type: "string" },
+                startsAt: { type: ["string", "null"] },
+                endsAt: { type: ["string", "null"] },
               },
               required: ["id", "name"],
             },
@@ -971,9 +990,18 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       },
       handler: async (args, ctx) => {
         const limit: number = args["limit"] ?? DEFAULT_EVENT_LIMIT;
-        const rows = asArray(await get("/events", {
-          start: args["start"], end: args["end"], category_id: args["calendarId"], limit,
-        }, ctx));
+        const rows = asArray(
+          await get(
+            "/events",
+            {
+              start: args["start"],
+              end: args["end"],
+              category_id: args["calendarId"],
+              limit,
+            },
+            ctx,
+          ),
+        );
         return {
           events: args["raw"] === true ? rows : rows.map(projectEvent),
           truncated: rows.length >= limit,
@@ -1012,11 +1040,14 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "List people checked in to one event instance, with check-in and check-out times. Not anonymous head counts; those come from breeze_api_get.",
       annotations: readOnly,
-      inputSchema: namedInput({
-        instanceId: INSTANCE_ID,
-        includeNames: { type: "boolean", description: "Add each attendee's name. Contact details need raw." },
-        raw: RAW_PROPERTY,
-      }, ["instanceId"]),
+      inputSchema: namedInput(
+        {
+          instanceId: INSTANCE_ID,
+          includeNames: { type: "boolean", description: "Add each attendee's name. Contact details need raw." },
+          raw: RAW_PROPERTY,
+        },
+        ["instanceId"],
+      ),
       outputSchema: {
         type: "object",
         properties: {
@@ -1025,8 +1056,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                personId: { type: "string" }, firstName: { type: "string" }, lastName: { type: "string" },
-                checkedInAt: { type: ["string", "null"] }, checkedOutAt: { type: ["string", "null"] },
+                personId: { type: "string" },
+                firstName: { type: "string" },
+                lastName: { type: "string" },
+                checkedInAt: { type: ["string", "null"] },
+                checkedOutAt: { type: ["string", "null"] },
               },
               required: ["personId"],
             },
@@ -1036,9 +1070,17 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       },
       handler: async (args, ctx) => {
         const wantDetails = args["includeNames"] === true || args["raw"] === true;
-        const rows = asArray(await get("/events/attendance/list", {
-          instance_id: args["instanceId"], type: "person", details: wantDetails ? "true" : "false",
-        }, ctx));
+        const rows = asArray(
+          await get(
+            "/events/attendance/list",
+            {
+              instance_id: args["instanceId"],
+              type: "person",
+              details: wantDetails ? "true" : "false",
+            },
+            ctx,
+          ),
+        );
         if (args["raw"] === true) return { attendance: rows };
         return {
           attendance: rows.map((value) => {
@@ -1070,8 +1112,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" }, name: { type: "string" }, slug: { type: "string" },
-                archived: { type: "boolean" }, createdAt: { type: "string" },
+                id: { type: "string" },
+                name: { type: "string" },
+                slug: { type: "string" },
+                archived: { type: "boolean" },
+                createdAt: { type: "string" },
               },
               required: ["id", "name"],
             },
@@ -1080,18 +1125,24 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         required: ["forms"],
       },
       handler: async (args, ctx) => ({
-        forms: asArray(await get("/forms/list_forms", { is_archived: args["archived"] === true ? 1 : 0 }, ctx)).map((value) => {
-          const form = asRecord(value);
-          return compact({
-            id: idString(form["id"]), name: form["name"], slug: form["url_slug"],
-            archived: flag(form["is_archived"]), createdAt: form["created_on"],
-          });
-        }),
+        forms: asArray(await get("/forms/list_forms", { is_archived: args["archived"] === true ? 1 : 0 }, ctx)).map(
+          (value) => {
+            const form = asRecord(value);
+            return compact({
+              id: idString(form["id"]),
+              name: form["name"],
+              slug: form["url_slug"],
+              archived: flag(form["is_archived"]),
+              createdAt: form["created_on"],
+            });
+          },
+        ),
       }),
     },
     {
       name: "list_form_fields",
-      description: "List one form's fields with fieldId, name, type, and options. Decodes the responses list_form_entries returns.",
+      description:
+        "List one form's fields with fieldId, name, type, and options. Decodes the responses list_form_entries returns.",
       annotations: readOnly,
       inputSchema: namedInput({ formId: FORM_ID }, ["formId"]),
       outputSchema: {
@@ -1102,7 +1153,9 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                fieldId: { type: "string" }, name: { type: "string" }, type: { type: "string" },
+                fieldId: { type: "string" },
+                name: { type: "string" },
+                type: { type: "string" },
                 options: { type: "array", items: { type: "object" } },
               },
               required: ["fieldId", "name"],
@@ -1123,10 +1176,13 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "List one form's entries with entry id, person id, and submission time; responses keyed by form fieldId on request. Not paginated.",
       annotations: readOnly,
-      inputSchema: namedInput({
-        formId: FORM_ID,
-        includeResponses: { type: "boolean", description: "Include each entry's answers keyed by fieldId." },
-      }, ["formId"]),
+      inputSchema: namedInput(
+        {
+          formId: FORM_ID,
+          includeResponses: { type: "boolean", description: "Include each entry's answers keyed by fieldId." },
+        },
+        ["formId"],
+      ),
       outputSchema: {
         type: "object",
         properties: {
@@ -1135,8 +1191,10 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" }, personId: { type: ["string", "null"] },
-                createdAt: { type: "string" }, responses: { type: "object" },
+                id: { type: "string" },
+                personId: { type: ["string", "null"] },
+                createdAt: { type: "string" },
+                responses: { type: "object" },
               },
               required: ["id"],
             },
@@ -1145,9 +1203,16 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         required: ["entries"],
       },
       handler: async (args, ctx) => ({
-        entries: asArray(await get("/forms/list_form_entries", {
-          form_id: args["formId"], details: args["includeResponses"] === true ? 1 : 0,
-        }, ctx)).map((value) => {
+        entries: asArray(
+          await get(
+            "/forms/list_form_entries",
+            {
+              form_id: args["formId"],
+              details: args["includeResponses"] === true ? 1 : 0,
+            },
+            ctx,
+          ),
+        ).map((value) => {
           const entry = asRecord(value);
           return compact({
             id: idString(entry["id"]),
@@ -1171,8 +1236,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                personId: { type: "string" }, roleIds: { type: "array", items: { type: "string" } },
-                response: { type: "string" }, comment: { type: "string" }, rsvpedAt: { type: ["string", "null"] },
+                personId: { type: "string" },
+                roleIds: { type: "array", items: { type: "string" } },
+                response: { type: "string" },
+                comment: { type: "string" },
+                rsvpedAt: { type: ["string", "null"] },
               },
               required: ["personId", "roleIds"],
             },
@@ -1213,11 +1281,14 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         required: ["roles"],
       },
       handler: async (args, ctx) => ({
-        roles: asArray(await get("/volunteers/list_roles", { instance_id: args["instanceId"], show_quantity: 1 }, ctx)).map((value) => {
+        roles: asArray(
+          await get("/volunteers/list_roles", { instance_id: args["instanceId"], show_quantity: 1 }, ctx),
+        ).map((value) => {
           const role = asRecord(value);
           const quantity = Number(role["quantity"]);
           return compact({
-            id: idString(role["id"]), name: role["name"],
+            id: idString(role["id"]),
+            name: role["name"],
             quantity: Number.isFinite(quantity) ? quantity : undefined,
           });
         }),
@@ -1228,20 +1299,27 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "List logged account actions of one type, such as person_updated or contribution_added, with object ids and times. The way to find what changed since a date.",
       annotations: readOnly,
-      inputSchema: namedInput({
-        action: {
-          type: "string", pattern: "^[a-z_]+$", maxLength: 40,
-          description: "Logged action, e.g. person_updated, tag_assign, contribution_added; the guide lists all.",
+      inputSchema: namedInput(
+        {
+          action: {
+            type: "string",
+            pattern: "^[a-z_]+$",
+            maxLength: 40,
+            description: "Logged action, e.g. person_updated, tag_assign, contribution_added; the guide lists all.",
+          },
+          start: dateProperty("Only actions on or after this day, YYYY-MM-DD."),
+          end: dateProperty("Only actions on or before this day, YYYY-MM-DD."),
+          userId: idProperty("Only actions by this Breeze user id."),
+          includeDetails: { type: "boolean", description: "Include Breeze's unstandardized description." },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: MAX_LOG_LIMIT,
+            description: `Rows returned, 1 to Breeze's ${MAX_LOG_LIMIT}. Defaults to ${DEFAULT_LOG_LIMIT}.`,
+          },
         },
-        start: dateProperty("Only actions on or after this day, YYYY-MM-DD."),
-        end: dateProperty("Only actions on or before this day, YYYY-MM-DD."),
-        userId: idProperty("Only actions by this Breeze user id."),
-        includeDetails: { type: "boolean", description: "Include Breeze's unstandardized description." },
-        limit: {
-          type: "integer", minimum: 1, maximum: MAX_LOG_LIMIT,
-          description: `Rows returned, 1 to Breeze's ${MAX_LOG_LIMIT}. Defaults to ${DEFAULT_LOG_LIMIT}.`,
-        },
-      }, ["action"]),
+        ["action"],
+      ),
       outputSchema: {
         type: "object",
         properties: {
@@ -1250,9 +1328,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" }, action: { type: "string" }, userId: { type: "string" },
+                id: { type: "string" },
+                action: { type: "string" },
+                userId: { type: "string" },
                 object: { description: "Parsed object_json, usually the affected id." },
-                createdAt: { type: "string" }, details: {},
+                createdAt: { type: "string" },
+                details: {},
               },
               required: ["id", "action"],
             },
@@ -1263,10 +1344,20 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       },
       handler: async (args, ctx) => {
         const limit: number = args["limit"] ?? DEFAULT_LOG_LIMIT;
-        const rows = asArray(await get("/account/list_log", {
-          action: args["action"], start: args["start"], end: args["end"], user_id: args["userId"],
-          details: args["includeDetails"] === true ? 1 : 0, limit,
-        }, ctx));
+        const rows = asArray(
+          await get(
+            "/account/list_log",
+            {
+              action: args["action"],
+              start: args["start"],
+              end: args["end"],
+              user_id: args["userId"],
+              details: args["includeDetails"] === true ? 1 : 0,
+              limit,
+            },
+            ctx,
+          ),
+        );
         return {
           entries: rows.map((value) => {
             const entry = asRecord(value);
@@ -1288,19 +1379,22 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "List giving transactions between two dates with donor, amount, method, batch, and fund split, plus a count and exact total. Undocumented by Breeze since 2023.",
       annotations: readOnly,
-      inputSchema: namedInput({
-        start: dateProperty("First gift date, YYYY-MM-DD."),
-        end: dateProperty("Last gift date, YYYY-MM-DD."),
-        personId: idProperty("Only this donor's gifts."),
-        includeFamily: { type: "boolean", description: "With personId, include the donor's family." },
-        amountMin: { type: "number", minimum: 0, description: "Gift amount at least this." },
-        amountMax: { type: "number", minimum: 0, description: "Gift amount at most this." },
-        fundIds: { ...ID_LIST, description: "Only gifts to these funds from list_funds." },
-        methodIds: { ...ID_LIST, description: "Only these payment method ids." },
-        batchNumbers: { ...ID_LIST, description: "Only these batch numbers." },
-        envelopeNumber: { type: "string", maxLength: 20, description: "Only this envelope number." },
-        raw: RAW_PROPERTY,
-      }, ["start", "end"]),
+      inputSchema: namedInput(
+        {
+          start: dateProperty("First gift date, YYYY-MM-DD."),
+          end: dateProperty("Last gift date, YYYY-MM-DD."),
+          personId: idProperty("Only this donor's gifts."),
+          includeFamily: { type: "boolean", description: "With personId, include the donor's family." },
+          amountMin: { type: "number", minimum: 0, description: "Gift amount at least this." },
+          amountMax: { type: "number", minimum: 0, description: "Gift amount at most this." },
+          fundIds: { ...ID_LIST, description: "Only gifts to these funds from list_funds." },
+          methodIds: { ...ID_LIST, description: "Only these payment method ids." },
+          batchNumbers: { ...ID_LIST, description: "Only these batch numbers." },
+          envelopeNumber: { type: "string", maxLength: 20, description: "Only this envelope number." },
+          raw: RAW_PROPERTY,
+        },
+        ["start", "end"],
+      ),
       outputSchema: {
         type: "object",
         properties: {
@@ -1309,9 +1403,15 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" }, paidOn: { type: "string" }, amount: { type: "string" },
-                method: { type: "string" }, personId: { type: "string" }, firstName: { type: "string" },
-                lastName: { type: "string" }, batchNumber: { type: "string" }, funds: { type: "array", items: { type: "object" } },
+                id: { type: "string" },
+                paidOn: { type: "string" },
+                amount: { type: "string" },
+                method: { type: "string" },
+                personId: { type: "string" },
+                firstName: { type: "string" },
+                lastName: { type: "string" },
+                batchNumber: { type: "string" },
+                funds: { type: "array", items: { type: "object" } },
               },
               required: ["id", "amount"],
             },
@@ -1325,18 +1425,28 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         if (args["includeFamily"] === true && args["personId"] === undefined) {
           throw new ConnectorCallError("invalid_args", "includeFamily needs a personId.");
         }
-        const joined = (value: unknown) =>
-          Array.isArray(value) ? value.join("-") : undefined;
+        const joined = (value: unknown) => (Array.isArray(value) ? value.join("-") : undefined);
         // Breeze's 2023 table says DD-MM-YYYY while its own example request
         // sends 2022-1-15; the server parses both, so the unambiguous ISO day
         // is what the schema accepts and what goes on the wire.
-        const rows = asArray(await get("/giving/list", {
-          start: args["start"], end: args["end"], person_id: args["personId"],
-          include_family: args["includeFamily"] === true ? 1 : undefined,
-          amount_min: args["amountMin"], amount_max: args["amountMax"],
-          fund_ids: joined(args["fundIds"]), method_ids: joined(args["methodIds"]),
-          batches: joined(args["batchNumbers"]), envelope_number: args["envelopeNumber"],
-        }, ctx));
+        const rows = asArray(
+          await get(
+            "/giving/list",
+            {
+              start: args["start"],
+              end: args["end"],
+              person_id: args["personId"],
+              include_family: args["includeFamily"] === true ? 1 : undefined,
+              amount_min: args["amountMin"],
+              amount_max: args["amountMax"],
+              fund_ids: joined(args["fundIds"]),
+              method_ids: joined(args["methodIds"]),
+              batches: joined(args["batchNumbers"]),
+              envelope_number: args["envelopeNumber"],
+            },
+            ctx,
+          ),
+        );
         return {
           contributions: args["raw"] === true ? rows : rows.map(projectContribution),
           count: rows.length,
@@ -1358,8 +1468,10 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" }, name: { type: "string" },
-                taxDeductible: { type: "boolean" }, isDefault: { type: "boolean" },
+                id: { type: "string" },
+                name: { type: "string" },
+                taxDeductible: { type: "boolean" },
+                isDefault: { type: "boolean" },
               },
               required: ["id", "name"],
             },
@@ -1371,8 +1483,10 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
         funds: asArray(await get("/funds/list", {}, ctx)).map((value) => {
           const fund = asRecord(value);
           return compact({
-            id: idString(fund["id"]), name: fund["name"],
-            taxDeductible: flag(fund["tax_deductible"]), isDefault: flag(fund["is_default"]),
+            id: idString(fund["id"]),
+            name: fund["name"],
+            taxDeductible: flag(fund["tax_deductible"]),
+            isDefault: flag(fund["is_default"]),
           });
         }),
       }),
@@ -1382,17 +1496,25 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "Create a new person profile with a first and last name and optional profile values. Does not check for duplicates; search list_people first.",
       annotations: additive,
-      inputSchema: namedInput({
-        firstName: { type: "string", minLength: 1, maxLength: 100, description: "First name." },
-        lastName: { type: "string", minLength: 1, maxLength: 100, description: "Last name." },
-        fields: FIELDS_PROPERTY,
-      }, ["firstName", "lastName"]),
+      inputSchema: namedInput(
+        {
+          firstName: { type: "string", minLength: 1, maxLength: 100, description: "First name." },
+          lastName: { type: "string", minLength: 1, maxLength: 100, description: "Last name." },
+          fields: FIELDS_PROPERTY,
+        },
+        ["firstName", "lastName"],
+      ),
       outputSchema: PERSON_SCHEMA,
       handler: async (args, ctx) => {
-        const payload = await get("/people/add", {
-          first: args["firstName"], last: args["lastName"],
-          fields_json: args["fields"] === undefined ? undefined : fieldsJson(args["fields"]),
-        }, ctx);
+        const payload = await get(
+          "/people/add",
+          {
+            first: args["firstName"],
+            last: args["lastName"],
+            fields_json: args["fields"] === undefined ? undefined : fieldsJson(args["fields"]),
+          },
+          ctx,
+        );
         const person = Array.isArray(payload) ? payload[0] : payload;
         if (!asRecord(person)["id"]) {
           throw new ConnectorCallError(
@@ -1421,12 +1543,19 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
     },
     {
       name: "assign_tag",
-      description: "Add one tag to one person. Tag ids come from list_tags; adding a tag the person already has changes nothing.",
+      description:
+        "Add one tag to one person. Tag ids come from list_tags; adding a tag the person already has changes nothing.",
       annotations: additive,
-      inputSchema: namedInput({ personId: PERSON_ID, tagId: idProperty("Tag id from list_tags.") }, ["personId", "tagId"]),
+      inputSchema: namedInput({ personId: PERSON_ID, tagId: idProperty("Tag id from list_tags.") }, [
+        "personId",
+        "tagId",
+      ]),
       outputSchema: WROTE_SCHEMA("assigned"),
       handler: async (args, ctx) => {
-        requireTrue(await get("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx), "the tag assignment");
+        requireTrue(
+          await get("/tags/assign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
+          "the tag assignment",
+        );
         return { assigned: true };
       },
     },
@@ -1434,10 +1563,16 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       name: "unassign_tag",
       description: "Remove one tag from one person. The tag itself and its other people are untouched.",
       annotations: destructive,
-      inputSchema: namedInput({ personId: PERSON_ID, tagId: idProperty("Tag id from list_tags.") }, ["personId", "tagId"]),
+      inputSchema: namedInput({ personId: PERSON_ID, tagId: idProperty("Tag id from list_tags.") }, [
+        "personId",
+        "tagId",
+      ]),
       outputSchema: WROTE_SCHEMA("unassigned"),
       handler: async (args, ctx) => {
-        requireTrue(await get("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx), "the tag removal");
+        requireTrue(
+          await get("/tags/unassign", { person_id: args["personId"], tag_id: args["tagId"] }, ctx),
+          "the tag removal",
+        );
         return { unassigned: true };
       },
     },
@@ -1449,9 +1584,18 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       inputSchema: namedInput({ personId: PERSON_ID, instanceId: INSTANCE_ID }, ["personId", "instanceId"]),
       outputSchema: WROTE_SCHEMA("checkedIn"),
       handler: async (args, ctx) => {
-        requireTrue(await get("/events/attendance/add", {
-          person_id: args["personId"], instance_id: args["instanceId"], direction: "in",
-        }, ctx), "the check-in");
+        requireTrue(
+          await get(
+            "/events/attendance/add",
+            {
+              person_id: args["personId"],
+              instance_id: args["instanceId"],
+              direction: "in",
+            },
+            ctx,
+          ),
+          "the check-in",
+        );
         return { checkedIn: true };
       },
     },
@@ -1460,11 +1604,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
 
 // --- Guide -------------------------------------------------------------------
 
-function usageGuide(
-  subdomain: string,
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function usageGuide(subdomain: string, purpose: string, instructions: string | undefined): string {
   const churchInstructions = instructions?.trim();
   return `# Breeze ChMS usage
 
@@ -1483,7 +1623,6 @@ function normalizeSubdomain(raw: unknown): string {
   return value;
 }
 
-
 /** The closed options breeze() accepts; see `assertKnownOptions`. */
 const BREEZE_OPTIONS = optionsOf<BreezeOptions>()({ ...PROVIDER_COMMON, ...keys("subdomain", "defaultPageSize") });
 
@@ -1493,7 +1632,12 @@ export const breeze = asProviderFactory<BreezeOptions>({
   title: "Breeze ChMS",
   kind: "api",
   readme: "Breeze ChMS",
-  bundle: {"baselineGzip":20637,"maxGzip":80637,"note":"./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 20637,
+    "maxGzip": 80637,
+    "note":
+      "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: BREEZE_OPTIONS,
   create: breezeConnector,
@@ -1506,14 +1650,8 @@ function breezeConnector(id: string, options: BreezeOptions): Connector {
   }
   const subdomain = normalizeSubdomain(options.subdomain);
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
-  if (
-    !Number.isInteger(defaultPageSize) ||
-    defaultPageSize < 1 ||
-    defaultPageSize > MAX_PAGE_SIZE
-  ) {
-    throw new Error(
-      `breeze() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`,
-    );
+  if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
+    throw new Error(`breeze() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
   const send = breezeTransport(subdomain);
 
@@ -1532,16 +1670,24 @@ function breezeConnector(id: string, options: BreezeOptions): Connector {
     },
     testCredential: async (value, ctx) => {
       try {
-        const account = asRecord(await callBreeze(
-          send,
-          { method: "GET", path: "/account/summary" },
-          { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
-        ));
+        const account = asRecord(
+          await callBreeze(
+            send,
+            { method: "GET", path: "/account/summary" },
+            { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
+          ),
+        );
         const reported = typeof account["subdomain"] === "string" ? account["subdomain"].toLowerCase() : undefined;
         if (reported && reported !== subdomain) {
-          return { ok: false, message: `The key belongs to ${reported}${BREEZE_HOST_SUFFIX}, not ${subdomain}${BREEZE_HOST_SUFFIX}.` };
+          return {
+            ok: false,
+            message: `The key belongs to ${reported}${BREEZE_HOST_SUFFIX}, not ${subdomain}${BREEZE_HOST_SUFFIX}.`,
+          };
         }
-        return { ok: true, message: `Authenticated to ${String(account["name"] ?? "the church account")} (${subdomain}${BREEZE_HOST_SUFFIX}).` };
+        return {
+          ok: true,
+          message: `Authenticated to ${String(account["name"] ?? "the church account")} (${subdomain}${BREEZE_HOST_SUFFIX}).`,
+        };
       } catch (error) {
         return {
           ok: false,

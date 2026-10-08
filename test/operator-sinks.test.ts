@@ -88,8 +88,7 @@ beforeEach(() => {
       if (
         this.body !== null &&
         type !== null &&
-        (ANY_PLANTED.test(type) ||
-          !/^(?:text\/[a-z0-9.+-]+|[a-z0-9.+-]+\/(?:[a-z0-9.-]+\+)?json)$/.test(essence))
+        (ANY_PLANTED.test(type) || !/^(?:text\/[a-z0-9.+-]+|[a-z0-9.+-]+\/(?:[a-z0-9.-]+\+)?json)$/.test(essence))
       ) {
         textOnUnreadable.push(type);
       }
@@ -117,11 +116,7 @@ type Answer = Response | (() => never);
  * A static-credential MCP endpoint whose handshake, catalog, and tool call
  * each scenario may replace.
  */
-function downstream(opts: {
-  initialize?: (id: number) => Answer;
-  tools?: unknown[];
-  call?: (id: number) => Answer;
-}) {
+function downstream(opts: { initialize?: (id: number) => Answer; tools?: unknown[]; call?: (id: number) => Answer }) {
   return async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.href !== MCP_URL || init.method !== "POST") return new Response(null, { status: 405 });
@@ -137,23 +132,37 @@ function downstream(opts: {
     };
     if (request.method === "initialize") {
       return answer(opts.initialize?.(request.id), () =>
-        Response.json({ jsonrpc: "2.0", id: request.id, result: {
-          protocolVersion: request.params?.protocolVersion,
-          capabilities: { tools: {} },
-          serverInfo: { name: "test", version: "1" },
-        } }));
+        Response.json({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            protocolVersion: request.params?.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: "test", version: "1" },
+          },
+        }),
+      );
     }
     if (request.method.startsWith("notifications/")) return new Response(null, { status: 202 });
     if (request.method === "tools/list") {
-      return Response.json({ jsonrpc: "2.0", id: request.id, result: {
-        tools: opts.tools ?? [readTool()],
-      } });
+      return Response.json({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          tools: opts.tools ?? [readTool()],
+        },
+      });
     }
     if (request.method === "tools/call") {
       return answer(opts.call?.(request.id), () =>
-        Response.json({ jsonrpc: "2.0", id: request.id, result: {
-          content: [{ type: "text", text: "ok" }],
-        } }));
+        Response.json({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            content: [{ type: "text", text: "ok" }],
+          },
+        }),
+      );
     }
     return Response.json({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } });
   };
@@ -164,11 +173,15 @@ function readTool(inputSchema: JsonSchema = { type: "object" }) {
 }
 
 const rpcError = (id: number) =>
-  Response.json({ jsonrpc: "2.0", id, error: {
-    code: -32000,
-    message: `refused ${planted("rpc-message")}`,
-    data: { echo: planted("rpc-data") },
-  } });
+  Response.json({
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32000,
+      message: `refused ${planted("rpc-message")}`,
+      data: { echo: planted("rpc-data") },
+    },
+  });
 
 const remote = () =>
   remoteMcp("svc", {
@@ -179,12 +192,14 @@ const remote = () =>
 
 const handler = (run: () => Promise<unknown> | unknown): Connector =>
   api("svc", {
-    tools: [{
-      name: "read",
-      description: "Read a thing",
-      annotations: { readOnlyHint: true },
-      handler: run,
-    }],
+    tools: [
+      {
+        name: "read",
+        description: "Read a thing",
+        annotations: { readOnlyHint: true },
+        handler: run,
+      },
+    ],
   });
 
 interface Scenario {
@@ -216,43 +231,62 @@ const scenarios: Scenario[] = [
   {
     name: "remoteMcp: an HTTP 400 refusal body",
     connector: remote,
-    fetch: downstream({ call: () => new Response(`refused ${planted("4xx-body")}`, {
-      status: 400,
-      headers: { "content-type": "text/plain" },
-    }) }),
+    fetch: downstream({
+      call: () =>
+        new Response(`refused ${planted("4xx-body")}`, {
+          status: 400,
+          headers: { "content-type": "text/plain" },
+        }),
+    }),
     agentMay: ["4xx-body"],
   },
   {
     name: "remoteMcp: an HTTP 500 body",
     connector: remote,
-    fetch: downstream({ call: () => new Response(`broke ${planted("5xx-body")}`, {
-      status: 500,
-      headers: { "content-type": "text/plain" },
-    }) }),
+    fetch: downstream({
+      call: () =>
+        new Response(`broke ${planted("5xx-body")}`, {
+          status: 500,
+          headers: { "content-type": "text/plain" },
+        }),
+    }),
   },
   {
     name: "remoteMcp: an isError result",
     connector: remote,
-    fetch: downstream({ call: (id) => Response.json({ jsonrpc: "2.0", id, result: {
-      content: [{ type: "text", text: `failed ${planted("is-error")}` }],
-      isError: true,
-    } }) }),
+    fetch: downstream({
+      call: (id) =>
+        Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: `failed ${planted("is-error")}` }],
+            isError: true,
+          },
+        }),
+    }),
     agentMay: ["is-error"],
   },
   {
     name: "remoteMcp: a planted content type on a 200 reply",
     connector: remote,
-    fetch: downstream({ call: () => new Response(`{"x":"${planted("ct-200-body")}"}`, {
-      headers: { "content-type": `application/${planted("ct-200")}` },
-    }) }),
+    fetch: downstream({
+      call: () =>
+        new Response(`{"x":"${planted("ct-200-body")}"}`, {
+          headers: { "content-type": `application/${planted("ct-200")}` },
+        }),
+    }),
   },
   {
     name: "remoteMcp: a planted content type on a 4xx refusal",
     connector: remote,
-    fetch: downstream({ call: () => new Response(`refused ${planted("ct-4xx-body")}`, {
-      status: 400,
-      headers: { "content-type": `application/${planted("ct-4xx")}` },
-    }) }),
+    fetch: downstream({
+      call: () =>
+        new Response(`refused ${planted("ct-4xx-body")}`, {
+          status: 400,
+          headers: { "content-type": `application/${planted("ct-4xx")}` },
+        }),
+    }),
     // Read as bytes, the refusal reaches the agent like any other 4xx answer;
     // the type it was labelled with reaches no one.
     agentMay: ["ct-4xx-body"],
@@ -260,17 +294,23 @@ const scenarios: Scenario[] = [
   {
     name: "remoteMcp: a planted content type on a 5xx answer",
     connector: remote,
-    fetch: downstream({ call: () => new Response(`broke ${planted("ct-5xx-body")}`, {
-      status: 503,
-      headers: { "content-type": `application/${planted("ct-5xx")}` },
-    }) }),
+    fetch: downstream({
+      call: () =>
+        new Response(`broke ${planted("ct-5xx-body")}`, {
+          status: 503,
+          headers: { "content-type": `application/${planted("ct-5xx")}` },
+        }),
+    }),
   },
   {
     name: "remoteMcp: a planted content type at the handshake",
     connector: remote,
-    fetch: downstream({ initialize: () => new Response(planted("ct-init-body"), {
-      headers: { "content-type": `application/${planted("ct-init")}` },
-    }) }),
+    fetch: downstream({
+      initialize: () =>
+        new Response(planted("ct-init-body"), {
+          headers: { "content-type": `application/${planted("ct-init")}` },
+        }),
+    }),
   },
   // Content-Types that pass a loose text-or-JSON filter and that workerd's own
   // parser still quotes: a JSON subtype under a planted type, and a planted
@@ -283,89 +323,119 @@ const scenarios: Scenario[] = [
     {
       name: `remoteMcp: ${label} on an HTTP 400 refusal`,
       connector: remote,
-      fetch: downstream({ call: () => new Response(`refused ${planted("ct-loose-4xx-body")}`, {
-        status: 400,
-        headers: { "content-type": type! },
-      }) }),
+      fetch: downstream({
+        call: () =>
+          new Response(`refused ${planted("ct-loose-4xx-body")}`, {
+            status: 400,
+            headers: { "content-type": type! },
+          }),
+      }),
       agentMay: ["ct-loose-4xx-body"],
     },
     {
       name: `remoteMcp: ${label} on a 200 reply`,
       connector: remote,
-      fetch: downstream({ call: () => new Response(`{"x":"${planted("ct-loose-200-body")}"}`, {
-        headers: { "content-type": type! },
-      }) }),
+      fetch: downstream({
+        call: () =>
+          new Response(`{"x":"${planted("ct-loose-200-body")}"}`, {
+            headers: { "content-type": type! },
+          }),
+      }),
     },
   ]),
   {
     name: "remoteMcp: a transport error and its cause",
     connector: remote,
-    fetch: downstream({ call: () => {
-      throw new TypeError(`fetch failed ${planted("transport")}`, {
-        cause: new Error(planted("transport-cause")),
-      });
-    } }),
+    fetch: downstream({
+      call: () => {
+        throw new TypeError(`fetch failed ${planted("transport")}`, {
+          cause: new Error(planted("transport-cause")),
+        });
+      },
+    }),
   },
   {
     name: "remoteMcp: an abort reason from somewhere other than the caller",
     connector: remote,
-    fetch: downstream({ call: () => {
-      throw new DOMException(`stream closed ${planted("foreign-abort")}`, "AbortError");
-    } }),
+    fetch: downstream({
+      call: () => {
+        throw new DOMException(`stream closed ${planted("foreign-abort")}`, "AbortError");
+      },
+    }),
   },
   {
     name: "remoteMcp: an input schema whose $ref cannot resolve",
     connector: remote,
-    fetch: downstream({ tools: [readTool({
-      type: "object",
-      properties: { q: { $ref: `#/${planted("schema-ref")}` } },
-    })] }),
+    fetch: downstream({
+      tools: [
+        readTool({
+          type: "object",
+          properties: { q: { $ref: `#/${planted("schema-ref")}` } },
+        }),
+      ],
+    }),
     args: { q: "x" },
   },
   {
     name: "remoteMcp: an input schema whose pattern is not a regex",
     connector: remote,
-    fetch: downstream({ tools: [readTool({
-      type: "object",
-      properties: { q: { type: "string", pattern: `${planted("schema-pattern")}(` } },
-    })] }),
+    fetch: downstream({
+      tools: [
+        readTool({
+          type: "object",
+          properties: { q: { type: "string", pattern: `${planted("schema-pattern")}(` } },
+        }),
+      ],
+    }),
     args: { q: "x" },
   },
   {
     name: "remoteMcp: an input schema whose type is no JSON type",
     connector: remote,
-    fetch: downstream({ tools: [readTool({
-      type: "object",
-      properties: { q: { type: planted("schema-type") } },
-    } as JsonSchema)] }),
+    fetch: downstream({
+      tools: [
+        readTool({
+          type: "object",
+          properties: { q: { type: planted("schema-type") } },
+        } as JsonSchema),
+      ],
+    }),
     args: { q: "x" },
   },
   {
     name: "api(): a reply stream that rejects",
-    connector: () => handler(async () =>
-      await new Response(new ReadableStream({
-        pull(controller) {
-          controller.error(new TypeError(planted("stream")));
-        },
-      })).text()),
+    connector: () =>
+      handler(
+        async () =>
+          await new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.error(new TypeError(planted("stream")));
+              },
+            }),
+          ).text(),
+      ),
   },
   {
     name: "api(): an error with a cause",
-    connector: () => handler(() => {
-      throw new Error(planted("message"), { cause: new Error(planted("cause")) });
-    }),
+    connector: () =>
+      handler(() => {
+        throw new Error(planted("message"), { cause: new Error(planted("cause")) });
+      }),
   },
   {
     name: "api(): an AggregateError's members",
-    connector: () => handler(() => {
-      throw new AggregateError([new Error(planted("member"))], planted("aggregate"));
-    }),
+    connector: () =>
+      handler(() => {
+        throw new AggregateError([new Error(planted("member"))], planted("aggregate"));
+      }),
   },
   {
     name: "api(): an abort reason from somewhere other than the caller",
-    connector: () => handler(() => {
-      throw new DOMException(planted("api-abort"), "AbortError");
-    }),
+    connector: () =>
+      handler(() => {
+        throw new DOMException(planted("api-abort"), "AbortError");
+      }),
   },
   {
     name: "api(): a reply that does not parse",
@@ -373,28 +443,33 @@ const scenarios: Scenario[] = [
   },
   {
     name: "api(): an error whose name is planted",
-    connector: () => handler(() => {
-      throw Object.assign(new Error("x"), { name: "PlantedName7f3a9c" });
-    }),
+    connector: () =>
+      handler(() => {
+        throw Object.assign(new Error("x"), { name: "PlantedName7f3a9c" });
+      }),
   },
   {
     name: "api(): a subclass whose name is planted",
-    connector: () => handler(() => {
-      throw new (class PlantedClass7f3a9c extends TypeError {})("x");
-    }),
+    connector: () =>
+      handler(() => {
+        throw new (class PlantedClass7f3a9c extends TypeError {})("x");
+      }),
   },
   {
     name: "api(): a DOMException whose name is planted",
-    connector: () => handler(() => {
-      throw new DOMException("x", "PlantedDomName7f3a9c");
-    }),
+    connector: () =>
+      handler(() => {
+        throw new DOMException("x", "PlantedDomName7f3a9c");
+      }),
   },
   {
     name: "remoteMcp: a transport error whose name is planted",
     connector: remote,
-    fetch: downstream({ call: () => {
-      throw Object.assign(new TypeError("fetch failed"), { name: "PlantedName7f3a9c" });
-    } }),
+    fetch: downstream({
+      call: () => {
+        throw Object.assign(new TypeError("fetch failed"), { name: "PlantedName7f3a9c" });
+      },
+    }),
   },
   {
     name: "a tool name the catalog does not list",
@@ -405,17 +480,19 @@ const scenarios: Scenario[] = [
   },
   {
     name: "api(): a downstream's code forwarded into a ConnectorCallError",
-    connector: () => handler(() => {
-      throw new ConnectorCallError(planted("code") as ConnectorCallErrorCode, "refused");
-    }),
+    connector: () =>
+      handler(() => {
+        throw new ConnectorCallError(planted("code") as ConnectorCallErrorCode, "refused");
+      }),
     // The agent reads the code the handler chose; activity and logs do not.
     agentMay: ["code"],
   },
   {
     name: "api(): a provider's own words in a ConnectorCallError",
-    connector: () => handler(() => {
-      throw new ConnectorCallError("invalid_args", `rejected ${planted("provider")}`);
-    }),
+    connector: () =>
+      handler(() => {
+        throw new ConnectorCallError("invalid_args", `rejected ${planted("provider")}`);
+      }),
     agentMay: ["provider"],
   },
 ];
@@ -428,11 +505,11 @@ describe("operator sinks", () => {
       const { logger, lines } = capturingLogger();
       const registry = makeRegistry([connector()], { logger });
       const target = activitySink();
-      const outcome = await new InvocationService(
-        registry,
-        new CatalogService(registry, BASE),
-        target.activity,
-      ).invoke(address, args, { source: "call_destructive_tool" });
+      const outcome = await new InvocationService(registry, new CatalogService(registry, BASE), target.activity).invoke(
+        address,
+        args,
+        { source: "call_destructive_tool" },
+      );
       const status = await registry.statusFor("svc", BASE);
 
       const operator = [
@@ -519,7 +596,9 @@ describe("the operator record", () => {
     });
     const { logger, lines } = capturingLogger();
     logFailure(logger, "call failed", record);
-    expect(lines).toEqual(['[connecta] call failed {"connector":"svc","tool":"read","attempts":2,"errorClass":"TypeError"}']);
+    expect(lines).toEqual([
+      '[connecta] call failed {"connector":"svc","tool":"read","attempts":2,"errorClass":"TypeError"}',
+    ]);
   });
 
   it("INV-6: logFailure writes a fixed rejection for a record failureRecord did not build", () => {
@@ -633,14 +712,19 @@ describe("a plugin status seam", () => {
     ["record-shaped prose", () => Promise.resolve({ state: "error", message: RECORD_SHAPED })],
     ["prose on an auth_required status", () => Promise.resolve({ state: "auth_required", message: planted("auth") })],
     ["an unknown state", () => Promise.resolve({ state: planted("state"), message: planted("m") })],
-    ["a thrown error with a planted name", () =>
-      Promise.reject(Object.assign(new Error(planted("thrown")), { name: "PlantedName7f3a9c" }))],
-    ["a thrown object shaped like a classification", () =>
-      Promise.reject({
-        code: "unavailable",
-        retryable: true,
-        details: { host: "https://planted-host-7f3a9c.example", code: "ECONNREFUSED" },
-      })],
+    [
+      "a thrown error with a planted name",
+      () => Promise.reject(Object.assign(new Error(planted("thrown")), { name: "PlantedName7f3a9c" })),
+    ],
+    [
+      "a thrown object shaped like a classification",
+      () =>
+        Promise.reject({
+          code: "unavailable",
+          retryable: true,
+          details: { host: "https://planted-host-7f3a9c.example", code: "ECONNREFUSED" },
+        }),
+    ],
   ])("INV-6: contributes no string to status or the log: %s", async (_, status) => {
     const { logger, lines } = capturingLogger();
     const registry = makeRegistry([seam(status)], { logger });
@@ -654,9 +738,11 @@ describe("a plugin status seam", () => {
       publicUrl: BASE,
       logger,
     });
-    const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
-      headers: { Authorization: "Bearer t" },
-    }));
+    const res = await connecta.fetch(
+      new Request(`${BASE}/ui/connectors/svc`, {
+        headers: { Authorization: "Bearer t" },
+      }),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).not.toMatch(ANY_PLANTED);
     expect(lines.some((line) => line.startsWith("[connecta] operator status"))).toBe(true);
@@ -691,9 +777,11 @@ describe("a status decorator", () => {
       publicUrl: BASE,
       logger,
     });
-    const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
-      headers: { Authorization: "Bearer t" },
-    }));
+    const res = await connecta.fetch(
+      new Request(`${BASE}/ui/connectors/svc`, {
+        headers: { Authorization: "Bearer t" },
+      }),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).not.toMatch(ANY_PLANTED);
     for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
@@ -704,12 +792,16 @@ describe("a catalog name outside MCP's tool-name grammar", () => {
   it("INV-6: stays out of the paging and call-failure records and activity rows", async () => {
     const name = `read space ${planted("tool-name")}`;
     let calls = 0;
-    vi.stubGlobal("fetch", downstream({
-      tools: [{ name, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
-      call: (id) => ++calls === 1
-        ? Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "x".repeat(4_000) }] } })
-        : rpcError(id),
-    }));
+    vi.stubGlobal(
+      "fetch",
+      downstream({
+        tools: [{ name, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+        call: (id) =>
+          ++calls === 1
+            ? Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "x".repeat(4_000) }] } })
+            : rpcError(id),
+      }),
+    );
     const store = memoryStorage();
     const storage = {
       ...store,
@@ -720,20 +812,20 @@ describe("a catalog name outside MCP's tool-name grammar", () => {
     };
     const { logger, lines } = capturingLogger();
     const target = activitySink();
-    const mt = createMetaTools(
-      makeRegistry([remote()], { storage, maxResultBytes: 1_000, logger }),
-      BASE,
-      { activity: target.activity },
-    );
+    const mt = createMetaTools(makeRegistry([remote()], { storage, maxResultBytes: 1_000, logger }), BASE, {
+      activity: target.activity,
+    });
     const paged = await mt.callTool({ address: `svc.${name}` });
     expect(paged.isError).toBeFalsy();
     const failed = await mt.callTool({ address: `svc.${name}` });
     expect(failed.isError).toBe(true);
 
-    expect(lines).toEqual(expect.arrayContaining([
-      '[connecta] result paging unavailable {"connector":"svc","tool":"<withheld>"}',
-      expect.stringMatching(/^\[connecta\] call failed \{"connector":"svc","tool":"<withheld>",/),
-    ]));
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        '[connecta] result paging unavailable {"connector":"svc","tool":"<withheld>"}',
+        expect.stringMatching(/^\[connecta\] call failed \{"connector":"svc","tool":"<withheld>",/),
+      ]),
+    );
     expect(target.events.map((event) => [event.toolName, event.outcome])).toEqual([
       ["<withheld>", "success"],
       ["<withheld>", "error"],
@@ -756,12 +848,14 @@ describe("ctx.oauth.fetch", () => {
         clientSecret: "secret",
         apiOrigins: [API],
       },
-      tools: [{
-        name: "read",
-        description: "Read a thing",
-        annotations: { readOnlyHint: true },
-        handler: async (_args, ctx) => await read(await ctx.oauth!.fetch(`${API}/me`)),
-      }],
+      tools: [
+        {
+          name: "read",
+          description: "Read a thing",
+          annotations: { readOnlyHint: true },
+          handler: async (_args, ctx) => await read(await ctx.oauth!.fetch(`${API}/me`)),
+        },
+      ],
     });
 
   it.each([
@@ -773,9 +867,12 @@ describe("ctx.oauth.fetch", () => {
       const url = String(input instanceof Request ? input.url : input);
       // The token endpoint labels its answer with a planted type too.
       if (url === TOKEN) {
-        return new Response(JSON.stringify({ access_token: "oauth-access-credential-42", token_type: "Bearer", expires_in: 3600 }), {
-          headers: { "content-type": `application/${planted("token-ct")}` },
-        });
+        return new Response(
+          JSON.stringify({ access_token: "oauth-access-credential-42", token_type: "Bearer", expires_in: 3600 }),
+          {
+            headers: { "content-type": `application/${planted("token-ct")}` },
+          },
+        );
       }
       return new Response(`{"name":"${planted("oauth-body")}"}`, {
         headers: { "content-type": `application/${planted("oauth-ct")}` },
@@ -793,11 +890,11 @@ describe("ctx.oauth.fetch", () => {
     await connector.finishAuth!("code", callback, new URLSearchParams({ code: "code", state }));
 
     const target = activitySink();
-    const outcome = await new InvocationService(
-      registry,
-      new CatalogService(registry, BASE),
-      target.activity,
-    ).invoke("svc.read", {}, { source: "call_destructive_tool" });
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE), target.activity).invoke(
+      "svc.read",
+      {},
+      { source: "call_destructive_tool" },
+    );
     // The agent reads the body as the handler decoded it.
     expect(outcome.ok).toBe(true);
     expect(rendered(outcome.ok ? outcome.value : undefined)).toContain(planted("oauth-body"));
@@ -811,10 +908,15 @@ describe("ctx.oauth.fetch", () => {
 describe("the operator page's catalog", () => {
   it("INV-6: shows a description but withholds a name outside MCP's tool-name grammar", async () => {
     const name = `读取 ${planted("ui-name")}`;
-    vi.stubGlobal("fetch", downstream({ tools: [
-      { name, description: `Reads ${planted("ui-description")}`, inputSchema: { type: "object" } },
-      { name: "list", description: "Lists things", inputSchema: { type: "object" } },
-    ] }));
+    vi.stubGlobal(
+      "fetch",
+      downstream({
+        tools: [
+          { name, description: `Reads ${planted("ui-description")}`, inputSchema: { type: "object" } },
+          { name: "list", description: "Lists things", inputSchema: { type: "object" } },
+        ],
+      }),
+    );
     const connecta = createTestConnecta({
       connectors: [remote()],
       auth: machineAuth("t"),
@@ -822,9 +924,11 @@ describe("the operator page's catalog", () => {
       publicUrl: BASE,
       logger: capturingLogger().logger,
     });
-    const res = await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
-      headers: { Authorization: "Bearer t" },
-    }));
+    const res = await connecta.fetch(
+      new Request(`${BASE}/ui/connectors/svc`, {
+        headers: { Authorization: "Bearer t" },
+      }),
+    );
     expect(res.status).toBe(200);
     const body = await res.text();
     const { tools } = JSON.parse(body) as { tools: Array<Record<string, unknown>> };
@@ -870,9 +974,13 @@ describe("a forwarded catalog drift report", () => {
       logger,
     });
     const health = await (await connecta.fetch(new Request(`${BASE}/health`))).text();
-    const page = await (await connecta.fetch(new Request(`${BASE}/ui/connectors/svc`, {
-      headers: { Authorization: "Bearer t" },
-    }))).text();
+    const page = await (
+      await connecta.fetch(
+        new Request(`${BASE}/ui/connectors/svc`, {
+          headers: { Authorization: "Bearer t" },
+        }),
+      )
+    ).text();
     const status = JSON.stringify(await connecta.registry.statusFor("svc", BASE));
     for (const text of [health, page, status, ...lines, ...consoleLines]) {
       expect(text).not.toMatch(ANY_PLANTED);
@@ -882,118 +990,179 @@ describe("a forwarded catalog drift report", () => {
 
   it("INV-6: re-serializes a real timestamp as connecta's own ISO-8601 UTC form", async () => {
     const registry = makeRegistry([drifting("2026-08-12T02:00:00+02:00")]);
-    expect((await registry.statusFor("svc", BASE)).catalogDrift?.observedAt).toBe(
-      "2026-08-12T00:00:00.000Z",
-    );
+    expect((await registry.statusFor("svc", BASE)).catalogDrift?.observedAt).toBe("2026-08-12T00:00:00.000Z");
   });
 });
 
-
 describe("control-character tool names at catalog intake", () => {
-  it.each(["fresh", "v3 cache", "v2 cache"])("INV-6: drops names from %s without leaking into discovery, calls, or operator sinks", async (source) => {
-    const rejected = ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085y"];
-    const kept = ["read space", "读取"];
-    const tools: ToolDef[] = [...rejected, ...kept].map((name) => ({
-      name, inputSchema: { type: "object" }, annotations: { readOnlyHint: true },
-    }));
-    let calls = 0;
-    let listings = 0;
-    const serve = downstream({ tools, call: (id) => {
-      calls++;
-      return Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "ok" }] } });
-    } });
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const method = init?.body ? (JSON.parse(String(init.body)) as { method: string }).method : "";
-      if (method === "tools/list") listings++;
-
-      return serve(input, init);
-    });
-    const storage = memoryStorage();
-    if (source !== "fresh") {
-      const now = Date.now();
-      const snapshot = await snapshotCatalog(tools);
-      await storage.set(`catalog:svc:chunk:${snapshot.fingerprint}:0`, new TextDecoder().decode(snapshot.serializedBytes));
-      await storage.set("catalog:svc", JSON.stringify({
-        version: source === "v2 cache" ? 2 : 3, revision: snapshot.fingerprint,
-        toolCount: tools.length, byteCount: snapshot.serializedBytes.byteLength, chunkCount: 1,
-        fetchedAt: now, expiresAt: now + 600_000, staleUntil: now + 1_200_000,
+  it.each(["fresh", "v3 cache", "v2 cache"])(
+    "INV-6: drops names from %s without leaking into discovery, calls, or operator sinks",
+    async (source) => {
+      const rejected = ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085y"];
+      const kept = ["read space", "读取"];
+      const tools: ToolDef[] = [...rejected, ...kept].map((name) => ({
+        name,
+        inputSchema: { type: "object" },
+        annotations: { readOnlyHint: true },
       }));
-    }
-    const { logger, lines } = capturingLogger();
-    const connector = () => remoteMcp("svc", { url: MCP_URL, classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) } });
-    const registry = new Registry([connector()], {
-      storage, logger,
-    });
-    const target = activitySink();
-    const mt = createMetaTools(registry, BASE, { activity: target.activity });
-    const search = await mt.searchTools({ query: "", connector: "svc" });
-    expect(search.isError).toBeFalsy();
-    expect(search.structuredContent?.total).toBe(2);
-    expect(listings).toBe(1);
-    expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
-    expect(JSON.stringify(search)).not.toContain("x\u0085y");
-    expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
-    expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
-    for (const name of rejected) {
-      const result = await mt.callTool({ address: `svc.${name}` });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result)).toContain("unknown_tool");
-      expect(JSON.stringify(result)).not.toContain(name);
-      expect(JSON.stringify(result)).not.toMatch(ANY_PLANTED);
-    }
-    for (const name of kept) expect((await mt.callTool({ address: `svc.${name}` })).isError).toBeFalsy();
-    const execute = createExecuteTool(registry, BASE, {
-      async execute(_code, providers) {
-        const fns = providers.find((provider) => provider.name === "connecta")!.fns;
-        const programSearch = await fns.search!({ query: "", connector: "svc" });
-        expect(JSON.stringify(programSearch)).not.toMatch(ANY_PLANTED);
-        expect(JSON.stringify(programSearch)).not.toContain("x\u0085y");
-        for (const name of rejected) {
-          await expect(fns.call!(`svc.${name}`, {})).rejects.toMatchObject({ code: "unknown_tool" });
-        }
-        for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toEqual({ data: "ok", format: "text" });
-        return { result: "ok" };
-      },
-    }, logger);
-    expect((await execute({ code: "" })).isError).toBeFalsy();
-    expect(calls).toBe(4);
-    const app = createTestConnecta({ connectors: [connector()], auth: machineAuth("t"), storage, publicUrl: BASE, logger });
-    const ui = await (await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))).text();
-    const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
-    const status = JSON.stringify(await registry.statusFor("svc", BASE));
-    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), ui, health, status]) {
-      expect(text).not.toMatch(ANY_PLANTED);
-      expect(text).not.toContain("x\u0085y");
-    }
-    expect(target.events.filter((event) => event.outcome === "success").map((event) => event.toolName)).toEqual(["<withheld>", "<withheld>"]);
-    await app.close();
-  });
+      let calls = 0;
+      let listings = 0;
+      const serve = downstream({
+        tools,
+        call: (id) => {
+          calls++;
+          return Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "ok" }] } });
+        },
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const method = init?.body ? (JSON.parse(String(init.body)) as { method: string }).method : "";
+        if (method === "tools/list") listings++;
+
+        return serve(input, init);
+      });
+      const storage = memoryStorage();
+      if (source !== "fresh") {
+        const now = Date.now();
+        const snapshot = await snapshotCatalog(tools);
+        await storage.set(
+          `catalog:svc:chunk:${snapshot.fingerprint}:0`,
+          new TextDecoder().decode(snapshot.serializedBytes),
+        );
+        await storage.set(
+          "catalog:svc",
+          JSON.stringify({
+            version: source === "v2 cache" ? 2 : 3,
+            revision: snapshot.fingerprint,
+            toolCount: tools.length,
+            byteCount: snapshot.serializedBytes.byteLength,
+            chunkCount: 1,
+            fetchedAt: now,
+            expiresAt: now + 600_000,
+            staleUntil: now + 1_200_000,
+          }),
+        );
+      }
+      const { logger, lines } = capturingLogger();
+      const connector = () =>
+        remoteMcp("svc", {
+          url: MCP_URL,
+          classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) },
+        });
+      const registry = new Registry([connector()], {
+        storage,
+        logger,
+      });
+      const target = activitySink();
+      const mt = createMetaTools(registry, BASE, { activity: target.activity });
+      const search = await mt.searchTools({ query: "", connector: "svc" });
+      expect(search.isError).toBeFalsy();
+      expect(search.structuredContent?.total).toBe(2);
+      expect(listings).toBe(1);
+      expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
+      expect(JSON.stringify(search)).not.toContain("x\u0085y");
+      expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
+      expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
+      for (const name of rejected) {
+        const result = await mt.callTool({ address: `svc.${name}` });
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result)).toContain("unknown_tool");
+        expect(JSON.stringify(result)).not.toContain(name);
+        expect(JSON.stringify(result)).not.toMatch(ANY_PLANTED);
+      }
+      for (const name of kept) expect((await mt.callTool({ address: `svc.${name}` })).isError).toBeFalsy();
+      const execute = createExecuteTool(
+        registry,
+        BASE,
+        {
+          async execute(_code, providers) {
+            const fns = providers.find((provider) => provider.name === "connecta")!.fns;
+            const programSearch = await fns.search!({ query: "", connector: "svc" });
+            expect(JSON.stringify(programSearch)).not.toMatch(ANY_PLANTED);
+            expect(JSON.stringify(programSearch)).not.toContain("x\u0085y");
+            for (const name of rejected) {
+              await expect(fns.call!(`svc.${name}`, {})).rejects.toMatchObject({ code: "unknown_tool" });
+            }
+            for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toEqual({ data: "ok", format: "text" });
+            return { result: "ok" };
+          },
+        },
+        logger,
+      );
+      expect((await execute({ code: "" })).isError).toBeFalsy();
+      expect(calls).toBe(4);
+      const app = createTestConnecta({
+        connectors: [connector()],
+        auth: machineAuth("t"),
+        storage,
+        publicUrl: BASE,
+        logger,
+      });
+      const ui = await (
+        await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))
+      ).text();
+      const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
+      const status = JSON.stringify(await registry.statusFor("svc", BASE));
+      for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), ui, health, status]) {
+        expect(text).not.toMatch(ANY_PLANTED);
+        expect(text).not.toContain("x\u0085y");
+      }
+      expect(target.events.filter((event) => event.outcome === "success").map((event) => event.toolName)).toEqual([
+        "<withheld>",
+        "<withheld>",
+      ]);
+      await app.close();
+    },
+  );
 
   it("INV-6: drops every C0, DEL, and C1 boundary while retaining adjacent Unicode", async () => {
-    const controls = [...Array.from({ length: 32 }, (_, i) => i), 127, ...Array.from({ length: 32 }, (_, i) => i + 128)];
+    const controls = [
+      ...Array.from({ length: 32 }, (_, i) => i),
+      127,
+      ...Array.from({ length: 32 }, (_, i) => i + 128),
+    ];
     const names = controls.map((code) => `x${String.fromCharCode(code)}y`);
-    const registry = makeRegistry([{
-      id: "svc", async listTools() { return [...names, "x y", "x~y", "x\u00a0y", "读取"].map((name) => ({ name })); },
-      async callTool() { return null; },
-    }]);
+    const registry = makeRegistry([
+      {
+        id: "svc",
+        async listTools() {
+          return [...names, "x y", "x~y", "x\u00a0y", "读取"].map((name) => ({ name }));
+        },
+        async callTool() {
+          return null;
+        },
+      },
+    ]);
     expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(["x y", "x~y", "x\u00a0y", "读取"]);
     expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(65);
   });
 });
 
-
 describe("catalog intake finding lifecycle", () => {
   it("INV-6: personal connector findings stay out of health without principal or name text", async () => {
     const { logger, lines } = capturingLogger();
     const app = createTestConnecta({
-      publicUrl: BASE, logger, storage: memoryStorage(),
-      connectors: [{
-        id: "svc", authScope: "personal", classification: { tools: {} },
-        async listTools() { return [{ name: "x\u0085planted-7f3a9c" }]; },
-        async callTool() { return null; },
-      }],
+      publicUrl: BASE,
+      logger,
+      storage: memoryStorage(),
+      connectors: [
+        {
+          id: "svc",
+          authScope: "personal",
+          classification: { tools: {} },
+          async listTools() {
+            return [{ name: "x\u0085planted-7f3a9c" }];
+          },
+          async callTool() {
+            return null;
+          },
+        },
+      ],
     });
-    const scoped = app.registry.scoped({ connectorIds: ["svc"], principalKey: "private-principal", subjectKey: "private-subject" });
+    const scoped = app.registry.scoped({
+      connectorIds: ["svc"],
+      principalKey: "private-principal",
+      subjectKey: "private-subject",
+    });
     expect(await scoped.getTools("svc", BASE)).toEqual([]);
     expect((await scoped.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(1);
     const body = await (await app.fetch(new Request(`${BASE}/health`))).text();
@@ -1009,13 +1178,26 @@ describe("catalog intake finding lifecycle", () => {
   it("INV-6: rejects control-character grants and bounds warnings even for a manually scoped C1 grant", async () => {
     for (const name of ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085planted-7f3a9c"]) {
       expect(() => parseConnectorAccess([`svc.${name}`])).toThrow("invalid connector permission");
-      expect(() => parseConnectorAccess([{ tool: `svc.${name}`, requireReadOnly: true }], { allowReadOnly: true })).toThrow("invalid connector permission");
+      expect(() =>
+        parseConnectorAccess([{ tool: `svc.${name}`, requireReadOnly: true }], { allowReadOnly: true }),
+      ).toThrow("invalid connector permission");
     }
     const name = "x\u0085planted-7f3a9c";
     const { logger, lines } = capturingLogger();
-    const registry = makeRegistry([{
-      id: "svc", async listTools() { return [{ name }]; }, async callTool() { return null; },
-    }], { logger });
+    const registry = makeRegistry(
+      [
+        {
+          id: "svc",
+          async listTools() {
+            return [{ name }];
+          },
+          async callTool() {
+            return null;
+          },
+        },
+      ],
+      { logger },
+    );
     const scoped = registry.scoped({ connectorIds: ["svc"], toolAccess: new Map([["svc", new Set([name])]]) });
     expect(await scoped.getTools("svc", BASE)).toEqual([]);
     expect(await scoped.getTools("svc", BASE)).toEqual([]);

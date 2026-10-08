@@ -34,27 +34,61 @@ describe("activity delivery", () => {
     const calls: ToolCallActivityEvent[] = [];
     const context = {
       sink: { record: (event: ToolCallActivityEvent) => void calls.push(event) },
-      actor: { kind: "test" }, requestId: "r", logger: silentLogger,
+      actor: { kind: "test" },
+      requestId: "r",
+      logger: silentLogger,
       serverInfo: { name: "display", version: "999.0.0" },
       clientInfo: { name: "Claude Code", version: "2.1.0" },
     };
     for (const source of ["call_tool", "call_destructive_tool", "execute_code"] as const) {
-      recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source, outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 });
+      recordToolActivity(context, {
+        connectorId: "calc",
+        toolName: "add",
+        address: "calc.add",
+        source,
+        outcome: "error",
+        errorCode: "auth_required",
+        durationMs: 1,
+        attempts: 1,
+      });
     }
     expect(calls).toHaveLength(3);
     for (const event of calls) {
-      expect(event).toMatchObject({ packageVersion: CONNECTA_VERSION, serverVersion: "999.0.0", clientName: "Claude Code", clientVersion: "2.1.0" });
+      expect(event).toMatchObject({
+        packageVersion: CONNECTA_VERSION,
+        serverVersion: "999.0.0",
+        clientName: "Claude Code",
+        clientVersion: "2.1.0",
+      });
     }
-    const input = { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 } as const;
-    recordToolActivity({
-      sink: context.sink, actor: context.actor, requestId: context.requestId,
-      serverInfo: context.serverInfo, logger: context.logger,
-    }, input);
+    const input = {
+      connectorId: "calc",
+      toolName: "add",
+      address: "calc.add",
+      source: "call_tool",
+      outcome: "error",
+      errorCode: "auth_required",
+      durationMs: 1,
+      attempts: 1,
+    } as const;
+    recordToolActivity(
+      {
+        sink: context.sink,
+        actor: context.actor,
+        requestId: context.requestId,
+        serverInfo: context.serverInfo,
+        logger: context.logger,
+      },
+      input,
+    );
     expect(calls.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
     expect(calls.at(-1)).not.toHaveProperty("clientName");
     expect(calls.at(-1)).not.toHaveProperty("clientVersion");
     for (const value of INVALID_CLIENT_FACTS) {
-      recordToolActivity({ ...context, clientInfo: { name: value, version: value } as typeof context.clientInfo }, input);
+      recordToolActivity(
+        { ...context, clientInfo: { name: value, version: value } as typeof context.clientInfo },
+        input,
+      );
       expect(calls.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
       expect(calls.at(-1)).not.toHaveProperty("clientName");
       expect(calls.at(-1)).not.toHaveProperty("clientVersion");
@@ -63,17 +97,11 @@ describe("activity delivery", () => {
 
   it("derives coarse agent friction from typed codes only", () => {
     expect(agentFrictionForCode("unknown_tool")).toBe("tool_not_found");
-    expect(agentFrictionForCode("ambiguous_tool_alias")).toBe(
-      "tool_not_found",
-    );
+    expect(agentFrictionForCode("ambiguous_tool_alias")).toBe("tool_not_found");
     expect(agentFrictionForCode("invalid_args")).toBe("schema_retry");
-    expect(agentFrictionForCode("destructive_tool_requires_approval")).toBe(
-      "destructive_reroute",
-    );
+    expect(agentFrictionForCode("destructive_tool_requires_approval")).toBe("destructive_reroute");
     expect(agentFrictionForCode("auth_required")).toBe("auth_required");
-    expect(agentFrictionForCode("result_too_large")).toBe(
-      "result_too_large",
-    );
+    expect(agentFrictionForCode("result_too_large")).toBe("result_too_large");
     expect(agentFrictionForCode("connector_call_failed")).toBeUndefined();
     // A downstream resource that is not there is not a friction class: the
     // caller re-addresses on its own, and `tool_not_found` means connecta could
@@ -107,9 +135,23 @@ describe("activity delivery", () => {
       ["error", 1, "destructive_reroute"],
     ]);
     expect(Object.keys(required(events[0])).sort()).toEqual([
-      "actor", "address", "attempts", "connectorId", "durationMs", "errorCode",
-      "friction", "id", "occurredAt", "outcome", "packageVersion", "requestId", "schemaVersion",
-      "serverName", "serverVersion", "source", "toolName",
+      "actor",
+      "address",
+      "attempts",
+      "connectorId",
+      "durationMs",
+      "errorCode",
+      "friction",
+      "id",
+      "occurredAt",
+      "outcome",
+      "packageVersion",
+      "requestId",
+      "schemaVersion",
+      "serverName",
+      "serverVersion",
+      "source",
+      "toolName",
     ]);
   });
 
@@ -144,7 +186,7 @@ describe("activity delivery", () => {
         outcome: "success",
         durationMs: 12,
         attempts: 1,
-      })
+      }),
     ).not.toThrow();
     expect(deferred).toHaveLength(1);
     await Promise.all(deferred);
@@ -175,11 +217,7 @@ describe("activity delivery", () => {
       serverInfo: { name: "connecta", version: "0.1.0" },
       logger: silentLogger,
     };
-    const tools = createMetaTools(
-      makeRegistry([dangerous]),
-      "https://connecta.test",
-      { activity },
-    );
+    const tools = createMetaTools(makeRegistry([dangerous]), "https://connecta.test", { activity });
 
     await tools.callDestructiveTool({ address: "danger.erase" });
 
@@ -215,11 +253,7 @@ describe("activity delivery", () => {
       serverInfo: { name: "connecta", version: "0.1.0" },
       logger: silentLogger,
     };
-    const tools = createMetaTools(
-      makeRegistry([large], { maxResultBytes: 64 }),
-      "https://connecta.test",
-      { activity },
-    );
+    const tools = createMetaTools(makeRegistry([large], { maxResultBytes: 64 }), "https://connecta.test", { activity });
 
     await tools.callTool({ address: "large.read" });
 

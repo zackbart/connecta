@@ -3,16 +3,34 @@
 // boundaries are refused rather than searched again with another capture.
 const MAX_URI_LENGTH = 8192;
 const MAX_MATCH_WORK = 262_144;
-interface Variable { name: string; explode: boolean; prefix: number | undefined }
-interface Expression { operator: string; variables: Variable[] }
+interface Variable {
+  name: string;
+  explode: boolean;
+  prefix: number | undefined;
+}
+interface Expression {
+  operator: string;
+  variables: Variable[];
+}
 type Part = string | Expression;
 import type { ResourceTemplateRefusalCode } from "../types.js";
 export type ResourceTemplateRefusal = ResourceTemplateRefusalCode;
-interface MatchResult { matched: boolean; refusal?: ResourceTemplateRefusal }
-interface ParsedTemplate { parts: Part[]; scheme: string; authority: string | undefined }
+interface MatchResult {
+  matched: boolean;
+  refusal?: ResourceTemplateRefusal;
+}
+interface ParsedTemplate {
+  parts: Part[];
+  scheme: string;
+  authority: string | undefined;
+}
 
 /** Bound parsing plus templates × URI length for the whole resource read. */
-export function resourceUriMatchesTemplates(uri: string, templates: readonly { uriTemplate: string }[], note: (code: ResourceTemplateRefusal) => void = () => {}): MatchResult {
+export function resourceUriMatchesTemplates(
+  uri: string,
+  templates: readonly { uriTemplate: string }[],
+  note: (code: ResourceTemplateRefusal) => void = () => {},
+): MatchResult {
   let work = 0;
   for (const template of templates) {
     work += uri.length + template.uriTemplate.length;
@@ -59,12 +77,22 @@ function parse(template: string): ParsedTemplate | "resource_template_ambiguous"
     if (specs.length > 16) return;
     const variables: Variable[] = [];
     for (const spec of specs) {
-      const value = /^((?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+(?:\.(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+)*)(\*|:[1-9][0-9]{0,3})?$/.exec(spec);
+      const value =
+        /^((?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+(?:\.(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+)*)(\*|:[1-9][0-9]{0,3})?$/.exec(
+          spec,
+        );
       if (!value) return;
-      variables.push({ name: value[1]!, explode: value[2] === "*", prefix: value[2]?.startsWith(":") ? Number(value[2].slice(1)) : undefined });
+      variables.push({
+        name: value[1]!,
+        explode: value[2] === "*",
+        prefix: value[2]?.startsWith(":") ? Number(value[2].slice(1)) : undefined,
+      });
     }
-    if (new Set(variables.map(value => value.name)).size !== variables.length ||
-        variables.length > 1 && variables.some(value => value.explode)) return;
+    if (
+      new Set(variables.map((value) => value.name)).size !== variables.length ||
+      (variables.length > 1 && variables.some((value) => value.explode))
+    )
+      return;
     parts.push(literal, { operator, variables });
     offset = end + 1;
   }
@@ -74,7 +102,10 @@ function parse(template: string): ParsedTemplate | "resource_template_ambiguous"
   for (let index = 1; index < parts.length; index += 2) {
     const expression = parts[index] as Expression;
     const literal = parts[index + 1] as string;
-    if (!literal && index + 2 < parts.length || literal && Array.from(literal).every(character => expressionCharacter(expression, character))) {
+    if (
+      (!literal && index + 2 < parts.length) ||
+      (literal && Array.from(literal).every((character) => expressionCharacter(expression, character)))
+    ) {
       return "resource_template_ambiguous";
     }
   }
@@ -89,10 +120,23 @@ function literalAuthority(rest: string): string | undefined {
 }
 
 function expressionCharacter({ operator, variables }: Expression, character: string): boolean {
-  const base = operator === "+" || operator === "#" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~!$'()*+@-/,%" :
-    operator === "." ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_~-%" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-%";
-  const syntax = operator === ";" ? ";=," : operator === "?" || operator === "&" ? operator + "&=," : operator === "/" || operator === "." ? operator + "," : ",";
-  return base.includes(character) || syntax.includes(character) || variables.some(value => value.name.includes(character));
+  const base =
+    operator === "+" || operator === "#"
+      ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~!$'()*+@-/,%"
+      : operator === "."
+        ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_~-%"
+        : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-%";
+  const syntax =
+    operator === ";"
+      ? ";=,"
+      : operator === "?" || operator === "&"
+        ? operator + "&=,"
+        : operator === "/" || operator === "."
+          ? operator + ","
+          : ",";
+  return (
+    base.includes(character) || syntax.includes(character) || variables.some((value) => value.name.includes(character))
+  );
 }
 
 // KMP gives a single forward scan even when a literal has repeated prefixes.
@@ -112,11 +156,16 @@ function findLiteral(uri: string, literal: string, offset: number): number {
 }
 
 function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boolean {
-  if (uri.length > MAX_URI_LENGTH || !uri.startsWith(scheme) || authority === undefined && uri.slice(scheme.length).startsWith("//")) return false;
+  if (
+    uri.length > MAX_URI_LENGTH ||
+    !uri.startsWith(scheme) ||
+    (authority === undefined && uri.slice(scheme.length).startsWith("//"))
+  )
+    return false;
   const values = new Map<string, Array<{ parts: string[]; prefix: number | undefined }>>();
   const capture = (variable: Variable, raw: string[], path: boolean): boolean => {
-    const decoded = raw.map(value => safeValue(value, variable.prefix, path));
-    if (decoded.some(value => value === undefined)) return false;
+    const decoded = raw.map((value) => safeValue(value, variable.prefix, path));
+    if (decoded.some((value) => value === undefined)) return false;
     const prior = values.get(variable.name) ?? [];
     prior.push({ parts: decoded as string[], prefix: variable.prefix });
     values.set(variable.name, prior);
@@ -146,8 +195,8 @@ function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boo
       for (const token of tokens) {
         const equal = token.indexOf("=");
         const name = equal < 0 ? token : token.slice(0, equal);
-        const next = variables.findIndex(value => value.name === name);
-        if (next <= last || next < 0 || equal < 0 && operator !== ";") return false;
+        const next = variables.findIndex((value) => value.name === name);
+        if (next <= last || next < 0 || (equal < 0 && operator !== ";")) return false;
         last = next;
         const variable = variables[next]!;
         const value = equal < 0 ? "" : token.slice(equal + 1);
@@ -157,34 +206,50 @@ function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boo
       const separator = operator === "/" || operator === "." ? operator : ",";
       if (operator === "." && body.includes("..")) return false;
       const tokens = body.split(separator);
-      if (operator === "/" && tokens.length > 1 && tokens.some(value => !value)) return false;
+      if (operator === "/" && tokens.length > 1 && tokens.some((value) => !value)) return false;
       if (variables.length === 1) {
         const variable = variables[0]!;
-        const list = variable.prefix === undefined && (variable.explode || operator !== "/" && operator !== ".");
-        if (!list && tokens.length > 1 || !capture(variable, list ? tokens : [body], operator === "+" || operator === "#")) return false;
+        const list = variable.prefix === undefined && (variable.explode || (operator !== "/" && operator !== "."));
+        if (
+          (!list && tokens.length > 1) ||
+          !capture(variable, list ? tokens : [body], operator === "+" || operator === "#")
+        )
+          return false;
       } else {
         if (tokens.length > variables.length) return false;
-        for (const [i, value] of tokens.entries()) if (!capture(variables[i]!, [value], operator === "+" || operator === "#")) return false;
+        for (const [i, value] of tokens.entries())
+          if (!capture(variables[i]!, [value], operator === "+" || operator === "#")) return false;
       }
     }
   }
   if (offset !== uri.length) return false;
   const candidates = new Map<string, string[]>();
   for (const [name, occurrences] of values) {
-    const candidate = occurrences.find(value => value.prefix === undefined || Array.from(value.parts[0]!).length < value.prefix)
-      ?? occurrences.reduce((a, b) => a.parts[0]!.length >= b.parts[0]!.length ? a : b);
-    if (!occurrences.every(value => value.prefix === undefined
-      ? JSON.stringify(value.parts) === JSON.stringify(candidate.parts)
-      : value.parts.length === 1 && value.parts[0] === Array.from(candidate.parts[0]!).slice(0, value.prefix).join(""))) return false;
+    const candidate =
+      occurrences.find((value) => value.prefix === undefined || Array.from(value.parts[0]!).length < value.prefix) ??
+      occurrences.reduce((a, b) => (a.parts[0]!.length >= b.parts[0]!.length ? a : b));
+    if (
+      !occurrences.every((value) =>
+        value.prefix === undefined
+          ? JSON.stringify(value.parts) === JSON.stringify(candidate.parts)
+          : value.parts.length === 1 &&
+            value.parts[0] === Array.from(candidate.parts[0]!).slice(0, value.prefix).join(""),
+      )
+    )
+      return false;
     candidates.set(name, candidate.parts);
   }
-  const expanded = parts.map(part => typeof part === "string" ? part : expand(part, candidates)).join("");
-  const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, value => value.toUpperCase());
+  const expanded = parts.map((part) => (typeof part === "string" ? part : expand(part, candidates))).join("");
+  const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, (value) => value.toUpperCase());
   // Empty expressions can join literals into an authority the template did
   // not advertise. Compare the final RFC 3986 authority after re-expansion.
   const rest = uri.slice(scheme.length);
-  return canonical(expanded) === canonical(uri) && literalAuthority(rest) === authority && sameHost(uri, scheme, authority) &&
-    safePath(authority === undefined ? rest : rest.slice(authority.length + 2));
+  return (
+    canonical(expanded) === canonical(uri) &&
+    literalAuthority(rest) === authority &&
+    sameHost(uri, scheme, authority) &&
+    safePath(authority === undefined ? rest : rest.slice(authority.length + 2))
+  );
 }
 
 function sameHost(uri: string, scheme: string, authority: string | undefined): boolean {
@@ -195,7 +260,9 @@ function sameHost(uri: string, scheme: string, authority: string | undefined): b
   try {
     const host = authority === undefined ? "" : new URL(`${scheme}//${authority}/`).host;
     return new URL(uri).host === host;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function safePath(path: string): boolean {
@@ -206,8 +273,12 @@ function safePath(path: string): boolean {
   let value = end < 0 ? path : path.slice(0, end);
   for (let depth = 0; depth < 8; depth++) {
     if (/[\\\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(value)) return false;
-    if (!value.includes("%") || depth > 0 && !/%[0-9a-f]{2}/i.test(value)) return true;
-    try { value = depth === 0 ? decodeURIComponent(value) : decodeNestedPercentEscapes(value); } catch { return false; }
+    if (!value.includes("%") || (depth > 0 && !/%[0-9a-f]{2}/i.test(value))) return true;
+    try {
+      value = depth === 0 ? decodeURIComponent(value) : decodeNestedPercentEscapes(value);
+    } catch {
+      return false;
+    }
   }
   return false;
 }
@@ -216,32 +287,60 @@ function expand({ operator, variables }: Expression, values: Map<string, string[
   const named = operator === ";" || operator === "?" || operator === "&";
   const prefix = operator === "+" ? "" : operator;
   const separator = operator === "/" || operator === "." || operator === ";" ? operator : named ? "&" : ",";
-  const encode = (value: string) => operator === "+" || operator === "#" ? value.split(/(%[0-9a-f]{2})/gi).map(part => /^%[0-9a-f]{2}$/i.test(part) ? part : encodeURI(part)).join("")
-    : encodeURIComponent(value).replace(/[!'()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
-  const nameValue = (name: string, value: string) => named ? name + (value || operator !== ";" ? `=${value}` : "") : value;
+  const encode = (value: string) =>
+    operator === "+" || operator === "#"
+      ? value
+          .split(/(%[0-9a-f]{2})/gi)
+          .map((part) => (/^%[0-9a-f]{2}$/i.test(part) ? part : encodeURI(part)))
+          .join("")
+      : encodeURIComponent(value).replace(
+          /[!'()*]/g,
+          (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+        );
+  const nameValue = (name: string, value: string) =>
+    named ? name + (value || operator !== ";" ? `=${value}` : "") : value;
   const expansions: string[] = [];
   for (const variable of variables) {
     const parts = values.get(variable.name);
     if (!parts) continue;
-    const encoded = parts.map(value => encode(variable.prefix === undefined ? value : Array.from(value).slice(0, variable.prefix).join("")));
-    expansions.push(variable.explode && parts.length > 1
-      ? encoded.map(value => nameValue(variable.name, value)).join(separator)
-      : nameValue(variable.name, encoded.join(",")));
+    const encoded = parts.map((value) =>
+      encode(variable.prefix === undefined ? value : Array.from(value).slice(0, variable.prefix).join("")),
+    );
+    expansions.push(
+      variable.explode && parts.length > 1
+        ? encoded.map((value) => nameValue(variable.name, value)).join(separator)
+        : nameValue(variable.name, encoded.join(",")),
+    );
   }
   return expansions.length ? prefix + expansions.join(separator) : "";
 }
 
 function safeValue(raw: string, prefix: number | undefined, path: boolean): string | undefined {
   let expanded: string;
-  try { expanded = decodeURIComponent(raw); } catch { return undefined; }
+  try {
+    expanded = decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
   let value = expanded;
   // Check each decoding layer. Reserved paths may contain slashes, but cannot
   // introduce URI syntax, a network path, traversal, controls or format marks.
   for (let depth = 0; depth < 8; depth++) {
-    if (/[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || (!path && value.includes("/")) ||
-        value.startsWith("/") || value.split("/").some(segment => segment === "." || segment === "..")) return undefined;
-    if (!/%[0-9a-f]{2}/i.test(value)) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
-    try { value = decodeNestedPercentEscapes(value); } catch { return undefined; }
+    if (
+      /[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) ||
+      unsafeUnicode(value) ||
+      (!path && value.includes("/")) ||
+      value.startsWith("/") ||
+      value.split("/").some((segment) => segment === "." || segment === "..")
+    )
+      return undefined;
+    if (!/%[0-9a-f]{2}/i.test(value))
+      return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
+    try {
+      value = decodeNestedPercentEscapes(value);
+    } catch {
+      return undefined;
+    }
   }
   return undefined;
 }

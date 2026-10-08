@@ -214,11 +214,11 @@ async function nodeTemplate(): Promise<SmokeTarget> {
     const database = join(work, "connecta.sqlite");
     let token = "";
     const provisioned = await step(checks, "provision stored machine token", async () => {
-      const result = spawnSync(join(ROOT, "node_modules", ".bin", "tsx"),
-        ["src/provision-token.ts", "smoke-machine"], {
-          cwd: app, encoding: "utf8",
-          env: { ...process.env, CONNECTA_DATABASE: database },
-        });
+      const result = spawnSync(join(ROOT, "node_modules", ".bin", "tsx"), ["src/provision-token.ts", "smoke-machine"], {
+        cwd: app,
+        encoding: "utf8",
+        env: { ...process.env, CONNECTA_DATABASE: database },
+      });
       if (result.status !== 0) throw new Error("trusted token provisioning failed");
       token = result.stdout.trim();
       if (!/^cta_[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("provisioning did not return a cta_ token");
@@ -242,7 +242,8 @@ async function nodeTemplate(): Promise<SmokeTarget> {
       headers,
       readCode: `async () => (await connecta.call("time.get_now", {})).data.now`,
       expectRead: (result) => {
-        if (typeof result !== "string" || Number.isNaN(Date.parse(result))) throw new Error(`unexpected ${JSON.stringify(result)}`);
+        if (typeof result !== "string" || Number.isNaN(Date.parse(result)))
+          throw new Error(`unexpected ${JSON.stringify(result)}`);
         return `time.get_now → ${result}`;
       },
       write: {
@@ -323,25 +324,29 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
     `PUBLIC_URL:${origin}`,
     `CREDENTIAL_ENCRYPTION_KEY:${randomBytes(32).toString("base64")}`,
     ...(kind === "worker-example" ? ["DOWNSTREAM_TOKEN:unused-in-smoke"] : []),
-    ...(world
-      ? [`TRACKER_URL:${world.service("tracker").url}`, `CHAT_URL:${world.service("chat").url}`]
-      : []),
+    ...(world ? [`TRACKER_URL:${world.service("tracker").url}`, `CHAT_URL:${world.service("chat").url}`] : []),
   ];
   const proc = startProcess(
     join(ROOT, "node_modules", ".bin", "wrangler"),
     [
       "dev",
-      "--config", join(ROOT, "eval", "deploy", `wrangler.${kind}.jsonc`),
-      "--ip", "127.0.0.1",
-      "--port", String(port),
-      "--persist-to", persist,
+      "--config",
+      join(ROOT, "eval", "deploy", `wrangler.${kind}.jsonc`),
+      "--ip",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--persist-to",
+      persist,
       "--show-interactive-dev-session=false",
       ...vars.flatMap((variable) => ["--var", variable]),
     ],
     { cwd: ROOT, env: { WRANGLER_SEND_METRICS: "false", CI: "1" } },
   );
   try {
-    const booted = await step(checks, "boot (wrangler dev)", () => waitForHealth(origin, proc.child, proc.output, 90_000));
+    const booted = await step(checks, "boot (wrangler dev)", () =>
+      waitForHealth(origin, proc.child, proc.output, 90_000),
+    );
     if (!booted) return target;
     await mcpBattery(
       checks,
@@ -412,7 +417,9 @@ for (const name of selected) {
   targets.push(result);
   console.error(`[smoke] ${result.status.toUpperCase().padEnd(5)} ${result.target}`);
   for (const item of result.checks) {
-    console.error(`[smoke]   ${item.pass ? "ok  " : "FAIL"} ${item.name} (${item.ms}ms)${item.detail ? ` — ${item.detail.slice(0, 200)}` : ""}`);
+    console.error(
+      `[smoke]   ${item.pass ? "ok  " : "FAIL"} ${item.name} (${item.ms}ms)${item.detail ? ` — ${item.detail.slice(0, 200)}` : ""}`,
+    );
   }
 }
 const file: SmokeResultFile = { kind: "connecta-eval/smoke", version: 1, meta: runMeta(), targets };

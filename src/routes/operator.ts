@@ -44,18 +44,12 @@ export function refuse(error: string, status: number): Effect.Effect<never, Answ
   return Effect.fail(new Answer(privateJson({ error }, { status })));
 }
 
-export type Authorized = Extract<
-  Awaited<ReturnType<typeof authorize>>,
-  { ok: true }
->;
+export type Authorized = Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>;
 
-function admitted(
-  result: Promise<Awaited<ReturnType<typeof authorize>>>,
-): Effect.Effect<Authorized, Answer> {
+function admitted(result: Promise<Awaited<ReturnType<typeof authorize>>>): Effect.Effect<Authorized, Answer> {
   return Effect.flatMap(
     Effect.promise(() => result),
-    (authz) =>
-      authz.ok ? Effect.succeed(authz) : Effect.fail(new Answer(authz.response)),
+    (authz) => (authz.ok ? Effect.succeed(authz) : Effect.fail(new Answer(authz.response))),
   );
 }
 
@@ -65,16 +59,7 @@ export function authorized(
   partitionIdentity = true,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(
-      authorize(
-        request,
-        baseUrl,
-        opts.config.auth,
-        runtimeContext,
-        opts.config.identity,
-        partitionIdentity,
-      ),
-    ),
+    admitted(authorize(request, baseUrl, opts.config.auth, runtimeContext, opts.config.identity, partitionIdentity)),
   );
 }
 
@@ -84,16 +69,7 @@ export function authorizedPerson(
   purpose: string,
 ): Effect.Effect<Authorized, Answer> {
   return Effect.suspend(() =>
-    admitted(
-      authorizeUiIdentity(
-        request,
-        baseUrl,
-        opts.config.auth,
-        purpose,
-        runtimeContext,
-        opts.config.identity,
-      ),
-    ),
+    admitted(authorizeUiIdentity(request, baseUrl, opts.config.auth, purpose, runtimeContext, opts.config.identity)),
   );
 }
 
@@ -116,10 +92,7 @@ export function scopeFor(
  * connector that does not exist refuses the whole view, management rights
  * included, rather than quietly granting what remains.
  */
-export function visibleRegistry(
-  { opts }: RouteContext,
-  authz: Authorized,
-): Effect.Effect<RegistryView, Answer> {
+export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
   return Effect.try({
     try: () => {
       validateAuthPermissions(authz, opts.registry);
@@ -137,10 +110,7 @@ export function visibleRegistry(
  * OAuth disconnect has started, the cache invalidation that follows it must
  * run too, whether or not anyone is still waiting for the answer.
  */
-export function serveOperator(
-  program: Effect.Effect<Response, Answer>,
-  signal?: AbortSignal,
-): Promise<Response> {
+export function serveOperator(program: Effect.Effect<Response, Answer>, signal?: AbortSignal): Promise<Response> {
   return runEdge(
     Effect.catch(program, (answer) => Effect.succeed(answer.response)),
     signal ? { signal } : undefined,

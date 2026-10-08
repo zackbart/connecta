@@ -1,9 +1,7 @@
 import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import type { z } from "zod";
 
-type JsonSchemaOptions = Parameters<
-  StandardSchemaWithJSON["~standard"]["jsonSchema"]["input"]
->[0];
+type JsonSchemaOptions = Parameters<StandardSchemaWithJSON["~standard"]["jsonSchema"]["input"]>[0];
 
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
@@ -34,9 +32,7 @@ function deepFreeze<T>(value: T): T {
  * Conversions with library options are passed through uncached; nothing in
  * the SDK sends them.
  */
-export function advertisedSchema<T extends z.ZodType>(
-  schema: T,
-): StandardSchemaWithJSON<z.input<T>, z.output<T>> {
+export function advertisedSchema<T extends z.ZodType>(schema: T): StandardSchemaWithJSON<z.input<T>, z.output<T>> {
   const standard = schema["~standard"];
   const rendered = new Map<string, Record<string, unknown>>();
   const convert =

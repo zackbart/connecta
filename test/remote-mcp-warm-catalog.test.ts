@@ -3,10 +3,7 @@ import type { Tool } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { machineAuth } from "./helpers/machine-auth.js";
-import {
-  MAX_CATALOG_CHUNK_BYTES,
-  MAX_SERIALIZED_CATALOG_BYTES,
-} from "../src/catalog-limits.js";
+import { MAX_CATALOG_CHUNK_BYTES, MAX_SERIALIZED_CATALOG_BYTES } from "../src/catalog-limits.js";
 import { createExecuteTool } from "../src/execute.js";
 import type { Executor } from "../src/types.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -59,25 +56,36 @@ function fixture(legacy = false, destructive = false) {
   if (destructive) {
     for (const tool of definitions) tool.annotations = { readOnlyHint: false, destructiveHint: true };
   }
-  const downstream = httpDownstream((server) => {
-    server.registerTool("mirrored", {
-      inputSchema: z.object({ tenant: z.string().meta({ "x-mcp-header": "Tenant" }) }),
-      annotations: { readOnlyHint: true },
-    }, async () => ({ content: [] }));
-    // Raw handlers let the server return an invalid result deliberately, while
-    // its registered schema still enforces header/body parity before dispatch.
-    server.server.setRequestHandler("tools/list", async () => ({ tools: definitions, ttlMs: 300_000, cacheScope: "public" }));
-    server.server.setRequestHandler("tools/call", async () => ({
-      content: [{ type: "text", text: "ran" }],
-      ...(output !== undefined ? { structuredContent: output } : {}),
-    }));
-  }, {
-    capture: async (request) => {
-      if (request.method !== "POST") return;
-      const message = await request.json() as { method: string };
-      requests.push({ method: message.method, headers: request.headers });
+  const downstream = httpDownstream(
+    (server) => {
+      server.registerTool(
+        "mirrored",
+        {
+          inputSchema: z.object({ tenant: z.string().meta({ "x-mcp-header": "Tenant" }) }),
+          annotations: { readOnlyHint: true },
+        },
+        async () => ({ content: [] }),
+      );
+      // Raw handlers let the server return an invalid result deliberately, while
+      // its registered schema still enforces header/body parity before dispatch.
+      server.server.setRequestHandler("tools/list", async () => ({
+        tools: definitions,
+        ttlMs: 300_000,
+        cacheScope: "public",
+      }));
+      server.server.setRequestHandler("tools/call", async () => ({
+        content: [{ type: "text", text: "ran" }],
+        ...(output !== undefined ? { structuredContent: output } : {}),
+      }));
     },
-  });
+    {
+      capture: async (request) => {
+        if (request.method !== "POST") return;
+        const message = (await request.json()) as { method: string };
+        requests.push({ method: message.method, headers: request.headers });
+      },
+    },
+  );
   const connector = remoteMcp("down", {
     url: downstream.url,
     versionNegotiation: legacy ? "legacy" : "auto",
@@ -87,15 +95,24 @@ function fixture(legacy = false, destructive = false) {
       return transport;
     },
   });
-  return { connector, definitions, requests, setOutput: (value: unknown) => { output = value; } };
+  return {
+    connector,
+    definitions,
+    requests,
+    setOutput: (value: unknown) => {
+      output = value;
+    },
+  };
 }
 
 const cases = [
   { cache: "same request", caller: "call_tool", view: "root" },
   { cache: "memory", caller: "call_tool", view: "root" },
   ...(["root", "scoped", "pool"] as const).flatMap((view) =>
-    (["call_tool", "call_destructive_tool", "connecta.call"] as const).map((caller) =>
-      ({ cache: "storage", caller, view } as const))),
+    (["call_tool", "call_destructive_tool", "connecta.call"] as const).map(
+      (caller) => ({ cache: "storage", caller, view }) as const,
+    ),
+  ),
 ] as const;
 
 describe.each(cases)("downstream definitions from $cache via $caller in $view", ({ cache, caller, view }) => {
@@ -135,17 +152,29 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
     const callRegistry = view === "scoped" ? scoped : registry;
     const callMeta = view === "scoped" ? createMetaTools(callRegistry, BASE) : meta;
     const execute = createExecuteTool(callRegistry, BASE, executor, silentLogger);
-    const deployment = view === "pool" ? createTestConnecta({
-      connectors: [f.connector], storage, publicUrl: BASE, executor, logger: silentLogger,
-      auth: machineAuth("reader", { subjectId: "reader" }),
-      identity: { connectorAccess: () => allowed },
-      pools: { readers: { tools: allowed, grant: () => true } },
-    }) : undefined;
+    const deployment =
+      view === "pool"
+        ? createTestConnecta({
+            connectors: [f.connector],
+            storage,
+            publicUrl: BASE,
+            executor,
+            logger: silentLogger,
+            auth: machineAuth("reader", { subjectId: "reader" }),
+            identity: { connectorAccess: () => allowed },
+            pools: { readers: { tools: allowed, grant: () => true } },
+          })
+        : undefined;
     if (deployment) {
       closers.push(() => deployment.close());
       // Warm the admitted pool's own host partition. A root catalog cannot
       // seed a different pool, even when the downstream marks it public.
-      const warmed = await mcpRpc(deployment, "tools/call", { name: "search_tools", arguments: { query: "numeric" } }, { query: "/readers", token: "reader" });
+      const warmed = await mcpRpc(
+        deployment,
+        "tools/call",
+        { name: "search_tools", arguments: { query: "numeric" } },
+        { query: "/readers", token: "reader" },
+      );
       expect(warmed.status).toBe(200);
       expect((await readJsonRpc(warmed)).result).not.toMatchObject({ isError: true });
     }
@@ -153,18 +182,28 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
       target = { address, args };
       const code = `async () => await connecta.call(${JSON.stringify(address)}, ${JSON.stringify(args)})`;
       if (deployment) {
-        const response = await mcpRpc(deployment, "tools/call", {
-          name: caller === "connecta.call" ? "execute_code" : caller,
-          arguments: caller === "connecta.call" ? { code } : {
-            address, args,
-            ...(caller === "call_destructive_tool" ? { reason: "Regression coverage" } : {}),
+        const response = await mcpRpc(
+          deployment,
+          "tools/call",
+          {
+            name: caller === "connecta.call" ? "execute_code" : caller,
+            arguments:
+              caller === "connecta.call"
+                ? { code }
+                : {
+                    address,
+                    args,
+                    ...(caller === "call_destructive_tool" ? { reason: "Regression coverage" } : {}),
+                  },
           },
-        }, { query: "/readers", token: "reader" });
+          { query: "/readers", token: "reader" },
+        );
         expect(response.status).toBe(200);
         return (await readJsonRpc(response)).result as ToolResult;
       }
       if (caller === "connecta.call") return execute({ code });
-      if (caller === "call_destructive_tool") return callMeta.callDestructiveTool({ address, args, reason: "Regression coverage" });
+      if (caller === "call_destructive_tool")
+        return callMeta.callDestructiveTool({ address, args, reason: "Regression coverage" });
       return callMeta.callTool({ address, args });
     };
     f.requests.length = 0;
@@ -244,7 +283,12 @@ it("ignores retired registry catalogs and obtains current downstream definitions
 });
 
 describe.each([
-  { label: "chunk boundary", iconBytes: MAX_CATALOG_CHUNK_BYTES + 1, descriptionBytes: MAX_CATALOG_CHUNK_BYTES, chunkCount: 2 },
+  {
+    label: "chunk boundary",
+    iconBytes: MAX_CATALOG_CHUNK_BYTES + 1,
+    descriptionBytes: MAX_CATALOG_CHUNK_BYTES,
+    chunkCount: 2,
+  },
   { label: "catalog ceiling", iconBytes: MAX_SERIALIZED_CATALOG_BYTES + 1, descriptionBytes: 0, chunkCount: 1 },
 ])("inline icons over the $label", ({ iconBytes, descriptionBytes, chunkCount }) => {
   it("omits data payloads, retains URL icons, and reloads a complete bounded catalog", async () => {
@@ -269,7 +313,9 @@ describe.each([
     expect(required(tools[1]).icons).toEqual([]);
     expect(numeric.icons[0]?.src.length).toBeGreaterThan(iconBytes);
 
-    const roots = (await storage.list("response-cache:v1:down:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"));
+    const roots = (await storage.list("response-cache:v1:down:")).filter(
+      (key) => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"),
+    );
     expect(roots).toHaveLength(1);
     const root = required(roots[0]);
     const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };

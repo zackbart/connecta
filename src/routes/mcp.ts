@@ -1,7 +1,14 @@
 import { bindActivityRequest } from "../activity-request.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
-import { oauthConnectUrl, oauthConnectLink, oauthConnectLinkProgress, closeOAuthConnectLinks, claimAuthRetry, oauthConnectUnavailable } from "../oauth-handoff.js";
+import {
+  oauthConnectUrl,
+  oauthConnectLink,
+  oauthConnectLinkProgress,
+  closeOAuthConnectLinks,
+  claimAuthRetry,
+  oauthConnectUnavailable,
+} from "../oauth-handoff.js";
 import { AuthElicitation } from "../auth-elicitation.js";
 import {
   classifyInboundRequest,
@@ -15,11 +22,7 @@ import { Duration, Effect, Exit, Option, Result, Scope } from "effect";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
 import type { McpClientContext } from "../mcp-client-context.js";
 import { registerExecuteTool } from "../execute.js";
-import {
-  ExecutorAdmissionError,
-  type AdmissionController,
-  type AdmissionLease,
-} from "../executor-admission.js";
+import { ExecutorAdmissionError, type AdmissionController, type AdmissionLease } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import { intersectAccess } from "../connector-access.js";
@@ -81,8 +84,9 @@ async function isModernListen(request: Request, signal: AbortSignal): Promise<bo
       ...(method !== null ? { mcpMethodHeader: method } : {}),
       body: JSON.parse(text + decoder.decode()),
     });
-    return route.kind === "modern" && route.messageKind === "request" &&
-      route.message.method === "subscriptions/listen";
+    return (
+      route.kind === "modern" && route.messageKind === "request" && route.message.method === "subscriptions/listen"
+    );
   } catch {
     // Leave unreadable, malformed, and legacy bodies to the normal SDK path.
     return false;
@@ -102,11 +106,7 @@ export const MCP_CORS_HEADERS = {
 // Browser-based MCP clients call /mcp cross-origin. Without CORS on every
 // response — errors included — the browser hides the 401, the client cannot
 // read WWW-Authenticate, and OAuth discovery silently never starts.
-function withMcpCors(
-  response: Response,
-  request: Request,
-  allowedOrigin: string | null,
-): Response {
+function withMcpCors(response: Response, request: Request, allowedOrigin: string | null): Response {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(MCP_CORS_HEADERS)) {
     headers.set(name, value);
@@ -118,8 +118,10 @@ function withMcpCors(
     // Browsers do not interpret a prefix wildcard in Allow-Headers. Echo only
     // valid SEP-2243 field names; unrelated requested headers stay disallowed.
     const paramHeaders = (request.headers.get("Access-Control-Request-Headers") ?? "")
-      .toLowerCase().split(",").map(name => name.trim())
-      .filter(name => /^mcp-param-[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name));
+      .toLowerCase()
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => /^mcp-param-[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name));
     if (paramHeaders.length) {
       headers.append("Access-Control-Allow-Headers", [...new Set(paramHeaders)].join(", "));
     }
@@ -153,34 +155,29 @@ function requestAdmissionFailure(sentSecrets: SentSecrets, error: ExecutorAdmiss
   const data = {
     code: overloaded ? "server_overloaded" : "server_shutting_down",
     retryable: overloaded,
-    ...(overloaded && error.retryAfterMs !== undefined
-      ? { retryAfterMs: error.retryAfterMs }
-      : {}),
+    ...(overloaded && error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
   };
   const headers = new Headers({
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
   });
   if (overloaded && error.retryAfterMs !== undefined) {
-    headers.set(
-      "Retry-After",
-      String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))),
-    );
+    headers.set("Retry-After", String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))));
   }
   return new Response(
-    JSON.stringify(redactAgentOutput(sentSecrets, {
-      jsonrpc: "2.0",
-      error: {
-        // MCP 2026-07-28 basic#error-codes forbids new allocations in the
-        // legacy -32000..-32019 range. Use application codes outside the
-        // JSON-RPC reserved range, avoiding retired protocol meanings.
-        code: overloaded ? -33001 : -33002,
-        message: overloaded
-          ? "Server capacity is exhausted. Retry later."
-          : "Server is shutting down.",
-        data,
-      },
-    })),
+    JSON.stringify(
+      redactAgentOutput(sentSecrets, {
+        jsonrpc: "2.0",
+        error: {
+          // MCP 2026-07-28 basic#error-codes forbids new allocations in the
+          // legacy -32000..-32019 range. Use application codes outside the
+          // JSON-RPC reserved range, avoiding retired protocol meanings.
+          code: overloaded ? -33001 : -33002,
+          message: overloaded ? "Server capacity is exhausted. Retry later." : "Server is shutting down.",
+          data,
+        },
+      }),
+    ),
     { status: 503, headers },
   );
 }
@@ -195,11 +192,7 @@ function requestAdmissionFailure(sentSecrets: SentSecrets, error: ExecutorAdmiss
  * failure part of the same bounded lifecycle as success, error, and
  * cancellation.
  */
-function closeWithBody(
-  response: Response,
-  signal: AbortSignal,
-  close: () => void,
-): Response {
+function closeWithBody(response: Response, signal: AbortSignal, close: () => void): Response {
   let released = false;
   let onAbort = () => {};
   const release = () => {
@@ -304,10 +297,16 @@ function admitted(
   return Effect.acquireRelease(
     Effect.suspend(() => {
       const pending = controller.acquire({ signal });
-      return Effect.tryPromise({ try: () => pending, catch: (error) => error })
-        .pipe(Effect.onInterrupt(() => Effect.sync(() => {
-          pending.then((lease) => lease.release(), () => {});
-        })));
+      return Effect.tryPromise({ try: () => pending, catch: (error) => error }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            pending.then(
+              (lease) => lease.release(),
+              () => {},
+            );
+          }),
+        ),
+      );
     }),
     (lease) => Effect.sync(() => lease.release()),
     { interruptible: true },
@@ -334,17 +333,19 @@ function toolkitRetired(logger: Logger, sentSecrets: SentSecrets): Response {
       "URL, or point it at the deployment for its audience.",
   );
   return new Response(
-    JSON.stringify(redactAgentOutput(sentSecrets, {
-      jsonrpc: "2.0",
-      id: null,
-      error: {
-        code: -32600,
-        message:
-          "This deployment does not accept ?toolkit=. Toolkits were retired " +
-          "in issue #178 — remove the ?toolkit= value from the MCP endpoint " +
-          "URL, or ask the operator for the deployment serving this audience.",
-      },
-    })),
+    JSON.stringify(
+      redactAgentOutput(sentSecrets, {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32600,
+          message:
+            "This deployment does not accept ?toolkit=. Toolkits were retired " +
+            "in issue #178 — remove the ?toolkit= value from the MCP endpoint " +
+            "URL, or ask the operator for the deployment serving this audience.",
+        },
+      }),
+    ),
     {
       status: 404,
       headers: {
@@ -383,8 +384,16 @@ function serveMcp(
       principal: principalKey,
       registry,
       canManage: canManageAuth,
-      connectLink: (id, force, after) => oauthConnectLink(opts, opts.config.publicUrl ?? baseUrl, id, principalKey, force,
-        Boolean(opts.config.vault?.seal && opts.config.vault.open), after),
+      connectLink: (id, force, after) =>
+        oauthConnectLink(
+          opts,
+          opts.config.publicUrl ?? baseUrl,
+          id,
+          principalKey,
+          force,
+          Boolean(opts.config.vault?.seal && opts.config.vault.open),
+          after,
+        ),
       linkProgress: (id, nonce) => oauthConnectLinkProgress(opts, baseUrl, id, nonce),
       closeLinks: (id, nonces) => closeOAuthConnectLinks(opts, baseUrl, id, nonces),
       claimRetry: (id, nonce) => claimAuthRetry(opts, baseUrl, id, nonce),
@@ -418,12 +427,8 @@ function serveMcp(
           requestId: crypto.randomUUID(),
           ...(pool !== undefined ? { pool } : {}),
           serverInfo: opts.config.serverInfo,
-          ...(opts.config.activity?.deploymentId
-            ? { deploymentId: opts.config.activity?.deploymentId }
-            : {}),
-          ...(runtimeContext?.waitUntil
-            ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
-            : {}),
+          ...(opts.config.activity?.deploymentId ? { deploymentId: opts.config.activity?.deploymentId } : {}),
+          ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
           logger: opts.config.logger,
         }
       : undefined;
@@ -450,9 +455,7 @@ function serveMcp(
       probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
       discoveryConcurrency: opts.config.discovery.concurrency,
       requestSignal,
-      ...(runtimeContext?.waitUntil
-        ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
-        : {}),
+      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
     });
     registerExecuteTool(server, registry, {
       authElicitation,
@@ -464,9 +467,7 @@ function serveMcp(
       logger: opts.config.logger,
       ...(activity ? { activity } : {}),
       requestSignal,
-      ...(runtimeContext?.waitUntil
-        ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
-        : {}),
+      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       ...executeLimits(opts.config),
       trust,
     });
@@ -490,12 +491,19 @@ function serveMcp(
       }).fetch(request);
       if (request.headers.get("Mcp-Method") === "subscriptions/listen" && response.status === 200) {
         const body = await response.clone().json();
-        if (isJSONRPCErrorResponse(body) && body.error.code === -32603 && body.error.message === "Subscription limit reached") {
-          return new Response(JSON.stringify({
-            jsonrpc: "2.0",
-            id: body.id,
-            error: { code: -32601, message: "Method not found: subscriptions/listen" },
-          }), { status: 404, headers: response.headers });
+        if (
+          isJSONRPCErrorResponse(body) &&
+          body.error.code === -32603 &&
+          body.error.message === "Subscription limit reached"
+        ) {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id,
+              error: { code: -32601, message: "Method not found: subscriptions/listen" },
+            }),
+            { status: 404, headers: response.headers },
+          );
         }
       }
       return response;
@@ -511,33 +519,40 @@ function serveMcp(
     return transport.handleRequest(request);
   };
 
-  return Effect.addFinalizer(() => Effect.sync(() => {
-    for (const server of servers) void server.close().catch(() => {});
-  })).pipe(Effect.andThen(Effect.promise(async () => {
-    const response = await exchange();
-    // Both SDK transports serialize here. This also covers SDK-generated
-    // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
-    if (!response.body) return response;
-    const body = await response.text();
-    let text: string | undefined;
-    if (response.headers.get("Content-Type")?.includes("application/json")) {
-      // Structured redaction also joins text blocks before a secret split
-      // across them can cross the serialization boundary.
-      try { text = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body))); }
-      catch { /* Non-JSON diagnostics still pass through the text boundary. */ }
-    }
-    // Parsed JSON already passes every string through the boundary. A second
-    // serialized pass would mistake a blob's encoding for credential bytes.
-    text ??= redactAgentOutput(sentSecrets, body);
-    const headers = new Headers(response.headers);
-    headers.delete("Content-Length");
-    return new Response(text, { status: response.status, statusText: response.statusText, headers });
-  })));
+  return Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const server of servers) void server.close().catch(() => {});
+    }),
+  ).pipe(
+    Effect.andThen(
+      Effect.promise(async () => {
+        const response = await exchange();
+        // Both SDK transports serialize here. This also covers SDK-generated
+        // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
+        if (!response.body) return response;
+        const body = await response.text();
+        let text: string | undefined;
+        if (response.headers.get("Content-Type")?.includes("application/json")) {
+          // Structured redaction also joins text blocks before a secret split
+          // across them can cross the serialization boundary.
+          try {
+            text = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body)));
+          } catch {
+            /* Non-JSON diagnostics still pass through the text boundary. */
+          }
+        }
+        // Parsed JSON already passes every string through the boundary. A second
+        // serialized pass would mistake a blob's encoding for credential bytes.
+        text ??= redactAgentOutput(sentSecrets, body);
+        const headers = new Headers(response.headers);
+        headers.delete("Content-Length");
+        return new Response(text, { status: response.status, statusText: response.statusText, headers });
+      }),
+    ),
+  );
 }
 
-export function createMcpRoute(
-  opts: ServerOptions,
-): {
+export function createMcpRoute(opts: ServerOptions): {
   handle(context: RouteContext): Effect.Effect<Response | null, unknown>;
   rejectOrigin(request: Request): Response | null;
 } {
@@ -552,9 +567,15 @@ export function createMcpRoute(
     }
   };
   // The schema has already refused anything but exact origins or "*".
-  const origins = new Set(configuredOrigins === undefined
-    ? opts.config.publicUrl ? [new URL(opts.config.publicUrl).origin] : []
-    : configuredOrigins === "*" ? [] : configuredOrigins);
+  const origins = new Set(
+    configuredOrigins === undefined
+      ? opts.config.publicUrl
+        ? [new URL(opts.config.publicUrl).origin]
+        : []
+      : configuredOrigins === "*"
+        ? []
+        : configuredOrigins,
+  );
   const allowsOrigin = (origin: string): boolean => {
     if (configuredOrigins === "*") return true;
     if (!isExactOrigin(origin)) return false;
@@ -568,7 +589,11 @@ export function createMcpRoute(
     if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
     const origin = request.headers.get("Origin");
     if (origin === null || allowsOrigin(origin)) return null;
-    return withMcpCors(mcpRefusal(sentSecretsForRequest(request), 403, -33005, "MCP access is forbidden."), request, null);
+    return withMcpCors(
+      mcpRefusal(sentSecretsForRequest(request), 403, -33005, "MCP access is forbidden."),
+      request,
+      null,
+    );
   };
   let lastAdmissionWarningAt = 0;
   let suppressedAdmissionWarnings = 0;
@@ -588,16 +613,8 @@ export function createMcpRoute(
     suppressedAdmissionWarnings = 0;
   };
 
-
-  function routeMcp(
-    context: RouteContext,
-  ): Effect.Effect<Response | null, unknown> {
-    const {
-      path,
-      request,
-      baseUrl,
-      runtimeContext,
-    } = context;
+  function routeMcp(context: RouteContext): Effect.Effect<Response | null, unknown> {
+    const { path, request, baseUrl, runtimeContext } = context;
     if (path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
     // Admission, refusal bodies, SDK serialization and connector work share
     // one set. Connector contexts still receive an opaque scope, never the
@@ -607,9 +624,8 @@ export function createMcpRoute(
     const poolName = path === "/mcp" ? undefined : path.slice("/mcp/".length);
     const origin = request.headers.get("Origin");
     const allowed = origin === null || allowsOrigin(origin);
-    const cors = (response: Response): Response => withMcpCors(
-      response, request, configuredOrigins === "*" ? "*" : allowed ? origin : null,
-    );
+    const cors = (response: Response): Response =>
+      withMcpCors(response, request, configuredOrigins === "*" ? "*" : allowed ? origin : null);
     // DNS-rebinding refusals cost neither a permit nor an auth lookup. This
     // local header check also guards OPTIONS before any provider metadata.
     const refusal = rejectOrigin(request);
@@ -624,210 +640,251 @@ export function createMcpRoute(
     request.signal.addEventListener("abort", onCallerAbort, { once: true });
     if (request.signal.aborted) onCallerAbort();
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    return scopedToBody(Effect.gen(function* () {
-      yield* Effect.addFinalizer(() => Effect.sync(() => {
-        if (!localAbort.signal.aborted) {
-          localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+    return scopedToBody(
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (!localAbort.signal.aborted) {
+              localAbort.abort(request.signal.reason ?? new Error("MCP request ended."));
+            }
+            request.signal.removeEventListener("abort", onCallerAbort);
+            if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+          }),
+        );
+        // Only a body-confirmed modern listen may skip admission. Trusting the
+        // method header alone would let a legacy tools/call bypass the pool.
+        const startedAt = Date.now();
+        const maxDurationMs = opts.requestAdmission.maxDurationMs;
+        let listen = false;
+        if (request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen") {
+          const classify = Effect.promise(() => isModernListen(request, localAbort.signal));
+          const prepared =
+            maxDurationMs === undefined
+              ? Option.some(yield* classify)
+              : yield* classify.pipe(Effect.timeoutOption(Duration.millis(maxDurationMs)));
+          if (Option.isNone(prepared)) {
+            localAbort.abort(new Error("MCP request lifetime exceeded."));
+            return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
+          }
+          listen = prepared.value;
         }
-        request.signal.removeEventListener("abort", onCallerAbort);
-        if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-      }));
-      // Only a body-confirmed modern listen may skip admission. Trusting the
-      // method header alone would let a legacy tools/call bypass the pool.
-      const startedAt = Date.now();
-      const maxDurationMs = opts.requestAdmission.maxDurationMs;
-      let listen = false;
-      if (request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen") {
-        const classify = Effect.promise(() => isModernListen(request, localAbort.signal));
-        const prepared = maxDurationMs === undefined
-          ? Option.some(yield* classify)
-          : yield* classify.pipe(Effect.timeoutOption(Duration.millis(maxDurationMs)));
-        if (Option.isNone(prepared)) {
-          localAbort.abort(new Error("MCP request lifetime exceeded."));
+        const admission = listen
+          ? Result.succeed(undefined)
+          : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
+        if (Result.isFailure(admission)) {
+          const error = admission.failure;
+          if (!(error instanceof ExecutorAdmissionError)) {
+            return yield* Effect.fail(error);
+          }
+          if (error.code === "executor_cancelled") {
+            return yield* Effect.fail(request.signal.reason ?? error);
+          }
+          if (error.code === "executor_overloaded") {
+            warnAdmissionRejected(error);
+          }
+          return cors(requestAdmissionFailure(sentSecrets, error));
+        }
+        const remainingMs = admission.success
+          ? admission.success.remainingMs()
+          : maxDurationMs === undefined
+            ? undefined
+            : maxDurationMs - (Date.now() - startedAt);
+        if (remainingMs !== undefined && remainingMs <= 0) {
+          admission.success?.release();
           return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
         }
-        listen = prepared.value;
-      }
-      const admission = listen
-        ? Result.succeed(undefined)
-        : yield* Effect.result(admitted(opts.requestAdmission, request.signal));
-      if (Result.isFailure(admission)) {
-        const error = admission.failure;
-        if (!(error instanceof ExecutorAdmissionError)) {
-          return yield* Effect.fail(error);
+        if (remainingMs !== undefined) {
+          deadlineTimer = setTimeout(() => {
+            localAbort.abort(new Error("MCP request lifetime exceeded."));
+          }, remainingMs);
         }
-        if (error.code === "executor_cancelled") {
-          return yield* Effect.fail(request.signal.reason ?? error);
+        const localRequest = new Request(request, { signal: localAbort.signal });
+        if (admission.success && admission.success.waitMs > 0) {
+          opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
+            waitMs: admission.success.waitMs,
+            active: opts.requestAdmission.activeCount,
+            queued: opts.requestAdmission.queuedCount,
+          });
         }
-        if (error.code === "executor_overloaded") {
-          warnAdmissionRejected(error);
-        }
-        return cors(requestAdmissionFailure(sentSecrets, error));
-      }
-      const remainingMs = admission.success
-        ? admission.success.remainingMs()
-        : maxDurationMs === undefined ? undefined : maxDurationMs - (Date.now() - startedAt);
-      if (remainingMs !== undefined && remainingMs <= 0) {
-        admission.success?.release();
-        return cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
-      }
-      if (remainingMs !== undefined) {
-        deadlineTimer = setTimeout(() => {
-          localAbort.abort(new Error("MCP request lifetime exceeded."));
-        }, remainingMs);
-      }
-      const localRequest = new Request(request, { signal: localAbort.signal });
-      if (admission.success && admission.success.waitMs > 0) {
-        opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
-          waitMs: admission.success.waitMs,
-          active: opts.requestAdmission.activeCount,
-          queued: opts.requestAdmission.queuedCount,
-        });
-      }
-      // Promise code the fiber stops waiting on when the caller leaves. An
-      // Effect `authorize` would put Effect in the /activity bundle, which
-      // shares it, to save only the lookups an abandoned authorization
-      // finishes on its own.
-      const handled = Effect.gen(function* () {
-      const authz = yield* Effect.promise(() => authorize(
-        localRequest,
-        baseUrl,
-        opts.config.auth,
-        runtimeContext,
-        opts.config.identity,
-      ));
-      if (!authz.ok) {
-        const response = authz.response;
-        // Preserve the auth adapter's challenge and status. The MCP host must
-        // repair its connection to connecta before any connector can be called.
-        if (response.status !== 401 && response.status !== 403) return cors(response);
-        const headers = new Headers(response.headers);
-        headers.set("Connecta-Error-Code", "host_auth_required");
-        headers.set("Connecta-Recovery", "host_connection");
-        // Custom adapters may own a streaming or non-JSON response. Preserve
-        // that body and its request lifetime, and carry recovery in headers.
-        if (!response.headers.get("Content-Type")?.includes("application/json")) {
-          return cors(new Response(response.body, { status: response.status, headers }));
-        }
-        headers.set("Content-Type", "application/json");
-        headers.delete("Content-Length");
-        void response.body?.cancel().catch(() => {});
-        return cors(new Response(JSON.stringify(redactAgentOutput(sentSecrets, {
-          error: {
-            code: "host_auth_required",
-            message: "The host is not authorized to connect to this endpoint. Sign in or update the host's connecta access token and endpoint grants.",
-            retryable: false,
-            recovery: "host_connection",
-          },
-        })), { status: response.status, headers }));
-      }
-      // A pool endpoint narrows the identity's own view and nothing else. An
-      // undeclared name, a grant that refuses, and a grant that throws are
-      // one identical 404 so a credential never enumerates the other pools;
-      // the operator log is where the reason lives.
-      let access: ConnectorAccess = authz;
-      let trust = opts.config.trust;
-      if (poolName !== undefined) {
-        const pool = opts.pools?.get(poolName);
-        const denialReason = !pool ? "pool_not_declared" : yield* Effect.promise(async () => {
-          try {
-            return (await pool.grant(authz.identity)) === true ? undefined : "pool_grant_denied" as const;
-          } catch {
-            return "pool_grant_threw" as const;
+        // Promise code the fiber stops waiting on when the caller leaves. An
+        // Effect `authorize` would put Effect in the /activity bundle, which
+        // shares it, to save only the lookups an abandoned authorization
+        // finishes on its own.
+        const handled = Effect.gen(function* () {
+          const authz = yield* Effect.promise(() =>
+            authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, opts.config.identity),
+          );
+          if (!authz.ok) {
+            const response = authz.response;
+            // Preserve the auth adapter's challenge and status. The MCP host must
+            // repair its connection to connecta before any connector can be called.
+            if (response.status !== 401 && response.status !== 403) return cors(response);
+            const headers = new Headers(response.headers);
+            headers.set("Connecta-Error-Code", "host_auth_required");
+            headers.set("Connecta-Recovery", "host_connection");
+            // Custom adapters may own a streaming or non-JSON response. Preserve
+            // that body and its request lifetime, and carry recovery in headers.
+            if (!response.headers.get("Content-Type")?.includes("application/json")) {
+              return cors(new Response(response.body, { status: response.status, headers }));
+            }
+            headers.set("Content-Type", "application/json");
+            headers.delete("Content-Length");
+            void response.body?.cancel().catch(() => {});
+            return cors(
+              new Response(
+                JSON.stringify(
+                  redactAgentOutput(sentSecrets, {
+                    error: {
+                      code: "host_auth_required",
+                      message:
+                        "The host is not authorized to connect to this endpoint. Sign in or update the host's connecta access token and endpoint grants.",
+                      retryable: false,
+                      recovery: "host_connection",
+                    },
+                  }),
+                ),
+                { status: response.status, headers },
+              ),
+            );
           }
-        });
-        if (!pool || denialReason !== undefined) {
-          logFailure(opts.config.logger, "MCP pool request denied", failureRecord({ reason: denialReason ?? "pool_not_declared" }));
-          return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
-        }
-        access = intersectAccess(authz, pool.access);
-        trust = pool.trust;
-      }
-      let scopedRegistry: RegistryView;
-      try {
-        validateAuthPermissions(authz, opts.registry);
-        scopedRegistry = opts.registry.scoped({
-          connectorIds: access.connectorIds,
-          ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
-          ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}),
-          ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
-          ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
-          endpoint: new URL(request.url).pathname,
-          origin: request.headers.get("Origin"),
-          currentResultAccess: async (address, classification, signal) => {
-            signal?.throwIfAborted();
-            const current = await authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, opts.config.identity);
-            if (!current.ok) {
-              await current.response.body?.cancel().catch(() => {});
-              return false;
+          // A pool endpoint narrows the identity's own view and nothing else. An
+          // undeclared name, a grant that refuses, and a grant that throws are
+          // one identical 404 so a credential never enumerates the other pools;
+          // the operator log is where the reason lives.
+          let access: ConnectorAccess = authz;
+          let trust = opts.config.trust;
+          if (poolName !== undefined) {
+            const pool = opts.pools?.get(poolName);
+            const denialReason = !pool
+              ? "pool_not_declared"
+              : yield* Effect.promise(async () => {
+                  try {
+                    return (await pool.grant(authz.identity)) === true ? undefined : ("pool_grant_denied" as const);
+                  } catch {
+                    return "pool_grant_threw" as const;
+                  }
+                });
+            if (!pool || denialReason !== undefined) {
+              logFailure(
+                opts.config.logger,
+                "MCP pool request denied",
+                failureRecord({ reason: denialReason ?? "pool_not_declared" }),
+              );
+              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
             }
-            if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey) return false;
-            validateAuthPermissions(current, opts.registry);
-            let currentAccess: ConnectorAccess = current;
-            let currentTrust = opts.config.trust;
-            if (poolName !== undefined) {
-              const pool = opts.pools.get(poolName);
-              if (!pool || await pool.grant(current.identity) !== true) return false;
-              currentAccess = intersectAccess(current, pool.access);
-              currentTrust = pool.trust;
-            }
-            const view = opts.registry.scoped({
-              ...currentAccess,
-              ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
-              ...(current.principalKey ? { principalKey: current.principalKey } : {}),
+            access = intersectAccess(authz, pool.access);
+            trust = pool.trust;
+          }
+          let scopedRegistry: RegistryView;
+          try {
+            validateAuthPermissions(authz, opts.registry);
+            scopedRegistry = opts.registry.scoped({
+              connectorIds: access.connectorIds,
+              ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
+              ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}),
+              ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
+              ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+              endpoint: new URL(request.url).pathname,
+              origin: request.headers.get("Origin"),
+              currentResultAccess: async (address, classification, signal) => {
+                signal?.throwIfAborted();
+                const current = await authorize(
+                  localRequest,
+                  baseUrl,
+                  opts.config.auth,
+                  runtimeContext,
+                  opts.config.identity,
+                );
+                if (!current.ok) {
+                  await current.response.body?.cancel().catch(() => {});
+                  return false;
+                }
+                if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
+                  return false;
+                validateAuthPermissions(current, opts.registry);
+                let currentAccess: ConnectorAccess = current;
+                let currentTrust = opts.config.trust;
+                if (poolName !== undefined) {
+                  const pool = opts.pools.get(poolName);
+                  if (!pool || (await pool.grant(current.identity)) !== true) return false;
+                  currentAccess = intersectAccess(current, pool.access);
+                  currentTrust = pool.trust;
+                }
+                const view = opts.registry.scoped({
+                  ...currentAccess,
+                  ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
+                  ...(current.principalKey ? { principalKey: current.principalKey } : {}),
+                });
+                const resolved = view.resolveAddress(address);
+                if (!resolved) return false;
+                const requestScope = {};
+                try {
+                  const tool = (
+                    await view.getTools(resolved.connector.id, baseUrl, requestScope, signal ? { signal } : {})
+                  ).find((tool) => tool.name === resolved.toolName);
+                  signal?.throwIfAborted();
+                  return Boolean(
+                    tool &&
+                    ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"),
+                  );
+                } finally {
+                  await closeConnectorScope(
+                    resolved.connector,
+                    view.contextFor(resolved.connector.id, baseUrl, requestScope),
+                    runtimeContext?.waitUntil?.bind(runtimeContext),
+                  );
+                }
+              },
+              caller: {
+                identity: authz.identity,
+                // `authorize` admits an open deployment's every request as the
+                // anonymous actor; only a provider's `ok` is an authentication.
+                authenticated: opts.config.auth.length > 0,
+                ...(poolName !== undefined ? { pool: poolName } : {}),
+              },
             });
-            const resolved = view.resolveAddress(address);
-            if (!resolved) return false;
-            const requestScope = {};
-            try {
-              const tool = (await view.getTools(resolved.connector.id, baseUrl, requestScope, signal ? { signal } : {}))
-                .find(tool => tool.name === resolved.toolName);
-              signal?.throwIfAborted();
-              return Boolean(tool && ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"));
-            } finally {
-              await closeConnectorScope(resolved.connector, view.contextFor(resolved.connector.id, baseUrl, requestScope),
-                runtimeContext?.waitUntil?.bind(runtimeContext));
-            }
-          },
-          caller: {
-            identity: authz.identity,
-            // `authorize` admits an open deployment's every request as the
-            // anonymous actor; only a provider's `ok` is an authentication.
-            authenticated: opts.config.auth.length > 0,
-            ...(poolName !== undefined ? { pool: poolName } : {}),
-          },
+          } catch {
+            return cors(mcpRefusal(sentSecrets, 403, -33005, "MCP access is forbidden."));
+          }
+          if (new URL(request.url).searchParams.has("toolkit")) {
+            return cors(toolkitRetired(opts.config.logger, sentSecrets));
+          }
+          return cors(
+            yield* serveMcp(
+              localRequest,
+              localAbort.signal,
+              requestScope,
+              opts,
+              baseUrl,
+              authz.actor,
+              scopedRegistry,
+              (id) => {
+                const connector = scopedRegistry.getConnector(id);
+                return Boolean(connector && mayManageConnector(authz, connector));
+              },
+              authz.principalKey,
+              runtimeContext,
+              trust,
+              poolName,
+              authz.identity.principal
+                ? {
+                    kind: authz.actor.kind,
+                    id: authz.identity.principal.id,
+                    namespace: authz.identity.principal.namespace,
+                  }
+                : undefined,
+            ),
+          );
         });
-      } catch {
-        return cors(mcpRefusal(sentSecrets, 403, -33005, "MCP access is forbidden."));
-      }
-      if (new URL(request.url).searchParams.has("toolkit")) {
-        return cors(toolkitRetired(opts.config.logger, sentSecrets));
-      }
-      return cors(yield* serveMcp(
-        localRequest,
-        localAbort.signal,
-        requestScope,
-        opts,
-        baseUrl,
-        authz.actor,
-        scopedRegistry,
-        id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
-        authz.principalKey,
-        runtimeContext,
-        trust,
-        poolName,
-        authz.identity.principal ? { kind: authz.actor.kind, id: authz.identity.principal.id, namespace: authz.identity.principal.namespace } : undefined,
-      ));
-      });
-      if (remainingMs === undefined) return yield* handled;
-      const bounded = yield* handled.pipe(
-        Effect.timeoutOption(Duration.millis(remainingMs)),
-      );
-      if (Option.isNone(bounded)) localAbort.abort(new Error("MCP request lifetime exceeded."));
-      return Option.isSome(bounded)
-        ? bounded.value
-        : cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
-    }), localAbort.signal);
+        if (remainingMs === undefined) return yield* handled;
+        const bounded = yield* handled.pipe(Effect.timeoutOption(Duration.millis(remainingMs)));
+        if (Option.isNone(bounded)) localAbort.abort(new Error("MCP request lifetime exceeded."));
+        return Option.isSome(bounded)
+          ? bounded.value
+          : cors(mcpRefusal(sentSecrets, 504, -33003, "MCP request lifetime exceeded."));
+      }),
+      localAbort.signal,
+    );
   }
   return { handle: routeMcp, rejectOrigin };
 }

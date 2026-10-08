@@ -12,12 +12,13 @@ export function classifyTool(
   if (review) {
     if (review.stale || review.verdict !== "read") return "write";
     // An explicit downstream contradiction invalidates a reviewed read (#721).
-    if (definition.annotations?.readOnlyHint === false ||
-      definition.annotations?.destructiveHint === true) return "write";
+    if (definition.annotations?.readOnlyHint === false || definition.annotations?.destructiveHint === true)
+      return "write";
     return "read";
   }
-  return definition.annotations?.readOnlyHint === true &&
-    definition.annotations?.destructiveHint !== true ? "read" : "write";
+  return definition.annotations?.readOnlyHint === true && definition.annotations?.destructiveHint !== true
+    ? "read"
+    : "write";
 }
 
 /** The only permission decision for a connector call. Approval is host-owned. */
@@ -26,6 +27,9 @@ export function surfaceAllowsTool(
   surface: string,
   trust: PoolTrust = "read-only",
 ): boolean {
-  return classification === "read" || surface === "call_destructive_tool" ||
-    (surface === "execute_code" && trust === "trusted");
+  return (
+    classification === "read" ||
+    surface === "call_destructive_tool" ||
+    (surface === "execute_code" && trust === "trusted")
+  );
 }

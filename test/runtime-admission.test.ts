@@ -6,10 +6,7 @@
 
 import { Effect, Exit, Fiber, Scope } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  AdmissionController,
-  ExecutorAdmissionError,
-} from "../src/executor-admission.js";
+import { AdmissionController, ExecutorAdmissionError } from "../src/executor-admission.js";
 import { acquireScoped, admit } from "../src/runtime/admission.js";
 import { microtaskScheduler, runEdge } from "../src/runtime/run.js";
 import { withDeadline } from "../src/timeout.js";
@@ -44,9 +41,7 @@ describe("acquireScoped", () => {
     const admission = controller();
     const seen = await runEdge(
       Effect.scoped(
-        acquireScoped(admission).pipe(
-          Effect.map((lease) => ({ waitMs: lease.waitMs, active: admission.activeCount })),
-        ),
+        acquireScoped(admission).pipe(Effect.map((lease) => ({ waitMs: lease.waitMs, active: admission.activeCount }))),
       ),
     );
     expect(seen).toEqual({ waitMs: 0, active: 1 });
@@ -56,9 +51,9 @@ describe("acquireScoped", () => {
   it("releases on failure after admission, too", async () => {
     const admission = controller();
     const boom = new Error("work failed");
-    await expect(
-      runEdge(Effect.scoped(acquireScoped(admission).pipe(Effect.andThen(Effect.fail(boom))))),
-    ).rejects.toBe(boom);
+    await expect(runEdge(Effect.scoped(acquireScoped(admission).pipe(Effect.andThen(Effect.fail(boom)))))).rejects.toBe(
+      boom,
+    );
     expect(admission.activeCount).toBe(0);
   });
 
@@ -68,10 +63,9 @@ describe("acquireScoped", () => {
     const scope = Scope.makeUnsafe();
     // runEdge offers no handle to interrupt with, so fork directly — on the
     // scheduler runEdge uses, so the fiber moves without a timer tick.
-    const waiting = Effect.runFork(
-      acquireScoped(admission).pipe(Scope.provide(scope)),
-      { scheduler: microtaskScheduler },
-    );
+    const waiting = Effect.runFork(acquireScoped(admission).pipe(Scope.provide(scope)), {
+      scheduler: microtaskScheduler,
+    });
     await drainMicrotasks();
     expect(admission.queuedCount).toBe(1);
 
@@ -161,23 +155,29 @@ describe("withDeadline", () => {
   it("passes a synchronous throw and a rejection through untouched", async () => {
     const thrown = new TypeError("sync");
     await expect(
-      withDeadline(() => {
-        throw thrown;
-      }, { timeoutError: new Error("unused") }),
+      withDeadline(
+        () => {
+          throw thrown;
+        },
+        { timeoutError: new Error("unused") },
+      ),
     ).rejects.toBe(thrown);
     const rejectedWith = { not: "an Error" };
-    await expect(
-      withDeadline(() => Promise.reject(rejectedWith), { timeoutError: new Error("unused") }),
-    ).rejects.toBe(rejectedWith);
+    await expect(withDeadline(() => Promise.reject(rejectedWith), { timeoutError: new Error("unused") })).rejects.toBe(
+      rejectedWith,
+    );
   });
 
   it("resolves with the operation's value and aborts its signal afterwards", async () => {
     let signal: AbortSignal | undefined;
     await expect(
-      withDeadline(async (s) => {
-        signal = s;
-        return 7;
-      }, { timeoutMs: 1_000, timeoutError: new Error("unused") }),
+      withDeadline(
+        async (s) => {
+          signal = s;
+          return 7;
+        },
+        { timeoutMs: 1_000, timeoutError: new Error("unused") },
+      ),
     ).resolves.toBe(7);
     expect(signal?.aborted).toBe(true);
   });

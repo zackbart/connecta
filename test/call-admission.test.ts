@@ -1,17 +1,10 @@
 import { recordToolActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import {
-  CallAdmissionError,
-  ConnectorCallAdmissionController,
-} from "../src/call-admission.js";
+import { CallAdmissionError, ConnectorCallAdmissionController } from "../src/call-admission.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import type {
-  Connector,
-  ConnectorCallAdmissionPolicy,
-  ToolDef,
-} from "../src/types.js";
+import type { Connector, ConnectorCallAdmissionPolicy, ToolDef } from "../src/types.js";
 import { activitySink, createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -93,9 +86,7 @@ describe("connector call admission controller", () => {
       vi.setSystemTime(10_250);
       (await admission.acquire({ toolName: "read", args: {} })).release();
 
-      await expect(
-        admission.acquire({ toolName: "read", args: {} }),
-      ).rejects.toMatchObject({
+      await expect(admission.acquire({ toolName: "read", args: {} })).rejects.toMatchObject({
         name: "CallAdmissionError",
         admissionKind: "budget",
         code: "rate_limited",
@@ -105,9 +96,7 @@ describe("connector call admission controller", () => {
       expect(admission.snapshot().totals.rateLimited).toBe(1);
 
       vi.setSystemTime(10_999);
-      await expect(
-        admission.acquire({ toolName: "read", args: {} }),
-      ).rejects.toMatchObject({ retryAfterMs: 1 });
+      await expect(admission.acquire({ toolName: "read", args: {} })).rejects.toMatchObject({ retryAfterMs: 1 });
       vi.setSystemTime(11_000);
       (await admission.acquire({ toolName: "read", args: {} })).release();
     } finally {
@@ -142,9 +131,7 @@ describe("connector call admission controller", () => {
     });
     active.release();
     (await admission.acquire({ toolName: "read", args: {} })).release();
-    await expect(
-      admission.acquire({ toolName: "read", args: {} }),
-    ).rejects.toMatchObject({ admissionKind: "budget" });
+    await expect(admission.acquire({ toolName: "read", args: {} })).rejects.toMatchObject({ admissionKind: "budget" });
     expect(admission.snapshot().totals).toMatchObject({
       admitted: 2,
       cancelled: 1,
@@ -194,10 +181,7 @@ describe("connector call admission controller", () => {
       },
       partitionKey: () => "original",
     });
-    const admission = new ConnectorCallAdmissionController(
-      "limited",
-      configured,
-    );
+    const admission = new ConnectorCallAdmissionController("limited", configured);
     // Deliberately violate the readonly config surface to prove the controller
     // took a defensive snapshot rather than retaining caller-owned objects.
     const mutable = required(configured.rules[0]) as unknown as {
@@ -239,9 +223,7 @@ describe("connector call admission controller", () => {
         ),
       );
       (await bounded.acquire({ toolName: "read", args: "a" })).release();
-      await expect(
-        bounded.acquire({ toolName: "read", args: "b" }),
-      ).rejects.toMatchObject({
+      await expect(bounded.acquire({ toolName: "read", args: "b" })).rejects.toMatchObject({
         admissionKind: "partition",
         code: "rate_limited",
       });
@@ -257,13 +239,10 @@ describe("connector call admission controller", () => {
           },
         }),
       );
-      await expect(
-        throwing.acquire({ toolName: "read", args: {} }),
-      ).rejects.toMatchObject({
+      await expect(throwing.acquire({ toolName: "read", args: {} })).rejects.toMatchObject({
         admissionKind: "partition",
         code: "connector_call_failed",
-        message:
-          'Connector "throwing" call-admission partitionKey threw.',
+        message: 'Connector "throwing" call-admission partitionKey threw.',
       });
       await expect(
         new ConnectorCallAdmissionController(
@@ -316,15 +295,9 @@ describe("connector call admission integration", () => {
       },
     });
     const registry = makeRegistry([connector]);
-    const providers = await buildSandboxProviders(
-      registry,
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     const connecta = providers.find(({ name }) => name === "connecta")!;
-    const parallel = Promise.all([0, 1, 2, 3].map((index) =>
-      required(connecta.fns.call)("limited.read", { index }),
-    ));
+    const parallel = Promise.all([0, 1, 2, 3].map((index) => required(connecta.fns.call)("limited.read", { index })));
 
     await waitFor(() => releases.length === 2);
     expect(registry.callAdmissionSnapshot().limited).toMatchObject({
@@ -366,18 +339,10 @@ describe("connector call admission integration", () => {
     });
     await waitFor(() => releases.length === 1);
 
-    const providers = await buildSandboxProviders(
-      registry,
-      BASE,
-      silentLogger,
-    );
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     const connecta = providers.find(({ name }) => name === "connecta")!;
-    const codeMode = required(connecta.fns.call)("limited.read",
-      { source: "code" },
-    );
-    await waitFor(
-      () => required(registry.callAdmissionSnapshot().limited).queued === 1,
-    );
+    const codeMode = required(connecta.fns.call)("limited.read", { source: "code" });
+    await waitFor(() => required(registry.callAdmissionSnapshot().limited).queued === 1);
 
     releases.shift()!();
     await direct;
@@ -407,9 +372,7 @@ describe("connector call admission integration", () => {
     const active = createMetaTools(registry, BASE).callTool({
       address: "limited.read",
     });
-    await waitFor(
-      () => required(registry.callAdmissionSnapshot().limited).active === 1,
-    );
+    await waitFor(() => required(registry.callAdmissionSnapshot().limited).active === 1);
     const controller = new AbortController();
     const queued = createMetaTools(registry, BASE, {
       requestSignal: controller.signal,
@@ -417,9 +380,7 @@ describe("connector call admission integration", () => {
       address: "limited.read",
       resultMode: "value",
     });
-    await waitFor(
-      () => required(registry.callAdmissionSnapshot().limited).queued === 1,
-    );
+    await waitFor(() => required(registry.callAdmissionSnapshot().limited).queued === 1);
     controller.abort(new Error("caller left"));
 
     expect(JSON.parse(required((await queued).content[0]).text)).toMatchObject({
@@ -455,8 +416,7 @@ describe("connector call admission integration", () => {
         calls++;
         connectorSignal = ctx.signal;
         await new Promise<never>((_, reject) => {
-          const cancelled = () =>
-            reject(ctx.signal?.reason ?? new Error("caller left"));
+          const cancelled = () => reject(ctx.signal?.reason ?? new Error("caller left"));
           ctx.signal?.addEventListener("abort", cancelled, { once: true });
           if (ctx.signal?.aborted) cancelled();
         });
@@ -550,18 +510,23 @@ describe("connector call admission integration", () => {
   });
 
   it("partitions personal budgets by principal while sharing shared budgets", async () => {
-    const connectors = ["personal", "shared"].map(id => connectorWith({
-      id, ...(id === "personal" ? { authScope: "personal" as const } : {}),
-      tools: [READ_TOOL], call: async () => ({}),
-      callAdmission: policy({ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 60_000 } }),
-    }));
+    const connectors = ["personal", "shared"].map((id) =>
+      connectorWith({
+        id,
+        ...(id === "personal" ? { authScope: "personal" as const } : {}),
+        tools: [READ_TOOL],
+        call: async () => ({}),
+        callAdmission: policy({ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 60_000 } }),
+      }),
+    );
     const registry = makeRegistry(connectors);
     const alice = registry.scoped({ connectorIds: "all", principalKey: "alice" });
     const bob = registry.scoped({ connectorIds: "all", principalKey: "bob" });
     const input = { toolName: "read", args: {} };
     (await alice.admitCall("personal", input)).release();
     (await bob.admitCall("personal", input)).release();
-    for (const view of [alice, bob]) await expect(view.admitCall("personal", input)).rejects.toMatchObject({ code: "rate_limited" });
+    for (const view of [alice, bob])
+      await expect(view.admitCall("personal", input)).rejects.toMatchObject({ code: "rate_limited" });
     (await alice.admitCall("shared", input)).release();
     await expect(bob.admitCall("shared", input)).rejects.toMatchObject({ code: "rate_limited" });
     expect(registry.callAdmissionSnapshot().personal).toMatchObject({ totals: { admitted: 2, rateLimited: 2 } });
@@ -571,10 +536,15 @@ describe("connector call admission integration", () => {
   it("retains personal budgets at the registry cap and evicts only drained controllers", async () => {
     vi.useFakeTimers();
     try {
-      const registry = makeRegistry([connectorWith({
-        id: "personal", authScope: "personal", tools: [READ_TOOL], call: async () => ({}),
-        callAdmission: policy({ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1_000 } }),
-      })]);
+      const registry = makeRegistry([
+        connectorWith({
+          id: "personal",
+          authScope: "personal",
+          tools: [READ_TOOL],
+          call: async () => ({}),
+          callAdmission: policy({ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1_000 } }),
+        }),
+      ]);
       const input = { toolName: "read", args: {} };
       const first = registry.scoped({ connectorIds: "all", principalKey: "0" });
       (await first.admitCall("personal", input)).release();
@@ -595,10 +565,18 @@ describe("connector call admission integration", () => {
   });
 
   it("closes queued and future personal admission alongside shared admission", async () => {
-    const connecta = createTestConnecta({ connectors: [connectorWith({
-      id: "personal", authScope: "personal", tools: [READ_TOOL], call: async () => ({}),
-      callAdmission: policy({ maxConcurrency: 1 }),
-    })], logger: silentLogger });
+    const connecta = createTestConnecta({
+      connectors: [
+        connectorWith({
+          id: "personal",
+          authScope: "personal",
+          tools: [READ_TOOL],
+          call: async () => ({}),
+          callAdmission: policy({ maxConcurrency: 1 }),
+        }),
+      ],
+      logger: silentLogger,
+    });
     const registry = connecta.registry;
     const alice = registry.scoped({ connectorIds: "all", principalKey: "alice" });
     const input = { toolName: "read", args: {} };
@@ -644,15 +622,15 @@ describe("connector call admission integration", () => {
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",
           aggregate: {
-              rules: 1,
-              partitions: 1,
-              active: 1,
-              queued: 0,
-              totals: {
-                admitted: 1,
-                rejected: 0,
-                rateLimited: 0,
-              },
+            rules: 1,
+            partitions: 1,
+            active: 1,
+            queued: 0,
+            totals: {
+              admitted: 1,
+              rejected: 0,
+              rateLimited: 0,
+            },
           },
         },
       },
@@ -669,8 +647,7 @@ describe("connector call admission integration", () => {
     try {
       vi.setSystemTime(1_000);
       let calls = 0;
-      const events: Array<{ outcome: string; attempts: number; errorCode?: string }> =
-        [];
+      const events: Array<{ outcome: string; attempts: number; errorCode?: string }> = [];
       const connector: Connector = connectorWith({
         id: "budgeted",
         kind: "api",
@@ -692,7 +669,7 @@ describe("connector call admission integration", () => {
       const registry = makeRegistry([connector]);
       const activity = {
         recordTool: recordToolActivity,
-      sink: {
+        sink: {
           record(event: (typeof events)[number]) {
             events.push(event);
           },
@@ -723,11 +700,10 @@ describe("connector call admission integration", () => {
         attempts: 1,
         errorCode: "rate_limited",
       });
-      expect(events.map(({ outcome, attempts }) => ({ outcome, attempts })))
-        .toEqual([
-          { outcome: "success", attempts: 1 },
-          { outcome: "error", attempts: 1 },
-        ]);
+      expect(events.map(({ outcome, attempts }) => ({ outcome, attempts }))).toEqual([
+        { outcome: "success", attempts: 1 },
+        { outcome: "error", attempts: 1 },
+      ]);
       expect(calls).toBe(1);
       await vi.advanceTimersByTimeAsync(50);
       const retried = await tools.callTool({ address: "budgeted.read", resultMode: "value" });

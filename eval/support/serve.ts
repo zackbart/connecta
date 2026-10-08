@@ -17,10 +17,7 @@ export interface Served {
   close(): Promise<void>;
 }
 
-export async function serveFetch(
-  handler: (request: Request) => Promise<Response>,
-  port = 0,
-): Promise<Served> {
+export async function serveFetch(handler: (request: Request) => Promise<Response>, port = 0): Promise<Served> {
   const server: Server = createServer((req, res) => {
     void (async () => {
       try {
@@ -32,16 +29,13 @@ export async function serveFetch(
           headers.set(key, Array.isArray(value) ? value.join(", ") : value);
         }
         const method = req.method ?? "GET";
-        const request = new Request(
-          `http://${req.headers.host ?? "127.0.0.1"}${req.url ?? "/"}`,
-          {
-            method,
-            headers,
-            ...(method !== "GET" && method !== "HEAD" && chunks.length
-              ? { body: new Uint8Array(Buffer.concat(chunks)) }
-              : {}),
-          },
-        );
+        const request = new Request(`http://${req.headers.host ?? "127.0.0.1"}${req.url ?? "/"}`, {
+          method,
+          headers,
+          ...(method !== "GET" && method !== "HEAD" && chunks.length
+            ? { body: new Uint8Array(Buffer.concat(chunks)) }
+            : {}),
+        });
         const response = await handler(request);
         res.statusCode = response.status;
         response.headers.forEach((value, key) => res.setHeader(key, value));
@@ -49,12 +43,7 @@ export async function serveFetch(
           res.end();
           return;
         }
-        await pipeline(
-          Readable.fromWeb(
-            response.body as Parameters<typeof Readable.fromWeb>[0],
-          ),
-          res,
-        );
+        await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), res);
       } catch (error) {
         if (!res.headersSent) {
           res.statusCode = 500;

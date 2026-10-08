@@ -19,7 +19,17 @@ import {
 } from "./services.js";
 import { trackerState, trackerTools, type TrackerState } from "./tracker.js";
 
-export type ServiceId = "tracker" | "chat" | "analytics" | "billing" | "ci" | "audit" | "mixpanel" | "revenuecat" | "supabase" | "assets";
+export type ServiceId =
+  | "tracker"
+  | "chat"
+  | "analytics"
+  | "billing"
+  | "ci"
+  | "audit"
+  | "mixpanel"
+  | "revenuecat"
+  | "supabase"
+  | "assets";
 
 /**
  * How a deployment should wire one fake. Deliberately connecta-agnostic: the
@@ -85,12 +95,14 @@ export class World {
       ["billing", make("billing", billingTools(this.now), () => BILLING_TOKEN)],
       ["ci", make("ci", ciTools(this.now, this.ci))],
       ["audit", make("audit", auditTools(this.audit, clock))],
-      ...(options.prerequisites ? [
-        ["mixpanel", make("mixpanel", mixpanelTools())],
-        ["revenuecat", make("revenuecat", revenuecatTools())],
-        ["supabase", make("supabase", supabaseTools())],
-      ] as [ServiceId, FakeService][] : []),
-      ...(options.assets ? [["assets", make("assets", assetTools())]] as [ServiceId, FakeService][] : []),
+      ...(options.prerequisites
+        ? ([
+            ["mixpanel", make("mixpanel", mixpanelTools())],
+            ["revenuecat", make("revenuecat", revenuecatTools())],
+            ["supabase", make("supabase", supabaseTools())],
+          ] as [ServiceId, FakeService][])
+        : []),
+      ...(options.assets ? ([["assets", make("assets", assetTools())]] as [ServiceId, FakeService][]) : []),
     ]);
   }
 
@@ -112,7 +124,9 @@ export class World {
       return {
         id,
         ...META[id],
-        ...(id in PREREQUISITE_GUIDES ? { usageGuide: PREREQUISITE_GUIDES[id as keyof typeof PREREQUISITE_GUIDES] } : {}),
+        ...(id in PREREQUISITE_GUIDES
+          ? { usageGuide: PREREQUISITE_GUIDES[id as keyof typeof PREREQUISITE_GUIDES] }
+          : {}),
         url: service.url,
         ...(id === "billing"
           ? {

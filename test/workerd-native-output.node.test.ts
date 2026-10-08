@@ -18,7 +18,15 @@ describe("workerd's native output", () => {
     delete env.FORCE_COLOR;
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
-      [vitest, "run", "--project", "workers", "test/operator-sinks.test.ts", "test/clerk-operator-output.test.ts", "test/byte-read-response.test.ts"],
+      [
+        vitest,
+        "run",
+        "--project",
+        "workers",
+        "test/operator-sinks.test.ts",
+        "test/clerk-operator-output.test.ts",
+        "test/byte-read-response.test.ts",
+      ],
       { cwd: root, timeout: 120_000, maxBuffer: 16 * 1024 * 1024, env },
     );
     const output = `${stdout}\n${stderr}`;

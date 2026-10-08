@@ -32,8 +32,14 @@ export function bindMcpClient(
   if (capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)) {
     client.clientCapabilities = ownCapabilities(capabilities as Record<string, unknown>);
   }
-  if (info && typeof info === "object" && "name" in info && "version" in info &&
-      typeof info.name === "string" && typeof info.version === "string") {
+  if (
+    info &&
+    typeof info === "object" &&
+    "name" in info &&
+    "version" in info &&
+    typeof info.name === "string" &&
+    typeof info.version === "string"
+  ) {
     client.clientInfo = { name: info.name, version: info.version };
   }
   if (activity) {

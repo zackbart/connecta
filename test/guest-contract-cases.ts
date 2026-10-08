@@ -29,46 +29,85 @@ export async function checkStashAuthority(executor: Executor): Promise<void> {
   const storage = memoryStorage();
   const secret = "stash-disclosure-sentinel-".repeat(100);
   const docs: Connector = {
-    id: "docs", kind: "api",
-    async listTools() { return [{ name: "write", annotations: { readOnlyHint: false } }, readOnly("read")]; },
-    async callTool() { return secret; },
+    id: "docs",
+    kind: "api",
+    async listTools() {
+      return [{ name: "write", annotations: { readOnlyHint: false } }, readOnly("read")];
+    },
+    async callTool() {
+      return secret;
+    },
   };
   const control: Connector = {
-    id: "control", kind: "api",
-    async listTools() { return [readOnly("revoke")]; },
-    async callTool() { if (mode === "grant") granted = false; else member = false; return true; },
-  };
-  const build = (trust: "trusted" | "read-only") => createConnecta({
-    connectors: [docs, control], storage, logger: "silent", calls: { maxResultBytes: 512 },
-    allowedOrigins: ["https://first.test", "https://second.test"],
-    executor: customExecutor({ execute: executor.execute.bind(executor) }, { lifecycle: "self-managed" }),
-    auth: { kind: "stash-test", activityActorNamespace: "stash-test", authorize(request) {
-      const token = request.headers.get("Authorization")?.slice(7) ?? "alice";
-      return { ok: true, subjectId: token === "other" ? "other" : "shared",
-        principal: { namespace: "owners", id: token === "bob" ? "bob" : "alice" } };
-    } },
-    identity: { connectorAccess: () => zero ? [] : toolOnly ? ["docs.read", "control"] : granted ? ["docs", "control"] : ["control"] },
-    pools: {
-      admin: { tools: ["docs", "control"], trust, grant: () => member },
-      empty: { tools: ["control"], trust: "trusted", grant: () => true },
+    id: "control",
+    kind: "api",
+    async listTools() {
+      return [readOnly("revoke")];
     },
-  });
+    async callTool() {
+      if (mode === "grant") granted = false;
+      else member = false;
+      return true;
+    },
+  };
+  const build = (trust: "trusted" | "read-only") =>
+    createConnecta({
+      connectors: [docs, control],
+      storage,
+      logger: "silent",
+      calls: { maxResultBytes: 512 },
+      allowedOrigins: ["https://first.test", "https://second.test"],
+      executor: customExecutor({ execute: executor.execute.bind(executor) }, { lifecycle: "self-managed" }),
+      auth: {
+        kind: "stash-test",
+        activityActorNamespace: "stash-test",
+        authorize(request) {
+          const token = request.headers.get("Authorization")?.slice(7) ?? "alice";
+          return {
+            ok: true,
+            subjectId: token === "other" ? "other" : "shared",
+            principal: { namespace: "owners", id: token === "bob" ? "bob" : "alice" },
+          };
+        },
+      },
+      identity: {
+        connectorAccess: () =>
+          zero ? [] : toolOnly ? ["docs.read", "control"] : granted ? ["docs", "control"] : ["control"],
+      },
+      pools: {
+        admin: { tools: ["docs", "control"], trust, grant: () => member },
+        empty: { tools: ["control"], trust: "trusted", grant: () => true },
+      },
+    });
   const app = build("trusted");
   const readonly = build("read-only");
-  const rpc = async (name: string, args: unknown, options: { app?: typeof app; path?: string; token?: string; origin?: string } = {}) => {
-    const response = await (options.app ?? app).fetch(new Request(`${CONTRACT_BASE}${options.path ?? "/mcp/admin"}`, {
-      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${options.token ?? "alice"}`, Origin: options.origin ?? "https://first.test" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-    }));
+  const rpc = async (
+    name: string,
+    args: unknown,
+    options: { app?: typeof app; path?: string; token?: string; origin?: string } = {},
+  ) => {
+    const response = await (options.app ?? app).fetch(
+      new Request(`${CONTRACT_BASE}${options.path ?? "/mcp/admin"}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${options.token ?? "alice"}`,
+          Origin: options.origin ?? "https://first.test",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+      }),
+    );
     expect(response.status).toBe(200);
     return (await readJsonRpc(response)).result as ToolResult;
   };
   try {
     const inline = await rpc("call_destructive_tool", { address: "docs.write" }, { app: readonly });
     expect(inline.isError).toBeFalsy();
-    expect(inline.structuredContent).toMatchObject({ truncated: true,
-      hint: expect.stringContaining("Paging is unavailable for write results on read-only pools") });
+    expect(inline.structuredContent).toMatchObject({
+      truncated: true,
+      hint: expect.stringContaining("Paging is unavailable for write results on read-only pools"),
+    });
     expect(inline.structuredContent).not.toHaveProperty("resultId");
     expect(inline.structuredContent).not.toHaveProperty("nextAction");
     const direct = await rpc("call_destructive_tool", { address: "docs.write" });
@@ -79,7 +118,15 @@ export async function checkStashAuthority(executor: Executor): Promise<void> {
     expect(visible.isError).toBeFalsy();
     expect(visible.structuredContent).toMatchObject({ result: { text: JSON.stringify(secret).slice(0, 20) } });
     const deny = async (options: Parameters<typeof rpc>[2] = {}, prefix = "") => {
-      const result = await rpc("execute_code", { code: prefix ? `async () => { ${prefix}; return await connecta.result(${JSON.stringify(id)}, { maxBytes: 20 }); }` : code }, options);
+      const result = await rpc(
+        "execute_code",
+        {
+          code: prefix
+            ? `async () => { ${prefix}; return await connecta.result(${JSON.stringify(id)}, { maxBytes: 20 }); }`
+            : code,
+        },
+        options,
+      );
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({ error: { code: "not_found" } });
       expect(JSON.stringify(result)).not.toContain("stash-disclosure-sentinel");
@@ -111,7 +158,11 @@ export async function checkStashAuthority(executor: Executor): Promise<void> {
 export async function checkSharedPreludes(executor: Executor): Promise<void> {
   const result = await executor.execute("async () => combineFromPrelude(2, 3)", [
     { name: "first", fns: { noop: async () => 1 }, prelude: "const combine = (a, b) => a + b;" },
-    { name: "second", fns: { noop: async () => 2 }, prelude: "globalThis.combineFromPrelude = (a, b) => combine(a, b);" },
+    {
+      name: "second",
+      fns: { noop: async () => 2 },
+      prelude: "globalThis.combineFromPrelude = (a, b) => combine(a, b);",
+    },
   ]);
   expect(result.error).toBeUndefined();
   expect(result.result).toBe(5);
@@ -122,10 +173,15 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
   const harness = contractHarness();
   const call = 'await connecta.call("remote.echo", { text: ["echoed"], options: { uppercase: "wrong" } })';
   const baseline = await harness.run(executor, `async () => ${call}`);
-  expect(baseline.value.error).toMatchObject({ code: "invalid_args", validation: { issues: expect.any(Array) },
-    repair: { issues: expect.any(Array), acceptedKeys: expect.any(Array) } });
+  expect(baseline.value.error).toMatchObject({
+    code: "invalid_args",
+    validation: { issues: expect.any(Array) },
+    repair: { issues: expect.any(Array), acceptedKeys: expect.any(Array) },
+  });
   for (const data of ["undefined", '"AA=="']) {
-    const outcome = await harness.run(executor, `async () => {
+    const outcome = await harness.run(
+      executor,
+      `async () => {
       const arrays = [];
       Object.defineProperty(Array.prototype, "__codemode_binary_v1__", { value: "Uint8Array", configurable: true });
       Object.defineProperty(Array.prototype, "data", { configurable: true, get() {
@@ -141,7 +197,8 @@ export async function checkHostFailureArrays(executor: Executor): Promise<void> 
         }
         throw error;
       }
-    }`);
+    }`,
+    );
     expect(outcome.isError, outcome.text).toBe(true);
     expect(outcome.value.error).toEqual(baseline.value.error);
   }
@@ -153,33 +210,54 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
   const witnessed: unknown[] = [];
   const warnings: unknown[] = [];
   const events: ToolCallActivityEvent[] = [];
-  const logger = { ...silentLogger, warn: (...args: unknown[]) => { warnings.push(args); } };
-  const registry = makeRegistry([{
-    id: "deadline", kind: "api",
-    async listTools() {
-      return [{ name: "write", annotations: { readOnlyHint: false } }, readOnly("witness")];
+  const logger = {
+    ...silentLogger,
+    warn: (...args: unknown[]) => {
+      warnings.push(args);
     },
-    async callTool(name, args) {
-      if (name === "write") {
-        writes++;
-        return await new Promise<never>(() => {});
-      }
-      witnessed.push(args);
-      return true;
-    },
-  }], { logger });
+  };
+  const registry = makeRegistry(
+    [
+      {
+        id: "deadline",
+        kind: "api",
+        async listTools() {
+          return [{ name: "write", annotations: { readOnlyHint: false } }, readOnly("witness")];
+        },
+        async callTool(name, args) {
+          if (name === "write") {
+            writes++;
+            return await new Promise<never>(() => {});
+          }
+          witnessed.push(args);
+          return true;
+        },
+      },
+    ],
+    { logger },
+  );
   const activity: ActivityRequestContext = {
     recordTool: recordToolActivity,
-    sink: { record: (event) => { events.push(event); } },
-    actor: { kind: "contract" }, requestId: "deadline-contract-request",
-    serverInfo: { name: "connecta-contract", version: "0" }, logger,
+    sink: {
+      record: (event) => {
+        events.push(event);
+      },
+    },
+    actor: { kind: "contract" },
+    requestId: "deadline-contract-request",
+    serverInfo: { name: "connecta-contract", version: "0" },
+    logger,
   };
   const direct = await createMetaTools(registry, CONTRACT_BASE, { activity }).callDestructiveTool({
-    address: "deadline.write", args: { private: "deadline-argument-sentinel" }, timeoutMs: 25, resultMode: "value",
+    address: "deadline.write",
+    args: { private: "deadline-argument-sentinel" },
+    timeoutMs: 25,
+    resultMode: "value",
   });
   const check = (error: unknown) => {
     expect(error).toMatchObject({
-      code: "write_outcome_unknown", retryable: false,
+      code: "write_outcome_unknown",
+      retryable: false,
       details: { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
     });
     expect((error as { details: { elapsedMs: number } }).details.elapsedMs).toBeGreaterThanOrEqual(24);
@@ -187,12 +265,17 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
   check(direct.structuredContent?.error);
   for (const caught of [false, true]) {
     const result = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
-      trust: "trusted", defaultToolTimeoutMs: 25,
-    })({ code: caught ? `async () => {
+      trust: "trusted",
+      defaultToolTimeoutMs: 25,
+    })({
+      code: caught
+        ? `async () => {
       try { await connecta.call("deadline.write", { private: "deadline-argument-sentinel" }); }
       catch (error) { await connecta.call("deadline.witness", error.details); }
       return "caught";
-    }` : `async () => await connecta.call("deadline.write", { private: "deadline-argument-sentinel" })` });
+    }`
+        : `async () => await connecta.call("deadline.write", { private: "deadline-argument-sentinel" })`,
+    });
     expect(result.isError).toBe(true);
     check(result.structuredContent?.error);
     expect(result.structuredContent).toMatchObject({
@@ -201,17 +284,23 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
     });
   }
   const multiple = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
-    trust: "trusted", defaultToolTimeoutMs: 25,
-  })({ code: `async () => await Promise.allSettled([
+    trust: "trusted",
+    defaultToolTimeoutMs: 25,
+  })({
+    code: `async () => await Promise.allSettled([
     connecta.call("deadline.write", { private: "deadline-argument-sentinel" }),
     connecta.call("deadline.write", { private: "deadline-argument-sentinel" }),
-  ])` });
+  ])`,
+  });
   check(multiple.structuredContent?.error);
   expect(multiple.structuredContent).toMatchObject({
-    error: { writes: { succeeded: 0, failed: 0, unknown: 2 }, timeouts: [
-      { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
-      { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
-    ] },
+    error: {
+      writes: { succeeded: 0, failed: 0, unknown: 2 },
+      timeouts: [
+        { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+        { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+      ],
+    },
     hostCalls: { attempted: 2, admitted: 2, succeeded: 0, failed: 2 },
   });
   expect(writes).toBe(5);
@@ -226,7 +315,9 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
 /** Review regression: a write passed its gate but is still in admission. */
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
-  const blocked = new Promise<void>((resolve) => { releaseRead = resolve; });
+  const blocked = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
   let writes = 0;
   let finished = false;
   const limited: Connector = {
@@ -242,42 +333,49 @@ export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<
       return "done";
     },
   };
-  const registry = makeRegistry([limited, {
-    id: "control", kind: "api",
-    async listTools() { return [readOnly("queued")]; },
-    async callTool() {
-      const deadline = Date.now() + 1_000;
-      while (registry.callAdmissionSnapshot().limited?.queued !== 1) {
-        if (Date.now() > deadline) throw new Error("write never queued");
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
-      // Release the read the moment exhaustion withdraws the queued write,
-      // rather than on a bare 40ms timer a slow guest could outlast before its
-      // fourth call. An implementation that never withdraws the write still
-      // gets the read released 250ms on, while the run waits on it, and the
-      // write that capacity then admits fails the checks below. 250ms is six
-      // times the old margin; it is only the fallback for a broken run.
-      void (async () => {
-        const fallback = Date.now() + 250;
-        while (!finished && Date.now() < fallback
-          && registry.callAdmissionSnapshot().limited?.queued !== 0) {
+  const registry = makeRegistry([
+    limited,
+    {
+      id: "control",
+      kind: "api",
+      async listTools() {
+        return [readOnly("queued")];
+      },
+      async callTool() {
+        const deadline = Date.now() + 1_000;
+        while (registry.callAdmissionSnapshot().limited?.queued !== 1) {
+          if (Date.now() > deadline) throw new Error("write never queued");
           await new Promise((resolve) => setTimeout(resolve, 1));
         }
-        releaseRead();
-      })();
-      return true;
+        // Release the read the moment exhaustion withdraws the queued write,
+        // rather than on a bare 40ms timer a slow guest could outlast before its
+        // fourth call. An implementation that never withdraws the write still
+        // gets the read released 250ms on, while the run waits on it, and the
+        // write that capacity then admits fails the checks below. 250ms is six
+        // times the old margin; it is only the fallback for a broken run.
+        void (async () => {
+          const fallback = Date.now() + 250;
+          while (!finished && Date.now() < fallback && registry.callAdmissionSnapshot().limited?.queued !== 0) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+          releaseRead();
+        })();
+        return true;
+      },
     },
-  }]);
+  ]);
   try {
     const outcome = await createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
       maxHostCalls: 3,
       trust: "trusted",
-    })({ code: `async () => {
+    })({
+      code: `async () => {
       void connecta.call("limited.read", {}).then(({ data }) => data).catch(() => {});
       void connecta.call("limited.write", {}).then(({ data }) => data).catch(() => {});
       await connecta.call("control.queued", {}).then(({ data }) => data);
       await connecta.call("control.queued", {}).then(({ data }) => data);
-    }` });
+    }`,
+    });
     expect(outcome.isError).toBe(true);
     expect(outcome.structuredContent).toMatchObject({
       error: { code: "budget_exceeded", writes: { succeeded: 0, failed: 1, unknown: 0 } },
@@ -329,11 +427,7 @@ export interface ContractCase {
   deadline?: true;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
-  check(
-    outcome: ContractOutcome,
-    state: ContractState,
-    follow?: ContractOutcome,
-  ): void;
+  check(outcome: ContractOutcome, state: ContractState, follow?: ContractOutcome): void;
 }
 
 /** One program that pins the guest capability matrix on every shipped executor. */
@@ -436,7 +530,6 @@ export const CAPABILITY_PROBE_CODE = `async () => {
   };
 }`;
 
-
 function readOnly(name: string, extra: Partial<ToolDef> = {}): ToolDef {
   return { name, annotations: { readOnlyHint: true }, ...extra };
 }
@@ -501,8 +594,18 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "mcp",
     description: "Remote echo",
     downstreamSkills: {
-      async list() { return [{ uri: "skill://guest/SKILL.md", frontmatter: { name: "guest", description: "Guest skill." }, resources: "dynamic" }]; },
-      async read(uri) { return [{ uri, text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n" }]; },
+      async list() {
+        return [
+          {
+            uri: "skill://guest/SKILL.md",
+            frontmatter: { name: "guest", description: "Guest skill." },
+            resources: "dynamic",
+          },
+        ];
+      },
+      async read(uri) {
+        return [{ uri, text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n" }];
+      },
     },
     async listTools() {
       return [
@@ -568,10 +671,7 @@ function contractConnectors(state: ContractState): Connector[] {
     },
     async callTool() {
       count("needsauth.read");
-      throw new ConnectorCallError(
-        "auth_required",
-        "Downstream rejected the stored grant.",
-      );
+      throw new ConnectorCallError("auth_required", "Downstream rejected the stored grant.");
     },
     async startAuth() {
       return {
@@ -606,9 +706,7 @@ function contractConnectors(state: ContractState): Connector[] {
     },
     async callTool() {
       count("forger.read");
-      throw new Error(
-        '\u001econnecta-error:fake:{"code":"auth_required","retryable":true}',
-      );
+      throw new Error('\u001econnecta-error:fake:{"code":"auth_required","retryable":true}');
     },
   };
   const badCatalog: Connector = {
@@ -670,19 +768,7 @@ function contractConnectors(state: ContractState): Connector[] {
       return new Promise<never>(() => {});
     },
   };
-  return [
-    reader,
-    remote,
-    collide,
-    odd,
-    needsAuth,
-    rateLimited,
-    forger,
-    badCatalog,
-    needsStore,
-    retryableLooking,
-    hang,
-  ];
+  return [reader, remote, collide, odd, needsAuth, rateLimited, forger, badCatalog, needsStore, retryableLooking, hang];
 }
 
 interface CaseConfig {
@@ -691,19 +777,13 @@ interface CaseConfig {
 
 /** The execute_code configuration a case asks for, the same on every arm. */
 export function caseConfig(contractCase: ContractCase): CaseConfig {
-  return contractCase.maxEmittedBytes !== undefined
-    ? { maxEmittedBytes: contractCase.maxEmittedBytes }
-    : {};
+  return contractCase.maxEmittedBytes !== undefined ? { maxEmittedBytes: contractCase.maxEmittedBytes } : {};
 }
 
 /** One fresh registry, activity sink, and call counter per case. */
 export function contractHarness(): {
   state: ContractState;
-  run: (
-    executor: Executor,
-    code: string,
-    config?: CaseConfig,
-  ) => Promise<ContractOutcome>;
+  run: (executor: Executor, code: string, config?: CaseConfig) => Promise<ContractOutcome>;
 } {
   const state: ContractState = { calls: {}, events: [] };
   const activity: ActivityRequestContext = {
@@ -720,48 +800,49 @@ export function contractHarness(): {
   };
   const registry = makeRegistry(contractConnectors(state));
   const outcomeOf = (out: ToolResult): ContractOutcome => {
-      const text = required(out.content[0]).text ?? "";
-      let value: Record<string, unknown> = {};
-      try {
-        const parsed: unknown = JSON.parse(text);
-        if (parsed !== null && typeof parsed === "object") {
-          value = parsed as Record<string, unknown>;
-        }
-      } catch {
-        value = {};
+    const text = required(out.content[0]).text ?? "";
+    let value: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed !== null && typeof parsed === "object") {
+        value = parsed as Record<string, unknown>;
       }
-      return {
-        isError: out.isError === true,
-        text,
-        value,
-        result: value.result,
-        content: out.content as unknown as Array<Record<string, unknown>>,
-        ...(out._meta !== undefined
-          ? { meta: out._meta as Record<string, unknown> }
-          : {}),
-      };
+    } catch {
+      value = {};
+    }
+    return {
+      isError: out.isError === true,
+      text,
+      value,
+      result: value.result,
+      content: out.content as unknown as Array<Record<string, unknown>>,
+      ...(out._meta !== undefined ? { meta: out._meta as Record<string, unknown> } : {}),
+    };
   };
   return {
     state,
     run: async (executor, code, config = {}) => {
       if (code === "{{directRecoveryCode}}") {
-        const direct = await createMetaTools(registry, CONTRACT_BASE).callTool({ address: "reader.big", args: { chars: 30_000 }, resultMode: "value" });
+        const direct = await createMetaTools(registry, CONTRACT_BASE).callTool({
+          address: "reader.big",
+          args: { chars: 30_000 },
+          resultMode: "value",
+        });
         const notice = required(direct.structuredContent).data as { nextAction: { arguments: { code: string } } };
         code = notice.nextAction.arguments.code;
       }
       if (code.includes("{{directResultId}}")) {
-        const direct = await createMetaTools(registry, CONTRACT_BASE).callTool({ address: "reader.big", args: { chars: 30_000 }, resultMode: "value" });
+        const direct = await createMetaTools(registry, CONTRACT_BASE).callTool({
+          address: "reader.big",
+          args: { chars: 30_000 },
+          resultMode: "value",
+        });
         const id = (required(direct.structuredContent).data as { resultId: string }).resultId;
         code = code.replaceAll("{{directResultId}}", id);
       }
-      return outcomeOf(await createExecuteTool(
-        registry,
-        CONTRACT_BASE,
-        executor,
-        silentLogger,
-        activity,
-        config,
-      )({ code }));
+      return outcomeOf(
+        await createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, activity, config)({ code }),
+      );
     },
   };
 }
@@ -797,7 +878,10 @@ export const CONTRACT_CASES: ContractCase[] = [
       catch (error) { return { code: error.code, message: error.message }; }
     }`,
     check(outcome, state) {
-      expect(outcome.result).toMatchObject({ code: "invalid_args", message: expect.stringContaining("connecta.call({ address, args?, timeoutMs? })") });
+      expect(outcome.result).toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("connecta.call({ address, args?, timeoutMs? })"),
+      });
       expect(Object.values(state.calls)).toHaveLength(0);
       expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
     },
@@ -811,7 +895,10 @@ export const CONTRACT_CASES: ContractCase[] = [
       catch (error) { return { guide, missing: error.code }; }
     }`,
     check(outcome) {
-      expect(outcome.result).toMatchObject({ guide: { name: "connector:reader", format: "text", text: expect.stringContaining("Read one value") }, missing: "not_found" });
+      expect(outcome.result).toMatchObject({
+        guide: { name: "connector:reader", format: "text", text: expect.stringContaining("Read one value") },
+        missing: "not_found",
+      });
       expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 1, failed: 1 });
     },
   },
@@ -825,7 +912,11 @@ export const CONTRACT_CASES: ContractCase[] = [
       return { same: alias.text === native.text, format: downstream.format, text: downstream.text };
     }`,
     check(outcome) {
-      expect(outcome.result).toEqual({ same: true, format: "text", text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n" });
+      expect(outcome.result).toEqual({
+        same: true,
+        format: "text",
+        text: "---\nname: guest\ndescription: Guest skill.\n---\n\nRead exact guest bytes.\r\n",
+      });
       expect(outcome.value.hostCalls).toEqual({ attempted: 3, admitted: 3, succeeded: 3, failed: 0 });
     },
   },
@@ -855,7 +946,15 @@ export const CONTRACT_CASES: ContractCase[] = [
     code: "{{directRecoveryCode}}",
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toMatchObject({ offset: 0, bytes: 3829, totalBytes: 30_011, hasMore: true, nextOffset: 3829, format: "text", text: expect.any(String) });
+      expect(outcome.result).toMatchObject({
+        offset: 0,
+        bytes: 3829,
+        totalBytes: 30_011,
+        hasMore: true,
+        nextOffset: 3829,
+        format: "text",
+        text: expect.any(String),
+      });
       expect(outcome.text.length).toBeLessThan(24_000);
       expect(outcome.result).not.toHaveProperty("truncated");
     },
@@ -866,9 +965,13 @@ export const CONTRACT_CASES: ContractCase[] = [
     code: `async () => { throw new Error("Validation failed: text is required"); }`,
     check(outcome) {
       expect(outcome.isError).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: "program_error", details: {
-        name: "Error", hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
-      } });
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "Error",
+          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+        },
+      });
     },
   },
   ...[
@@ -886,7 +989,11 @@ export const CONTRACT_CASES: ContractCase[] = [
     code: `async () => {\n${source};\n}`,
     check(outcome) {
       expect(outcome.isError).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: "program_error", retryable: false, details: { name, line: 2, hint: expect.stringContaining(hint!) } });
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        retryable: false,
+        details: { name, line: 2, hint: expect.stringContaining(hint!) },
+      });
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   })),
@@ -900,7 +1007,11 @@ export const CONTRACT_CASES: ContractCase[] = [
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
       expect(outcome.value.emitted).toBe(1);
-      expect(outcome.content[1]).toMatchObject({ type: "image", mimeType: "image/png", data: expect.stringContaining("iVBOR") });
+      expect(outcome.content[1]).toMatchObject({
+        type: "image",
+        mimeType: "image/png",
+        data: expect.stringContaining("iVBOR"),
+      });
     },
   },
   {
@@ -914,7 +1025,9 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.isError, outcome.text).toBe(false);
       expect(outcome.result).toMatchObject({ truncated: true, totalChars: 100_011 });
       expect((outcome.result as { preview: string }).preview).not.toContain('"truncated"');
-      expect(JSON.stringify(outcome.result).length + JSON.stringify(outcome.content[1]).length).toBeLessThanOrEqual(24_000);
+      expect(JSON.stringify(outcome.result).length + JSON.stringify(outcome.content[1]).length).toBeLessThanOrEqual(
+        24_000,
+      );
     },
   },
   {
@@ -959,7 +1072,14 @@ return fs;
 }`,
     check(outcome) {
       expect(outcome.isError).toBe(true);
-      expect(outcome.value.error, outcome.text).toMatchObject({ code: "program_error", details: { name: "SyntaxError", line: 2, hint: expect.stringContaining("Imports, require, and filesystem access") } });
+      expect(outcome.value.error, outcome.text).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "SyntaxError",
+          line: 2,
+          hint: expect.stringContaining("Imports, require, and filesystem access"),
+        },
+      });
     },
   },
   {
@@ -998,31 +1118,43 @@ return fs;
     name: "INV-6: guest source has no lexical access to the authenticated runner",
     code: `async () => ({ run: typeof run, baseline: typeof baseline, dispatchers: typeof __dispatchers, connectors: typeof __connectors, privateGlobals: Object.keys(globalThis).filter(key => key.startsWith("__connecta_run_")) })`,
     check(outcome) {
-      expect(outcome.result).toEqual({ run: "undefined", baseline: "undefined", dispatchers: "undefined", connectors: "undefined", privateGlobals: [] });
+      expect(outcome.result).toEqual({
+        run: "undefined",
+        baseline: "undefined",
+        dispatchers: "undefined",
+        connectors: "undefined",
+        privateGlobals: [],
+      });
     },
   },
-  ...[".finally(() => {})", ".then(() => {})", ".catch(() => { throw new Error('handler failed'); })"].map((suffix): ContractCase => ({
-    clauses: "M1, M3",
-    name: `INV-7: unawaited rejected emission branches remain failures ${suffix}`,
-    code: `async () => { connecta.emit({ type: "text", text: "x".repeat(30_000) })${suffix}; return "must fail"; }`,
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: suffix.includes("catch") ? "program_error" : "result_too_large" });
-    },
-  })),
-  ...[".then(x => x)", ".finally(() => {})", ".catch(null)", ".then(x => x).finally(() => {})"].map((suffix): ContractCase => ({
-    clauses: "M1, M3",
-    name: `INV-7: caught emission chains handle propagated failures ${suffix}`,
-    code: `async () => {
+  ...[".finally(() => {})", ".then(() => {})", ".catch(() => { throw new Error('handler failed'); })"].map(
+    (suffix): ContractCase => ({
+      clauses: "M1, M3",
+      name: `INV-7: unawaited rejected emission branches remain failures ${suffix}`,
+      code: `async () => { connecta.emit({ type: "text", text: "x".repeat(30_000) })${suffix}; return "must fail"; }`,
+      check(outcome) {
+        expect(outcome.isError, outcome.text).toBe(true);
+        expect(outcome.value.error).toMatchObject({
+          code: suffix.includes("catch") ? "program_error" : "result_too_large",
+        });
+      },
+    }),
+  ),
+  ...[".then(x => x)", ".finally(() => {})", ".catch(null)", ".then(x => x).finally(() => {})"].map(
+    (suffix): ContractCase => ({
+      clauses: "M1, M3",
+      name: `INV-7: caught emission chains handle propagated failures ${suffix}`,
+      code: `async () => {
       let caught = false;
       await connecta.emit({ type: "bad" })${suffix}.catch(error => { caught = error.code === "invalid_args"; });
       return caught;
     }`,
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toBe(true);
-    },
-  })),
+      check(outcome) {
+        expect(outcome.isError, outcome.text).toBe(false);
+        expect(outcome.result).toBe(true);
+      },
+    }),
+  ),
   {
     clauses: "M1, M3",
     name: "INV-7: catching one emit branch leaves a sibling rejection unhandled",
@@ -1061,7 +1193,10 @@ return fs;
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: "budget_exceeded", message: expect.stringContaining("128 attempts maximum") });
+      expect(outcome.value.error).toMatchObject({
+        code: "budget_exceeded",
+        message: expect.stringContaining("128 attempts maximum"),
+      });
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   },
@@ -1078,9 +1213,13 @@ return fs;
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: "unknown_address", nextAction: {
-        function: "connecta.search", arguments: { query: "read" }
-      } });
+      expect(outcome.value.error).toMatchObject({
+        code: "unknown_address",
+        nextAction: {
+          function: "connecta.search",
+          arguments: { query: "read" },
+        },
+      });
     },
   },
   {
@@ -1094,7 +1233,10 @@ return fs;
       throw error;
     }`,
     check(outcome) {
-      expect(outcome.value.error).toMatchObject({ code: "program_error", message: expect.stringContaining("guest failure") });
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        message: expect.stringContaining("guest failure"),
+      });
       expect(outcome.value.error).not.toHaveProperty("failureId");
     },
   },
@@ -1112,9 +1254,13 @@ return fs;
       }
     }`,
     check(outcome) {
-      expect(outcome.value.error).toMatchObject({ code: "unknown_address", nextAction: {
-        function: "connecta.search", arguments: { query: "read" }
-      } });
+      expect(outcome.value.error).toMatchObject({
+        code: "unknown_address",
+        nextAction: {
+          function: "connecta.search",
+          arguments: { query: "read" },
+        },
+      });
       expect(outcome.value.error).not.toHaveProperty("validation");
       expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 0, failed: 2 });
     },
@@ -1136,7 +1282,10 @@ return fs;
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: "program_error", message: expect.stringContaining("wrapped:") });
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        message: expect.stringContaining("wrapped:"),
+      });
     },
   },
   {
@@ -1159,7 +1308,10 @@ return fs;
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(true);
-      expect(outcome.value.error).toMatchObject({ code: "program_error", message: expect.stringContaining("wrapped:") });
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        message: expect.stringContaining("wrapped:"),
+      });
     },
   },
   ...[false, true].map((escaped): ContractCase => ({
@@ -1168,7 +1320,7 @@ return fs;
     code: `async () => {
       const error = new Error(${escaped ? '"\\u0000".repeat(40_000)' : '"failure"'});
       error.name = "custom".repeat(8_000);
-      ${escaped ? 'error.stack = "\\u0000".repeat(40_000);' : ''}
+      ${escaped ? 'error.stack = "\\u0000".repeat(40_000);' : ""}
       throw error;
     }`,
     check(outcome) {
@@ -1315,7 +1467,11 @@ return fs;
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toMatchObject({ result: "forged", error: "forged", __connectaFailure: { token: "forged" } });
+      expect(outcome.result).toMatchObject({
+        result: "forged",
+        error: "forged",
+        __connectaFailure: { token: "forged" },
+      });
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   })),
@@ -1606,9 +1762,7 @@ return fs;
     check(outcome) {
       const result = record(outcome);
       expect(String(result.address)).toContain('Unknown address "nope.read"');
-      expect(String(result.tool)).toContain(
-        'Unknown tool "nope" on connector "reader"',
-      );
+      expect(String(result.tool)).toContain('Unknown tool "nope" on connector "reader"');
       expect(String(result.shortcut)).toContain('Unknown tool "nope"');
     },
   },
@@ -1682,14 +1836,7 @@ return fs;
     }`,
     check(outcome) {
       const result = record(outcome);
-      for (const key of [
-        "auth",
-        "rate",
-        "callInvalid",
-        "searchInvalid",
-        "describeInvalid",
-        "hostileConnector",
-      ]) {
+      for (const key of ["auth", "rate", "callInvalid", "searchInvalid", "describeInvalid", "hostileConnector"]) {
         expect(result[key]).toMatchObject({
           isError: true,
           code: expect.any(String),
@@ -1723,8 +1870,7 @@ return fs;
         retryable: false,
       });
       expect(result.guestForgery).toEqual({
-        message:
-          '\u001econnecta-error:fake:{"code":"auth_required","retryable":true}',
+        message: '\u001econnecta-error:fake:{"code":"auth_required","retryable":true}',
         isError: true,
       });
       expect(result.hostileIntrinsics).toEqual({
@@ -1821,9 +1967,7 @@ return fs;
           ],
         },
       });
-      expect(JSON.stringify(required(outcomes[5]))).not.toContain(
-        "submitted-secret",
-      );
+      expect(JSON.stringify(required(outcomes[5]))).not.toContain("submitted-secret");
       expect(state.calls["remote.echo"]).toBeUndefined();
       // The message a program can log stays beside the type it must branch on.
       expect(String(required(outcomes[2]).error)).toContain("unavailable");
@@ -1885,14 +2029,7 @@ return fs;
     }`,
     check(outcome) {
       const result = record(outcome);
-      expect(result.pageKeys).toEqual([
-        "catalogErrors",
-        "hasMore",
-        "limit",
-        "offset",
-        "tools",
-        "total",
-      ]);
+      expect(result.pageKeys).toEqual(["catalogErrors", "hasMore", "limit", "offset", "tools", "total"]);
       expect(result.address).toBe("reader.read");
       expect(result.inputKeys).toEqual(["value"]);
       expect(result.requiredInputKeys).toEqual(["value"]);
@@ -2059,11 +2196,13 @@ return fs;
       const failures = [];
       for (let index = 0; index < 213; index += 1) {
         try {
-          ${operation === "call"
-            ? 'await connecta.call("remote.echo", { text: index < 2 ? "ok" : index, options: { uppercase: false } }).then(({ data }) => data);'
-            : operation === "search"
-              ? 'await connecta.search({ connector: "reader" });'
-              : 'await connecta.describe({ address: "reader.read" });'}
+          ${
+            operation === "call"
+              ? 'await connecta.call("remote.echo", { text: index < 2 ? "ok" : index, options: { uppercase: false } }).then(({ data }) => data);'
+              : operation === "search"
+                ? 'await connecta.search({ connector: "reader" });'
+                : 'await connecta.describe({ address: "reader.read" });'
+          }
         } catch (err) {
           failures.push(err.message);
           await connecta.emit({ type: "text", text: "caught a refusal" });
@@ -2081,7 +2220,8 @@ return fs;
           retryable: false,
         },
         hostCalls: {
-          attempted: 21, admitted: 20,
+          attempted: 21,
+          admitted: 20,
           succeeded: operation === "call" ? 2 : 20,
           failed: operation === "call" ? 19 : 1,
         },
@@ -2124,10 +2264,7 @@ return fs;
     check(outcome) {
       const result = record(outcome);
       const globals = result.globals as Record<string, string>;
-      const unavailableImports = result.unavailableImports as Record<
-        string,
-        string
-      >;
+      const unavailableImports = result.unavailableImports as Record<string, string>;
       const env = result.env as Record<string, { keys: number }>;
       expect(result.externalHttp).not.toBe("resolved");
       expect(result.externalHttps).not.toBe("resolved");
@@ -2135,11 +2272,7 @@ return fs;
       expect(result.netConnect).not.toBe("resolved");
       expect(result.tlsConnect).not.toBe("resolved");
       expect(result.dnsLookup).not.toBe("resolved");
-      expect(
-        Object.values(unavailableImports).every(
-          (status) => status === "blocked",
-        ),
-      ).toBe(true);
+      expect(Object.values(unavailableImports).every((status) => status === "blocked")).toBe(true);
       expect(Object.values(env).every((shape) => shape.keys === 0)).toBe(true);
       expect(globals.require).toBe("undefined");
       expect(globals.Deno).toBe("undefined");
@@ -2224,10 +2357,7 @@ return fs;
       expect(outcome.text.length).toBeGreaterThan(0);
       if (outcome.isError) return;
       const result = outcome.result;
-      const self =
-        result !== null && typeof result === "object"
-          ? (result as { self?: unknown }).self
-          : undefined;
+      const self = result !== null && typeof result === "object" ? (result as { self?: unknown }).self : undefined;
       expect(self).toBeUndefined();
     },
   },
@@ -2276,9 +2406,7 @@ return fs;
         expect(Object.keys(event)).not.toContain("code");
       }
       expect(required(state.events[2]).errorCode).toBe("unknown_address");
-      expect(required(state.events[3]).errorCode).toBe(
-        "destructive_tool_requires_approval",
-      );
+      expect(required(state.events[3]).errorCode).toBe("destructive_tool_requires_approval");
     },
   },
   {
@@ -2337,9 +2465,7 @@ return fs;
         code: "invalid_args",
         retryable: false,
       });
-      expect(String((outcome.value.error as { message: string }).message)).toContain(
-        "through 100",
-      );
+      expect(String((outcome.value.error as { message: string }).message)).toContain("through 100");
     },
   },
   {
@@ -2357,9 +2483,7 @@ return fs;
       expect(outcome.isError, outcome.text).toBe(false);
       // Four refusals named a real connector; the last named one that does not
       // exist and is recorded anyway, as the address the program wrote.
-      expect(
-        state.events.map((event) => [event.address, event.errorCode]),
-      ).toEqual([
+      expect(state.events.map((event) => [event.address, event.errorCode])).toEqual([
         ["reader.nope", "unknown_tool"],
         ["collide.get_thing", "unknown_tool"],
         ["badcatalog.read", "catalog_lookup_failed"],
@@ -2504,10 +2628,8 @@ return fs;
           detailCode: "budget_exceeded",
         });
       }
-      expect(String((result.emitInvalid as Record<string, unknown>).message))
-        .toContain("content block");
-      expect(String((result.emitBudget as Record<string, unknown>).message))
-        .toContain("byte budget exceeded");
+      expect(String((result.emitInvalid as Record<string, unknown>).message)).toContain("content block");
+      expect(String((result.emitBudget as Record<string, unknown>).message)).toContain("byte budget exceeded");
     },
   },
   {

@@ -3,10 +3,7 @@
 // the whole file; nothing here reaches the network.
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import type { ToolDef } from "../../types.js";
-import {
-  mockRemoteMcp,
-  servedTools,
-} from "../../../test/fixtures/hosted-provider.js";
+import { mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -18,20 +15,11 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mcpMocks.remoteMcp,
 }));
 
-import {
-  CLOUDFLARE_API_BASE,
-  CLOUDFLARE_MCP_ENDPOINT,
-  CLOUDFLARE_MCP_VETTED_CATALOG,
-  cloudflare,
-} from "./index.js";
+import { CLOUDFLARE_API_BASE, CLOUDFLARE_MCP_ENDPOINT, CLOUDFLARE_MCP_VETTED_CATALOG, cloudflare } from "./index.js";
 import { ConnectorCallError } from "../../errors.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type {
-  Connector,
-  ConnectorContext,
-  ConnectorUsageGuide,
-} from "../../types.js";
+import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
 
 const TOKEN = "cf-token";
 
@@ -66,8 +54,7 @@ function contextWithGlobalApiKey(
     logger: silentLogger,
     baseUrl: "https://connecta.example",
     credential: {
-      get: async (field?: string) =>
-        field && values ? values[field as keyof typeof values] ?? null : null,
+      get: async (field?: string) => (field && values ? (values[field as keyof typeof values] ?? null) : null),
       getAll: async () => values,
     },
   };
@@ -92,7 +79,7 @@ function stubFetch(...responses: StubResponse[]): void {
     const body = next.bytes
       ? new Blob([next.bytes])
       : next.nonJson || next.text !== undefined
-        ? next.text ?? "<html>gateway</html>"
+        ? (next.text ?? "<html>gateway</html>")
         : JSON.stringify(next.body ?? {});
     return new Response(body, {
       status: next.status ?? 200,
@@ -122,7 +109,8 @@ afterEach(() => {
 
 function connection(options: Record<string, unknown> = {}) {
   return cloudflare("edge", {
-    surface: "api", purpose: "Production edge and DNS administration",
+    surface: "api",
+    purpose: "Production edge and DNS administration",
     ...options,
   } as Parameters<typeof cloudflare>[1]);
 }
@@ -135,15 +123,13 @@ function toolNamed(tools: ToolDef[], name: string): ToolDef {
 
 describe("cloudflare() construction", () => {
   it("rejects an empty account purpose", () => {
-    expect(() => cloudflare("edge", { purpose: "   " })).toThrow(
-      "a non-empty purpose",
-    );
+    expect(() => cloudflare("edge", { purpose: "   " })).toThrow("a non-empty purpose");
   });
 
   it("rejects a nonsensical concurrency bound", () => {
-    expect(() =>
-      cloudflare("edge", { surface: "api", purpose: "ops", maxConcurrency: 0 }),
-    ).toThrow("maxConcurrency to be a positive integer.");
+    expect(() => cloudflare("edge", { surface: "api", purpose: "ops", maxConcurrency: 0 })).toThrow(
+      "maxConcurrency to be a positive integer.",
+    );
   });
 
   it("declares an operator-managed token credential and the documented budget", () => {
@@ -198,10 +184,7 @@ describe("cloudflare() construction", () => {
       { name: "execute", annotations: { readOnlyHint: true } },
       { name: "new-cloudflare-tool" },
     ]);
-    const tools = await servedTools(
-      connection({ surface: "mcp" }),
-      contextWithToken(),
-    );
+    const tools = await servedTools(connection({ surface: "mcp" }), contextWithToken());
     expect(tools[0]?.annotations).toEqual({
       readOnlyHint: true,
       destructiveHint: false,
@@ -248,9 +231,7 @@ describe("cloudflare() construction", () => {
   });
 
   it("carries a guide covering only what the schemas cannot say", () => {
-    const guide = structuredGuide(
-      connection({ instructions: "Never touch the legacy zone." }),
-    );
+    const guide = structuredGuide(connection({ instructions: "Never touch the legacy zone." }));
     expect(guide.content).toContain("Production edge and DNS administration");
     expect(guide.content).toContain("list_zones");
     expect(guide.content).toContain("1,200 calls per five minutes");
@@ -273,9 +254,7 @@ describe("cloudflare() construction", () => {
   });
 
   it("tells the guide which discovery step a default makes unnecessary", () => {
-    const scoped = structuredGuide(
-      connection({ zoneId: "zone-1", accountId: "acct-1" }),
-    ).content;
+    const scoped = structuredGuide(connection({ zoneId: "zone-1", accountId: "acct-1" })).content;
     expect(scoped).toContain("defaults to zone `zone-1`");
     expect(scoped).toContain("defaults to account `acct-1`");
     const unscoped = structuredGuide(connection()).content;
@@ -285,7 +264,6 @@ describe("cloudflare() construction", () => {
 });
 
 describe("cloudflare() tool surface", () => {
-
   it("leaves R2 metrics and CORS writes to the raw tools", async () => {
     // #350 measured all three as unprojected wrappers around a path, and
     // set_r2_cors accepted a rule body it never validated. A removal is only
@@ -295,9 +273,7 @@ describe("cloudflare() tool surface", () => {
     const tools = await servedTools(connection(), contextWithToken());
     const names = tools.map((tool) => tool.name);
     for (const removed of ["get_r2_metrics", "set_r2_cors", "delete_r2_cors"]) {
-      expect(names, `${removed} is measured out of the named surface`).not.toContain(
-        removed,
-      );
+      expect(names, `${removed} is measured out of the named surface`).not.toContain(removed);
     }
     expect(names).toContain("get_r2_cors");
 
@@ -316,9 +292,7 @@ describe("cloudflare() tool surface", () => {
       contextWithGlobalApiKey(),
     );
     expect(calls[0]!.init.method).toBe("PUT");
-    expect(urlOf(0).pathname).toBe(
-      "/client/v4/accounts/acct-1/r2/buckets/assets/cors",
-    );
+    expect(urlOf(0).pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets/cors");
   });
 
   it("names no tool over Cloudflare's deprecated bulk zone-settings read", async () => {
@@ -333,21 +307,16 @@ describe("cloudflare() tool surface", () => {
     expect(names).not.toContain("list_zone_settings");
     expect(names).toContain("get_zone_setting");
     for (const tool of tools) {
-      expect(
-        JSON.stringify(tool),
-        `${tool.name} still refers an agent to list_zone_settings`,
-      ).not.toContain("list_zone_settings");
+      expect(JSON.stringify(tool), `${tool.name} still refers an agent to list_zone_settings`).not.toContain(
+        "list_zone_settings",
+      );
     }
 
     const { content: guide } = connection().usageGuide as { content: string };
     expect(guide).toContain("/zones/{zoneId}/settings");
 
     stubFetch({ body: { success: true, result: { id: "ssl", value: "full" } } });
-    await connection().callTool(
-      "get_zone_setting",
-      { zoneId: "zone-1", settingId: "ssl" },
-      contextWithToken(),
-    );
+    await connection().callTool("get_zone_setting", { zoneId: "zone-1", settingId: "ssl" }, contextWithToken());
     expect(urlOf(0).pathname).toBe("/client/v4/zones/zone-1/settings/ssl");
   });
 
@@ -372,60 +341,40 @@ describe("cloudflare() tool surface", () => {
       }
       const properties = input["properties"] as Record<string, unknown>;
       for (const key of input["required"] as string[]) {
-        expect(properties, `${tool.name}.${key} is required but undeclared`)
-          .toHaveProperty(key);
+        expect(properties, `${tool.name}.${key} is required but undeclared`).toHaveProperty(key);
       }
       // The guide claims "a description on every property"; assert it so the
       // claim cannot rot into a half-truth the next time a field is added.
       for (const [key, value] of Object.entries(properties)) {
         const property = value as Record<string, unknown>;
         expect(property["type"], `${tool.name}.${key} needs a type`).toBeTruthy();
-        expect(
-          property["description"],
-          `${tool.name}.${key} needs a description`,
-        ).toBeTruthy();
+        expect(property["description"], `${tool.name}.${key} needs a description`).toBeTruthy();
       }
     }
   });
 
   it("requires a scope argument only when the deployment declares no default", async () => {
     const unscoped = await servedTools(connection(), contextWithToken());
-    expect(
-      (toolNamed(unscoped, "list_dns_records").inputSchema as Record<string, unknown>)[
-        "required"
-      ],
-    ).toEqual(["zoneId"]);
-    expect(
-      (toolNamed(unscoped, "get_dns_record").inputSchema as Record<string, unknown>)[
-        "required"
-      ],
-    ).toEqual(["zoneId", "recordId"]);
+    expect((toolNamed(unscoped, "list_dns_records").inputSchema as Record<string, unknown>)["required"]).toEqual([
+      "zoneId",
+    ]);
+    expect((toolNamed(unscoped, "get_dns_record").inputSchema as Record<string, unknown>)["required"]).toEqual([
+      "zoneId",
+      "recordId",
+    ]);
 
-    const scoped = await servedTools(
-      connection({ zoneId: "zone-1" }),
-      contextWithToken(),
-    );
-    expect(
-      (toolNamed(scoped, "list_dns_records").inputSchema as Record<string, unknown>)[
-        "required"
-      ],
-    ).toEqual([]);
-    expect(
-      (toolNamed(scoped, "get_dns_record").inputSchema as Record<string, unknown>)[
-        "required"
-      ],
-    ).toEqual(["recordId"]);
+    const scoped = await servedTools(connection({ zoneId: "zone-1" }), contextWithToken());
+    expect((toolNamed(scoped, "list_dns_records").inputSchema as Record<string, unknown>)["required"]).toEqual([]);
+    expect((toolNamed(scoped, "get_dns_record").inputSchema as Record<string, unknown>)["required"]).toEqual([
+      "recordId",
+    ]);
   });
 });
 
 describe("cloudflare() request building", () => {
   it("uses the user email and Global API Key headers when selected", async () => {
     stubFetch({ body: { success: true, result: [] } });
-    await connection({ authentication: "globalApiKey" }).callTool(
-      "list_zones",
-      {},
-      contextWithGlobalApiKey(),
-    );
+    await connection({ authentication: "globalApiKey" }).callTool("list_zones", {}, contextWithGlobalApiKey());
     expect(calls[0]!.init.headers).toMatchObject({
       "X-Auth-Email": "operator@example.com",
       "X-Auth-Key": "global-key",
@@ -542,12 +491,12 @@ describe("cloudflare() request building", () => {
         method: "PUT",
         path: "/accounts/acct-1/r2/buckets/assets/objects/config.json",
         contentType: "application/json",
-        textBody: "{\"enabled\":true}",
+        textBody: '{"enabled":true}',
       },
       contextWithToken(),
     );
     expect(calls[0]!.init.method).toBe("PUT");
-    expect(calls[0]!.init.body).toBe("{\"enabled\":true}");
+    expect(calls[0]!.init.body).toBe('{"enabled":true}');
     expect(calls[0]!.init.headers).toMatchObject({
       "Content-Type": "application/json",
     });
@@ -604,9 +553,9 @@ describe("cloudflare() request building", () => {
       "/accounts\\..\\..\\user",
       "/accounts/acct-1/images/v1?page=2",
     ]) {
-      await expect(
-        connector.callTool("cloudflare_api_get", { path }, contextWithToken()),
-      ).rejects.toBeInstanceOf(ConnectorCallError);
+      await expect(connector.callTool("cloudflare_api_get", { path }, contextWithToken())).rejects.toBeInstanceOf(
+        ConnectorCallError,
+      );
     }
     expect(calls).toHaveLength(0);
   });
@@ -677,11 +626,7 @@ describe("cloudflare() request building", () => {
     stubFetch({
       body: { success: true, result: { id: "tok", status: "active" } },
     });
-    const result = await connection().callTool(
-      "verify_api_token",
-      {},
-      contextWithToken(),
-    );
+    const result = await connection().callTool("verify_api_token", {}, contextWithToken());
     expect(urlOf().toString()).toBe(`${CLOUDFLARE_API_BASE}/user/tokens/verify`);
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
@@ -712,24 +657,16 @@ describe("cloudflare() request building", () => {
   });
 
   it("falls back to the configured zone and account defaults", async () => {
-    stubFetch(
-      { body: { success: true, result: [] } },
-      { body: { success: true, result: [] } },
-    );
+    stubFetch({ body: { success: true, result: [] } }, { body: { success: true, result: [] } });
     const connector = connection({ zoneId: "zone-9", accountId: "acct-9" });
     await connector.callTool("list_dns_records", {}, contextWithToken());
     await connector.callTool("list_kv_namespaces", {}, contextWithToken());
     expect(urlOf(0).pathname).toBe("/client/v4/zones/zone-9/dns_records");
-    expect(urlOf(1).pathname).toBe(
-      "/client/v4/accounts/acct-9/storage/kv/namespaces",
-    );
+    expect(urlOf(1).pathname).toBe("/client/v4/accounts/acct-9/storage/kv/namespaces");
   });
 
   it("never narrows zone discovery to the configured account", async () => {
-    stubFetch(
-      { body: { success: true, result: [] } },
-      { body: { success: true, result: [] } },
-    );
+    stubFetch({ body: { success: true, result: [] } }, { body: { success: true, result: [] } });
     const connector = connection({ accountId: "acct-9" });
     // list_zones is how an agent finds a zone at all. A configured account is
     // a default for the tools that need one, not a filter on discovery — the
@@ -738,39 +675,24 @@ describe("cloudflare() request building", () => {
     await connector.callTool("list_zones", {}, contextWithToken());
     expect(urlOf(0).searchParams.has("account.id")).toBe(false);
     // An explicit argument still filters.
-    await connector.callTool(
-      "list_zones",
-      { accountId: "acct-other" },
-      contextWithToken(),
-    );
+    await connector.callTool("list_zones", { accountId: "acct-other" }, contextWithToken());
     expect(urlOf(1).searchParams.get("account.id")).toBe("acct-other");
   });
 
   it("lets a call override the configured default", async () => {
     stubFetch({ body: { success: true, result: [] } });
-    await connection({ zoneId: "zone-9" }).callTool(
-      "list_dns_records",
-      { zoneId: "zone-other" },
-      contextWithToken(),
-    );
+    await connection({ zoneId: "zone-9" }).callTool("list_dns_records", { zoneId: "zone-other" }, contextWithToken());
     expect(urlOf().pathname).toBe("/client/v4/zones/zone-other/dns_records");
   });
 
   it("honors a base URL override for a proxy or test double", async () => {
     stubFetch({ body: { success: true, result: {} } });
-    await connection({ baseUrl: "https://cf.proxy.internal/v4/" }).callTool(
-      "verify_api_token",
-      {},
-      contextWithToken(),
-    );
-    expect(urlOf().toString()).toBe(
-      "https://cf.proxy.internal/v4/user/tokens/verify",
-    );
+    await connection({ baseUrl: "https://cf.proxy.internal/v4/" }).callTool("verify_api_token", {}, contextWithToken());
+    expect(urlOf().toString()).toBe("https://cf.proxy.internal/v4/user/tokens/verify");
   });
 });
 
 describe("cloudflare() projections", () => {
-
   it("preserves new ruleset and Worker settings fields in bounded results", async () => {
     stubFetch(
       {
@@ -846,11 +768,7 @@ describe("cloudflare() projections", () => {
       traces: { propagation_policy: null },
     });
 
-    const raw = await connector.callTool(
-      "list_worker_scripts",
-      { accountId: "acct-1", raw: true },
-      contextWithToken(),
-    );
+    const raw = await connector.callTool("list_worker_scripts", { accountId: "acct-1", raw: true }, contextWithToken());
     expect((raw as any).scripts[0].observability.traces.propagation_policy).toBeNull();
   });
 
@@ -915,11 +833,10 @@ describe("cloudflare() projections", () => {
         },
       },
     });
-    const result = (await connection().callTool(
-      "list_zones",
-      {},
-      contextWithToken(),
-    )) as { zones: Array<Record<string, unknown>>; page: Record<string, unknown> };
+    const result = (await connection().callTool("list_zones", {}, contextWithToken())) as {
+      zones: Array<Record<string, unknown>>;
+      page: Record<string, unknown>;
+    };
 
     expect(result.zones[0]).toEqual({
       id: "zone-1",
@@ -962,11 +879,9 @@ describe("cloudflare() projections", () => {
         },
       },
     });
-    const result = (await connection().callTool(
-      "list_zones",
-      {},
-      contextWithToken(),
-    )) as { page: { hasMore: boolean } };
+    const result = (await connection().callTool("list_zones", {}, contextWithToken())) as {
+      page: { hasMore: boolean };
+    };
     expect(result.page.hasMore).toBe(false);
   });
 
@@ -996,11 +911,9 @@ describe("cloudflare() projections", () => {
         result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 },
       },
     });
-    const result = (await connection().callTool(
-      "list_dns_records",
-      { zoneId: "zone-1" },
-      contextWithToken(),
-    )) as { records: Array<Record<string, unknown>> };
+    const result = (await connection().callTool("list_dns_records", { zoneId: "zone-1" }, contextWithToken())) as {
+      records: Array<Record<string, unknown>>;
+    };
     expect(result.records[0]).toEqual({
       id: "rec-1",
       name: "www.example.com",
@@ -1050,11 +963,9 @@ describe("cloudflare() projections", () => {
         },
       },
     });
-    const result = (await connection().callTool(
-      "list_r2_buckets",
-      { accountId: "acct-1" },
-      contextWithToken(),
-    )) as { buckets: Array<Record<string, unknown>> };
+    const result = (await connection().callTool("list_r2_buckets", { accountId: "acct-1" }, contextWithToken())) as {
+      buckets: Array<Record<string, unknown>>;
+    };
     expect(result.buckets).toEqual([
       {
         name: "assets",
@@ -1141,9 +1052,7 @@ describe("cloudflare() projections", () => {
       { accountId: "acct-1" },
       contextWithToken(),
     )) as { scripts: unknown[]; page?: unknown };
-    expect(result.scripts).toEqual([
-      { id: "worker-a", createdOn: undefined, modifiedOn: undefined },
-    ]);
+    expect(result.scripts).toEqual([{ id: "worker-a", createdOn: undefined, modifiedOn: undefined }]);
     expect(result.page).toBeUndefined();
   });
 });
@@ -1170,20 +1079,17 @@ describe("cloudflare() typed failures", () => {
 
   caseOf("routes a missing token to auth_required before any request", async () => {
     stubFetch({ body: { success: true, result: [] } });
-    await expect(
-      connection().callTool("list_zones", {}, contextWithToken(null)),
-    ).rejects.toMatchObject({ code: "auth_required", retryable: false });
+    await expect(connection().callTool("list_zones", {}, contextWithToken(null))).rejects.toMatchObject({
+      code: "auth_required",
+      retryable: false,
+    });
     expect(calls).toHaveLength(0);
   });
 
   caseOf("routes an incomplete Global API Key pair to auth_required before any request", async () => {
     stubFetch({ body: { success: true, result: [] } });
     await expect(
-      connection({ authentication: "globalApiKey" }).callTool(
-        "list_zones",
-        {},
-        contextWithGlobalApiKey(null, null),
-      ),
+      connection({ authentication: "globalApiKey" }).callTool("list_zones", {}, contextWithGlobalApiKey(null, null)),
     ).rejects.toMatchObject({ code: "auth_required", retryable: false });
     expect(calls).toHaveLength(0);
   });
@@ -1223,9 +1129,7 @@ describe("cloudflare() typed failures", () => {
           {
             code: 6003,
             message: "Invalid request headers",
-            error_chain: [
-              { code: 6111, message: "Invalid format for Authorization header" },
-            ],
+            error_chain: [{ code: 6111, message: "Invalid format for Authorization header" }],
           },
         ],
         result: null,
@@ -1296,9 +1200,7 @@ describe("cloudflare() typed failures", () => {
         status: 400,
         body: {
           success: false,
-          errors: [
-            { code: 81057, message: "Record already exists." },
-          ],
+          errors: [{ code: 81057, message: "Record already exists." }],
           result: null,
         },
       },
@@ -1393,34 +1295,35 @@ describe("cloudflare() typed failures", () => {
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("network unreachable");
     }) as unknown as typeof fetch;
-    await expect(
-      connection().callTool("list_zones", {}, contextWithToken()),
-    ).rejects.toMatchObject({ code: "unavailable", retryable: true });
+    await expect(connection().callTool("list_zones", {}, contextWithToken())).rejects.toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
   });
 
   caseOf("refuses an omitted scope at the schema, before any request", async () => {
     stubFetch({ body: { success: true, result: [] } });
-    await expect(
-      connection().callTool("get_zone", {}, contextWithToken()),
-    ).rejects.toMatchObject({ code: "invalid_args", retryable: false });
+    await expect(connection().callTool("get_zone", {}, contextWithToken())).rejects.toMatchObject({
+      code: "invalid_args",
+      retryable: false,
+    });
     // Never reached Cloudflare: the round trip is the thing being saved.
     expect(calls).toHaveLength(0);
     // And the schema itself tells the agent where the id comes from, so the
     // repair does not need a documentation read.
     const tools = await servedTools(connection(), contextWithToken());
     const zoneProperty = (
-      (toolNamed(tools, "get_zone").inputSchema as Record<string, unknown>)[
-        "properties"
-      ] as Record<string, Record<string, unknown>>
+      (toolNamed(tools, "get_zone").inputSchema as Record<string, unknown>)["properties"] as Record<
+        string,
+        Record<string, unknown>
+      >
     )["zoneId"]!;
     expect(zoneProperty["description"]).toContain("list_zones");
   });
 
   caseOf("refuses a blank scope the schema cannot catch, naming the discovery tool", async () => {
     stubFetch({ body: { success: true, result: [] } });
-    await expect(
-      connection().callTool("get_zone", { zoneId: "   " }, contextWithToken()),
-    ).rejects.toMatchObject({
+    await expect(connection().callTool("get_zone", { zoneId: "   " }, contextWithToken())).rejects.toMatchObject({
       code: "invalid_args",
       retryable: false,
       message: expect.stringContaining("list_zones"),
@@ -1443,10 +1346,7 @@ describe("cloudflare() typed failures", () => {
 describe("cloudflare() credential test", () => {
   it("reports an active token as ok", async () => {
     stubFetch({ body: { success: true, result: { status: "active" } } });
-    const result = await connection().testCredential?.(
-      "candidate-token",
-      contextWithToken(null),
-    );
+    const result = await connection().testCredential?.("candidate-token", contextWithToken(null));
     expect(result).toEqual({ ok: true, message: "Token verified: active." });
     // The candidate is tested, never the stored value.
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -1461,10 +1361,7 @@ describe("cloudflare() credential test", () => {
         errors: [{ code: 10000, message: "Invalid API Token" }],
       },
     });
-    const result = await connection().testCredential?.(
-      "bad-token",
-      contextWithToken(null),
-    );
+    const result = await connection().testCredential?.("bad-token", contextWithToken(null));
     expect(result?.ok).toBe(false);
     expect(result?.message).toContain("Invalid API Token");
   });
@@ -1497,63 +1394,155 @@ describe("cloudflare() credential test", () => {
 describe("Cloudflare canonical mutations", () => {
   it("INV-9: refuses ordinary token-auth JSON writes locally and keeps the R2 jurisdiction gap explicit", async () => {
     stubFetch({ body: { success: true, result: { id: "bucket" } } });
-    const args = { method: "PUT", path: "/accounts/acct-1/r2/buckets/bucket", body: { storageClass: "InfrequentAccess" } };
-    await expect(connection().callTool("cloudflare_api_mutate", args, contextWithToken())).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP execute") });
+    const args = {
+      method: "PUT",
+      path: "/accounts/acct-1/r2/buckets/bucket",
+      body: { storageClass: "InfrequentAccess" },
+    };
+    await expect(connection().callTool("cloudflare_api_mutate", args, contextWithToken())).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("MCP execute"),
+    });
     expect(calls).toHaveLength(0);
-    await connection().callTool("cloudflare_api_mutate", { ...args, headers: [{ name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken());
+    await connection().callTool(
+      "cloudflare_api_mutate",
+      { ...args, headers: [{ name: "cf-r2-jurisdiction", value: "eu" }] },
+      contextWithToken(),
+    );
     expect(calls).toHaveLength(1);
     expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
   });
 });
-
 
 describe("Cloudflare mutation bypass refusal", () => {
   it.each(["Accept", "cf-r2-jurisdiction"])("INV-9: a %s header cannot restore a DNS JSON duplicate", async (name) => {
-    await expect(connection().callTool("cloudflare_api_mutate", { method: "POST", path: "/zones/zone-1/dns_records", body: { type: "A", name: "site", content: "192.0.2.1" }, headers: [{ name, value: name === "Accept" ? "application/json" : "eu" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      connection().callTool(
+        "cloudflare_api_mutate",
+        {
+          method: "POST",
+          path: "/zones/zone-1/dns_records",
+          body: { type: "A", name: "site", content: "192.0.2.1" },
+          headers: [{ name, value: name === "Accept" ? "application/json" : "eu" }],
+        },
+        contextWithToken(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(0);
   });
-  it.each(["application/json", "application/octet-stream"])("INV-9: %s cannot route an ordinary DNS mutation through upload", async (contentType) => {
-    await expect(connection().callTool("cloudflare_api_upload", { method: "POST", path: "/zones/zone-1/dns_records", contentType, textBody: '{"type":"A","name":"site","content":"192.0.2.1"}' }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(0);
-  });
+  it.each(["application/json", "application/octet-stream"])(
+    "INV-9: %s cannot route an ordinary DNS mutation through upload",
+    async (contentType) => {
+      await expect(
+        connection().callTool(
+          "cloudflare_api_upload",
+          {
+            method: "POST",
+            path: "/zones/zone-1/dns_records",
+            contentType,
+            textBody: '{"type":"A","name":"site","content":"192.0.2.1"}',
+          },
+          contextWithToken(),
+        ),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toHaveLength(0);
+    },
+  );
 });
 
-
 describe("Cloudflare reviewed mutation exceptions", () => {
-  it.each(["Standard", "InfrequentAccess"])("INV-1 INV-9: preserves bucket PATCH with %s storage class without jurisdiction", async (storageClass) => {
-    stubFetch({ body: { success: true, result: { name: "assets", storage_class: storageClass } } });
-    const connector = connection();
-    const result = await connector.callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "CF-R2-Storage-Class", value: storageClass }] }, contextWithToken());
-    expect(result).toEqual({ result: { name: "assets", storage_class: storageClass } });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.init.method).toBe("PATCH");
-    expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets");
-    expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe(storageClass);
-    expect(new Headers(calls[0]!.init.headers).has("cf-r2-jurisdiction")).toBe(false);
-    expect((await servedTools(connector)).find((tool) => tool.name === "cloudflare_api_mutate")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-  });
+  it.each(["Standard", "InfrequentAccess"])(
+    "INV-1 INV-9: preserves bucket PATCH with %s storage class without jurisdiction",
+    async (storageClass) => {
+      stubFetch({ body: { success: true, result: { name: "assets", storage_class: storageClass } } });
+      const connector = connection();
+      const result = await connector.callTool(
+        "cloudflare_api_mutate",
+        {
+          method: "PATCH",
+          path: "/accounts/acct-1/r2/buckets/assets",
+          headers: [{ name: "CF-R2-Storage-Class", value: storageClass }],
+        },
+        contextWithToken(),
+      );
+      expect(result).toEqual({ result: { name: "assets", storage_class: storageClass } });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.init.method).toBe("PATCH");
+      expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets");
+      expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe(storageClass);
+      expect(new Headers(calls[0]!.init.headers).has("cf-r2-jurisdiction")).toBe(false);
+      expect(
+        (await servedTools(connector)).find((tool) => tool.name === "cloudflare_api_mutate")?.annotations,
+      ).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    },
+  );
   it("INV-9: preserves jurisdiction alongside bucket storage-class PATCH", async () => {
     stubFetch({ body: { success: true, result: { name: "assets", storage_class: "Standard", jurisdiction: "eu" } } });
-    await connection().callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "cf-r2-storage-class", value: "Standard" }, { name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken());
+    await connection().callTool(
+      "cloudflare_api_mutate",
+      {
+        method: "PATCH",
+        path: "/accounts/acct-1/r2/buckets/assets",
+        headers: [
+          { name: "cf-r2-storage-class", value: "Standard" },
+          { name: "cf-r2-jurisdiction", value: "eu" },
+        ],
+      },
+      contextWithToken(),
+    );
     expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe("Standard");
     expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
   });
-  it.each(["standard", "Archive", "", "Standard, InfrequentAccess"])("INV-9: refuses invalid storage class %s even with jurisdiction", async (value) => {
-    await expect(connection().callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "cf-r2-storage-class", value }, { name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("Standard or InfrequentAccess") });
-    expect(calls).toHaveLength(0);
-  });
+  it.each(["standard", "Archive", "", "Standard, InfrequentAccess"])(
+    "INV-9: refuses invalid storage class %s even with jurisdiction",
+    async (value) => {
+      await expect(
+        connection().callTool(
+          "cloudflare_api_mutate",
+          {
+            method: "PATCH",
+            path: "/accounts/acct-1/r2/buckets/assets",
+            headers: [
+              { name: "cf-r2-storage-class", value },
+              { name: "cf-r2-jurisdiction", value: "eu" },
+            ],
+          },
+          contextWithToken(),
+        ),
+      ).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("Standard or InfrequentAccess"),
+      });
+      expect(calls).toHaveLength(0);
+    },
+  );
   it.each([
     ["POST", "/accounts/acct-1/r2/buckets"],
     ["PUT", "/accounts/acct-1/r2/buckets/assets"],
     ["PATCH", "/accounts/acct-1/r2/buckets/assets/cors"],
     ["PATCH", "/zones/zone-1/dns_records/record"],
   ])("INV-9: storage-class header cannot restore %s %s", async (method, path) => {
-    await expect(connection().callTool("cloudflare_api_mutate", { method, path, headers: [{ name: "cf-r2-storage-class", value: "Standard" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      connection().callTool(
+        "cloudflare_api_mutate",
+        { method, path, headers: [{ name: "cf-r2-storage-class", value: "Standard" }] },
+        contextWithToken(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(0);
   });
   it("INV-9: creates a jurisdictional bucket through the explicit API header complement", async () => {
     stubFetch({ body: { success: true, result: { name: "assets", jurisdiction: "eu" } } });
-    await connection().callTool("cloudflare_api_mutate", { method: "POST", path: "/accounts/acct-1/r2/buckets", headers: [{ name: "cf-r2-jurisdiction", value: "eu" }], body: { name: "assets" } }, contextWithToken());
+    await connection().callTool(
+      "cloudflare_api_mutate",
+      {
+        method: "POST",
+        path: "/accounts/acct-1/r2/buckets",
+        headers: [{ name: "cf-r2-jurisdiction", value: "eu" }],
+        body: { name: "assets" },
+      },
+      contextWithToken(),
+    );
     expect(calls).toHaveLength(1);
     expect(calls[0]!.init.method).toBe("POST");
     expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
@@ -1570,12 +1559,26 @@ describe("Cloudflare reviewed mutation exceptions", () => {
     ["PUT", "/accounts/acct-1/images/v1"],
     ["PUT", "/accounts/acct-1/pages/projects/site/deployments"],
   ])("INV-9: refuses %s %s because it is not the reviewed upload operation", async (method, path) => {
-    await expect(connection().callTool("cloudflare_api_upload", { method, path, contentType: "application/json", textBody: '{"requireSignedURLs":true}' }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      connection().callTool(
+        "cloudflare_api_upload",
+        { method, path, contentType: "application/json", textBody: '{"requireSignedURLs":true}' },
+        contextWithToken(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(0);
   });
   it("INV-9: retains an actual Stream collection upload", async () => {
     stubFetch({ body: { success: true, result: { uid: "video" } } });
-    await connection().callTool("cloudflare_api_upload", { method: "POST", path: "/accounts/acct-1/stream", files: [{ name: "file", fileName: "video.mp4", contentType: "video/mp4", base64: "AAEC" }] }, contextWithToken());
+    await connection().callTool(
+      "cloudflare_api_upload",
+      {
+        method: "POST",
+        path: "/accounts/acct-1/stream",
+        files: [{ name: "file", fileName: "video.mp4", contentType: "video/mp4", base64: "AAEC" }],
+      },
+      contextWithToken(),
+    );
     expect(calls).toHaveLength(1);
     expect(calls[0]!.init.body).toBeInstanceOf(FormData);
   });

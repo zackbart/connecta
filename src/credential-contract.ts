@@ -20,7 +20,12 @@ export interface CredentialVault {
   getAll(connectorId: string, owner?: string): Promise<ConnectorCredentialValues | null>;
   metadata(connectorId: string, owner?: string): Promise<CredentialMetadata | null>;
   set(connectorId: string, value: string, updatedBy: string, owner?: string): Promise<CredentialMetadata>;
-  setAll(connectorId: string, values: ConnectorCredentialValues, updatedBy: string, owner?: string): Promise<CredentialMetadata>;
+  setAll(
+    connectorId: string,
+    values: ConnectorCredentialValues,
+    updatedBy: string,
+    owner?: string,
+  ): Promise<CredentialMetadata>;
   delete(connectorId: string, owner?: string): Promise<void>;
   /**
    * Encrypt downstream OAuth state (tokens, a registered client, a PKCE

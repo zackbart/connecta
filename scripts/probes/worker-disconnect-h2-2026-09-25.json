@@ -476,9 +476,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "raw",
       "mode": "heartbeat",
@@ -556,9 +554,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "raw",
       "mode": "idle-timer",
@@ -621,9 +617,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "raw",
       "mode": "stalled",
@@ -683,9 +677,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "mcp",
       "mode": "heartbeat",
@@ -785,9 +777,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "mcp",
       "mode": "idle-timer",
@@ -872,9 +862,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "mcp",
       "mode": "stalled",
@@ -959,9 +947,7 @@
       "enabled": true,
       "servedVersion": "true",
       "compatibilityDate": "2025-01-01",
-      "flags": [
-        "enable_request_signal"
-      ],
+      "flags": ["enable_request_signal"],
       "maxDurationMs": 2000,
       "route": "mcp",
       "mode": "queued-handoff",

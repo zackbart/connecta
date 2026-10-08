@@ -9,11 +9,7 @@
 // runEdge; Effect callers come through this module and never see a Promise.
 
 import { Effect, type Scope } from "effect";
-import type {
-  AdmissionController,
-  AdmissionLease,
-  ExecutorAdmissionError,
-} from "../executor-admission.js";
+import type { AdmissionController, AdmissionLease, ExecutorAdmissionError } from "../executor-admission.js";
 
 type AdmissionProgram = (
   controller: AdmissionController,
@@ -68,9 +64,7 @@ export function acquireScoped(
   controller: AdmissionController,
   options: AdmitOptions = {},
 ): Effect.Effect<AdmissionLease, ExecutorAdmissionError, Scope.Scope> {
-  return Effect.acquireRelease(
-    admit(controller, options),
-    (lease) => Effect.sync(() => lease.release()),
-    { interruptible: true },
-  );
+  return Effect.acquireRelease(admit(controller, options), (lease) => Effect.sync(() => lease.release()), {
+    interruptible: true,
+  });
 }

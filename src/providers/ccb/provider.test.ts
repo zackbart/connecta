@@ -5,13 +5,7 @@
 // rotating single-use refresh tokens, the 401 replay, and then the requests,
 // projections, pagination, and typed failures the connector owns.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  CCB_MEDIA_TYPE,
-  CCB_READ_SCOPES,
-  CCB_WRITE_SCOPES,
-  ccb,
-  type CcbOptions,
-} from "./index.js";
+import { CCB_MEDIA_TYPE, CCB_READ_SCOPES, CCB_WRITE_SCOPES, ccb, type CcbOptions } from "./index.js";
 import { classifyCallError } from "../../errors.js";
 import { identityStorageKey } from "../../identity.js";
 import { memoryStorage } from "../../storage/memory.js";
@@ -151,16 +145,11 @@ function json(body: unknown, headers: Record<string, string> = {}, status = 200)
 
 /** Answer one path (exact, template-free) with one response. */
 function on(method: string, path: string, respond: (request: ApiRequest) => Response): Route {
-  return (request) =>
-    request.method === method && request.url.pathname === path ? respond(request) : undefined;
+  return (request) => (request.method === method && request.url.pathname === path ? respond(request) : undefined);
 }
 
 /** Start, consent, and finish one grant through the connector's own hooks. */
-async function authorize(
-  connector: Connector,
-  ctx: () => ConnectorContext,
-  fake: Fake,
-): Promise<URL> {
+async function authorize(connector: Connector, ctx: () => ConnectorContext, fake: Fake): Promise<URL> {
   const started = await connector.startAuth!(ctx());
   expect(started.state).toBe("auth_required");
   const authorizationUrl = new URL(started.authorizationUrl!);
@@ -253,7 +242,10 @@ describe("ccb() consent URL", () => {
   });
 
   it("asks Identity Auth with resource_owner_auth at the sandbox host, per person", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 599 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 599 })),
+    );
     const connector = connection({ mode: "identity", environment: "sandbox", access: "read-write" });
     const registry = makeRegistry([connector]);
     const key = await identityStorageKey({ namespace: "synthetic", id: "pastor" });
@@ -267,7 +259,10 @@ describe("ccb() consent URL", () => {
   });
 
   it("requests an explicit scope list exactly", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 599 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 599 })),
+    );
     const connector = connection({ scopes: ["read:individuals", "read:background_checks"] });
     const started = await connector.startAuth!(makeRegistry([connector]).contextFor("church", BASE));
     expect(new URL(started.authorizationUrl!).searchParams.get("scope")).toBe(
@@ -285,7 +280,9 @@ describe("ccb() OAuth end to end", () => {
     expect(exchange.headers.get("accept")).toBe(CCB_MEDIA_TYPE);
     expect(exchange.headers.get("authorization")).toBe(BASIC);
 
-    fake.route(on("GET", "/me", () => json({ id: 7, name: "Ada Pastor", username: "ada", user_types: ["ADMIN"], images: {} })));
+    fake.route(
+      on("GET", "/me", () => json({ id: 7, name: "Ada Pastor", username: "ada", user_types: ["ADMIN"], images: {} })),
+    );
     expect(await call("get_me")).toEqual({ id: 7, name: "Ada Pastor", username: "ada", userTypes: ["ADMIN"] });
     const request = fake.requests.at(-1)!;
     expect(request.url.origin).toBe(SANDBOX_API);
@@ -300,16 +297,12 @@ describe("ccb() OAuth end to end", () => {
     // Two hours pass: the access token is dead, the refresh token is not.
     fake.expireAccess();
     expect(await call("get_me")).toMatchObject({ id: 7 });
-    const refreshes = () =>
-      fake.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token");
+    const refreshes = () => fake.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token");
     expect(refreshes().map((r) => r.params.get("refresh_token"))).toEqual(["refresh-1"]);
     expect(refreshes()[0]!.headers.get("accept")).toBe(CCB_MEDIA_TYPE);
     // CCB refuses a scope on refresh; the grant never sends one.
     expect(refreshes()[0]!.params.has("scope")).toBe(false);
-    expect(fake.requests.map((r) => r.headers.get("authorization"))).toEqual([
-      "Bearer access-1",
-      "Bearer access-2",
-    ]);
+    expect(fake.requests.map((r) => r.headers.get("authorization"))).toEqual(["Bearer access-1", "Bearer access-2"]);
     expect(fake.refresh.has("refresh-1")).toBe(false);
 
     // The next expiry redeems the rotated token, never the spent one.
@@ -354,7 +347,11 @@ describe("ccb() tool surface", () => {
   });
 
   it("puts the routing fact first in the guide and appends church instructions", () => {
-    const connector = connection({ environment: "sandbox", mode: "identity", instructions: "Small groups live under the Connect department." });
+    const connector = connection({
+      environment: "sandbox",
+      mode: "identity",
+      instructions: "Small groups live under the Connect department.",
+    });
     const content = guide(connector).content;
     const firstLine = content.split("\n").find((line) => line.trim() && !line.startsWith("#"));
     expect(firstLine).toContain("Sandbox church data, acting as each signed-in person");
@@ -383,19 +380,33 @@ describe("ccb() reads", () => {
 
   it("lists individuals with CCB's paging, projecting and reporting the next page", async () => {
     const { fake, call } = await connected();
-    fake.route(on("GET", "/individuals", () =>
-      json([PERSON], { "x-page": "2", "x-total-pages": "4", "x-total": "77", "x-next-page": "3" }),
-    ));
+    fake.route(
+      on("GET", "/individuals", () =>
+        json([PERSON], { "x-page": "2", "x-total-pages": "4", "x-total": "77", "x-next-page": "3" }),
+      ),
+    );
     const result = await call("list_individuals", { query: "hop", includeInactive: true, page: 2, perPage: 50 });
     expect(result).toEqual({
-      individuals: [{
-        id: 42, name: "Grace Hopper", firstName: "Grace", lastName: "Hopper", email: "grace@example.org",
-        phones: { mobile: "555-0100" }, familyId: 9, campusId: 1, active: true,
-      }],
+      individuals: [
+        {
+          id: 42,
+          name: "Grace Hopper",
+          firstName: "Grace",
+          lastName: "Hopper",
+          email: "grace@example.org",
+          phones: { mobile: "555-0100" },
+          familyId: 9,
+          campusId: 1,
+          active: true,
+        },
+      ],
       page: { hasMore: true, nextPage: 3, total: 77 },
     });
     expect(Object.fromEntries(fake.requests.at(-1)!.url.searchParams)).toEqual({
-      name: "hop", include_inactive: "true", page: "2", per_page: "50",
+      name: "hop",
+      include_inactive: "true",
+      page: "2",
+      per_page: "50",
     });
   });
 
@@ -432,29 +443,56 @@ describe("ccb() reads", () => {
     for (const secret of ["peanuts", "G-17", "envelope", "last_giving_date", "actions", "thumbnail"]) {
       expect(text).not.toContain(secret);
     }
-    expect(await call("get_individual", { individualId: 42, raw: true })).toMatchObject({ allergies: "peanuts", giving_number: "G-17" });
+    expect(await call("get_individual", { individualId: 42, raw: true })).toMatchObject({
+      allergies: "peanuts",
+      giving_number: "G-17",
+    });
   });
 
   it("addresses an event occurrence and drops prayer requests from attendance", async () => {
     const { fake, call } = await connected();
-    fake.route(on("GET", "/events/12/attendance/20260927", () =>
-      json({ event_id: 12, occurrence: "20260927", status: "MET", total_attendance: 14, visitors: 2, topic: "Romans 8", prayer_requests: "private", notes: "leader notes" }),
-    ));
+    fake.route(
+      on("GET", "/events/12/attendance/20260927", () =>
+        json({
+          event_id: 12,
+          occurrence: "20260927",
+          status: "MET",
+          total_attendance: 14,
+          visitors: 2,
+          topic: "Romans 8",
+          prayer_requests: "private",
+          notes: "leader notes",
+        }),
+      ),
+    );
     const summary = await call("get_event_attendance", { eventId: 12, occurrence: "2026-09-27" });
-    expect(summary).toEqual({ eventId: 12, occurrence: "20260927", status: "MET", totalAttendance: 14, visitors: 2, topic: "Romans 8" });
+    expect(summary).toEqual({
+      eventId: 12,
+      occurrence: "20260927",
+      status: "MET",
+      totalAttendance: 14,
+      visitors: 2,
+      topic: "Romans 8",
+    });
   });
 
   it("chooses the individual or family giving endpoint and refuses a range CCB would reject", async () => {
     const { fake, call } = await connected();
     fake.route(
-      on("GET", "/families/9/metrics/giving", () => json([{ family_id: 9, date: "2026-08-01", count: 3, members: [{ id: 42, count: 2, start: "2026-08-01" }] }])),
+      on("GET", "/families/9/metrics/giving", () =>
+        json([{ family_id: 9, date: "2026-08-01", count: 3, members: [{ id: 42, count: 2, start: "2026-08-01" }] }]),
+      ),
     );
     expect(await call("get_giving_metrics", { familyId: 9, start: "2026-01-01", end: "2026-09-30" })).toEqual({
       periods: [{ start: "2026-08-01", count: 3, members: [{ individualId: 42, count: 2 }] }],
     });
     const before = fake.requests.length;
-    expect(await failure(call("get_giving_metrics", { individualId: 42, familyId: 9 }))).toMatchObject({ code: "invalid_args" });
-    expect(await failure(call("get_giving_metrics", { individualId: 42, start: "2024-01-01", end: "2026-01-01" }))).toMatchObject({ code: "invalid_args" });
+    expect(await failure(call("get_giving_metrics", { individualId: 42, familyId: 9 }))).toMatchObject({
+      code: "invalid_args",
+    });
+    expect(
+      await failure(call("get_giving_metrics", { individualId: 42, start: "2024-01-01", end: "2026-01-01" })),
+    ).toMatchObject({ code: "invalid_args" });
     expect(fake.requests.length).toBe(before);
   });
 });
@@ -478,7 +516,9 @@ describe("ccb() typed failures (H11)", () => {
   });
 
   it("maps a 429 to rate_limited with CCB's stated wait", async () => {
-    expect(await failing(json({ error: "Rate limit exceeded", retry_after: 5 }, { "retry-after": "5" }, 429))).toMatchObject({
+    expect(
+      await failing(json({ error: "Rate limit exceeded", retry_after: 5 }, { "retry-after": "5" }, 429)),
+    ).toMatchObject({
       code: "rate_limited",
       retryable: true,
       retryAfterMs: 5000,
@@ -501,7 +541,10 @@ describe("ccb() typed failures (H11)", () => {
   });
 
   it("carries an upstream retry-after on a 5xx", async () => {
-    expect(await failing(json({}, { "retry-after": "9" }, 503))).toMatchObject({ code: "unavailable", retryAfterMs: 9000 });
+    expect(await failing(json({}, { "retry-after": "9" }, 503))).toMatchObject({
+      code: "unavailable",
+      retryAfterMs: 9000,
+    });
   });
 
   it("refuses a successful response that is not JSON", async () => {
@@ -522,7 +565,14 @@ describe("ccb() escape hatches (H14)", () => {
     });
     expect(fake.requests.at(-1)!.url.search).toBe("?per_page=50");
     const before = fake.requests.length;
-    for (const path of ["https://evil.example/steal", "/../../oauth/token", "/groups/../oauth/token", "/%6Fauth/token", "/oauth/token", "/individuals?x=1"]) {
+    for (const path of [
+      "https://evil.example/steal",
+      "/../../oauth/token",
+      "/groups/../oauth/token",
+      "/%6Fauth/token",
+      "/oauth/token",
+      "/individuals?x=1",
+    ]) {
       expect(await failure(call("ccb_api_get", { path })), path).toMatchObject({ code: "invalid_args" });
     }
     expect(fake.requests.length).toBe(before);
@@ -531,18 +581,26 @@ describe("ccb() escape hatches (H14)", () => {
 
   it("runs advanced searches as a read against one domain's results endpoint", async () => {
     const { fake, call } = await connected();
-    fake.route(on("POST", "/search/individuals/results", (request) => json([{ id: 1, echo: request.body }], { "x-next-page": "2" })));
+    fake.route(
+      on("POST", "/search/individuals/results", (request) =>
+        json([{ id: 1, echo: request.body }], { "x-next-page": "2" }),
+      ),
+    );
     const body = { configuration: { columns: ["name"] }, filters: { name: "Ada" } };
     const result = await call("ccb_api_search", { domain: "individuals", body, perPage: 100 });
     expect(result).toEqual({ result: [{ id: 1, echo: body }], page: { hasMore: true, nextPage: 2, total: null } });
     expect(fake.requests.at(-1)!.url.search).toBe("?page=1&per_page=100");
-    expect(await failure(call("ccb_api_search", { domain: "permission_individuals", body: {} }))).toMatchObject({ code: "invalid_args" });
+    expect(await failure(call("ccb_api_search", { domain: "permission_individuals", body: {} }))).toMatchObject({
+      code: "invalid_args",
+    });
   });
 
   it("sends a JSON mutation through the approval-gated hatch", async () => {
     const { fake, call } = await connected({ access: "read-write" });
     fake.route(on("POST", "/individuals/42/notes", (request) => json({ id: 3, note: (request.body as any).note })));
-    expect(await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } })).toEqual({
+    expect(
+      await call("ccb_api_mutate", { method: "POST", path: "/individuals/42/notes", body: { note: "Visited" } }),
+    ).toEqual({
       result: { id: 3, note: "Visited" },
     });
     expect(fake.requests.at(-1)!.headers.get("content-type")).toBe("application/json");
@@ -551,7 +609,12 @@ describe("ccb() escape hatches (H14)", () => {
 
 describe("ccb() call admission", () => {
   it("meters each endpoint separately with CCB's documented 60-call burst", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network touched"); }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network touched");
+      }),
+    );
     const connector = connection();
     const rule = connector.callAdmission!.rules[0]!;
     expect(rule.budget).toEqual({ kind: "rolling-window", maxCalls: 60, windowMs: 60_000 });

@@ -47,10 +47,7 @@ const TOOL_ADDRESS_RE = /^[a-z0-9_-]+\..{1,256}$/su;
  * decides whether that is a construction failure or a 403: a grant that
  * cannot be parsed must never fail open.
  */
-export function parseConnectorAccess(
-  value: unknown,
-  options: { allowReadOnly?: boolean } = {},
-): ConnectorAccess {
+export function parseConnectorAccess(value: unknown, options: { allowReadOnly?: boolean } = {}): ConnectorAccess {
   if (value === "all") return { connectorIds: "all" };
   if (!Array.isArray(value)) throw new Error("invalid connector permission");
   const whole = new Set<string>();
@@ -62,10 +59,17 @@ export function parseConnectorAccess(
       continue;
     }
     const isGuarded = typeof entry !== "string";
-    if (isGuarded && (!options.allowReadOnly || entry === null ||
-      typeof entry !== "object" || Array.isArray(entry) ||
-      !Object.hasOwn(entry, "tool") || !Object.hasOwn(entry, "requireReadOnly") ||
-      Object.keys(entry).length !== 2 || entry.requireReadOnly !== true)) {
+    if (
+      isGuarded &&
+      (!options.allowReadOnly ||
+        entry === null ||
+        typeof entry !== "object" ||
+        Array.isArray(entry) ||
+        !Object.hasOwn(entry, "tool") ||
+        !Object.hasOwn(entry, "requireReadOnly") ||
+        Object.keys(entry).length !== 2 ||
+        entry.requireReadOnly !== true)
+    ) {
       throw new Error("invalid connector permission");
     }
     const address = isGuarded ? entry.tool : entry;
@@ -109,14 +113,9 @@ export function parseConnectorAccess(
  * connector whose tool intersection is empty is gone too, so the pool can
  * only narrow what the identity resolver already allowed.
  */
-export function intersectAccess(
-  ceiling: ConnectorAccess,
-  pool: ConnectorAccess,
-): ConnectorAccess {
+export function intersectAccess(ceiling: ConnectorAccess, pool: ConnectorAccess): ConnectorAccess {
   if (pool.connectorIds === "all") return ceiling;
-  const allowedIds = ceiling.connectorIds === "all"
-    ? null
-    : new Set(ceiling.connectorIds);
+  const allowedIds = ceiling.connectorIds === "all" ? null : new Set(ceiling.connectorIds);
   const connectorIds: string[] = [];
   const toolAccess = new Map<string, ReadonlySet<string>>();
   const guardedToolAccess = new Map<string, ReadonlySet<string>>();
@@ -134,9 +133,7 @@ export function intersectAccess(
     const guarded = ceiling.guardedToolAccess?.get(id);
     if (guarded) {
       const allowed = toolAccess.get(id);
-      const retained = allowed
-        ? new Set([...guarded].filter((name) => allowed.has(name)))
-        : guarded;
+      const retained = allowed ? new Set([...guarded].filter((name) => allowed.has(name))) : guarded;
       if (retained.size > 0) guardedToolAccess.set(id, retained);
     }
     connectorIds.push(id);

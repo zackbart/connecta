@@ -9,10 +9,7 @@ import {
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
   storedCredentialShape,
 } from "../src/credential-rules.js";
-import type {
-  ConnectorContext,
-  ConnectorCredentialConfig,
-} from "../src/types.js";
+import type { ConnectorContext, ConnectorCredentialConfig } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import { seedGrant } from "./fixtures/oauth.js";
@@ -140,15 +137,10 @@ describe("storedCredentialShape", () => {
 
   for (const testCase of cases) {
     it(testCase.name, () => {
-      const result = storedCredentialShape(
-        testCase.declaration,
-        testCase.stored,
-      );
+      const result = storedCredentialShape(testCase.declaration, testCase.stored);
       expect(result.state).toBe(testCase.state);
       if (result.state === "mismatch") {
-        expect(result.message).toBe(
-          STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-        );
+        expect(result.message).toBe(STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR);
       }
       if (result.state === "valid") {
         expect(result.undeclared).toEqual(testCase.undeclared);
@@ -158,18 +150,8 @@ describe("storedCredentialShape", () => {
 
   it("names leftover fields once, and summarizes a long tail", () => {
     expect(describeUndeclaredCredentialFields(["email"])).toContain("(email)");
-    expect(describeUndeclaredCredentialFields(["email"])).toContain(
-      "drop it",
-    );
-    const many = describeUndeclaredCredentialFields([
-      "a",
-      "b",
-      "c",
-      "d",
-      "e",
-      "f",
-      "g",
-    ]);
+    expect(describeUndeclaredCredentialFields(["email"])).toContain("drop it");
+    const many = describeUndeclaredCredentialFields(["a", "b", "c", "d", "e", "f", "g"]);
     expect(many).toContain("(a, b, c, d, e, and 2 more)");
     expect(many).toContain("drop them");
   });
@@ -179,9 +161,9 @@ describe("CredentialVault", () => {
   it("INV-5: keeps connector credential access limited to stored own fields", async () => {
     const vault = new CredentialVault(memoryStorage(), KEY);
     await vault.set("service", "synthetic-secret", "operator");
-    const registry = makeRegistry([
-      connectorWith({ id: "service", credential: { label: "API token" } }),
-    ], { credentialVault: vault });
+    const registry = makeRegistry([connectorWith({ id: "service", credential: { label: "API token" } })], {
+      credentialVault: vault,
+    });
     const credential = required(registry.contextFor("service", OAUTH_BASE).credential);
     expect(await credential.get()).toBe("synthetic-secret");
     for (const field of ["constructor", "toString", "hasOwnProperty"]) {
@@ -205,11 +187,7 @@ describe("CredentialVault", () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);
 
-    const metadata = await vault.set(
-      "service",
-      "secret-token-1234",
-      "user_123",
-    );
+    const metadata = await vault.set("service", "secret-token-1234", "user_123");
 
     expect(metadata).toMatchObject({
       configured: true,
@@ -269,12 +247,8 @@ describe("CredentialVault", () => {
       apiEmail: "operator@example.com",
       apiKey: "global-key-5678",
     });
-    await expect(vault.get("cloudflare", "apiKey")).resolves.toBe(
-      "global-key-5678",
-    );
-    expect(await storage.get("conn:cloudflare:credential:v1")).not.toContain(
-      "operator@example.com",
-    );
+    await expect(vault.get("cloudflare", "apiKey")).resolves.toBe("global-key-5678");
+    expect(await storage.get("conn:cloudflare:credential:v1")).not.toContain("operator@example.com");
   });
 
   it("INV-5: binds ciphertext to its connector id", async () => {
@@ -284,23 +258,17 @@ describe("CredentialVault", () => {
     const raw = await storage.get("conn:one:credential:v1");
     await storage.set("conn:two:credential:v1", raw!);
 
-    await expect(vault.get("two")).rejects.toThrow(
-      "Stored credential could not be decrypted",
-    );
+    await expect(vault.get("two")).rejects.toThrow("Stored credential could not be decrypted");
   });
 
   it("cannot decrypt with a different key", async () => {
     const storage = memoryStorage();
-    await new CredentialVault(storage, KEY).set(
-      "service",
-      "top-secret",
-      "user_123",
-    );
+    await new CredentialVault(storage, KEY).set("service", "top-secret", "user_123");
     const otherKey = Buffer.alloc(32, 9).toString("base64");
 
-    await expect(
-      new CredentialVault(storage, otherKey).get("service"),
-    ).rejects.toThrow("Stored credential could not be decrypted");
+    await expect(new CredentialVault(storage, otherKey).get("service")).rejects.toThrow(
+      "Stored credential could not be decrypted",
+    );
   });
 
   it("deletes a credential", async () => {
@@ -322,10 +290,10 @@ describe("CredentialVault", () => {
     const vault = new CredentialVault(storage, KEY);
     const oauthConnector = (id: string, authScope?: "personal") =>
       connectorWith({ id, kind: "mcp", ...(authScope ? { authScope } : {}) });
-    const registry = makeRegistry(
-      [oauthConnector("notion", "personal"), oauthConnector("linear")],
-      { storage, credentialVault: vault },
-    );
+    const registry = makeRegistry([oauthConnector("notion", "personal"), oauthConnector("linear")], {
+      storage,
+      credentialVault: vault,
+    });
     const providerFor = (context: ConnectorContext, id: string) =>
       new KvOAuthProvider(
         id,
@@ -362,29 +330,26 @@ describe("CredentialVault", () => {
     expect(await linear.clientInformation()).toBeUndefined();
 
     await storage.set(`${scopes.principal("owner-a")}${grantKey}`, sealed);
-    const personal = providerFor(
-      registry.personalRegistry("owner-a").contextFor("notion", OAUTH_BASE),
-      "notion",
-    );
+    const personal = providerFor(registry.personalRegistry("owner-a").contextFor("notion", OAUTH_BASE), "notion");
     expect(await personal.tokens()).toBeUndefined();
     expect(await personal.clientInformation()).toBeUndefined();
   });
 
   it("rejects invalid keys, empty values, and oversized values", async () => {
-    expect(() => new CredentialVault(memoryStorage(), "not-base64")).toThrow(
-      "base64-encoded 32-byte key",
-    );
+    expect(() => new CredentialVault(memoryStorage(), "not-base64")).toThrow("base64-encoded 32-byte key");
     const vault = new CredentialVault(memoryStorage(), KEY);
     // .then(null, handler) attaches the rejection handler synchronously;
     // expect(...).rejects attaches a microtask later, which workerd (the
     // Workers test pool) reports as an unhandled rejection.
-    const empty = await vault
-      .set("service", "  ", "user_123")
-      .then(() => null, (e: unknown) => e as Error);
+    const empty = await vault.set("service", "  ", "user_123").then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
     expect(empty?.message).toContain("cannot be empty");
-    const oversized = await vault
-      .set("service", "x".repeat(16_385), "user_123")
-      .then(() => null, (e: unknown) => e as Error);
+    const oversized = await vault.set("service", "x".repeat(16_385), "user_123").then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
     expect(oversized?.message).toContain("cannot exceed");
   });
 });

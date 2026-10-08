@@ -36,10 +36,7 @@ export interface ConnectorCaller {
 
 const callers = new WeakMap<ConnectorContext, ConnectorCaller>();
 
-export function attachCaller(
-  ctx: ConnectorContext,
-  caller: ConnectorCaller | undefined,
-): ConnectorContext {
+export function attachCaller(ctx: ConnectorContext, caller: ConnectorCaller | undefined): ConnectorContext {
   if (caller) callers.set(ctx, caller);
   return ctx;
 }
@@ -47,4 +44,3 @@ export function attachCaller(
 export function callerOf(ctx: ConnectorContext): ConnectorCaller | undefined {
   return callers.get(ctx);
 }
-

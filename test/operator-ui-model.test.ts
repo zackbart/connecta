@@ -7,17 +7,8 @@ import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, ConnectorStatus, ToolDef } from "../src/types.js";
 import { uiProblemFor, uiToolSafety } from "../src/ui.js";
 import type { UiConnector, UiData, UiProblem } from "../src/operator-ui/model.js";
-import {
-  clientServerName,
-  clientSetupCommands,
-  poolEndpointUrl,
-} from "../src/operator-ui/setup-commands.js";
-import {
-  credentialTestNotice,
-  oauthDoneNotice,
-  problemCopy,
-  refusedNotice,
-} from "../src/operator-ui/view.js";
+import { clientServerName, clientSetupCommands, poolEndpointUrl } from "../src/operator-ui/setup-commands.js";
+import { credentialTestNotice, oauthDoneNotice, problemCopy, refusedNotice } from "../src/operator-ui/view.js";
 import { FIX_PROMPT_KINDS } from "../src/operator-ui/fix-prompts.js";
 import { activityHistory } from "../src/activity.js";
 import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js";
@@ -87,13 +78,13 @@ describe("tool safety classification", () => {
   it.each(cases)("agrees with the core predicate: %s", (_, annotations) => {
     const tool: ToolDef = { name: "t", ...(annotations ? { annotations } : {}) };
     tool.classification = classifyTool(tool);
-    expect(uiToolSafety(tool)).toBe(
-      isRead(tool) ? "runs_in_programs" : "needs_approval",
-    );
+    expect(uiToolSafety(tool)).toBe(isRead(tool) ? "runs_in_programs" : "needs_approval");
   });
 
   it("fails closed on anything short of an explicit, uncontradicted read-only hint", () => {
-    expect(uiToolSafety({ name: "t", classification: "read", annotations: { readOnlyHint: true } })).toBe("runs_in_programs");
+    expect(uiToolSafety({ name: "t", classification: "read", annotations: { readOnlyHint: true } })).toBe(
+      "runs_in_programs",
+    );
     for (const [, annotations] of cases.slice(1)) {
       expect(uiToolSafety({ name: "t", ...(annotations ? { annotations } : {}) })).toBe("needs_approval");
     }
@@ -127,9 +118,7 @@ describe("connector problem classification", () => {
     expect(uiProblemFor(oauth, "auth_required", clean)).toBe("oauth_required");
     expect(uiProblemFor(credential, "auth_required", clean)).toBe("credential_required");
     expect(uiProblemFor(plain, "auth_required", clean)).toBe("auth_required");
-    expect(uiProblemFor(credential, "auth_required", { ...clean, credentialDrift: true })).toBe(
-      "credential_mismatch",
-    );
+    expect(uiProblemFor(credential, "auth_required", { ...clean, credentialDrift: true })).toBe("credential_mismatch");
     expect(uiProblemFor(plain, "ok", { ...clean, catalogFailed: true })).toBe("catalog_failed");
   });
 
@@ -140,9 +129,7 @@ describe("connector problem classification", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
     });
-    const byId = Object.fromEntries(
-      (await uiData(connecta)).connectors.map((c): [string, UiConnector] => [c.id, c]),
-    );
+    const byId = Object.fromEntries((await uiData(connecta)).connectors.map((c): [string, UiConnector] => [c.id, c]));
     expect(byId.docs!.problem).toBeUndefined();
     expect(byId.flaky!.status).toBe("ok");
     expect(byId.flaky!.problem).toBe("catalog_failed");
@@ -257,10 +244,7 @@ describe("operator action notices", () => {
   const LEAK = `invalid_grant: token ${SECRET} was revoked`;
   const CONSENT = "https://auth.example/consent?state=test-state";
 
-  function oauthConnector(
-    id: string,
-    hooks: Partial<Pick<Connector, "startAuth" | "disconnectAuth">>,
-  ): Connector {
+  function oauthConnector(id: string, hooks: Partial<Pick<Connector, "startAuth" | "disconnectAuth">>): Connector {
     return {
       id,
       kind: "mcp",
@@ -317,7 +301,7 @@ describe("operator action notices", () => {
         // A plugin's state is checked against the closed set before it is
         // recorded, never copied.
         oauthConnector("oauthbadstate", {
-          startAuth: async () => ({ state: SECRET } as unknown as ConnectorStatus),
+          startAuth: async () => ({ state: SECRET }) as unknown as ConnectorStatus,
         }),
         // A successful start's message is informational, and is dropped.
         oauthConnector("oauthok", {
@@ -367,7 +351,11 @@ describe("operator action notices", () => {
       ["/ui/credentials/accepted/test", "POST", 200, { ok: true }],
     ];
     for (const [path, method, status, body] of answers) {
-      const res = await (path.startsWith("/ui/oauth/") && method === "POST" ? connectRequest : credentialRequest)(connecta, path, { method });
+      const res = await (path.startsWith("/ui/oauth/") && method === "POST" ? connectRequest : credentialRequest)(
+        connecta,
+        path,
+        { method },
+      );
       const text = await res.text();
       expect(res.status, `${method} ${path}`).toBe(status);
       expect(text, `${method} ${path}`).not.toContain(SECRET);
@@ -378,17 +366,18 @@ describe("operator action notices", () => {
     // The host records each failure as typed facts, one line per failure,
     // and none of the downstream's words.
     const records = logger.warn.mock.calls.map((call) => [String(call[0]), call[1]]);
-    expect(records).toEqual(expect.arrayContaining([
-      ["[connecta] OAuth start failed", { connector: "oauththrows", errorClass: "Error" }],
-      ["[connecta] OAuth disconnect failed", { connector: "oauththrows", errorClass: "Error" }],
-      ["[connecta] OAuth start failed", { connector: "oautherror", mode: "restart", state: "error" }],
-      ["[connecta] OAuth start failed", { connector: "oauthnourl", mode: "restart", state: "auth_required" }],
-      ["[connecta] OAuth start failed", { connector: "oauthbadstate", mode: "restart" }],
-      ["[connecta] credential test failed", { connector: "rejected" }],
-      ["[connecta] credential test threw", { connector: "thrown", errorClass: "Error" }],
-    ]));
-    const lines = (spy: ReturnType<typeof vi.fn>) =>
-      spy.mock.calls.map((call) => JSON.stringify(call));
+    expect(records).toEqual(
+      expect.arrayContaining([
+        ["[connecta] OAuth start failed", { connector: "oauththrows", errorClass: "Error" }],
+        ["[connecta] OAuth disconnect failed", { connector: "oauththrows", errorClass: "Error" }],
+        ["[connecta] OAuth start failed", { connector: "oautherror", mode: "restart", state: "error" }],
+        ["[connecta] OAuth start failed", { connector: "oauthnourl", mode: "restart", state: "auth_required" }],
+        ["[connecta] OAuth start failed", { connector: "oauthbadstate", mode: "restart" }],
+        ["[connecta] credential test failed", { connector: "rejected" }],
+        ["[connecta] credential test threw", { connector: "thrown", errorClass: "Error" }],
+      ]),
+    );
+    const lines = (spy: ReturnType<typeof vi.fn>) => spy.mock.calls.map((call) => JSON.stringify(call));
     const everything = Object.values(logger).flatMap(lines);
     expect(everything.some((line) => line.includes("consent pending"))).toBe(false);
     expect(everything.join("\n")).not.toContain(SECRET);
@@ -418,7 +407,9 @@ describe("operator action notices", () => {
       expect(JSON.stringify(notice)).not.toContain(SECRET);
       if (notice.fix) expect(FIX_PROMPT_KINDS).toContain(notice.fix.kind);
     }
-    expect(oauthDoneNotice("oauth_disconnect", { code: "oauth_revocation_failed" }).message).toContain("Disconnected locally");
+    expect(oauthDoneNotice("oauth_disconnect", { code: "oauth_revocation_failed" }).message).toContain(
+      "Disconnected locally",
+    );
     expect(credentialTestNotice("svc", hostile)).toMatchObject({
       tone: "error",
       fix: { kind: "credential_test_failed", connectorId: "svc" },
@@ -478,12 +469,8 @@ describe("client setup commands", () => {
   it("renders Claude Code, Codex, and JSON for one endpoint", () => {
     const commands = clientSetupCommands("acme-tools", "https://mcp.example.com/mcp");
     expect(commands.map((c) => c.id)).toEqual(["claude", "codex", "json"]);
-    expect(commands[0]!.text).toBe(
-      "claude mcp add --transport http acme-tools https://mcp.example.com/mcp",
-    );
-    expect(commands[1]!.text).toBe(
-      "codex mcp add acme-tools --url https://mcp.example.com/mcp",
-    );
+    expect(commands[0]!.text).toBe("claude mcp add --transport http acme-tools https://mcp.example.com/mcp");
+    expect(commands[1]!.text).toBe("codex mcp add acme-tools --url https://mcp.example.com/mcp");
     expect(JSON.parse(commands[2]!.text)).toEqual({
       mcpServers: { "acme-tools": { type: "http", url: "https://mcp.example.com/mcp" } },
     });
@@ -507,9 +494,7 @@ describe("client setup commands", () => {
 
   it("quotes a URL a shell would otherwise split, and carries no credential", () => {
     const [claude] = clientSetupCommands("acme", "http://localhost:8787/mcp?x=1&y=it's");
-    expect(claude!.text).toBe(
-      `claude mcp add --transport http acme 'http://localhost:8787/mcp?x=1&y=it'"'"'s'`,
-    );
+    expect(claude!.text).toBe(`claude mcp add --transport http acme 'http://localhost:8787/mcp?x=1&y=it'"'"'s'`);
     for (const command of clientSetupCommands("acme", "https://mcp.example.com/mcp")) {
       expect(command.text).not.toMatch(/authorization|bearer|token|header/i);
     }

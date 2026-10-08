@@ -29,25 +29,42 @@ import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 const args = flags(process.argv.slice(2));
 const runner = args.get("runner") ?? "codex";
 if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
-if ((runner === "codex" && args.has("max-budget-usd")) || args.has("mcp-output-tokens") || args.has("max-utilization")) {
-  throw new Error("Unsupported runner option; --max-budget-usd is Claude-only, and MCP output/utilization flags are retired");
+if (
+  (runner === "codex" && args.has("max-budget-usd")) ||
+  args.has("mcp-output-tokens") ||
+  args.has("max-utilization")
+) {
+  throw new Error(
+    "Unsupported runner option; --max-budget-usd is Claude-only, and MCP output/utilization flags are retired",
+  );
 }
 const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(",") : "gpt-6-luna"))
-  .split(",").map(model => model.trim()).filter(Boolean);
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
 const repeats = Number(args.get("repeats") ?? 1);
 const concurrency = Number(args.get("concurrency") ?? 1);
 const timeoutMs = Number(args.get("timeout-min") ?? 8) * 60_000;
 const effort = args.get("effort");
 if (runner === "claude" && effort) throw new Error("--effort is Codex-only");
 const maxBudgetUsd = args.has("max-budget-usd") ? Number(args.get("max-budget-usd")) : undefined;
-if (maxBudgetUsd !== undefined && (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0)) throw new Error("--max-budget-usd must be positive");
+if (maxBudgetUsd !== undefined && (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0))
+  throw new Error("--max-budget-usd must be positive");
 const skipFlags = new Set((args.get("include-skipped") ?? "").split(",").filter(Boolean));
-const eligible = ACTIVE_TASKS.filter(task => !task.skip || skipFlags.has(task.skip.flag));
-const skipped = ACTIVE_TASKS.filter(task => task.skip && !skipFlags.has(task.skip.flag)).map(task => ({ id: task.id, ...task.skip! }));
-const wanted = args.get("tasks")?.split(",").map(id => id.trim());
-const tasks = wanted ? eligible.filter(task => wanted.includes(task.id)) : eligible;
+const eligible = ACTIVE_TASKS.filter((task) => !task.skip || skipFlags.has(task.skip.flag));
+const skipped = ACTIVE_TASKS.filter((task) => task.skip && !skipFlags.has(task.skip.flag)).map((task) => ({
+  id: task.id,
+  ...task.skip!,
+}));
+const wanted = args
+  .get("tasks")
+  ?.split(",")
+  .map((id) => id.trim());
+const tasks = wanted ? eligible.filter((task) => wanted.includes(task.id)) : eligible;
 if (wanted && tasks.length !== wanted.length) {
-  throw new Error(`Unknown task in --tasks. Eligible tasks: ${eligible.map(task => task.id).join(", ")}. Skipped tasks need --include-skipped <flag>`);
+  throw new Error(
+    `Unknown task in --tasks. Eligible tasks: ${eligible.map((task) => task.id).join(", ")}. Skipped tasks need --include-skipped <flag>`,
+  );
 }
 if (!Number.isInteger(repeats) || repeats < 1) throw new Error("--repeats must be a positive integer");
 if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("--concurrency must be a positive integer");
@@ -58,11 +75,22 @@ const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `agent-${st
 const version = await (runner === "claude" ? claudeVersion() : codexVersion());
 if (version === "unavailable") throw new Error(`${runner} CLI is unavailable`);
 const file: AgentResultFile = {
-  kind: "connecta-eval/agent", version: 1, meta: runMeta(), [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
-  config: { runner, models, repeats, tasks: tasks.map(task => task.id),
-    concurrency, timeoutMs, ...(effort ? { effort } : {}) },
+  kind: "connecta-eval/agent",
+  version: 1,
+  meta: runMeta(),
+  [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
+  config: {
+    runner,
+    models,
+    repeats,
+    tasks: tasks.map((task) => task.id),
+    concurrency,
+    timeoutMs,
+    ...(effort ? { effort } : {}),
+  },
   tasks: tasks.map(({ id, title, measures, introducedIn }) => ({ id, title, measures, introducedIn })),
-  planned: PLANNED, skipped,
+  planned: PLANNED,
+  skipped,
   trials: [],
 };
 await mkdir(dirname(out), { recursive: true });
@@ -72,23 +100,30 @@ const save = async () => {
   await rename(temporary, out);
 };
 await save();
-console.error(`[eval] ${tasks.length} task(s) × ${models.length} model(s) × ${repeats} repeat(s), concurrency ${concurrency}, ${version}`);
+console.error(
+  `[eval] ${tasks.length} task(s) × ${models.length} model(s) × ${repeats} repeat(s), concurrency ${concurrency}, ${version}`,
+);
 const interrupted = new AbortController();
 process.once("SIGINT", () => interrupted.abort());
 process.once("SIGTERM", () => interrupted.abort());
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
-  runner, concurrency, timeoutMs, signal: interrupted.signal,
+  runner,
+  concurrency,
+  timeoutMs,
+  signal: interrupted.signal,
   ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
   ...(effort ? { effort } : {}),
   onTrial: async (trial, done, total) => {
     file.trials.push(trial);
     saving = saving.then(save);
     await saving;
-    const failed = trial.checks.filter(item => !item.pass && !item.advisory).map(item => item.id);
-    console.error(`[eval] ${done}/${total} ${trial.status.toUpperCase()} ${trial.task} ${trial.model} #${trial.repeat} ` +
-      `${(trial.metrics.wallMs / 1000).toFixed(0)}s${failed.length ? ` failed: ${failed.join(",")}` : ""}` +
-      `${trial.error ? ` error: ${trial.error}` : ""}`);
+    const failed = trial.checks.filter((item) => !item.pass && !item.advisory).map((item) => item.id);
+    console.error(
+      `[eval] ${done}/${total} ${trial.status.toUpperCase()} ${trial.task} ${trial.model} #${trial.repeat} ` +
+        `${(trial.metrics.wallMs / 1000).toFixed(0)}s${failed.length ? ` failed: ${failed.join(",")}` : ""}` +
+        `${trial.error ? ` error: ${trial.error}` : ""}`,
+    );
   },
 });
 if (stopped) file.stopped = stopped;
@@ -97,14 +132,15 @@ await save();
 console.error(`[eval] results: ${out}`);
 if (stopped) console.error(`[eval] stopped early: ${stopped}`);
 for (const cell of summarize(trials)) {
-  console.error(`[eval] ${cell.task.padEnd(28)} ${cell.model.padEnd(28)} ${cell.passed}/${cell.trials - cell.errored - cell.skipped} pass` +
-    `${cell.errored ? ` (${cell.errored} error)` : ""}${cell.skipped ? ` (${cell.skipped} N/A)` : ""}`);
+  console.error(
+    `[eval] ${cell.task.padEnd(28)} ${cell.model.padEnd(28)} ${cell.passed}/${cell.trials - cell.errored - cell.skipped} pass` +
+      `${cell.errored ? ` (${cell.errored} error)` : ""}${cell.skipped ? ` (${cell.skipped} N/A)` : ""}`,
+  );
 }
 const reportPath = args.get("report");
 if (reportPath) {
   const baselinePath = args.get("baseline");
-  const baseline = baselinePath
-    ? [JSON.parse(await readFile(resolve(baselinePath), "utf8")) as ResultFile] : [];
+  const baseline = baselinePath ? [JSON.parse(await readFile(resolve(baselinePath), "utf8")) as ResultFile] : [];
   await mkdir(dirname(resolve(reportPath)), { recursive: true });
   await writeFile(resolve(reportPath), renderReport({ current: [file], baseline }));
   console.error(`[eval] report: ${resolve(reportPath)}`);

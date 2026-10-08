@@ -9,7 +9,11 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 // Cheap structural guards that run on every invocation, whatever changed.
-export const GUARDS = ["test/purity.node.test.ts", "test/package-surface.node.test.ts", "test/deployment-shapes.node.test.ts"];
+export const GUARDS = [
+  "test/purity.node.test.ts",
+  "test/package-surface.node.test.ts",
+  "test/deployment-shapes.node.test.ts",
+];
 
 // Vitest reruns every suite when one of these is related. Leave them to `check`.
 const FULL_RUN = /(^|\/)(package\.json|(vitest|vite)\.config\.[^/]+)$/;
@@ -87,9 +91,15 @@ function run(name, command, args) {
   return new Promise((done) => {
     const child = spawn(command, args, { cwd: root, env: { ...process.env, FORCE_COLOR: "0" } });
     let output = "";
-    child.stdout.on("data", (chunk) => { output += chunk; });
-    child.stderr.on("data", (chunk) => { output += chunk; });
-    child.on("error", (error) => { output += `${error.message}\n`; });
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.on("error", (error) => {
+      output += `${error.message}\n`;
+    });
     child.on("close", (code) => {
       const seconds = ((performance.now() - started) / 1000).toFixed(1);
       done({ name, ok: code === 0, seconds, output });
@@ -125,13 +135,17 @@ async function main() {
     console.log(`${result.ok ? "ok  " : "FAIL"} ${result.name} ${result.seconds}s`);
     if (!result.ok) console.log(failureOutput(result.output).replace(/^/gm, "  "));
     else if (result.name.startsWith("vitest")) {
-      for (const line of result.output.split("\n").filter((line) => /^\s*(Test Files|Tests) /.test(line))) console.log(`  ${line.trim()}`);
+      for (const line of result.output.split("\n").filter((line) => /^\s*(Test Files|Tests) /.test(line)))
+        console.log(`  ${line.trim()}`);
     }
   }
-  if (deferred.length && !fullRun) console.log(`Not run here (Vitest would rerun every suite): ${deferred.join(", ")}. npm run check covers them.`);
+  if (deferred.length && !fullRun)
+    console.log(`Not run here (Vitest would rerun every suite): ${deferred.join(", ")}. npm run check covers them.`);
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   const failed = results.filter(({ ok }) => !ok).length;
-  console.log(`check:fast ${failed ? `failed (${failed} steps)` : "passed"} in ${seconds}s against ${base}. Partial: run npm run check before claiming done.`);
+  console.log(
+    `check:fast ${failed ? `failed (${failed} steps)` : "passed"} in ${seconds}s against ${base}. Partial: run npm run check before claiming done.`,
+  );
   if (failed) process.exitCode = 1;
 }
 

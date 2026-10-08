@@ -1,17 +1,10 @@
 import { operatorUi } from "../src/ui.js";
 import { recordToolActivity } from "../src/activity.js";
 import { Registry } from "../src/registry.js";
-import {
-  createConnecta as createRuntimeConnecta,
-  customExecutor,
-  type ConnectaConfig,
-} from "../src/index.js";
+import { createConnecta as createRuntimeConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { CredentialVault } from "../src/credentials.js";
-import type {
-  ActivityRequestContext,
-  ToolCallActivityEvent,
-} from "../src/activity.js";
+import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
 import { snapshotCatalog } from "../src/catalog-fingerprint.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -31,9 +24,7 @@ const stubExecutor: Executor = {
  * from every suite that imports it. A suite that wants to observe that
  * refusal must call the real `createConnecta` from `../src/index.js`.
  */
-export function createTestConnecta(
-  config: Omit<ConnectaConfig, "executor"> & { executor?: Executor },
-) {
+export function createTestConnecta(config: Omit<ConnectaConfig, "executor"> & { executor?: Executor }) {
   return createRuntimeConnecta({
     ui: operatorUi(),
     ...config,
@@ -58,7 +49,11 @@ export function activitySink(requestId = "test-request"): {
     events,
     activity: {
       recordTool: recordToolActivity,
-      sink: { record: (event) => { events.push(event); } },
+      sink: {
+        record: (event) => {
+          events.push(event);
+        },
+      },
       actor: { kind: "test" },
       requestId,
       serverInfo: { name: "connecta-test", version: "0" },
@@ -67,10 +62,7 @@ export function activitySink(requestId = "test-request"): {
   };
 }
 
-export function activityFor(
-  events: ToolCallActivityEvent[],
-  connectorId: string,
-): ToolCallActivityEvent | undefined {
+export function activityFor(events: ToolCallActivityEvent[], connectorId: string): ToolCallActivityEvent | undefined {
   return [...events].reverse().find((event) => event.connectorId === connectorId);
 }
 
@@ -89,20 +81,11 @@ export async function invokeTestCall(
   });
 }
 
-export async function seedCatalog(
-  storage: KVStorage,
-  id: string,
-  toolName: string,
-): Promise<void> {
+export async function seedCatalog(storage: KVStorage, id: string, toolName: string): Promise<void> {
   const now = Date.now();
-  const snapshot = await snapshotCatalog([
-    { name: toolName, annotations: { readOnlyHint: true } },
-  ]);
+  const snapshot = await snapshotCatalog([{ name: toolName, annotations: { readOnlyHint: true } }]);
   const serialized = new TextDecoder().decode(snapshot.serializedBytes);
-  await storage.set(
-    `catalog:${id}:chunk:${snapshot.fingerprint}:0`,
-    serialized,
-  );
+  await storage.set(`catalog:${id}:chunk:${snapshot.fingerprint}:0`, serialized);
   await storage.set(
     `catalog:${id}`,
     JSON.stringify({
@@ -124,10 +107,7 @@ export async function seedCatalog(
  * This keeps indexed fixture access honest under `noUncheckedIndexedAccess`:
  * an unexpectedly missing item fails the test instead of being asserted away.
  */
-export function required<T>(
-  value: T | undefined,
-  label = "test fixture value",
-): T {
+export function required<T>(value: T | undefined, label = "test fixture value"): T {
   if (value === undefined) {
     throw new Error(`Expected ${label} to be defined`);
   }
@@ -203,9 +183,7 @@ export const remoteConnector: Connector = {
   },
   async callTool(_name, args) {
     return {
-      content: [
-        { type: "text", text: `echo:${(args as { text: string }).text}` },
-      ],
+      content: [{ type: "text", text: `echo:${(args as { text: string }).text}` }],
     };
   },
 };
@@ -251,14 +229,25 @@ export const authConnector: Connector & { startAuthCalls: unknown[] } = {
 };
 
 /** Follow the same list-then-detail sequence as the browser for detailed assertions. */
-export async function fetchTestUiDetails(deployment: { fetch(request: Request, env?: unknown, ctx?: unknown): Promise<Response> }, request: Request, env?: unknown, ctx?: unknown): Promise<Response> {
+export async function fetchTestUiDetails(
+  deployment: { fetch(request: Request, env?: unknown, ctx?: unknown): Promise<Response> },
+  request: Request,
+  env?: unknown,
+  ctx?: unknown,
+): Promise<Response> {
   const response = await deployment.fetch(request, env, ctx);
   if (!response.ok) return response;
-  const data = await response.json() as import("../src/operator-ui/model.js").UiData;
-  data.connectors = await Promise.all(data.connectors.map(async connector => {
-    const detail = await deployment.fetch(new Request(new URL(`/ui/connectors/${connector.id}`, request.url), { headers: request.headers }), env, ctx);
-    if (!detail.ok) throw new Error(`detail request failed: ${detail.status}`);
-    return await detail.json() as import("../src/operator-ui/model.js").UiConnector;
-  }));
+  const data = (await response.json()) as import("../src/operator-ui/model.js").UiData;
+  data.connectors = await Promise.all(
+    data.connectors.map(async (connector) => {
+      const detail = await deployment.fetch(
+        new Request(new URL(`/ui/connectors/${connector.id}`, request.url), { headers: request.headers }),
+        env,
+        ctx,
+      );
+      if (!detail.ok) throw new Error(`detail request failed: ${detail.status}`);
+      return (await detail.json()) as import("../src/operator-ui/model.js").UiConnector;
+    }),
+  );
   return Response.json(data);
 }

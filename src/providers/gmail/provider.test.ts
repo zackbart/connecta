@@ -86,9 +86,10 @@ function guide(connector: Connector): ConnectorUsageGuide {
 const path = (index: number) => calls[index]!.url.pathname.replace("/gmail/v1/users/me", "");
 
 function b64url(value: string, charset: "utf-8" | "latin1" = "utf-8"): string {
-  const bytes = charset === "utf-8"
-    ? new TextEncoder().encode(value)
-    : Uint8Array.from(value, (character) => character.charCodeAt(0));
+  const bytes =
+    charset === "utf-8"
+      ? new TextEncoder().encode(value)
+      : Uint8Array.from(value, (character) => character.charCodeAt(0));
   let binary = "";
   for (let index = 0; index < bytes.length; index += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
@@ -103,7 +104,11 @@ function decodeRaw(raw: string): string {
 }
 
 /** Headers (unfolded) and the decoded text of every base64 part of a raw message. */
-function parseMime(raw: string): { headers: Record<string, string>; parts: { type: string; text: string }[]; source: string } {
+function parseMime(raw: string): {
+  headers: Record<string, string>;
+  parts: { type: string; text: string }[];
+  source: string;
+} {
   const source = decodeRaw(raw);
   const [head = "", ...rest] = source.split("\r\n\r\n");
   const headers: Record<string, string> = {};
@@ -131,9 +136,11 @@ function parseMime(raw: string): { headers: Record<string, string>; parts: { typ
 
 /** RFC 2047 B-words back to text, for asserting what a client will show. */
 function decodeWords(value: string): string {
-  return value.replace(/=\?UTF-8\?B\?([^?]+)\?=\s*/g, (_word, data: string) =>
-    new TextDecoder().decode(Uint8Array.from(atob(data), (character) => character.charCodeAt(0))),
-  ).trim();
+  return value
+    .replace(/=\?UTF-8\?B\?([^?]+)\?=\s*/g, (_word, data: string) =>
+      new TextDecoder().decode(Uint8Array.from(atob(data), (character) => character.charCodeAt(0))),
+    )
+    .trim();
 }
 
 const MESSAGE = {
@@ -251,8 +258,23 @@ describe("reading mail (H9, H10)", () => {
         body: {
           id: "t1",
           messages: [
-            { id: "m1", labelIds: ["INBOX"], internalDate: "1790000000000", payload: { headers: [{ name: "Subject", value: "Elders meeting" }, { name: "From", value: "Ann <ann@church.example>" }] } },
-            { id: "m2", labelIds: ["INBOX", "UNREAD"], internalDate: "1790000600000", payload: { headers: [{ name: "From", value: "Bo <bo@church.example>" }] } },
+            {
+              id: "m1",
+              labelIds: ["INBOX"],
+              internalDate: "1790000000000",
+              payload: {
+                headers: [
+                  { name: "Subject", value: "Elders meeting" },
+                  { name: "From", value: "Ann <ann@church.example>" },
+                ],
+              },
+            },
+            {
+              id: "m2",
+              labelIds: ["INBOX", "UNREAD"],
+              internalDate: "1790000600000",
+              payload: { headers: [{ name: "From", value: "Bo <bo@church.example>" }] },
+            },
           ],
         },
       };
@@ -301,9 +323,9 @@ describe("reading mail (H9, H10)", () => {
         call(connection(), "search_threads", { ...other, cursor: result.page.nextCursor }),
       ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("different call") });
     }
-    await expect(
-      call(connection(), "list_drafts", { limit: 5, cursor: result.page.nextCursor }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(connection(), "list_drafts", { limit: 5, cursor: result.page.nextCursor })).rejects.toMatchObject(
+      { code: "invalid_args" },
+    );
   });
 
   it("ends paging with one branchable signal", async () => {
@@ -336,9 +358,7 @@ describe("reading mail (H9, H10)", () => {
           body: "Can we move Tuesday’s meeting to 7pm?",
           bodyTruncated: false,
           bodyFormat: "text",
-          attachments: [
-            { filename: "agenda.pdf", mimeType: "application/pdf", size: 12345, attachmentId: "att-1" },
-          ],
+          attachments: [{ filename: "agenda.pdf", mimeType: "application/pdf", size: 12345, attachmentId: "att-1" }],
         },
       ],
       page: { hasMore: false, nextCursor: null },
@@ -349,9 +369,7 @@ describe("reading mail (H9, H10)", () => {
   it("caps a body with an explicit marker", async () => {
     route = () => ({ body: MESSAGE });
     const result = await call(connection(), "get_message", { messageId: "m2", maxBodyChars: 11 });
-    expect(result.body).toBe(
-      "Can we move\n[… 26 more characters truncated; raise maxBodyChars to read them]",
-    );
+    expect(result.body).toBe("Can we move\n[… 26 more characters truncated; raise maxBodyChars to read them]");
     expect(result.bodyTruncated).toBe(true);
   });
 
@@ -441,7 +459,12 @@ describe("reading mail (H9, H10)", () => {
     calls.length = 0;
     const draft = await call(connection(), "get_draft", { draftId: "d1" });
     expect(calls[0]!.url.searchParams.get("format")).toBe("full");
-    expect(draft).toMatchObject({ draftId: "d1", messageId: "m9", threadId: "t9", body: "Can we move Tuesday’s meeting to 7pm?" });
+    expect(draft).toMatchObject({
+      draftId: "d1",
+      messageId: "m9",
+      threadId: "t9",
+      body: "Can we move Tuesday’s meeting to 7pm?",
+    });
     expect(draft.id).toBeUndefined();
   });
 
@@ -479,9 +502,7 @@ describe("writing drafts", () => {
     expect(mime.headers["Bcc"]).toBe("elders@church.example");
     expect(mime.headers["MIME-Version"]).toBe("1.0");
     expect(mime.headers["From"]).toBeUndefined();
-    expect(mime.parts).toEqual([
-      { type: 'text/plain; charset="UTF-8"', text: "Bonjour à tous,\nÀ mardi." },
-    ]);
+    expect(mime.parts).toEqual([{ type: 'text/plain; charset="UTF-8"', text: "Bonjour à tous,\nÀ mardi." }]);
     expect(result).toEqual({ draftId: "d1", messageId: "m1", threadId: "t1", saved: true, sent: false });
   });
 
@@ -534,9 +555,9 @@ describe("writing drafts", () => {
     await expect(
       call(connection(), "create_draft", { to: ["ann@church.example\nBcc: spy@evil.example"], body: "x" }),
     ).rejects.toMatchObject({ code: "invalid_args" });
-    await expect(
-      call(connection(), "create_draft", { to: ["not an address"], body: "x" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(connection(), "create_draft", { to: ["not an address"], body: "x" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     await expect(call(connection(), "create_draft", { to: ["a@b.example"] })).rejects.toMatchObject({
       code: "invalid_args",
     });
@@ -627,7 +648,9 @@ describe("writing drafts", () => {
     ],
   ])("refuses, unchanged, a draft carrying %s it could not rebuild", async (_kind, parts, named) => {
     route = () => ({ body: existingDraft([{ name: "To", value: "ann@church.example" }], parts) });
-    const failure = await call(connection(), "update_draft", { draftId: "d1", body: "Revised." }).catch((error) => error);
+    const failure = await call(connection(), "update_draft", { draftId: "d1", body: "Revised." }).catch(
+      (error) => error,
+    );
     expect(failure).toMatchObject({ code: "invalid_args" });
     expect(failure.message).toContain(named);
     expect(failure.message).toContain("Nothing was changed");
@@ -643,10 +666,15 @@ describe("writing drafts", () => {
       body: { attachmentId: "a9", size: 10 },
     };
     for (let level = 0; level < 22; level += 1) {
-      deepest = { mimeType: "multipart/mixed", parts: [{ mimeType: "text/plain", body: { data: b64url("x") } }, deepest] };
+      deepest = {
+        mimeType: "multipart/mixed",
+        parts: [{ mimeType: "text/plain", body: { data: b64url("x") } }, deepest],
+      };
     }
     route = () => ({ body: existingDraft([{ name: "To", value: "ann@church.example" }], [deepest]) });
-    const failure = await call(connection(), "update_draft", { draftId: "d1", body: "Revised." }).catch((error) => error);
+    const failure = await call(connection(), "update_draft", { draftId: "d1", body: "Revised." }).catch(
+      (error) => error,
+    );
     expect(failure).toMatchObject({ code: "invalid_args" });
     expect(failure.message).toContain("nested more than 20 levels");
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
@@ -665,7 +693,8 @@ describe("writing drafts", () => {
                   { name: "Subject", value: "Plans" },
                   {
                     name: "Reply-To",
-                    value: 'Alice <alice@example.com>, "Bob, Jr." <bob@example.com> (desk), Team: carol@example.com, dan@example.com;',
+                    value:
+                      'Alice <alice@example.com>, "Bob, Jr." <bob@example.com> (desk), Team: carol@example.com, dan@example.com;',
                   },
                   { name: "From", value: "someone-else@example.com" },
                 ],
@@ -693,9 +722,10 @@ describe("writing drafts", () => {
     };
     route = (request) =>
       request.method === "GET" ? { body: replied } : { body: { id: "d2", message: { id: "m3", threadId: "t1" } } };
-    await expect(
-      call(connection(), "create_draft", { replyToMessageId: "m2", body: "Hi" }),
-    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("pass to explicitly") });
+    await expect(call(connection(), "create_draft", { replyToMessageId: "m2", body: "Hi" })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("pass to explicitly"),
+    });
     expect(calls.map((entry) => entry.method)).toEqual(["GET"]);
 
     calls.length = 0;
@@ -784,9 +814,7 @@ describe("a message's own body, apart from what it carries", () => {
     const result = await call(connection(), "get_message", { messageId: "m10" });
     expect(path(1)).toBe("/messages/m10/attachments/body-3");
     expect(result).toMatchObject({ body: "Logo above", bodyFormat: "html" });
-    expect(result.attachments).toEqual([
-      { filename: "", mimeType: "image/png", size: 2048, attachmentId: "img-1" },
-    ]);
+    expect(result.attachments).toEqual([{ filename: "", mimeType: "image/png", size: 2048, attachmentId: "img-1" }]);
   });
 
   it("says so, never returning a silent empty body, when a stored body is too large to read", async () => {
@@ -897,34 +925,38 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
   it.each([
     ["the default body cap", undefined],
     ["the largest explicit body cap", 100_000],
-  ])("pages a 40-message worst-case thread under %s, every page under the bridge", async (_cap, maxBodyChars) => {
-    // Sized to stay inside the connector's 16 MB response ceiling, which a
-    // thread this hostile would otherwise hit first.
-    const messages = Array.from({ length: 40 }, (_, index) =>
-      hugeMessage(`m${index}`, 12_000, { attachments: 10, headerChars: 2000, labelCount: 30, filenameChars: 300 }),
-    );
-    route = () => ({ body: { id: "t-huge", messages } });
-    const seen: string[] = [];
-    let cursor: string | undefined;
-    let pages = 0;
-    do {
-      const result = await call(connection(), "get_thread", {
-        threadId: "t-huge",
-        ...(maxBodyChars === undefined ? {} : { maxBodyChars }),
-        ...(cursor === undefined ? {} : { cursor }),
-      });
-      expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-      expect(result.messages.length).toBeGreaterThan(0);
-      expect(result.messageCount).toBe(40);
-      seen.push(...result.messages.map((message: { id: string }) => message.id));
-      cursor = result.page.nextCursor ?? undefined;
-      expect(result.page.hasMore).toBe(cursor !== undefined);
-      pages += 1;
-    } while (cursor !== undefined && pages < 200);
-    // Every message exactly once, in order, however many pages it took.
-    expect(seen).toEqual(messages.map((message) => message.id));
-    expect(pages).toBeGreaterThan(1);
-  }, 60_000);
+  ])(
+    "pages a 40-message worst-case thread under %s, every page under the bridge",
+    async (_cap, maxBodyChars) => {
+      // Sized to stay inside the connector's 16 MB response ceiling, which a
+      // thread this hostile would otherwise hit first.
+      const messages = Array.from({ length: 40 }, (_, index) =>
+        hugeMessage(`m${index}`, 12_000, { attachments: 10, headerChars: 2000, labelCount: 30, filenameChars: 300 }),
+      );
+      route = () => ({ body: { id: "t-huge", messages } });
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const result = await call(connection(), "get_thread", {
+          threadId: "t-huge",
+          ...(maxBodyChars === undefined ? {} : { maxBodyChars }),
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+        expect(result.messages.length).toBeGreaterThan(0);
+        expect(result.messageCount).toBe(40);
+        seen.push(...result.messages.map((message: { id: string }) => message.id));
+        cursor = result.page.nextCursor ?? undefined;
+        expect(result.page.hasMore).toBe(cursor !== undefined);
+        pages += 1;
+      } while (cursor !== undefined && pages < 200);
+      // Every message exactly once, in order, however many pages it took.
+      expect(seen).toEqual(messages.map((message) => message.id));
+      expect(pages).toBeGreaterThan(1);
+    },
+    60_000,
+  );
 
   it("caps one worst-case message, at the largest body cap, under the bridge and says where it cut", async () => {
     route = () => ({ body: hugeMessage("m1", 200_000) });
@@ -946,7 +978,11 @@ describe("every result is deliverable both ways it can be called", { timeout: 60
         : {
             body: {
               id: "m2",
-              payload: { mimeType: "text/plain", headers: headers(10_000), body: { size: 1_000_000, attachmentId: "big" } },
+              payload: {
+                mimeType: "text/plain",
+                headers: headers(10_000),
+                body: { size: 1_000_000, attachmentId: "big" },
+              },
             },
           };
     const result = await call(connection(), "get_message", { messageId: "m2", maxBodyChars: 100_000 });
@@ -1113,9 +1149,9 @@ describe("round-5 bounds: identifiers, wrappers, and cursors", () => {
     expect(first.page.hasMore).toBe(true);
     expect(size(first)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
     current = [{ id: "Label_new", name: "new", type: "user" }, ...labels];
-    await expect(
-      call(connection(), "list_labels", { cursor: first.page.nextCursor }),
-    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(call(connection(), "list_labels", { cursor: first.page.nextCursor })).rejects.toMatchObject({
+      code: "conflict",
+    });
   });
 });
 
@@ -1131,7 +1167,7 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
     const properties = schema?.properties ?? {};
     // An omission names a field of the object it sits on, by its public name.
     const omitted = Array.isArray((value as { omittedIds?: unknown }).omittedIds)
-      ? ((value as { omittedIds: string[] }).omittedIds)
+      ? (value as { omittedIds: string[] }).omittedIds
           .filter((name) => !(name in properties))
           .map((name) => `${path}.omittedIds:${name}`)
       : [];
@@ -1149,40 +1185,51 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
   }
 
   it.each([
-    ["get_message", { messageId: "m1" }, (body: string) => ({ id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } })],
+    [
+      "get_message",
+      { messageId: "m1" },
+      (body: string) => ({ id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } }),
+    ],
     [
       "get_draft",
       { draftId: "d1" },
-      (body: string) => ({ id: "d1", message: { id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } } }),
+      (body: string) => ({
+        id: "d1",
+        message: { id: "m1", payload: { mimeType: "text/plain", body: { data: b64url(body) } } },
+      }),
     ],
-  ] as const)("%s fits a body at the exact boundary, untruncated, and cuts one character past it", async (tool, args, reply) => {
-    // The largest plain body whose whole result fits, found by measuring the
-    // real result — the accounting the tool itself must get right.
-    const fetchWith = async (length: number) => {
-      // Three bytes a character, so the result budget binds before maxBodyChars.
-      route = () => ({ body: reply("界".repeat(length)) });
-      return await call(connection(), tool, { ...args, maxBodyChars: 100_000 });
-    };
-    let low = 50_000;
-    let high = 70_000;
-    while (low < high) {
-      const middle = Math.ceil((low + high) / 2);
-      const result = await fetchWith(middle);
-      if (result.bodyTruncated === false) low = middle;
-      else high = middle - 1;
-    }
-    const exact = await fetchWith(low);
-    expect(exact.bodyTruncated).toBe(false);
-    expect(exact.body.length).toBe(low);
-    expect(size(exact)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    // At the boundary the result is within a few bytes of the budget: the
-    // body was not given up to an estimate.
-    expect(RESULT_BUDGET_BYTES - size(exact)).toBeLessThan(8);
+  ] as const)(
+    "%s fits a body at the exact boundary, untruncated, and cuts one character past it",
+    async (tool, args, reply) => {
+      // The largest plain body whose whole result fits, found by measuring the
+      // real result — the accounting the tool itself must get right.
+      const fetchWith = async (length: number) => {
+        // Three bytes a character, so the result budget binds before maxBodyChars.
+        route = () => ({ body: reply("界".repeat(length)) });
+        return await call(connection(), tool, { ...args, maxBodyChars: 100_000 });
+      };
+      let low = 50_000;
+      let high = 70_000;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const result = await fetchWith(middle);
+        if (result.bodyTruncated === false) low = middle;
+        else high = middle - 1;
+      }
+      const exact = await fetchWith(low);
+      expect(exact.bodyTruncated).toBe(false);
+      expect(exact.body.length).toBe(low);
+      expect(size(exact)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+      // At the boundary the result is within a few bytes of the budget: the
+      // body was not given up to an estimate.
+      expect(RESULT_BUDGET_BYTES - size(exact)).toBeLessThan(8);
 
-    const past = await fetchWith(low + 1);
-    expect(past.bodyTruncated).toBe(true);
-    expect(size(past)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-  }, 60_000);
+      const past = await fetchWith(low + 1);
+      expect(past.bodyTruncated).toBe(true);
+      expect(size(past)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+    },
+    60_000,
+  );
 
   it("counts label ids it leaves out, and never cuts one", async () => {
     const labelIds = [...Array.from({ length: 21 }, (_, index) => `Label_${index}`), "L".repeat(500)];
@@ -1247,7 +1294,15 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
       const path = request.url.pathname;
       if (path.endsWith("/threads")) return { body: { threads: [{ id: "t1" }] } };
       if (path.endsWith("/drafts") && request.method === "GET") return { body: { drafts: [{ id: "d1" }] } };
-      if (path.endsWith("/labels")) return { body: { labels: [{ id: "INBOX", name: "INBOX", type: "system" }, { id: "X".repeat(500), name: "x" }] } };
+      if (path.endsWith("/labels"))
+        return {
+          body: {
+            labels: [
+              { id: "INBOX", name: "INBOX", type: "system" },
+              { id: "X".repeat(500), name: "x" },
+            ],
+          },
+        };
       if (path.includes("/drafts/")) return { body: { id: "D".repeat(500), message } };
       if (path.includes("/threads/")) return { body: { id: "t1", messages: [message] } };
       if (request.method === "POST") return { body: { id: "D".repeat(500), message: { id: "m9" } } };

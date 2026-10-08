@@ -6,11 +6,7 @@
 // to validate; handlers, schemas, and loggers pass through as `opaque()`.
 
 import { array, keys, optionsOf, strings, variants } from "../config-schema.js";
-import type {
-  ConnectorCredentialConfig,
-  ConnectorCredentialFieldConfig,
-  ConnectorUsageGuide,
-} from "../types.js";
+import type { ConnectorCredentialConfig, ConnectorCredentialFieldConfig, ConnectorUsageGuide } from "../types.js";
 export { CALL_ADMISSION, PROVIDER_COMMON } from "../provider.js";
 import type { RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import type { RemoteMcpAuth } from "./remote-mcp.js";
@@ -20,9 +16,7 @@ type AuthCase<T extends RemoteMcpAuth["type"]> = Extract<RemoteMcpAuth, { type: 
 export const CREDENTIAL = optionsOf<ConnectorCredentialConfig>()({
   ...keys("label", "description", "placeholder"),
   fields: array(
-    optionsOf<ConnectorCredentialFieldConfig>()(
-      keys("name", "label", "description", "placeholder", "inputType"),
-    ),
+    optionsOf<ConnectorCredentialFieldConfig>()(keys("name", "label", "description", "placeholder", "inputType")),
   ),
 });
 

@@ -1,11 +1,6 @@
 import type { OperatorUiContract } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
-import type {
-  CredentialManagementCapability,
-  UiConnector,
-  UiData,
-  UiProblem,
-} from "./model.js";
+import type { CredentialManagementCapability, UiConnector, UiData, UiProblem } from "./model.js";
 import type { FixPromptKind } from "./fix-prompts.js";
 
 /**
@@ -47,9 +42,7 @@ export const OPERATOR_PAGES: readonly OperatorPage[] = [
   "config",
 ];
 
-export const PAGE_META: Readonly<
-  Record<OperatorPage, { path: string; label: string }>
-> = {
+export const PAGE_META: Readonly<Record<OperatorPage, { path: string; label: string }>> = {
   overview: { path: "/", label: "Overview" },
   connector: { path: "/connectors", label: "Connector" },
   tools: { path: "/tools", label: "Tools" },
@@ -172,10 +165,8 @@ export type DownstreamAction = "oauth_disconnect" | "oauth_reconnect" | "credent
 export type RowAction = DownstreamAction | "credential_save" | "credential_remove";
 
 const REFUSED_COPY: Readonly<Record<DownstreamAction, string>> = {
-  oauth_disconnect:
-    "Disconnect didn't finish. If the service refused it, the deployment's log has its reply.",
-  oauth_reconnect:
-    "Authorization couldn't start. If the service refused it, the deployment's log has its reply.",
+  oauth_disconnect: "Disconnect didn't finish. If the service refused it, the deployment's log has its reply.",
+  oauth_reconnect: "Authorization couldn't start. If the service refused it, the deployment's log has its reply.",
   credential_test: "The credential test couldn't run.",
 };
 
@@ -189,7 +180,10 @@ export function oauthDoneNotice(
   opened = true,
 ): Notice {
   if (action === "oauth_disconnect") {
-    if (answer?.code === "oauth_revocation_failed") return info("Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.");
+    if (answer?.code === "oauth_revocation_failed")
+      return info(
+        "Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.",
+      );
     return info("Disconnected. Connect again whenever you are ready.");
   }
   if (answer?.state === "ok") return info("Connected.");
@@ -201,10 +195,7 @@ export function oauthDoneNotice(
 }
 
 /** A credential Test's result. `ok` is the only part of the answer it reads. */
-export function credentialTestNotice(
-  connectorId: string,
-  answer: { ok?: unknown } | null,
-): Notice {
+export function credentialTestNotice(connectorId: string, answer: { ok?: unknown } | null): Notice {
   return answer?.ok === true
     ? info("Credential is valid.")
     : failure(
@@ -220,15 +211,8 @@ export function credentialTestNotice(
  * action's one sentence. `problem` is whatever the response carried, so it is
  * checked, not trusted.
  */
-export function refusedNotice(
-  action: DownstreamAction,
-  connectorId: string,
-  problem?: unknown,
-): Notice {
-  if (
-    action === "credential_test" &&
-    (problem === "credential_required" || problem === "credential_mismatch")
-  ) {
+export function refusedNotice(action: DownstreamAction, connectorId: string, problem?: unknown): Notice {
+  if (action === "credential_test" && (problem === "credential_required" || problem === "credential_mismatch")) {
     return failure(PROBLEM_COPY[problem], { kind: problem, connectorId });
   }
   return failure(REFUSED_COPY[action], {
@@ -297,20 +281,14 @@ export function actionFailedNotice(
  */
 export type ConnectorLoadFailure = "session" | "network";
 
-export function connectorLoadFailureCopy(
-  failure: ConnectorLoadFailure,
-  productName: string,
-): string {
+export function connectorLoadFailureCopy(failure: ConnectorLoadFailure, productName: string): string {
   return failure === "session"
     ? "Your session wasn't accepted while loading this connector. Sign in again to see its status."
     : `Couldn't reach ${productName} to load this connector. Check your connection, then refresh it.`;
 }
 
 /** The signed-in page's answer when `/ui/data` could not be read. */
-export function loadFailureCopy(
-  failure: "server" | "network",
-  productName: string,
-): { title: string; body: string } {
+export function loadFailureCopy(failure: "server" | "network", productName: string): { title: string; body: string } {
   return {
     title: `Couldn't reach ${productName}`,
     body:
@@ -343,10 +321,7 @@ export interface PendingConfirm {
 }
 
 /** The confirm's question, naming the connector by its title. */
-export function confirmCopy(
-  action: PendingConfirm["action"],
-  name: string,
-): { question: string; confirm: string } {
+export function confirmCopy(action: PendingConfirm["action"], name: string): { question: string; confirm: string } {
   if (action === "oauth_disconnect") {
     return {
       question: `Disconnect ${name}? Its stored grant and any pending authorization are removed, and its tools stop working until it is connected again.`,
@@ -511,10 +486,7 @@ function identityScopedState() {
  * what makes the drop stick: work already in flight for the old identity
  * resolves into a state that no longer accepts it.
  */
-export function resetIdentity(
-  state: OperatorState,
-  gate: Notice | null = null,
-): OperatorState {
+export function resetIdentity(state: OperatorState, gate: Notice | null = null): OperatorState {
   return {
     ...state,
     generation: state.generation + 1,
@@ -532,10 +504,7 @@ export function resetIdentity(
  * Leaving a page closes what should not survive it: a one-time secret, a half
  * typed credential, and the notices that answered the page just left.
  */
-export function withPage(
-  state: OperatorState,
-  page: OperatorPage,
-): OperatorState {
+export function withPage(state: OperatorState, page: OperatorPage): OperatorState {
   return {
     ...state,
     page,
@@ -549,9 +518,7 @@ export function withPage(
   };
 }
 
-export function credentialUnavailableCopy(
-  capability?: CredentialManagementCapability,
-): string {
+export function credentialUnavailableCopy(capability?: CredentialManagementCapability): string {
   if (capability === "no_slots") {
     return "No connectors declare operator-managed credential slots. Connector credentials remain configuration-as-code until a slot is declared.";
   }
@@ -575,8 +542,6 @@ export function connectorStatusLabel(status: string, problem?: UiProblem): strin
   return "Unavailable";
 }
 
-
-
 /** The tone a status carries wherever it is rendered as a badge or a tile. */
 export type Tone = "ok" | "warn" | "danger" | "neutral";
 
@@ -599,20 +564,15 @@ export function connectorStatusTone(status: string): Tone {
 const PROBLEM_COPY: Readonly<Record<UiProblem, string>> = {
   connector_unavailable:
     "Unavailable: its status check or catalog load failed, or did not finish in time. The deployment's log has the downstream error.",
-  oauth_required:
-    "Needs OAuth authorization: no grant is stored, or the stored grant expired or was revoked.",
-  credential_required:
-    "Needs a credential: nothing usable is stored in its credential slot.",
-  auth_required:
-    "Needs authorization. Its secret lives in deployment configuration, not on this page.",
-  credential_mismatch:
-    "The stored credential does not match the fields this connector declares, so it cannot be used.",
-  catalog_failed:
-    "Connected, but its tool catalog could not be loaded, so none of its tools are served.",
+  oauth_required: "Needs OAuth authorization: no grant is stored, or the stored grant expired or was revoked.",
+  credential_required: "Needs a credential: nothing usable is stored in its credential slot.",
+  auth_required: "Needs authorization. Its secret lives in deployment configuration, not on this page.",
+  credential_mismatch: "The stored credential does not match the fields this connector declares, so it cannot be used.",
+  catalog_failed: "Connected, but its tool catalog could not be loaded, so none of its tools are served.",
 };
 
 export function problemCopy(problem: UiProblem | undefined): string | null {
-  return problem ? PROBLEM_COPY[problem] ?? null : null;
+  return problem ? (PROBLEM_COPY[problem] ?? null) : null;
 }
 
 /**
@@ -621,9 +581,7 @@ export function problemCopy(problem: UiProblem | undefined): string | null {
  * error. The two used to share the red box, so the row contradicted itself.
  */
 export function problemTone(problem: UiProblem): "warn" | "danger" {
-  return problem === "oauth_required" ||
-    problem === "credential_required" ||
-    problem === "auth_required"
+  return problem === "oauth_required" || problem === "credential_required" || problem === "auth_required"
     ? "warn"
     : "danger";
 }
@@ -685,15 +643,15 @@ export function driftState(drift?: CatalogDriftReport): DriftState {
 }
 
 /** Every category with its count, so a clean report still shows its zeros. */
-export function driftCounts(
-  drift?: CatalogDriftReport,
-): Array<{ key: string; label: string; count: number }> {
+export function driftCounts(drift?: CatalogDriftReport): Array<{ key: string; label: string; count: number }> {
   if (!drift) return [];
-  return DRIFT_CATEGORIES.filter(({ key }) => key !== "droppedTools" || drift.droppedTools !== undefined).map(({ key, label }) => ({
-    key,
-    label,
-    count: drift[key] || 0,
-  }));
+  return DRIFT_CATEGORIES.filter(({ key }) => key !== "droppedTools" || drift.droppedTools !== undefined).map(
+    ({ key, label }) => ({
+      key,
+      label,
+      count: drift[key] || 0,
+    }),
+  );
 }
 
 /** One line naming the state and when it was observed. Never what drifted. */
@@ -785,20 +743,21 @@ function activityMatches(event: UiActivityEvent, query: string): boolean {
     activityOutcomeBadge(event.outcome).label,
     activityDetail(event),
     actorKindLabel(event.actor?.kind),
-  ].some((value) => String(value ?? "").toLowerCase().includes(q));
+  ].some((value) =>
+    String(value ?? "")
+      .toLowerCase()
+      .includes(q),
+  );
 }
 
-export function filterActivity(
-  events: UiActivityEvent[],
-  query: string,
-): UiActivityEvent[] {
+export function filterActivity(events: UiActivityEvent[], query: string): UiActivityEvent[] {
   return events.filter((event) => activityMatches(event, query));
 }
 
 /** Counts only. What the deployment ran, never what it sent or received. */
 export function activitySummary(events: UiActivityEvent[]): string {
   if (events.length === 0) return "";
-  const calls = events.filter(event => event.kind !== "catalog_drift");
+  const calls = events.filter((event) => event.kind !== "catalog_drift");
   const changes = events.length - calls.length;
   const tools = new Set(calls.map((event) => event.address)).size;
   return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${tools} tool${
@@ -809,14 +768,7 @@ export function activitySummary(events: UiActivityEvent[]): string {
 // A pause and an approval are neither success nor failure: each gets its own
 // class, and the stylesheet paints neither as an error. Nothing has emitted
 // either since issue #672 removed program pauses, but older rows carry them.
-const ACTIVITY_OUTCOMES = [
-  "success",
-  "error",
-  "timeout",
-  "cancelled",
-  "paused",
-  "approved",
-];
+const ACTIVITY_OUTCOMES = ["success", "error", "timeout", "cancelled", "paused", "approved"];
 
 export function activityOutcomeClass(outcome: string): string {
   return ACTIVITY_OUTCOMES.includes(outcome) ? outcome : "error";
@@ -876,9 +828,7 @@ export function activityDetail(event: UiActivityEvent): string {
   if (event.approval === "tool") parts.push("approved for the rest of the run");
   if (event.approval === "call") parts.push("approved for this call");
   if (event.attempts > 1) parts.push(`${event.attempts} attempts`);
-  const reasons = [event.friction, event.errorCode]
-    .filter((code): code is string => Boolean(code))
-    .map(reasonLabel);
+  const reasons = [event.friction, event.errorCode].filter((code): code is string => Boolean(code)).map(reasonLabel);
   // The friction class and the code often say the same thing in two
   // vocabularies ("auth_required" twice); once is enough.
   for (const reason of new Set(reasons)) parts.push(reason);
@@ -904,12 +854,8 @@ export function credentialStateLabel(credential: {
   updatedAt?: string;
 }): string {
   if (!credential.configured) return "not configured";
-  const masked = credential.fields?.length
-    ? "configured"
-    : `configured · ••••${credential.lastFour ?? ""}`;
-  return credential.updatedAt
-    ? `${masked} · updated ${formatDate(credential.updatedAt)}`
-    : masked;
+  const masked = credential.fields?.length ? "configured" : `configured · ••••${credential.lastFour ?? ""}`;
+  return credential.updatedAt ? `${masked} · updated ${formatDate(credential.updatedAt)}` : masked;
 }
 
 /** Gate copy for each browser-auth shape, so the sign-in state is never a blank page. */

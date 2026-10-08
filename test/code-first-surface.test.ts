@@ -7,25 +7,18 @@ import { customExecutor, createConnecta } from "../src/index.js";
 import { CONNECTA_INSTRUCTIONS, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor } from "../src/types.js";
-import {
-  calcApi,
-  makeDeployment,
-  mcpRpc,
-  readJsonRpc,
-} from "./fixtures/http.js";
+import { calcApi, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
 const TOKEN = "surface-token";
 const BASE = "https://connecta.test";
-const REMOVED_TOOLS = [
-  "list_connectors",
-  "describe_tools",
-  "batch_call",
-  "resume_execution",
-];
+const REMOVED_TOOLS = ["list_connectors", "describe_tools", "batch_call", "resume_execution"];
 
-const stubExecutor: Executor = customExecutor({
-  execute: async () => ({ result: null }),
-}, { lifecycle: "self-managed" });
+const stubExecutor: Executor = customExecutor(
+  {
+    execute: async () => ({ result: null }),
+  },
+  { lifecycle: "self-managed" },
+);
 
 function connectors() {
   return [calcApi()];
@@ -49,11 +42,7 @@ describe("construction", () => {
     // The refusal has to say what to configure on either runtime, or the
     // operator's next move is a guess. Assert the load-bearing fragments
     // rather than the whole sentence, which is free to grow.
-    for (const fragment of [
-      "quickJsExecutor()",
-      "@zackbart/connecta/quickjs",
-      "DynamicWorkerExecutor",
-    ]) {
+    for (const fragment of ["quickJsExecutor()", "@zackbart/connecta/quickjs", "DynamicWorkerExecutor"]) {
       expect(construct).toThrow(fragment);
     }
   });
@@ -82,43 +71,34 @@ describe("construction", () => {
 });
 
 describe("the advertised surface", () => {
-  const SEVEN = [
-    "authorize_connector",
-    "call_destructive_tool",
-    "call_tool",
-    "execute_code",
-    "search_tools",
-    "skills",
-  ];
+  const SEVEN = ["authorize_connector", "call_destructive_tool", "call_tool", "execute_code", "search_tools", "skills"];
 
   it("advertises exactly six tools, whatever the storage", async () => {
     for (const storage of [memoryStorage()]) {
-      const body = await readJsonRpc(await mcpRpc(
-        makeDeployment({ ...deploymentConfig, storage }),
-        "tools/list",
-        {},
-        { token: TOKEN },
-      ));
+      const body = await readJsonRpc(
+        await mcpRpc(makeDeployment({ ...deploymentConfig, storage }), "tools/list", {}, { token: TOKEN }),
+      );
       const tools = body.result.tools as Array<{ name: string; description: string }>;
       expect(tools.map((tool) => tool.name).sort()).toEqual(SEVEN);
       const execute = tools.find((tool) => tool.name === "execute_code")?.description;
-      expect(execute).toContain(
-        "Read-only pool: programs read; writes use call_destructive_tool.",
-      );
+      expect(execute).toContain("Read-only pool: programs read; writes use call_destructive_tool.");
       expect(execute).toContain("call_destructive_tool");
     }
   });
 
   it("does not advertise direct-call field projection", async () => {
     const body = await readJsonRpc(
-      await mcpRpc(makeDeployment(deploymentConfig), "tools/list", {}, {
-        token: TOKEN,
-      }),
+      await mcpRpc(
+        makeDeployment(deploymentConfig),
+        "tools/list",
+        {},
+        {
+          token: TOKEN,
+        },
+      ),
     );
     for (const name of ["call_tool", "call_destructive_tool"]) {
-      const tool = body.result.tools.find(
-        (entry: { name: string }) => entry.name === name,
-      );
+      const tool = body.result.tools.find((entry: { name: string }) => entry.name === name);
       expect(tool.inputSchema.properties).not.toHaveProperty("fields");
     }
     expect(CONNECTA_INSTRUCTIONS).not.toContain("use fields");
@@ -127,34 +107,41 @@ describe("the advertised surface", () => {
 
   it("never advertises or teaches a removed top-level tool", async () => {
     const connecta = makeDeployment(deploymentConfig);
-    const listed = await readJsonRpc(
-      await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }),
+    const listed = await readJsonRpc(await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }));
+    const initialized = await readJsonRpc(
+      await mcpRpc(
+        connecta,
+        "initialize",
+        {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "surface-test", version: "0" },
+        },
+        { token: TOKEN },
+      ),
     );
-    const initialized = await readJsonRpc(await mcpRpc(connecta, "initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "surface-test", version: "0" },
-    }, { token: TOKEN }));
     // The skill is swept as it is *served*, not as it is imported: pinning the
     // served text to the constant first is what makes the sweep below evidence
     // about this deployment rather than about a string literal.
-    const skill = await readJsonRpc(await mcpRpc(connecta, "tools/call", {
-      name: "skills",
-      arguments: { name: "usage" },
-    }, { token: TOKEN }));
+    const skill = await readJsonRpc(
+      await mcpRpc(
+        connecta,
+        "tools/call",
+        {
+          name: "skills",
+          arguments: { name: "usage" },
+        },
+        { token: TOKEN },
+      ),
+    );
     const servedSkill = skill.result.content[0].text as string;
     expect(servedSkill).toBe(USAGE_SKILL);
-    expect(servedSkill).toContain(
-      'connector: "ci"',
-    );
+    expect(servedSkill).toContain('connector: "ci"');
     expect(servedSkill).toContain("No imports, require, filesystem, fetch, or timers");
 
     const advertised = [
       initialized.result.instructions,
-      ...listed.result.tools.map(
-        (tool: { name: string; description: string }) =>
-          `${tool.name} ${tool.description}`,
-      ),
+      ...listed.result.tools.map((tool: { name: string; description: string }) => `${tool.name} ${tool.description}`),
       servedSkill,
     ].join("\n");
     expect(initialized.result.instructions).toBe(CONNECTA_INSTRUCTIONS);
@@ -165,11 +152,18 @@ describe("the advertised surface", () => {
 
   it("keeps route guidance bounded without rendering instructions", async () => {
     const connecta = makeDeployment(deploymentConfig);
-    const initialized = await readJsonRpc(await mcpRpc(connecta, "initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "surface-test", version: "0" },
-    }, { token: TOKEN }));
+    const initialized = await readJsonRpc(
+      await mcpRpc(
+        connecta,
+        "initialize",
+        {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "surface-test", version: "0" },
+        },
+        { token: TOKEN },
+      ),
+    );
     const instructions = initialized.result.instructions as string;
     expect(instructions).toBe(CONNECTA_INSTRUCTIONS);
     expect(instructions).not.toContain("connecta.ui");
@@ -181,10 +175,17 @@ describe("the advertised surface", () => {
   it("rejects calls to every removed top-level tool", async () => {
     const connecta = makeDeployment(deploymentConfig);
     for (const removed of REMOVED_TOOLS) {
-      const body = await readJsonRpc(await mcpRpc(connecta, "tools/call", {
-        name: removed,
-        arguments: {},
-      }, { token: TOKEN }));
+      const body = await readJsonRpc(
+        await mcpRpc(
+          connecta,
+          "tools/call",
+          {
+            name: removed,
+            arguments: {},
+          },
+          { token: TOKEN },
+        ),
+      );
       // The MCP server owns this refusal: an unregistered name is a JSON-RPC
       // error, not a tool result. What matters is that it fails loudly and
       // names the tool that was called, rather than resolving to something

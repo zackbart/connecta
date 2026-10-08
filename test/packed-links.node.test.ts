@@ -4,18 +4,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { spawnChecker, tempFixture } from "./fixtures/node.js";
 
-const checker = fileURLToPath(
-  new URL("../scripts/check-doc-links.mjs", import.meta.url),
-);
+const checker = fileURLToPath(new URL("../scripts/check-doc-links.mjs", import.meta.url));
 /**
  * A checkout on disk plus the subset of it that `npm pack` would carry — the
  * two inputs the gate takes, kept separate on purpose: the defect it exists
  * for is a file that is present in the repository and absent from the tarball.
  */
-async function fixture(
-  files: Record<string, string>,
-  packed: string[],
-): Promise<string> {
+async function fixture(files: Record<string, string>, packed: string[]): Promise<string> {
   return tempFixture("connecta-packed-links-", {
     ...files,
     "packed-paths.txt": packed.join("\n"),
@@ -23,9 +18,7 @@ async function fixture(
 }
 
 function check(root: string) {
-  return spawnChecker(checker, [
-    "--packed", "--root", root, "--files", join(root, "packed-paths.txt"),
-  ]);
+  return spawnChecker(checker, ["--packed", "--root", root, "--files", join(root, "packed-paths.txt")]);
 }
 
 describe("packed Markdown link gate", () => {
@@ -59,12 +52,7 @@ describe("packed Markdown link gate", () => {
   it("rejects a relative link to a path the tarball does not carry", async () => {
     const root = await fixture(
       {
-        "documentation/guide.md": [
-          "# Guide",
-          "",
-          "Measured in [`eval/run.md`](../eval/run.md).",
-          "",
-        ].join("\n"),
+        "documentation/guide.md": ["# Guide", "", "Measured in [`eval/run.md`](../eval/run.md).", ""].join("\n"),
         "eval/run.md": "# Evidence\n",
       },
       ["documentation/guide.md"],
@@ -90,16 +78,13 @@ describe("packed Markdown link gate", () => {
     const result = check(root);
 
     expect(result.status).toBe(1);
-    expect(result.output).toContain(
-      "cite it as https://github.com/zackbart/connecta/blob/main/scripts/drift",
-    );
+    expect(result.output).toContain("cite it as https://github.com/zackbart/connecta/blob/main/scripts/drift");
   });
 
   it("sees reference-style definitions, not only inline links", async () => {
     const root = await fixture(
       {
-        "README.md": ["Read the [notes].", "", "[notes]: ./test/notes.md", ""]
-          .join("\n"),
+        "README.md": ["Read the [notes].", "", "[notes]: ./test/notes.md", ""].join("\n"),
         "test/notes.md": "# Notes\n",
       },
       ["README.md"],
@@ -122,17 +107,12 @@ describe("packed Markdown link gate", () => {
 
     expect(check(root)).toMatchObject({
       status: 1,
-      output: expect.stringContaining(
-        "resolves to documentation/stub.md, which the tarball does not carry",
-      ),
+      output: expect.stringContaining("resolves to documentation/stub.md, which the tarball does not carry"),
     });
   });
 
   it("exempts the changelog, which quotes paths as a record", async () => {
-    const root = await fixture(
-      { "CHANGELOG.md": "Removed [`eval/old.md`](./eval/old.md).\n" },
-      ["CHANGELOG.md"],
-    );
+    const root = await fixture({ "CHANGELOG.md": "Removed [`eval/old.md`](./eval/old.md).\n" }, ["CHANGELOG.md"]);
 
     expect(check(root)).toMatchObject({
       status: 0,

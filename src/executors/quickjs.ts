@@ -16,23 +16,13 @@ import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Deferred, Duration, Effect, Exit, Schedule, Scope } from "effect";
-import {
-  AdmissionController,
-  ExecutorAdmissionError,
-  ExecutorExecutionError,
-} from "../executor-admission.js";
+import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } from "../executor-admission.js";
 import { msg } from "../errors.js";
 import { InvocationFailure } from "../invocation.js";
 import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
-import type {
-  AdmittingExecutor,
-  AdmissionSnapshot,
-  ExecuteResult,
-  ExecutorLease,
-  ExecutorProvider,
-} from "../types.js";
+import type { AdmittingExecutor, AdmissionSnapshot, ExecuteResult, ExecutorLease, ExecutorProvider } from "../types.js";
 import {
   hostCallLabel,
   MAX_QUICKJS_IPC_BYTES,
@@ -130,10 +120,7 @@ const MAX_ERROR_CHARS = 4_000;
 
 // Respawn backoff after consecutive crashes: 100 ms, doubling, capped at 5 s.
 // A value, not a running effect: stepping it happens inside a request's fiber.
-const CRASH_BACKOFF = Schedule.min([
-  Schedule.exponential(Duration.millis(100)),
-  Schedule.spaced(Duration.seconds(5)),
-]);
+const CRASH_BACKOFF = Schedule.min([Schedule.exponential(Duration.millis(100)), Schedule.spaced(Duration.seconds(5))]);
 
 const crashBackoff: Effect.Effect<CrashStep> = Effect.map(
   Schedule.toStep(CRASH_BACKOFF),
@@ -148,9 +135,7 @@ const crashBackoff: Effect.Effect<CrashStep> = Effect.map(
 function retainStderrTail(current: Buffer, chunk: Buffer | string): Buffer {
   const incoming = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
   if (incoming.length >= MAX_CHILD_STDERR_BYTES) {
-    return Buffer.from(
-      incoming.subarray(incoming.length - MAX_CHILD_STDERR_BYTES),
-    );
+    return Buffer.from(incoming.subarray(incoming.length - MAX_CHILD_STDERR_BYTES));
   }
   const combined = Buffer.concat([current, incoming]);
   if (combined.length <= MAX_CHILD_STDERR_BYTES) return combined;
@@ -160,38 +145,21 @@ function retainStderrTail(current: Buffer, chunk: Buffer | string): Buffer {
 function childExitError(message: string, stderrTail: Buffer): Error {
   if (stderrTail.length === 0) return new Error(message);
   return new Error(
-    `${message}\nRecent child stderr (last ${stderrTail.length} bytes):\n` +
-      stderrTail.toString("utf8"),
+    `${message}\nRecent child stderr (last ${stderrTail.length} bytes):\n` + stderrTail.toString("utf8"),
   );
 }
 
-function positiveWhole(
-  value: number | undefined,
-  fallback: number,
-  name: string,
-): number {
+function positiveWhole(value: number | undefined, fallback: number, name: string): number {
   const resolved = value ?? fallback;
-  if (
-    !Number.isFinite(resolved) ||
-    !Number.isInteger(resolved) ||
-    resolved < 1
-  ) {
+  if (!Number.isFinite(resolved) || !Number.isInteger(resolved) || resolved < 1) {
     throw new TypeError(`${name} must be a positive whole number.`);
   }
   return resolved;
 }
 
-function nonNegativeWhole(
-  value: number | undefined,
-  fallback: number,
-  name: string,
-): number {
+function nonNegativeWhole(value: number | undefined, fallback: number, name: string): number {
   const resolved = value ?? fallback;
-  if (
-    !Number.isFinite(resolved) ||
-    !Number.isInteger(resolved) ||
-    resolved < 0
-  ) {
+  if (!Number.isFinite(resolved) || !Number.isInteger(resolved) || resolved < 0) {
     throw new TypeError(`${name} must be a non-negative whole number.`);
   }
   return resolved;
@@ -210,10 +178,7 @@ function cancelled(message: string): ExecutorAdmissionError {
 }
 
 function shuttingDown(): ExecutorAdmissionError {
-  return new ExecutorAdmissionError(
-    "executor_closed",
-    "Executor is shutting down.",
-  );
+  return new ExecutorAdmissionError("executor_closed", "Executor is shutting down.");
 }
 
 /**
@@ -228,10 +193,7 @@ function unlessCancelled<A, E>(
 ): Effect.Effect<A, E | ExecutorAdmissionError> {
   if (!signal) return effect;
   if (signal.aborted) return Effect.fail(cancelled(message));
-  return Effect.raceAllFirst([
-    effect,
-    fromSignal(signal).pipe(Effect.mapError(() => cancelled(message))),
-  ]);
+  return Effect.raceAllFirst([effect, fromSignal(signal).pipe(Effect.mapError(() => cancelled(message)))]);
 }
 
 /**
@@ -270,47 +232,19 @@ class QuickJsChildPool implements AdmittingExecutor {
   private nextJobId = 1;
 
   constructor(options: QuickJsExecutorOptions) {
-    const concurrency = positiveWhole(
-      options.concurrency,
-      DEFAULT_CONCURRENCY,
-      "concurrency",
-    );
-    const queueTimeoutMs = positiveWhole(
-      options.queueTimeoutMs,
-      DEFAULT_QUEUE_TIMEOUT_MS,
-      "queueTimeoutMs",
-    );
+    const concurrency = positiveWhole(options.concurrency, DEFAULT_CONCURRENCY, "concurrency");
+    const queueTimeoutMs = positiveWhole(options.queueTimeoutMs, DEFAULT_QUEUE_TIMEOUT_MS, "queueTimeoutMs");
     this.admission = new AdmissionController({
       concurrency,
-      maxQueueSize: nonNegativeWhole(
-        options.maxQueueSize,
-        DEFAULT_MAX_QUEUE_SIZE,
-        "maxQueueSize",
-      ),
+      maxQueueSize: nonNegativeWhole(options.maxQueueSize, DEFAULT_MAX_QUEUE_SIZE, "maxQueueSize"),
       queueTimeoutMs,
       retryAfterMs: queueTimeoutMs,
     });
     this.runtimeOptions = {
-      timeoutMs: positiveWhole(
-        options.timeoutMs,
-        DEFAULT_TIMEOUT_MS,
-        "timeoutMs",
-      ),
-      cpuTimeMs: positiveWhole(
-        options.cpuTimeMs,
-        DEFAULT_CPU_TIME_MS,
-        "cpuTimeMs",
-      ),
-      memoryLimitBytes: positiveWhole(
-        options.memoryLimitBytes,
-        DEFAULT_MEMORY_LIMIT_BYTES,
-        "memoryLimitBytes",
-      ),
-      maxStackSizeBytes: positiveWhole(
-        options.maxStackSizeBytes,
-        DEFAULT_STACK_LIMIT_BYTES,
-        "maxStackSizeBytes",
-      ),
+      timeoutMs: positiveWhole(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs"),
+      cpuTimeMs: positiveWhole(options.cpuTimeMs, DEFAULT_CPU_TIME_MS, "cpuTimeMs"),
+      memoryLimitBytes: positiveWhole(options.memoryLimitBytes, DEFAULT_MEMORY_LIMIT_BYTES, "memoryLimitBytes"),
+      maxStackSizeBytes: positiveWhole(options.maxStackSizeBytes, DEFAULT_STACK_LIMIT_BYTES, "maxStackSizeBytes"),
     };
     this.slots = Array.from({ length: concurrency }, () => ({
       crashes: [],
@@ -342,10 +276,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         // A lease let go mid-run takes its child with it: the program is
         // abandoned, and the next lease must not inherit its leftovers.
         if (slot.active) {
-          this.rejectActive(
-            slot,
-            new Error("Executor lease was released during execution."),
-          );
+          this.rejectActive(slot, new Error("Executor lease was released during execution."));
           this.recycle(slot);
         }
         this.available.push(slot);
@@ -358,10 +289,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     return this.admission.snapshot();
   }
 
-  async execute(
-    code: string,
-    providers: ExecutorProvider[],
-  ): Promise<ExecuteResult> {
+  async execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult> {
     const lease = await this.acquire();
     try {
       return await lease.execute(code, providers);
@@ -390,21 +318,15 @@ class QuickJsChildPool implements AdmittingExecutor {
   ): Effect.Effect<ExecuteResult, Error> {
     return Effect.gen({ self: this }, function* () {
       if (signal?.aborted) {
-        return yield* Effect.fail(
-          cancelled("Execution was cancelled before it started."),
-        );
+        return yield* Effect.fail(cancelled("Execution was cancelled before it started."));
       }
       yield* this.ensureChild(slot, signal);
       if (signal?.aborted) {
-        return yield* Effect.fail(
-          cancelled("Execution was cancelled before it started."),
-        );
+        return yield* Effect.fail(cancelled("Execution was cancelled before it started."));
       }
       const child = slot.child?.process;
       if (!child?.connected) {
-        return yield* Effect.fail(
-          new Error("QuickJS child IPC channel is unavailable."),
-        );
+        return yield* Effect.fail(new Error("QuickJS child IPC channel is unavailable."));
       }
 
       const id = this.nextJobId++;
@@ -446,10 +368,7 @@ class QuickJsChildPool implements AdmittingExecutor {
           this.recycle(slot);
         });
       } catch (err) {
-        this.rejectActive(
-          slot,
-          err instanceof Error ? err : new Error(String(err)),
-        );
+        this.rejectActive(slot, err instanceof Error ? err : new Error(String(err)));
         this.recycle(slot);
       }
 
@@ -465,27 +384,25 @@ class QuickJsChildPool implements AdmittingExecutor {
       const started = Date.now();
       const contenders: Array<Effect.Effect<ExecuteResult, Error>> = [
         Deferred.await(active.outcome),
-        Effect.sleep(
-          Duration.millis(this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS),
-        ).pipe(
-          Effect.andThen(Effect.suspend(() => {
-            const elapsedMs = Date.now() - started;
-            const deadlineMs = this.runtimeOptions.timeoutMs;
-            return endWith(new InvocationFailure({
-              code: "timeout",
-              message: `Operation "execute_code" timed out during sandbox termination after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`,
-              retryable: false,
-              details: { operation: "execute_code", stage: "sandbox termination", elapsedMs, deadlineMs },
-            }));
-          })),
+        Effect.sleep(Duration.millis(this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS)).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const elapsedMs = Date.now() - started;
+              const deadlineMs = this.runtimeOptions.timeoutMs;
+              return endWith(
+                new InvocationFailure({
+                  code: "timeout",
+                  message: `Operation "execute_code" timed out during sandbox termination after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`,
+                  retryable: false,
+                  details: { operation: "execute_code", stage: "sandbox termination", elapsedMs, deadlineMs },
+                }),
+              );
+            }),
+          ),
         ),
       ];
       if (signal) {
-        contenders.push(
-          fromSignal(signal).pipe(
-            Effect.catch(() => endWith(cancelled("Execution was cancelled."))),
-          ),
-        );
+        contenders.push(fromSignal(signal).pipe(Effect.catch(() => endWith(cancelled("Execution was cancelled.")))));
       }
       return yield* Effect.raceAllFirst(contenders);
     });
@@ -494,10 +411,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   // A ready child on the slot: the warm one, or a new one once any crash
   // backoff has passed. Waiting stops at the caller's abort, but a child that
   // is still starting keeps starting for whoever leases the slot next.
-  private ensureChild(
-    slot: ChildSlot,
-    signal: AbortSignal | undefined,
-  ): Effect.Effect<void, Error> {
+  private ensureChild(slot: ChildSlot, signal: AbortSignal | undefined): Effect.Effect<void, Error> {
     return Effect.gen({ self: this }, function* () {
       if (this.closed) return yield* Effect.fail(shuttingDown());
       const current = slot.child;
@@ -526,10 +440,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     });
   }
 
-  private awaitReady(
-    child: Child,
-    signal: AbortSignal | undefined,
-  ): Effect.Effect<void, Error> {
+  private awaitReady(child: Child, signal: AbortSignal | undefined): Effect.Effect<void, Error> {
     if (Deferred.isDoneUnsafe(child.ready)) return Deferred.await(child.ready);
     return unlessCancelled(
       Deferred.await(child.ready),
@@ -546,10 +457,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   private spawn(slot: ChildSlot): Effect.Effect<Child, Error> {
     return Effect.suspend(() => {
       const sourceMode = import.meta.url.endsWith(".ts");
-      const childUrl = new URL(
-        sourceMode ? "./quickjs-child.ts" : "./quickjs-child.js",
-        import.meta.url,
-      );
+      const childUrl = new URL(sourceMode ? "./quickjs-child.ts" : "./quickjs-child.js", import.meta.url);
       const childPath = fileURLToPath(childUrl);
       if (!existsSync(childPath)) {
         return Effect.fail(
@@ -564,9 +472,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       const scope = Scope.makeUnsafe();
       return Effect.acquireRelease(
         Effect.sync(() => this.forkChild(slot, scope, childPath, sourceMode)).pipe(
-          Effect.tap((child) =>
-            Effect.forkIn(this.startupWatchdog(slot, child), scope),
-          ),
+          Effect.tap((child) => Effect.forkIn(this.startupWatchdog(slot, child), scope)),
         ),
         terminate,
       ).pipe(Scope.provide(scope));
@@ -585,9 +491,7 @@ class QuickJsChildPool implements AdmittingExecutor {
             this.failChildStartup(
               slot,
               child,
-              new Error(
-                `QuickJS child did not become ready within ${CHILD_STARTUP_TIMEOUT_MS}ms.`,
-              ),
+              new Error(`QuickJS child did not become ready within ${CHILD_STARTUP_TIMEOUT_MS}ms.`),
             ),
           ),
         ),
@@ -595,12 +499,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     );
   }
 
-  private forkChild(
-    slot: ChildSlot,
-    scope: Scope.Closeable,
-    childPath: string,
-    sourceMode: boolean,
-  ): Child {
+  private forkChild(slot: ChildSlot, scope: Scope.Closeable, childPath: string, sourceMode: boolean): Child {
     const subprocess = fork(childPath, [], {
       // The child needs only its entry path, exec arguments, and IPC channel.
       // Do not copy deployment credentials or Node startup configuration into
@@ -622,9 +521,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     subprocess.stderr?.on("data", (chunk: Buffer | string) => {
       stderrTail = retainStderrTail(stderrTail, chunk);
     });
-    (
-      subprocess.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null
-    )?.unref?.();
+    (subprocess.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null)?.unref?.();
     slot.child = child;
     subprocess.on("message", (message: ChildToParentMessage) => {
       void this.onMessage(slot, child, message);
@@ -647,9 +544,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       Deferred.doneUnsafe(child.exited, Exit.void);
       const expected = child.retired;
       const current = slot.child === child;
-      const exitDescription = `${
-        exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`
-      }`;
+      const exitDescription = `${exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`}`;
       // Charge the crash and detach the child before failing its readiness:
       // a settled Deferred resumes its waiter synchronously, and a successor
       // must never find a dead child on the slot or a crash not yet counted.
@@ -657,30 +552,17 @@ class QuickJsChildPool implements AdmittingExecutor {
       this.retire(
         slot,
         child,
-        childExitError(
-          `QuickJS child exited before becoming ready (${exitDescription}).`,
-          stderrTail,
-        ),
+        childExitError(`QuickJS child exited before becoming ready (${exitDescription}).`, stderrTail),
       );
       if (expected || !current) return;
-      this.rejectActive(
-        slot,
-        childExitError(
-          `QuickJS child exited unexpectedly (${exitDescription}).`,
-          stderrTail,
-        ),
-      );
+      this.rejectActive(slot, childExitError(`QuickJS child exited unexpectedly (${exitDescription}).`, stderrTail));
     });
     subprocess.unref();
     subprocess.channel?.unref();
     return child;
   }
 
-  private async onMessage(
-    slot: ChildSlot,
-    child: Child,
-    message: ChildToParentMessage,
-  ): Promise<void> {
+  private async onMessage(slot: ChildSlot, child: Child, message: ChildToParentMessage): Promise<void> {
     // A compromised child is exactly the adversary this process boundary
     // contains, and this handler's rejection would crash the serving process.
     // Refuse malformed intake before touching any field.
@@ -707,7 +589,9 @@ class QuickJsChildPool implements AdmittingExecutor {
         const retained = entry.slice(0, MAX_EXECUTE_LOG_CHARS + 1 - active.logChars - separator);
         active.logs.push(retained);
         active.logChars += separator + retained.length;
-      } catch { /* Malformed log messages carry no output. */ }
+      } catch {
+        /* Malformed log messages carry no output. */
+      }
       return;
     }
     if (message.type === "host-call") {
@@ -749,10 +633,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   ): Promise<void> {
     let payloadJson: string;
     try {
-      if (
-        serializedBytes(message.payloadJson) >
-        MAX_QUICKJS_HOST_RPC_BYTES
-      ) {
+      if (serializedBytes(message.payloadJson) > MAX_QUICKJS_HOST_RPC_BYTES) {
         // Refused before parsing, so there is no address to name here: parsing
         // an over-limit payload to improve its error message would spend the
         // work the limit exists to refuse.
@@ -761,13 +642,9 @@ class QuickJsChildPool implements AdmittingExecutor {
       const payload = JSON.parse(message.payloadJson) as HostCallPayload;
       const provider = active.providers.get(payload.namespace);
       const fn =
-        provider && Object.hasOwn(provider.fns, payload.functionName)
-          ? provider.fns[payload.functionName]
-          : undefined;
+        provider && Object.hasOwn(provider.fns, payload.functionName) ? provider.fns[payload.functionName] : undefined;
       if (!fn) {
-        throw new Error(
-          `Unknown function ${payload.namespace}.${payload.functionName}`,
-        );
+        throw new Error(`Unknown function ${payload.namespace}.${payload.functionName}`);
       }
       const value = await fn(...payload.args);
       try {
@@ -822,9 +699,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     if (!active) return;
     // Never concatenate the stream with the final reply: those entries are
     // the same logs. A normal reply retains its existing full log contract.
-    const resolved = outcome.logs === undefined && active.logs.length > 0
-      ? { ...outcome, logs: active.logs }
-      : outcome;
+    const resolved = outcome.logs === undefined && active.logs.length > 0 ? { ...outcome, logs: active.logs } : outcome;
     this.clearActive(slot);
     Deferred.doneUnsafe(active.outcome, Exit.succeed(resolved));
   }
@@ -856,23 +731,13 @@ class QuickJsChildPool implements AdmittingExecutor {
   private recycle(slot: ChildSlot): void {
     const child = slot.child;
     if (!child) return;
-    this.retire(
-      slot,
-      child,
-      new Error("QuickJS child was recycled before becoming ready."),
-    );
+    this.retire(slot, child, new Error("QuickJS child was recycled before becoming ready."));
   }
 
   private stopSlot(slot: ChildSlot): void {
     const child = slot.child;
     if (!child) return;
-    this.rejectActive(
-      slot,
-      new ExecutorExecutionError(
-        "executor_closed",
-        "Executor is shutting down.",
-      ),
-    );
+    this.rejectActive(slot, new ExecutorExecutionError("executor_closed", "Executor is shutting down."));
     this.retire(slot, child, shuttingDown());
   }
 
@@ -899,8 +764,6 @@ class QuickJsChildPool implements AdmittingExecutor {
  * providers; one lease maps to one child and carries execution, avoiding a
  * double-acquire deadlock at concurrency 1.
  */
-export function quickJsExecutor(
-  options: QuickJsExecutorOptions = {},
-): AdmittingExecutor {
+export function quickJsExecutor(options: QuickJsExecutorOptions = {}): AdmittingExecutor {
   return brandExecutor(new QuickJsChildPool(options), "leased");
 }

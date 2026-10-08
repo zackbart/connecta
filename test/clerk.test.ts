@@ -24,84 +24,152 @@ import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import type { Connector } from "../src/types.js";
 
 describe("OAuth browser token policy", () => {
-  it.each(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])("requires session tokens on %s browser routes", async method => {
-    const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
-    for (const path of ["/connect/service", "/oauth/callback/service"]) {
-      for (const tokenType of ["oauth_token", "api_key", "machine_token", undefined]) {
-        mocks.authenticateRequest.mockResolvedValue({ status: "signed-in", headers: new Headers(),
-          toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType }),
+  it.each(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])(
+    "requires session tokens on %s browser routes",
+    async (method) => {
+      const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
+      for (const path of ["/connect/service", "/oauth/callback/service"]) {
+        for (const tokenType of ["oauth_token", "api_key", "machine_token", undefined]) {
+          mocks.authenticateRequest.mockResolvedValue({
+            status: "signed-in",
+            headers: new Headers(),
+            toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType }),
+          });
+          expect(
+            (
+              await auth.authorize(
+                new Request(`${BASE}${path}`, { method, headers: { Authorization: "Bearer credential" } }),
+                BASE,
+              )
+            ).ok,
+          ).toBe(false);
+          expect([mocks.authenticateRequest.mock.calls.at(-1)![1].acceptsToken].flat()).toEqual(["session_token"]);
+        }
+        mocks.authenticateRequest.mockResolvedValue({
+          status: "signed-in",
+          headers: new Headers(),
+          toAuth: () => ({
+            isAuthenticated: true,
+            userId: "alice",
+            tokenType: "session_token",
+            sessionClaims: { azp: BASE },
+          }),
         });
-        expect((await auth.authorize(new Request(`${BASE}${path}`, { method, headers: { Authorization: "Bearer credential" } }), BASE)).ok).toBe(false);
-        expect([mocks.authenticateRequest.mock.calls.at(-1)![1].acceptsToken].flat()).toEqual(["session_token"]);
+        expect(
+          (
+            await auth.authorize(
+              new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=alice" } }),
+              BASE,
+            )
+          ).ok,
+        ).toBe(true);
       }
-      mocks.authenticateRequest.mockResolvedValue({ status: "signed-in", headers: new Headers(),
-        toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }),
-      });
-      expect((await auth.authorize(new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=alice" } }), BASE)).ok).toBe(true);
-    }
-  });
-  it.each(["personal", "shared"] as const)("requires a browser session on every callback method for %s", async authScope => {
-    mocks.authenticateRequest.mockReset();
-    mocks.authenticateRequest.mockImplementation(async (request: Request, options: { acceptsToken: string | string[] }) => {
-      const oauth = request.headers.get("authorization") === "Bearer mcp-oauth-token";
-      const session = request.headers.get("cookie") === "__session=alice";
-      const accepted = session || (oauth && [options.acceptsToken].flat().includes("oauth_token"));
-      return {
-        status: accepted ? "signed-in" : "signed-out", headers: new Headers(),
-        toAuth: () => accepted
-          ? session
-            ? { isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }
-            : browserFlowMcpAuth("alice")
-          : { isAuthenticated: false },
+    },
+  );
+  it.each(["personal", "shared"] as const)(
+    "requires a browser session on every callback method for %s",
+    async (authScope) => {
+      mocks.authenticateRequest.mockReset();
+      mocks.authenticateRequest.mockImplementation(
+        async (request: Request, options: { acceptsToken: string | string[] }) => {
+          const oauth = request.headers.get("authorization") === "Bearer mcp-oauth-token";
+          const session = request.headers.get("cookie") === "__session=alice";
+          const accepted = session || (oauth && [options.acceptsToken].flat().includes("oauth_token"));
+          return {
+            status: accepted ? "signed-in" : "signed-out",
+            headers: new Headers(),
+            toAuth: () =>
+              accepted
+                ? session
+                  ? { isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }
+                  : browserFlowMcpAuth("alice")
+                : { isAuthenticated: false },
+          };
+        },
+      );
+      const finishAuth = vi.fn(async () => {});
+      const connector: Connector = {
+        id: "service",
+        authScope,
+        listTools: async () => [],
+        callTool: async () => null,
+        startAuth: async (ctx) => {
+          await ctx.storage.set("state", "flow-state");
+          return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
+        },
+        verifyState: async (state, ctx) => state === (await ctx.storage.get("state")),
+        finishAuth,
       };
-    });
-    const finishAuth = vi.fn(async () => {});
-    const connector: Connector = {
-      id: "service", authScope, listTools: async () => [], callTool: async () => null,
-      startAuth: async ctx => {
-        await ctx.storage.set("state", "flow-state");
-        return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
-      },
-      verifyState: async (state, ctx) => state === await ctx.storage.get("state"), finishAuth,
-    };
-    const storage = memoryStorage();
-    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, logger: "silent", vault: oauthVault(storage), auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }) });
-    try {
-      const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "mcp-oauth-token" }));
-      const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
-      const refusedStart = await app.fetch(new Request(link, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
-      expect(refusedStart.status).toBe(401);
-      expect(refusedStart.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
-      expect((await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=alice" } }))).status).toBe(302);
-      const callback = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
-      const refusedCallback = await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
-      expect(refusedCallback.status).toBe(401);
-      expect(refusedCallback.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
-      expect(finishAuth).not.toHaveBeenCalled();
-      for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
-        const result = await app.fetch(new Request(callback, { method, headers: { Authorization: "Bearer mcp-oauth-token" } }));
-        expect(result.status).toBe(405);
-        expect(result.headers.get("Allow")).toBe("GET");
+      const storage = memoryStorage();
+      const app = createTestConnecta({
+        connectors: [connector],
+        storage,
+        publicUrl: BASE,
+        logger: "silent",
+        vault: oauthVault(storage),
+        auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }),
+      });
+      try {
+        const rpc = await readJsonRpc(
+          await mcpRpc(
+            app,
+            "tools/call",
+            { name: "authorize_connector", arguments: { connector: "service" } },
+            { token: "mcp-oauth-token" },
+          ),
+        );
+        const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
+        const refusedStart = await app.fetch(
+          new Request(link, { headers: { Authorization: "Bearer mcp-oauth-token" } }),
+        );
+        expect(refusedStart.status).toBe(401);
+        expect(refusedStart.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
+        expect(
+          (await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=alice" } }))).status,
+        ).toBe(302);
+        const callback = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
+        const refusedCallback = await app.fetch(
+          new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }),
+        );
+        expect(refusedCallback.status).toBe(401);
+        expect(refusedCallback.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
         expect(finishAuth).not.toHaveBeenCalled();
+        for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+          const result = await app.fetch(
+            new Request(callback, { method, headers: { Authorization: "Bearer mcp-oauth-token" } }),
+          );
+          expect(result.status).toBe(405);
+          expect(result.headers.get("Allow")).toBe("GET");
+          expect(finishAuth).not.toHaveBeenCalled();
+        }
+        expect((await app.fetch(new Request(callback, { headers: { Cookie: "__session=alice" } }))).status).toBe(200);
+        expect(finishAuth).toHaveBeenCalledOnce();
+      } finally {
+        await app.close();
       }
-      expect((await app.fetch(new Request(callback, { headers: { Cookie: "__session=alice" } }))).status).toBe(200);
-      expect(finishAuth).toHaveBeenCalledOnce();
-    } finally { await app.close(); }
-  });
+    },
+  );
 });
 
 const BASE = "https://connecta.test";
 const domain = "clerk.example.com$";
-const publishableKey =
-  "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
+const publishableKey = "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
 // Browser-flow setup enters through MCP with a resource-bound OAuth token.
 function browserFlowMcpAuth(userId: string) {
   const token = [
     btoa(JSON.stringify({ alg: "RS256", typ: "at+jwt" })),
     btoa(JSON.stringify({ sub: userId, aud: `${BASE}/mcp` })),
     btoa("signature"),
-  ].map(part => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")).join(".");
-  return { isAuthenticated: true, userId, tokenType: "oauth_token", clientId: "client_connecta", getToken: async () => token };
+  ]
+    .map((part) => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"))
+    .join(".");
+  return {
+    isAuthenticated: true,
+    userId,
+    tokenType: "oauth_token",
+    clientId: "client_connecta",
+    getToken: async () => token,
+  };
 }
 
 const friendlyUser = (fullName = "Ada Lovelace") => ({
@@ -195,12 +263,8 @@ describe("clerkAuth inbound auth", () => {
       ],
     });
 
-    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
-      "Zack Bart",
-    );
-    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
-      "Zack Bart",
-    );
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe("Zack Bart");
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe("Zack Bart");
     expect(mocks.getUser).toHaveBeenCalledTimes(1);
 
     mocks.getUser.mockResolvedValue({
@@ -217,18 +281,12 @@ describe("clerkAuth inbound auth", () => {
         },
       ],
     });
-    await expect(auth.activityActorLabel!("user_email")).resolves.toBe(
-      "operator@example.com",
-    );
+    await expect(auth.activityActorLabel!("user_email")).resolves.toBe("operator@example.com");
 
     mocks.getUser.mockRejectedValue(new Error("Clerk unavailable"));
-    await expect(
-      auth.activityActorLabel!("user_offline"),
-    ).resolves.toBeUndefined();
+    await expect(auth.activityActorLabel!("user_offline")).resolves.toBeUndefined();
     const callsAfterFailure = mocks.getUser.mock.calls.length;
-    await expect(
-      auth.activityActorLabel!("user_offline"),
-    ).resolves.toBeUndefined();
+    await expect(auth.activityActorLabel!("user_offline")).resolves.toBeUndefined();
     expect(mocks.getUser).toHaveBeenCalledTimes(callsAfterFailure);
   });
 
@@ -253,9 +311,7 @@ describe("clerkAuth inbound auth", () => {
       ],
     });
 
-    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
-      "friendly-handle",
-    );
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe("friendly-handle");
   });
 
   it("coalesces concurrent activity label lookups for one id", async () => {
@@ -297,9 +353,7 @@ describe("clerkAuth inbound auth", () => {
     expect(mocks.getUser).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
-      "Grace Hopper",
-    );
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe("Grace Hopper");
     expect(mocks.getUser).toHaveBeenCalledTimes(2);
   });
 
@@ -312,21 +366,15 @@ describe("clerkAuth inbound auth", () => {
       allowedOAuthClientIds: ["client_connecta"],
     });
 
-    const lookups = Array.from({ length: 12 }, (_, index) =>
-      auth.activityActorLabel!(`user_${index}`),
-    );
+    const lookups = Array.from({ length: 12 }, (_, index) => auth.activityActorLabel!(`user_${index}`));
     expect(mocks.getUser).toHaveBeenCalledTimes(8);
     await vi.advanceTimersByTimeAsync(1_250);
-    await expect(Promise.all(lookups)).resolves.toEqual(
-      Array(12).fill(undefined),
-    );
+    await expect(Promise.all(lookups)).resolves.toEqual(Array(12).fill(undefined));
 
     // Caller-facing promises and pending-map entries have settled, but the
     // eight raw Clerk calls are still physically hung. Do not start a ninth.
     await vi.advanceTimersByTimeAsync(30_000);
-    await expect(
-      auth.activityActorLabel!("user_after_timeout"),
-    ).resolves.toBeUndefined();
+    await expect(auth.activityActorLabel!("user_after_timeout")).resolves.toBeUndefined();
     expect(mocks.getUser).toHaveBeenCalledTimes(8);
   });
 
@@ -351,17 +399,12 @@ describe("clerkAuth inbound auth", () => {
 
     resolveUser(friendlyUser());
     await vi.advanceTimersByTimeAsync(0);
-    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
-      "Ada Lovelace",
-    );
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe("Ada Lovelace");
     expect(mocks.getUser).toHaveBeenCalledTimes(1);
   });
 
   it("throws instead of silently ignoring toolkit-era options", () => {
-    for (const options of [
-      { toolkits: ["support"] },
-      { unscoped: true },
-    ]) {
+    for (const options of [{ toolkits: ["support"] }, { unscoped: true }]) {
       expect(() =>
         clerkAuth({
           publishableKey,
@@ -383,7 +426,12 @@ describe("clerkAuth inbound auth", () => {
 
   it("accepts browser session tokens for the operator UI", async () => {
     mocks.authenticateRequest.mockResolvedValue({
-      toAuth: () => ({ isAuthenticated: true, userId: "user_123", tokenType: "session_token", sessionClaims: { azp: BASE } }),
+      toAuth: () => ({
+        isAuthenticated: true,
+        userId: "user_123",
+        tokenType: "session_token",
+        sessionClaims: { azp: BASE },
+      }),
     });
     const auth = clerkAuth({
       publishableKey,
@@ -431,60 +479,93 @@ describe("clerkAuth inbound auth", () => {
     });
   });
 
-  it.each(["personal", "shared"] as const)("refreshes Clerk browser sessions on connect and callback for %s OAuth", async authScope => {
-    const signedIn = () => ({
-      status: "signed-in",
-      headers: new Headers({ "Set-Cookie": "__session=fresh; Secure; HttpOnly" }),
-      toAuth: () => ({ isAuthenticated: true, userId: "alice", tokenType: "session_token", sessionClaims: { azp: BASE } }),
-    });
-    mocks.authenticateRequest.mockImplementation(async (request: Request) => {
-      if (request.headers.get("authorization") === "Bearer alice") {
-        return { status: "signed-in", headers: new Headers(), toAuth: () => browserFlowMcpAuth("alice") };
+  it.each(["personal", "shared"] as const)(
+    "refreshes Clerk browser sessions on connect and callback for %s OAuth",
+    async (authScope) => {
+      const signedIn = () => ({
+        status: "signed-in",
+        headers: new Headers({ "Set-Cookie": "__session=fresh; Secure; HttpOnly" }),
+        toAuth: () => ({
+          isAuthenticated: true,
+          userId: "alice",
+          tokenType: "session_token",
+          sessionClaims: { azp: BASE },
+        }),
+      });
+      mocks.authenticateRequest.mockImplementation(async (request: Request) => {
+        if (request.headers.get("authorization") === "Bearer alice") {
+          return { status: "signed-in", headers: new Headers(), toAuth: () => browserFlowMcpAuth("alice") };
+        }
+        if (request.headers.get("cookie") === "__session=expired") {
+          return {
+            status: "handshake",
+            headers: new Headers({
+              Location: `https://clerk.example.com/v1/client/handshake?redirect_url=${encodeURIComponent(request.url)}`,
+              "Set-Cookie": "__clerk_hs=refresh; Secure",
+            }),
+            toAuth: () => {
+              throw new Error("handshake is not an identity");
+            },
+          };
+        }
+        return signedIn();
+      });
+      const finishAuth = vi.fn(async () => {});
+      const connector: Connector = {
+        id: "service",
+        authScope,
+        listTools: async () => [],
+        callTool: async () => null,
+        startAuth: async (ctx) => {
+          await ctx.storage.set("state", "flow-state");
+          return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
+        },
+        verifyState: async (state, ctx) => state === (await ctx.storage.get("state")),
+        finishAuth,
+      };
+      const storage = memoryStorage();
+      const app = createTestConnecta({
+        connectors: [connector],
+        storage,
+        publicUrl: BASE,
+        logger: "silent",
+        vault: oauthVault(storage),
+        auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }),
+      });
+      try {
+        const rpc = await readJsonRpc(
+          await mcpRpc(
+            app,
+            "tools/call",
+            { name: "authorize_connector", arguments: { connector: "service" } },
+            { token: "alice" },
+          ),
+        );
+        const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
+        const handshake = await app.fetch(new Request(link, { headers: { Cookie: "__session=expired" } }));
+        expect(handshake.status).toBe(307);
+        expect(handshake.headers.get("Set-Cookie")).toContain("__clerk_hs=refresh");
+        const started = await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=fresh" } }));
+        expect(started.status).toBe(302);
+        expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), {
+          acceptsToken: "session_token",
+        });
+        expect(started.headers.get("Location")).toContain("https://consent.example/authorize?");
+        expect(started.headers.get("Set-Cookie")).toContain("__session=fresh");
+        const callbackUrl = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
+        const refresh = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=expired" } }));
+        expect(refresh.status).toBe(307);
+        expect(new URL(refresh.headers.get("Location")!).searchParams.get("redirect_url")).toBe(callbackUrl);
+        expect(finishAuth).not.toHaveBeenCalled();
+        const completed = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=fresh" } }));
+        expect(completed.status).toBe(200);
+        expect(completed.headers.get("Set-Cookie")).toContain("__session=fresh");
+        expect(finishAuth).toHaveBeenCalledOnce();
+      } finally {
+        await app.close();
       }
-      if (request.headers.get("cookie") === "__session=expired") {
-        return {
-          status: "handshake", headers: new Headers({ Location: `https://clerk.example.com/v1/client/handshake?redirect_url=${encodeURIComponent(request.url)}`, "Set-Cookie": "__clerk_hs=refresh; Secure" }),
-          toAuth: () => { throw new Error("handshake is not an identity"); },
-        };
-      }
-      return signedIn();
-    });
-    const finishAuth = vi.fn(async () => {});
-    const connector: Connector = {
-      id: "service", authScope, listTools: async () => [], callTool: async () => null,
-      startAuth: async ctx => {
-        await ctx.storage.set("state", "flow-state");
-        return { state: "auth_required", authorizationUrl: "https://consent.example/authorize?state=flow-state" };
-      },
-      verifyState: async (state, ctx) => state === await ctx.storage.get("state"),
-      finishAuth,
-    };
-    const storage = memoryStorage();
-    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, logger: "silent", vault: oauthVault(storage), auth: clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }) });
-    try {
-      const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "alice" }));
-      const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
-      const handshake = await app.fetch(new Request(link, { headers: { Cookie: "__session=expired" } }));
-      expect(handshake.status).toBe(307);
-      expect(handshake.headers.get("Set-Cookie")).toContain("__clerk_hs=refresh");
-      const started = await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=fresh" } }));
-      expect(started.status).toBe(302);
-      expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), { acceptsToken: "session_token" });
-      expect(started.headers.get("Location")).toContain("https://consent.example/authorize?");
-      expect(started.headers.get("Set-Cookie")).toContain("__session=fresh");
-      const callbackUrl = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
-      const refresh = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=expired" } }));
-      expect(refresh.status).toBe(307);
-      expect(new URL(refresh.headers.get("Location")!).searchParams.get("redirect_url")).toBe(callbackUrl);
-      expect(finishAuth).not.toHaveBeenCalled();
-      const completed = await app.fetch(new Request(callbackUrl, { headers: { Cookie: "__session=fresh" } }));
-      expect(completed.status).toBe(200);
-      expect(completed.headers.get("Set-Cookie")).toContain("__session=fresh");
-      expect(finishAuth).toHaveBeenCalledOnce();
-    } finally {
-      await app.close();
-    }
-  });
+    },
+  );
 
   it("still rejects a session token minted for a sibling origin", async () => {
     mocks.authenticateRequest.mockResolvedValue({
@@ -517,7 +598,9 @@ describe("clerkAuth inbound auth", () => {
         btoa(JSON.stringify({ alg: "RS256", typ: "at+jwt", kid: "test" })),
         btoa(JSON.stringify({ sub: "user_123", ...claims })),
         btoa("signature"),
-      ].map((part) => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")).join(".");
+      ]
+        .map((part) => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"))
+        .join(".");
 
     function deployment(allowedOAuthClientIds: readonly string[] | undefined = ["client_connecta"]) {
       const auth = clerkAuth({
@@ -530,13 +613,20 @@ describe("clerkAuth inbound auth", () => {
         publicUrl: BASE,
         auth,
         storage: memoryStorage(),
-        connectors: [api("calc", { description: "Test calculator", tools: [{
-          name: "ping",
-          description: "Return a test response",
-          inputSchema: { type: "object", properties: {} },
-          annotations: { readOnlyHint: true },
-          handler: async () => "pong",
-        }] })],
+        connectors: [
+          api("calc", {
+            description: "Test calculator",
+            tools: [
+              {
+                name: "ping",
+                description: "Return a test response",
+                inputSchema: { type: "object", properties: {} },
+                annotations: { readOnlyHint: true },
+                handler: async () => "pong",
+              },
+            ],
+          }),
+        ],
         pools: { support: { tools: ["calc"], grant: () => true } },
       });
     }
@@ -565,7 +655,9 @@ describe("clerkAuth inbound auth", () => {
           Accept: "application/json, text/event-stream",
         },
         body: JSON.stringify({
-          jsonrpc: "2.0", id: 1, method: "initialize",
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
           params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
         }),
       });
@@ -602,18 +694,24 @@ describe("clerkAuth inbound auth", () => {
       await expectUnauthorized(deployment());
     });
 
-    it.each(["oat_verified", jwt({})])("rejects an unbound token without a fallback client allowlist: %s", async (token) => {
-      authenticateOAuth(token);
-      await expectUnauthorized(deployment([]));
-    });
+    it.each(["oat_verified", jwt({})])(
+      "rejects an unbound token without a fallback client allowlist: %s",
+      async (token) => {
+        authenticateOAuth(token);
+        await expectUnauthorized(deployment([]));
+      },
+    );
 
-    it.each(["/mcp", "/mcp/support"])("accepts the canonical resource audience at %s without a fallback allowlist", async (path) => {
-      authenticateOAuth(jwt({ aud: `${BASE}${path}` }));
-      const response = await deployment([]).fetch(mcpRequest(path));
-      expect(response.status).toBe(200);
-      expect(await response.text()).toContain('"serverInfo"');
-      expect(mocks.authenticateRequest).toHaveBeenCalledWith(expect.any(Request), { acceptsToken: "oauth_token" });
-    });
+    it.each(["/mcp", "/mcp/support"])(
+      "accepts the canonical resource audience at %s without a fallback allowlist",
+      async (path) => {
+        authenticateOAuth(jwt({ aud: `${BASE}${path}` }));
+        const response = await deployment([]).fetch(mcpRequest(path));
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain('"serverInfo"');
+        expect(mocks.authenticateRequest).toHaveBeenCalledWith(expect.any(Request), { acceptsToken: "oauth_token" });
+      },
+    );
 
     it.each([
       { aud: ["https://other.test/mcp", `${BASE}/mcp`] },
@@ -629,7 +727,10 @@ describe("clerkAuth inbound auth", () => {
     it("uses the public resource URL behind a different request origin", async () => {
       authenticateOAuth(jwt({ aud: `${BASE}/mcp` }));
       const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE, allowedOAuthClientIds: [] });
-      await expect(auth.authorize(new Request("https://internal.test/mcp"), "https://internal.test")).resolves.toEqual({ ok: true, userId: "user_123" });
+      await expect(auth.authorize(new Request("https://internal.test/mcp"), "https://internal.test")).resolves.toEqual({
+        ok: true,
+        userId: "user_123",
+      });
     });
 
     it("INV-4: does not treat the base resource audience as a pool audience", async () => {
@@ -648,30 +749,46 @@ describe("clerkAuth inbound auth", () => {
 
     it("rejects session tokens on MCP and keeps the same session working through authorizeUiIdentity", async () => {
       mocks.authenticateRequest.mockResolvedValue({
-        toAuth: () => ({ isAuthenticated: true, tokenType: "session_token", userId: "user_123", sessionClaims: { azp: BASE } }),
+        toAuth: () => ({
+          isAuthenticated: true,
+          tokenType: "session_token",
+          userId: "user_123",
+          sessionClaims: { azp: BASE },
+        }),
       });
       const c = deployment([]);
       await expectUnauthorized(c);
       await expectUnauthorized(c, "/mcp/support");
-      const response = await c.fetch(new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: "Bearer supplied-token" },
-      }));
+      const response = await c.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: "Bearer supplied-token" },
+        }),
+      );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ connectors: [{ id: "calc" }] });
-      expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), { acceptsToken: "session_token" });
+      expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), {
+        acceptsToken: "session_token",
+      });
     });
 
     it("rejects a failed SDK verification before reading token claims", async () => {
       const getToken = vi.fn();
-      mocks.authenticateRequest.mockResolvedValue({ status: "signed-out", toAuth: () => ({ isAuthenticated: false, getToken }) });
+      mocks.authenticateRequest.mockResolvedValue({
+        status: "signed-out",
+        toAuth: () => ({ isAuthenticated: false, getToken }),
+      });
       await expectUnauthorized(deployment());
       expect(getToken).not.toHaveBeenCalled();
       expect(mocks.fetch).not.toHaveBeenCalled();
     });
 
     it.each([
-      `${BASE}/mcp/`, `${BASE}/MCP`, `${BASE}/mcp?x=1`,
-      `${BASE}/mcp#fragment`, `${BASE}/mcpx`, `${BASE}/mcp/support`,
+      `${BASE}/mcp/`,
+      `${BASE}/MCP`,
+      `${BASE}/mcp?x=1`,
+      `${BASE}/mcp#fragment`,
+      `${BASE}/mcpx`,
+      `${BASE}/mcp/support`,
       "https://CONNECTA.test/mcp",
     ])("compares JWT resource URLs without normalization: %s", async (aud) => {
       authenticateOAuth(jwt({ aud }));
@@ -679,64 +796,78 @@ describe("clerkAuth inbound auth", () => {
       expect(mocks.fetch).not.toHaveBeenCalled();
     });
 
-    it.each(["/mcp", "/mcp/support"])("checks raw opaque audiences after real Clerk verification at %s", async (path) => {
-      // Clerk uses the current fetch in test mode, including under workerd.
-      vi.stubEnv("NODE_ENV", "test");
-      const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
-      const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", telemetry: { disabled: true } });
-      mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
-      const cases: [Record<string, unknown>, readonly string[] | undefined, number][] = [
-        [{ aud: [`${BASE}${path}`] }, [], 200],
-        [{ aud: `${BASE}${path}` }, [], 200],
-        [{ aud: ["https://other.test/mcp", `${BASE}${path}`] }, [], 200],
-        [{ aud: [`${BASE}${path}`] }, undefined, 200],
-        [{ aud: ["https://other.test/mcp"] }, ["client_connecta"], 401],
-        [{ aud: [path === "/mcp" ? `${BASE}/mcp/support` : `${BASE}/mcp`] }, ["client_connecta"], 401],
-        ...["/", "?x=1", "#fragment", "x"].map((suffix): [Record<string, unknown>, readonly string[], number] =>
-          [{ aud: [`${BASE}${path}${suffix}`] }, ["client_connecta"], 401]),
-        [{ aud: [`${BASE}${path.toUpperCase()}`] }, ["client_connecta"], 401],
-        [{ aud: [`https://CONNECTA.test${path}`] }, ["client_connecta"], 401],
-        [{ aud: null }, ["client_connecta"], 401],
-        [{ aud: [] }, ["client_connecta"], 401],
-        [{ aud: [123, `${BASE}${path}`] }, ["client_connecta"], 401],
-        [{}, [], 401],
-        [{}, undefined, 401],
-        [{}, ["client_connecta"], 200],
-        [{ client_id: "client_other" }, ["client_connecta"], 401],
-      ];
-      for (const [claims, allowedOAuthClientIds, status] of cases) {
-        mocks.fetch.mockReset();
-        mocks.fetch.mockImplementation(async () => Response.json(opaqueVerification(claims)));
-        // undefined really omits the option, rather than deployment()'s default.
-        const auth = clerkAuth({
-          publishableKey, secretKey: "sk_test_fake", publicUrl: BASE,
-          ...(allowedOAuthClientIds === undefined ? {} : { allowedOAuthClientIds }),
-        });
-        const request = mcpRequest(path);
-        request.headers.set("Authorization", "Bearer oat_verified");
-        const result = await auth.authorize(request, BASE);
-        expect(result.ok ? 200 : result.response.status, JSON.stringify(claims)).toBe(status);
-        expect(mocks.fetch).toHaveBeenCalledTimes(2);
-        for (const [, init] of mocks.fetch.mock.calls) {
-          expect(init.method).toBe("POST");
-          expect(JSON.parse(init.body)).toEqual({ access_token: "oat_verified" });
-          expect(new Headers(init.headers).get("Authorization")).toBe("Bearer sk_test_fake");
+    it.each(["/mcp", "/mcp/support"])(
+      "checks raw opaque audiences after real Clerk verification at %s",
+      async (path) => {
+        // Clerk uses the current fetch in test mode, including under workerd.
+        vi.stubEnv("NODE_ENV", "test");
+        const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
+        const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", telemetry: { disabled: true } });
+        mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
+        const cases: [Record<string, unknown>, readonly string[] | undefined, number][] = [
+          [{ aud: [`${BASE}${path}`] }, [], 200],
+          [{ aud: `${BASE}${path}` }, [], 200],
+          [{ aud: ["https://other.test/mcp", `${BASE}${path}`] }, [], 200],
+          [{ aud: [`${BASE}${path}`] }, undefined, 200],
+          [{ aud: ["https://other.test/mcp"] }, ["client_connecta"], 401],
+          [{ aud: [path === "/mcp" ? `${BASE}/mcp/support` : `${BASE}/mcp`] }, ["client_connecta"], 401],
+          ...["/", "?x=1", "#fragment", "x"].map((suffix): [Record<string, unknown>, readonly string[], number] => [
+            { aud: [`${BASE}${path}${suffix}`] },
+            ["client_connecta"],
+            401,
+          ]),
+          [{ aud: [`${BASE}${path.toUpperCase()}`] }, ["client_connecta"], 401],
+          [{ aud: [`https://CONNECTA.test${path}`] }, ["client_connecta"], 401],
+          [{ aud: null }, ["client_connecta"], 401],
+          [{ aud: [] }, ["client_connecta"], 401],
+          [{ aud: [123, `${BASE}${path}`] }, ["client_connecta"], 401],
+          [{}, [], 401],
+          [{}, undefined, 401],
+          [{}, ["client_connecta"], 200],
+          [{ client_id: "client_other" }, ["client_connecta"], 401],
+        ];
+        for (const [claims, allowedOAuthClientIds, status] of cases) {
+          mocks.fetch.mockReset();
+          mocks.fetch.mockImplementation(async () => Response.json(opaqueVerification(claims)));
+          // undefined really omits the option, rather than deployment()'s default.
+          const auth = clerkAuth({
+            publishableKey,
+            secretKey: "sk_test_fake",
+            publicUrl: BASE,
+            ...(allowedOAuthClientIds === undefined ? {} : { allowedOAuthClientIds }),
+          });
+          const request = mcpRequest(path);
+          request.headers.set("Authorization", "Bearer oat_verified");
+          const result = await auth.authorize(request, BASE);
+          expect(result.ok ? 200 : result.response.status, JSON.stringify(claims)).toBe(status);
+          expect(mocks.fetch).toHaveBeenCalledTimes(2);
+          for (const [, init] of mocks.fetch.mock.calls) {
+            expect(init.method).toBe("POST");
+            expect(JSON.parse(init.body)).toEqual({ access_token: "oat_verified" });
+            expect(new Headers(init.headers).get("Authorization")).toBe("Bearer sk_test_fake");
+          }
+          const directInit = mocks.fetch.mock.calls[1]![1];
+          expect(mocks.fetch.mock.calls[1]![0]).toBe(
+            "https://api.clerk.com/v1/oauth_applications/access_tokens/verify",
+          );
+          expect(directInit.redirect).toBe("error");
+          expect(directInit.signal).toBeInstanceOf(AbortSignal);
+          expect(new Headers(directInit.headers).get("Clerk-API-Version")).toBe("2026-05-12");
+          if (!result.ok) {
+            expect(await result.response.json()).toEqual({ error: "unauthorized" });
+            expect(result.response.headers.get("WWW-Authenticate")).toContain("resource_metadata=");
+          }
         }
-        const directInit = mocks.fetch.mock.calls[1]![1];
-        expect(mocks.fetch.mock.calls[1]![0]).toBe("https://api.clerk.com/v1/oauth_applications/access_tokens/verify");
-        expect(directInit.redirect).toBe("error");
-        expect(directInit.signal).toBeInstanceOf(AbortSignal);
-        expect(new Headers(directInit.headers).get("Clerk-API-Version")).toBe("2026-05-12");
-        if (!result.ok) {
-          expect(await result.response.json()).toEqual({ error: "unauthorized" });
-          expect(result.response.headers.get("WWW-Authenticate")).toContain("resource_metadata=");
-        }
-      }
-    });
+      },
+    );
 
     it.each([
-      { revoked: true }, { expired: true }, { subject: "user_other" },
-      { client_id: "client_other" }, { object: "other" }, { active: false },
+      { revoked: true },
+      { expired: true },
+      { subject: "user_other" },
+      { client_id: "client_other" },
+      { object: "other" },
+      { active: false },
     ])("rejects an opaque verification response that disagrees with SDK authentication: %j", async (claims) => {
       authenticateOAuth("oat_verified");
       mocks.fetch.mockResolvedValue(Response.json(opaqueVerification({ aud: [`${BASE}/mcp`], ...claims })));
@@ -749,7 +880,9 @@ describe("clerkAuth inbound auth", () => {
       () => Response.json({ message: "oat_private" }, { status: 503 }),
       () => new Response("oat_private"),
       () => Response.json(null),
-      () => { throw new Error("oat_private"); },
+      () => {
+        throw new Error("oat_private");
+      },
     ])("fails closed on opaque verification failure without logging response contents", async (response) => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
@@ -782,7 +915,9 @@ describe("clerkAuth inbound auth", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         mocks.authenticateRequest.mockResolvedValue({
-          status: "private-status", reason: "private-reason", message: "oat_private",
+          status: "private-status",
+          reason: "private-reason",
+          message: "oat_private",
           toAuth: () => ({ isAuthenticated: false }),
         });
         await expectUnauthorized(deployment());
@@ -801,11 +936,16 @@ describe("clerkAuth inbound auth", () => {
     it("cancels the raw verification request when the caller leaves", async () => {
       authenticateOAuth("oat_verified");
       let started!: () => void;
-      const pending = new Promise<void>((resolve) => { started = resolve; });
-      mocks.fetch.mockImplementation((_url, { signal }: RequestInit) => new Promise((_resolve, reject) => {
-        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
-        started();
-      }));
+      const pending = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      mocks.fetch.mockImplementation(
+        (_url, { signal }: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+            started();
+          }),
+      );
       const controller = new AbortController();
       const request = new Request(`${BASE}/mcp`, { signal: controller.signal });
       const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
@@ -818,11 +958,17 @@ describe("clerkAuth inbound auth", () => {
 
     it("INV-7: expires the raw opaque verification request at its ten-second deadline", async () => {
       authenticateOAuth("oat_verified");
-      mocks.fetch.mockImplementation((_url, { signal }: RequestInit) => new Promise((_resolve, reject) => {
-        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
-      }));
+      mocks.fetch.mockImplementation(
+        (_url, { signal }: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+          }),
+      );
       const started = Date.now();
-      const result = await clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).authorize(mcpRequest("/mcp"), BASE);
+      const result = await clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).authorize(
+        mcpRequest("/mcp"),
+        BASE,
+      );
       expect(result.ok).toBe(false);
       expect(mocks.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
       expect(Date.now() - started).toBeGreaterThanOrEqual(9_000);
@@ -831,7 +977,8 @@ describe("clerkAuth inbound auth", () => {
 
     it("INV-4: rechecks opaque revocation on every request without an audience cache", async () => {
       authenticateOAuth("oat_verified");
-      mocks.fetch.mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp` })))
+      mocks.fetch
+        .mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp` })))
         .mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp`, revoked: true })));
       const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
       expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(true);
@@ -849,22 +996,40 @@ describe("clerkAuth inbound auth", () => {
 
     it("checks the audience after real Clerk JWT verification", async () => {
       const { createClerkClient } = await vi.importActual<typeof import("@clerk/backend")>("@clerk/backend");
-      const keys = await crypto.subtle.generateKey({
-        name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
-        publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256",
-      }, true, ["sign", "verify"]) as CryptoKeyPair;
-      const publicDer = new Uint8Array(await crypto.subtle.exportKey("spki", keys.publicKey) as ArrayBuffer);
+      const keys = (await crypto.subtle.generateKey(
+        {
+          name: "RSASSA-PKCS1-v1_5",
+          modulusLength: 2048,
+          publicExponent: new Uint8Array([1, 0, 1]),
+          hash: "SHA-256",
+        },
+        true,
+        ["sign", "verify"],
+      )) as CryptoKeyPair;
+      const publicDer = new Uint8Array((await crypto.subtle.exportKey("spki", keys.publicKey)) as ArrayBuffer);
       const jwtKey = `-----BEGIN PUBLIC KEY-----\n${btoa(String.fromCharCode(...publicDer))}\n-----END PUBLIC KEY-----`;
-      const privateKey = await crypto.subtle.exportKey("jwk", keys.privateKey) as JsonWebKey;
+      const privateKey = (await crypto.subtle.exportKey("jwk", keys.privateKey)) as JsonWebKey;
       const clerk = createClerkClient({ publishableKey, secretKey: "sk_test_fake", jwtKey });
       mocks.authenticateRequest.mockImplementation((request, options) => clerk.authenticateRequest(request, options));
       const c = deployment();
       const now = Math.floor(Date.now() / 1000);
-      for (const [aud, status] of [[`${BASE}/mcp`, 200], ["https://other.test/mcp", 401]] as const) {
-        const token = await signJwt({
-          sub: "user_123", iss: "https://clerk.example.com", client_id: "client_connecta",
-          scope: "openid profile email", iat: now, exp: now + 300, aud,
-        }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid: "test" } });
+      for (const [aud, status] of [
+        [`${BASE}/mcp`, 200],
+        ["https://other.test/mcp", 401],
+      ] as const) {
+        const token = await signJwt(
+          {
+            sub: "user_123",
+            iss: "https://clerk.example.com",
+            client_id: "client_connecta",
+            scope: "openid profile email",
+            iat: now,
+            exp: now + 300,
+            aud,
+          },
+          privateKey,
+          { algorithm: "RS256", header: { typ: "at+jwt", kid: "test" } },
+        );
         const request = mcpRequest("/mcp");
         request.headers.set("Authorization", `Bearer ${token}`);
         const response = await c.fetch(request);
@@ -875,7 +1040,13 @@ describe("clerkAuth inbound auth", () => {
 
     it("checks token binding on every request even after caching an admitted user", async () => {
       const gate = vi.fn(() => true);
-      const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE, allowedOAuthClientIds: ["client_connecta"], gate });
+      const auth = clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+        allowedOAuthClientIds: ["client_connecta"],
+        gate,
+      });
       authenticateOAuth("oat_verified");
       expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(true);
       authenticateOAuth(jwt({ aud: "https://other.test/mcp" }));
@@ -885,18 +1056,20 @@ describe("clerkAuth inbound auth", () => {
       expect(gate).toHaveBeenCalledTimes(1);
     });
 
-    it.each([null, "client_connecta", [""], ["*"], [" client_connecta"], ["client\nconnecta"], [123]])("requires well-formed fallback configuration: %j", (allowedOAuthClientIds) => {
-      expect(() => clerkAuth({ publishableKey, secretKey: "sk_test_fake", allowedOAuthClientIds } as never)).toThrow("allowedOAuthClientIds");
-    });
+    it.each([null, "client_connecta", [""], ["*"], [" client_connecta"], ["client\nconnecta"], [123]])(
+      "requires well-formed fallback configuration: %j",
+      (allowedOAuthClientIds) => {
+        expect(() => clerkAuth({ publishableKey, secretKey: "sk_test_fake", allowedOAuthClientIds } as never)).toThrow(
+          "allowedOAuthClientIds",
+        );
+      },
+    );
   });
 
   // allowedDomains decides who this deployment admits (documentation/auth.md).
   describe("allowedDomains", () => {
     /** A Clerk user with one primary email, verified unless told otherwise. */
-    const userWithEmail = (
-      emailAddress: string,
-      status: string | null = "verified",
-    ) => ({
+    const userWithEmail = (emailAddress: string, status: string | null = "verified") => ({
       primaryEmailAddressId: "idn_primary",
       emailAddresses: [
         {
@@ -907,9 +1080,7 @@ describe("clerkAuth inbound auth", () => {
       ],
     });
 
-    const authorize = async (
-      options: Partial<Parameters<typeof clerkAuth>[0]>,
-    ) => {
+    const authorize = async (options: Partial<Parameters<typeof clerkAuth>[0]>) => {
       mocks.authenticateRequest.mockResolvedValue({
         toAuth: () => ({
           isAuthenticated: true,
@@ -957,24 +1128,18 @@ describe("clerkAuth inbound auth", () => {
       // never contain a domain the operator cannot tell from theirs by eye.
       expect(() => build(["acmé.com"])).toThrow("is not a domain");
       expect(() => build([42])).toThrow("is not a string");
-      expect(() => build(["me@acme.com"])).toThrow(
-        "Write the domain alone, with no `@`",
-      );
+      expect(() => build(["me@acme.com"])).toThrow("Write the domain alone, with no `@`");
       expect(() => build(["ACME.com", " acme.co.uk "])).not.toThrow();
     });
 
     it("admits a user whose verified primary email is on an allowed domain", async () => {
       mocks.getUser.mockResolvedValue(userWithEmail("dev@acme.com"));
-      await expect(authorize({ allowedDomains: ["acme.com"] })).resolves.toEqual(
-        { ok: true, userId: "user_123" },
-      );
+      await expect(authorize({ allowedDomains: ["acme.com"] })).resolves.toEqual({ ok: true, userId: "user_123" });
     });
 
     it("matches the domain case-insensitively on both sides", async () => {
       mocks.getUser.mockResolvedValue(userWithEmail("Dev@ACME.Com"));
-      await expect(
-        authorize({ allowedDomains: [" Acme.COM "] }),
-      ).resolves.toEqual({ ok: true, userId: "user_123" });
+      await expect(authorize({ allowedDomains: [" Acme.COM "] })).resolves.toEqual({ ok: true, userId: "user_123" });
     });
 
     it("rejects a user on a domain nobody listed, with the gate's 403", async () => {
@@ -1007,9 +1172,7 @@ describe("clerkAuth inbound auth", () => {
 
     it("admits a subdomain only when it is spelled out", async () => {
       mocks.getUser.mockResolvedValue(userWithEmail("dev@mail.acme.com"));
-      await expect(
-        authorize({ allowedDomains: ["mail.acme.com"] }),
-      ).resolves.toEqual({ ok: true, userId: "user_123" });
+      await expect(authorize({ allowedDomains: ["mail.acme.com"] })).resolves.toEqual({ ok: true, userId: "user_123" });
     });
 
     it("fails closed when the email is missing, unverified or malformed", async () => {
@@ -1072,23 +1235,19 @@ describe("clerkAuth inbound auth", () => {
 
     it("composes with `gate` — either one can deny", async () => {
       mocks.getUser.mockResolvedValue(userWithEmail("dev@acme.com"));
-      await expect(
-        authorize({ allowedDomains: ["acme.com"], gate: () => true }),
-      ).resolves.toEqual({ ok: true, userId: "user_123" });
+      await expect(authorize({ allowedDomains: ["acme.com"], gate: () => true })).resolves.toEqual({
+        ok: true,
+        userId: "user_123",
+      });
 
       // The gate denies a user the domain admits.
-      expect(
-        (await authorize({ allowedDomains: ["acme.com"], gate: () => false }))
-          .ok,
-      ).toBe(false);
+      expect((await authorize({ allowedDomains: ["acme.com"], gate: () => false })).ok).toBe(false);
 
       // The domain denies a user the gate admits — and the allowlist runs
       // first, so an outsider never reaches operator gate code.
       const gate = vi.fn(() => true);
       mocks.getUser.mockResolvedValue(userWithEmail("dev@other.com"));
-      expect((await authorize({ allowedDomains: ["acme.com"], gate })).ok).toBe(
-        false,
-      );
+      expect((await authorize({ allowedDomains: ["acme.com"], gate })).ok).toBe(false);
       expect(gate).not.toHaveBeenCalled();
     });
 
@@ -1148,9 +1307,7 @@ describe("clerkAuth inbound auth", () => {
     it("bounds denied identities and re-checks an evicted identity", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       mocks.authenticateRequest.mockImplementation(async (request: Request) => {
-        const userId = request.headers
-          .get("authorization")!
-          .replace("Bearer ", "");
+        const userId = request.headers.get("authorization")!.replace("Bearer ", "");
         return {
           toAuth: () => ({
             isAuthenticated: true,
@@ -1161,9 +1318,7 @@ describe("clerkAuth inbound auth", () => {
           }),
         };
       });
-      mocks.getUser.mockImplementation(async (userId: string) =>
-        userWithEmail(`${userId}@outside.example`),
-      );
+      mocks.getUser.mockImplementation(async (userId: string) => userWithEmail(`${userId}@outside.example`));
       const auth = clerkAuth({
         publishableKey,
         secretKey: "sk_test_fake",
@@ -1208,9 +1363,7 @@ describe("clerkAuth inbound auth", () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-07-26T12:00:00Z"));
       mocks.authenticateRequest.mockImplementation(async (request: Request) => {
-        const userId = request.headers
-          .get("authorization")!
-          .replace("Bearer ", "");
+        const userId = request.headers.get("authorization")!.replace("Bearer ", "");
         return {
           toAuth: () => ({
             isAuthenticated: true,
@@ -1222,9 +1375,7 @@ describe("clerkAuth inbound auth", () => {
         };
       });
       mocks.getUser.mockImplementation(async (userId: string) =>
-        userWithEmail(
-          userId === "allowed" ? "dev@acme.com" : "dev@outside.example",
-        ),
+        userWithEmail(userId === "allowed" ? "dev@acme.com" : "dev@outside.example"),
       );
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const auth = clerkAuth({
@@ -1242,8 +1393,7 @@ describe("clerkAuth inbound auth", () => {
           }),
           BASE,
         );
-      const lookupCount = (userId: string) =>
-        mocks.getUser.mock.calls.filter(([id]) => id === userId).length;
+      const lookupCount = (userId: string) => mocks.getUser.mock.calls.filter(([id]) => id === userId).length;
 
       expect((await request("allowed")).ok).toBe(true);
       expect((await request("denied")).ok).toBe(false);
@@ -1317,15 +1467,11 @@ describe("clerkAuth inbound auth", () => {
       // The commonest paste error of all.
       ["a secret key in the publishable slot", "sk_test_deadbeef"],
     ])("refuses %s at construction", (_label, key) => {
-      expect(() => construct(key)).toThrowError(
-        /^clerkAuth: `publishableKey`/,
-      );
+      expect(() => construct(key)).toThrowError(/^clerkAuth: `publishableKey`/);
       // Never a DOMException, and never the value itself in the log line.
       expect(() => construct(key)).not.toThrowError(/atob|base64-encoded data/);
       if (typeof key === "string" && key !== "") {
-        expect(() => construct(key)).not.toThrowError(
-          new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-        );
+        expect(() => construct(key)).not.toThrowError(new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       }
     });
 
@@ -1333,28 +1479,19 @@ describe("clerkAuth inbound auth", () => {
     // by the `atob` catch rather than by the shape check that precedes it,
     // which is the only branch reachable with a payload this well-formed.
     it("names the decode when the payload passes the shape check", () => {
-      expect(() => construct("pk_test_A")).toThrowError(
-        /does not carry decodable base64/,
-      );
+      expect(() => construct("pk_test_A")).toThrowError(/does not carry decodable base64/);
     });
 
     it("accepts the keys Clerk actually issues", () => {
       // Shaped like the real thing: a dev instance on `accounts.dev`, a
       // production instance on the deployment's own domain, and the example
       // host the rest of this suite uses.
-      const hosts = [
-        "wandering-tiger-42.clerk.accounts.dev",
-        "clerk.acme.com",
-        "clerk.example.com",
-      ];
+      const hosts = ["wandering-tiger-42.clerk.accounts.dev", "clerk.acme.com", "clerk.example.com"];
       for (const prefix of ["pk_test_", "pk_live_"]) {
         for (const host of hosts) {
           // Clerk terminates the encoded domain with `$`; some keys omit it,
           // and the base64 Clerk issues drops the `=` padding.
-          const payloads = [`${host}$`, host].flatMap((encoded) => [
-            btoa(encoded),
-            btoa(encoded).replace(/=+$/, ""),
-          ]);
+          const payloads = [`${host}$`, host].flatMap((encoded) => [btoa(encoded), btoa(encoded).replace(/=+$/, "")]);
           for (const payload of payloads) {
             const auth = construct(`${prefix}${payload}`);
             expect(auth.activityActorNamespace).toBe(`https://${host}`);

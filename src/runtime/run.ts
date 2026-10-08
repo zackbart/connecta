@@ -19,14 +19,7 @@
 //   interrupted without error". Callers of withDeadline today see the abort
 //   reason the caller chose, and runEdge keeps it that way.
 
-import {
-  Cause,
-  Context,
-  Duration,
-  Effect,
-  Exit,
-  Scheduler,
-} from "effect";
+import { Cause, Context, Duration, Effect, Exit, Scheduler } from "effect";
 import type { DeadlineOptions } from "../timeout.js";
 
 /** Yield to the scheduler through the microtask queue, never a timer. */
@@ -41,17 +34,12 @@ function setMicrotask(task: () => void): () => void {
 }
 
 /** The scheduler every edge-run fiber uses; see the header for why. */
-export const microtaskScheduler: Scheduler.Scheduler =
-  new Scheduler.MixedScheduler("async", setMicrotask);
+export const microtaskScheduler: Scheduler.Scheduler = new Scheduler.MixedScheduler("async", setMicrotask);
 
-const runExit = Effect.runPromiseExitWith(
-  Context.make(Scheduler.Scheduler, microtaskScheduler),
-);
+const runExit = Effect.runPromiseExitWith(Context.make(Scheduler.Scheduler, microtaskScheduler));
 
 function abortReason(signal: AbortSignal | undefined): unknown {
-  return signal && signal.reason !== undefined
-    ? signal.reason
-    : new DOMException("aborted", "AbortError");
+  return signal && signal.reason !== undefined ? signal.reason : new DOMException("aborted", "AbortError");
 }
 
 /**
@@ -87,14 +75,8 @@ export interface EdgeOptions {
  * effect requires no services: a caller that needs some provides them first
  * (src/runtime/storage.ts).
  */
-export async function runEdge<A, E>(
-  effect: Effect.Effect<A, E>,
-  options: EdgeOptions = {},
-): Promise<A> {
-  const exit = await runExit(
-    effect,
-    options.signal ? { signal: options.signal } : undefined,
-  );
+export async function runEdge<A, E>(effect: Effect.Effect<A, E>, options: EdgeOptions = {}): Promise<A> {
+  const exit = await runExit(effect, options.signal ? { signal: options.signal } : undefined);
   if (Exit.isSuccess(exit)) return exit.value;
   return rethrow(exit.cause, options.signal);
 }
@@ -160,9 +142,7 @@ export function withDeadlineEffect<A, E, R>(
     if (options.timeoutMs !== undefined) {
       contenders.push(
         Effect.sleep(Duration.millis(options.timeoutMs)).pipe(
-          Effect.andThen(
-            Effect.sync(() => controller.abort(options.timeoutError)),
-          ),
+          Effect.andThen(Effect.sync(() => controller.abort(options.timeoutError))),
           Effect.andThen(Effect.never),
         ),
       );
@@ -190,10 +170,7 @@ export interface DetachContext {
  * returned promise never rejects: the outcome is the effect's own business,
  * and an unhandled rejection from background work helps nobody.
  */
-export function detach(
-  effect: Effect.Effect<unknown, unknown>,
-  ctx?: DetachContext,
-): Promise<void> {
+export function detach(effect: Effect.Effect<unknown, unknown>, ctx?: DetachContext): Promise<void> {
   const settled = runExit(effect).then(
     () => {},
     () => {},

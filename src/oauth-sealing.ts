@@ -29,53 +29,56 @@ export function vaultOAuthSealer(
   const { seal, open } = vault;
   if (typeof seal !== "function" || typeof open !== "function") return undefined;
   return {
-    seal: (physicalKey, plaintext) =>
-      seal.call(vault, connectorId, physicalKey, plaintext, owner),
-    open: (physicalKey, sealed) =>
-      open.call(vault, connectorId, physicalKey, sealed, owner),
+    seal: (physicalKey, plaintext) => seal.call(vault, connectorId, physicalKey, plaintext, owner),
+    open: (physicalKey, sealed) => open.call(vault, connectorId, physicalKey, sealed, owner),
     warn: (message) => logger.warn(message),
   };
 }
 
-export function attachOAuthSealer(
-  ctx: ConnectorContext,
-  sealer: OAuthStateSealer | undefined,
-): ConnectorContext {
+export function attachOAuthSealer(ctx: ConnectorContext, sealer: OAuthStateSealer | undefined): ConnectorContext {
   if (sealer) sealers.set(ctx, sealer);
   return ctx;
 }
 
-export function oauthSealerFor(
-  ctx: ConnectorContext,
-): OAuthStateSealer | undefined {
+export function oauthSealerFor(ctx: ConnectorContext): OAuthStateSealer | undefined {
   return sealers.get(ctx);
 }
 
 /** Carry the sealer onto a context derived by spreading another. */
-export function inheritOAuthSealer(
-  from: ConnectorContext,
-  to: ConnectorContext,
-): ConnectorContext {
+export function inheritOAuthSealer(from: ConnectorContext, to: ConnectorContext): ConnectorContext {
   return attachOAuthSealer(to, sealers.get(from));
 }
 
 /** A separate HMAC key for browser handoffs, derived from the credential key. */
 export async function deriveOAuthHandoffKey(raw: Uint8Array): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey("raw", new Uint8Array(raw), "HKDF", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({
-    name: "HKDF",
-    hash: "SHA-256",
-    salt: new TextEncoder().encode("connecta:oauth-handoff:v1"),
-    info: new TextEncoder().encode("browser-connect"),
-  }, material, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign", "verify"]);
+  return crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new TextEncoder().encode("connecta:oauth-handoff:v1"),
+      info: new TextEncoder().encode("browser-connect"),
+    },
+    material,
+    { name: "HMAC", hash: "SHA-256", length: 256 },
+    false,
+    ["sign", "verify"],
+  );
 }
 
 /** A purpose-specific MCP retry key, available only to the host's codec. */
 export async function deriveRequestStateKey(raw: Uint8Array): Promise<Uint8Array> {
   const material = await crypto.subtle.importKey("raw", new Uint8Array(raw), "HKDF", false, ["deriveBits"]);
-  return new Uint8Array(await crypto.subtle.deriveBits({
-    name: "HKDF", hash: "SHA-256",
-    salt: new TextEncoder().encode("connecta:request-state:v1"),
-    info: new TextEncoder().encode("auth-elicitation"),
-  }, material, 256));
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new TextEncoder().encode("connecta:request-state:v1"),
+        info: new TextEncoder().encode("auth-elicitation"),
+      },
+      material,
+      256,
+    ),
+  );
 }

@@ -2,11 +2,7 @@ import type { FetchLike } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import {
-  classifyHost,
-  isPrivateHost,
-  learnedUrlRefusal,
-} from "../src/url-safety.js";
+import { classifyHost, isPrivateHost, learnedUrlRefusal } from "../src/url-safety.js";
 import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthRefreshSpentKeys } from "../src/storage/keys.js";
@@ -107,13 +103,10 @@ describe("classifyHost", () => {
 describe("learnedUrlRefusal", () => {
   const publicConfig = new URL("https://downstream.example/mcp");
   const loopbackConfig = new URL("http://127.0.0.1:8787/mcp");
-  const refusal = (configured: URL, target: string) =>
-    learnedUrlRefusal(configured, new URL(target));
+  const refusal = (configured: URL, target: string) => learnedUrlRefusal(configured, new URL(target));
 
   it("trusts every URL on the configured origin", () => {
-    expect(
-      refusal(publicConfig, "https://downstream.example/.well-known/x"),
-    ).toBeUndefined();
+    expect(refusal(publicConfig, "https://downstream.example/.well-known/x")).toBeUndefined();
     expect(refusal(loopbackConfig, "http://127.0.0.1:8787/token")).toBeUndefined();
     const lan = new URL("http://10.0.0.5:3000/mcp");
     expect(refusal(lan, "http://10.0.0.5:3000/register")).toBeUndefined();
@@ -126,10 +119,7 @@ describe("learnedUrlRefusal", () => {
     expect(refusal(loopbackConfig, "https://auth.example/token")).toBeUndefined();
   });
 
-  it.each([
-    "http://auth.example/token",
-    "ftp://auth.example/token",
-  ])("refuses the non-HTTPS URL %s", (target) => {
+  it.each(["http://auth.example/token", "ftp://auth.example/token"])("refuses the non-HTTPS URL %s", (target) => {
     expect(refusal(publicConfig, target)).toMatch(/HTTPS/);
     expect(refusal(loopbackConfig, target)).toMatch(/HTTPS/);
   });
@@ -157,9 +147,7 @@ describe("learnedUrlRefusal", () => {
     ]) {
       expect(refusal(loopbackConfig, target)).toBeUndefined();
     }
-    expect(
-      refusal(new URL("http://localhost:3000/mcp"), "http://127.0.0.1:9000/token"),
-    ).toBeUndefined();
+    expect(refusal(new URL("http://localhost:3000/mcp"), "http://127.0.0.1:9000/token")).toBeUndefined();
   });
 
   it.each([
@@ -174,10 +162,7 @@ describe("learnedUrlRefusal", () => {
 
   it("names the host and never the path, query, or credentials", () => {
     const reason = required(
-      refusal(
-        publicConfig,
-        "https://user:pass-secret@10.1.2.3/token?code=query-secret#frag-secret",
-      ),
+      refusal(publicConfig, "https://user:pass-secret@10.1.2.3/token?code=query-secret#frag-secret"),
     );
     expect(reason).toContain("10.1.2.3");
     for (const secret of ["pass-secret", "query-secret", "frag-secret", "/token"]) {
@@ -216,8 +201,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     const issuer = opts.authorizationServer;
     const resourceMetadataUrl = `${mcp.origin}/.well-known/oauth-protected-resource`;
     const tokenEndpoint = opts.tokenEndpoint ?? `${issuer}/token`;
-    const registrationEndpoint =
-      opts.registrationEndpoint ?? `${issuer}/register`;
+    const registrationEndpoint = opts.registrationEndpoint ?? `${issuer}/register`;
     const requests: URL[] = [];
     const fetchStub: FetchLike = async (input, init = {}) => {
       const url = new URL(input);
@@ -285,12 +269,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     requestScope: {},
   });
 
-  it.each([
-    "http://169.254.169.254",
-    "https://169.254.169.254",
-    "https://10.0.0.8",
-    "https://[::ffff:a9fe:a9fe]",
-  ])(
+  it.each(["http://169.254.169.254", "https://169.254.169.254", "https://10.0.0.8", "https://[::ffff:a9fe:a9fe]"])(
     "refuses protected-resource metadata naming %s as the authorization server",
     async (authorizationServer) => {
       const server = downstream({
@@ -308,11 +287,9 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
       expect(started.message).toContain(host);
       expect(reached(server, host)).toBe(0);
       // Discovery itself ran: the refusal is the guard, not a dead fixture.
-      expect(
-        server.requests.some((url) =>
-          url.pathname.startsWith("/.well-known/oauth-protected-resource"),
-        ),
-      ).toBe(true);
+      expect(server.requests.some((url) => url.pathname.startsWith("/.well-known/oauth-protected-resource"))).toBe(
+        true,
+      );
     },
   );
 
@@ -333,8 +310,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     });
     expect(reached(server, "192.168.1.50")).toBe(0);
     expect(reached(server, "auth.example")).toBeGreaterThan(0);
-    expect(await new KvOAuthProvider("svc", storage, REDIRECT).pendingAuthorizationUrl())
-      .toBeUndefined();
+    expect(await new KvOAuthProvider("svc", storage, REDIRECT).pendingAuthorizationUrl()).toBeUndefined();
   });
 
   it("refuses a token endpoint on a private literal at code exchange", async () => {
@@ -349,15 +325,18 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     // Consent starts normally: nothing has asked for the token endpoint yet.
     const started = await c.startAuth!(scope(storage));
     expect(started.state).toBe("auth_required");
-    const state = new URL(required(started.authorizationUrl)).searchParams.get(
-      "state",
-    );
+    const state = new URL(required(started.authorizationUrl)).searchParams.get("state");
 
     const callback = scope(storage);
     expect(await c.verifyState!(state, callback)).toBe(true);
-    const error = await c
-      .finishAuth!("code-123", callback, new URLSearchParams({ code: "code-123", state: state! }))
-      .then(() => null, (err: unknown) => err);
+    const error = await c.finishAuth!(
+      "code-123",
+      callback,
+      new URLSearchParams({ code: "code-123", state: state! }),
+    ).then(
+      () => null,
+      (err: unknown) => err,
+    );
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).name).toBe("RemoteMcpDestinationError");
@@ -420,9 +399,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
 
     expect(started.state).toBe("auth_required");
     expect(started.authorizationUrl).toMatch(/^https:\/\/auth\.example\/authorize\?/);
-    expect(
-      server.requests.some((url) => url.href === "https://auth.example/register"),
-    ).toBe(true);
+    expect(server.requests.some((url) => url.href === "https://auth.example/register")).toBe(true);
   });
 
   it("keeps a loopback-configured connector working against a loopback authorization server", async () => {
@@ -439,15 +416,11 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     expect(started.authorizationUrl).toMatch(/^http:\/\/localhost:9000\/authorize\?/);
     expect(reached(server, "localhost")).toBeGreaterThan(0);
 
-    const state = new URL(required(started.authorizationUrl)).searchParams.get(
-      "state",
-    );
+    const state = new URL(required(started.authorizationUrl)).searchParams.get("state");
     const callback = scope(storage);
     expect(await c.verifyState!(state, callback)).toBe(true);
     await c.finishAuth!("code-123", callback, new URLSearchParams({ code: "code-123", state: state! }));
-    expect(
-      server.requests.some((url) => url.href === "http://localhost:9000/token"),
-    ).toBe(true);
+    expect(server.requests.some((url) => url.href === "http://localhost:9000/token")).toBe(true);
   });
 
   it.each(["http://192.168.1.20", "http://169.254.169.254"])(

@@ -1,37 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import {
-  BASE,
-  connectorIds,
-  toolsByConnector,
-  registry,
-  type SearchResult,
-  textOf,
-} from "./fixtures/meta-tools.js";
+import { BASE, connectorIds, toolsByConnector, registry, type SearchResult, textOf } from "./fixtures/meta-tools.js";
 import { api } from "../src/connectors/api.js";
-import {
-  compactDiscoverySchema,
-  compactSchema,
-  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-} from "../src/catalog.js";
+import { compactDiscoverySchema, compactSchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders } from "../src/execute.js";
-import {
-  createMetaTools,
-  jsonResult,
-  MAX_DISCOVERY_RESULT_BYTES,
-  MAX_SEARCH_LIMIT,
-} from "../src/meta-tools.js";
+import { createMetaTools, jsonResult, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
 import { LINEAR_SAVE_ISSUE, PROVIDER_CORPUS } from "./fixtures/schema-corpus.js";
-import {
-  required,
-  calcConnector,
-  makeRegistry,
-  remoteConnector,
-  silentLogger,
-} from "./helpers.js";
+import { required, calcConnector, makeRegistry, remoteConnector, silentLogger } from "./helpers.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -66,9 +44,7 @@ function expectStructurallyCompleteTypeShape(text: string): void {
 describe("structured result compatibility", () => {
   it("keeps structuredContent canonical and content complete but compact", () => {
     const value = {
-      connectors: [
-        { id: "calc", tools: [{ address: "calc.add", score: 1 }] },
-      ],
+      connectors: [{ id: "calc", tools: [{ address: "calc.add", score: 1 }] }],
       total: 1,
     };
     const result = jsonResult(value);
@@ -85,13 +61,11 @@ describe("structured result compatibility", () => {
   });
 
   it("uses the same compact policy for discovery results", async () => {
-    const result = await createMetaTools(
-      makeRegistry([calcConnector]),
-      BASE,
-    ).searchTools({ query: "add", includeSchemas: "compact" });
-    expect(required(result.content[0]).text).toBe(
-      JSON.stringify(result.structuredContent),
-    );
+    const result = await createMetaTools(makeRegistry([calcConnector]), BASE).searchTools({
+      query: "add",
+      includeSchemas: "compact",
+    });
+    expect(required(result.content[0]).text).toBe(JSON.stringify(result.structuredContent));
   });
 });
 
@@ -136,30 +110,22 @@ describe("describe recovery", () => {
       id: "billing",
       kind: "api",
       tools: async () => {
-        throw new ConnectorCallError(
-          "unavailable",
-          `Upstream unavailable. ${"x".repeat(1_000)}`,
-          { retryAfterMs: 30_000 },
-        );
+        throw new ConnectorCallError("unavailable", `Upstream unavailable. ${"x".repeat(1_000)}`, {
+          retryAfterMs: 30_000,
+        });
       },
       call: async () => null,
     });
-    const [entry] = await new CatalogService(
-      makeRegistry([unavailable]),
-      BASE,
-    ).describe({ addresses: ["billing.read"] });
+    const [entry] = await new CatalogService(makeRegistry([unavailable]), BASE).describe({
+      addresses: ["billing.read"],
+    });
     const details = required(required(entry).errorDetails);
     expect(details).toMatchObject({
       code: "unavailable",
       retryable: true,
       retryAfterMs: 30_000,
     });
-    expect(Object.keys(details).sort()).toEqual([
-      "code",
-      "message",
-      "retryAfterMs",
-      "retryable",
-    ]);
+    expect(Object.keys(details).sort()).toEqual(["code", "message", "retryAfterMs", "retryable"]);
     expect(Buffer.byteLength(details.message)).toBeLessThanOrEqual(515);
     expect(required(entry).error).toBe(details.message);
   });
@@ -173,20 +139,17 @@ describe("describe recovery", () => {
       },
       call: async () => null,
     });
-    const hostile = Array.from(
-      { length: 6 },
-      (_, index) =>
-        index < 2
-          ? `ghost${index}.${"x".repeat(50_000)}`
-          : index < 4
-            ? `calc.${"y".repeat(50_000)}${index}`
-            : `billing.${"z".repeat(50_000)}${index}`,
+    const hostile = Array.from({ length: 6 }, (_, index) =>
+      index < 2
+        ? `ghost${index}.${"x".repeat(50_000)}`
+        : index < 4
+          ? `calc.${"y".repeat(50_000)}${index}`
+          : `billing.${"z".repeat(50_000)}${index}`,
     );
     const addresses = [hostile[0]!, "calc.add", ...hostile.slice(1), "calc.add"];
-    const described = await new CatalogService(
-      makeRegistry([calcConnector, unavailable]),
-      BASE,
-    ).describe({ addresses });
+    const described = await new CatalogService(makeRegistry([calcConnector, unavailable]), BASE).describe({
+      addresses,
+    });
 
     expect(described).toHaveLength(addresses.length);
     expect(required(described[1])).toMatchObject({
@@ -203,9 +166,7 @@ describe("describe recovery", () => {
       expect(Buffer.byteLength(required(failure.error))).toBeLessThanOrEqual(560);
       expect(Buffer.byteLength(required(failure.errorDetails).message)).toBeLessThanOrEqual(560);
     }
-    expect(Buffer.byteLength(JSON.stringify(described))).toBeLessThan(
-      MAX_DISCOVERY_RESULT_BYTES,
-    );
+    expect(Buffer.byteLength(JSON.stringify(described))).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
   });
 });
 
@@ -213,9 +174,8 @@ describe("search_tools", () => {
   it("uses the default bound for catalog fan-out and preserves all results", async () => {
     let active = 0;
     let maxActive = 0;
-    const connectors = Array.from(
-      { length: 9 },
-      (_, index): Connector => (connectorWith({
+    const connectors = Array.from({ length: 9 }, (_, index): Connector =>
+      connectorWith({
         id: `search_${index}`,
         kind: "mcp",
         description: `Search ${index}`,
@@ -232,7 +192,7 @@ describe("search_tools", () => {
           ];
         },
         call: async () => null,
-      })),
+      }),
     );
     const result = textOf(
       await createMetaTools(makeRegistry(connectors), BASE).searchTools({
@@ -246,29 +206,20 @@ describe("search_tools", () => {
 
   it("matches name and description into flat tool rows", async () => {
     const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(
-      await mt.searchTools({ query: "echo" }),
-    ) as SearchResult;
+    const parsed = textOf(await mt.searchTools({ query: "echo" })) as SearchResult;
     // A single matching tool carries its canonical connector address.
     expect(connectorIds(parsed)).toHaveLength(1);
     expect(required(connectorIds(parsed)[0])).toBe("remote");
-    expect(parsed.tools.map((t) => t.address)).toEqual([
-      "remote.echo",
-    ]);
+    expect(parsed.tools.map((t) => t.address)).toEqual(["remote.echo"]);
     expect(parsed.total).toBe(1);
   });
 
   it("empty query browses healthy tools and reports unavailable catalogs", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(await mt.searchTools({})) as SearchResult;
-    const whitespace = textOf(
-      await mt.searchTools({ query: " \n\t " }),
-    ) as SearchResult;
+    const whitespace = textOf(await mt.searchTools({ query: " \n\t " })) as SearchResult;
     // Healthy connector tools are returned in one page; failures are separate.
-    expect(connectorIds(parsed).sort()).toEqual([
-      "calc",
-      "remote",
-    ]);
+    expect(connectorIds(parsed).sort()).toEqual(["calc", "remote"]);
     const byId = toolsByConnector(parsed);
     expect(required(byId.calc).tools.map((t) => t.address)).toEqual(["calc.add"]);
     expect(required(byId.remote).tools.map((t) => t.address)).toEqual(["remote.echo"]);
@@ -279,10 +230,7 @@ describe("search_tools", () => {
   it("does not turn a non-empty Unicode-only query into a browse", async () => {
     const query = "界".repeat(80);
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([calcConnector, remoteConnector]),
-        BASE,
-      ).searchTools({ query }),
+      await createMetaTools(makeRegistry([calcConnector, remoteConnector]), BASE).searchTools({ query }),
     ) as SearchResult;
 
     expect(parsed).toMatchObject({
@@ -298,21 +246,16 @@ describe("search_tools", () => {
       },
     });
     expect(parsed.matchMode).toBeUndefined();
-    expect(
-      new TextEncoder().encode(JSON.stringify(parsed.queryAnalysis)).length,
-    ).toBeLessThan(1_600);
+    expect(new TextEncoder().encode(JSON.stringify(parsed.queryAnalysis)).length).toBeLessThan(1_600);
   });
 
   it("clips non-BMP no-match analysis by Unicode code point", async () => {
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([calcConnector, remoteConnector]),
-        BASE,
-      ).searchTools({ query: "😀".repeat(80) }),
+      await createMetaTools(makeRegistry([calcConnector, remoteConnector]), BASE).searchTools({
+        query: "😀".repeat(80),
+      }),
     ) as SearchResult;
-    const unmatched = required(
-      required(parsed.queryAnalysis).unmatchedTerms[0],
-    );
+    const unmatched = required(required(parsed.queryAnalysis).unmatchedTerms[0]);
 
     expect(parsed.tools).toEqual([]);
     expect(unmatched).toBe(`${"😀".repeat(63)}…`);
@@ -322,10 +265,9 @@ describe("search_tools", () => {
 
   it("uses searchable ASCII terms from a mixed Unicode query", async () => {
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([calcConnector, remoteConnector]),
-        BASE,
-      ).searchTools({ query: `${"界".repeat(80)} add` }),
+      await createMetaTools(makeRegistry([calcConnector, remoteConnector]), BASE).searchTools({
+        query: `${"界".repeat(80)} add`,
+      }),
     ) as SearchResult;
     const tools = parsed.tools;
 
@@ -365,12 +307,8 @@ describe("search_tools", () => {
       call: async (name) => name,
     });
     const mt = createMetaTools(makeRegistry([classified]), BASE);
-    const addresses = async (
-      safety?: "readOnly" | "approvalRequired" | "all",
-    ) => {
-      const page = textOf(
-        await mt.searchTools({ ...(safety ? { safety } : {}), limit: 10 }),
-      ) as SearchResult;
+    const addresses = async (safety?: "readOnly" | "approvalRequired" | "all") => {
+      const page = textOf(await mt.searchTools({ ...(safety ? { safety } : {}), limit: 10 })) as SearchResult;
       return page.tools.map((tool) => tool.address);
     };
 
@@ -392,9 +330,7 @@ describe("search_tools", () => {
     for (const address of await addresses("approvalRequired")) {
       const result = await mt.callTool({ address });
       expect(result.isError).toBe(true);
-      expect(required(result.content[0]).text).toContain(
-        "is a write",
-      );
+      expect(required(result.content[0]).text).toContain("is a write");
     }
   });
 
@@ -413,51 +349,37 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(filtered.total).toBe(0);
-    expect(filtered.queryAnalysis?.guidance).toContain(
-      "No matching read-only capability",
-    );
-    expect(filtered.queryAnalysis?.guidance).toContain(
-      "Change safety to inspect the other tools.",
-    );
+    expect(filtered.queryAnalysis?.guidance).toContain("No matching read-only capability");
+    expect(filtered.queryAnalysis?.guidance).toContain("Change safety to inspect the other tools.");
 
-    const complete = textOf(
-      await mt.searchTools({ query: "create" }),
-    ) as SearchResult;
+    const complete = textOf(await mt.searchTools({ query: "create" })) as SearchResult;
     expect(complete.tools).toHaveLength(1);
   });
 
   it("respects the connector filter → a single group", async () => {
     const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(
-      await mt.searchTools({ connector: "calc" }),
-    ) as SearchResult;
+    const parsed = textOf(await mt.searchTools({ connector: "calc" })) as SearchResult;
     expect(connectorIds(parsed)).toHaveLength(1);
     expect(required(connectorIds(parsed)[0])).toBe("calc");
-    expect(parsed.tools.map((t) => t.address)).toEqual([
-      "calc.add",
-    ]);
+    expect(parsed.tools.map((t) => t.address)).toEqual(["calc.add"]);
     expect(parsed.total).toBe(1);
   });
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {
     const loads = { wanted: 0, unrelated: 0 };
-    const dynamic = (id: keyof typeof loads): Connector => (connectorWith({
-      id,
-      kind: "mcp",
-      tools: async () => {
-        loads[id]++;
-        return [{ name: "read", description: `Read ${id} data` }];
-      },
-      call: async () => null,
-    }));
-    const mt = createMetaTools(
-      makeRegistry([dynamic("wanted"), dynamic("unrelated")]),
-      BASE,
-    );
+    const dynamic = (id: keyof typeof loads): Connector =>
+      connectorWith({
+        id,
+        kind: "mcp",
+        tools: async () => {
+          loads[id]++;
+          return [{ name: "read", description: `Read ${id} data` }];
+        },
+        call: async () => null,
+      });
+    const mt = createMetaTools(makeRegistry([dynamic("wanted"), dynamic("unrelated")]), BASE);
 
-    const parsed = textOf(
-      await mt.searchTools({ query: "read", connector: "wanted" }),
-    ) as SearchResult;
+    const parsed = textOf(await mt.searchTools({ query: "read", connector: "wanted" })) as SearchResult;
 
     expect(connectorIds(parsed)).toEqual(["wanted"]);
     expect(loads).toEqual({ wanted: 1, unrelated: 0 });
@@ -500,14 +422,10 @@ describe("search_tools", () => {
     expect(first.limit).toBe(8);
     expect(first.total).toBe(12);
     expect(first.tools).toHaveLength(8);
-    expect(
-      first.tools[0],
-    ).not.toHaveProperty("queryCoverage");
+    expect(first.tools[0]).not.toHaveProperty("queryCoverage");
     expect(first.nextOffset).toBe(8);
 
-    const second = textOf(
-      await mt.searchTools({ offset: required(first.nextOffset) }),
-    ) as SearchResult;
+    const second = textOf(await mt.searchTools({ offset: required(first.nextOffset) })) as SearchResult;
     expect(second.limit).toBe(8);
     expect(second.tools).toHaveLength(4);
     expect(second.hasMore).toBe(false);
@@ -532,17 +450,12 @@ describe("search_tools", () => {
       const result = await mt.searchTools({ limit });
       expect(result.isError).toBeFalsy();
       const parsed = textOf(result) as SearchResult;
-      expect(parsed.tools).toHaveLength(
-        limit,
-      );
+      expect(parsed.tools).toHaveLength(limit);
     }
     expect(loads).toBe(2);
 
     for (const limit of [MAX_SEARCH_LIMIT + 1, Number.MAX_SAFE_INTEGER]) {
-      const result = await createMetaTools(
-        makeRegistry([connector]),
-        BASE,
-      ).searchTools({ limit });
+      const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({ limit });
       expect(result.isError).toBe(true);
       expect(textOf(result)).toMatchObject({
         error: { code: "invalid_args", retryable: false },
@@ -553,10 +466,7 @@ describe("search_tools", () => {
   });
 
   it("keeps default and maximum result pages coverage-free", async () => {
-    const terms = Array.from(
-      { length: 8 },
-      (_, index) => `${index}${"x".repeat(79)}`,
-    );
+    const terms = Array.from({ length: 8 }, (_, index) => `${index}${"x".repeat(79)}`);
     const connector: Connector = connectorWith({
       id: "coverage_budget",
       staticTools: Array.from({ length: MAX_SEARCH_LIMIT }, (_, index) => ({
@@ -578,12 +488,8 @@ describe("search_tools", () => {
       expect(tools).toHaveLength(limit ?? 8);
       expect(tools.every((tool) => !("queryCoverage" in tool))).toBe(true);
       expect(tools.every((tool) => !("score" in tool))).toBe(true);
-      const responseBytes = new TextEncoder().encode(
-        required(result.content[0]).text,
-      ).length;
-      expect(responseBytes).toBeLessThan(
-        limit === undefined ? 10_000 : 100_000,
-      );
+      const responseBytes = new TextEncoder().encode(required(result.content[0]).text).length;
+      expect(responseBytes).toBeLessThan(limit === undefined ? 10_000 : 100_000);
       expect(responseBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
     }
   });
@@ -606,9 +512,7 @@ describe("search_tools", () => {
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const seen = new Set<string>();
     for (const offset of [0, 50_000, total - MAX_SEARCH_LIMIT]) {
-      const page = textOf(
-        await mt.searchTools({ offset, limit: MAX_SEARCH_LIMIT }),
-      ) as SearchResult;
+      const page = textOf(await mt.searchTools({ offset, limit: MAX_SEARCH_LIMIT })) as SearchResult;
       expect(page.total).toBe(total);
       expect(page.offset).toBe(offset);
       expect(page.tools).toHaveLength(MAX_SEARCH_LIMIT);
@@ -632,18 +536,13 @@ describe("search_tools", () => {
       tools: [],
       call: async () => null,
     });
-    const result = await createMetaTools(
-      makeRegistry([connector]),
-      BASE,
-    ).searchTools({ fullDescriptions: true });
+    const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({ fullDescriptions: true });
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatchObject({
       error: {
         code: "result_too_large",
-        message: expect.stringContaining(
-          `${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`,
-        ),
+        message: expect.stringContaining(`${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`),
         retryable: false,
       },
     });
@@ -654,27 +553,21 @@ describe("search_tools", () => {
       id: "knowledge",
       description: "Knowledge base",
       tools: [
-          {
-            name: "article-search",
-            description:
-              "Search articles, then fetch a matching document for details.",
-          },
-          {
-            name: "article-fetch",
-            description: "Fetch an article document by URL or ID.",
-          },
-        ],
+        {
+          name: "article-search",
+          description: "Search articles, then fetch a matching document for details.",
+        },
+        {
+          name: "article-fetch",
+          description: "Fetch an article document by URL or ID.",
+        },
+      ],
       call: async () => null,
     });
     const mt = createMetaTools(makeRegistry([conn]), BASE);
-    const parsed = textOf(
-      await mt.searchTools({ query: "fetch article document" }),
-    ) as SearchResult;
+    const parsed = textOf(await mt.searchTools({ query: "fetch article document" })) as SearchResult;
 
-    expect(parsed.tools.map((t) => t.name)).toEqual([
-      "article-fetch",
-      "article-search",
-    ]);
+    expect(parsed.tools.map((t) => t.name)).toEqual(["article-fetch", "article-search"]);
     expect(parsed.matchMode).toBeUndefined();
   });
 
@@ -695,18 +588,12 @@ describe("search_tools", () => {
       call: async () => null,
     });
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([connector]),
-        BASE,
-      ).searchTools({
-        query:
-          "can you show me all of the current open issues in our project please",
+      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
+        query: "can you show me all of the current open issues in our project please",
       }),
     ) as SearchResult;
 
-    expect(
-      parsed.tools.map((tool) => tool.name),
-    ).toEqual(["list_issues"]);
+    expect(parsed.tools.map((tool) => tool.name)).toEqual(["list_issues"]);
     expect(parsed.matchMode).toBeUndefined();
   });
 
@@ -731,19 +618,14 @@ describe("search_tools", () => {
       call: async () => null,
     });
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([connector]),
-        BASE,
-      ).searchTools({
+      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
         query: "find a drive file and share it",
       }),
     ) as SearchResult;
 
-    expect(
-      new Set(
-        parsed.tools.map((tool) => tool.address),
-      ),
-    ).toEqual(new Set(["files.search_files", "files.share_file"]));
+    expect(new Set(parsed.tools.map((tool) => tool.address))).toEqual(
+      new Set(["files.search_files", "files.share_file"]),
+    );
     expect(parsed.matchMode).toBe("partial");
   });
 
@@ -769,9 +651,7 @@ describe("search_tools", () => {
     });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
 
-    const supported = textOf(
-      await mt.searchTools({ query: "list projects deployments" }),
-    ) as SearchResult;
+    const supported = textOf(await mt.searchTools({ query: "list projects deployments" })) as SearchResult;
     expect(supported.matchMode).toBe("partial");
     expect(supported.queryAnalysis).toMatchObject({
       representedTerms: ["list", "projects", "deployments"],
@@ -792,13 +672,9 @@ describe("search_tools", () => {
         ...required(supportedFirstPage.queryAnalysis).otherResultTerms,
       ]),
     ).toEqual(new Set(["list", "projects", "deployments"]));
-    expect(
-      required(supportedFirstPage.queryAnalysis).otherResultTerms,
-    ).toHaveLength(1);
+    expect(required(supportedFirstPage.queryAnalysis).otherResultTerms).toHaveLength(1);
 
-    const mixed = textOf(
-      await mt.searchTools({ query: "list projects invoices" }),
-    ) as SearchResult;
+    const mixed = textOf(await mt.searchTools({ query: "list projects invoices" })) as SearchResult;
     expect(mixed.matchMode).toBe("partial");
     expect(mixed.queryAnalysis).toMatchObject({
       representedTerms: ["list", "projects"],
@@ -818,9 +694,7 @@ describe("search_tools", () => {
       unmatchedTerms: ["owner", "billing", "metadata"],
     });
 
-    const absent = textOf(
-      await mt.searchTools({ query: "calendar availability" }),
-    ) as SearchResult;
+    const absent = textOf(await mt.searchTools({ query: "calendar availability" })) as SearchResult;
     expect(absent).toMatchObject({
       tools: [],
       total: 0,
@@ -828,9 +702,7 @@ describe("search_tools", () => {
         representedTerms: [],
         otherResultTerms: [],
         unmatchedTerms: ["calendar", "availability"],
-        guidance: expect.stringContaining(
-          "No matching capability is configured in this deployment",
-        ),
+        guidance: expect.stringContaining("No matching capability is configured in this deployment"),
       },
     });
 
@@ -843,13 +715,9 @@ describe("search_tools", () => {
     expect(scopedAbsent.queryAnalysis).toMatchObject({
       connectorScope: "projects",
       unmatchedTerms: ["calendar", "availability"],
-      guidance: expect.stringContaining(
-        'No matching capability was found on connector "projects"',
-      ),
+      guidance: expect.stringContaining('No matching capability was found on connector "projects"'),
     });
-    expect(required(scopedAbsent.queryAnalysis).guidance).not.toContain(
-      "configured in this deployment",
-    );
+    expect(required(scopedAbsent.queryAnalysis).guidance).not.toContain("configured in this deployment");
 
     const unknownConnector = textOf(
       await mt.searchTools({
@@ -863,9 +731,7 @@ describe("search_tools", () => {
       representedTerms: [],
       otherResultTerms: [],
       unmatchedTerms: ["calendar", "availability"],
-      guidance: expect.stringContaining(
-        'Connector "ghost" is not configured in this deployment',
-      ),
+      guidance: expect.stringContaining('Connector "ghost" is not configured in this deployment'),
     });
   });
 
@@ -888,27 +754,17 @@ describe("search_tools", () => {
     });
     const mt = createMetaTools(makeRegistry([inventory]), BASE);
 
-    const byId = textOf(
-      await mt.searchTools({ query: "inventory" }),
-    ) as SearchResult;
-    expect(byId.tools.map((tool) => tool.address)).toEqual([
-      "inventory.list_skus", "inventory.get_sku",
-    ]);
+    const byId = textOf(await mt.searchTools({ query: "inventory" })) as SearchResult;
+    expect(byId.tools.map((tool) => tool.address)).toEqual(["inventory.list_skus", "inventory.get_sku"]);
     expect(byId.queryAnalysis).toBeUndefined();
 
     // A partial title word still receives identity guidance.
-    const byTitle = textOf(
-      await mt.searchTools({ query: "warehouse" }),
-    ) as SearchResult;
+    const byTitle = textOf(await mt.searchTools({ query: "warehouse" })) as SearchResult;
     expect(byTitle.total).toBe(0);
-    expect(
-      required(required(byTitle.queryAnalysis).guidance),
-    ).toContain('connector "inventory"');
+    expect(required(required(byTitle.queryAnalysis).guidance)).toContain('connector "inventory"');
 
     // A term the deployment really does not have keeps the stronger claim.
-    const absent = textOf(
-      await mt.searchTools({ query: "calendar" }),
-    ) as SearchResult;
+    const absent = textOf(await mt.searchTools({ query: "calendar" })) as SearchResult;
     expect(absent.total).toBe(0);
     expect(required(required(absent.queryAnalysis).guidance)).toContain(
       "No matching capability is configured in this deployment",
@@ -923,9 +779,7 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(lateId.total).toBe(0);
-    expect(required(required(lateId.queryAnalysis).guidance)).toContain(
-      'connector "inventory"',
-    );
+    expect(required(required(lateId.queryAnalysis).guidance)).toContain('connector "inventory"');
 
     const lateTitle = textOf(
       await mt.searchTools({
@@ -933,39 +787,24 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(lateTitle.total).toBe(0);
-    expect(required(required(lateTitle.queryAnalysis).guidance)).toContain(
-      'connector "inventory"',
-    );
+    expect(required(required(lateTitle.queryAnalysis).guidance)).toContain('connector "inventory"');
 
     // Exact identity contributes ranking without requiring tool descriptions
     // to repeat the connector's name.
-    const matched = textOf(
-      await mt.searchTools({ query: "inventory sku" }),
-    ) as SearchResult;
-    expect(
-      matched.tools.map((tool) => tool.address),
-    ).toEqual(["inventory.get_sku", "inventory.list_skus"]);
+    const matched = textOf(await mt.searchTools({ query: "inventory sku" })) as SearchResult;
+    expect(matched.tools.map((tool) => tool.address)).toEqual(["inventory.get_sku", "inventory.list_skus"]);
     expect(matched.queryAnalysis).toBeUndefined();
   });
 
   it("bounds query analysis independently of long search input", async () => {
-    const query = Array.from(
-      { length: 20 },
-      (_, index) => `${index}${"x".repeat(100)}`,
-    ).join(" ");
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([]), BASE).searchTools({ query }),
-    ) as SearchResult;
+    const query = Array.from({ length: 20 }, (_, index) => `${index}${"x".repeat(100)}`).join(" ");
+    const parsed = textOf(await createMetaTools(makeRegistry([]), BASE).searchTools({ query })) as SearchResult;
     const analysis = required(parsed.queryAnalysis);
 
     expect(analysis.unmatchedTerms).toHaveLength(8);
-    expect(
-      analysis.unmatchedTerms.every((term) => term.length <= 64),
-    ).toBe(true);
+    expect(analysis.unmatchedTerms.every((term) => term.length <= 64)).toBe(true);
     expect(analysis.truncated).toBe(true);
-    expect(new TextEncoder().encode(JSON.stringify(analysis)).length).toBeLessThan(
-      1_600,
-    );
+    expect(new TextEncoder().encode(JSON.stringify(analysis)).length).toBeLessThan(1_600);
   });
 
   it("does not let short function words force incidental partial matches", async () => {
@@ -985,17 +824,12 @@ describe("search_tools", () => {
       call: async () => null,
     });
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([connector]),
-        BASE,
-      ).searchTools({
+      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
         query: "send a message to a channel",
       }),
     ) as SearchResult;
 
-    expect(
-      parsed.tools.map((tool) => tool.name),
-    ).toEqual(["send_message"]);
+    expect(parsed.tools.map((tool) => tool.name)).toEqual(["send_message"]);
     expect(parsed.matchMode).toBeUndefined();
   });
 
@@ -1016,17 +850,12 @@ describe("search_tools", () => {
       call: async () => null,
     });
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([connector]),
-        BASE,
-      ).searchTools({
+      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
         query: "a and the",
       }),
     ) as SearchResult;
 
-    expect(
-      parsed.tools.map((tool) => tool.name),
-    ).toEqual(["phrase"]);
+    expect(parsed.tools.map((tool) => tool.name)).toEqual(["phrase"]);
     expect(parsed.matchMode).toBeUndefined();
   });
 
@@ -1043,10 +872,7 @@ describe("search_tools", () => {
       call: async () => null,
     });
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([connector]),
-        BASE,
-      ).searchTools({
+      await createMetaTools(makeRegistry([connector]), BASE).searchTools({
         query: "weather radar and rain forecast",
       }),
     ) as SearchResult;
@@ -1077,8 +903,7 @@ describe("search_tools", () => {
         },
         ...Array.from({ length: 8 }, (_, index) => ({
           name: `business_context_${index}`,
-          description:
-            "List organizations and projects configured for business analysis",
+          description: "List organizations and projects configured for business analysis",
         })),
         ...Array.from({ length: 2 }, (_, index) => ({
           name: `project_note_${index}`,
@@ -1096,9 +921,7 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
 
-    expect(
-      first.tools.map((tool) => tool.name),
-    ).toEqual([
+    expect(first.tools.map((tool) => tool.name)).toEqual([
       "List-Organizations",
       ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
     ]);
@@ -1108,11 +931,7 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(first.matchMode).toBeUndefined();
-    expect(
-      first.tools.every(
-        (tool) => !("queryCoverage" in tool) && !("score" in tool),
-      ),
-    ).toBe(true);
+    expect(first.tools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
 
     const second = textOf(
       await mt.searchTools({
@@ -1121,16 +940,9 @@ describe("search_tools", () => {
         offset: required(first.nextOffset),
       }),
     ) as SearchResult;
-    expect(second.tools.map((tool) => tool.name)).toEqual([
-      "business_context_7",
-      "List-All-Organizations",
-    ]);
+    expect(second.tools.map((tool) => tool.name)).toEqual(["business_context_7", "List-All-Organizations"]);
     expect(second).toMatchObject({ total: 10, hasMore: false });
-    expect(
-      second.tools.every(
-        (tool) => !("queryCoverage" in tool) && !("score" in tool),
-      ),
-    ).toBe(true);
+    expect(second.tools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
 
     const rawPhrase = textOf(
       await mt.searchTools({
@@ -1138,9 +950,7 @@ describe("search_tools", () => {
         limit: 8,
       }),
     ) as SearchResult;
-    expect(
-      rawPhrase.tools.map((tool) => tool.name),
-    ).toEqual([
+    expect(rawPhrase.tools.map((tool) => tool.name)).toEqual([
       "List-All-Organizations",
       ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
     ]);
@@ -1150,11 +960,7 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(rawPhrase.matchMode).toBeUndefined();
-    expect(
-      rawPhrase.tools.every(
-        (tool) => !("queryCoverage" in tool) && !("score" in tool),
-      ),
-    ).toBe(true);
+    expect(rawPhrase.tools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
   });
 
   it("uses deterministic partial-term ranking when no all-term match exists", async () => {
@@ -1162,47 +968,31 @@ describe("search_tools", () => {
       id: "experiments",
       description: "Experiment service",
       tools: [
-          {
-            name: "list_experiments",
-            description: "List experiments and their configuration.",
-          },
-          {
-            name: "get_experiment",
-            description:
-              "Get experiment details including metrics and variants.",
-          },
-          {
-            name: "get_results",
-            description: "Get experiment results.",
-          },
-        ],
+        {
+          name: "list_experiments",
+          description: "List experiments and their configuration.",
+        },
+        {
+          name: "get_experiment",
+          description: "Get experiment details including metrics and variants.",
+        },
+        {
+          name: "get_results",
+          description: "Get experiment results.",
+        },
+      ],
       call: async () => null,
     });
     const mt = createMetaTools(makeRegistry([conn]), BASE);
-    const query =
-      "get experiment details metrics variants results configuration";
-    const first = textOf(
-      await mt.searchTools({ query, limit: 2 }),
-    ) as SearchResult;
+    const query = "get experiment details metrics variants results configuration";
+    const first = textOf(await mt.searchTools({ query, limit: 2 })) as SearchResult;
 
     expect(first.matchMode).toBe("partial");
     const firstTools = first.tools;
-    expect(firstTools.map((t) => t.name))
-      .toEqual(["get_experiment", "get_results"]);
-    expect(
-      firstTools.every(
-        (tool) => !("queryCoverage" in tool) && !("score" in tool),
-      ),
-    ).toBe(true);
+    expect(firstTools.map((t) => t.name)).toEqual(["get_experiment", "get_results"]);
+    expect(firstTools.every((tool) => !("queryCoverage" in tool) && !("score" in tool))).toBe(true);
     expect(first.queryAnalysis).toMatchObject({
-      representedTerms: [
-        "get",
-        "experiment",
-        "details",
-        "metrics",
-        "variants",
-        "results",
-      ],
+      representedTerms: ["get", "experiment", "details", "metrics", "variants", "results"],
       otherResultTerms: ["configuration"],
       unmatchedTerms: [],
     });
@@ -1217,22 +1007,18 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(second.matchMode).toBe("partial");
-    expect(second.tools.map((tool) => tool.name)).toEqual([
-      "list_experiments",
-    ]);
+    expect(second.tools.map((tool) => tool.name)).toEqual(["list_experiments"]);
   });
 
   it("keeps partial fallback connector-scoped and returns no mode without overlap", async () => {
-    const connector = (id: string, name: string): Connector => (connectorWith({
-      id,
-      tools: [{ name, description: `${name} records` }],
-      call: async () => null,
-    }));
+    const connector = (id: string, name: string): Connector =>
+      connectorWith({
+        id,
+        tools: [{ name, description: `${name} records` }],
+        call: async () => null,
+      });
     const mt = createMetaTools(
-      makeRegistry([
-        connector("wanted", "get_experiment"),
-        connector("other", "get_results"),
-      ]),
+      makeRegistry([connector("wanted", "get_experiment"), connector("other", "get_results")]),
       BASE,
     );
     const partial = textOf(
@@ -1264,13 +1050,9 @@ describe("search_tools", () => {
     });
     const mt = createMetaTools(makeRegistry([conn]), BASE);
     const concise = textOf(await mt.searchTools({})) as SearchResult;
-    const full = textOf(
-      await mt.searchTools({ fullDescriptions: true }),
-    ) as SearchResult;
+    const full = textOf(await mt.searchTools({ fullDescriptions: true })) as SearchResult;
 
-    expect(required(concise.tools[0]).description!.length).toBeLessThan(
-      longDescription.length,
-    );
+    expect(required(concise.tools[0]).description!.length).toBeLessThan(longDescription.length);
     expect(required(concise.tools[0]).description).toMatch(/…$/);
     expect(required(full.tools[0]).description).toBe(longDescription);
   });
@@ -1284,10 +1066,7 @@ describe("search_tools", () => {
           `optionalField${index}`,
           { type: "string", description: propertyProse },
         ]),
-        [
-          "recordId",
-          { type: "string", description: `${propertyProse} required` },
-        ],
+        ["recordId", { type: "string", description: `${propertyProse} required` }],
       ]),
       required: ["recordId"],
     };
@@ -1302,9 +1081,9 @@ describe("search_tools", () => {
       })),
       tools: [],
       call: async (name, args) => ({
-          name,
-          recordId: (args as Record<string, unknown>).recordId,
-        }),
+        name,
+        recordId: (args as Record<string, unknown>).recordId,
+      }),
     });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const compactResult = await mt.searchTools({
@@ -1326,15 +1105,9 @@ describe("search_tools", () => {
     expect(tools.every((tool) => tool.inputSchemaTruncated)).toBe(true);
     expect(tools.every((tool) => !("inputKeys" in tool))).toBe(true);
     expect(
-      tools.every(
-        (tool) =>
-          new TextEncoder().encode(tool.inputSchema).length <=
-          MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-      ),
+      tools.every((tool) => new TextEncoder().encode(tool.inputSchema).length <= MAX_COMPACT_DISCOVERY_SCHEMA_BYTES),
     ).toBe(true);
-    expect(required(tools[0]).inputSchema).toMatch(
-      /^\{ "recordId": unknown, "optionalField0"\?: unknown/,
-    );
+    expect(required(tools[0]).inputSchema).toMatch(/^\{ "recordId": unknown, "optionalField0"\?: unknown/);
 
     // The required-first routing shape is enough for the simple read; no
     // describe round trip is needed.
@@ -1393,23 +1166,22 @@ describe("search_tools", () => {
       id: "crm",
       kind: "mcp",
       tools: [
-          {
-            name: "lookup",
-            inputSchema: {
-              type: "object",
-              properties: { id: { type: "string" } },
-              required: ["id"],
-            },
-            annotations: { readOnlyHint: true, openWorldHint: false },
+        {
+          name: "lookup",
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
           },
-        ],
+          annotations: { readOnlyHint: true, openWorldHint: false },
+        },
+      ],
       call: async () => ({ content: [{ type: "text", text: "{}" }] }),
     });
     const parsed = textOf(
-      await createMetaTools(
-        makeRegistry([apiConnector, mcpConnector]),
-        BASE,
-      ).searchTools({ includeSchemas: "compact" }),
+      await createMetaTools(makeRegistry([apiConnector, mcpConnector]), BASE).searchTools({
+        includeSchemas: "compact",
+      }),
     ) as SearchResult;
     const byId = toolsByConnector(parsed);
     expect(required(required(byId.weather).tools[0]).inputSchema).toBe("{ city: string }");
@@ -1448,9 +1220,7 @@ describe("search_tools", () => {
         },
       ],
     });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([titled]), BASE).searchTools({}),
-    ) as SearchResult;
+    const parsed = textOf(await createMetaTools(makeRegistry([titled]), BASE).searchTools({})) as SearchResult;
 
     expect(parsed.tools[0]).toMatchObject({
       address: "billing.list",
@@ -1464,30 +1234,23 @@ describe("search_tools", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const connector = (id: string): Connector => (connectorWith({
-      id,
-      kind: "mcp",
-      tools: async () => {
-        started++;
-        if (started === 2) release();
-        await gate;
-        return [{ name: "read" }];
-      },
-      call: async () => null,
-    }));
-    const search = createMetaTools(
-      makeRegistry([connector("first"), connector("second")]),
-      BASE,
-    ).searchTools({});
+    const connector = (id: string): Connector =>
+      connectorWith({
+        id,
+        kind: "mcp",
+        tools: async () => {
+          started++;
+          if (started === 2) release();
+          await gate;
+          return [{ name: "read" }];
+        },
+        call: async () => null,
+      });
+    const search = createMetaTools(makeRegistry([connector("first"), connector("second")]), BASE).searchTools({});
     await expect(
       Promise.race([
         search,
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("catalogs loaded sequentially")),
-            100,
-          ),
-        ),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("catalogs loaded sequentially")), 100)),
       ]),
     ).resolves.toBeDefined();
     expect(started).toBe(2);
@@ -1507,10 +1270,7 @@ describe("compact schema rendering", () => {
     // inside execute_code is the only surface that reaches it now, and it
     // renders property descriptions where search's bounded compact schema
     // deliberately does not.
-    const described = await new CatalogService(
-      makeRegistry([conn]),
-      BASE,
-    ).describe({ addresses: ["shape.t"] });
+    const described = await new CatalogService(makeRegistry([conn]), BASE).describe({ addresses: ["shape.t"] });
     return required(described[0]).inputSchema as string;
   }
 
@@ -1524,9 +1284,7 @@ describe("compact schema rendering", () => {
       },
       required: ["id"],
     });
-    expect(shape).toBe(
-      '{ id: string // the id, mode?: "a" | "b", tags?: string[] }',
-    );
+    expect(shape).toBe('{ id: string // the id, mode?: "a" | "b", tags?: string[] }');
   });
 
   it("renders numeric and string constraints in discovery and describe", async () => {
@@ -1551,7 +1309,7 @@ describe("compact schema rendering", () => {
       },
     };
     const expected =
-      '{ limit?: integer /* >= 1; > 0; <= 50; < 51; multiple of 1 */, ' +
+      "{ limit?: integer /* >= 1; > 0; <= 50; < 51; multiple of 1 */, " +
       'name?: string /* length >= 3; length <= 64; format "hostname"; pattern "^[a-z]+$" */ }';
 
     expect(compactDiscoverySchema(schema)).toEqual({
@@ -1565,19 +1323,13 @@ describe("compact schema rendering", () => {
         minLength: 2,
       }).text,
     ).toBe("(string | null) /* length >= 2 */");
-    expect(compactDiscoverySchema({ minimum: 0 }).text).toBe(
-      "unknown /* >= 0 */",
-    );
+    expect(compactDiscoverySchema({ minimum: 0 }).text).toBe("unknown /* >= 0 */");
   });
 
   it("groups enum and resolved-union constraints around the whole type", () => {
     const constrainedEnum = { enum: ["a", "bbb"], minLength: 2 };
-    expect(compactDiscoverySchema(constrainedEnum).text).toBe(
-      '("a" | "bbb") /* length >= 2 */',
-    );
-    expect(compactSchema(constrainedEnum)).toBe(
-      '("a" | "bbb") /* length >= 2 */',
-    );
+    expect(compactDiscoverySchema(constrainedEnum).text).toBe('("a" | "bbb") /* length >= 2 */');
+    expect(compactSchema(constrainedEnum)).toBe('("a" | "bbb") /* length >= 2 */');
 
     const constrainedRef = {
       $ref: "#/$defs/Value",
@@ -1588,21 +1340,13 @@ describe("compact schema rendering", () => {
         },
       },
     };
-    expect(compactDiscoverySchema(constrainedRef).text).toBe(
-      "(string | null) /* length >= 2 */",
-    );
-    expect(compactSchema(constrainedRef)).toBe(
-      "(string | null) /* length >= 2 */",
-    );
+    expect(compactDiscoverySchema(constrainedRef).text).toBe("(string | null) /* length >= 2 */");
+    expect(compactSchema(constrainedRef)).toBe("(string | null) /* length >= 2 */");
   });
 
   it("does not group unconstrained array-valued type unions", () => {
-    expect(compactDiscoverySchema({ type: ["string", "null"] }).text).toBe(
-      "string | null",
-    );
-    expect(compactSchema({ type: ["string", "null"] })).toBe(
-      "string | null",
-    );
+    expect(compactDiscoverySchema({ type: ["string", "null"] }).text).toBe("string | null");
+    expect(compactSchema({ type: ["string", "null"] })).toBe("string | null");
   });
 
   // `A | B[]` reads as "an A, or an array of B" (#569): every shape that
@@ -1669,10 +1413,7 @@ describe("compact schema rendering", () => {
       compactSchema({
         type: "array",
         items: {
-          oneOf: [
-            { type: "object", properties: { x: { type: "string", description: "b) c)" } } },
-            { type: "number" },
-          ],
+          oneOf: [{ type: "object", properties: { x: { type: "string", description: "b) c)" } } }, { type: "number" }],
         },
       }),
     ).toBe("({ x?: string // b) c) } | number)[]");
@@ -1694,13 +1435,19 @@ describe("compact schema rendering", () => {
       await createMetaTools(reg, BASE).searchTools({ connector: "corpus", includeSchemas: "compact" }),
     ) as SearchResult;
     const providers = await buildSandboxProviders(reg, BASE, silentLogger);
-    const program = (await required(
-      required(providers.find((item) => item.name === "connecta")).fns.search,
-    )({ connector: "corpus", includeSchemas: "compact" })) as { tools: Array<Record<string, unknown>> };
+    const program = (await required(required(providers.find((item) => item.name === "connecta")).fns.search)({
+      connector: "corpus",
+      includeSchemas: "compact",
+    })) as { tools: Array<Record<string, unknown>> };
 
     const shapes = (rows: Array<Record<string, unknown>>) =>
-      rows.map(({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }) =>
-        ({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }));
+      rows.map(({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }) => ({
+        address,
+        inputSchema,
+        outputSchema,
+        inputSchemaTruncated,
+        outputSchemaTruncated,
+      }));
     const topRows = topLevel.tools as Array<Record<string, unknown>>;
     expect(topRows).toHaveLength(PROVIDER_CORPUS.length);
     expect(shapes(program.tools)).toEqual(shapes(topRows));
@@ -1725,10 +1472,7 @@ describe("compact schema rendering", () => {
     const schema = {
       type: "object",
       properties: Object.fromEntries(
-        Array.from({ length: 36 }, (_, index) => [
-          `field${index}`,
-          { type: "string", minLength: 1, maxLength: 64 },
-        ]),
+        Array.from({ length: 36 }, (_, index) => [`field${index}`, { type: "string", minLength: 1, maxLength: 64 }]),
       ),
     };
 
@@ -1737,9 +1481,7 @@ describe("compact schema rendering", () => {
     expect(compact.text).toContain("field0?: string");
     expect(compact.text).toContain("field35?: string");
     expect(compact.text).not.toContain("length >=");
-    expect(new TextEncoder().encode(compact.text).length).toBeLessThanOrEqual(
-      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-    );
+    expect(new TextEncoder().encode(compact.text).length).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES);
   });
 
   it('inlines $ref by name and falls back to "json" format on request', async () => {
@@ -1792,10 +1534,7 @@ describe("compact schema rendering", () => {
   });
 
   it("bounds nested UTF-8 enums without hiding other property types", () => {
-    const values = Array.from(
-      { length: 80 },
-      (_, index) => `${"😀".repeat(4)}-region-${index}`,
-    );
+    const values = Array.from({ length: 80 }, (_, index) => `${"😀".repeat(4)}-region-${index}`);
     const schema = {
       type: "object",
       properties: {
@@ -1823,13 +1562,9 @@ describe("compact schema rendering", () => {
     const omitted = compact.text.match(/(\d+) enum values omitted/);
     expect(omitted).not.toBeNull();
     const shown = compact.text.match(/-region-/g)?.length ?? 0;
-    expect(shown + Number(required(omitted ?? undefined)[1])).toBe(
-      values.length,
-    );
+    expect(shown + Number(required(omitted ?? undefined)[1])).toBe(values.length);
     expectStructurallyCompleteTypeShape(compact.text);
-    expect(new TextEncoder().encode(compact.text).length).toBeLessThan(
-      new TextEncoder().encode(exact).length * 0.25,
-    );
+    expect(new TextEncoder().encode(compact.text).length).toBeLessThan(new TextEncoder().encode(exact).length * 0.25);
     expect(exact).toContain(required(values.at(-1)));
   });
 
@@ -1852,22 +1587,18 @@ describe("compact schema rendering", () => {
         includeSchemas: "json",
       }),
     ) as any;
-    expect(required(search.tools[0]).inputSchema).toEqual(
-      schema,
-    );
+    expect(required(search.tools[0]).inputSchema).toEqual(schema);
 
     const [describedJson] = await new CatalogService(registry, BASE).describe({
       addresses: ["enum_exact.read"],
       format: "json",
     });
     expect(required(describedJson).inputSchema).toEqual(schema);
-    const [describedCompact] = await new CatalogService(
-      registry,
-      BASE,
-    ).describe({ addresses: ["enum_exact.read"], format: "compact" });
-    expect(required(describedCompact).inputSchema).toContain(
-      required(values.at(-1)),
-    );
+    const [describedCompact] = await new CatalogService(registry, BASE).describe({
+      addresses: ["enum_exact.read"],
+      format: "compact",
+    });
+    expect(required(describedCompact).inputSchema).toContain(required(values.at(-1)));
     expect(required(describedCompact).inputSchema).not.toContain("omitted");
   });
 
@@ -1895,21 +1626,23 @@ describe("compact schema rendering", () => {
       required: ["payload"],
     });
     expect(nestedObject.truncated).toBe(true);
-    expect(nestedObject.text).toBe(
-      '{ "payload": unknown, "traceId"?: unknown } /* truncated */',
-    );
+    expect(nestedObject.text).toBe('{ "payload": unknown, "traceId"?: unknown } /* truncated */');
     expectStructurallyCompleteTypeShape(nestedObject.text);
 
-    expect(new TextEncoder().encode(nestedObject.text).length).toBeLessThanOrEqual(
-      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-    );
+    expect(new TextEncoder().encode(nestedObject.text).length).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES);
   });
 });
 
-
 it("counts both discovery copies and their JSON escaping against the ceiling", async () => {
-  const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", description: "x".repeat(140_000), annotations: { readOnlyHint: true } }] });
-  const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({ query: "", fullDescriptions: true });
+  const connector = connectorWith({
+    id: "large",
+    kind: "api",
+    tools: [{ name: "read", description: "x".repeat(140_000), annotations: { readOnlyHint: true } }],
+  });
+  const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({
+    query: "",
+    fullDescriptions: true,
+  });
   expect(result.isError).toBe(true);
   expect(textOf(result)).toMatchObject({ error: { code: "result_too_large" } });
   expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);

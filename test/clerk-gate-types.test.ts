@@ -12,7 +12,9 @@ it("INV-13: declares the bundled gate client independently of consumer Clerk typ
   expectTypeOf<NonNullable<ClerkAuthOptions["gate"]>>().parameters.toEqualTypeOf<[string, ClerkGateClient]>();
   expectTypeOf<ClerkGateClient["users"]["getUser"]>().returns.toEqualTypeOf<Promise<ClerkUser>>();
   expectTypeOf<ClerkUser["fullName"]>().toEqualTypeOf<string | null>();
-  expectTypeOf<ClerkUser["emailAddresses"][number]["verification"]>().toEqualTypeOf<{ readonly status: string } | null>();
+  expectTypeOf<ClerkUser["emailAddresses"][number]["verification"]>().toEqualTypeOf<{
+    readonly status: string;
+  } | null>();
   // @ts-expect-error The gate contract does not claim the full Clerk API.
   expectTypeOf<ClerkGateClient["organizations"]>();
   // @ts-expect-error Gate code cannot depend on the internal auth operations.

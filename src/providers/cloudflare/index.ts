@@ -11,11 +11,7 @@ import { skill } from "./skill.generated.js";
  * it: no `cloudflare` package in any dependency field, every import relative.
  */
 import { apiConnector as api, type ApiTool } from "../../connectors/api-connector.js";
-import {
-  remoteMcp,
-  withCredentialDefaults,
-  type RemoteMcpAuth,
-} from "../../connectors/remote-mcp.js";
+import { remoteMcp, withCredentialDefaults, type RemoteMcpAuth } from "../../connectors/remote-mcp.js";
 import { reviewedCatalog } from "../../catalog-drift.js";
 import {
   guardedFetch,
@@ -143,9 +139,7 @@ export interface CloudflareMcpOptions extends CloudflareCommonOptions {
 export interface CloudflareOptions extends CloudflareApiOptions {}
 
 /** Select one Cloudflare interface when deployment configuration constructs it. */
-export type CloudflareConnectionOptions =
-  | CloudflareOptions
-  | CloudflareMcpOptions;
+export type CloudflareConnectionOptions = CloudflareOptions | CloudflareMcpOptions;
 
 /**
  * Cloudflare documents a global limit of 1,200 requests per five minutes per
@@ -176,7 +170,7 @@ function admissionPolicy(maxConcurrency: number): ConnectorCallAdmissionPolicy {
 const API_TOKEN_CREDENTIAL: ConnectorCredentialConfig = {
   label: "Cloudflare API token",
   description:
-    "A scoped API token (My Profile → API Tokens → Create Token), not a Global API Key. Grant only the permissions the deployment needs: zone-scoped \"Zone Read\", \"Zone Settings Write\", \"DNS Write\", \"Cache Purge\", and the phase-specific Rules product Read permissions as needed; account-scoped \"Workers Scripts Read/Write\", \"Workers KV Storage Read/Write\", \"Workers R2 Storage Read/Write\", or \"Cloudflare Pages Read/Write\" for the platform tools.",
+    'A scoped API token (My Profile → API Tokens → Create Token), not a Global API Key. Grant only the permissions the deployment needs: zone-scoped "Zone Read", "Zone Settings Write", "DNS Write", "Cache Purge", and the phase-specific Rules product Read permissions as needed; account-scoped "Workers Scripts Read/Write", "Workers KV Storage Read/Write", "Workers R2 Storage Read/Write", or "Cloudflare Pages Read/Write" for the platform tools.',
   placeholder: "Paste API token",
 };
 
@@ -209,9 +203,7 @@ function credentialConfig(
   if (authentication === "apiToken") {
     const credential = override ?? API_TOKEN_CREDENTIAL;
     if (credential.fields?.length) {
-      throw new Error(
-        "cloudflare() API token authentication requires a single-value credential.",
-      );
+      throw new Error("cloudflare() API token authentication requires a single-value credential.");
     }
     return credential;
   }
@@ -264,9 +256,7 @@ interface CloudflareEnvelope {
 type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -274,9 +264,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 /** Flatten Cloudflare's error array (and any nested chain) into one line. */
@@ -285,8 +273,7 @@ function describeErrors(errors: CloudflareEnvelopeError[]): string {
   const walk = (list: CloudflareEnvelopeError[]): void => {
     for (const entry of list) {
       const code = typeof entry.code === "number" ? entry.code : undefined;
-      const message =
-        typeof entry.message === "string" ? entry.message : "Unknown error";
+      const message = typeof entry.message === "string" ? entry.message : "Unknown error";
       parts.push(code === undefined ? message : `${code}: ${message}`);
       if (Array.isArray(entry.error_chain)) walk(entry.error_chain);
     }
@@ -341,11 +328,7 @@ const AUTH_ERROR_CODES = new Set([1001, 6003, 6111, 9103, 9106, 9107]);
  * cannot do that" — an agent needs to stop retrying either way, and the
  * operator needs to know the token is the thing to fix.
  */
-function failureFor(
-  status: number,
-  headers: Headers,
-  errors: CloudflareEnvelopeError[],
-): ConnectorCallError {
+function failureFor(status: number, headers: Headers, errors: CloudflareEnvelopeError[]): ConnectorCallError {
   const detail = describeErrors(errors);
   const codes = errorCodes(errors);
   // 429 is checked before the authentication codes on purpose: Cloudflare
@@ -375,10 +358,7 @@ function failureFor(
     );
   }
   if (status === 400 || status === 409 || status === 422) {
-    return new ConnectorCallError(
-      "invalid_args",
-      `Cloudflare rejected the request (HTTP ${status}). ${detail}`,
-    );
+    return new ConnectorCallError("invalid_args", `Cloudflare rejected the request (HTTP ${status}). ${detail}`);
   }
   // Cloudflare refuses a token that may not touch a resource with 401 or 403,
   // so a 404 here is a real absence rather than a permission gap wearing a
@@ -391,15 +371,9 @@ function failureFor(
     );
   }
   if (status >= 500) {
-    return new ConnectorCallError(
-      "unavailable",
-      `Cloudflare is unavailable (HTTP ${status}). ${detail}`,
-    );
+    return new ConnectorCallError("unavailable", `Cloudflare is unavailable (HTTP ${status}). ${detail}`);
   }
-  return new ConnectorCallError(
-    "connector_call_failed",
-    `Cloudflare request failed (HTTP ${status}). ${detail}`,
-  );
+  return new ConnectorCallError("connector_call_failed", `Cloudflare request failed (HTTP ${status}). ${detail}`);
 }
 
 // --- The request path --------------------------------------------------------
@@ -454,10 +428,7 @@ async function readAuthenticationHeaders(
  * What stays here is what only Cloudflare knows: which headers prove identity,
  * and what a status code means once it arrives.
  */
-function cloudflareTransport(
-  baseUrl: string,
-  authentication: CloudflareAuthentication,
-): GuardedTransport {
+function cloudflareTransport(baseUrl: string, authentication: CloudflareAuthentication): GuardedTransport {
   return guardedFetch({
     provider: "Cloudflare",
     baseUrl,
@@ -474,19 +445,13 @@ async function callCloudflare(
 ): Promise<CloudflareResponse> {
   return await send(spec, ctx, async (response) => {
     const parsed = await response.jsonResult();
-    const envelope =
-      "value" in parsed
-        ? (parsed.value as CloudflareEnvelope | undefined)
-        : undefined;
+    const envelope = "value" in parsed ? (parsed.value as CloudflareEnvelope | undefined) : undefined;
     if (envelope === undefined) {
       // A gateway error page or an empty body, not an envelope: the status is
       // the only real signal left.
       // No cause: the parser's error quotes the body it could not read.
       throw response.ok
-        ? new ConnectorCallError(
-            "unavailable",
-            "Cloudflare returned a non-JSON body for a successful status.",
-          )
+        ? new ConnectorCallError("unavailable", "Cloudflare returned a non-JSON body for a successful status.")
         : failureFor(response.status, response.headers, []);
     }
 
@@ -495,10 +460,7 @@ async function callCloudflare(
       throw failureFor(response.status, response.headers, errors);
     }
     const isV4Envelope =
-      "success" in envelope ||
-      "result" in envelope ||
-      "result_info" in envelope ||
-      "messages" in envelope;
+      "success" in envelope || "result" in envelope || "result_info" in envelope || "messages" in envelope;
     return {
       // `/graphql` and a small number of product APIs return ordinary JSON
       // instead of the standard v4 envelope. Preserve that document whole so
@@ -545,21 +507,16 @@ async function callCloudflareContent(
       let envelope: CloudflareEnvelope | undefined;
       try {
         const parsed = await response.jsonResult();
-        envelope =
-          "value" in parsed
-            ? (parsed.value as CloudflareEnvelope | undefined)
-            : undefined;
+        envelope = "value" in parsed ? (parsed.value as CloudflareEnvelope | undefined) : undefined;
       } catch {
         // Content reads classify an already-failed status even when its error
         // body exceeds the transport ceiling.
       }
-      const errors =
-        envelope && Array.isArray(envelope.errors) ? envelope.errors : [];
+      const errors = envelope && Array.isArray(envelope.errors) ? envelope.errors : [];
       throw failureFor(response.status, response.headers, errors);
     }
     const common = compact({
-      contentType:
-        response.headers.get("content-type") ?? "application/octet-stream",
+      contentType: response.headers.get("content-type") ?? "application/octet-stream",
       etag: response.headers.get("etag") ?? undefined,
     });
     if (responseType === "text") {
@@ -588,16 +545,11 @@ function pageInfo(info: CloudflareResultInfo | undefined): PageInfo | undefined 
   if (!info) return undefined;
   // A cursor-only result_info carries no page counters; inventing them would
   // report `hasMore: false` on a listing that has more.
-  if (
-    info.page === undefined &&
-    info.total_pages === undefined &&
-    info.count === undefined
-  ) {
+  if (info.page === undefined && info.total_pages === undefined && info.count === undefined) {
     return undefined;
   }
   const page = typeof info.page === "number" ? info.page : 1;
-  const totalPages =
-    typeof info.total_pages === "number" ? info.total_pages : undefined;
+  const totalPages = typeof info.total_pages === "number" ? info.total_pages : undefined;
   return compact({
     page,
     perPage: typeof info.per_page === "number" ? info.per_page : 0,
@@ -611,11 +563,7 @@ function pageInfo(info: CloudflareResultInfo | undefined): PageInfo | undefined 
 function pagedList(
   key: string,
   project: (value: unknown) => unknown,
-): (
-  result: unknown,
-  resultInfo: CloudflareResultInfo | undefined,
-  raw: boolean,
-) => JsonRecord {
+): (result: unknown, resultInfo: CloudflareResultInfo | undefined, raw: boolean) => JsonRecord {
   return (result, resultInfo, raw) => ({
     [key]: raw ? result : asArray(result).map(project),
     page: pageInfo(resultInfo),
@@ -623,9 +571,7 @@ function pagedList(
 }
 
 function cursorResult(cursor: unknown): { nextCursor?: string } {
-  return typeof cursor === "string" && cursor !== ""
-    ? { nextCursor: cursor }
-    : {};
+  return typeof cursor === "string" && cursor !== "" ? { nextCursor: cursor } : {};
 }
 
 function projectAccount(value: unknown): JsonRecord {
@@ -642,9 +588,7 @@ function projectZone(value: unknown): JsonRecord {
   const zone = asRecord(value);
   const account = asRecord(zone["account"]);
   const plan = asRecord(zone["plan"]);
-  const nameServers = Array.isArray(zone["name_servers"])
-    ? zone["name_servers"]
-    : undefined;
+  const nameServers = Array.isArray(zone["name_servers"]) ? zone["name_servers"] : undefined;
   return compact({
     id: zone["id"],
     name: zone["name"],
@@ -673,9 +617,7 @@ function projectZoneSetting(value: unknown): JsonRecord {
 function projectDnsRecord(value: unknown): JsonRecord {
   const record = asRecord(value);
   const comment = record["comment"] ? record["comment"] : undefined;
-  const tags = Array.isArray(record["tags"]) && record["tags"].length > 0
-    ? record["tags"]
-    : undefined;
+  const tags = Array.isArray(record["tags"]) && record["tags"].length > 0 ? record["tags"] : undefined;
   return compact({
     id: record["id"],
     name: record["name"],
@@ -823,17 +765,16 @@ function projectRuleset(value: unknown): JsonRecord {
 function projectPagesProject(value: unknown): JsonRecord {
   const project = asRecord(value);
   const latest = asRecord(project["latest_deployment"]);
-  const domains = Array.isArray(project["domains"])
-    ? project["domains"]
-    : undefined;
-  const latestDeployment = latest["id"] === undefined
-    ? undefined
-    : compact({
-        id: latest["id"],
-        environment: latest["environment"],
-        url: latest["url"],
-        createdOn: latest["created_on"],
-      });
+  const domains = Array.isArray(project["domains"]) ? project["domains"] : undefined;
+  const latestDeployment =
+    latest["id"] === undefined
+      ? undefined
+      : compact({
+          id: latest["id"],
+          environment: latest["environment"],
+          url: latest["url"],
+          createdOn: latest["created_on"],
+        });
   return compact({
     name: project["name"],
     subdomain: project["subdomain"],
@@ -848,8 +789,7 @@ function projectPagesProject(value: unknown): JsonRecord {
 
 const PAGE_OUTPUT_SCHEMA: JsonSchema = {
   type: "object",
-  description:
-    "Pagination counters from Cloudflare's result_info. Absent when the endpoint does not paginate.",
+  description: "Pagination counters from Cloudflare's result_info. Absent when the endpoint does not paginate.",
   properties: {
     page: { type: "integer" },
     perPage: { type: "integer" },
@@ -891,9 +831,7 @@ function pagingInputProperties(
 ): Record<string, JsonSchema> {
   const { defaultPerPage, bounds = "cloudflare" } = options;
   const defaultNote =
-    defaultPerPage === undefined
-      ? " Cloudflare chooses the default."
-      : ` Defaults to ${defaultPerPage}.`;
+    defaultPerPage === undefined ? " Cloudflare chooses the default." : ` Defaults to ${defaultPerPage}.`;
   const boundsNote =
     bounds === "clamped"
       ? ` The ${maxPerPage} ceiling is this connection's cap, not Cloudflare's limit.`
@@ -923,8 +861,7 @@ function pagingInputProperties(
  */
 const CURSOR_INPUT_PROPERTY: JsonSchema = {
   type: "string",
-  description:
-    "Opaque cursor from a previous call's nextCursor. This endpoint pages by cursor, not page number.",
+  description: "Opaque cursor from a previous call's nextCursor. This endpoint pages by cursor, not page number.",
 };
 
 const NEXT_CURSOR_OUTPUT_PROPERTY: JsonSchema = {
@@ -1005,11 +942,7 @@ interface Scoping {
  * blank or whitespace-only id — and answers with the discovery tool's name
  * rather than a Cloudflare round trip that would 404.
  */
-function requireScope(
-  provided: unknown,
-  fallback: string | undefined,
-  kind: "zoneId" | "accountId",
-): string {
+function requireScope(provided: unknown, fallback: string | undefined, kind: "zoneId" | "accountId"): string {
   const value = typeof provided === "string" ? provided.trim() : "";
   if (value) return value;
   if (fallback) return fallback;
@@ -1032,10 +965,7 @@ function requireScope(
 }
 
 /** A scope argument is only required when the deployment declared no default. */
-function scopeProperty(
-  kind: "zoneId" | "accountId",
-  fallback: string | undefined,
-): JsonSchema {
+function scopeProperty(kind: "zoneId" | "accountId", fallback: string | undefined): JsonSchema {
   const noun = kind === "zoneId" ? "Zone" : "Account";
   const discovery = kind === "zoneId" ? "list_zones" : "list_accounts";
   return {
@@ -1047,25 +977,19 @@ function scopeProperty(
   };
 }
 
-function scopeRequired(
-  kind: "zoneId" | "accountId",
-  fallback: string | undefined,
-): string[] {
+function scopeRequired(kind: "zoneId" | "accountId", fallback: string | undefined): string[] {
   return fallback ? [] : [kind];
 }
 
 function optionalString(args: JsonRecord, key: string): string | undefined {
   const value = args[key];
-  return typeof value === "string" && value.trim() !== ""
-    ? value.trim()
-    : undefined;
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
 function optionalNumber(args: JsonRecord, key: string): number | undefined {
   const value = args[key];
   return typeof value === "number" ? value : undefined;
 }
-
 
 function requireString(args: JsonRecord, key: string): string {
   const value = optionalString(args, key);
@@ -1098,10 +1022,7 @@ function cloudflareApiPath(value: unknown): string {
       try {
         next = decodeURIComponent(decoded);
       } catch {
-        throw new ConnectorCallError(
-          "invalid_args",
-          "path contains invalid percent encoding.",
-        );
+        throw new ConnectorCallError("invalid_args", "path contains invalid percent encoding.");
       }
       if (next === decoded) {
         stable = true;
@@ -1110,10 +1031,7 @@ function cloudflareApiPath(value: unknown): string {
       decoded = next;
     }
     if (!stable) {
-      throw new ConnectorCallError(
-        "invalid_args",
-        "path contains too many layers of percent encoding.",
-      );
+      throw new ConnectorCallError("invalid_args", "path contains too many layers of percent encoding.");
     }
     if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\")) {
       throw new ConnectorCallError(
@@ -1124,17 +1042,12 @@ function cloudflareApiPath(value: unknown): string {
   }
   const normalized = new URL(`https://connecta.invalid/client/v4${path}`);
   if (!normalized.pathname.startsWith("/client/v4/")) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "path normalization escaped the Cloudflare v4 API base.",
-    );
+    throw new ConnectorCallError("invalid_args", "path normalization escaped the Cloudflare v4 API base.");
   }
   return path;
 }
 
-function queryFromArgs(
-  value: unknown,
-): Record<string, string | number | boolean | undefined> | undefined {
+function queryFromArgs(value: unknown): Record<string, string | number | boolean | undefined> | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
   const query: Record<string, string> = {};
   for (const item of value) {
@@ -1175,9 +1088,7 @@ function headersFromArgs(value: unknown): Record<string, string> | undefined {
   return headers;
 }
 
-function rawSpec(
-  args: JsonRecord,
-): Pick<GuardedRequest, "path" | "query" | "headers"> {
+function rawSpec(args: JsonRecord): Pick<GuardedRequest, "path" | "query" | "headers"> {
   return compact({
     path: cloudflareApiPath(args["path"]),
     query: queryFromArgs(args["query"]),
@@ -1187,12 +1098,27 @@ function rawSpec(
 
 // The hosted helper cannot send R2 jurisdiction or bucket-edit storage headers.
 // Ordinary headers such as Accept are not a reason to restore JSON duplicates.
-function needsMutationHeaders(method: GuardedRequest["method"], spec: Pick<GuardedRequest, "path" | "headers">): boolean {
+function needsMutationHeaders(
+  method: GuardedRequest["method"],
+  spec: Pick<GuardedRequest, "path" | "headers">,
+): boolean {
   const headers = Object.entries(spec.headers ?? {});
-  if (method === "PATCH" && /^\/accounts\/[^/]+\/r2\/buckets\/[^/]+\/?$/.test(spec.path) &&
-    headers.some(([name, value]) => name.toLowerCase() === "cf-r2-storage-class" && (value === "Standard" || value === "InfrequentAccess"))) return true;
-  return /^\/accounts\/[^/]+\/r2\/buckets(?:\/|$)/.test(spec.path) &&
-    headers.some(([name, value]) => name.toLowerCase() === "cf-r2-jurisdiction" && typeof value === "string" && value.trim().length > 0);
+  if (
+    method === "PATCH" &&
+    /^\/accounts\/[^/]+\/r2\/buckets\/[^/]+\/?$/.test(spec.path) &&
+    headers.some(
+      ([name, value]) =>
+        name.toLowerCase() === "cf-r2-storage-class" && (value === "Standard" || value === "InfrequentAccess"),
+    )
+  )
+    return true;
+  return (
+    /^\/accounts\/[^/]+\/r2\/buckets(?:\/|$)/.test(spec.path) &&
+    headers.some(
+      ([name, value]) =>
+        name.toLowerCase() === "cf-r2-jurisdiction" && typeof value === "string" && value.trim().length > 0,
+    )
+  );
 }
 
 // Reviewed raw-body families, rather than a Content-Type assertion that could
@@ -1202,10 +1128,14 @@ function isUploadEndpoint(method: unknown, path: string): boolean {
   if (!match) return false;
   const accountPath = match[1]!;
   if (method === "PUT") {
-    return /^(?:\/workers\/scripts\/[^/]+|\/storage\/kv\/namespaces\/[^/]+\/values\/.+|\/r2\/buckets\/[^/]+\/objects\/.+)\/?$/.test(accountPath);
+    return /^(?:\/workers\/scripts\/[^/]+|\/storage\/kv\/namespaces\/[^/]+\/values\/.+|\/r2\/buckets\/[^/]+\/objects\/.+)\/?$/.test(
+      accountPath,
+    );
   }
   if (method === "POST") {
-    return /^(?:\/workers\/scripts\/[^/]+\/versions|\/images\/v1|\/stream|\/pages\/assets\/upload|\/pages\/projects\/[^/]+\/deployments)\/?$/.test(accountPath);
+    return /^(?:\/workers\/scripts\/[^/]+\/versions|\/images\/v1|\/stream|\/pages\/assets\/upload|\/pages\/projects\/[^/]+\/deployments)\/?$/.test(
+      accountPath,
+    );
   }
   return false;
 }
@@ -1219,11 +1149,9 @@ function bytesFromBase64(value: string): Uint8Array<ArrayBuffer> {
     const binary = atob(value);
     return Uint8Array.from(binary, (character) => character.charCodeAt(0));
   } catch (cause) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "base64Body and multipart file base64 values must be valid base64.",
-      { cause },
-    );
+    throw new ConnectorCallError("invalid_args", "base64Body and multipart file base64 values must be valid base64.", {
+      cause,
+    });
   }
 }
 
@@ -1235,8 +1163,7 @@ function uploadBody(args: JsonRecord): {
   const files = asArray(args["files"]);
   const hasMultipart = fields.length > 0 || files.length > 0;
   const textBody = typeof args["textBody"] === "string" ? args["textBody"] : undefined;
-  const base64Body =
-    typeof args["base64Body"] === "string" ? args["base64Body"] : undefined;
+  const base64Body = typeof args["base64Body"] === "string" ? args["base64Body"] : undefined;
   const rawCount = Number(textBody !== undefined) + Number(base64Body !== undefined);
   if ((hasMultipart && rawCount > 0) || (!hasMultipart && rawCount !== 1)) {
     throw new ConnectorCallError(
@@ -1263,18 +1190,13 @@ function uploadBody(args: JsonRecord): {
     for (const value of files) {
       const file = asRecord(value);
       const text = typeof file["text"] === "string" ? file["text"] : undefined;
-      const base64 =
-        typeof file["base64"] === "string" ? file["base64"] : undefined;
+      const base64 = typeof file["base64"] === "string" ? file["base64"] : undefined;
       if (Number(text !== undefined) + Number(base64 !== undefined) !== 1) {
-        throw new ConnectorCallError(
-          "invalid_args",
-          "Each multipart file needs exactly one of text or base64.",
-        );
+        throw new ConnectorCallError("invalid_args", "Each multipart file needs exactly one of text or base64.");
       }
-      const blob = new Blob(
-        [text ?? bytesFromBase64(base64!)],
-        { type: String(file["contentType"] ?? "application/octet-stream") },
-      );
+      const blob = new Blob([text ?? bytesFromBase64(base64!)], {
+        type: String(file["contentType"] ?? "application/octet-stream"),
+      });
       form.append(String(file["name"]), blob, String(file["fileName"]));
     }
     return { rawBody: form };
@@ -1426,8 +1348,7 @@ const PAGES_PROJECT_SCHEMA: JsonSchema = {
 
 const QUERY_INPUT_PROPERTY: JsonSchema = {
   type: "array",
-  description:
-    "Query parameters as name/value pairs; each name may appear once.",
+  description: "Query parameters as name/value pairs; each name may appear once.",
   items: {
     type: "object",
     properties: {
@@ -1463,8 +1384,7 @@ const HEADERS_INPUT_PROPERTY: JsonSchema = {
 const R2_JURISDICTION_PROPERTY: JsonSchema = {
   type: "string",
   enum: ["default", "eu", "us", "fedramp"],
-  description:
-    "Bucket jurisdiction. Omit for ordinary buckets; set eu, us, or fedramp for jurisdictional buckets.",
+  description: "Bucket jurisdiction. Omit for ordinary buckets; set eu, us, or fedramp for jurisdictional buckets.",
 };
 
 const R2_BUCKET_NAME_PROPERTY: JsonSchema = {
@@ -1513,8 +1433,7 @@ const WORKER_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
 const SETTING_ID_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
-  description:
-    "Cloudflare zone setting id, such as ssl, brotli, webmcp_enabled, or webmcp_packs.",
+  description: "Cloudflare zone setting id, such as ssl, brotli, webmcp_enabled, or webmcp_packs.",
 };
 
 const RECORD_ID_PROPERTY: JsonSchema = {
@@ -1571,9 +1490,7 @@ function cfTool(
             ...properties,
           }
         : properties,
-      required: scopeKind
-        ? [...scopeRequired(scopeKind, scopeFallback), ...required]
-        : required,
+      required: scopeKind ? [...scopeRequired(scopeKind, scopeFallback), ...required] : required,
       additionalProperties: false,
     },
     outputSchema,
@@ -1592,15 +1509,10 @@ function getResult(
   };
 }
 
-function buildTools(
-  scope: Scoping,
-  authentication: CloudflareAuthentication,
-): ApiTool[] {
+function buildTools(scope: Scoping, authentication: CloudflareAuthentication): ApiTool[] {
   const { send } = scope;
-  const zoneArg = (args: JsonRecord): string =>
-    requireScope(args["zoneId"], scope.zoneId, "zoneId");
-  const accountArg = (args: JsonRecord): string =>
-    requireScope(args["accountId"], scope.accountId, "accountId");
+  const zoneArg = (args: JsonRecord): string => requireScope(args["zoneId"], scope.zoneId, "zoneId");
+  const accountArg = (args: JsonRecord): string => requireScope(args["accountId"], scope.accountId, "accountId");
 
   const readOnly = { readOnlyHint: true, destructiveHint: false } as const;
 
@@ -1615,32 +1527,28 @@ function buildTools(
           {},
           [],
           {
-                      type: "object",
-                      properties: {
-                        id: { type: "string" },
-                        status: {
-                          type: "string",
-                          description: "\"active\" for a usable token.",
-                        },
-                        notBefore: { type: "string" },
-                        expiresOn: { type: "string" },
-                      },
-                      required: ["status"],
-                    },
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              status: {
+                type: "string",
+                description: '"active" for a usable token.',
+              },
+              notBefore: { type: "string" },
+              expiresOn: { type: "string" },
+            },
+            required: ["status"],
+          },
           async (_args, ctx) => {
-                      const { result } = await callCloudflare(
-                        send,
-                        { method: "GET", path: "/user/tokens/verify" },
-                        ctx,
-                      );
-                      const token = asRecord(result);
-                      return compact({
-                        id: token["id"],
-                        status: token["status"],
-                        notBefore: token["not_before"],
-                        expiresOn: token["expires_on"],
-                      });
-                    },
+            const { result } = await callCloudflare(send, { method: "GET", path: "/user/tokens/verify" }, ctx);
+            const token = asRecord(result);
+            return compact({
+              id: token["id"],
+              status: token["status"],
+              notBefore: token["not_before"],
+              expiresOn: token["expires_on"],
+            });
+          },
         )
       : cfTool(
           "verify_global_api_key",
@@ -1651,26 +1559,22 @@ function buildTools(
           {},
           [],
           {
-                      type: "object",
-                      properties: {
-                        id: { type: "string" },
-                        email: { type: "string" },
-                        status: {
-                          type: "string",
-                          description: "\"active\" when Cloudflare accepts the email and key.",
-                        },
-                      },
-                      required: ["email", "status"],
-                    },
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              email: { type: "string" },
+              status: {
+                type: "string",
+                description: '"active" when Cloudflare accepts the email and key.',
+              },
+            },
+            required: ["email", "status"],
+          },
           async (_args, ctx) => {
-                      const { result } = await callCloudflare(
-                        send,
-                        { method: "GET", path: "/user" },
-                        ctx,
-                      );
-                      const user = asRecord(result);
-                      return { id: user["id"], email: user["email"], status: "active" };
-                    },
+            const { result } = await callCloudflare(send, { method: "GET", path: "/user" }, ctx);
+            const user = asRecord(result);
+            return { id: user["id"], email: user["email"], status: "active" };
+          },
         ),
     cfTool(
       "cloudflare_api_get",
@@ -1679,60 +1583,55 @@ function buildTools(
       undefined,
       undefined,
       {
-              path: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "Relative path below /client/v4, beginning with '/', for example /accounts/<id>/images/v1 or /zones/<id>/email/routing/rules. Do not include a query string.",
-                },
-                query: QUERY_INPUT_PROPERTY,
-                headers: HEADERS_INPUT_PROPERTY,
-                responseType: {
-                  type: "string",
-                  enum: ["json", "text", "base64"],
-                  description:
-                    "How to read a successful response. Defaults to json; use text or base64 for object, log, script, and media downloads.",
-                }
-            },
+        path: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Relative path below /client/v4, beginning with '/', for example /accounts/<id>/images/v1 or /zones/<id>/email/routing/rules. Do not include a query string.",
+        },
+        query: QUERY_INPUT_PROPERTY,
+        headers: HEADERS_INPUT_PROPERTY,
+        responseType: {
+          type: "string",
+          enum: ["json", "text", "base64"],
+          description:
+            "How to read a successful response. Defaults to json; use text or base64 for object, log, script, and media downloads.",
+        },
+      },
       ["path"],
       {
-              type: "object",
-              properties: {
-                result: {
-                  description: "Cloudflare's unprojected result for the endpoint.",
-                },
-                resultInfo: {
-                  type: "object",
-                  description:
-                    "Cloudflare's unprojected pagination metadata, when the endpoint returns it.",
-                },
-                text: { type: "string", description: "Text response body when responseType is text." },
-                base64: { type: "string", description: "Base64 response bytes when responseType is base64." },
-                contentType: { type: "string", description: "Response Content-Type for text/base64 reads." },
-                etag: { type: "string", description: "Response ETag when Cloudflare supplies one." },
-              },
-              required: [],
-            },
+        type: "object",
+        properties: {
+          result: {
+            description: "Cloudflare's unprojected result for the endpoint.",
+          },
+          resultInfo: {
+            type: "object",
+            description: "Cloudflare's unprojected pagination metadata, when the endpoint returns it.",
+          },
+          text: { type: "string", description: "Text response body when responseType is text." },
+          base64: { type: "string", description: "Base64 response bytes when responseType is base64." },
+          contentType: { type: "string", description: "Response Content-Type for text/base64 reads." },
+          etag: { type: "string", description: "Response ETag when Cloudflare supplies one." },
+        },
+        required: [],
+      },
       async (args: JsonRecord, ctx) => {
-              const raw = rawSpec(args);
-              const responseType = optionalString(args, "responseType") ?? "json";
-              const spec = compact({
-                method: "GET",
-                ...raw,
-              }) as unknown as GuardedRequest;
-              if (responseType === "text" || responseType === "base64") {
-                return await callCloudflareContent(send, spec, ctx, responseType);
-              }
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                spec,
-                ctx,
-              );
-              return compact({
-                result,
-                resultInfo,
-              });
-            },
+        const raw = rawSpec(args);
+        const responseType = optionalString(args, "responseType") ?? "json";
+        const spec = compact({
+          method: "GET",
+          ...raw,
+        }) as unknown as GuardedRequest;
+        if (responseType === "text" || responseType === "base64") {
+          return await callCloudflareContent(send, spec, ctx, responseType);
+        }
+        const { result, resultInfo } = await callCloudflare(send, spec, ctx);
+        return compact({
+          result,
+          resultInfo,
+        });
+      },
     ),
     cfTool(
       "cloudflare_api_mutate",
@@ -1741,60 +1640,60 @@ function buildTools(
       undefined,
       undefined,
       {
-              method: {
-                  type: "string",
-                  enum: ["POST", "PUT", "PATCH", "DELETE"],
-                  description: "HTTP mutation method required by the Cloudflare endpoint.",
-                },
-                path: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "Relative path below /client/v4, beginning with '/'. Do not include a query string.",
-                },
-                query: QUERY_INPUT_PROPERTY,
-                headers: HEADERS_INPUT_PROPERTY,
-                body: {
-                  type: ["object", "array", "string", "number", "boolean", "null"],
-                  description:
-                    "JSON request body exactly as documented by Cloudflare. Omit for endpoints with no body.",
-                }
-            },
+        method: {
+          type: "string",
+          enum: ["POST", "PUT", "PATCH", "DELETE"],
+          description: "HTTP mutation method required by the Cloudflare endpoint.",
+        },
+        path: {
+          type: "string",
+          minLength: 1,
+          description: "Relative path below /client/v4, beginning with '/'. Do not include a query string.",
+        },
+        query: QUERY_INPUT_PROPERTY,
+        headers: HEADERS_INPUT_PROPERTY,
+        body: {
+          type: ["object", "array", "string", "number", "boolean", "null"],
+          description: "JSON request body exactly as documented by Cloudflare. Omit for endpoints with no body.",
+        },
+      },
       ["method", "path"],
       {
-              type: "object",
-              properties: {
-                result: {
-                  description: "Cloudflare's unprojected result for the endpoint.",
-                },
-                resultInfo: {
-                  type: "object",
-                  description:
-                    "Cloudflare's unprojected pagination metadata, when the endpoint returns it.",
-                },
-              },
-              required: ["result"],
-            },
+        type: "object",
+        properties: {
+          result: {
+            description: "Cloudflare's unprojected result for the endpoint.",
+          },
+          resultInfo: {
+            type: "object",
+            description: "Cloudflare's unprojected pagination metadata, when the endpoint returns it.",
+          },
+        },
+        required: ["result"],
+      },
       async (args: JsonRecord, ctx) => {
-              const method = String(args["method"]) as GuardedRequest["method"];
-              const spec = rawSpec(args);
-              if (authentication === "apiToken" && !needsMutationHeaders(method, spec)) {
-                throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for JSON mutations with an API token. This REST tool is reserved for Global API Key identity, R2 bucket operations requiring cf-r2-jurisdiction, or bucket PATCH with cf-r2-storage-class set to Standard or InfrequentAccess.");
-              }
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                compact({
-                  method,
-                  ...spec,
-                  body: args["body"],
-                }) as unknown as GuardedRequest,
-                ctx,
-              );
-              return compact({
-                result,
-                resultInfo,
-              });
-            },
+        const method = String(args["method"]) as GuardedRequest["method"];
+        const spec = rawSpec(args);
+        if (authentication === "apiToken" && !needsMutationHeaders(method, spec)) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            "Use the Cloudflare MCP execute tool for JSON mutations with an API token. This REST tool is reserved for Global API Key identity, R2 bucket operations requiring cf-r2-jurisdiction, or bucket PATCH with cf-r2-storage-class set to Standard or InfrequentAccess.",
+          );
+        }
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          compact({
+            method,
+            ...spec,
+            body: args["body"],
+          }) as unknown as GuardedRequest,
+          ctx,
+        );
+        return compact({
+          result,
+          resultInfo,
+        });
+      },
     ),
     cfTool(
       "cloudflare_api_upload",
@@ -1803,97 +1702,97 @@ function buildTools(
       undefined,
       undefined,
       {
-              method: {
-                  type: "string",
-                  enum: ["POST", "PUT"],
-                  description: "Upload method the Cloudflare endpoint requires.",
-                },
-                path: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "Path below /client/v4, beginning with '/'. No query string.",
-                },
-                query: QUERY_INPUT_PROPERTY,
-                headers: HEADERS_INPUT_PROPERTY,
-                contentType: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "Content-Type for a raw text or base64 body. Omit for multipart.",
-                },
-                textBody: {
-                  type: "string",
-                  description: "Raw UTF-8 body. Exclusive with base64Body and fields/files.",
-                },
-                base64Body: {
-                  type: "string",
-                  description: "Base64-encoded body bytes. Exclusive with textBody and fields/files.",
-                },
-                fields: {
-                  type: "array",
-                  description: "String fields of a multipart/form-data request.",
-                  items: {
-                    type: "object",
-                    properties: {
-                      name: { type: "string", minLength: 1 },
-                      value: { type: "string" },
-                      contentType: { type: "string", minLength: 1 },
-                      fileName: { type: "string", minLength: 1 },
-                    },
-                    required: ["name", "value"],
-                    additionalProperties: false,
-                  },
-                },
-                files: {
-                  type: "array",
-                  description:
-                    "Multipart file parts. Each needs exactly one of text or base64.",
-                  items: {
-                    type: "object",
-                    properties: {
-                      name: { type: "string", minLength: 1 },
-                      fileName: { type: "string", minLength: 1 },
-                      contentType: { type: "string", minLength: 1 },
-                      text: { type: "string" },
-                      base64: { type: "string" },
-                    },
-                    required: ["name", "fileName", "contentType"],
-                    additionalProperties: false,
-                  },
-                }
+        method: {
+          type: "string",
+          enum: ["POST", "PUT"],
+          description: "Upload method the Cloudflare endpoint requires.",
+        },
+        path: {
+          type: "string",
+          minLength: 1,
+          description: "Path below /client/v4, beginning with '/'. No query string.",
+        },
+        query: QUERY_INPUT_PROPERTY,
+        headers: HEADERS_INPUT_PROPERTY,
+        contentType: {
+          type: "string",
+          minLength: 1,
+          description: "Content-Type for a raw text or base64 body. Omit for multipart.",
+        },
+        textBody: {
+          type: "string",
+          description: "Raw UTF-8 body. Exclusive with base64Body and fields/files.",
+        },
+        base64Body: {
+          type: "string",
+          description: "Base64-encoded body bytes. Exclusive with textBody and fields/files.",
+        },
+        fields: {
+          type: "array",
+          description: "String fields of a multipart/form-data request.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", minLength: 1 },
+              value: { type: "string" },
+              contentType: { type: "string", minLength: 1 },
+              fileName: { type: "string", minLength: 1 },
             },
+            required: ["name", "value"],
+            additionalProperties: false,
+          },
+        },
+        files: {
+          type: "array",
+          description: "Multipart file parts. Each needs exactly one of text or base64.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", minLength: 1 },
+              fileName: { type: "string", minLength: 1 },
+              contentType: { type: "string", minLength: 1 },
+              text: { type: "string" },
+              base64: { type: "string" },
+            },
+            required: ["name", "fileName", "contentType"],
+            additionalProperties: false,
+          },
+        },
+      },
       ["method", "path"],
       {
-              type: "object",
-              properties: {
-                result: {
-                  description: "Cloudflare's unprojected upload result.",
-                },
-              },
-              required: ["result"],
-            },
+        type: "object",
+        properties: {
+          result: {
+            description: "Cloudflare's unprojected upload result.",
+          },
+        },
+        required: ["result"],
+      },
       async (args: JsonRecord, ctx) => {
-              const spec = rawSpec(args);
-              if (authentication === "apiToken" && !isUploadEndpoint(args["method"], spec.path)) {
-                throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for this mutation. REST uploads are confined to Workers, KV values, R2 objects, Images, Stream and Pages upload endpoints.");
-              }
-              const upload = uploadBody(args);
-              const { result } = await callCloudflare(
-                send,
-                compact({
-                  method: String(args["method"]) as "POST" | "PUT",
-                  ...spec,
-                  headers:
-                    spec.headers !== undefined || upload.headers !== undefined
-                      ? { ...spec.headers, ...upload.headers }
-                      : undefined,
-                  rawBody: upload.rawBody,
-                }) as unknown as GuardedRequest,
-                ctx,
-              );
-              return { result };
-            },
+        const spec = rawSpec(args);
+        if (authentication === "apiToken" && !isUploadEndpoint(args["method"], spec.path)) {
+          throw new ConnectorCallError(
+            "invalid_args",
+            "Use the Cloudflare MCP execute tool for this mutation. REST uploads are confined to Workers, KV values, R2 objects, Images, Stream and Pages upload endpoints.",
+          );
+        }
+        const upload = uploadBody(args);
+        const { result } = await callCloudflare(
+          send,
+          compact({
+            method: String(args["method"]) as "POST" | "PUT",
+            ...spec,
+            headers:
+              spec.headers !== undefined || upload.headers !== undefined
+                ? { ...spec.headers, ...upload.headers }
+                : undefined,
+            rawBody: upload.rawBody,
+          }) as unknown as GuardedRequest,
+          ctx,
+        );
+        return { result };
+      },
     ),
     cfTool(
       "list_accounts",
@@ -1902,31 +1801,31 @@ function buildTools(
       undefined,
       undefined,
       {
-              name: {
-                  type: "string",
-                  description: "Filter by exact account name.",
-                },
-                ...pagingInputProperties(5, 50, { defaultPerPage: 20 }),
-                raw: RAW_INPUT_PROPERTY
-            },
+        name: {
+          type: "string",
+          description: "Filter by exact account name.",
+        },
+        ...pagingInputProperties(5, 50, { defaultPerPage: 20 }),
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       listOutputSchema("accounts", ACCOUNT_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: "/accounts",
-                  query: {
-                    name: optionalString(args, "name"),
-                    page: optionalNumber(args, "page"),
-                    per_page: optionalNumber(args, "perPage"),
-                  },
-                },
-                ctx,
-              );
-              return pagedList("accounts", projectAccount)(result, resultInfo, args["raw"] === true);
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: "/accounts",
+            query: {
+              name: optionalString(args, "name"),
+              page: optionalNumber(args, "page"),
+              per_page: optionalNumber(args, "perPage"),
             },
+          },
+          ctx,
+        );
+        return pagedList("accounts", projectAccount)(result, resultInfo, args["raw"] === true);
+      },
     ),
     cfTool(
       "list_zones",
@@ -1935,48 +1834,47 @@ function buildTools(
       undefined,
       undefined,
       {
-              name: {
-                  type: "string",
-                  description: "Filter by zone name, e.g. example.com.",
-                },
-                accountId: {
-                  type: "string",
-                  description:
-                    "Restrict to one account. Defaults to every account the token can see.",
-                },
-                status: {
-                  type: "string",
-                  enum: ["initializing", "pending", "active", "moved"],
-                  description: "Filter by zone status.",
-                },
-                ...pagingInputProperties(5, 50, { defaultPerPage: 20 }),
-                raw: RAW_INPUT_PROPERTY
-            },
+        name: {
+          type: "string",
+          description: "Filter by zone name, e.g. example.com.",
+        },
+        accountId: {
+          type: "string",
+          description: "Restrict to one account. Defaults to every account the token can see.",
+        },
+        status: {
+          type: "string",
+          enum: ["initializing", "pending", "active", "moved"],
+          description: "Filter by zone status.",
+        },
+        ...pagingInputProperties(5, 50, { defaultPerPage: 20 }),
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       listOutputSchema("zones", ZONE_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: "/zones",
-                  query: {
-                    name: optionalString(args, "name"),
-                    // Undefaulted on purpose: list_zones is the discovery step,
-                    // and quietly filtering it by a configured accountId would
-                    // be a restriction in all but name — one with no argument
-                    // that escapes it, since an empty accountId would fall back
-                    // to the default again.
-                    "account.id": optionalString(args, "accountId"),
-                    status: optionalString(args, "status"),
-                    page: optionalNumber(args, "page"),
-                    per_page: optionalNumber(args, "perPage"),
-                  },
-                },
-                ctx,
-              );
-              return pagedList("zones", projectZone)(result, resultInfo, args["raw"] === true);
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: "/zones",
+            query: {
+              name: optionalString(args, "name"),
+              // Undefaulted on purpose: list_zones is the discovery step,
+              // and quietly filtering it by a configured accountId would
+              // be a restriction in all but name — one with no argument
+              // that escapes it, since an empty accountId would fall back
+              // to the default again.
+              "account.id": optionalString(args, "accountId"),
+              status: optionalString(args, "status"),
+              page: optionalNumber(args, "page"),
+              per_page: optionalNumber(args, "perPage"),
             },
+          },
+          ctx,
+        );
+        return pagedList("zones", projectZone)(result, resultInfo, args["raw"] === true);
+      },
     ),
     cfTool(
       "get_zone",
@@ -1985,14 +1883,14 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              raw: RAW_INPUT_PROPERTY
-            },
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       ZONE_SCHEMA,
       getResult(
         send,
         (args) => ({ method: "GET", path: `/zones/${encodeURIComponent(zoneArg(args))}` }),
-        (result, args) => args["raw"] === true ? result : projectZone(result),
+        (result, args) => (args["raw"] === true ? result : projectZone(result)),
       ),
     ),
     // No bulk `list_zone_settings` on purpose (#361): Cloudflare's published
@@ -2009,18 +1907,18 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              settingId: SETTING_ID_PROPERTY,
-                raw: RAW_INPUT_PROPERTY
-            },
+        settingId: SETTING_ID_PROPERTY,
+        raw: RAW_INPUT_PROPERTY,
+      },
       ["settingId"],
       ZONE_SETTING_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/settings/${encodeURIComponent(requireString(args, "settingId"))}`,
-                }),
-        (result, args) => args["raw"] === true ? result : projectZoneSetting(result),
+          method: "GET",
+          path: `/zones/${encodeURIComponent(zoneArg(args))}/settings/${encodeURIComponent(requireString(args, "settingId"))}`,
+        }),
+        (result, args) => (args["raw"] === true ? result : projectZoneSetting(result)),
       ),
     ),
     cfTool(
@@ -2030,42 +1928,42 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              perPage: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: 50,
-                  description: "Rulesets per request, 1 to 50.",
-                },
-                cursor: CURSOR_INPUT_PROPERTY
-            },
+        perPage: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "Rulesets per request, 1 to 50.",
+        },
+        cursor: CURSOR_INPUT_PROPERTY,
+      },
       [],
       {
-              type: "object",
-              properties: {
-                rulesets: { type: "array", items: RULESET_SCHEMA },
-                nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
-              },
-              required: ["rulesets"],
-            },
+        type: "object",
+        properties: {
+          rulesets: { type: "array", items: RULESET_SCHEMA },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
+        },
+        required: ["rulesets"],
+      },
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/rulesets`,
-                  query: {
-                    per_page: optionalNumber(args, "perPage"),
-                    cursor: optionalString(args, "cursor"),
-                  },
-                },
-                ctx,
-              );
-              const cursor = resultInfo?.cursors?.after;
-              return {
-                rulesets: asArray(result).map(projectRuleset),
-                ...cursorResult(cursor),
-              };
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/zones/${encodeURIComponent(zoneArg(args))}/rulesets`,
+            query: {
+              per_page: optionalNumber(args, "perPage"),
+              cursor: optionalString(args, "cursor"),
             },
+          },
+          ctx,
+        );
+        const cursor = resultInfo?.cursors?.after;
+        return {
+          rulesets: asArray(result).map(projectRuleset),
+          ...cursorResult(cursor),
+        };
+      },
     ),
     cfTool(
       "get_zone_ruleset",
@@ -2074,20 +1972,20 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              rulesetId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Ruleset id from list_zone_rulesets.",
-                }
-            },
+        rulesetId: {
+          type: "string",
+          minLength: 1,
+          description: "Ruleset id from list_zone_rulesets.",
+        },
+      },
       ["rulesetId"],
       RULESET_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/rulesets/${encodeURIComponent(requireString(args, "rulesetId"))}`,
-                }),
+          method: "GET",
+          path: `/zones/${encodeURIComponent(zoneArg(args))}/rulesets/${encodeURIComponent(requireString(args, "rulesetId"))}`,
+        }),
         projectRuleset,
       ),
     ),
@@ -2098,61 +1996,60 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              name: {
-                  type: "string",
-                  description:
-                    "Exact record name, fully qualified, e.g. www.example.com.",
-                },
-                type: {
-                  type: "string",
-                  enum: [...CLOUDFLARE_DNS_RECORD_TYPES],
-                  description: "Filter by record type.",
-                },
-                content: {
-                  type: "string",
-                  description: "Exact record content, e.g. an IP address.",
-                },
-                order: {
-                  type: "string",
-                  enum: ["type", "name", "content", "ttl", "proxied"],
-                  description: "Sort field.",
-                },
-                direction: {
-                  type: "string",
-                  enum: ["asc", "desc"],
-                  description: "Sort direction for `order`. Defaults to asc.",
-                },
-                // Cloudflare documents 1 to 5,000,000 here with a default of 100; the
-                // ceiling is nominal, so this connection caps it at a page size that
-                // actually returns.
-                ...pagingInputProperties(1, 1000, {
-                  defaultPerPage: 100,
-                  bounds: "clamped",
-                }),
-                raw: RAW_INPUT_PROPERTY
-            },
+        name: {
+          type: "string",
+          description: "Exact record name, fully qualified, e.g. www.example.com.",
+        },
+        type: {
+          type: "string",
+          enum: [...CLOUDFLARE_DNS_RECORD_TYPES],
+          description: "Filter by record type.",
+        },
+        content: {
+          type: "string",
+          description: "Exact record content, e.g. an IP address.",
+        },
+        order: {
+          type: "string",
+          enum: ["type", "name", "content", "ttl", "proxied"],
+          description: "Sort field.",
+        },
+        direction: {
+          type: "string",
+          enum: ["asc", "desc"],
+          description: "Sort direction for `order`. Defaults to asc.",
+        },
+        // Cloudflare documents 1 to 5,000,000 here with a default of 100; the
+        // ceiling is nominal, so this connection caps it at a page size that
+        // actually returns.
+        ...pagingInputProperties(1, 1000, {
+          defaultPerPage: 100,
+          bounds: "clamped",
+        }),
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       listOutputSchema("records", DNS_RECORD_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records`,
-                  query: {
-                    name: optionalString(args, "name"),
-                    type: optionalString(args, "type"),
-                    content: optionalString(args, "content"),
-                    order: optionalString(args, "order"),
-                    direction: optionalString(args, "direction"),
-                    page: optionalNumber(args, "page"),
-                    per_page: optionalNumber(args, "perPage"),
-                  },
-                },
-                ctx,
-              );
-              return pagedList("records", projectDnsRecord)(result, resultInfo, args["raw"] === true);
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records`,
+            query: {
+              name: optionalString(args, "name"),
+              type: optionalString(args, "type"),
+              content: optionalString(args, "content"),
+              order: optionalString(args, "order"),
+              direction: optionalString(args, "direction"),
+              page: optionalNumber(args, "page"),
+              per_page: optionalNumber(args, "perPage"),
             },
+          },
+          ctx,
+        );
+        return pagedList("records", projectDnsRecord)(result, resultInfo, args["raw"] === true);
+      },
     ),
     cfTool(
       "get_dns_record",
@@ -2161,20 +2058,20 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              recordId: RECORD_ID_PROPERTY,
-                raw: RAW_INPUT_PROPERTY
-            },
+        recordId: RECORD_ID_PROPERTY,
+        raw: RAW_INPUT_PROPERTY,
+      },
       ["recordId"],
       DNS_RECORD_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(
-                    String(args["recordId"]),
-                  )}`,
-                }),
-        (result, args) => args["raw"] === true ? result : projectDnsRecord(result),
+          method: "GET",
+          path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(
+            String(args["recordId"]),
+          )}`,
+        }),
+        (result, args) => (args["raw"] === true ? result : projectDnsRecord(result)),
       ),
     ),
     cfTool(
@@ -2184,30 +2081,30 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              raw: RAW_INPUT_PROPERTY
-            },
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       listOutputSchema("scripts", {
-              type: "object",
-              properties: {
-                id: { type: "string", description: "Script name." },
-                createdOn: { type: "string" },
-                modifiedOn: { type: "string" },
-                usageModel: { type: "string" },
-              },
-              required: ["id"],
-            }),
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Script name." },
+          createdOn: { type: "string" },
+          modifiedOn: { type: "string" },
+          usageModel: { type: "string" },
+        },
+        required: ["id"],
+      }),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts`,
-                },
-                ctx,
-              );
-              return pagedList("scripts", projectWorkerScript)(result, resultInfo, args["raw"] === true);
-            },
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts`,
+          },
+          ctx,
+        );
+        return pagedList("scripts", projectWorkerScript)(result, resultInfo, args["raw"] === true);
+      },
     ),
     cfTool(
       "get_worker_settings",
@@ -2216,18 +2113,18 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: SCRIPT_NAME_PROPERTY,
-                raw: RAW_INPUT_PROPERTY
-            },
+        scriptName: SCRIPT_NAME_PROPERTY,
+        raw: RAW_INPUT_PROPERTY,
+      },
       ["scriptName"],
       WORKER_SETTINGS_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/settings`,
-                }),
-        (result, args) => args["raw"] === true ? result : projectWorkerSettings(result),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/settings`,
+        }),
+        (result, args) => (args["raw"] === true ? result : projectWorkerSettings(result)),
       ),
     ),
     cfTool(
@@ -2237,25 +2134,23 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: SCRIPT_NAME_PROPERTY
-            },
+        scriptName: SCRIPT_NAME_PROPERTY,
+      },
       ["scriptName"],
       listOutputSchema("deployments", WORKER_DEPLOYMENT_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/deployments`,
-                },
-                ctx,
-              );
-              const record = asRecord(result);
-              const deployments = Array.isArray(result)
-                ? result
-                : asArray(record["deployments"]);
-              return { deployments: deployments.map(projectWorkerDeployment) };
-            },
+        const { result } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/deployments`,
+          },
+          ctx,
+        );
+        const record = asRecord(result);
+        const deployments = Array.isArray(result) ? result : asArray(record["deployments"]);
+        return { deployments: deployments.map(projectWorkerDeployment) };
+      },
     ),
     cfTool(
       "get_worker_deployment",
@@ -2264,17 +2159,17 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: SCRIPT_NAME_PROPERTY,
-                deploymentId: WORKER_DEPLOYMENT_ID_PROPERTY
-            },
+        scriptName: SCRIPT_NAME_PROPERTY,
+        deploymentId: WORKER_DEPLOYMENT_ID_PROPERTY,
+      },
       ["scriptName", "deploymentId"],
       WORKER_DEPLOYMENT_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}`,
-                }),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}`,
+        }),
         projectWorkerDeployment,
       ),
     ),
@@ -2285,35 +2180,35 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              ...pagingInputProperties(1, 1000, { defaultPerPage: 20 }),
-                raw: RAW_INPUT_PROPERTY
-            },
+        ...pagingInputProperties(1, 1000, { defaultPerPage: 20 }),
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       listOutputSchema("namespaces", {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                title: { type: "string" },
-                supportsUrlEncoding: { type: "boolean" },
-                jurisdiction: { type: "string", enum: ["eu", "fedramp", "us"] },
-              },
-              required: ["id", "title"],
-            }),
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          supportsUrlEncoding: { type: "boolean" },
+          jurisdiction: { type: "string", enum: ["eu", "fedramp", "us"] },
+        },
+        required: ["id", "title"],
+      }),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces`,
-                  query: {
-                    page: optionalNumber(args, "page"),
-                    per_page: optionalNumber(args, "perPage"),
-                  },
-                },
-                ctx,
-              );
-              return pagedList("namespaces", projectKvNamespace)(result, resultInfo, args["raw"] === true);
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces`,
+            query: {
+              page: optionalNumber(args, "page"),
+              per_page: optionalNumber(args, "perPage"),
             },
+          },
+          ctx,
+        );
+        return pagedList("namespaces", projectKvNamespace)(result, resultInfo, args["raw"] === true);
+      },
     ),
     cfTool(
       "get_kv_namespace",
@@ -2322,16 +2217,16 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: NAMESPACE_ID_PROPERTY
-            },
+        namespaceId: NAMESPACE_ID_PROPERTY,
+      },
       ["namespaceId"],
       KV_NAMESPACE_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}`,
-                }),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}`,
+        }),
         projectKvNamespace,
       ),
     ),
@@ -2342,59 +2237,59 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: NAMESPACE_ID_PROPERTY,
-                prefix: {
-                  type: "string",
-                  description: "Return only keys beginning with this prefix.",
-                },
-                limit: {
-                  type: "integer",
-                  minimum: 10,
-                  maximum: 1000,
-                  description: "Keys per request, 10 to 1000. Defaults to 1000.",
-                },
-                cursor: CURSOR_INPUT_PROPERTY
-            },
+        namespaceId: NAMESPACE_ID_PROPERTY,
+        prefix: {
+          type: "string",
+          description: "Return only keys beginning with this prefix.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 10,
+          maximum: 1000,
+          description: "Keys per request, 10 to 1000. Defaults to 1000.",
+        },
+        cursor: CURSOR_INPUT_PROPERTY,
+      },
       ["namespaceId"],
       {
+        type: "object",
+        properties: {
+          keys: {
+            type: "array",
+            items: {
               type: "object",
               properties: {
-                keys: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      name: { type: "string" },
-                      expiration: { type: "number" },
-                      metadata: {},
-                    },
-                    required: ["name"],
-                  },
-                },
-                nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
+                name: { type: "string" },
+                expiration: { type: "number" },
+                metadata: {},
               },
-              required: ["keys"],
+              required: ["name"],
             },
+          },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
+        },
+        required: ["keys"],
+      },
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/keys`,
-                  query: {
-                    prefix: optionalString(args, "prefix"),
-                    limit: optionalNumber(args, "limit"),
-                    cursor: optionalString(args, "cursor"),
-                  },
-                },
-                ctx,
-              );
-              const cursor = resultInfo?.cursor;
-              return {
-                keys: asArray(result).map(projectKvKey),
-                ...cursorResult(cursor),
-              };
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/keys`,
+            query: {
+              prefix: optionalString(args, "prefix"),
+              limit: optionalNumber(args, "limit"),
+              cursor: optionalString(args, "cursor"),
             },
+          },
+          ctx,
+        );
+        const cursor = resultInfo?.cursor;
+        return {
+          keys: asArray(result).map(projectKvKey),
+          ...cursorResult(cursor),
+        };
+      },
     ),
     cfTool(
       "bulk_get_kv_values",
@@ -2403,42 +2298,42 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: NAMESPACE_ID_PROPERTY,
-                keys: {
-                  type: "array",
-                  minItems: 1,
-                  maxItems: 100,
-                  items: { type: "string", minLength: 1, maxLength: 512 },
-                  description: "Key names to retrieve, up to 100.",
-                },
-                withMetadata: {
-                  type: "boolean",
-                  description: "Include each key's metadata and expiration when true.",
-                },
-                type: {
-                  type: "string",
-                  enum: ["text", "json"],
-                  description: "Return strings as stored, or parse JSON values before returning them.",
-                }
-            },
+        namespaceId: NAMESPACE_ID_PROPERTY,
+        keys: {
+          type: "array",
+          minItems: 1,
+          maxItems: 100,
+          items: { type: "string", minLength: 1, maxLength: 512 },
+          description: "Key names to retrieve, up to 100.",
+        },
+        withMetadata: {
+          type: "boolean",
+          description: "Include each key's metadata and expiration when true.",
+        },
+        type: {
+          type: "string",
+          enum: ["text", "json"],
+          description: "Return strings as stored, or parse JSON values before returning them.",
+        },
+      },
       ["namespaceId", "keys"],
       KV_BULK_VALUES_SCHEMA,
       async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "POST",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk/get`,
-                  body: compact({
-                    keys: args["keys"],
-                    withMetadata: args["withMetadata"],
-                    type: args["type"],
-                  }),
-                },
-                ctx,
-              );
-              return projectKvBulkValues(result);
-            },
+        const { result } = await callCloudflare(
+          send,
+          {
+            method: "POST",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk/get`,
+            body: compact({
+              keys: args["keys"],
+              withMetadata: args["withMetadata"],
+              type: args["type"],
+            }),
+          },
+          ctx,
+        );
+        return projectKvBulkValues(result);
+      },
     ),
     cfTool(
       "list_r2_buckets",
@@ -2447,57 +2342,57 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              nameContains: {
-                  type: "string",
-                  description: "Filter to buckets whose name contains this string.",
-                },
-                perPage: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: 1000,
-                  description: "Buckets per request, 1 to 1000. Defaults to 20.",
-                },
-                cursor: CURSOR_INPUT_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY,
-                raw: RAW_INPUT_PROPERTY
-            },
+        nameContains: {
+          type: "string",
+          description: "Filter to buckets whose name contains this string.",
+        },
+        perPage: {
+          type: "integer",
+          minimum: 1,
+          maximum: 1000,
+          description: "Buckets per request, 1 to 1000. Defaults to 20.",
+        },
+        cursor: CURSOR_INPUT_PROPERTY,
+        jurisdiction: R2_JURISDICTION_PROPERTY,
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       {
-              type: "object",
-              properties: {
-                buckets: {
-                  type: "array",
-                  items: R2_BUCKET_SCHEMA,
-                },
-                nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
-              },
-              required: ["buckets"],
-            },
+        type: "object",
+        properties: {
+          buckets: {
+            type: "array",
+            items: R2_BUCKET_SCHEMA,
+          },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
+        },
+        required: ["buckets"],
+      },
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets`,
-                  query: {
-                    name_contains: optionalString(args, "nameContains"),
-                    per_page: optionalNumber(args, "perPage"),
-                    cursor: optionalString(args, "cursor"),
-                  },
-                  headers: r2Headers(args),
-                },
-                ctx,
-              );
-              // R2 nests its list under `buckets` rather than returning a bare array,
-              // and its result_info carries a cursor instead of page counters.
-              const cursor = resultInfo?.cursor;
-              const next = cursorResult(cursor);
-              if (args["raw"] === true) return { buckets: result, ...next };
-              return {
-                buckets: asArray(asRecord(result)["buckets"]).map(projectR2Bucket),
-                ...next,
-              };
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets`,
+            query: {
+              name_contains: optionalString(args, "nameContains"),
+              per_page: optionalNumber(args, "perPage"),
+              cursor: optionalString(args, "cursor"),
             },
+            headers: r2Headers(args),
+          },
+          ctx,
+        );
+        // R2 nests its list under `buckets` rather than returning a bare array,
+        // and its result_info carries a cursor instead of page counters.
+        const cursor = resultInfo?.cursor;
+        const next = cursorResult(cursor);
+        if (args["raw"] === true) return { buckets: result, ...next };
+        return {
+          buckets: asArray(asRecord(result)["buckets"]).map(projectR2Bucket),
+          ...next,
+        };
+      },
     ),
     cfTool(
       "get_r2_bucket",
@@ -2506,18 +2401,18 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY
-            },
+        bucketName: R2_BUCKET_NAME_PROPERTY,
+        jurisdiction: R2_JURISDICTION_PROPERTY,
+      },
       ["bucketName"],
       R2_BUCKET_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}`,
-                  headers: r2Headers(args),
-                }),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}`,
+          headers: r2Headers(args),
+        }),
         projectR2Bucket,
       ),
     ),
@@ -2528,68 +2423,66 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY,
-                prefix: {
-                  type: "string",
-                  description: "Return only object keys beginning with this prefix.",
-                },
-                delimiter: {
-                  type: "string",
-                  minLength: 1,
-                  maxLength: 1,
-                  description: "One character used to group path-like keys, usually '/'.",
-                },
-                startAfter: {
-                  type: "string",
-                  description: "Begin after this key in lexicographic order.",
-                },
-                perPage: {
-                  type: "integer",
-                  minimum: 1,
-                  maximum: 1000,
-                  description: "Objects per request, 1 to 1000.",
-                },
-                cursor: CURSOR_INPUT_PROPERTY
-            },
+        bucketName: R2_BUCKET_NAME_PROPERTY,
+        jurisdiction: R2_JURISDICTION_PROPERTY,
+        prefix: {
+          type: "string",
+          description: "Return only object keys beginning with this prefix.",
+        },
+        delimiter: {
+          type: "string",
+          minLength: 1,
+          maxLength: 1,
+          description: "One character used to group path-like keys, usually '/'.",
+        },
+        startAfter: {
+          type: "string",
+          description: "Begin after this key in lexicographic order.",
+        },
+        perPage: {
+          type: "integer",
+          minimum: 1,
+          maximum: 1000,
+          description: "Objects per request, 1 to 1000.",
+        },
+        cursor: CURSOR_INPUT_PROPERTY,
+      },
       ["bucketName"],
       {
-              type: "object",
-              properties: {
-                objects: { type: "array", items: R2_OBJECT_SCHEMA },
-                commonPrefixes: { type: "array", items: { type: "string" } },
-                nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
-                truncated: { type: "boolean" },
-              },
-              required: ["objects", "truncated"],
-            },
+        type: "object",
+        properties: {
+          objects: { type: "array", items: R2_OBJECT_SCHEMA },
+          commonPrefixes: { type: "array", items: { type: "string" } },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
+          truncated: { type: "boolean" },
+        },
+        required: ["objects", "truncated"],
+      },
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/objects`,
-                  headers: r2Headers(args),
-                  query: {
-                    prefix: optionalString(args, "prefix"),
-                    delimiter: optionalString(args, "delimiter"),
-                    start_after: optionalString(args, "startAfter"),
-                    per_page: optionalNumber(args, "perPage"),
-                    cursor: optionalString(args, "cursor"),
-                  },
-                },
-                ctx,
-              );
-              const cursor = resultInfo?.cursor;
-              return {
-                objects: asArray(result).map(projectR2Object),
-                ...(Array.isArray(resultInfo?.delimited)
-                  ? { commonPrefixes: resultInfo.delimited }
-                  : {}),
-                ...cursorResult(cursor),
-                truncated: resultInfo?.is_truncated === true,
-              };
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/objects`,
+            headers: r2Headers(args),
+            query: {
+              prefix: optionalString(args, "prefix"),
+              delimiter: optionalString(args, "delimiter"),
+              start_after: optionalString(args, "startAfter"),
+              per_page: optionalNumber(args, "perPage"),
+              cursor: optionalString(args, "cursor"),
             },
+          },
+          ctx,
+        );
+        const cursor = resultInfo?.cursor;
+        return {
+          objects: asArray(result).map(projectR2Object),
+          ...(Array.isArray(resultInfo?.delimited) ? { commonPrefixes: resultInfo.delimited } : {}),
+          ...cursorResult(cursor),
+          truncated: resultInfo?.is_truncated === true,
+        };
+      },
     ),
     // No `get_r2_metrics`, `set_r2_cors`, or `delete_r2_cors` on purpose (#350).
     // A named tool is a permanent line item in every deployment's catalog, and
@@ -2610,18 +2503,18 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              bucketName: R2_BUCKET_NAME_PROPERTY,
-                jurisdiction: R2_JURISDICTION_PROPERTY
-            },
+        bucketName: R2_BUCKET_NAME_PROPERTY,
+        jurisdiction: R2_JURISDICTION_PROPERTY,
+      },
       ["bucketName"],
       R2_CORS_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/cors`,
-                  headers: r2Headers(args),
-                }),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/cors`,
+          headers: r2Headers(args),
+        }),
         projectR2Cors,
       ),
     ),
@@ -2632,26 +2525,26 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              ...pagingInputProperties(1, 100, { bounds: "undocumented" }),
-                raw: RAW_INPUT_PROPERTY
-            },
+        ...pagingInputProperties(1, 100, { bounds: "undocumented" }),
+        raw: RAW_INPUT_PROPERTY,
+      },
       [],
       listOutputSchema("projects", PAGES_PROJECT_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects`,
-                  query: {
-                    page: optionalNumber(args, "page"),
-                    per_page: optionalNumber(args, "perPage"),
-                  },
-                },
-                ctx,
-              );
-              return pagedList("projects", projectPagesProject)(result, resultInfo, args["raw"] === true);
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects`,
+            query: {
+              page: optionalNumber(args, "page"),
+              per_page: optionalNumber(args, "perPage"),
             },
+          },
+          ctx,
+        );
+        return pagedList("projects", projectPagesProject)(result, resultInfo, args["raw"] === true);
+      },
     ),
     cfTool(
       "get_pages_project",
@@ -2660,18 +2553,18 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: PROJECT_NAME_PROPERTY,
-                raw: RAW_INPUT_PROPERTY
-            },
+        projectName: PROJECT_NAME_PROPERTY,
+        raw: RAW_INPUT_PROPERTY,
+      },
       ["projectName"],
       PAGES_PROJECT_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}`,
-                }),
-        (result, args) => args["raw"] === true ? result : projectPagesProject(result),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}`,
+        }),
+        (result, args) => (args["raw"] === true ? result : projectPagesProject(result)),
       ),
     ),
     cfTool(
@@ -2681,35 +2574,35 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: PROJECT_NAME_PROPERTY,
-                env: {
-                  type: "string",
-                  enum: ["production", "preview"],
-                  description: "Optional deployment environment filter.",
-                },
-                ...pagingInputProperties(1, 100, { bounds: "undocumented" })
-            },
+        projectName: PROJECT_NAME_PROPERTY,
+        env: {
+          type: "string",
+          enum: ["production", "preview"],
+          description: "Optional deployment environment filter.",
+        },
+        ...pagingInputProperties(1, 100, { bounds: "undocumented" }),
+      },
       ["projectName"],
       listOutputSchema("deployments", PAGES_DEPLOYMENT_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result, resultInfo } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments`,
-                  query: {
-                    env: optionalString(args, "env"),
-                    page: optionalNumber(args, "page"),
-                    per_page: optionalNumber(args, "perPage"),
-                  },
-                },
-                ctx,
-              );
-              return {
-                deployments: asArray(result).map(projectPagesDeployment),
-                page: pageInfo(resultInfo),
-              };
+        const { result, resultInfo } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments`,
+            query: {
+              env: optionalString(args, "env"),
+              page: optionalNumber(args, "page"),
+              per_page: optionalNumber(args, "perPage"),
             },
+          },
+          ctx,
+        );
+        return {
+          deployments: asArray(result).map(projectPagesDeployment),
+          page: pageInfo(resultInfo),
+        };
+      },
     ),
     cfTool(
       "get_pages_deployment",
@@ -2718,19 +2611,19 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: PROJECT_NAME_PROPERTY,
-                deploymentId: DEPLOYMENT_ID_PROPERTY,
-                raw: RAW_INPUT_PROPERTY
-            },
+        projectName: PROJECT_NAME_PROPERTY,
+        deploymentId: DEPLOYMENT_ID_PROPERTY,
+        raw: RAW_INPUT_PROPERTY,
+      },
       ["projectName", "deploymentId"],
       PAGES_DEPLOYMENT_SCHEMA,
       getResult(
         send,
         (args) => ({
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}`,
-                }),
-        (result, args) => args["raw"] === true ? result : projectPagesDeployment(result),
+          method: "GET",
+          path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}`,
+        }),
+        (result, args) => (args["raw"] === true ? result : projectPagesDeployment(result)),
       ),
     ),
     cfTool(
@@ -2740,21 +2633,21 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: PAGES_PROJECT_NAME_PROPERTY
-            },
+        projectName: PAGES_PROJECT_NAME_PROPERTY,
+      },
       ["projectName"],
       listOutputSchema("domains", PAGES_DOMAIN_SCHEMA),
       async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
-                  method: "GET",
-                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains`,
-                },
-                ctx,
-              );
-              return { domains: asArray(result).map(projectPagesDomain) };
-            },
+        const { result } = await callCloudflare(
+          send,
+          {
+            method: "GET",
+            path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains`,
+          },
+          ctx,
+        );
+        return { domains: asArray(result).map(projectPagesDomain) };
+      },
     ),
   ];
   return tools;
@@ -2783,9 +2676,7 @@ Account purpose: ${purpose}
 
 - ${zoneLine}
 - ${accountLine}${skill.fragments.guide_0}${authenticationLine}${skill.fragments.guide_1}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
@@ -2797,22 +2688,23 @@ Account purpose: ${purpose}
  */
 const CLOUDFLARE_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
-    "search": {"verdict": "read", "reason": "Searches the Cloudflare OpenAPI contract without executing API methods."},
-    "execute": {"verdict": "destructive", "reason": "Can mix HTTP methods across the Cloudflare API; no input schema proves a program only reads."},
+    "search": {
+      "verdict": "read",
+      "reason": "Searches the Cloudflare OpenAPI contract without executing API methods.",
+    },
+    "execute": {
+      "verdict": "destructive",
+      "reason": "Can mix HTTP methods across the Cloudflare API; no input schema proves a program only reads.",
+    },
   },
 };
 
-function mcpUsageGuide(
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function mcpUsageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `# Cloudflare MCP usage
 
 Official whole-API MCP interface: ${purpose}${skill.fragments.guide_2}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
@@ -2839,34 +2731,24 @@ function cloudflareMcp(
     classify: provider.classify,
     usageGuide: {
       content: mcpUsageGuide(purpose, options.instructions),
-      summary:
-        "Official whole-API MCP. Search the OpenAPI document; execute programs always classify as writes.",
+      summary: "Official whole-API MCP. Search the OpenAPI document; execute programs always classify as writes.",
       required: true,
     },
   });
   return connector;
 }
 
-function cloudflareApi(
-  id: string,
-  purpose: string,
-  options: CloudflareApiOptions,
-): Connector {
+function cloudflareApi(id: string, purpose: string, options: CloudflareApiOptions): Connector {
   const maxConcurrency = options.maxConcurrency ?? 6;
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
     throw new Error("cloudflare() maxConcurrency must be a positive integer.");
   }
   const authentication = options.authentication ?? "apiToken";
   if (authentication !== "apiToken" && authentication !== "globalApiKey") {
-    throw new Error(
-      'cloudflare() authentication must be "apiToken" or "globalApiKey".',
-    );
+    throw new Error('cloudflare() authentication must be "apiToken" or "globalApiKey".');
   }
   const scope: Scoping = {
-    send: cloudflareTransport(
-      options.baseUrl?.trim() || CLOUDFLARE_API_BASE,
-      authentication,
-    ),
+    send: cloudflareTransport(options.baseUrl?.trim() || CLOUDFLARE_API_BASE, authentication),
     accountId: options.accountId?.trim() || undefined,
     zoneId: options.zoneId?.trim() || undefined,
   };
@@ -2881,17 +2763,14 @@ function cloudflareApi(
       // Explicit rather than derived: the first content line is the zone
       // scoping rule, which varies per deployment and reads as an instruction
       // rather than as the routing fact a browsing agent needs.
-      summary:
-        "Zone and account scoping, named-vs-raw routing, two pagination shapes, and lean-vs-raw results.",
+      summary: "Zone and account scoping, named-vs-raw routing, two pagination shapes, and lean-vs-raw results.",
       // Deliberately not `required`. Every named tool's schema is complete
       // enough to call it correctly on its own, and the scoping convention the
       // guide carries is repeated on each `zoneId` and `accountId` property —
       // so forcing the guide into context before every operation would spend
       // tokens on a sequence the schemas already express.
     },
-    ...(options.maxResultBytes !== undefined
-      ? { maxResultBytes: options.maxResultBytes }
-      : {}),
+    ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
     tools: buildTools(scope, authentication),
     ...(authentication === "apiToken"
       ? {
@@ -2907,27 +2786,23 @@ function cloudflareApi(
                 },
               },
               (result) => {
-              const status = asRecord(result)["status"];
-              return status === "active"
-                ? { ok: true, message: "Token verified: active." }
-                : { ok: false, message: `Token status is "${String(status)}".` };
+                const status = asRecord(result)["status"];
+                return status === "active"
+                  ? { ok: true, message: "Token verified: active." }
+                  : { ok: false, message: `Token status is "${String(status)}".` };
               },
             );
           },
         }
       : {
-          async testCredentials(
-            values: Record<string, string>,
-            ctx: ConnectorContext,
-          ) {
+          async testCredentials(values: Record<string, string>, ctx: ConnectorContext) {
             return await testCloudflareCredential(
               scope.send,
               { method: "GET", path: "/user" },
               {
                 ...ctx,
                 credential: {
-                  get: async (field?: string) =>
-                    field ? values[field] ?? null : null,
+                  get: async (field?: string) => (field ? (values[field] ?? null) : null),
                   getAll: async () => values,
                 },
               },
@@ -2941,20 +2816,23 @@ function cloudflareApi(
   });
 }
 
-
 /** The closed options cloudflare() accepts; see `assertKnownOptions`. */
-const CLOUDFLARE_OPTIONS = variants("surface", {
-  api: optionsOf<CloudflareApiOptions>()({
-    ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
-    ...keys("surface", "accountId", "zoneId", "baseUrl", "authentication", "maxConcurrency"),
-    credential: CREDENTIAL,
-  }).shape,
-  mcp: optionsOf<CloudflareMcpOptions>()({
-    ...PROVIDER_COMMON,
-    ...keys("surface"),
-    auth: REMOTE_MCP_AUTH,
-  }).shape,
-}, "mcp");
+const CLOUDFLARE_OPTIONS = variants(
+  "surface",
+  {
+    api: optionsOf<CloudflareApiOptions>()({
+      ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
+      ...keys("surface", "accountId", "zoneId", "baseUrl", "authentication", "maxConcurrency"),
+      credential: CREDENTIAL,
+    }).shape,
+    mcp: optionsOf<CloudflareMcpOptions>()({
+      ...PROVIDER_COMMON,
+      ...keys("surface"),
+      auth: REMOTE_MCP_AUTH,
+    }).shape,
+  },
+  "mcp",
+);
 
 /** A maintained Cloudflare connection using the selected provider interface. */
 export const cloudflare = defineProvider<CloudflareConnectionOptions>({
@@ -2962,18 +2840,14 @@ export const cloudflare = defineProvider<CloudflareConnectionOptions>({
   title: "Cloudflare",
   kind: "composed",
   readme: "Cloudflare",
-  bundle: {"baselineGzip":151186,"maxGzip":211186},
+  bundle: { "baselineGzip": 151186, "maxGzip": 211186 },
   skill,
   options: CLOUDFLARE_OPTIONS,
   classify: CLOUDFLARE_MCP_CLASSIFICATION,
   create: cloudflareConnector,
 });
 
-function cloudflareConnector(
-  id: string,
-  options: CloudflareConnectionOptions,
-  provider: ProviderContext,
-): Connector {
+function cloudflareConnector(id: string, options: CloudflareConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
   return options.surface === "api"
     ? cloudflareApi(id, purpose, options)

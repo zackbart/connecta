@@ -20,20 +20,20 @@ its state and fonts before capturing.
 Each row runs empty, loading, error, populated, and restricted-viewer fixtures
 in both light and dark themes, for 120 screenshots.
 
-| Page or tab | Empty state | Loading/error request | Restricted viewer |
-| --- | --- | --- | --- |
-| Overview | No connectors or attention items | Config | Scoped connectors, no privileged navigation |
-| Connectors | No connectors | Config | Read grant and credential slot, no other connectors |
-| Connector Config | Zero-tool connector | Config | Scoped connector snapshot |
-| Connector Tools | Empty catalog | Config | Read tool only |
-| Connector Auth | Deployment-managed auth | Config | Visible slot, deployment-managed auth |
-| Connector Activity | No calls | Activity | Unavailable |
-| Connector Diagnostics | No observed drift/call | Config | Scoped diagnostics |
-| Tools | Empty catalog | Config | Read tool only |
-| Access | No pools or client tokens | Config | No token management |
-| Access tokens | No client tokens | Token list | No token management |
-| Activity | No calls | Activity | Unavailable |
-| Config | Snapshot without connectors or pools | Config | Scoped snapshot |
+| Page or tab           | Empty state                          | Loading/error request | Restricted viewer                                   |
+| --------------------- | ------------------------------------ | --------------------- | --------------------------------------------------- |
+| Overview              | No connectors or attention items     | Config                | Scoped connectors, no privileged navigation         |
+| Connectors            | No connectors                        | Config                | Read grant and credential slot, no other connectors |
+| Connector Config      | Zero-tool connector                  | Config                | Scoped connector snapshot                           |
+| Connector Tools       | Empty catalog                        | Config                | Read tool only                                      |
+| Connector Auth        | Deployment-managed auth              | Config                | Visible slot, deployment-managed auth               |
+| Connector Activity    | No calls                             | Activity              | Unavailable                                         |
+| Connector Diagnostics | No observed drift/call               | Config                | Scoped diagnostics                                  |
+| Tools                 | Empty catalog                        | Config                | Read tool only                                      |
+| Access                | No pools or client tokens            | Config                | No token management                                 |
+| Access tokens         | No client tokens                     | Token list            | No token management                                 |
+| Activity              | No calls                             | Activity              | Unavailable                                         |
+| Config                | Snapshot without connectors or pools | Config                | Scoped snapshot                                     |
 
 Another 36 screenshots cover configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;

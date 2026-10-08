@@ -125,37 +125,52 @@ function clipArgs(args: unknown): string {
   return text.length > 500 ? `${text.slice(0, 500)}…` : text;
 }
 
-
-async function runTrial(
-  task: ActiveTask,
-  model: string,
-  repeat: number,
-  options: TrialOptions,
-): Promise<TrialResult> {
+async function runTrial(task: ActiveTask, model: string, repeat: number, options: TrialOptions): Promise<TrialResult> {
   const startedAt = new Date().toISOString();
   const skip = task.runnerSkips?.[options.runner ?? "codex"];
-  if (skip) return {
-    task: task.id, model, repeat, startedAt, status: "skipped", skip, checks: [],
-    metrics: { wallMs: 0, apiMs: undefined, modelTurns: undefined, conversationTurns: 0,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }, costUsd: undefined,
-      metaTools: {}, otherTools: {}, toolErrors: 0, confirmationNudges: 0,
-      downstream: downstreamMetrics([], []) },
-    approvals: { allowed: [], denied: [], gated: [], exercised: [], permissionDenials: [] },
-    transcript: [], ledger: [],
-  };
+  if (skip)
+    return {
+      task: task.id,
+      model,
+      repeat,
+      startedAt,
+      status: "skipped",
+      skip,
+      checks: [],
+      metrics: {
+        wallMs: 0,
+        apiMs: undefined,
+        modelTurns: undefined,
+        conversationTurns: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+        costUsd: undefined,
+        metaTools: {},
+        otherTools: {},
+        toolErrors: 0,
+        confirmationNudges: 0,
+        downstream: downstreamMetrics([], []),
+      },
+      approvals: { allowed: [], denied: [], gated: [], exercised: [], permissionDenials: [] },
+      transcript: [],
+      ledger: [],
+    };
   const world = new World(task.world);
   await world.start();
   for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment, task.world?.oauth ? world.oauth : undefined);
+  const deployment = await startNodeDeployment(
+    world.connectorSpecs(),
+    task.deployment,
+    task.world?.oauth ? world.oauth : undefined,
+  );
   const hostEvents: StreamEvent[] = [];
-  const host = task.host ? await startAuthHost(deployment, task.host.urlElicitation === "capable", e => hostEvents.push(e)) : undefined;
+  const host = task.host
+    ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
+    : undefined;
   try {
     const surface = await surfaceOf(deployment.mcpUrl, deployment.token);
-    assertSurface(surface.map(tool => tool.name));
+    assertSurface(surface.map((tool) => tool.name));
     const deny = task.approvals?.deny ?? [];
-    const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter(
-      (tool) => !deny.includes(tool),
-    );
+    const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter((tool) => !deny.includes(tool));
     const gated = surface.filter((tool) => !tool.readOnly).map((tool) => tool.name);
     const prompts = [task.prompt];
     const notes: { beforeTurn: number; text: string }[] = [];
@@ -184,11 +199,7 @@ async function runTrial(
           const last = parseTrace(events, [], [])
             .transcript.filter((entry) => entry.kind !== "turn_end")
             .at(-1);
-          if (
-            nudges < MAX_NUDGES &&
-            last?.kind === "assistant" &&
-            CONFIRMATION.test(last.text)
-          ) {
+          if (nudges < MAX_NUDGES && last?.kind === "assistant" && CONFIRMATION.test(last.text)) {
             nudges += 1;
             prompts.push(NUDGE);
             return NUDGE;
@@ -211,9 +222,7 @@ async function runTrial(
     const trace = parseTrace(run.events, run.turnStarts, prompts);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     for (const note of notes) {
-      const at = trace.transcript.findIndex(
-        (entry) => entry.kind === "user" && entry.turn === note.beforeTurn,
-      );
+      const at = trace.transcript.findIndex((entry) => entry.kind === "user" && entry.turn === note.beforeTurn);
       const entry: TranscriptEntry = { kind: "operator", turn: note.beforeTurn - 1, text: note.text };
       if (at >= 0) trace.transcript.splice(at, 0, entry);
       else trace.transcript.push(entry);
@@ -226,18 +235,29 @@ async function runTrial(
       conversationTurns: run.turnStarts.length,
       tokens: trace.tokens,
       costUsd: trace.costUsd,
-      metaTools: countBy(trace.toolUses.filter((use) => surfaceNames.has(use.tool)), (use) => use.tool),
-      otherTools: countBy(trace.toolUses.filter((use) => !surfaceNames.has(use.tool)), (use) => use.tool),
+      metaTools: countBy(
+        trace.toolUses.filter((use) => surfaceNames.has(use.tool)),
+        (use) => use.tool,
+      ),
+      otherTools: countBy(
+        trace.toolUses.filter((use) => !surfaceNames.has(use.tool)),
+        (use) => use.tool,
+      ),
       toolErrors: trace.toolUses.filter((use) => use.isError).length,
       confirmationNudges: nudges,
       downstream: downstreamMetrics(world.ledger.calls, world.ledger.requests),
     };
-    const error = run.aborted ? "interrupted by operator" : run.timedOut ? `${options.runner ?? "codex"} trial timed out` :
-      infraError(run.events, run.exitCode, trace.loadedTools);
+    const error = run.aborted
+      ? "interrupted by operator"
+      : run.timedOut
+        ? `${options.runner ?? "codex"} trial timed out`
+        : infraError(run.events, run.exitCode, trace.loadedTools);
     const completed = check(
       "conversation-completed",
       "every turn ended normally within the time limit",
-      !run.timedOut && trace.resultSubtypes.length > 0 && trace.resultSubtypes.every((subtype) => subtype === "success"),
+      !run.timedOut &&
+        trace.resultSubtypes.length > 0 &&
+        trace.resultSubtypes.every((subtype) => subtype === "success"),
       run.timedOut ? "timed out" : trace.resultSubtypes.join(", "),
     );
     const unprompted: Check = {

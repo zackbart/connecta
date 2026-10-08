@@ -1,13 +1,6 @@
 // Node-only: walks the package tree with Node filesystem APIs.
 import { spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,13 +8,11 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
-const { discoverProviders } = await import(discoveryModule) as {
+const { discoverProviders } = (await import(discoveryModule)) as {
   discoverProviders(root: string): Promise<{ name: string; index: string }[]>;
 };
 const providers = await discoverProviders(ROOT);
-const packageJson = JSON.parse(
-  readFileSync(join(ROOT, "package.json"), "utf8"),
-) as {
+const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
@@ -59,16 +50,8 @@ function satisfiesCaretRange(version: string, range: string): boolean {
     }
     const [major, minor, patch] = parse(trimmed.slice(1));
     // Caret on a 0.x line only widens the rightmost non-zero component.
-    const ceiling =
-      major > 0
-        ? [major + 1, 0, 0]
-        : minor > 0
-          ? [0, minor + 1, 0]
-          : [0, 0, patch + 1];
-    return (
-      compare(candidate, [major, minor, patch]) >= 0 &&
-      compare(candidate, ceiling) < 0
-    );
+    const ceiling = major > 0 ? [major + 1, 0, 0] : minor > 0 ? [0, minor + 1, 0] : [0, 0, patch + 1];
+    return compare(candidate, [major, minor, patch]) >= 0 && compare(candidate, ceiling) < 0;
   });
 }
 
@@ -79,14 +62,7 @@ describe("public package boundary", () => {
     // node:sqlite, behind ./sqlite, is unflagged from Node 22.13.
     expect(packageJson.engines?.node).toBe(">=22.13.0");
     expect(packageJson.files).toEqual(
-      expect.arrayContaining([
-        "bin",
-        "dist",
-        "documentation",
-        "templates",
-        "README.md",
-        "LICENSE",
-      ]),
+      expect.arrayContaining(["bin", "dist", "documentation", "templates", "README.md", "LICENSE"]),
     );
     // No code export resolves outside dist/ — the manifest data export
     // (`./package.json`, #374) is the one exception, and it ships anyway — so
@@ -115,7 +91,10 @@ describe("public package boundary", () => {
     expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(
       [
         ".",
-        "./ui", "./credentials", "./activity", "./auth/access-tokens",
+        "./ui",
+        "./credentials",
+        "./activity",
+        "./auth/access-tokens",
         "./package.json",
         "./node",
         "./sqlite",
@@ -154,17 +133,10 @@ describe("public package boundary", () => {
   it("ships one SQL store with two drivers and no other storage backend", () => {
     // The shared core, the key families, and the in-memory default. The two
     // drivers are the /d1 and /sqlite subpaths; no KV or file store remains.
-    expect(readdirSync(join(ROOT, "src", "storage")).sort()).toEqual([
-      "keys.ts",
-      "memory.ts",
-      "sql.ts",
-    ]);
+    expect(readdirSync(join(ROOT, "src", "storage")).sort()).toEqual(["keys.ts", "memory.ts", "sql.ts"]);
     expect(packageJson.exports?.["./d1"]).toEqual({ types: "./dist/d1.d.ts", import: "./dist/d1.js" });
     expect(packageJson.exports?.["./sqlite"]).toEqual({ types: "./dist/sqlite.d.ts", import: "./dist/sqlite.js" });
-    expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual([
-      "connecta.config.ts",
-      "index.ts",
-    ]);
+    expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
   });
 
   // The rule is about the exports map, not the tarball: `examples/worker`
@@ -176,24 +148,16 @@ describe("public package boundary", () => {
     // (#374) — so it is the one export that legitimately sits outside dist/.
     const targets = Object.entries(packageJson.exports ?? {})
       .filter(([subpath]) => subpath !== "./package.json")
-      .flatMap(([, entry]) =>
-        typeof entry === "string"
-          ? [entry]
-          : Object.values(entry as Record<string, string>),
-      );
+      .flatMap(([, entry]) => (typeof entry === "string" ? [entry] : Object.values(entry as Record<string, string>)));
     expect(targets.length).toBeGreaterThan(0);
     for (const target of targets) {
       expect(target, `${target} resolves outside dist/`).toMatch(/^\.\/dist\//);
     }
-
   });
 
   it("INV-13: keeps Clerk behind an optional adapter subpath", () => {
     expect(packageJson.dependencies).not.toHaveProperty("@clerk/backend");
-    expect(packageJson.peerDependencies).toHaveProperty(
-      "@clerk/backend",
-      "^3.12.0",
-    );
+    expect(packageJson.peerDependencies).toHaveProperty("@clerk/backend", "^3.12.0");
     expect(packageJson.peerDependenciesMeta?.["@clerk/backend"]).toEqual({
       optional: true,
     });
@@ -202,26 +166,18 @@ describe("public package boundary", () => {
 
   it("keeps Cloudflare Access dependency-free behind its Worker subpath", () => {
     expect(packageJson.exports).toHaveProperty("./auth/cloudflare-access");
-    const source = readFileSync(
-      join(ROOT, "src", "auth", "cloudflare-access.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "auth", "cloudflare-access.ts"), "utf8");
     expect(source).not.toMatch(/from\s+["'][^./]/);
   });
 
   it("INV-13: keeps QuickJS behind an optional executor subpath", () => {
     expect(packageJson.dependencies).not.toHaveProperty("quickjs-emscripten");
-    expect(packageJson.peerDependencies).toHaveProperty(
-      "quickjs-emscripten",
-      "^0.32.0",
-    );
+    expect(packageJson.peerDependencies).toHaveProperty("quickjs-emscripten", "^0.32.0");
     expect(packageJson.peerDependenciesMeta?.["quickjs-emscripten"]).toEqual({
       optional: true,
     });
     expect(packageJson.exports).toHaveProperty("./quickjs");
-    expect(
-      readFileSync(join(ROOT, "src", "executors", "quickjs.ts"), "utf8"),
-    ).toContain('from "node:child_process"');
+    expect(readFileSync(join(ROOT, "src", "executors", "quickjs.ts"), "utf8")).toContain('from "node:child_process"');
     expect(readdirSync(join(ROOT, "src", "executors")).sort()).toEqual([
       "quickjs-child.ts",
       "quickjs-protocol.ts",
@@ -251,16 +207,14 @@ describe("public package boundary", () => {
     expect(arms).toContain(packageJson.devDependencies?.["@cloudflare/codemode"]);
     // …and the version actually resolved has to sit inside it, which is the
     // half a range string cannot state on its own.
-    const lock = JSON.parse(
-      readFileSync(join(ROOT, "package-lock.json"), "utf8"),
-    ) as { packages?: Record<string, { version?: string }> };
-    const resolved = lock.packages?.["node_modules/@cloudflare/codemode"]
-      ?.version;
+    const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")) as {
+      packages?: Record<string, { version?: string }>;
+    };
+    const resolved = lock.packages?.["node_modules/@cloudflare/codemode"]?.version;
     expect(resolved, "@cloudflare/codemode is not in the lockfile").toBeTruthy();
     expect(
       satisfiesCaretRange(resolved ?? "", published ?? ""),
-      `locked @cloudflare/codemode ${resolved} is outside the published ` +
-        `peer range ${published}`,
+      `locked @cloudflare/codemode ${resolved} is outside the published ` + `peer range ${published}`,
     ).toBe(true);
     // A range in the manifest and a different one in the prose a deployment
     // follows is the same drift one file over.
@@ -278,23 +232,18 @@ describe("public package boundary", () => {
     expect(providers.length).toBeGreaterThan(0);
     const core = await import("../src/index.js");
     for (const { name, index } of providers) {
-      expect(
-        packageJson.exports,
-        `src/providers/${name}/index.ts needs a ./providers/${name} export`,
-      ).toHaveProperty(`./providers/${name}`, {
-        types: `./dist/providers/${name}/index.d.ts`,
-        import: `./dist/providers/${name}/index.js`,
-      });
+      expect(packageJson.exports, `src/providers/${name}/index.ts needs a ./providers/${name} export`).toHaveProperty(
+        `./providers/${name}`,
+        {
+          types: `./dist/providers/${name}/index.d.ts`,
+          import: `./dist/providers/${name}/index.js`,
+        },
+      );
       // A runtime specifier: the provider is loaded, not statically linked, so
       // adding one never widens what the root entry pulls in.
-      const provider = (await import(
-        pathToFileURL(index).href
-      )) as Record<string, unknown>;
+      const provider = (await import(pathToFileURL(index).href)) as Record<string, unknown>;
       for (const symbol of Object.keys(provider)) {
-        expect(
-          core,
-          `core entry re-exports ${symbol} from providers/${name}`,
-        ).not.toHaveProperty(symbol);
+        expect(core, `core entry re-exports ${symbol} from providers/${name}`).not.toHaveProperty(symbol);
       }
     }
   }, 30_000);
@@ -328,10 +277,7 @@ describe("public package boundary", () => {
   });
 
   it("keeps the Cloudflare provider free of bare-specifier imports", () => {
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "cloudflare", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "cloudflare", "index.ts"), "utf8");
     // Every import must be relative: a bare specifier here would be a runtime
     // dependency the package never declares.
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -340,10 +286,7 @@ describe("public package boundary", () => {
   });
 
   it("keeps the Planning Center provider free of bare-specifier imports", () => {
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "planning-center", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "planning-center", "index.ts"), "utf8");
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
@@ -353,10 +296,7 @@ describe("public package boundary", () => {
     expect(packageJson.dependencies).not.toHaveProperty("@vercel/sdk");
     expect(packageJson.peerDependencies).not.toHaveProperty("@vercel/sdk");
     expect(packageJson.devDependencies).not.toHaveProperty("@vercel/sdk");
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "vercel", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "vercel", "index.ts"), "utf8");
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
@@ -364,10 +304,7 @@ describe("public package boundary", () => {
 
   it("keeps the CCB provider dependency-free and out of the root entry", () => {
     // Its OAuth grant is core's `api()` machinery, not an OAuth client library.
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "ccb", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "ccb", "index.ts"), "utf8");
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
@@ -375,20 +312,14 @@ describe("public package boundary", () => {
 
   it("keeps the Overflow provider dependency-free and behind its own subpath", () => {
     expect(packageJson.exports).toHaveProperty("./providers/overflow");
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "overflow", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "overflow", "index.ts"), "utf8");
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
   });
 
   it("keeps the Tithe.ly provider dependency-free", () => {
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "tithely", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "tithely", "index.ts"), "utf8");
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
@@ -397,10 +328,7 @@ describe("public package boundary", () => {
   // Breeze has no SDK worth wrapping and gets none: its API is keyed GETs
   // against one church's host, so the provider stays Web-API fetch.
   it("keeps the Breeze provider dependency-free and out of the root entry", () => {
-    const source = readFileSync(
-      join(ROOT, "src", "providers", "breeze", "index.ts"),
-      "utf8",
-    );
+    const source = readFileSync(join(ROOT, "src", "providers", "breeze", "index.ts"), "utf8");
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
@@ -514,18 +442,17 @@ describe("Effect behind the published surface", () => {
     expect(range).toMatch(/^\^4\.\d+\.\d+$/);
     expect(packageJson.peerDependencies).not.toHaveProperty("effect");
     expect(packageJson.devDependencies).not.toHaveProperty("effect");
-    const lock = JSON.parse(
-      readFileSync(join(ROOT, "package-lock.json"), "utf8"),
-    ) as { packages?: Record<string, { version?: string }> };
+    const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")) as {
+      packages?: Record<string, { version?: string }>;
+    };
     const locked = lock.packages?.["node_modules/effect"]?.version ?? "";
     const [floorMinor = 0, floorPatch = 0] = range!.slice(3).split(".").map(Number);
     const [major, minor = 0, patch = 0] = locked.split(".").map(Number);
     expect(major, `locked effect ${locked}`).toBe(4);
-    expect(minor * 1e6 + patch, `locked effect ${locked} is below ${range}`)
-      .toBeGreaterThanOrEqual(floorMinor * 1e6 + floorPatch);
-    const nested = Object.keys(lock.packages ?? {}).filter((path) =>
-      path.endsWith("/node_modules/effect"),
+    expect(minor * 1e6 + patch, `locked effect ${locked} is below ${range}`).toBeGreaterThanOrEqual(
+      floorMinor * 1e6 + floorPatch,
     );
+    const nested = Object.keys(lock.packages ?? {}).filter((path) => path.endsWith("/node_modules/effect"));
     expect(nested, "a second copy of effect is locked").toEqual([]);
   });
 

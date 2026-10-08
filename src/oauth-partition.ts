@@ -30,9 +30,7 @@ export function retainingOAuthPartition<Args extends unknown[], Result>(
   contextIndex: number,
 ): (...args: Args) => Promise<Result> {
   return async (...args: Args): Promise<Result> => {
-    const release = retainOAuthPartition(
-      oauthPartitionFor(args[contextIndex] as ConnectorContext),
-    );
+    const release = retainOAuthPartition(oauthPartitionFor(args[contextIndex] as ConnectorContext));
     try {
       return await operation(...args);
     } finally {
@@ -45,10 +43,7 @@ export function oauthPartitionIdle(partition: object): boolean {
   return !activeWork.has(partition);
 }
 
-export function attachOAuthPartition(
-  ctx: ConnectorContext,
-  partition: object | undefined,
-): ConnectorContext {
+export function attachOAuthPartition(ctx: ConnectorContext, partition: object | undefined): ConnectorContext {
   if (partition) partitions.set(ctx, partition);
   return ctx;
 }

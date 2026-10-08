@@ -36,43 +36,43 @@ handoffs are evidence of shape and sequence only after redaction.
 
 N/A trials are excluded from the denominator.
 
-| Task | Claude Sonnet 5.5 | Codex GPT-6-Luna |
-| --- | --- | --- |
-| `cross-connector-join` | 2/2 | 0/2 |
-| `stale-close-and-summarize` | 2/2 | 2/2 |
-| `auth-required-recovery` | 2/2 | 2/2 |
-| `truncated-read-paging` | 2/2 | 2/2 |
-| `truncated-write-export` | 2/2 | 2/2 |
-| `p5-trusted-program-write` | 2/2 | 2/2 |
-| `p5-read-only-program-refusal` | 2/2 | 0/2 |
-| `p5-result-paging` | 2/2 | 1/2 |
-| `p5-direct-rich-output` | N/A, 2 trials | 0/2 |
-| `p5-program-image` | N/A, 2 trials | 2/2 |
-| `p5-auth-url-capable` | 0/2 | 2/2 |
-| `p5-auth-connect-incapable` | 2/2 | 2/2 |
-| `p5-fanout-over-budget` | 2/2 | 2/2 |
-| `p5-mixpanel-bootstrap` | 2/2 | 2/2 |
-| `p5-revenuecat-text` | 2/2 | 2/2 |
-| `p5-supabase-project-ref` | 2/2 | 2/2 |
-| `p5-absent-github` | 0/2 | 2/2 |
-| `p5-known-read-routing` | 2/2 | 0/2 |
-| `p5-connecta-read` | 2/2 | 2/2 |
-| Total | 30/34, 4 N/A | 29/38 |
+| Task                           | Claude Sonnet 5.5 | Codex GPT-6-Luna |
+| ------------------------------ | ----------------- | ---------------- |
+| `cross-connector-join`         | 2/2               | 0/2              |
+| `stale-close-and-summarize`    | 2/2               | 2/2              |
+| `auth-required-recovery`       | 2/2               | 2/2              |
+| `truncated-read-paging`        | 2/2               | 2/2              |
+| `truncated-write-export`       | 2/2               | 2/2              |
+| `p5-trusted-program-write`     | 2/2               | 2/2              |
+| `p5-read-only-program-refusal` | 2/2               | 0/2              |
+| `p5-result-paging`             | 2/2               | 1/2              |
+| `p5-direct-rich-output`        | N/A, 2 trials     | 0/2              |
+| `p5-program-image`             | N/A, 2 trials     | 2/2              |
+| `p5-auth-url-capable`          | 0/2               | 2/2              |
+| `p5-auth-connect-incapable`    | 2/2               | 2/2              |
+| `p5-fanout-over-budget`        | 2/2               | 2/2              |
+| `p5-mixpanel-bootstrap`        | 2/2               | 2/2              |
+| `p5-revenuecat-text`           | 2/2               | 2/2              |
+| `p5-supabase-project-ref`      | 2/2               | 2/2              |
+| `p5-absent-github`             | 0/2               | 2/2              |
+| `p5-known-read-routing`        | 2/2               | 0/2              |
+| `p5-connecta-read`             | 2/2               | 2/2              |
+| Total                          | 30/34, 4 N/A      | 29/38            |
 
 ## Final failure triage
 
-| Task | Runner / repeats | Classification and trial evidence |
-| --- | --- | --- |
-| `cross-connector-join` | Codex 1, 2 | Ambiguous prompt. Hooli has the highest MRR, $120,000, and no open bug. Codex checked Hooli, posted nothing, and explained the absence. Stark/API-207 is the expected answer only if "highest-paying customer" means the highest-paying customer with an open bug. Preserve 0/2 and the legacy task for comparability; the orchestrator owns a follow-up issue. |
-| `p5-read-only-program-refusal` | Claude 1, 2 | Pass after a grader fix. Both made exactly one program write attempt on `tracker.close_issue` WEB-105, which the host refused with `destructive_tool_requires_approval`. Each left WEB-105 open and answered `not closed`. Both also used read-only discovery or verification calls. The prompt's "attempt it once" limits write attempts, not programs, so the grader now counts refused write attempts from the host's program record. A program that catches the refusal and returns only the message text still counts. Negative controls still reject a second write attempt, a wrong issue, and a direct `call_destructive_tool`. |
-| `p5-read-only-program-refusal` | Codex 1, 2 | Genuine miss. Both used `call_destructive_tool`, which the host rejected, instead of testing a program write. WEB-105 stayed open and the structured answer was correct, but `refusal` and `correct-destination` fail. |
-| `p5-auth-url-capable` | Claude 1, 2 | Genuine measured miss. Both accepted two URL elicitations, with two OAuth starts and visits, instead of the required single handoff. `connect-visited` and `host-mode` fail even though the balance answer is correct. The host adapter handles URLs independently of native CLI support. |
-| `p5-absent-github` | Claude 1 | Genuine miss. A generic `pull requests list` search returned unrelated tools without an explicit GitHub absence result. The answer honestly says no GitHub connector exists, but `correct-destination` lacks the required absence discovery. The prose-only `states-absence` check also fails; it is advisory. |
-| `p5-absent-github` | Claude 2 | Genuine miss. Explicit absence searches succeeded, then it called `tracker.list_projects`. That violates `no-lookalike-call`, even though its answer declined to substitute tracker counts. |
-| `p5-result-paging` | Codex 1 | Runner/grading limitation. `call_tool` requested `resultMode: value`, so the retained ID is in `data.resultId`. Two successful programs paged that exact ID through the log, including the failing test. The `result-api` grader reads only a top-level `resultId` from the first response and cannot bind this envelope. Keep the measured 1/2; this failure is not evidence that the agent failed to page. |
-| `p5-direct-rich-output` | Codex 1, 2 | Genuine miss. Both fetched `assets.get_badge_image` inside `execute_code`, returning nested JSON image data rather than direct `call_tool` rich output. `image-delivered` fails; approval/revision evidence passes. |
-| `p5-known-read-routing` | Codex 1, 2 | Genuine miss. Both discovered and read `ci.get_run` from `execute_code` instead of the requested known-address `call_tool` route. The run 4812 answer is correct; `direct-read` fails. |
-| `p5-direct-rich-output`, `p5-program-image` | Claude 1, 2 each | Runner limitation, four N/A trials. Claude's stream adapter converts MCP images into native source blocks and drops rich text when structured content is present. Native delivery cannot be observed. These trials were skipped, not failed; the live fixture is the corrected valid PNG. |
+| Task                                        | Runner / repeats | Classification and trial evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cross-connector-join`                      | Codex 1, 2       | Ambiguous prompt. Hooli has the highest MRR, $120,000, and no open bug. Codex checked Hooli, posted nothing, and explained the absence. Stark/API-207 is the expected answer only if "highest-paying customer" means the highest-paying customer with an open bug. Preserve 0/2 and the legacy task for comparability; the orchestrator owns a follow-up issue.                                                                                                                                                                                                                                                                         |
+| `p5-read-only-program-refusal`              | Claude 1, 2      | Pass after a grader fix. Both made exactly one program write attempt on `tracker.close_issue` WEB-105, which the host refused with `destructive_tool_requires_approval`. Each left WEB-105 open and answered `not closed`. Both also used read-only discovery or verification calls. The prompt's "attempt it once" limits write attempts, not programs, so the grader now counts refused write attempts from the host's program record. A program that catches the refusal and returns only the message text still counts. Negative controls still reject a second write attempt, a wrong issue, and a direct `call_destructive_tool`. |
+| `p5-read-only-program-refusal`              | Codex 1, 2       | Genuine miss. Both used `call_destructive_tool`, which the host rejected, instead of testing a program write. WEB-105 stayed open and the structured answer was correct, but `refusal` and `correct-destination` fail.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `p5-auth-url-capable`                       | Claude 1, 2      | Genuine measured miss. Both accepted two URL elicitations, with two OAuth starts and visits, instead of the required single handoff. `connect-visited` and `host-mode` fail even though the balance answer is correct. The host adapter handles URLs independently of native CLI support.                                                                                                                                                                                                                                                                                                                                               |
+| `p5-absent-github`                          | Claude 1         | Genuine miss. A generic `pull requests list` search returned unrelated tools without an explicit GitHub absence result. The answer honestly says no GitHub connector exists, but `correct-destination` lacks the required absence discovery. The prose-only `states-absence` check also fails; it is advisory.                                                                                                                                                                                                                                                                                                                          |
+| `p5-absent-github`                          | Claude 2         | Genuine miss. Explicit absence searches succeeded, then it called `tracker.list_projects`. That violates `no-lookalike-call`, even though its answer declined to substitute tracker counts.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `p5-result-paging`                          | Codex 1          | Runner/grading limitation. `call_tool` requested `resultMode: value`, so the retained ID is in `data.resultId`. Two successful programs paged that exact ID through the log, including the failing test. The `result-api` grader reads only a top-level `resultId` from the first response and cannot bind this envelope. Keep the measured 1/2; this failure is not evidence that the agent failed to page.                                                                                                                                                                                                                            |
+| `p5-direct-rich-output`                     | Codex 1, 2       | Genuine miss. Both fetched `assets.get_badge_image` inside `execute_code`, returning nested JSON image data rather than direct `call_tool` rich output. `image-delivered` fails; approval/revision evidence passes.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `p5-known-read-routing`                     | Codex 1, 2       | Genuine miss. Both discovered and read `ci.get_run` from `execute_code` instead of the requested known-address `call_tool` route. The run 4812 answer is correct; `direct-read` fails.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `p5-direct-rich-output`, `p5-program-image` | Claude 1, 2 each | Runner limitation, four N/A trials. Claude's stream adapter converts MCP images into native source blocks and drops rich text when structured content is present. Native delivery cannot be observed. These trials were skipped, not failed; the live fixture is the corrected valid PNG.                                                                                                                                                                                                                                                                                                                                               |
 
 ## Earlier first-run history
 

@@ -1,16 +1,20 @@
 import { ConnectorCallError } from "./errors.js";
 
 function refused(): never {
-  throw new ConnectorCallError("connector_call_failed",
-    "OAuth metadata or consent URL cannot be safely checked; refusing authorization.", { retryable: false });
+  throw new ConnectorCallError(
+    "connector_call_failed",
+    "OAuth metadata or consent URL cannot be safely checked; refusing authorization.",
+    { retryable: false },
+  );
 }
 
 /** Matching only: never change the endpoint that discovery supplied. */
 export function percentDecoded(value: string): string {
   for (let pass = 0; pass < 8; pass++) {
     const next = value.replace(/(?:%[0-9a-f]{2})+/gi, (escaped) => {
-      try { return decodeURIComponent(escaped); }
-      catch {
+      try {
+        return decodeURIComponent(escaped);
+      } catch {
         // Replacement decoding preserves valid UTF-8 beside malformed bytes.
         const bytes = escaped.match(/%[0-9a-f]{2}/gi)!;
         return new TextDecoder().decode(Uint8Array.from(bytes, (byte) => parseInt(byte.slice(1), 16)));
@@ -53,8 +57,11 @@ function unicodeLabel(label: string): string {
     let delta = previous === 0 ? Math.floor((i - previous) / 700) : Math.floor((i - previous) / 2);
     delta += Math.floor(delta / count);
     let k = 0;
-    while (delta > 455) { delta = Math.floor(delta / 35); k += 36; }
-    bias = k + Math.floor(36 * delta / (delta + 38));
+    while (delta > 455) {
+      delta = Math.floor(delta / 35);
+      k += 36;
+    }
+    bias = k + Math.floor((36 * delta) / (delta + 38));
     n += Math.floor(i / count);
     if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) refused();
     i %= count;
@@ -68,15 +75,29 @@ function unicodeLabel(label: string): string {
  * ASCII and Unicode views and match case-insensitively; paths remain exact. */
 export function credentialUrlViews(value: string): { hosts: string[]; components: string[]; joined: string[] } {
   let url: URL;
-  try { url = new URL(value); } catch { return refused(); }
+  try {
+    url = new URL(value);
+  } catch {
+    return refused();
+  }
   const host = url.hostname.toLowerCase();
   const hosts = [host, host.split(".").map(unicodeLabel).join(".").toLowerCase()];
   const path = url.pathname.split("/").map(percentDecoded);
   const query = [...url.searchParams].map(([key, item]) => [percentDecoded(key), percentDecoded(item)]);
   const prefix = [url.protocol, percentDecoded(url.username), percentDecoded(url.password)];
   const suffix = [percentDecoded(url.hash.slice(1))];
-  const components = [value, percentDecoded(url.href), ...prefix, ...hosts, url.port,
-    percentDecoded(url.pathname), percentDecoded(url.search), ...path, ...query.flat(), ...suffix];
+  const components = [
+    value,
+    percentDecoded(url.href),
+    ...prefix,
+    ...hosts,
+    url.port,
+    percentDecoded(url.pathname),
+    percentDecoded(url.search),
+    ...path,
+    ...query.flat(),
+    ...suffix,
+  ];
   const joined = hosts.flatMap((hostname) => [
     [...prefix, hostname, url.port, ...path, ...query.flat(), ...suffix].join(""),
     [...prefix, hostname, url.port, ...path, ...query.map((entry) => entry[1]), ...suffix].join(""),

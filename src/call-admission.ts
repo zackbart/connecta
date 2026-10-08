@@ -1,15 +1,8 @@
 import { Deferred, Duration, Effect } from "effect";
 import { ConnectorCallError } from "./errors.js";
-import {
-  provideCallAdmissionProgram,
-  startCallAdmission,
-} from "./runtime/call-admission.js";
+import { provideCallAdmissionProgram, startCallAdmission } from "./runtime/call-admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
-import type {
-  ConnectorCallAdmissionInput,
-  ConnectorCallAdmissionPolicy,
-  ConnectorCallAdmissionRule,
-} from "./types.js";
+import type { ConnectorCallAdmissionInput, ConnectorCallAdmissionPolicy, ConnectorCallAdmissionRule } from "./types.js";
 
 const DEFAULT_MAX_QUEUE_SIZE = 32;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5_000;
@@ -19,12 +12,7 @@ const MAX_PARTITION_KEY_BYTES = 128;
 const DEFAULT_PARTITION_KEY = "";
 const enc = new TextEncoder();
 
-export type CallAdmissionFailureKind =
-  | "concurrency"
-  | "budget"
-  | "cancelled"
-  | "closed"
-  | "partition";
+export type CallAdmissionFailureKind = "concurrency" | "budget" | "cancelled" | "closed" | "partition";
 
 /**
  * A locally-produced connector-call failure. Extending ConnectorCallError
@@ -43,9 +31,7 @@ export class CallAdmissionError extends ConnectorCallError {
   }
 }
 
-export function isCallAdmissionError(
-  error: unknown,
-): error is CallAdmissionError {
+export function isCallAdmissionError(error: unknown): error is CallAdmissionError {
   return error instanceof CallAdmissionError;
 }
 
@@ -101,7 +87,11 @@ export function aggregateCallAdmissionSnapshots(
   snapshots: readonly ConnectorCallAdmissionSnapshot[],
 ): ConnectorCallAdmissionSnapshot {
   const aggregate: ConnectorCallAdmissionSnapshot = {
-    rules: 0, partitions: 0, active: 0, queued: 0, closed: snapshots.length > 0,
+    rules: 0,
+    partitions: 0,
+    active: 0,
+    queued: 0,
+    closed: snapshots.length > 0,
     totals: { admitted: 0, queued: 0, rejected: 0, rateLimited: 0, cancelled: 0 },
     queueWaitMs: { count: 0, total: 0, max: 0 },
   };
@@ -145,12 +135,8 @@ export class ConnectorCallAdmissionController {
   private readonly queueTimeoutMs: number;
   private readonly retryAfterMs: number;
   private readonly maxPartitions: number;
-  private readonly budget:
-    | { maxCalls: number; windowMs: number }
-    | undefined;
-  private readonly partitionKey:
-    | ConnectorCallAdmissionRule["partitionKey"]
-    | undefined;
+  private readonly budget: { maxCalls: number; windowMs: number } | undefined;
+  private readonly partitionKey: ConnectorCallAdmissionRule["partitionKey"] | undefined;
   private readonly partitions = new Map<string, PartitionState>();
   private closed = false;
   private admittedTotal = 0;
@@ -172,30 +158,18 @@ export class ConnectorCallAdmissionController {
       );
     }
     const rule = policy.rules[0];
-    if (
-      rule.maxConcurrency === undefined &&
-      rule.budget === undefined
-    ) {
-      throw new TypeError(
-        `connector "${connectorId}" callAdmission rule must declare maxConcurrency or budget.`,
-      );
+    if (rule.maxConcurrency === undefined && rule.budget === undefined) {
+      throw new TypeError(`connector "${connectorId}" callAdmission rule must declare maxConcurrency or budget.`);
     }
     this.maxConcurrency =
       rule.maxConcurrency === undefined
         ? undefined
-        : positiveWhole(
-            rule.maxConcurrency,
-            `connector "${connectorId}" callAdmission maxConcurrency`,
-          );
+        : positiveWhole(rule.maxConcurrency, `connector "${connectorId}" callAdmission maxConcurrency`);
     if (
       this.maxConcurrency === undefined &&
-      (rule.maxQueueSize !== undefined ||
-        rule.queueTimeoutMs !== undefined ||
-        rule.retryAfterMs !== undefined)
+      (rule.maxQueueSize !== undefined || rule.queueTimeoutMs !== undefined || rule.retryAfterMs !== undefined)
     ) {
-      throw new TypeError(
-        `connector "${connectorId}" callAdmission queue settings require maxConcurrency.`,
-      );
+      throw new TypeError(`connector "${connectorId}" callAdmission queue settings require maxConcurrency.`);
     }
     this.maxQueueSize = nonNegativeWhole(
       rule.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
@@ -215,18 +189,10 @@ export class ConnectorCallAdmissionController {
     );
     if (rule.budget) {
       if (rule.budget.kind !== "rolling-window") {
-        throw new TypeError(
-          `connector "${connectorId}" callAdmission budget kind must be "rolling-window".`,
-        );
+        throw new TypeError(`connector "${connectorId}" callAdmission budget kind must be "rolling-window".`);
       }
-      const maxCalls = positiveWhole(
-        rule.budget.maxCalls,
-        `connector "${connectorId}" callAdmission budget.maxCalls`,
-      );
-      const windowMs = positiveWhole(
-        rule.budget.windowMs,
-        `connector "${connectorId}" callAdmission budget.windowMs`,
-      );
+      const maxCalls = positiveWhole(rule.budget.maxCalls, `connector "${connectorId}" callAdmission budget.maxCalls`);
+      const windowMs = positiveWhole(rule.budget.windowMs, `connector "${connectorId}" callAdmission budget.windowMs`);
       this.budget = { maxCalls, windowMs };
     } else {
       this.budget = undefined;
@@ -234,9 +200,7 @@ export class ConnectorCallAdmissionController {
     this.partitionKey = rule.partitionKey;
   }
 
-  acquire(
-    input: Readonly<ConnectorCallAdmissionInput> & { signal?: AbortSignal },
-  ): Promise<CallAdmissionPermit> {
+  acquire(input: Readonly<ConnectorCallAdmissionInput> & { signal?: AbortSignal }): Promise<CallAdmissionPermit> {
     // The checks run now and the returned effect only waits. It closes over
     // the partition key, not `input`, so a queued call does not retain its
     // `args` — the limiter's payload-free state contract.
@@ -296,11 +260,7 @@ export class ConnectorCallAdmissionController {
     }
   }
 
-  private admit(
-    state: PartitionState,
-    now: number,
-    waitMs: number,
-  ): CallAdmissionPermit {
+  private admit(state: PartitionState, now: number, waitMs: number): CallAdmissionPermit {
     state.active++;
     if (this.budget) state.admittedAt.push(now);
     this.admittedTotal++;
@@ -323,10 +283,7 @@ export class ConnectorCallAdmissionController {
 
   private pump(state: PartitionState): void {
     if (this.closed || this.maxConcurrency === undefined) return;
-    while (
-      state.active < this.maxConcurrency &&
-      state.waiters.length > 0
-    ) {
+    while (state.active < this.maxConcurrency && state.waiters.length > 0) {
       const waiter = state.waiters.shift()!;
       // The waiter's signal is not read here. This runs in whichever request
       // released a slot, and on Workers reading an AbortSignal that another
@@ -341,17 +298,11 @@ export class ConnectorCallAdmissionController {
       const retryAfterMs = this.budgetRetryAfterMs(state, now);
       if (retryAfterMs !== undefined) {
         this.rateLimitedTotal++;
-        Deferred.doneUnsafe(
-          waiter.outcome,
-          Effect.fail(this.budgetLimited(retryAfterMs)),
-        );
+        Deferred.doneUnsafe(waiter.outcome, Effect.fail(this.budgetLimited(retryAfterMs)));
         continue;
       }
       const waitMs = Math.max(0, now - waiter.queuedAt);
-      Deferred.doneUnsafe(
-        waiter.outcome,
-        Effect.succeed(this.admit(state, now, waitMs)),
-      );
+      Deferred.doneUnsafe(waiter.outcome, Effect.succeed(this.admit(state, now, waitMs)));
     }
   }
 
@@ -369,10 +320,7 @@ export class ConnectorCallAdmissionController {
     if (expired > 0) state.admittedAt.splice(0, expired);
   }
 
-  private budgetRetryAfterMs(
-    state: PartitionState,
-    now: number,
-  ): number | undefined {
+  private budgetRetryAfterMs(state: PartitionState, now: number): number | undefined {
     const budget = this.budget;
     if (!budget || state.admittedAt.length < budget.maxCalls) {
       return undefined;
@@ -388,17 +336,9 @@ export class ConnectorCallAdmissionController {
     }
   }
 
-  private maybeDeletePartition(
-    key: string,
-    state: PartitionState,
-    now: number,
-  ): void {
+  private maybeDeletePartition(key: string, state: PartitionState, now: number): void {
     this.pruneBudget(state, now);
-    if (
-      state.active === 0 &&
-      state.waiters.length === 0 &&
-      state.admittedAt.length === 0
-    ) {
+    if (state.active === 0 && state.waiters.length === 0 && state.admittedAt.length === 0) {
       this.partitions.delete(key);
     }
   }
@@ -415,11 +355,7 @@ export class ConnectorCallAdmissionController {
   // permit in the same breath, give the slot back, because nobody is left to
   // receive it. (A line comment, not JSDoc: TypeScript copies a private
   // member's JSDoc into the published declaration.)
-  private cleanupWaiter(
-    key: string,
-    state: PartitionState,
-    waiter: Waiter,
-  ): Effect.Effect<void> {
+  private cleanupWaiter(key: string, state: PartitionState, waiter: Waiter): Effect.Effect<void> {
     if (this.removeWaiter(state, waiter)) {
       this.cancelledTotal++;
       this.maybeDeletePartition(key, state, waiter.now());
@@ -509,10 +445,7 @@ export class ConnectorCallAdmissionController {
           ),
         );
       }
-      if (
-        typeof key !== "string" ||
-        enc.encode(key).length > MAX_PARTITION_KEY_BYTES
-      ) {
+      if (typeof key !== "string" || enc.encode(key).length > MAX_PARTITION_KEY_BYTES) {
         controller.rejectedTotal++;
         return Effect.fail(
           new CallAdmissionError(
@@ -555,10 +488,7 @@ export class ConnectorCallAdmissionController {
         controller.rateLimitedTotal++;
         return Effect.fail(controller.budgetLimited(budgetRetryAfterMs));
       }
-      if (
-        controller.maxConcurrency === undefined ||
-        state.active < controller.maxConcurrency
-      ) {
+      if (controller.maxConcurrency === undefined || state.active < controller.maxConcurrency) {
         return Effect.succeed(controller.admit(state, queuedAt, 0));
       }
       if (state.waiters.length >= controller.maxQueueSize) {
@@ -600,10 +530,7 @@ export class ConnectorCallAdmissionController {
           Effect.andThen(
             giveUp(
               () => controller.rejectedTotal++,
-              () =>
-                controller.concurrencyLimited(
-                  `queue wait exceeded ${controller.queueTimeoutMs}ms`,
-                ),
+              () => controller.concurrencyLimited(`queue wait exceeded ${controller.queueTimeoutMs}ms`),
             ),
           ),
         ),

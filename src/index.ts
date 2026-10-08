@@ -1,35 +1,15 @@
 import { describeConfigSources } from "./config-value-sources.js";
-import {
-  credentialTestRule,
-  describeCredentialTestMismatch,
-} from "./credential-rules.js";
+import { credentialTestRule, describeCredentialTestMismatch } from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
-import {
-  droppedBrandingUrls,
-  droppedThemeTokens,
-  droppedUiAuthUrls,
-} from "./branding.js";
-import {
-  readConfig,
-  type ConnectaConfig,
-  type ResolvedConfig,
-} from "./config.js";
+import { droppedBrandingUrls, droppedThemeTokens, droppedUiAuthUrls } from "./branding.js";
+import { readConfig, type ConnectaConfig, type ResolvedConfig } from "./config.js";
 import { describeConfig, type ConnectaConfigDescription } from "./describe-config.js";
 export { customExecutor, type CustomExecutorOptions } from "./executor-contract.js";
-import {
-  AdmissionController,
-  executorName,
-  isAdmittingExecutor,
-  withExecutorAdmission,
-} from "./executor-admission.js";
-export type {
-  AccessTokensModule,
-  ActivityModule,
-  OperatorSurface,
-} from "./module-contracts.js";
+import { AdmissionController, executorName, isAdmittingExecutor, withExecutorAdmission } from "./executor-admission.js";
+export type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
 export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
 export { defineConfig } from "./config.js";
 export type {
@@ -75,10 +55,7 @@ export interface Connecta {
  * catalog lacks it. Remote catalogs load lazily, so their addresses are
  * checked at catalog load instead and stay unreachable until they match.
  */
-function resolvePools(
-  pools: ResolvedConfig["pools"],
-  registry: Registry,
-): Map<string, ResolvedPool> {
+function resolvePools(pools: ResolvedConfig["pools"], registry: Registry): Map<string, ResolvedPool> {
   const resolved = new Map<string, ResolvedPool>();
   if (!pools) return resolved;
   // The schema has already refused a pool that is not an object, a missing or
@@ -124,10 +101,7 @@ function warnInsecureConfig(config: ResolvedConfig): void {
 
   // Static API headers can carry secrets without declaring credential hooks.
   // Any configured connector warrants the open-deployment warning.
-  if (
-    inboundAuth.length === 0 &&
-    config.connectors.length > 0
-  ) {
+  if (inboundAuth.length === 0 && config.connectors.length > 0) {
     logger.warn(
       "[connecta] running with no inbound authentication: any caller can " +
         "invoke every shared connector. " +
@@ -266,9 +240,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           sink: resolved.activity.store,
           recordChange: resolved.activity.recordChange,
           serverInfo: resolved.serverInfo,
-          ...(resolved.activity.deploymentId !== undefined
-            ? { deploymentId: resolved.activity.deploymentId }
-            : {}),
+          ...(resolved.activity.deploymentId !== undefined ? { deploymentId: resolved.activity.deploymentId } : {}),
         }
       : undefined,
     toolCacheTtlSeconds: resolved.discovery.catalogTtlSeconds,
@@ -365,11 +337,7 @@ export type { GuestApi, GuestResourceResult, GuestResult, GuestResultPage, Guest
 // are internal factoring and are deliberately not part of the API surface.
 export type { Registry } from "./registry.js";
 
-export type {
-  RemoteMcpOptions,
-  RemoteMcpAuth,
-  RemoteMcpRedirectPolicy,
-} from "./connectors/remote-mcp.js";
+export type { RemoteMcpOptions, RemoteMcpAuth, RemoteMcpRedirectPolicy } from "./connectors/remote-mcp.js";
 export type {
   ApiHandlerContext,
   ApiOAuthAccess,

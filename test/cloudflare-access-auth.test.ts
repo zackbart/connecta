@@ -34,11 +34,7 @@ describe("cloudflareAccessAuth", () => {
       uiAuth: { kind: "cloudflare-access" },
     });
     await expect(
-      auth.authorize(
-        request,
-        BASE,
-        runtime({ user_uuid: "user-123", email: "ada@example.com" }),
-      ),
+      auth.authorize(request, BASE, runtime({ user_uuid: "user-123", email: "ada@example.com" })),
     ).resolves.toEqual({
       ok: true,
       userId: "user-123",
@@ -57,11 +53,7 @@ describe("cloudflareAccessAuth", () => {
   });
 
   it("uses a verified Access email when local development supplies no UUID", async () => {
-    const result = await cloudflareAccessAuth().authorize(
-      request,
-      BASE,
-      runtime({ email: "ada@example.com" }),
-    );
+    const result = await cloudflareAccessAuth().authorize(request, BASE, runtime({ email: "ada@example.com" }));
     expect(result).toEqual({
       ok: true,
       userId: "ada@example.com",
@@ -70,34 +62,56 @@ describe("cloudflareAccessAuth", () => {
   });
 
   it("INV-4: refuses Access service identities; machines need cta_ tokens", async () => {
-    for (const identity of [undefined, { common_name: "service-client-id.access" }, { service_token_id: "service-id" }, { user_uuid: "human", service_token_status: true }]) {
+    for (const identity of [
+      undefined,
+      { common_name: "service-client-id.access" },
+      { service_token_id: "service-id" },
+      { user_uuid: "human", service_token_status: true },
+    ]) {
       const result = await cloudflareAccessAuth().authorize(request, BASE, runtime(identity));
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.response.status).toBe(403);
     }
   });
 
-  it.each(["valid", "invalid", "expired", "wrong-audience"])("INV-4: refuses %s caller JWTs without edge-validated context on Node and Workers", async verdict => {
-    const header = btoa(JSON.stringify({ alg: "none" }));
-    const payload = btoa(JSON.stringify({ sub: "human", aud: verdict === "wrong-audience" ? "other-app" : "access-app", exp: verdict === "expired" ? 1 : 9999999999 }));
-    const jwt = verdict === "invalid" ? "invalid" : `${header}.${payload}.signature`;
-    const fetcher = vi.spyOn(globalThis, "fetch");
-    const result = await cloudflareAccessAuth().authorize(new Request(`${BASE}/mcp`, { headers: { "Cf-Access-Jwt-Assertion": jwt, Authorization: `Bearer ${jwt}` } }), BASE);
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.response.status).toBe(401);
-      expect(result.response.headers.get("WWW-Authenticate")).toBe('Bearer scope="openid email"');
-    }
-    expect(fetcher).not.toHaveBeenCalled();
-    fetcher.mockRestore();
-  });
+  it.each(["valid", "invalid", "expired", "wrong-audience"])(
+    "INV-4: refuses %s caller JWTs without edge-validated context on Node and Workers",
+    async (verdict) => {
+      const header = btoa(JSON.stringify({ alg: "none" }));
+      const payload = btoa(
+        JSON.stringify({
+          sub: "human",
+          aud: verdict === "wrong-audience" ? "other-app" : "access-app",
+          exp: verdict === "expired" ? 1 : 9999999999,
+        }),
+      );
+      const jwt = verdict === "invalid" ? "invalid" : `${header}.${payload}.signature`;
+      const fetcher = vi.spyOn(globalThis, "fetch");
+      const result = await cloudflareAccessAuth().authorize(
+        new Request(`${BASE}/mcp`, { headers: { "Cf-Access-Jwt-Assertion": jwt, Authorization: `Bearer ${jwt}` } }),
+        BASE,
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(401);
+        expect(result.response.headers.get("WWW-Authenticate")).toBe('Bearer scope="openid email"');
+      }
+      expect(fetcher).not.toHaveBeenCalled();
+      fetcher.mockRestore();
+    },
+  );
 
-  it.each(["", undefined, 123, "bad aud"])("INV-4: refuses malformed trusted application AUD %j before identity lookup", async aud => {
-    const getIdentity = vi.fn(async () => ({ user_uuid: "human" }));
-    const result = await cloudflareAccessAuth().authorize(request, BASE, { access: { aud: aud as string, getIdentity } });
-    expect(result.ok).toBe(false);
-    expect(getIdentity).not.toHaveBeenCalled();
-  });
+  it.each(["", undefined, 123, "bad aud"])(
+    "INV-4: refuses malformed trusted application AUD %j before identity lookup",
+    async (aud) => {
+      const getIdentity = vi.fn(async () => ({ user_uuid: "human" }));
+      const result = await cloudflareAccessAuth().authorize(request, BASE, {
+        access: { aud: aud as string, getIdentity },
+      });
+      expect(result.ok).toBe(false);
+      expect(getIdentity).not.toHaveBeenCalled();
+    },
+  );
 
   it("fails closed when Access or its identity is unavailable", async () => {
     const auth = cloudflareAccessAuth();
@@ -116,7 +130,16 @@ describe("cloudflareAccessAuth", () => {
   it("refuses Access-only machine MCP calls and operator mutation", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth(),
-      connectors: [{ id: "oauth", kind: "mcp", listTools: async () => [], callTool: async () => null, startAuth: async () => ({ state: "ok" }), disconnectAuth: async () => {} }],
+      connectors: [
+        {
+          id: "oauth",
+          kind: "mcp",
+          listTools: async () => [],
+          callTool: async () => null,
+          startAuth: async () => ({ state: "ok" }),
+          disconnectAuth: async () => {},
+        },
+      ],
     });
     const context = workerRuntime();
 
@@ -144,8 +167,18 @@ describe("cloudflareAccessAuth", () => {
 
   it("lets a human Access identity use same-origin operator mutation", async () => {
     const deployment = makeDeployment({
-      auth: cloudflareAccessAuth(), vault: oauthVault(memoryStorage()),
-      connectors: [{ id: "oauth", kind: "mcp", listTools: async () => [], callTool: async () => null, startAuth: async () => ({ state: "ok" }), disconnectAuth: async () => {} }],
+      auth: cloudflareAccessAuth(),
+      vault: oauthVault(memoryStorage()),
+      connectors: [
+        {
+          id: "oauth",
+          kind: "mcp",
+          listTools: async () => [],
+          callTool: async () => null,
+          startAuth: async () => ({ state: "ok" }),
+          disconnectAuth: async () => {},
+        },
+      ],
     });
     const context = workerRuntime({ user_uuid: "operator-1" });
     const crossOrigin = await deployment.fetch(
@@ -179,10 +212,7 @@ describe("cloudflareAccessAuth", () => {
 
   it("keeps Clerk as the pre-Access shell and switches to ambient auth at the edge", async () => {
     const deployment = makeDeployment({
-      auth: [
-        cloudflareAccessAuth(),
-        fakeClerkAuth({ token: "clerk-session" }),
-      ],
+      auth: [cloudflareAccessAuth(), fakeClerkAuth({ token: "clerk-session" })],
     });
 
     const beforeAccess = await deployment.fetch(new Request(`${BASE}/`));
@@ -196,9 +226,7 @@ describe("cloudflareAccessAuth", () => {
       workerRuntime({ user_uuid: "operator-1" }),
     );
     const accessShell = await afterAccess.text();
-    expect(accessShell).toContain(
-      '"auth":{"kind":"cloudflare-access"}',
-    );
+    expect(accessShell).toContain('"auth":{"kind":"cloudflare-access"}');
     expect(accessShell).not.toContain("clerk.browser.js");
     const explicit = await deployment.fetch(
       new Request(`${BASE}/`, { headers: { Authorization: "Basic unknown" } }),

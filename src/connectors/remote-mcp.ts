@@ -1,4 +1,13 @@
-import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, downstreamRedirectUri, remoteClientAuthMethod, selfHostedClientUrl, trackRemoteClientRequest, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
+import {
+  assertRemoteOAuthClient,
+  declareSelfHostedClient,
+  downstreamClientMetadata,
+  downstreamRedirectUri,
+  remoteClientAuthMethod,
+  selfHostedClientUrl,
+  trackRemoteClientRequest,
+  type RemoteOAuthClient,
+} from "../auth/downstream-client-metadata.js";
 import {
   AuthorizationServerMismatchError,
   Client,
@@ -44,9 +53,26 @@ import {
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
-import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
+import {
+  redactCatalog,
+  redactSentSecrets,
+  sentSecretsFor,
+  shortSecretWarning,
+  trackCredentialReads,
+  type SentSecrets,
+} from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
-import { catalogClientOptions, catalogItems, observeCompletedCatalogRefresh, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch, observeCatalogExpiry } from "../catalog-cache.js";
+import {
+  catalogClientOptions,
+  catalogItems,
+  observeCompletedCatalogRefresh,
+  type CatalogMethod,
+  type CatalogResult,
+  closeCatalogCacheScope,
+  observeCatalogChange,
+  observeCatalogFetch,
+  observeCatalogExpiry,
+} from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -73,7 +99,11 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
-import { downstreamInputCapabilities, assertDownstreamOutputSafe, downstreamWriteContinuation } from "../downstream-input-context.js";
+import {
+  downstreamInputCapabilities,
+  assertDownstreamOutputSafe,
+  downstreamWriteContinuation,
+} from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -172,9 +202,7 @@ export function withCredentialDefaults(
   return {
     ...auth,
     credential: auth.credential ?? defaults.credential,
-    ...(auth.scheme === undefined && defaults.scheme !== undefined
-      ? { scheme: defaults.scheme }
-      : {}),
+    ...(auth.scheme === undefined && defaults.scheme !== undefined ? { scheme: defaults.scheme } : {}),
   };
 }
 
@@ -261,8 +289,18 @@ export interface RemoteMcpOptions {
 /** The closed options remoteMcp() accepts; see `assertKnownOptions`. */
 const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
   ...keys(
-    "url", "title", "description", "authScope", "maxResultBytes", "versionNegotiation",
-    "redirects", "requireHttps", "logger", "_transportFactory", "classify", "skills",
+    "url",
+    "title",
+    "description",
+    "authScope",
+    "maxResultBytes",
+    "versionNegotiation",
+    "redirects",
+    "requireHttps",
+    "logger",
+    "_transportFactory",
+    "classify",
+    "skills",
   ),
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
@@ -289,7 +327,9 @@ const TERMINATE_SESSION_BUDGET_MS = 1_000;
 const LOCAL_CLOSE_BUDGET_MS = 1_000;
 
 function unadvertisedResource(): ConnectorCallError {
-  return new ConnectorCallError("not_found", "The resource URI is not advertised by this connector.", { retryable: false });
+  return new ConnectorCallError("not_found", "The resource URI is not advertised by this connector.", {
+    retryable: false,
+  });
 }
 
 /** SDK aggregation cap; intake also refuses loops and non-progress (INV-8). */
@@ -309,8 +349,13 @@ function skillTextBytes(value: string): number {
     const code = value.charCodeAt(i);
     if (code < 0x80) bytes++;
     else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length &&
-      value.charCodeAt(i + 1) >= 0xdc00 && value.charCodeAt(i + 1) <= 0xdfff) {
+    else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      i + 1 < value.length &&
+      value.charCodeAt(i + 1) >= 0xdc00 &&
+      value.charCodeAt(i + 1) <= 0xdfff
+    ) {
       bytes += 4;
       i++;
     } else bytes += 3;
@@ -327,19 +372,35 @@ function skillJsonBytes(value: unknown): number {
 }
 
 function validSkill(value: unknown): value is ConnectorSkill {
-  if (!skillObject(value) || typeof value.uri !== "string" || !value.uri ||
-    !skillObject(value.frontmatter) || typeof value.frontmatter.name !== "string" ||
-    !value.frontmatter.name || typeof value.frontmatter.description !== "string" ||
-    !value.frontmatter.description) return false;
+  if (
+    !skillObject(value) ||
+    typeof value.uri !== "string" ||
+    !value.uri ||
+    !skillObject(value.frontmatter) ||
+    typeof value.frontmatter.name !== "string" ||
+    !value.frontmatter.name ||
+    typeof value.frontmatter.description !== "string" ||
+    !value.frontmatter.description
+  )
+    return false;
   if (value.resources === "dynamic") return true;
-  if (!Array.isArray(value.resources) || !value.resources.length || value.resources.length > MAX_SKILL_FILES) return false;
+  if (!Array.isArray(value.resources) || !value.resources.length || value.resources.length > MAX_SKILL_FILES)
+    return false;
   const uris = new Set<string>();
   let bytes = 0;
   for (const resource of value.resources) {
-    if (!skillObject(resource) || typeof resource.uri !== "string" || !resource.uri ||
-      uris.has(resource.uri) || typeof resource.digest !== "string" ||
+    if (
+      !skillObject(resource) ||
+      typeof resource.uri !== "string" ||
+      !resource.uri ||
+      uris.has(resource.uri) ||
+      typeof resource.digest !== "string" ||
       !/^sha256:[a-f0-9]{64}$/.test(resource.digest) ||
-      typeof resource.size !== "number" || !Number.isSafeInteger(resource.size) || resource.size < 0) return false;
+      typeof resource.size !== "number" ||
+      !Number.isSafeInteger(resource.size) ||
+      resource.size < 0
+    )
+      return false;
     uris.add(resource.uri);
     bytes += resource.size;
     if (bytes > MAX_SKILL_BYTES) return false;
@@ -350,9 +411,13 @@ function validSkill(value: unknown): value is ConnectorSkill {
 function completeSkillResult(value: unknown): value is Record<string, unknown> {
   // The modern SDK codec rejects non-complete wire results and removes
   // resultType before invoking an explicit result schema.
-  return skillObject(value) &&
-    typeof value.ttlMs === "number" && Number.isSafeInteger(value.ttlMs) && value.ttlMs >= 0 &&
-    (value.cacheScope === "public" || value.cacheScope === "private");
+  return (
+    skillObject(value) &&
+    typeof value.ttlMs === "number" &&
+    Number.isSafeInteger(value.ttlMs) &&
+    value.ttlMs >= 0 &&
+    (value.cacheScope === "public" || value.cacheScope === "private")
+  );
 }
 
 interface SkillPage {
@@ -366,13 +431,25 @@ const SkillPageSchema: StandardSchemaV1<unknown, SkillPage> = {
     version: 1,
     vendor: "connecta",
     validate(value) {
-      if (!completeSkillResult(value) || !Array.isArray(value.skills) || value.skills.length > MAX_SKILLS ||
-        !value.skills.every(validSkill) || (value.nextCursor !== undefined && typeof value.nextCursor !== "string")) {
+      if (
+        !completeSkillResult(value) ||
+        !Array.isArray(value.skills) ||
+        value.skills.length > MAX_SKILLS ||
+        !value.skills.every(validSkill) ||
+        (value.nextCursor !== undefined && typeof value.nextCursor !== "string")
+      ) {
         return { issues: [{ message: "Invalid or incomplete Skills listing." }] };
       }
       const bytes = skillJsonBytes(value);
-      if (bytes > MAX_SERIALIZED_CATALOG_BYTES) return { issues: [{ message: "Skills listing exceeds the byte limit." }] };
-      return { value: { skills: value.skills, bytes, ...(typeof value.nextCursor === "string" ? { nextCursor: value.nextCursor } : {}) } };
+      if (bytes > MAX_SERIALIZED_CATALOG_BYTES)
+        return { issues: [{ message: "Skills listing exceeds the byte limit." }] };
+      return {
+        value: {
+          skills: value.skills,
+          bytes,
+          ...(typeof value.nextCursor === "string" ? { nextCursor: value.nextCursor } : {}),
+        },
+      };
     },
   },
 };
@@ -383,23 +460,38 @@ function skillReadSchema(uri: string): StandardSchemaV1<unknown, ConnectorSkillR
       version: 1,
       vendor: "connecta",
       validate(value) {
-        if (!completeSkillResult(value) || !Array.isArray(value.contents) || value.contents.length !== 1 ||
-          skillJsonBytes(value) > MAX_SKILL_READ_RPC_BYTES) {
+        if (
+          !completeSkillResult(value) ||
+          !Array.isArray(value.contents) ||
+          value.contents.length !== 1 ||
+          skillJsonBytes(value) > MAX_SKILL_READ_RPC_BYTES
+        ) {
           return { issues: [{ message: "Invalid or incomplete skill resource response." }] };
         }
         const content: unknown = value.contents[0];
-        if (!skillObject(content) || content.uri !== uri ||
-          (content.mimeType !== undefined && typeof content.mimeType !== "string")) {
+        if (
+          !skillObject(content) ||
+          content.uri !== uri ||
+          (content.mimeType !== undefined && typeof content.mimeType !== "string")
+        ) {
           return { issues: [{ message: "Unexpected skill resource contents." }] };
         }
         const mimeType = typeof content.mimeType === "string" ? { mimeType: content.mimeType } : {};
-        if (typeof content.text === "string" && !("blob" in content) &&
-          skillTextBytes(content.text) <= MAX_SKILL_BYTES) {
+        if (
+          typeof content.text === "string" &&
+          !("blob" in content) &&
+          skillTextBytes(content.text) <= MAX_SKILL_BYTES
+        ) {
           return { value: [{ uri, ...mimeType, text: content.text }] };
         }
-        if (typeof content.blob === "string" && !("text" in content) &&
-          content.blob.length % 4 === 0 && !/[^A-Za-z0-9+/]/.test(content.blob.replace(/={1,2}$/, ""))) {
-          const bytes = content.blob.length / 4 * 3 - (content.blob.endsWith("==") ? 2 : content.blob.endsWith("=") ? 1 : 0);
+        if (
+          typeof content.blob === "string" &&
+          !("text" in content) &&
+          content.blob.length % 4 === 0 &&
+          !/[^A-Za-z0-9+/]/.test(content.blob.replace(/={1,2}$/, ""))
+        ) {
+          const bytes =
+            (content.blob.length / 4) * 3 - (content.blob.endsWith("==") ? 2 : content.blob.endsWith("=") ? 1 : 0);
           if (bytes <= MAX_SKILL_BYTES) return { value: [{ uri, ...mimeType, blob: content.blob }] };
         }
         return { issues: [{ message: "Invalid or oversized skill resource bytes." }] };
@@ -409,8 +501,14 @@ function skillReadSchema(uri: string): StandardSchemaV1<unknown, ConnectorSkillR
 }
 
 /** Bound the body before SDK consumption, including its detached SSE reader. */
-async function boundedSkillResponse(response: Response, limit: number, rpcId: unknown, signal?: AbortSignal | null): Promise<Response> {
-  const exceeded = () => new ConnectorCallError("connector_call_failed", "Downstream Skills response exceeds the RPC byte limit.");
+async function boundedSkillResponse(
+  response: Response,
+  limit: number,
+  rpcId: unknown,
+  signal?: AbortSignal | null,
+): Promise<Response> {
+  const exceeded = () =>
+    new ConnectorCallError("connector_call_failed", "Downstream Skills response exceeds the RPC byte limit.");
   const declared = response.headers.get("content-length");
   if (declared !== null && Number(declared) > limit) {
     await response.body?.cancel().catch(() => {});
@@ -418,7 +516,9 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
   }
   if (!response.body) return response;
   const reader = response.body.getReader();
-  const abort = () => { void reader.cancel().catch(() => {}); };
+  const abort = () => {
+    void reader.cancel().catch(() => {});
+  };
   signal?.addEventListener("abort", abort, { once: true });
   let bytes = 0;
   const chunks: Uint8Array[] = [];
@@ -460,7 +560,10 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
       const byte = chunk[offset]!;
       if (skipLf) {
         skipLf = false;
-        if (byte === 10) { offset++; continue; }
+        if (byte === 10) {
+          offset++;
+          continue;
+        }
       }
       // Strip exactly one initial UTF-8 BOM, even across single-byte chunks.
       if (bomOffset >= 0) {
@@ -469,7 +572,10 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
           offset++;
           continue;
         }
-        if (bomOffset) { lineBytes = true; state = 3; }
+        if (bomOffset) {
+          lineBytes = true;
+          state = 3;
+        }
         bomOffset = -1;
       }
       if (byte === 10 || byte === 13) {
@@ -497,14 +603,20 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
       lineBytes = true;
       if (state === 0) {
         if (byte === field[fieldOffset]) {
-          if (++fieldOffset === field.length) { beginData(); state = 1; }
+          if (++fieldOffset === field.length) {
+            beginData();
+            state = 1;
+          }
         } else state = 3;
         offset++;
         continue;
       }
       if (state === 1) {
         state = 2;
-        if (byte === 32) { offset++; continue; }
+        if (byte === 32) {
+          offset++;
+          continue;
+        }
       }
       let end = offset;
       while (end < chunk.length && chunk[end] !== 13 && chunk[end] !== 10) end++;
@@ -540,22 +652,33 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
           buffer.set(chunk.value.subarray(offset, offset + size), buffered);
           offset += size;
           buffered += size;
-          if (buffered === buffer.length) { chunks.push(buffer); buffer = undefined; buffered = 0; }
+          if (buffered === buffer.length) {
+            chunks.push(buffer);
+            buffer = undefined;
+            buffered = 0;
+          }
         }
         continue;
       }
       const terminal = consume(chunk.value);
       if (terminal !== undefined) return await terminalResponse(terminal);
     }
-    if (sse) throw new ConnectorCallError("connector_call_failed", "Downstream Skills stream ended without a terminal RPC response.");
+    if (sse)
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "Downstream Skills stream ended without a terminal RPC response.",
+      );
     if (buffer && buffered) chunks.push(buffer.subarray(0, buffered));
-    return new Response(new ReadableStream<Uint8Array>({
-      pull(controller) {
-        const chunk = chunks.shift();
-        if (chunk) controller.enqueue(chunk);
-        else controller.close();
-      },
-    }), { status: response.status, statusText: response.statusText, headers: response.headers });
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        },
+      }),
+      { status: response.status, statusText: response.statusText, headers: response.headers },
+    );
   } catch (error) {
     await reader.cancel().catch(() => {});
     throw error;
@@ -565,25 +688,18 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
   }
 }
 
-
 /**
  * Compatibility concession for hand-rolled servers that serialize
  * end-of-pagination as `null`. Only the cursor is widened; every tool and every
  * other result field still passes through the SDK's pinned schema.
  */
-const CompatibleListToolsResultSchema: StandardSchemaV1<
-  unknown,
-  ListToolsResult
-> = {
+const CompatibleListToolsResultSchema: StandardSchemaV1<unknown, ListToolsResult> = {
   "~standard": {
     version: 1,
     vendor: "connecta",
     validate(value) {
       const normalized =
-        typeof value === "object" &&
-        value !== null &&
-        "nextCursor" in value &&
-        value.nextCursor === null
+        typeof value === "object" && value !== null && "nextCursor" in value && value.nextCursor === null
           ? (() => {
               const copy = { ...value };
               delete copy.nextCursor;
@@ -644,19 +760,13 @@ function startMessage(err: unknown): string {
  * (405 is a legal answer), errors, or never replies all fall through to the
  * close with the session left to age out as it did before.
  */
-function terminateSession(
-  transport: Transport,
-  logger: Logger,
-  connectorId: string,
-): Effect.Effect<void> {
+function terminateSession(transport: Transport, logger: Logger, connectorId: string): Effect.Effect<void> {
   // SDK v2's Client.close() does not send the legacy session DELETE on our
   // behalf. Connecta's own endpoint creates no protocol session, but a stateful
   // legacy downstream can still issue `Mcp-Session-Id`, and every path that
   // abandons one — scope teardown, credential rotation, OAuth retirement, an
   // abandoned connect — owes it this best-effort, one-second DELETE.
-  const terminate = (
-    transport as Transport & { terminateSession?: () => Promise<void> }
-  ).terminateSession;
+  const terminate = (transport as Transport & { terminateSession?: () => Promise<void> }).terminateSession;
   if (typeof terminate !== "function") return Effect.void;
   const warn = (log: () => void) =>
     Effect.sync(() => {
@@ -683,9 +793,7 @@ function terminateSession(
             "session termination refused or failed; the downstream session may remain until its provider timeout",
             failureRecord(
               { connector: connectorId },
-              error instanceof SdkHttpError
-                ? attachFailureFacts(error, { httpStatus: error.status })
-                : error,
+              error instanceof SdkHttpError ? attachFailureFacts(error, { httpStatus: error.status }) : error,
             ),
           ),
         ),
@@ -693,12 +801,14 @@ function terminateSession(
     ),
     Effect.sleep(Duration.millis(TERMINATE_SESSION_BUDGET_MS)).pipe(
       Effect.andThen(
-        warn(() => logger.warn(
-          `[connecta] connector "${connectorId}" session termination was not ` +
-            `acknowledged within ${TERMINATE_SESSION_BUDGET_MS} ms; the ` +
-            "downstream may still finish the headers-only DELETE, otherwise " +
-            "the session will remain until its provider timeout.",
-        )),
+        warn(() =>
+          logger.warn(
+            `[connecta] connector "${connectorId}" session termination was not ` +
+              `acknowledged within ${TERMINATE_SESSION_BUDGET_MS} ms; the ` +
+              "downstream may still finish the headers-only DELETE, otherwise " +
+              "the session will remain until its provider timeout.",
+          ),
+        ),
       ),
     ),
   ]);
@@ -711,15 +821,10 @@ function terminateSession(
  * otherwise hold every caller that awaits the scope close, the credential Test
  * action among them.
  */
-function closeLocally(
-  client: Client | null,
-  transport: Transport | null,
-): Effect.Effect<void> {
+function closeLocally(client: Client | null, transport: Transport | null): Effect.Effect<void> {
   if (!client && !transport) return Effect.void;
   return Effect.raceAllFirst([
-    promised(() =>
-      Promise.resolve(client ? client.close() : transport?.close()),
-    ).pipe(Effect.ignore),
+    promised(() => Promise.resolve(client ? client.close() : transport?.close())).pipe(Effect.ignore),
     Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
   ]);
 }
@@ -757,39 +862,59 @@ function payloadFree<A extends unknown[], R>(run: (...args: A) => Promise<R>): (
 
 /** Both the SDK's auth signal and its classified form invalidate a live client. */
 function requiresAuthorization(error: unknown): boolean {
-  return error instanceof UnauthorizedError ||
+  return (
+    error instanceof UnauthorizedError ||
     (error instanceof ConnectorCallError &&
-      (error.code === "auth_required" || error.code === "downstream_oauth_required"));
+      (error.code === "auth_required" || error.code === "downstream_oauth_required"))
+  );
 }
 
 /** Classify SDK/runtime facts, dropping every SDK payload and cause chain. */
-function downstreamCallError(error: unknown, httpStatus?: number, wait?: number, oauthStep?: OAuthStep, secrets?: SentSecrets): unknown {
+function downstreamCallError(
+  error: unknown,
+  httpStatus?: number,
+  wait?: number,
+  oauthStep?: OAuthStep,
+  secrets?: SentSecrets,
+): unknown {
   if (error instanceof ConnectorCallError) {
     return hasSdkPayload(error.cause) ? carryFailureFacts(error, withheldAs(error.message, error)) : error;
   }
   if (error instanceof WithheldTextError || error instanceof UnauthorizedError) return error;
-  const network = !(error instanceof SdkError) && !(error instanceof OAuthClientFlowError)
-    ? networkErrorCode(error) : undefined;
+  const network =
+    !(error instanceof SdkError) && !(error instanceof OAuthClientFlowError) ? networkErrorCode(error) : undefined;
   if (network) {
     return network === "timeout" || network === "ETIMEDOUT" || network.endsWith("_TIMEOUT")
       ? new ConnectorCallError("timeout", "The downstream request timed out.")
       : unavailableCallError(error);
   }
-  const status = error instanceof SdkHttpError || error instanceof RegistrationRejectedError
-    ? error.status : httpStatus;
-  if (error instanceof InsufficientScopeError || (status === 403 && !(error instanceof RegistrationRejectedError)) ||
-      (error instanceof OAuthError && ["insufficient_scope", "invalid_scope", "access_denied"].includes(error.code))) {
-    return new ConnectorCallError("provider_permission_denied",
-      "The provider denied this operation. Check the account's permissions and the tool's required access with the provider or an administrator.");
+  const status =
+    error instanceof SdkHttpError || error instanceof RegistrationRejectedError ? error.status : httpStatus;
+  if (
+    error instanceof InsufficientScopeError ||
+    (status === 403 && !(error instanceof RegistrationRejectedError)) ||
+    (error instanceof OAuthError && ["insufficient_scope", "invalid_scope", "access_denied"].includes(error.code))
+  ) {
+    return new ConnectorCallError(
+      "provider_permission_denied",
+      "The provider denied this operation. Check the account's permissions and the tool's required access with the provider or an administrator.",
+    );
   }
   // Token endpoints return typed OAuth recovery codes on HTTP 400. Other
   // OAuth steps, especially registration, keep their HTTP status verdict.
-  if (error instanceof OAuthError && OAUTH_ERROR_CODES.has(error.code) &&
-      (status === undefined || oauthStep === "token request")) {
+  if (
+    error instanceof OAuthError &&
+    OAUTH_ERROR_CODES.has(error.code) &&
+    (status === undefined || oauthStep === "token request")
+  ) {
     return new ConnectorCallError(
       ["invalid_client", "invalid_grant", "invalid_token", "unauthorized_client"].includes(error.code)
-        ? "downstream_oauth_required" : error.code === "too_many_requests" ? "rate_limited"
-          : ["server_error", "temporarily_unavailable"].includes(error.code) ? "unavailable" : "connector_call_failed",
+        ? "downstream_oauth_required"
+        : error.code === "too_many_requests"
+          ? "rate_limited"
+          : ["server_error", "temporarily_unavailable"].includes(error.code)
+            ? "unavailable"
+            : "connector_call_failed",
       `OAuth failed with error ${error.code}.`,
     );
   }
@@ -806,13 +931,19 @@ function downstreamCallError(error: unknown, httpStatus?: number, wait?: number,
       }
     }
     return new ConnectorCallError(
-      status === 401 && !(error instanceof RegistrationRejectedError) ? "auth_required"
-        : status === 429 ? "rate_limited" : status === 408 && !(error instanceof RegistrationRejectedError)
-        ? "timeout" : "connector_call_failed",
+      status === 401 && !(error instanceof RegistrationRejectedError)
+        ? "auth_required"
+        : status === 429
+          ? "rate_limited"
+          : status === 408 && !(error instanceof RegistrationRejectedError)
+            ? "timeout"
+            : "connector_call_failed",
       boundedEchoText(secrets?.text(message) ?? message),
-      { retryable: [429, 502, 503, 504].includes(status) ||
-          (status === 408 && !(error instanceof RegistrationRejectedError)),
-        ...(wait !== undefined ? { retryAfterMs: wait } : {}) },
+      {
+        retryable:
+          [429, 502, 503, 504].includes(status) || (status === 408 && !(error instanceof RegistrationRejectedError)),
+        ...(wait !== undefined ? { retryAfterMs: wait } : {}),
+      },
     );
   }
   if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
@@ -820,8 +951,10 @@ function downstreamCallError(error: unknown, httpStatus?: number, wait?: number,
   }
   // ProtocolError.data is server-chosen even when its message is allowed.
   if (error instanceof ProtocolError) {
-    return new ConnectorCallError(error.code === -32602 ? "invalid_args" : "connector_call_failed",
-      boundedEchoText(secrets?.text(error.message) ?? error.message));
+    return new ConnectorCallError(
+      error.code === -32602 ? "invalid_args" : "connector_call_failed",
+      boundedEchoText(secrets?.text(error.message) ?? error.message),
+    );
   }
   return new ConnectorCallError("connector_call_failed", "The downstream operation failed.");
 }
@@ -843,9 +976,7 @@ function base64Utf8(value: string): string {
  * `node:` hash: the whole core has to keep running unchanged on Workers.
  */
 async function digestOf(value: string): Promise<string> {
-  const bytes = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", encoder.encode(value)),
-  );
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
   let hex = "";
   for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
   return hex;
@@ -860,9 +991,7 @@ async function digestOf(value: string): Promise<string> {
  */
 function credentialHeaderValue(scheme: string | null, value: string): string {
   if (scheme === null) return value;
-  return /(?:^|\s)basic$/i.test(scheme)
-    ? `${scheme} ${base64Utf8(value)}`
-    : `${scheme} ${value}`;
+  return /(?:^|\s)basic$/i.test(scheme) ? `${scheme} ${base64Utf8(value)}` : `${scheme} ${value}`;
 }
 
 /**
@@ -891,12 +1020,7 @@ function carriesIllegalHeaderChar(value: string): boolean {
 const HEADER_NAME_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function isLoopbackHost(hostname: string): boolean {
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "[::1]" ||
-    hostname === "::1"
-  );
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
 
 export const MAX_REMOTE_REDIRECT_HOPS = 5;
@@ -967,7 +1091,7 @@ export function redirectSafeFetch(
           cause,
           current.href,
           undefined,
-          hasSdkPayload(cause) ? undefined : init.signal ?? undefined,
+          hasSdkPayload(cause) ? undefined : (init.signal ?? undefined),
         );
       }
       // Every MCP and OAuth exchange reads its answer through here, and the
@@ -977,56 +1101,32 @@ export function redirectSafeFetch(
       const location = response.headers.get("location");
       await response.body?.cancel().catch(() => {});
       if (!location) {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          `HTTP ${response.status} carried no Location header`,
-        );
+        throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} carried no Location header`);
       }
       if (policy === "none") {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          `HTTP ${response.status} redirects are disabled`,
-        );
+        throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} redirects are disabled`);
       }
       if (hops >= MAX_REMOTE_REDIRECT_HOPS) {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          `the redirect chain exceeded ${MAX_REMOTE_REDIRECT_HOPS} hops`,
-        );
+        throw new RemoteMcpRedirectError(connectorId, `the redirect chain exceeded ${MAX_REMOTE_REDIRECT_HOPS} hops`);
       }
 
       let next: URL;
       try {
         next = new URL(location, current);
       } catch {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          `HTTP ${response.status} carried an invalid Location header`,
-        );
+        throw new RemoteMcpRedirectError(connectorId, `HTTP ${response.status} carried an invalid Location header`);
       }
       if (current.protocol === "https:" && next.protocol !== "https:") {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          "an HTTPS-to-HTTP downgrade is not allowed",
-        );
+        throw new RemoteMcpRedirectError(connectorId, "an HTTPS-to-HTTP downgrade is not allowed");
       }
       if (next.origin !== current.origin) {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          "a cross-origin redirect is not allowed",
-        );
+        throw new RemoteMcpRedirectError(connectorId, "a cross-origin redirect is not allowed");
       }
       if (next.username || next.password) {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          "a redirect target containing URL credentials is not allowed",
-        );
+        throw new RemoteMcpRedirectError(connectorId, "a redirect target containing URL credentials is not allowed");
       }
       if (seen.has(next.href)) {
-        throw new RemoteMcpRedirectError(
-          connectorId,
-          "the redirect chain loops",
-        );
+        throw new RemoteMcpRedirectError(connectorId, "the redirect chain loops");
       }
 
       seen.add(next.href);
@@ -1094,11 +1194,7 @@ for (const [ctor, label] of [
  * redirect wrapper. The typed local refusal proves that this guard sent nothing;
  * failures after an HTTP dispatch keep their permanent ambiguous verdict.
  */
-function learnedUrlSafeFetch(
-  connectorId: string,
-  configured: URL,
-  baseFetch: FetchLike,
-): FetchLike {
+function learnedUrlSafeFetch(connectorId: string, configured: URL, baseFetch: FetchLike): FetchLike {
   return async (input, init) => {
     const reason = learnedUrlRefusal(configured, new URL(input));
     if (reason !== undefined) {
@@ -1133,7 +1229,12 @@ function recordWireErrors(transport: Transport, catalogChanged: () => void): voi
   transport.onmessage = (message) => {
     // The public transport observer runs before SDK 2.3.1's delete-based
     // eviction. Ordinary opposite-scope cleanup never rotates this fence.
-    if (isJSONRPCNotification(message) && (message.method === "notifications/tools/list_changed" || message.method === "notifications/resources/list_changed")) catalogChanged();
+    if (
+      isJSONRPCNotification(message) &&
+      (message.method === "notifications/tools/list_changed" ||
+        message.method === "notifications/resources/list_changed")
+    )
+      catalogChanged();
     if (isJSONRPCErrorResponse(message) && seen.size < MAX_WIRE_ERRORS) {
       seen.add(wireErrorKey(message.error.code, message.error.message));
     }
@@ -1160,8 +1261,7 @@ function keepsItsText(err: unknown, transport: Transport | undefined): boolean {
   }
   if (err instanceof SdkHttpError) return err.status >= 400 && err.status < 500;
   if (err instanceof ProtocolError) {
-    return transport !== undefined &&
-      wireErrors.get(transport)?.has(wireErrorKey(err.code, err.message)) === true;
+    return transport !== undefined && wireErrors.get(transport)?.has(wireErrorKey(err.code, err.message)) === true;
   }
   return false;
 }
@@ -1173,8 +1273,14 @@ function keepsItsText(err: unknown, transport: Transport | undefined): boolean {
  * the validator's account that follows, is repeated.
  */
 const SDK_OUTPUT_SCHEMA_CHECKS: readonly (readonly [RegExp, string])[] = [
-  [/^Structured content does not match the tool's output schema/, "the result did not match the tool's declared output schema"],
-  [/^Tool .* has an output schema but did not return structured content/s, "the result did not return structured content although the tool declares an output schema"],
+  [
+    /^Structured content does not match the tool's output schema/,
+    "the result did not match the tool's declared output schema",
+  ],
+  [
+    /^Tool .* has an output schema but did not return structured content/s,
+    "the result did not return structured content although the tool declares an output schema",
+  ],
   [/^Tool .* has an invalid outputSchema/s, "the tool's declared output schema could not be compiled"],
 ];
 
@@ -1211,9 +1317,11 @@ function ownAbortReason(err: unknown, signals: readonly (AbortSignal | undefined
  * caller's, so it passes as the SDK wrote it.
  */
 function ownAbortReasonAsSdkReports(err: unknown, signals: readonly (AbortSignal | undefined)[]): boolean {
-  return err instanceof SdkError &&
+  return (
+    err instanceof SdkError &&
     err.code === SdkErrorCode.RequestTimeout &&
-    signals.some((signal) => signal?.aborted === true && err.message === String(signal.reason));
+    signals.some((signal) => signal?.aborted === true && err.message === String(signal.reason))
+  );
 }
 
 /** An error's class name, when it is a plain identifier worth naming. */
@@ -1260,11 +1368,7 @@ interface OAuthTrail {
  * but the MCP endpoint is a discovery GET, a token request (a form carrying
  * `grant_type`), or the JSON POST of dynamic client registration.
  */
-function tracedOAuthFetch(
-  trail: OAuthTrail,
-  endpoint: URL,
-  baseFetch: FetchLike,
-): FetchLike {
+function tracedOAuthFetch(trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
   return async (input, init) => {
     const url = new URL(input);
     if (url.href === endpoint.href) {
@@ -1274,9 +1378,7 @@ function tracedOAuthFetch(
       const step: OAuthStep =
         (init?.method ?? "GET").toUpperCase() === "GET"
           ? "discovery"
-          : body instanceof URLSearchParams ||
-              (typeof body === "string" &&
-                new URLSearchParams(body).has("grant_type"))
+          : body instanceof URLSearchParams || (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
             ? "token request"
             : "client registration";
       trail.last = { step, host: url.origin };
@@ -1296,9 +1398,7 @@ function tracedOAuthFetch(
 function registrationErrorCode(body: string): string | undefined {
   try {
     const code = (JSON.parse(body) as { error?: unknown } | null)?.error;
-    return typeof code === "string" && OAUTH_ERROR_CODES.has(code)
-      ? code
-      : undefined;
+    return typeof code === "string" && OAUTH_ERROR_CODES.has(code) ? code : undefined;
   } catch {
     return undefined;
   }
@@ -1372,23 +1472,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     throw new Error(`[connecta] connector "${id}" skills must be a boolean.`);
   }
   const classification =
-    opts.classify === undefined
-      ? undefined
-      : reviewedClassification(opts.classify, `connector "${id}"`);
+    opts.classify === undefined ? undefined : reviewedClassification(opts.classify, `connector "${id}"`);
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
   assertOAuthScope(id, oauthScope);
   const staticClient = opts.auth?.type === "oauth" && opts.auth.client ? { ...opts.auth.client } : undefined;
   assertRemoteOAuthClient(id, staticClient);
-  if (staticClient && clientMetadataUrl !== undefined) throw new Error(`[connecta] connector "${id}" OAuth client and clientMetadataUrl are mutually exclusive.`);
+  if (staticClient && clientMetadataUrl !== undefined)
+    throw new Error(`[connecta] connector "${id}" OAuth client and clientMetadataUrl are mutually exclusive.`);
   if (clientMetadataUrl !== undefined) {
     let valid = false;
     try {
       const url = new URL(clientMetadataUrl);
-      valid = url.protocol === "https:" && url.pathname !== "/" &&
-        !url.username && !url.password && !url.hash;
-    } catch { /* Invalid configuration is rejected below without echoing its value. */ }
-    if (!valid) throw new Error(`[connecta] connector "${id}" clientMetadataUrl must be an HTTPS URL with a non-root path, without credentials or a fragment.`);
+      valid = url.protocol === "https:" && url.pathname !== "/" && !url.username && !url.password && !url.hash;
+    } catch {
+      /* Invalid configuration is rejected below without echoing its value. */
+    }
+    if (!valid)
+      throw new Error(
+        `[connecta] connector "${id}" clientMetadataUrl must be an HTTPS URL with a non-root path, without credentials or a fragment.`,
+      );
   }
   if (opts.authScope === "personal" && opts.auth?.type === "headers") {
     throw new Error(
@@ -1433,13 +1536,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           const decoded = atob(basic[1]!);
           const colon = decoded.indexOf(":");
           if (colon !== -1) warnShortSecret(decoded.slice(colon + 1), logger);
-        } catch { /* Invalid Basic configuration is not a short password. */ }
+        } catch {
+          /* Invalid Basic configuration is not a short password. */
+        }
       } else warnShortSecret(value.replace(/^(?:Bearer|token)\s+/i, ""), logger);
     }
   }
 
-  const credentialAuth =
-    opts.auth?.type === "credential" ? opts.auth : undefined;
+  const credentialAuth = opts.auth?.type === "credential" ? opts.auth : undefined;
   if (credentialAuth?.credential?.fields?.length) {
     throw new Error(
       `[connecta] connector "${id}" credential auth declares named fields; ` +
@@ -1455,7 +1559,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     try {
       if (Object.keys(requestAuth.headers).some((name) => name.toLowerCase() === "authorization")) throw new Error();
       new Headers(requestAuth.headers);
-    } catch { throw new Error(`remoteMcp(${JSON.stringify(id)}) requires valid request auth headers without Authorization.`); }
+    } catch {
+      throw new Error(`remoteMcp(${JSON.stringify(id)}) requires valid request auth headers without Authorization.`);
+    }
   }
   const credentialConfig: ConnectorCredentialConfig = credentialAuth?.credential ?? {
     label: "API key",
@@ -1489,8 +1595,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (destination.protocol !== "https:" && destination.protocol !== "http:") {
     throw new Error(`[connecta] connector "${id}" url must be an http(s) URL.`);
   }
-  const insecureDestination =
-    destination.protocol !== "https:" && !isLoopbackHost(destination.hostname);
+  const insecureDestination = destination.protocol !== "https:" && !isLoopbackHost(destination.hostname);
   if (insecureDestination) {
     if (opts.requireHttps || requestAuth) {
       throw new Error(
@@ -1540,8 +1645,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const safeOrigin = async (host: string | undefined): Promise<string | undefined> => {
       if (!host || sentSecretsFor(ctx).contains(host, true)) return undefined;
       if (host === destination.origin || (staticClient && host === new URL(staticClient.issuer).origin)) return host;
-      try { return host === await newProvider(ctx).validatedIssuerOrigin() ? host : undefined; }
-      catch { return undefined; }
+      try {
+        return host === (await newProvider(ctx).validatedIssuerOrigin()) ? host : undefined;
+      } catch {
+        return undefined;
+      }
     };
     if (ownAbortReason(err, signals) && !hasSdkPayload(err)) return err;
     if (err instanceof RegistrationRejectedError) {
@@ -1553,36 +1661,55 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         httpStatus: err.status,
         ...(code ? { oauthError: code } : {}),
       };
-      return attachFailureFacts(carryFailureFacts(err, withheldAs(
-        `Connector "${id}" could not register an OAuth client with ` +
-          `${origin ?? "its authorization server"}: the ` +
-          `registration endpoint answered HTTP ${err.status}` +
-          `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
-          "withheld because it can quote the request or anything the server " +
-          "chose to add. Check the server's client registration policy, then " +
-          "retry authorization.",
-        downstreamCallError(err, undefined, trail.last?.retryAfterMs),
-      )), facts);
+      return attachFailureFacts(
+        carryFailureFacts(
+          err,
+          withheldAs(
+            `Connector "${id}" could not register an OAuth client with ` +
+              `${origin ?? "its authorization server"}: the ` +
+              `registration endpoint answered HTTP ${err.status}` +
+              `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
+              "withheld because it can quote the request or anything the server " +
+              "chose to add. Check the server's client registration policy, then " +
+              "retry authorization.",
+            downstreamCallError(err, undefined, trail.last?.retryAfterMs),
+          ),
+        ),
+        facts,
+      );
     }
     const leg = trail.last;
     const origin = await safeOrigin(leg?.host);
     const facts = leg
-      ? { step: `OAuth ${leg.step}` as const, ...(origin ? { origin } : {}), ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}) }
+      ? {
+          step: `OAuth ${leg.step}` as const,
+          ...(origin ? { origin } : {}),
+          ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}),
+        }
       : { step: "OAuth flow" as const };
     if (err instanceof UnauthorizedError || err instanceof ConnectorCallError || err instanceof WithheldTextError) {
       return attachFailureFacts(downstreamCallError(err), facts);
     }
     const classified = downstreamCallError(err, leg?.httpStatus, leg?.retryAfterMs, leg?.step);
-    if (err instanceof OAuthError || (classified instanceof ConnectorCallError && classified.code === "provider_permission_denied")) {
+    if (
+      err instanceof OAuthError ||
+      (classified instanceof ConnectorCallError && classified.code === "provider_permission_denied")
+    ) {
       return attachFailureFacts(carryFailureFacts(err, classified), facts);
     }
-    return attachFailureFacts(carryFailureFacts(err, withheldAs(
-      `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
-        `failed${errorKind(err)}. The error is withheld because its text can ` +
-        "quote what the server sent. Check the server's OAuth metadata, then " +
-        "retry authorization.",
-      classified,
-    )), facts);
+    return attachFailureFacts(
+      carryFailureFacts(
+        err,
+        withheldAs(
+          `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
+            `failed${errorKind(err)}. The error is withheld because its text can ` +
+            "quote what the server sent. Check the server's OAuth metadata, then " +
+            "retry authorization.",
+          classified,
+        ),
+      ),
+      facts,
+    );
   };
 
   const endpointOrigin = new URL(opts.url).origin;
@@ -1609,11 +1736,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // Skills operations retain the existing closed operator-record vocabulary.
     const facts = {
       ...(step === "skills/list" || step === "resources/read" ? {} : { step }),
-      origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}),
+      origin: endpointOrigin,
+      ...(httpStatus ? { httpStatus } : {}),
     };
-    const classified = downstreamCallError(redactSentSecrets(ctx, err), undefined, undefined, undefined, sentSecretsFor(ctx));
-    const verdict = isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
-      ? carryFailureFacts(err, authRequiredError()) : classified;
+    const classified = downstreamCallError(
+      redactSentSecrets(ctx, err),
+      undefined,
+      undefined,
+      undefined,
+      sentSecretsFor(ctx),
+    );
+    const verdict =
+      isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
+        ? carryFailureFacts(err, authRequiredError())
+        : classified;
     if (ownAbortReasonAsSdkReports(err, signals)) {
       return attachFailureFacts(carryFailureFacts(err, withheldAs(msg(err), verdict)), facts);
     }
@@ -1621,15 +1757,22 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return attachFailureFacts(carryFailureFacts(err, verdict), facts);
     }
     if (requestAuth && httpStatus === 401) {
-      return attachFailureFacts(new ConnectorCallError("auth_required", "The downstream rejected this request's Bearer token."), facts);
+      return attachFailureFacts(
+        new ConnectorCallError("auth_required", "The downstream rejected this request's Bearer token."),
+        facts,
+      );
     }
-    if (
-      ownAbortReason(err, signals) ||
-      keepsItsText(err, transport)
-    ) {
-      return attachFailureFacts(carryFailureFacts(err, redactSentSecrets(ctx,
-        err instanceof UnauthorizedError || (ownAbortReason(err, signals) && !hasSdkPayload(err))
-          ? err : verdict)), facts);
+    if (ownAbortReason(err, signals) || keepsItsText(err, transport)) {
+      return attachFailureFacts(
+        carryFailureFacts(
+          err,
+          redactSentSecrets(
+            ctx,
+            err instanceof UnauthorizedError || (ownAbortReason(err, signals) && !hasSdkPayload(err)) ? err : verdict,
+          ),
+        ),
+        facts,
+      );
     }
     // The SDK wraps a failure of connecta's own fetch (a refused redirect, an
     // unreachable host) in an error of its own, such as the version probe's;
@@ -1639,12 +1782,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return attachFailureFacts(carryFailureFacts(ours, withheldAs(ours.message, ours)), facts);
     }
     const status = httpStatus ? ` with HTTP ${httpStatus}` : "";
-    return attachFailureFacts(carryFailureFacts(err, withheldAs(
-      `Connector "${id}" ${step} with ${endpointOrigin} failed${status}` +
-        `${errorKind(err)}${sdkCheckFailed(err)}. The error is withheld because ` +
-        "its text can quote what the server sent.",
-      verdict,
-    )), facts);
+    return attachFailureFacts(
+      carryFailureFacts(
+        err,
+        withheldAs(
+          `Connector "${id}" ${step} with ${endpointOrigin} failed${status}` +
+            `${errorKind(err)}${sdkCheckFailed(err)}. The error is withheld because ` +
+            "its text can quote what the server sent.",
+          verdict,
+        ),
+      ),
+      facts,
+    );
   };
 
   /**
@@ -1689,31 +1838,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           "version this release ships with.",
       );
     }
-    const flow = async <T>(
-      start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>,
-    ): Promise<T> => {
+    const flow = async <T>(start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>): Promise<T> => {
       const trail: OAuthTrail = {};
       try {
-        return await start((fetchFn) => tracedOAuthFetch(trail, endpoint, async (input, init) => {
-          trackSentRequest(ctx, input, init);
-          return await fetchFn(input, init);
-        }));
+        return await start((fetchFn) =>
+          tracedOAuthFetch(trail, endpoint, async (input, init) => {
+            trackSentRequest(ctx, input, init);
+            return await fetchFn(input, init);
+          }),
+        );
       } catch (err) {
         throw await withoutAuthorizationServerText(ctx, err, trail, signals);
       }
     };
     adapted.onUnauthorized = (ctx) =>
-      flow((trace) =>
-        onUnauthorized.call(adapted, { ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }),
-      );
+      flow((trace) => onUnauthorized.call(adapted, { ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }));
     internals._stepUpAuthorize = (challenge, retries) =>
       flow((trace) => {
         const traced = trace(internals._fetchWithInit ?? fetch);
         // The step-up reads its fetch from `this`; everything else it reads
         // and writes stays the transport's own.
         const self = new Proxy(transport, {
-          get: (target, key) =>
-            key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
+          get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
           set: (target, key, value) => Reflect.set(target, key, value, target),
         });
         return stepUp.call(self, challenge, retries);
@@ -1751,13 +1897,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const readCredential = async (ctx: ConnectorContext): Promise<string> => {
     if (requestAuth) {
       let value: string;
-      try { value = await requestAuth.token(ctx); } catch (error) {
+      try {
+        value = await requestAuth.token(ctx);
+      } catch (error) {
         if (error instanceof ConnectorCallError) throw error;
         throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
       }
       ctx.signal?.throwIfAborted();
-      if (typeof value !== "string" || !value.trim() || Array.from(value).some((char) => { const code = char.charCodeAt(0); return code <= 32 || (code >= 127 && code <= 159); })) {
-        throw new ConnectorCallError("auth_required", "The request token is empty or cannot be sent as a Bearer header.");
+      if (
+        typeof value !== "string" ||
+        !value.trim() ||
+        Array.from(value).some((char) => {
+          const code = char.charCodeAt(0);
+          return code <= 32 || (code >= 127 && code <= 159);
+        })
+      ) {
+        throw new ConnectorCallError(
+          "auth_required",
+          "The request token is empty or cannot be sent as a Bearer header.",
+        );
       }
       return value;
     }
@@ -1804,13 +1962,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * above, which is what keeps an unsendable value from reaching a transport
    * at all.
    */
-  const withoutCredential = (
-    err: unknown,
-    ...secrets: (string | null)[]
-  ): unknown => {
-    const quoted = secrets.filter(
-      (secret): secret is string => typeof secret === "string" && secret !== "",
-    );
+  const withoutCredential = (err: unknown, ...secrets: (string | null)[]): unknown => {
+    const quoted = secrets.filter((secret): secret is string => typeof secret === "string" && secret !== "");
     if (quoted.length === 0) return err;
     const seen = new Set<unknown>();
     let current: unknown = err;
@@ -1833,8 +1986,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   // Its own class, so that a status record, which carries no message, still says so.
-  const scopeEndedError = () =>
-    new ScopeEndedError(`Connector "${id}" scope ended during connection.`);
+  const scopeEndedError = () => new ScopeEndedError(`Connector "${id}" scope ended during connection.`);
 
   const requestOptions = (ctx: ConnectorContext) =>
     ctx.timeoutMs || ctx.signal
@@ -1848,43 +2000,82 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * SDK 2.3.1 treats an identical repeated page as completion. Refuse it here:
    * an advertised successor is never proof of a complete catalog (INV-8). */
   const listingContexts = new WeakMap<RequestOptions, ConnectorContext>();
-  const installCatalogIntake = (client: Client, ctx: ConnectorContext, cache: Awaited<ReturnType<typeof catalogClientOptions>>): void => {
+  const installCatalogIntake = (
+    client: Client,
+    ctx: ConnectorContext,
+    cache: Awaited<ReturnType<typeof catalogClientOptions>>,
+  ): void => {
     let toolPages = 0;
     const listingContext = (options?: RequestOptions) => {
       const { signal: _signal, timeoutMs: _timeout, ...base } = ctx;
-      return (options && listingContexts.get(options)) ?? { ...base, requestScope: ctx.requestScope ?? ctx,
-        ...(options?.signal ? { signal: options.signal } : {}), ...(options?.timeout ? { timeoutMs: options.timeout } : {}) };
+      return (
+        (options && listingContexts.get(options)) ?? {
+          ...base,
+          requestScope: ctx.requestScope ?? ctx,
+          ...(options?.signal ? { signal: options.signal } : {}),
+          ...(options?.timeout ? { timeoutMs: options.timeout } : {}),
+        }
+      );
     };
     const listTools = client.listTools.bind(client);
-    client.listTools = (params, options) => cache.withListing(listingContext(options), async () => {
-      const before = toolPages;
-      let result: ListToolsResult;
-      try { result = await listTools(params, options); }
-      catch (error) {
-        const bounded = atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [cache.currentContext().signal]);
-        const transient = error instanceof SdkHttpError && [502, 503, 504].includes(error.status) || bounded instanceof ConnectorCallError && bounded.code === "unavailable";
-        const fallback = transient && toolPages === before ? await cache.fallbackTools() : undefined;
-        if (!fallback) throw error;
-        return fallback;
-      }
-      if (toolPages !== before && params?.cursor === undefined) {
-        const refresh = await cache.completeCatalogRefresh(result);
-        if (refresh) {
-          try { await observeCompletedCatalogRefresh(cache.currentContext(), refresh); }
-          catch (error) { logFailure(cache.currentContext().logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+    client.listTools = (params, options) =>
+      cache.withListing(listingContext(options), async () => {
+        const before = toolPages;
+        let result: ListToolsResult;
+        try {
+          result = await listTools(params, options);
+        } catch (error) {
+          const bounded = atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [
+            cache.currentContext().signal,
+          ]);
+          const transient =
+            (error instanceof SdkHttpError && [502, 503, 504].includes(error.status)) ||
+            (bounded instanceof ConnectorCallError && bounded.code === "unavailable");
+          const fallback = transient && toolPages === before ? await cache.fallbackTools() : undefined;
+          if (!fallback) throw error;
+          return fallback;
         }
-      }
-      return result;
-    });
+        if (toolPages !== before && params?.cursor === undefined) {
+          const refresh = await cache.completeCatalogRefresh(result);
+          if (refresh) {
+            try {
+              await observeCompletedCatalogRefresh(cache.currentContext(), refresh);
+            } catch (error) {
+              logFailure(
+                cache.currentContext().logger,
+                "catalog refresh observation failed",
+                failureRecord({ connector: id }, error),
+              );
+            }
+          }
+        }
+        return result;
+      });
     const listResources = client.listResources.bind(client);
-    client.listResources = (params, options) => cache.withListing(listingContext(options), () => listResources(params, options));
+    client.listResources = (params, options) =>
+      cache.withListing(listingContext(options), () => listResources(params, options));
     const listResourceTemplates = client.listResourceTemplates.bind(client);
-    client.listResourceTemplates = (params, options) => cache.withListing(listingContext(options), () => listResourceTemplates(params, options));
+    client.listResourceTemplates = (params, options) =>
+      cache.withListing(listingContext(options), () => listResourceTemplates(params, options));
     const request = client.request.bind(client);
-    const walks = new WeakMap<object, { names: Set<string>; cursors: Set<string>; barren: number; bytes: number; first?: CatalogResult & { ttlMs: number; cacheScope: "public" | "private" } }>();
+    const walks = new WeakMap<
+      object,
+      {
+        names: Set<string>;
+        cursors: Set<string>;
+        barren: number;
+        bytes: number;
+        first?: CatalogResult & { ttlMs: number; cacheScope: "public" | "private" };
+      }
+    >();
     client.request = (async (...args: unknown[]) => {
       const message = args[0] as { method: string; params?: { cursor?: string } };
-      if (message.method !== "tools/list" && message.method !== "resources/list" && message.method !== "resources/templates/list") return Reflect.apply(request, client, args);
+      if (
+        message.method !== "tools/list" &&
+        message.method !== "resources/list" &&
+        message.method !== "resources/templates/list"
+      )
+        return Reflect.apply(request, client, args);
       const method: CatalogMethod = message.method;
       const ctx = cache.currentContext();
       const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
@@ -1898,28 +2089,56 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       let page: CatalogResult;
       try {
-        page = await request(message as Parameters<Client["request"]>[0], method === "tools/list" ? CompatibleListToolsResultSchema : method === "resources/list" ? specTypeSchemas.ListResourcesResult : specTypeSchemas.ListResourceTemplatesResult, options);
+        page = await request(
+          message as Parameters<Client["request"]>[0],
+          method === "tools/list"
+            ? CompatibleListToolsResultSchema
+            : method === "resources/list"
+              ? specTypeSchemas.ListResourcesResult
+              : specTypeSchemas.ListResourceTemplatesResult,
+          options,
+        );
       } catch (error) {
-        if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog nextCursor must be a string, null, or absent.", { retryable: false });
+        if (isCursorShapeError(error))
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "Downstream catalog nextCursor must be a string, null, or absent.",
+            { retryable: false },
+          );
         throw error;
       }
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
       const clean = cache.intake(ctx, method, page);
       if (method === "tools/list") toolPages++;
       if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
-      const tools = catalogItems(method, clean).filter(item => {
-        const name = method === "tools/list" ? item.name : method === "resources/list" ? (item as { uri: string }).uri : (item as { uriTemplate: string }).uriTemplate;
+      const tools = catalogItems(method, clean).filter((item) => {
+        const name =
+          method === "tools/list"
+            ? item.name
+            : method === "resources/list"
+              ? (item as { uri: string }).uri
+              : (item as { uriTemplate: string }).uriTemplate;
         if (walk.names.has(name)) return false;
         walk.names.add(name);
         return true;
       });
       walk.bytes += new TextEncoder().encode(JSON.stringify(tools)).byteLength;
       if (walk.names.size > MAX_CATALOG_TOOLS || walk.bytes > MAX_SERIALIZED_CATALOG_BYTES) {
-        throw new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", { retryable: false });
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "Downstream catalog exceeds the complete-catalog ceiling.",
+          { retryable: false },
+        );
       }
       if (clean.nextCursor !== undefined) {
-        if (walk.cursors.has(clean.nextCursor)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination chain loops.", { retryable: false });
-        if (tools.length === 0 && ++walk.barren > 1) throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination is not advancing.", { retryable: false });
+        if (walk.cursors.has(clean.nextCursor))
+          throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination chain loops.", {
+            retryable: false,
+          });
+        if (tools.length === 0 && ++walk.barren > 1)
+          throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination is not advancing.", {
+            retryable: false,
+          });
         if (tools.length > 0) walk.barren = 0;
         walk.cursors.add(clean.nextCursor);
       }
@@ -1960,8 +2179,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return state;
   };
 
-  const isClosed = (state: ConnectionState): boolean =>
-    state.scope.state._tag === "Closed";
+  const isClosed = (state: ConnectionState): boolean => state.scope.state._tag === "Closed";
 
   const stateFor = (ctx: ConnectorContext): ConnectionState => {
     const state = entryFor(ctx);
@@ -1975,7 +2193,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     signal: AbortSignal | undefined = ctx.signal,
   ): KvOAuthProvider => {
     if (state?.provider) return state.provider;
-    const metadataUrl = staticClient ? undefined : clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id);
+    const metadataUrl = staticClient ? undefined : (clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id));
     const redirectUri = downstreamRedirectUri(ctx.baseUrl, ctx.publicUrl, id);
     const provider = new KvOAuthProvider(
       id,
@@ -1988,13 +2206,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       JSON.stringify({
         url: new URL(opts.url).href,
         redirectUri,
-        clientMetadata: downstreamClientMetadata(redirectUri, oauthScope, ctx.oauthClientName,
-          staticClient ? remoteClientAuthMethod(staticClient) : "none"),
+        clientMetadata: downstreamClientMetadata(
+          redirectUri,
+          oauthScope,
+          ctx.oauthClientName,
+          staticClient ? remoteClientAuthMethod(staticClient) : "none",
+        ),
         authScope: opts.authScope ?? "shared",
         versionNegotiation: opts.versionNegotiation ?? "auto",
         redirects: opts.redirects ?? "none",
         clientMetadataUrl: metadataUrl,
-        ...(staticClient ? { client: { issuer: staticClient.issuer, clientId: staticClient.clientId, tokenEndpointAuthMethod: staticClient.tokenEndpointAuthMethod } } : {}),
+        ...(staticClient
+          ? {
+              client: {
+                issuer: staticClient.issuer,
+                clientId: staticClient.clientId,
+                tokenEndpointAuthMethod: staticClient.tokenEndpointAuthMethod,
+              },
+            }
+          : {}),
       }),
       (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
       metadataUrl,
@@ -2025,23 +2255,38 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       trackSentRequest(ctx, input, init);
       let rpc: unknown;
       if (typeof init?.body === "string") {
-        try { rpc = JSON.parse(init.body); }
-        catch { /* OAuth exchanges can send form-encoded bodies. */ }
+        try {
+          rpc = JSON.parse(init.body);
+        } catch {
+          /* OAuth exchanges can send form-encoded bodies. */
+        }
       }
-      const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) &&
-        init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call";
+      const writeContinuation =
+        downstreamWriteContinuation(ctx.requestScope ?? ctx) &&
+        init?.method === "POST" &&
+        skillObject(rpc) &&
+        rpc.method === "tools/call";
       const response = writeContinuation
         ? await fetch(input, { ...init, redirect: "manual" })
         : await fetch(input, init);
-      if (writeContinuation && (response.status === 401 || response.status >= 300 && response.status < 400)) {
+      if (writeContinuation && (response.status === 401 || (response.status >= 300 && response.status < 400))) {
         await response.body?.cancel().catch(() => {});
         // Stop before the SDK can refresh auth or follow a redirect and resend
         // this write. The host's one-use continuation nonce remains spent.
         if (response.status === 401) throw authRequiredError();
-        throw new ConnectorCallError("connector_call_failed", "The downstream redirected a write continuation; it was not repeated.", { retryable: false });
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "The downstream redirected a write continuation; it was not repeated.",
+          { retryable: false },
+        );
       }
       if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
-        return boundedSkillResponse(response, rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES, rpc.id, init?.signal);
+        return boundedSkillResponse(
+          response,
+          rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
+          rpc.id,
+          init?.signal,
+        );
       }
       return response;
     };
@@ -2108,11 +2353,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // can pass it to the runtime's deferred channel. Terminating and closing are
   // each bounded, so no close waits more than two seconds in all.
   const closingSessions = new WeakMap<Transport, Deferred.Deferred<void>>();
-  const closeConnection = (
-    client: Client | null,
-    transport: Transport | null,
-    logger: Logger,
-  ): Effect.Effect<void> =>
+  const closeConnection = (client: Client | null, transport: Transport | null, logger: Logger): Effect.Effect<void> =>
     Effect.suspend(() => {
       const previous = transport && closingSessions.get(transport);
       if (previous) return Deferred.await(previous);
@@ -2120,9 +2361,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // A connect can acquire a session after an early close. Deduplicate only
       // once that session exists, so its late abandonment still sends DELETE.
       if (transport?.sessionId) closingSessions.set(transport, closed);
-      return (
-        transport ? terminateSession(transport, logger, id) : Effect.void
-      ).pipe(
+      return (transport ? terminateSession(transport, logger, id) : Effect.void).pipe(
         Effect.andThen(closeLocally(client, transport)),
         Effect.ensuring(Deferred.done(closed, Exit.void)),
       );
@@ -2140,10 +2379,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (release) detach(release);
   };
 
-  const ensureConnected = async (
-    ctx: ConnectorContext,
-    state: ConnectionState,
-  ): Promise<Client> => {
+  const ensureConnected = async (ctx: ConnectorContext, state: ConnectionState): Promise<Client> => {
     // A 401 after connect is a verdict for the whole request scope, not merely
     // for the one call that observed it. Do not let the still-cached client make
     // a later status or call in the same scope report healthy.
@@ -2182,10 +2418,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let credentialDigest: string | null = null;
     if (credentialAuth || requestAuth) {
       credentialValue = await readCredential(ctx);
-      credentialFramed = credentialHeaderValue(
-        credentialScheme,
-        credentialValue,
-      );
+      credentialFramed = credentialHeaderValue(credentialScheme, credentialValue);
       credentialDigest = await digestOf(credentialValue);
       // Gated on a connect in flight as well as a cached client, exactly like
       // the epoch read above: a rotation that lands while the first caller is
@@ -2202,19 +2435,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const observedConnection = state.client ?? state.connecting;
         const currentCredential = await readCredential(ctx);
         if (isClosed(state)) throw scopeEndedError();
-        if (currentCredential !== credentialValue ||
-            (state.client ?? state.connecting) !== observedConnection) {
-          throw new ConnectorCallError("connector_call_failed",
-            "The downstream credential changed while connecting; retry the operation.", { retryable: true });
+        if (currentCredential !== credentialValue || (state.client ?? state.connecting) !== observedConnection) {
+          throw new ConnectorCallError(
+            "connector_call_failed",
+            "The downstream credential changed while connecting; retry the operation.",
+            { retryable: true },
+          );
         }
         closeHalf(state);
       }
     }
     if (isClosed(state)) throw scopeEndedError();
     if (state.client) return state.client;
-    const attempt =
-      state.connecting ??
-      startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
+    const attempt = state.connecting ?? startConnect(ctx, state, credentialValue, credentialFramed, credentialDigest);
     // A Promise edge of its own, as architecture.md's "Effect inside" requires
     // of every shared wait: whatever this caller does next with the client is
     // its own I/O, so it resumes in its own continuation rather than inside the
@@ -2298,15 +2531,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const lease = Scope.forkUnsafe(state.scope);
       const handshakeAbort = new AbortController();
       const held: { client: Client | null; transport: Transport | null } = {
-        client: null, transport: null,
+        client: null,
+        transport: null,
       };
       yield* Scope.addFinalizer(
         lease,
         Effect.sync(() => handshakeAbort.abort()).pipe(
-          Effect.andThen(Effect.suspend(() => {
-            if (!held.transport) connectionAbort.abort();
-            return closeConnection(held.client, held.transport, ctx.logger);
-          })),
+          Effect.andThen(
+            Effect.suspend(() => {
+              if (!held.transport) connectionAbort.abort();
+              return closeConnection(held.client, held.transport, ctx.logger);
+            }),
+          ),
           // Let session termination use the OAuth fetch wrapper before ending
           // its lifetime. Local transport close aborts all active MCP fetches.
           Effect.ensuring(Effect.sync(() => connectionAbort.abort())),
@@ -2331,33 +2567,73 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // SDK v2 selects its validator by runtime export condition: AJV on
         // Node and @cfworker/json-schema under workerd. The Workers-safe path
         // no longer needs Connecta-specific wiring.
-        const oauthConfig = isOauth ? {
-          client: staticClient,
-          clientMetadataUrl: staticClient ? undefined : clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id),
-          redirectUri: downstreamRedirectUri(ctx.baseUrl, ctx.publicUrl, id),
-          clientName: ctx.oauthClientName,
-        } : undefined;
-        const negotiationDigest = yield* promised(() => digestOf(JSON.stringify([
-          opts.url, opts.versionNegotiation ?? "auto", opts.auth?.type,
-          opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
-          credentialHeader, credentialScheme, opts.authScope ?? "shared",
-          opts.redirects ?? "none", oauthConfig, oauthScope,
-          state.credentialDigest, genAtStart, callerOf(ctx), skillsEnabled === true,
-        ])));
-        const prior = opts.versionNegotiation === "legacy" ? undefined
-          : yield* promised(() => readNegotiation(ctx, negotiationDigest));
+        const oauthConfig = isOauth
+          ? {
+              client: staticClient,
+              clientMetadataUrl: staticClient
+                ? undefined
+                : (clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id)),
+              redirectUri: downstreamRedirectUri(ctx.baseUrl, ctx.publicUrl, id),
+              clientName: ctx.oauthClientName,
+            }
+          : undefined;
+        const negotiationDigest = yield* promised(() =>
+          digestOf(
+            JSON.stringify([
+              opts.url,
+              opts.versionNegotiation ?? "auto",
+              opts.auth?.type,
+              opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+              credentialHeader,
+              credentialScheme,
+              opts.authScope ?? "shared",
+              opts.redirects ?? "none",
+              oauthConfig,
+              oauthScope,
+              state.credentialDigest,
+              genAtStart,
+              callerOf(ctx),
+              skillsEnabled === true,
+            ]),
+          ),
+        );
+        const prior =
+          opts.versionNegotiation === "legacy"
+            ? undefined
+            : yield* promised(() => readNegotiation(ctx, negotiationDigest));
         if (!owned()) return yield* Effect.fail(scopeEndedError());
-        const cacheOptions = yield* promised(() => catalogClientOptions(ctx, id, JSON.stringify({
-          url: new URL(opts.url).href, auth: opts.auth?.type ?? null,
-          headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
-          credentialHeader, credentialScheme, authScope: opts.authScope ?? "shared",
-          redirects: opts.redirects ?? "none", versionNegotiation: opts.versionNegotiation ?? "auto",
-          oauthConfig, oauthScope,
-        }), JSON.stringify([genAtStart, state.credentialDigest]), connectionAbort.signal, cacheOwner, requestAuth || opts.authScope === "personal" ? "private" : "shared",
-          provider ? async () => digestOf(JSON.stringify(await provider.tokens())) : undefined));
+        const cacheOptions = yield* promised(() =>
+          catalogClientOptions(
+            ctx,
+            id,
+            JSON.stringify({
+              url: new URL(opts.url).href,
+              auth: opts.auth?.type ?? null,
+              headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+              credentialHeader,
+              credentialScheme,
+              authScope: opts.authScope ?? "shared",
+              redirects: opts.redirects ?? "none",
+              versionNegotiation: opts.versionNegotiation ?? "auto",
+              oauthConfig,
+              oauthScope,
+            }),
+            JSON.stringify([genAtStart, state.credentialDigest]),
+            connectionAbort.signal,
+            cacheOwner,
+            requestAuth || opts.authScope === "personal" ? "private" : "shared",
+            provider ? async () => digestOf(JSON.stringify(await provider.tokens())) : undefined,
+          ),
+        );
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         const makeClient = () => {
-          const { intake: _intake, completeCatalogRefresh: _refresh, withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
+          const {
+            intake: _intake,
+            completeCatalogRefresh: _refresh,
+            withListing: _listing,
+            currentContext: _context,
+            ...clientOptions
+          } = cacheOptions;
           const client = new Client(
             { name: "connecta", version: CONNECTA_VERSION },
             {
@@ -2393,9 +2669,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             // Some legacy servers crash on an unknown pre-initialize method.
             // Only an auto probe's typed HTTP 5xx permits a fresh legacy
             // handshake. An auth failure, timeout or initialize failure does not.
-            if (prior || opts.versionNegotiation === "legacy" ||
-                !(error instanceof SdkHttpError) || error.code !== SdkErrorCode.EraNegotiationFailed ||
-                error.status < 500 || error.status >= 600 || !owned() || handshakeAbort.signal.aborted) throw error;
+            if (
+              prior ||
+              opts.versionNegotiation === "legacy" ||
+              !(error instanceof SdkHttpError) ||
+              error.code !== SdkErrorCode.EraNegotiationFailed ||
+              error.status < 500 ||
+              error.status >= 600 ||
+              !owned() ||
+              handshakeAbort.signal.aborted
+            )
+              throw error;
             // The SDK closed the failed probe transport. Its replacement owns
             // a new connection, with the same credential and OAuth generation.
             c = makeClient();
@@ -2433,9 +2717,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (!owned()) return yield* Effect.fail(scopeEndedError());
           if (generation !== genAtStart) {
             return yield* Effect.fail(
-              new UnauthorizedError(
-                "Connector was re-authorized during connect; reconnect required.",
-              ),
+              new UnauthorizedError("Connector was re-authorized during connect; reconnect required."),
             );
           }
         }
@@ -2443,8 +2725,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.connectedGeneration = genAtStart;
         state.authRequired = false;
         const discover = c.getDiscoverResult();
-        if (!prior) yield* promised(() => storeNegotiation(ctx, negotiationDigest,
-          discover ? { kind: "modern", discover } : { kind: "legacy" }));
+        if (!prior)
+          yield* promised(() =>
+            storeNegotiation(ctx, negotiationDigest, discover ? { kind: "modern", discover } : { kind: "legacy" }),
+          );
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         return c;
       }).pipe(
@@ -2473,9 +2757,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // `readCredential` already rejects a value that cannot ride one, so
           // reaching this is a gap in that check rather than a routine
           // outcome.
-          return Effect.fail(
-            withoutCredential(err, credentialValue, credentialFramed),
-          );
+          return Effect.fail(withoutCredential(err, credentialValue, credentialFramed));
         }),
       );
     });
@@ -2492,10 +2774,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
     const reset = operatorDisconnected
-      ? provider.disconnectAuthorization(learnedUrlSafeFetch(id, new URL(opts.url), async (input, init) => {
-          trackSentRequest(ctx, input, init);
-          return await fetch(input, init);
-        }))
+      ? provider.disconnectAuthorization(
+          learnedUrlSafeFetch(id, new URL(opts.url), async (input, init) => {
+            trackSentRequest(ctx, input, init);
+            return await fetch(input, init);
+          }),
+        )
       : provider.resetAuthorization(false, preserveClient);
     try {
       await reset;
@@ -2512,10 +2796,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // it, and a URL keeps origin and path: a CIMD document's query may carry a
   // token even though the document itself is public.
   const describedClientMetadataUrl = describedUrl(clientMetadataUrl);
-  const authDescription: ConnectorAuthDescription =
-    requestAuth
-      ? { mode: "request", header: "Authorization", scheme: "Bearer", ...(requestAuth.headers ? { headerNames: Object.keys(requestAuth.headers) } : {}) }
-      : opts.auth?.type === "headers"
+  const authDescription: ConnectorAuthDescription = requestAuth
+    ? {
+        mode: "request",
+        header: "Authorization",
+        scheme: "Bearer",
+        ...(requestAuth.headers ? { headerNames: Object.keys(requestAuth.headers) } : {}),
+      }
+    : opts.auth?.type === "headers"
       ? { mode: "headers", headerNames: Object.keys(opts.auth.headers) }
       : credentialAuth
         ? { mode: "credential", header: credentialHeader, scheme: credentialScheme }
@@ -2523,21 +2811,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ? {
               mode: "oauth",
               ...(oauthScope !== undefined ? { scope: oauthScope } : {}),
-              ...(describedClientMetadataUrl !== undefined
-                ? { clientMetadataUrl: describedClientMetadataUrl }
-                : {}),
+              ...(describedClientMetadataUrl !== undefined ? { clientMetadataUrl: describedClientMetadataUrl } : {}),
             }
           : { mode: "none" };
   const endpoint = describedEndpoint(opts.url);
 
   const optionSources = Object.freeze({
     "source.kind": "default" as const,
-    "auth.mode": opts.auth === undefined ? "default" as const : "config" as const,
-    "auth.header": credentialAuth?.header === undefined ? "default" as const : "config" as const,
-    "auth.scheme": credentialAuth?.scheme === undefined ? "default" as const : "config" as const,
-    "credential.label": credentialAuth?.credential === undefined ? "default" as const : "config" as const,
-    ...Object.fromEntries(["versionNegotiation", "redirects", "requireHttps"].map(key =>
-      [`transport.${key}`, opts[key as "versionNegotiation" | "redirects" | "requireHttps"] === undefined ? "default" : "config"] as const)),
+    "auth.mode": opts.auth === undefined ? ("default" as const) : ("config" as const),
+    "auth.header": credentialAuth?.header === undefined ? ("default" as const) : ("config" as const),
+    "auth.scheme": credentialAuth?.scheme === undefined ? ("default" as const) : ("config" as const),
+    "credential.label": credentialAuth?.credential === undefined ? ("default" as const) : ("config" as const),
+    ...Object.fromEntries(
+      ["versionNegotiation", "redirects", "requireHttps"].map(
+        (key) =>
+          [
+            `transport.${key}`,
+            opts[key as "versionNegotiation" | "redirects" | "requireHttps"] === undefined ? "default" : "config",
+          ] as const,
+      ),
+    ),
   });
   const resourceTemplateRefusals = new Set<ResourceTemplateRefusal>();
   const skillScopeOpen = (ctx: ConnectorContext, state: ConnectionState) => {
@@ -2556,9 +2849,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       skillScopeOpen(ctx, state);
       const capabilities = client.getServerCapabilities();
       const extension = capabilities?.extensions?.[SKILLS_EXTENSION];
-      if (client.getProtocolEra() !== "modern" || !skillObject(capabilities?.resources) || !skillObject(extension) ||
-        (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")) {
-        throw new ConnectorCallError("connector_call_failed", "The downstream did not declare a valid Skills extension and resources capability.");
+      if (
+        client.getProtocolEra() !== "modern" ||
+        !skillObject(capabilities?.resources) ||
+        !skillObject(extension) ||
+        (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")
+      ) {
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          "The downstream did not declare a valid Skills extension and resources capability.",
+        );
       }
       const result = await run(client, state);
       skillScopeOpen(ctx, state);
@@ -2588,54 +2888,73 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         requireHttps: opts.requireHttps ?? false,
       },
     }),
-    ...(opts.description !== undefined
-      ? { description: opts.description }
-      : {}),
+    ...(opts.description !== undefined ? { description: opts.description } : {}),
     ...(opts.authScope !== undefined ? { authScope: opts.authScope } : {}),
-    ...(opts.maxResultBytes !== undefined
-      ? { maxResultBytes: opts.maxResultBytes }
-      : {}),
-    ...(opts.callAdmission !== undefined
-      ? { callAdmission: opts.callAdmission }
-      : {}),
+    ...(opts.maxResultBytes !== undefined ? { maxResultBytes: opts.maxResultBytes } : {}),
+    ...(opts.callAdmission !== undefined ? { callAdmission: opts.callAdmission } : {}),
     ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
-    ...(skillsEnabled ? {
-      downstreamSkills: {
-        list: (ctx: ConnectorContext) => withSkillsClient(ctx, "skills/list", async (client, state) => {
-          const listed: ConnectorSkill[] = [];
-          const uris = new Set<string>();
-          const cursors = new Set<string>();
-          let cursor: string | undefined;
-          let bytes = 0;
-          for (let page = 0; page < MAX_SKILLS; page++) {
-            skillScopeOpen(ctx, state);
-            const result = await client.request({ method: "skills/list", ...(cursor === undefined ? {} : { params: { cursor } }) }, SkillPageSchema, requestOptions(ctx));
-            bytes += result.bytes;
-            if (bytes > MAX_SERIALIZED_CATALOG_BYTES || listed.length + result.skills.length > MAX_SKILLS) {
-              throw new ConnectorCallError("connector_call_failed", "Downstream Skills listing exceeds the aggregate limit.");
-            }
-            for (const skill of result.skills) {
-              if (uris.has(skill.uri)) throw new ConnectorCallError("connector_call_failed", "Downstream Skills listing contains duplicate skill URIs.");
-              uris.add(skill.uri);
-              listed.push(skill);
-            }
-            if (result.nextCursor === undefined) return listed;
-            if (!result.skills.length || cursors.has(result.nextCursor)) {
-              throw new ConnectorCallError("connector_call_failed", "Downstream Skills pagination loops or makes no progress.");
-            }
-            cursors.add(result.nextCursor);
-            cursor = result.nextCursor;
-          }
-          throw new ConnectorCallError("connector_call_failed", "Downstream Skills listing exceeds the page limit.");
-        }),
-        read: (uri: string, ctx: ConnectorContext) => withSkillsClient(ctx, "resources/read", async (client) => {
-          // The registry admits only advertised manifest URIs. An explicit
-          // request bypasses the SDK readResource response cache entirely and
-          // validates the raw result before its resource union drops fields.
-          return client.request({ method: "resources/read", params: { uri } }, skillReadSchema(uri), requestOptions(ctx));
-        }),
-      },
-    } : {}),
+    ...(skillsEnabled
+      ? {
+          downstreamSkills: {
+            list: (ctx: ConnectorContext) =>
+              withSkillsClient(ctx, "skills/list", async (client, state) => {
+                const listed: ConnectorSkill[] = [];
+                const uris = new Set<string>();
+                const cursors = new Set<string>();
+                let cursor: string | undefined;
+                let bytes = 0;
+                for (let page = 0; page < MAX_SKILLS; page++) {
+                  skillScopeOpen(ctx, state);
+                  const result = await client.request(
+                    { method: "skills/list", ...(cursor === undefined ? {} : { params: { cursor } }) },
+                    SkillPageSchema,
+                    requestOptions(ctx),
+                  );
+                  bytes += result.bytes;
+                  if (bytes > MAX_SERIALIZED_CATALOG_BYTES || listed.length + result.skills.length > MAX_SKILLS) {
+                    throw new ConnectorCallError(
+                      "connector_call_failed",
+                      "Downstream Skills listing exceeds the aggregate limit.",
+                    );
+                  }
+                  for (const skill of result.skills) {
+                    if (uris.has(skill.uri))
+                      throw new ConnectorCallError(
+                        "connector_call_failed",
+                        "Downstream Skills listing contains duplicate skill URIs.",
+                      );
+                    uris.add(skill.uri);
+                    listed.push(skill);
+                  }
+                  if (result.nextCursor === undefined) return listed;
+                  if (!result.skills.length || cursors.has(result.nextCursor)) {
+                    throw new ConnectorCallError(
+                      "connector_call_failed",
+                      "Downstream Skills pagination loops or makes no progress.",
+                    );
+                  }
+                  cursors.add(result.nextCursor);
+                  cursor = result.nextCursor;
+                }
+                throw new ConnectorCallError(
+                  "connector_call_failed",
+                  "Downstream Skills listing exceeds the page limit.",
+                );
+              }),
+            read: (uri: string, ctx: ConnectorContext) =>
+              withSkillsClient(ctx, "resources/read", async (client) => {
+                // The registry admits only advertised manifest URIs. An explicit
+                // request bypasses the SDK readResource response cache entirely and
+                // validates the raw result before its resource union drops fields.
+                return client.request(
+                  { method: "resources/read", params: { uri } },
+                  skillReadSchema(uri),
+                  requestOptions(ctx),
+                );
+              }),
+          },
+        }
+      : {}),
     // Data the registry classifies every read with; listTools below returns
     // the downstream's listing unclassified.
     ...(classification !== undefined ? { classification } : {}),
@@ -2652,10 +2971,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
            * here is connecta's to verify — the credential's scope, project,
            * and mode are the provider's answer, not ours.
            */
-          testCredential: async (
-            value: string,
-            ctx: ConnectorContext,
-          ): Promise<CredentialTestResult> => {
+          testCredential: async (value: string, ctx: ConnectorContext): Promise<CredentialTestResult> => {
             try {
               // The connect below reads the vault itself — the header is
               // assembled deep inside `ensureConnected`, and handing a
@@ -2709,7 +3025,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
         }
         throw bounded;
-      } finally { listingContexts.delete(options); }
+      } finally {
+        listingContexts.delete(options);
+      }
       state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
       return clean.map((t) => ({
         name: t.name,
@@ -2718,36 +3036,27 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ? {
               // Inline images can consume the catalog ceiling and storage chunks.
               // The SDK needs no icons for validation or parameter mirroring.
-              icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as
-                NonNullable<ToolDef["icons"]>,
+              icons: t.icons.filter((icon) => !/^data:/i.test(icon.src)) as NonNullable<ToolDef["icons"]>,
             }
           : {}),
-        ...(t.execution !== undefined
-          ? { execution: t.execution as NonNullable<ToolDef["execution"]> }
-          : {}),
+        ...(t.execution !== undefined ? { execution: t.execution as NonNullable<ToolDef["execution"]> } : {}),
         // SEP-2243 declarations live in inputSchema. SDK validation and header
         // mirroring need no _meta keys, so arbitrary downstream metadata stays
         // out of the persisted catalog.
         ...(t.description !== undefined ? { description: t.description } : {}),
         ...(t.inputSchema !== undefined
           ? {
-              inputSchema: t.inputSchema as NonNullable<
-                ToolDef["inputSchema"]
-              >,
+              inputSchema: t.inputSchema as NonNullable<ToolDef["inputSchema"]>,
             }
           : {}),
         ...(t.outputSchema !== undefined
           ? {
-              outputSchema: t.outputSchema as NonNullable<
-                ToolDef["outputSchema"]
-              >,
+              outputSchema: t.outputSchema as NonNullable<ToolDef["outputSchema"]>,
             }
           : {}),
         ...(t.annotations !== undefined
           ? {
-              annotations: t.annotations as NonNullable<
-                ToolDef["annotations"]
-              >,
+              annotations: t.annotations as NonNullable<ToolDef["annotations"]>,
             }
           : {}),
       }));
@@ -2765,21 +3074,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ? {
               ...definition,
               // Older stored catalogs and custom connectors may omit inputSchema.
-              inputSchema: (definition.inputSchema ?? { type: "object" }) as
-                Tool["inputSchema"],
+              inputSchema: (definition.inputSchema ?? { type: "object" }) as Tool["inputSchema"],
             }
           : state.toolDefinitions.get(name);
         if (toolDefinition?.execution?.taskSupport === "required") {
-          throw new ConnectorCallError("connector_call_failed",
+          throw new ConnectorCallError(
+            "connector_call_failed",
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
           );
         }
         let output: StandardSchemaV1 | undefined;
-        const outputError = (code: number, message: string): unknown => atMcpBoundary(ctx,
-          new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
+        const outputError = (code: number, message: string): unknown =>
+          atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
         if (toolDefinition?.outputSchema) {
-          try { output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType); }
-          catch { throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`); }
+          try {
+            output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
+          } catch {
+            throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`);
+          }
         }
         const result = await client
           .callTool(
@@ -2805,9 +3117,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
         if (output && !result.isError) {
-          if (result.structuredContent === undefined) throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
+          if (result.structuredContent === undefined)
+            throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
           const validation = await output["~standard"].validate(result.structuredContent);
-          if (validation.issues) throw outputError(-32602, "Structured content does not match the tool's output schema: validation failed");
+          if (validation.issues)
+            throw outputError(-32602, "Structured content does not match the tool's output schema: validation failed");
         }
         return result;
       } catch (err) {
@@ -2831,28 +3145,48 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
           const resources = await client.listResources(undefined, options);
           const templates = await client.listResourceTemplates(undefined, options);
-          const exact = resources.resources.some(resource => resource.uri === uri);
+          const exact = resources.resources.some((resource) => resource.uri === uri);
           if (!exact) {
-            const match = resourceUriMatchesTemplates(uri, templates.resourceTemplates, code => resourceTemplateRefusals.add(code));
+            const match = resourceUriMatchesTemplates(uri, templates.resourceTemplates, (code) =>
+              resourceTemplateRefusals.add(code),
+            );
             if (!match.matched) {
-              if (match.refusal) throw new ConnectorCallError(match.refusal,
-                match.refusal === "resource_template_ambiguous" ? "The advertised resource templates have ambiguous expression boundaries." : "Resource template matching exceeds the read work limit.", { retryable: false });
+              if (match.refusal)
+                throw new ConnectorCallError(
+                  match.refusal,
+                  match.refusal === "resource_template_ambiguous"
+                    ? "The advertised resource templates have ambiguous expression boundaries."
+                    : "Resource template matching exceeds the read work limit.",
+                  { retryable: false },
+                );
               throw unadvertisedResource();
             }
           }
         } catch (err) {
           throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
-        } finally { listingContexts.delete(options); }
-        const result = await client.readResource({ uri }, {
-          ...requestOptions(ctx), cacheMode: "bypass", allowInputRequired: true,
-        }).catch((err: unknown) => {
-          if (err instanceof ResourceNotFoundError) {
-            throw new ConnectorCallError("not_found", "The downstream resource does not exist.");
-          }
-          throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
-        });
+        } finally {
+          listingContexts.delete(options);
+        }
+        const result = await client
+          .readResource(
+            { uri },
+            {
+              ...requestOptions(ctx),
+              cacheMode: "bypass",
+              allowInputRequired: true,
+            },
+          )
+          .catch((err: unknown) => {
+            if (err instanceof ResourceNotFoundError) {
+              throw new ConnectorCallError("not_found", "The downstream resource does not exist.");
+            }
+            throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+          });
         if (isInputRequiredResult(result)) {
-          throw new ConnectorCallError("input_required_unsupported", "Resource reads inside programs cannot request mid-call input.");
+          throw new ConnectorCallError(
+            "input_required_unsupported",
+            "Resource reads inside programs cannot request mid-call input.",
+          );
         }
         return result;
       } catch (err) {
@@ -2876,10 +3210,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const cacheClosing = closeCatalogCacheScope(ctx, id, cacheOwner);
       // Storage cannot cancel an already-started write. Bound the join in
       // parallel with transport cleanup so it adds no unbounded teardown tail.
-      const cacheClosed = cacheClosing && runEdge(Effect.raceAllFirst([
-        Effect.promise(() => cacheClosing),
-        Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
-      ]));
+      const cacheClosed =
+        cacheClosing &&
+        runEdge(
+          Effect.raceAllFirst([
+            Effect.promise(() => cacheClosing),
+            Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
+          ]),
+        );
       reset(state);
       // Runs the live connection's lease finalizer, if there is one.
       if (release) await runEdge(release);
@@ -2890,7 +3228,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       const report = async (status: ConnectorStatus) => {
         const path = isOauth ? await newProvider(ctx, state).registrationPath() : undefined;
-        return ownStatus({ ...status, ...(path ? { registrationPath: path } : {}), ...(resourceTemplateRefusals.size ? { resourceTemplateRefusals: [...resourceTemplateRefusals] } : {}) });
+        return ownStatus({
+          ...status,
+          ...(path ? { registrationPath: path } : {}),
+          ...(resourceTemplateRefusals.size ? { resourceTemplateRefusals: [...resourceTemplateRefusals] } : {}),
+        });
       };
       try {
         await ensureConnected(ctx, state);
@@ -2946,7 +3288,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const internals = t as unknown as { _fetchWithInit?: FetchLike };
       const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
       const exchange = new Proxy(t, {
-        get: (target, key) => key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
+        get: (target, key) => (key === "_fetchWithInit" ? traced : Reflect.get(target, key, target)),
         set: (target, key, value) => Reflect.set(target, key, value, target),
       });
       try {
@@ -3036,7 +3378,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
   }
 
-  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult = true, preserveInput = false): Promise<T> => {
+  const withActiveSecrets = async <T>(
+    ctx: ConnectorContext,
+    run: () => Promise<T>,
+    redactResult = true,
+    preserveInput = false,
+  ): Promise<T> => {
     trackCredentialReads(ctx);
     const secrets = sentSecretsFor(ctx);
     if (opts.auth?.type === "headers") {
@@ -3044,17 +3391,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
     const state = entryFor(ctx);
     let active = activeContexts.get(state);
-    if (!active) { active = new Set(); activeContexts.set(state, active); }
+    if (!active) {
+      active = new Set();
+      activeContexts.set(state, active);
+    }
     active.add(ctx);
     try {
       const result = await run();
       // Opaque state must reach the sealing handler byte-exact. Invocation
       // intercepts it before ordinary result processing or guest exposure.
       if (!preserveInput || !isInputRequiredResult(result)) assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
-      return preserveInput && isInputRequiredResult(result) || !redactResult ? result : redactSentSecrets(ctx, result);
+      return (preserveInput && isInputRequiredResult(result)) || !redactResult
+        ? result
+        : redactSentSecrets(ctx, result);
+    } catch (error) {
+      assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error);
+      throw redactSentSecrets(ctx, error);
+    } finally {
+      active.delete(ctx);
     }
-    catch (error) { assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error); throw redactSentSecrets(ctx, error); }
-    finally { active.delete(ctx); }
   };
   const callTool = connector.callTool;
   connector.callTool = (name, args, ctx, options) =>
@@ -3104,12 +3459,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
-  if (isOauth) registerInvocationAuth(connector, retainingOAuthPartition(async ctx => {
-    // Only inspect local grant state here. Discovery, refresh, and MCP
-    // transports remain inside callTool and cannot establish retry safety.
-    const provider = newProvider(ctx, stateFor(ctx));
-    if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
-    if (!await provider.tokens()) throw authRequiredError();
-  }, 0));
+  if (isOauth)
+    registerInvocationAuth(
+      connector,
+      retainingOAuthPartition(async (ctx) => {
+        // Only inspect local grant state here. Discovery, refresh, and MCP
+        // transports remain inside callTool and cannot establish retry safety.
+        const provider = newProvider(ctx, stateFor(ctx));
+        if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
+        if (!(await provider.tokens())) throw authRequiredError();
+      }, 0),
+    );
   return connector;
 }

@@ -107,7 +107,7 @@ which is recorded like `no-confirmation-needed` without changing pass/fail.
 Record evidence uses one helper in `tasks/correctness.ts` for CI runs, project
 counts, and other tasks with multiple records. It splits final answers at sentence
 ends (`.`, `!`, or `?` followed by whitespace or end), semicolons, newlines,
-list bullets and table rows. Commas and ` and ` split between records after a
+list bullets and table rows. Commas and `and` split between records after a
 complete set of fields, preserving commas within a record. Every record must
 have all its facts in at least one clause, in any order and case-insensitively.
 Hex commit SHAs match by their first seven characters. Any clause mixing a
@@ -220,11 +220,11 @@ For #598 and #602, `cross-connector-join` and `stale-close-and-summarize` each
 ran three times with Codex CLI 0.156.1 and served model `gpt-6-sol`. Each trial
 used the isolated fake deployment described above.
 
-| Wording | Task passes | Shadowed `connecta` parameter | Tool errors |
-| --- | --- | --- | --- |
-| [Before](baselines/codex-2026-09-25-before.json) | 6/6 | 5 | 5 |
-| [First clarification](baselines/codex-2026-09-25-first-wording.json) | 6/6 | 0 | 0 |
-| [Final clarification](baselines/codex-2026-09-25-final.json) | 6/6 | 0 | 0 |
+| Wording                                                              | Task passes | Shadowed `connecta` parameter | Tool errors |
+| -------------------------------------------------------------------- | ----------- | ----------------------------- | ----------- |
+| [Before](baselines/codex-2026-09-25-before.json)                     | 6/6         | 5                             | 5           |
+| [First clarification](baselines/codex-2026-09-25-first-wording.json) | 6/6         | 0                             | 0           |
+| [Final clarification](baselines/codex-2026-09-25-final.json)         | 6/6         | 0                             | 0           |
 
 Before the change, five trials began with `async (connecta) => ...`. Programs
 receive no arguments, so that parameter hid the provided global and caused a

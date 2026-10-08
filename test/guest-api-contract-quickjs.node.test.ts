@@ -60,22 +60,23 @@ describe("guest API contract (QuickJS executor)", () => {
         const chosen = custom ? customExecutor(base, { lifecycle: "self-managed" }) : base;
         const config = caseConfig(contractCase);
         const outcome = await harness.run(chosen, contractCase.code, config);
-        const follow = contractCase.follows
-          ? await harness.run(chosen, contractCase.follows, config)
-          : undefined;
+        const follow = contractCase.follows ? await harness.run(chosen, contractCase.follows, config) : undefined;
         contractCase.check(outcome, harness.state, follow);
       });
     }
   }
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
-    const outcome = await contractHarness().run(executor, `async () => {
+    const outcome = await contractHarness().run(
+      executor,
+      `async () => {
       console.log("before budget exhaustion");
       for (let i = 0; i < 213; i++) {
         try { await connecta.call("reader.read", { value: "ok" }); }
         catch { console.log("must not catch the budget refusal"); }
       }
-    }`);
+    }`,
+    );
     expect(outcome.isError).toBe(true);
     expect(outcome.value).toMatchObject({
       error: { code: "budget_exceeded" },

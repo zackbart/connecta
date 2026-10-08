@@ -53,10 +53,10 @@ export function chatState(now: number): ChatState {
 
 export function chatTools(state: ChatState, now: () => number): FakeTool[] {
   const channelOf = (value: unknown) => {
-    const key = String(value ?? "").replace(/^#/, "").toLowerCase();
-    return state.channels.find(
-      (channel) => channel.name === key || channel.id.toLowerCase() === key,
-    );
+    const key = String(value ?? "")
+      .replace(/^#/, "")
+      .toLowerCase();
+    return state.channels.find((channel) => channel.name === key || channel.id.toLowerCase() === key);
   };
   return [
     {
@@ -152,13 +152,8 @@ export function analyticsTools(): FakeTool[] {
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
       run: (args) => {
-        const rows = ACCOUNTS.filter(
-          (account) => args.plan === undefined || account.plan === args.plan,
-        );
-        const offset =
-          typeof args.cursor === "string" && /^p\d+$/.test(args.cursor)
-            ? Number(args.cursor.slice(1))
-            : 0;
+        const rows = ACCOUNTS.filter((account) => args.plan === undefined || account.plan === args.plan);
+        const offset = typeof args.cursor === "string" && /^p\d+$/.test(args.cursor) ? Number(args.cursor.slice(1)) : 0;
         const limit = typeof args.limit === "number" ? args.limit : 10;
         const page = rows.slice(offset, offset + limit);
         return {
@@ -245,8 +240,7 @@ export function billingTools(now: number): FakeTool[] {
         json: {
           invoices: invoices.filter(
             (invoice) =>
-              invoice.customerId === args.customerId &&
-              (args.status === undefined || invoice.status === args.status),
+              invoice.customerId === args.customerId && (args.status === undefined || invoice.status === args.status),
           ),
         },
       }),
@@ -302,7 +296,7 @@ function ciRunLog(runId: number, now: number): string {
       continue;
     }
     lines.push(
-      `${stamp()} [shard ${shard}/8] PASS test/${area}/case-${String(index).padStart(4, "0")}.test.ts (${(index * 37) % 400 + 12} ms)`,
+      `${stamp()} [shard ${shard}/8] PASS test/${area}/case-${String(index).padStart(4, "0")}.test.ts (${((index * 37) % 400) + 12} ms)`,
     );
   }
   lines.push(
@@ -314,9 +308,27 @@ function ciRunLog(runId: number, now: number): string {
 
 export function ciState(now: number) {
   return [
-    { runId: 4812, branch: "main", status: "failed", commit: "9f2c1ab", startedAt: new Date(now - 40 * 60_000).toISOString() },
-    { runId: 4811, branch: "main", status: "passed", commit: "71d0e3c", startedAt: new Date(now - 3 * 3_600_000).toISOString() },
-    { runId: 4810, branch: "feature/export", status: "passed", commit: "c0ffee1", startedAt: new Date(now - 5 * 3_600_000).toISOString() },
+    {
+      runId: 4812,
+      branch: "main",
+      status: "failed",
+      commit: "9f2c1ab",
+      startedAt: new Date(now - 40 * 60_000).toISOString(),
+    },
+    {
+      runId: 4811,
+      branch: "main",
+      status: "passed",
+      commit: "71d0e3c",
+      startedAt: new Date(now - 3 * 3_600_000).toISOString(),
+    },
+    {
+      runId: 4810,
+      branch: "feature/export",
+      status: "passed",
+      commit: "c0ffee1",
+      startedAt: new Date(now - 5 * 3_600_000).toISOString(),
+    },
   ];
 }
 
@@ -379,22 +391,52 @@ export interface AuditState {
  * deletion, by someone else, is far past the default inline cap.
  */
 function auditEvents(now: number): string {
-  const actors = ["sam.ortiz@example.com", "lee.park@example.com", "noor.haddad@example.com", "ivan.petrov@example.com"];
-  const actions = ["login", "token.created", "member.invited", "setting.changed", "project.viewed", "export.downloaded"];
+  const actors = [
+    "sam.ortiz@example.com",
+    "lee.park@example.com",
+    "noor.haddad@example.com",
+    "ivan.petrov@example.com",
+  ];
+  const actions = [
+    "login",
+    "token.created",
+    "member.invited",
+    "setting.changed",
+    "project.viewed",
+    "export.downloaded",
+  ];
   const lines: string[] = [];
   const start = now - 7 * DAY_MS;
   for (let index = 0; index < 1_150; index += 1) {
     const ts = new Date(start + index * 520_000).toISOString();
     if (index === 120) {
-      lines.push(JSON.stringify({ ts, actor: "sam.ortiz@example.com", action: "project.delete_requested", target: "prod-db", note: "requested deletion; awaiting second approver" }));
+      lines.push(
+        JSON.stringify({
+          ts,
+          actor: "sam.ortiz@example.com",
+          action: "project.delete_requested",
+          target: "prod-db",
+          note: "requested deletion; awaiting second approver",
+        }),
+      );
       continue;
     }
     if (index === 600) {
-      lines.push(JSON.stringify({ ts, actor: "lee.park@example.com", action: "project.deleted", target: "staging-db" }));
+      lines.push(
+        JSON.stringify({ ts, actor: "lee.park@example.com", action: "project.deleted", target: "staging-db" }),
+      );
       continue;
     }
     if (index === 1_050) {
-      lines.push(JSON.stringify({ ts, actor: "dana.whitfield@example.com", action: "project.deleted", target: "prod-db", note: "approved and executed deletion" }));
+      lines.push(
+        JSON.stringify({
+          ts,
+          actor: "dana.whitfield@example.com",
+          action: "project.deleted",
+          target: "prod-db",
+          note: "approved and executed deletion",
+        }),
+      );
       continue;
     }
     lines.push(

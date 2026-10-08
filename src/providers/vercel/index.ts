@@ -82,9 +82,7 @@ export type VercelConnectionOptions = VercelOptions | VercelMcpOptions;
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -92,9 +90,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function detailFor(payload: unknown, status: number): string {
@@ -121,11 +117,7 @@ function resetAfterMs(headers: Headers): number | undefined {
 }
 
 /** Map Vercel failures by the caller's useful next move. */
-function vercelFailure(
-  status: number,
-  headers: Headers,
-  payload: unknown,
-): ConnectorCallError {
+function vercelFailure(status: number, headers: Headers, payload: unknown): ConnectorCallError {
   const detail = detailFor(payload, status);
   if (status === 429) {
     const wait = resetAfterMs(headers);
@@ -188,11 +180,9 @@ function parseBody(text: string, contentType: string | null, strict = false): un
       return rows;
     }
     if (strict) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        "Vercel returned a malformed successful response.",
-        { retryable: false },
-      );
+      throw new ConnectorCallError("connector_call_failed", "Vercel returned a malformed successful response.", {
+        retryable: false,
+      });
     }
     return text;
   }
@@ -210,11 +200,9 @@ function parseStreamRows(text: string): unknown[] {
       try {
         rows.push(JSON.parse(line));
       } catch {
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          "Vercel returned a malformed runtime-log stream.",
-          { retryable: false },
-        );
+        throw new ConnectorCallError("connector_call_failed", "Vercel returned a malformed runtime-log stream.", {
+          retryable: false,
+        });
       }
     }
     return rows;
@@ -260,9 +248,7 @@ function teamQuery(
   defaultTeamId: string | undefined,
 ): Record<string, string | number | boolean | undefined> {
   return {
-    teamId: args["teamId"] === null
-      ? undefined
-      : args["teamId"] ?? defaultTeamId,
+    teamId: args["teamId"] === null ? undefined : (args["teamId"] ?? defaultTeamId),
   };
 }
 
@@ -353,10 +339,7 @@ const ENV_SCHEMA: JsonSchema = {
   required: ["id", "key", "type"],
 };
 
-function namedInput(
-  properties: Record<string, JsonSchema>,
-  required: string[],
-): JsonSchema {
+function namedInput(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
 }
 
@@ -366,11 +349,7 @@ function queryPairs(value: unknown): Record<string, string | number | boolean> {
     const pair = asRecord(row);
     if (typeof pair["name"] !== "string") continue;
     const item = pair["value"];
-    if (
-      typeof item === "string" ||
-      typeof item === "number" ||
-      typeof item === "boolean"
-    ) {
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
       query[pair["name"]] = item;
     }
   }
@@ -396,7 +375,8 @@ const QUERY_PROPERTY: JsonSchema = {
 
 const HEADERS_PROPERTY: JsonSchema = {
   type: "array",
-  description: "Endpoint-specific request headers. Credential, cookie, host, framing, and content-type headers are connector-owned.",
+  description:
+    "Endpoint-specific request headers. Credential, cookie, host, framing, and content-type headers are connector-owned.",
   items: {
     type: "object",
     properties: {
@@ -439,45 +419,37 @@ function uploadBody(args: JsonRecord): Uint8Array | string {
   const hasText = typeof args["textBody"] === "string";
   const hasBase64 = typeof args["base64Body"] === "string";
   if (hasText === hasBase64) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "Provide exactly one of textBody or base64Body for a Vercel upload.",
-    );
+    throw new ConnectorCallError("invalid_args", "Provide exactly one of textBody or base64Body for a Vercel upload.");
   }
   if (hasText) return args["textBody"];
   try {
-    return Uint8Array.from(atob(args["base64Body"]), (character) =>
-      character.charCodeAt(0),
-    );
+    return Uint8Array.from(atob(args["base64Body"]), (character) => character.charCodeAt(0));
   } catch {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "base64Body is not valid base64.",
-    );
+    throw new ConnectorCallError("invalid_args", "base64Body is not valid base64.");
   }
 }
 
-function rawRequest(
-  args: JsonRecord,
-  defaultTeamId: string | undefined,
-): Pick<GuardedRequest, "path" | "query"> {
+function rawRequest(args: JsonRecord, defaultTeamId: string | undefined): Pick<GuardedRequest, "path" | "query"> {
   const method = args["method"] ?? "GET";
   let path: string;
   try {
-    path = decodeURIComponent(new URL(`https://api.vercel.com${String(args["path"])}`).pathname).replace(/\/{2,}/g, "/");
+    path = decodeURIComponent(new URL(`https://api.vercel.com${String(args["path"])}`).pathname).replace(
+      /\/{2,}/g,
+      "/",
+    );
   } catch {
     throw new ConnectorCallError("invalid_args", "The REST path contains an invalid escape or URL.");
   }
   const matches = ([verb, pattern]: readonly [string, RegExp, string | null]) => verb === method && pattern.test(path);
   const canonical = VERCEL_EXACT_CANONICAL_ROUTES.find(matches) ?? VERCEL_CANONICAL_ROUTES.find(matches);
   if (canonical?.[2]) {
-    throw new ConnectorCallError("invalid_args", `Use ${canonical[2]} on its owning connector. The REST complement cannot repeat that operation.`);
+    throw new ConnectorCallError(
+      "invalid_args",
+      `Use ${canonical[2]} on its owning connector. The REST complement cannot repeat that operation.`,
+    );
   }
   const query = queryPairs(args["query"]);
-  if (
-    args["personalAccount"] === true &&
-    (query["teamId"] !== undefined || query["slug"] !== undefined)
-  ) {
+  if (args["personalAccount"] === true && (query["teamId"] !== undefined || query["slug"] !== undefined)) {
     throw new ConnectorCallError(
       "invalid_args",
       "personalAccount cannot be combined with a teamId or slug query parameter.",
@@ -494,19 +466,30 @@ function rawRequest(
   return { path: String(args["path"]), query };
 }
 
-function hostedRestRoute([method, path, name]: readonly [string, string, string], anyVersion: boolean): [string, RegExp, string] {
-  const pattern = path.replace(/\/+$/, "").split("/").map((segment, index) => {
-    if (anyVersion && index === 1 && /^v\d+$/.test(segment)) return "v\\d+";
-    if (/^\{[^}]+\}$/.test(segment)) return "[^/]+";
-    return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }).join("/");
+function hostedRestRoute(
+  [method, path, name]: readonly [string, string, string],
+  anyVersion: boolean,
+): [string, RegExp, string] {
+  const pattern = path
+    .replace(/\/+$/, "")
+    .split("/")
+    .map((segment, index) => {
+      if (anyVersion && index === 1 && /^v\d+$/.test(segment)) return "v\\d+";
+      if (/^\{[^}]+\}$/.test(segment)) return "[^/]+";
+      return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("/");
   return [method, new RegExp(`^${pattern}\\/?$`), `MCP ${name}`];
 }
 
 // Resolve actual published method/path/version contracts first, including
 // uncovered concrete endpoints. An id wildcard cannot consume a REST gap.
 const VERCEL_EXACT_CANONICAL_ROUTES: readonly [string, RegExp, string | null][] = [
-  ...UNCOVERED_REST_OPERATIONS.map(([method, path]): [string, RegExp, null] => [method, hostedRestRoute([method, path, ""], false)[1], null]),
+  ...UNCOVERED_REST_OPERATIONS.map(([method, path]): [string, RegExp, null] => [
+    method,
+    hostedRestRoute([method, path, ""], false)[1],
+    null,
+  ]),
   ...HOSTED_REST_OPERATIONS.map((operation) => hostedRestRoute(operation, false)),
 ];
 
@@ -538,7 +521,12 @@ const VERCEL_CANONICAL_ROUTES: readonly [string, RegExp, string][] = [
   ["DELETE", /^\/v\d+\/projects\/[^/]+\/env\/[^/]+\/?$/, "API delete_project_env_var"],
 ];
 
-const API_OWNED_MCP_TOOLS = new Set(["filter_project_envs", "get_project_env", "create_project_env", "edit_project_env"]);
+const API_OWNED_MCP_TOOLS = new Set([
+  "filter_project_envs",
+  "get_project_env",
+  "create_project_env",
+  "edit_project_env",
+]);
 
 /** Preserve vendor contracts for retained tools and refuse hidden direct calls. */
 function vercelCatalog(connector: Connector): Connector {
@@ -546,13 +534,18 @@ function vercelCatalog(connector: Connector): Connector {
     async listTools(ctx: ConnectorContext) {
       const tools = (await connector.listTools(ctx)).filter((tool) => !API_OWNED_MCP_TOOLS.has(tool.name));
       if (new Set(tools.map((tool) => tool.name)).size !== tools.length) {
-        throw new ConnectorCallError("connector_call_failed", "Vercel returned duplicate tool names.", { retryable: false });
+        throw new ConnectorCallError("connector_call_failed", "Vercel returned duplicate tool names.", {
+          retryable: false,
+        });
       }
       return tools;
     },
     async callTool(name: string, args: unknown, ctx: ConnectorContext, options?: Parameters<Connector["callTool"]>[3]) {
       if (API_OWNED_MCP_TOOLS.has(name)) {
-        throw new ConnectorCallError("invalid_args", "Project environment variables belong to the value-safe Vercel REST complement.");
+        throw new ConnectorCallError(
+          "invalid_args",
+          "Project environment variables belong to the value-safe Vercel REST complement.",
+        );
       }
       return await connector.callTool(name, args, ctx, options);
     },
@@ -564,10 +557,7 @@ const PERSONAL_ACCOUNT_PROPERTY: JsonSchema = {
   description: "True omits the configured default team. Do not combine with a teamId or slug query parameter.",
 };
 
-function tools(
-  send: GuardedTransport,
-  defaultTeamId: string | undefined,
-): ApiTool[] {
+function tools(send: GuardedTransport, defaultTeamId: string | undefined): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
   const team = (args: JsonRecord) => teamQuery(args, defaultTeamId);
@@ -596,12 +586,7 @@ function tools(
       },
       handler: async (args, ctx) => ({
         result:
-          (await callVercel(
-            send,
-            { method: "GET", ...rawRequest(args, defaultTeamId) },
-            ctx,
-            { raw: true },
-          )) ?? null,
+          (await callVercel(send, { method: "GET", ...rawRequest(args, defaultTeamId) }, ctx, { raw: true })) ?? null,
       }),
     },
     {
@@ -718,15 +703,26 @@ function tools(
         "Ask Vercel to verify a project's pending domain after its DNS challenge has been completed. Returns the current domain state.",
       annotations: destructive,
       inputSchema: namedInput(
-        { projectId: PROJECT_ID_PROPERTY, domain: { type: "string", minLength: 1, description: "Pending domain name from list_project_domains." }, teamId: TEAM_ID_PROPERTY },
+        {
+          projectId: PROJECT_ID_PROPERTY,
+          domain: { type: "string", minLength: 1, description: "Pending domain name from list_project_domains." },
+          teamId: TEAM_ID_PROPERTY,
+        },
         ["projectId", "domain"],
       ),
       outputSchema: DOMAIN_SCHEMA,
-      handler: async (args, ctx) => projectDomain(await callVercel(
-        send,
-        { method: "POST", path: `/v9/projects/${encodeURIComponent(args["projectId"])}/domains/${encodeURIComponent(args["domain"])}/verify`, query: team(args) },
-        ctx,
-      )),
+      handler: async (args, ctx) =>
+        projectDomain(
+          await callVercel(
+            send,
+            {
+              method: "POST",
+              path: `/v9/projects/${encodeURIComponent(args["projectId"])}/domains/${encodeURIComponent(args["domain"])}/verify`,
+              query: team(args),
+            },
+            ctx,
+          ),
+        ),
     },
     {
       name: "remove_project_domain",
@@ -743,14 +739,18 @@ function tools(
         ["projectId", "domain"],
       ),
       outputSchema: {
-        type: "object", properties: { removed: { type: "boolean" }, domain: { type: "string" } }, required: ["removed", "domain"],
+        type: "object",
+        properties: { removed: { type: "boolean" }, domain: { type: "string" } },
+        required: ["removed", "domain"],
       },
       handler: async (args, ctx) => {
         await callVercel(
           send,
           {
-            method: "DELETE", path: `/v9/projects/${encodeURIComponent(args["projectId"])}/domains/${encodeURIComponent(args["domain"])}`,
-            query: team(args), body: args["removeRedirects"] === undefined ? undefined : { removeRedirects: args["removeRedirects"] },
+            method: "DELETE",
+            path: `/v9/projects/${encodeURIComponent(args["projectId"])}/domains/${encodeURIComponent(args["domain"])}`,
+            query: team(args),
+            body: args["removeRedirects"] === undefined ? undefined : { removeRedirects: args["removeRedirects"] },
           },
           ctx,
         );
@@ -764,21 +764,30 @@ function tools(
       annotations: readOnly,
       inputSchema: namedInput(
         {
-          projectId: PROJECT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY,
+          projectId: PROJECT_ID_PROPERTY,
+          teamId: TEAM_ID_PROPERTY,
           gitBranch: { type: "string", description: "Preview branch filter." },
           customEnvironmentId: { type: "string", description: "Custom environment filter." },
         },
         ["projectId"],
       ),
       outputSchema: {
-        type: "object", properties: { variables: { type: "array", items: ENV_SCHEMA } }, required: ["variables"],
+        type: "object",
+        properties: { variables: { type: "array", items: ENV_SCHEMA } },
+        required: ["variables"],
       },
       handler: async (args, ctx) => {
         const payload = await callVercel(
           send,
           {
-            method: "GET", path: `/v10/projects/${encodeURIComponent(args["projectId"])}/env`,
-            query: { ...team(args), gitBranch: args["gitBranch"], customEnvironmentId: args["customEnvironmentId"], decrypt: "false" },
+            method: "GET",
+            path: `/v10/projects/${encodeURIComponent(args["projectId"])}/env`,
+            query: {
+              ...team(args),
+              gitBranch: args["gitBranch"],
+              customEnvironmentId: args["customEnvironmentId"],
+              decrypt: "false",
+            },
           },
           ctx,
         );
@@ -792,41 +801,73 @@ function tools(
       annotations: destructive,
       inputSchema: namedInput(
         {
-          projectId: PROJECT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY,
+          projectId: PROJECT_ID_PROPERTY,
+          teamId: TEAM_ID_PROPERTY,
           key: { type: "string", minLength: 1, maxLength: 256, description: "Environment variable name." },
-          value: { type: "string", maxLength: 65536, description: "New value. Vercel's total project-environment payload is capped at 64 KB." },
-          type: { type: "string", enum: ["plain", "encrypted", "sensitive"], description: "Storage type. Sensitive values cannot be read back." },
-          targets: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: ["production", "preview", "development"] }, description: "Default Vercel environments that receive this value." },
+          value: {
+            type: "string",
+            maxLength: 65536,
+            description: "New value. Vercel's total project-environment payload is capped at 64 KB.",
+          },
+          type: {
+            type: "string",
+            enum: ["plain", "encrypted", "sensitive"],
+            description: "Storage type. Sensitive values cannot be read back.",
+          },
+          targets: {
+            type: "array",
+            minItems: 1,
+            uniqueItems: true,
+            items: { type: "string", enum: ["production", "preview", "development"] },
+            description: "Default Vercel environments that receive this value.",
+          },
           gitBranch: { type: "string", description: "Optional preview-only Git branch." },
-          customEnvironmentIds: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Custom environment ids that receive this value." },
+          customEnvironmentIds: {
+            type: "array",
+            uniqueItems: true,
+            items: { type: "string", minLength: 1 },
+            description: "Custom environment ids that receive this value.",
+          },
           comment: { type: "string", maxLength: 500, description: "Operator-facing note explaining the variable." },
-          upsert: { type: "boolean", description: "Defaults to true. Set false for create-only behavior that refuses to overwrite an existing variable." },
+          upsert: {
+            type: "boolean",
+            description:
+              "Defaults to true. Set false for create-only behavior that refuses to overwrite an existing variable.",
+          },
         },
         ["projectId", "key", "value", "type", "targets"],
       ),
       outputSchema: ENV_SCHEMA,
       handler: async (args, ctx) => {
-        const payload = asRecord(await callVercel(
-          send,
-          {
-            method: "POST", path: `/v10/projects/${encodeURIComponent(args["projectId"])}/env`,
-            query: { ...team(args), upsert: args["upsert"] === false ? "false" : "true" },
-            body: compact({ key: args["key"], value: args["value"], type: args["type"], target: args["targets"], gitBranch: args["gitBranch"], customEnvironmentIds: args["customEnvironmentIds"], comment: args["comment"] }),
-          },
-          ctx,
-        ));
+        const payload = asRecord(
+          await callVercel(
+            send,
+            {
+              method: "POST",
+              path: `/v10/projects/${encodeURIComponent(args["projectId"])}/env`,
+              query: { ...team(args), upsert: args["upsert"] === false ? "false" : "true" },
+              body: compact({
+                key: args["key"],
+                value: args["value"],
+                type: args["type"],
+                target: args["targets"],
+                gitBranch: args["gitBranch"],
+                customEnvironmentIds: args["customEnvironmentIds"],
+                comment: args["comment"],
+              }),
+            },
+            ctx,
+          ),
+        );
         const failed = asArray(payload["failed"]);
         if (failed.length > 0) {
           const error = asRecord(asRecord(failed[0])["error"]);
           const code = typeof error["code"] === "string" ? `${error["code"]}: ` : "";
-          const message = typeof error["message"] === "string"
-            ? error["message"]
-            : "Vercel rejected the environment-variable write.";
+          const message =
+            typeof error["message"] === "string" ? error["message"] : "Vercel rejected the environment-variable write.";
           throw new ConnectorCallError("invalid_args", `Vercel ${code}${message}`);
         }
-        const created = Array.isArray(payload["created"])
-          ? payload["created"][0]
-          : payload["created"];
+        const created = Array.isArray(payload["created"]) ? payload["created"][0] : payload["created"];
         const result = projectEnvironmentVariable(created ?? payload);
         if (!result["id"] || !result["key"] || !result["type"]) {
           throw new ConnectorCallError(
@@ -845,29 +886,63 @@ function tools(
       annotations: destructive,
       inputSchema: namedInput(
         {
-          projectId: PROJECT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY,
-          envVarId: { type: "string", minLength: 1, description: "Environment-variable id from list_project_env_vars." },
+          projectId: PROJECT_ID_PROPERTY,
+          teamId: TEAM_ID_PROPERTY,
+          envVarId: {
+            type: "string",
+            minLength: 1,
+            description: "Environment-variable id from list_project_env_vars.",
+          },
           key: { type: "string", minLength: 1, maxLength: 256, description: "Replacement variable name." },
           value: { type: "string", maxLength: 65536, description: "Replacement value." },
           type: { type: "string", enum: ["plain", "encrypted", "sensitive"], description: "Replacement storage type." },
-          targets: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: ["production", "preview", "development"] }, description: "Replacement default environments." },
+          targets: {
+            type: "array",
+            minItems: 1,
+            uniqueItems: true,
+            items: { type: "string", enum: ["production", "preview", "development"] },
+            description: "Replacement default environments.",
+          },
           gitBranch: { type: ["string", "null"], description: "Replacement preview branch, or null to clear it." },
-          customEnvironmentIds: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Replacement custom environment ids." },
+          customEnvironmentIds: {
+            type: "array",
+            uniqueItems: true,
+            items: { type: "string", minLength: 1 },
+            description: "Replacement custom environment ids.",
+          },
           comment: { type: "string", maxLength: 500, description: "Replacement operator-facing note." },
         },
         ["projectId", "envVarId"],
       ),
       outputSchema: ENV_SCHEMA,
       handler: async (args, ctx) => {
-        const body = compact({ key: args["key"], value: args["value"], type: args["type"], target: args["targets"], gitBranch: args["gitBranch"], customEnvironmentIds: args["customEnvironmentIds"], comment: args["comment"] });
+        const body = compact({
+          key: args["key"],
+          value: args["value"],
+          type: args["type"],
+          target: args["targets"],
+          gitBranch: args["gitBranch"],
+          customEnvironmentIds: args["customEnvironmentIds"],
+          comment: args["comment"],
+        });
         if (Object.keys(body).length === 0) {
-          throw new ConnectorCallError("invalid_args", "Nothing to update: provide key, value, type, targets, gitBranch, customEnvironmentIds, or comment.");
+          throw new ConnectorCallError(
+            "invalid_args",
+            "Nothing to update: provide key, value, type, targets, gitBranch, customEnvironmentIds, or comment.",
+          );
         }
-        return projectEnvironmentVariable(await callVercel(
-          send,
-          { method: "PATCH", path: `/v9/projects/${encodeURIComponent(args["projectId"])}/env/${encodeURIComponent(args["envVarId"])}`, query: team(args), body },
-          ctx,
-        ));
+        return projectEnvironmentVariable(
+          await callVercel(
+            send,
+            {
+              method: "PATCH",
+              path: `/v9/projects/${encodeURIComponent(args["projectId"])}/env/${encodeURIComponent(args["envVarId"])}`,
+              query: team(args),
+              body,
+            },
+            ctx,
+          ),
+        );
       },
     },
     {
@@ -876,12 +951,32 @@ function tools(
         "Delete one environment variable from a Vercel project by id. Existing deployments keep their embedded value; future deployments do not.",
       annotations: destructive,
       inputSchema: namedInput(
-        { projectId: PROJECT_ID_PROPERTY, envVarId: { type: "string", minLength: 1, description: "Environment-variable id from list_project_env_vars." }, teamId: TEAM_ID_PROPERTY },
+        {
+          projectId: PROJECT_ID_PROPERTY,
+          envVarId: {
+            type: "string",
+            minLength: 1,
+            description: "Environment-variable id from list_project_env_vars.",
+          },
+          teamId: TEAM_ID_PROPERTY,
+        },
         ["projectId", "envVarId"],
       ),
-      outputSchema: { type: "object", properties: { deleted: { type: "boolean" }, envVarId: { type: "string" } }, required: ["deleted", "envVarId"] },
+      outputSchema: {
+        type: "object",
+        properties: { deleted: { type: "boolean" }, envVarId: { type: "string" } },
+        required: ["deleted", "envVarId"],
+      },
       handler: async (args, ctx) => {
-        await callVercel(send, { method: "DELETE", path: `/v9/projects/${encodeURIComponent(args["projectId"])}/env/${encodeURIComponent(args["envVarId"])}`, query: team(args) }, ctx);
+        await callVercel(
+          send,
+          {
+            method: "DELETE",
+            path: `/v9/projects/${encodeURIComponent(args["projectId"])}/env/${encodeURIComponent(args["envVarId"])}`,
+            query: team(args),
+          },
+          ctx,
+        );
         return { deleted: true, envVarId: args["envVarId"] };
       },
     },
@@ -890,24 +985,25 @@ function tools(
       description:
         "Permanently delete one Vercel deployment and its deployment URL. This cannot be undone; use cancel_deployment for work still running.",
       annotations: destructive,
-      inputSchema: namedInput(
-        { deploymentId: DEPLOYMENT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY },
-        ["deploymentId"],
-      ),
-      outputSchema: { type: "object", properties: { deleted: { type: "boolean" }, deploymentId: { type: "string" } }, required: ["deleted", "deploymentId"] },
+      inputSchema: namedInput({ deploymentId: DEPLOYMENT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY }, ["deploymentId"]),
+      outputSchema: {
+        type: "object",
+        properties: { deleted: { type: "boolean" }, deploymentId: { type: "string" } },
+        required: ["deleted", "deploymentId"],
+      },
       handler: async (args, ctx) => {
-        await callVercel(send, { method: "DELETE", path: `/v13/deployments/${encodeURIComponent(args["deploymentId"])}`, query: team(args) }, ctx);
+        await callVercel(
+          send,
+          { method: "DELETE", path: `/v13/deployments/${encodeURIComponent(args["deploymentId"])}`, query: team(args) },
+          ctx,
+        );
         return { deleted: true, deploymentId: args["deploymentId"] };
       },
     },
   ];
 }
 
-function apiUsageGuide(
-  purpose: string,
-  teamId: string | undefined,
-  instructions: string | undefined,
-): string {
+function apiUsageGuide(purpose: string, teamId: string | undefined, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `# Vercel usage
 
@@ -920,9 +1016,7 @@ ${
     ? `This connection defaults to team \`${teamId}${skill.fragments.guide_0}`
     : "This connection defaults to the token owner's personal account. Use hosted MCP `list_teams`, then pass `teamId`, for team-owned resources."
 }${skill.fragments.guide_1}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
@@ -934,66 +1028,156 @@ ${
  */
 const VERCEL_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
-    "request_promote": { verdict: "destructive", reason: "The rolling-releases MCP reference promotes an existing deployment to production; replaces the authored REST promotion write." },
-    "list_project_domains": { verdict: "read", reason: "The projects MCP reference lists project-domain metadata; formerly the named REST read." },
-    "add_project_domain": { verdict: "destructive", reason: "Attaches a domain to a project; preserves the former REST write classification." },
-    "cancel_deployment": { verdict: "destructive", reason: "Cancels an existing deployment, even if the vendor claims read-only access." },
+    "request_promote": {
+      verdict: "destructive",
+      reason:
+        "The rolling-releases MCP reference promotes an existing deployment to production; replaces the authored REST promotion write.",
+    },
+    "list_project_domains": {
+      verdict: "read",
+      reason: "The projects MCP reference lists project-domain metadata; formerly the named REST read.",
+    },
+    "add_project_domain": {
+      verdict: "destructive",
+      reason: "Attaches a domain to a project; preserves the former REST write classification.",
+    },
+    "cancel_deployment": {
+      verdict: "destructive",
+      reason: "Cancels an existing deployment, even if the vendor claims read-only access.",
+    },
     "upload_file": { verdict: "destructive", reason: "Uploads deployment file bytes and creates vendor state." },
-    "create_deployment": { verdict: "destructive", reason: "Creates a preview or production deployment from Git or files." },
-    "list_deployment_events": { verdict: "read", reason: "Reads build events using the documented deployments catalog." },
-    "search_vercel_documentation": {"verdict": "read", "reason": "Retrieves Vercel vercel documentation information without changing vendor state."},
-    "list_teams": {"verdict": "read", "reason": "Retrieves Vercel teams information without changing vendor state."},
-    "list_projects": {"verdict": "read", "reason": "Retrieves Vercel projects information without changing vendor state."},
-    "get_project": {"verdict": "read", "reason": "Retrieves Vercel project information without changing vendor state."},
-    "list_deployments": {"verdict": "read", "reason": "Retrieves Vercel deployments information without changing vendor state."},
-    "get_deployment": {"verdict": "read", "reason": "Retrieves Vercel deployment information without changing vendor state."},
-    "get_deployment_build_logs": {"verdict": "read", "reason": "Retrieves Vercel deployment build logs information without changing vendor state."},
-    "get_runtime_logs": {"verdict": "read", "reason": "Retrieves Vercel runtime logs information without changing vendor state."},
-    "get_runtime_errors": {"verdict": "read", "reason": "Retrieves Vercel runtime errors information without changing vendor state."},
-    "get_web_analytics": {"verdict": "read", "reason": "Retrieves Vercel web analytics information without changing vendor state."},
-    "list_agent_run_projects": {"verdict": "read", "reason": "Retrieves Vercel agent run projects information without changing vendor state."},
-    "list_agent_runs": {"verdict": "read", "reason": "Retrieves Vercel agent runs information without changing vendor state."},
-    "get_agent_run": {"verdict": "read", "reason": "Retrieves Vercel agent run information without changing vendor state."},
-    "get_agent_run_trace": {"verdict": "read", "reason": "Retrieves Vercel agent run trace information without changing vendor state."},
-    "check_domain_availability_and_price": {"verdict": "read", "reason": "Retrieves Vercel check domain availability and price information without changing vendor state."},
-    "get_purchase_quote": {"verdict": "read", "reason": "Reads a purchase quote; billing changes require a separate purchase tool."},
-    "get_domain_order": {"verdict": "read", "reason": "Retrieves Vercel domain order information without changing vendor state."},
-    "list_toolbar_threads": {"verdict": "read", "reason": "Retrieves Vercel toolbar threads information without changing vendor state."},
-    "get_toolbar_thread": {"verdict": "read", "reason": "Retrieves Vercel toolbar thread information without changing vendor state."},
-    "use_vercel_cli": {"verdict": "read", "reason": "Returns CLI guidance only; any subsequent CLI execution is outside this tool."},
-    "reply_to_toolbar_thread": {"verdict": "write", "reason": "reply to toolbar thread creates or appends Vercel state; it has side effects."},
-    "add_toolbar_reaction": {"verdict": "write", "reason": "add toolbar reaction creates or appends Vercel state; it has side effects."},
-    "deploy_to_vercel": {"verdict": "destructive", "reason": "Can change a live deployment and the project serving production traffic."},
-    "buy_pro": {"verdict": "destructive", "reason": "buy pro changes existing Vercel state or removes it."},
-    "buy_credits": {"verdict": "destructive", "reason": "buy credits changes existing Vercel state or removes it."},
-    "buy_addon": {"verdict": "destructive", "reason": "buy addon changes existing Vercel state or removes it."},
-    "buy_domain": {"verdict": "destructive", "reason": "buy domain changes existing Vercel state or removes it."},
-    "get_access_to_vercel_url": {"verdict": "destructive", "reason": "Creates an access grant; the returned access URL is a credential."},
-    "web_fetch_vercel_url": {"verdict": "destructive", "reason": "Invokes application code, whose side effects cannot be established from HTTP GET alone."},
-    "import-claude-design-from-url": {"verdict": "destructive", "reason": "Imports into a project and can change existing live project state."},
-    "change_toolbar_thread_resolve_status": {"verdict": "destructive", "reason": "change toolbar thread resolve status changes existing Vercel state or removes it."},
-    "edit_toolbar_message": {"verdict": "destructive", "reason": "edit toolbar message changes existing Vercel state or removes it."},
+    "create_deployment": {
+      verdict: "destructive",
+      reason: "Creates a preview or production deployment from Git or files.",
+    },
+    "list_deployment_events": {
+      verdict: "read",
+      reason: "Reads build events using the documented deployments catalog.",
+    },
+    "search_vercel_documentation": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel vercel documentation information without changing vendor state.",
+    },
+    "list_teams": { "verdict": "read", "reason": "Retrieves Vercel teams information without changing vendor state." },
+    "list_projects": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel projects information without changing vendor state.",
+    },
+    "get_project": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel project information without changing vendor state.",
+    },
+    "list_deployments": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel deployments information without changing vendor state.",
+    },
+    "get_deployment": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel deployment information without changing vendor state.",
+    },
+    "get_deployment_build_logs": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel deployment build logs information without changing vendor state.",
+    },
+    "get_runtime_logs": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel runtime logs information without changing vendor state.",
+    },
+    "get_runtime_errors": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel runtime errors information without changing vendor state.",
+    },
+    "get_web_analytics": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel web analytics information without changing vendor state.",
+    },
+    "list_agent_run_projects": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel agent run projects information without changing vendor state.",
+    },
+    "list_agent_runs": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel agent runs information without changing vendor state.",
+    },
+    "get_agent_run": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel agent run information without changing vendor state.",
+    },
+    "get_agent_run_trace": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel agent run trace information without changing vendor state.",
+    },
+    "check_domain_availability_and_price": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel check domain availability and price information without changing vendor state.",
+    },
+    "get_purchase_quote": {
+      "verdict": "read",
+      "reason": "Reads a purchase quote; billing changes require a separate purchase tool.",
+    },
+    "get_domain_order": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel domain order information without changing vendor state.",
+    },
+    "list_toolbar_threads": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel toolbar threads information without changing vendor state.",
+    },
+    "get_toolbar_thread": {
+      "verdict": "read",
+      "reason": "Retrieves Vercel toolbar thread information without changing vendor state.",
+    },
+    "use_vercel_cli": {
+      "verdict": "read",
+      "reason": "Returns CLI guidance only; any subsequent CLI execution is outside this tool.",
+    },
+    "reply_to_toolbar_thread": {
+      "verdict": "write",
+      "reason": "reply to toolbar thread creates or appends Vercel state; it has side effects.",
+    },
+    "add_toolbar_reaction": {
+      "verdict": "write",
+      "reason": "add toolbar reaction creates or appends Vercel state; it has side effects.",
+    },
+    "deploy_to_vercel": {
+      "verdict": "destructive",
+      "reason": "Can change a live deployment and the project serving production traffic.",
+    },
+    "buy_pro": { "verdict": "destructive", "reason": "buy pro changes existing Vercel state or removes it." },
+    "buy_credits": { "verdict": "destructive", "reason": "buy credits changes existing Vercel state or removes it." },
+    "buy_addon": { "verdict": "destructive", "reason": "buy addon changes existing Vercel state or removes it." },
+    "buy_domain": { "verdict": "destructive", "reason": "buy domain changes existing Vercel state or removes it." },
+    "get_access_to_vercel_url": {
+      "verdict": "destructive",
+      "reason": "Creates an access grant; the returned access URL is a credential.",
+    },
+    "web_fetch_vercel_url": {
+      "verdict": "destructive",
+      "reason": "Invokes application code, whose side effects cannot be established from HTTP GET alone.",
+    },
+    "import-claude-design-from-url": {
+      "verdict": "destructive",
+      "reason": "Imports into a project and can change existing live project state.",
+    },
+    "change_toolbar_thread_resolve_status": {
+      "verdict": "destructive",
+      "reason": "change toolbar thread resolve status changes existing Vercel state or removes it.",
+    },
+    "edit_toolbar_message": {
+      "verdict": "destructive",
+      "reason": "edit toolbar message changes existing Vercel state or removes it.",
+    },
   },
 };
 
-function mcpUsageGuide(
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function mcpUsageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `${skill.fragments.guide_2}${purpose}${skill.fragments.guide_3}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
-function vercelMcp(
-  id: string,
-  purpose: string,
-  options: VercelMcpOptions,
-  provider: ProviderContext,
-): Connector {
+function vercelMcp(id: string, purpose: string, options: VercelMcpOptions, provider: ProviderContext): Connector {
   const connector = remoteMcp(id, {
     url: VERCEL_MCP_ENDPOINT,
     ...provider.connectorOptions,
@@ -1004,28 +1188,17 @@ function vercelMcp(
     classify: provider.classify,
     usageGuide: {
       content: mcpUsageGuide(purpose, options.instructions),
-      summary:
-        "Official MCP. Live Vercel schemas, id resolution, deployment diagnosis, purchases, and access grants.",
+      summary: "Official MCP. Live Vercel schemas, id resolution, deployment diagnosis, purchases, and access grants.",
       required: true,
     },
   });
   return vercelCatalog(connector);
 }
 
-function vercelApi(
-  id: string,
-  purpose: string,
-  options: VercelApiOptions,
-): Connector {
+function vercelApi(id: string, purpose: string, options: VercelApiOptions): Connector {
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
-  if (
-    !Number.isInteger(defaultPageSize) ||
-    defaultPageSize < 1 ||
-    defaultPageSize > MAX_PAGE_SIZE
-  ) {
-    throw new Error(
-      `vercel() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`,
-    );
+  if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
+    throw new Error(`vercel() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
   const teamId = options.teamId?.trim() || undefined;
   const send = vercelTransport(options.baseUrl ?? VERCEL_API_BASE_URL);
@@ -1042,11 +1215,13 @@ function vercelApi(
     },
     testCredential: async (value, ctx) => {
       try {
-        const payload = asRecord(await callVercel(
-          send,
-          { method: "GET", path: "/v2/user" },
-          { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
-        ));
+        const payload = asRecord(
+          await callVercel(
+            send,
+            { method: "GET", path: "/v2/user" },
+            { ...ctx, credential: { get: async () => value, getAll: async () => ({ value }) } },
+          ),
+        );
         const user = asRecord(payload["user"] ?? payload);
         const identity = user["username"] ?? user["email"] ?? user["name"] ?? user["id"] ?? "Vercel user";
         return { ok: true, message: `Authenticated as ${identity}.` };
@@ -1063,25 +1238,24 @@ function vercelApi(
         "Team scoping, deployment diagnosis, value-safe environment variables, REST hatches, and cursor pagination.",
       required: true,
     },
-    ...(options.callAdmission
-      ? { callAdmission: options.callAdmission }
-      : {}),
+    ...(options.callAdmission ? { callAdmission: options.callAdmission } : {}),
     tools: tools(send, teamId),
-    ...(options.maxResultBytes !== undefined
-      ? { maxResultBytes: options.maxResultBytes }
-      : {}),
+    ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
   });
 }
 
-
 /** The closed options vercel() accepts; see `assertKnownOptions`. */
-const VERCEL_OPTIONS = variants("surface", {
-  api: optionsOf<VercelApiOptions>()({
-    ...PROVIDER_COMMON,
-    ...keys("surface", "teamId", "baseUrl", "defaultPageSize"),
-  }).shape,
-  mcp: optionsOf<VercelMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
-}, "mcp");
+const VERCEL_OPTIONS = variants(
+  "surface",
+  {
+    api: optionsOf<VercelApiOptions>()({
+      ...PROVIDER_COMMON,
+      ...keys("surface", "teamId", "baseUrl", "defaultPageSize"),
+    }).shape,
+    mcp: optionsOf<VercelMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
+  },
+  "mcp",
+);
 
 /** A maintained Vercel connection using the selected provider surface. */
 export const vercel = defineProvider<VercelConnectionOptions>({
@@ -1089,7 +1263,7 @@ export const vercel = defineProvider<VercelConnectionOptions>({
   title: "Vercel",
   kind: "composed",
   readme: "Vercel",
-  bundle: {"baselineGzip":143649,"maxGzip":203649},
+  bundle: { "baselineGzip": 143649, "maxGzip": 203649 },
   skill,
   options: VERCEL_OPTIONS,
   classify: VERCEL_MCP_CLASSIFICATION,
@@ -1098,13 +1272,8 @@ export const vercel = defineProvider<VercelConnectionOptions>({
 
 function vercelConnector(id: string, options: VercelConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  return options.surface === "api"
-    ? vercelApi(id, purpose, options)
-    : vercelMcp(id, purpose, options, provider);
+  return options.surface === "api" ? vercelApi(id, purpose, options) : vercelMcp(id, purpose, options, provider);
 }
 
 /** @deprecated Read `vercel.definition.classify` instead. Kept for existing imports. */
-export const VERCEL_MCP_VETTED_CATALOG = reviewedCatalog(
-  vercel.definition.classify!,
-  'defineProvider("vercel")',
-);
+export const VERCEL_MCP_VETTED_CATALOG = reviewedCatalog(vercel.definition.classify!, 'defineProvider("vercel")');

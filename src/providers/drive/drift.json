@@ -8,9 +8,7 @@
         "url": "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
         "format": "google-discovery"
       },
-      "scopes": [
-        "https://www.googleapis.com/auth/drive"
-      ],
+      "scopes": ["https://www.googleapis.com/auth/drive"],
       "endpoints": [
         {
           "method": "GET",

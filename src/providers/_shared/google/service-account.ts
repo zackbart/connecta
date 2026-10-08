@@ -22,11 +22,7 @@
  * and the scopes — both are configuration a reader needs to fix the grant —
  * and never the material that proves it.
  */
-import {
-  guardedFetch,
-  retryAfterMs,
-  type GuardedTransport,
-} from "../../../connectors/guarded-fetch.js";
+import { guardedFetch, retryAfterMs, type GuardedTransport } from "../../../connectors/guarded-fetch.js";
 import { ConnectorCallError, type ConnectorCallErrorCode } from "../../../errors.js";
 import type { ConnectorContext } from "../../../types.js";
 
@@ -252,9 +248,7 @@ export function parseServiceAccount(owner: string, input: unknown): ServiceAccou
   } else if (input && typeof input === "object" && !Array.isArray(input)) {
     record = input as Record<string, unknown>;
   } else {
-    throw new Error(
-      `${owner} requires serviceAccount: { clientEmail, privateKey } or the JSON key file's text.`,
-    );
+    throw new Error(`${owner} requires serviceAccount: { clientEmail, privateKey } or the JSON key file's text.`);
   }
   const clientEmail = field(record, fromFile ? "client_email" : "clientEmail");
   const privateKey = field(record, fromFile ? "private_key" : "privateKey");
@@ -294,13 +288,7 @@ function signingKey(account: ServiceAccountKey): Promise<CryptoKey> {
   let key = signingKeys.get(account);
   if (!key) {
     key = crypto.subtle
-      .importKey(
-        "pkcs8",
-        account.der,
-        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-        false,
-        ["sign"],
-      )
+      .importKey("pkcs8", account.der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"])
       .catch((cause: unknown) => {
         signingKeys.delete(account);
         throw new ConnectorCallError(
@@ -335,11 +323,7 @@ async function signAssertion(
     ),
   );
   const input = `${header}.${claims}`;
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    await signingKey(account),
-    encoder.encode(input),
-  );
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", await signingKey(account), encoder.encode(input));
   return `${input}.${base64Url(new Uint8Array(signature))}`;
 }
 
@@ -355,9 +339,7 @@ const tokenTransport: GuardedTransport = guardedFetch({
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 /** The token endpoint's OAuth `error` codes this module names back. */
@@ -431,10 +413,7 @@ function tokenFailure(
     );
   }
   if (status >= 500) {
-    return new ConnectorCallError(
-      "unavailable",
-      `Google's token endpoint answered HTTP ${status}.${said}`,
-    );
+    return new ConnectorCallError("unavailable", `Google's token endpoint answered HTTP ${status}.${said}`);
   }
   if (status === 403) {
     return new ConnectorCallError(
@@ -480,11 +459,11 @@ async function mint(
       const accessToken = body["access_token"];
       const expiresIn = Number(body["expires_in"] ?? ASSERTION_LIFETIME_SECONDS);
       if (typeof accessToken !== "string" || accessToken === "" || !Number.isFinite(expiresIn)) {
-        throw verdict(new ConnectorCallError(
-          "connector_call_failed",
-          "Google's token endpoint answered without an access token.",
-          { retryable: false },
-        ));
+        throw verdict(
+          new ConnectorCallError("connector_call_failed", "Google's token endpoint answered without an access token.", {
+            retryable: false,
+          }),
+        );
       }
       // Measured from before the request left, so a slow answer only ever
       // shortens the token's life here, never lengthens it.
@@ -548,9 +527,9 @@ const keyIdentities = new WeakMap<ServiceAccountKey, Promise<string>>();
 function keyIdentity(account: ServiceAccountKey): Promise<string> {
   let identity = keyIdentities.get(account);
   if (!identity) {
-    identity = crypto.subtle.digest("SHA-256", account.der).then((digest) =>
-      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
-    );
+    identity = crypto.subtle
+      .digest("SHA-256", account.der)
+      .then((digest) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""));
     keyIdentities.set(account, identity);
   }
   return identity;
@@ -558,12 +537,9 @@ function keyIdentity(account: ServiceAccountKey): Promise<string> {
 
 async function cacheKey({ account, subject, scopes }: DelegatedTokenRequest): Promise<string> {
   // Workspace addresses are case-insensitive; scope order is not a new grant.
-  return [
-    account.clientEmail,
-    await keyIdentity(account),
-    subject.toLowerCase(),
-    [...scopes].sort().join(" "),
-  ].join("\n");
+  return [account.clientEmail, await keyIdentity(account), subject.toLowerCase(), [...scopes].sort().join(" ")].join(
+    "\n",
+  );
 }
 
 function remember(key: string, minted: Minted): void {
@@ -602,10 +578,7 @@ function follow(flight: Flight, signal: AbortSignal | undefined): Promise<Flight
       clearTimeout(timer);
       reject(signal!.reason);
     };
-    const timer = setTimeout(
-      () => finish({ kind: "abandoned" }),
-      Math.max(0, flight.deadline - Date.now()),
-    );
+    const timer = setTimeout(() => finish({ kind: "abandoned" }), Math.max(0, flight.deadline - Date.now()));
     signal?.addEventListener("abort", onAbort, { once: true });
     void flight.outcome.then(finish);
   });
@@ -622,10 +595,7 @@ function follow(flight: Flight, signal: AbortSignal | undefined): Promise<Flight
  * reaches the deadline first, mints for itself. A refusal is rebuilt for each
  * follower from its code and message, never handed over as the owner's object.
  */
-export async function delegatedToken(
-  request: DelegatedTokenRequest,
-  ctx: ConnectorContext,
-): Promise<string> {
+export async function delegatedToken(request: DelegatedTokenRequest, ctx: ConnectorContext): Promise<string> {
   const key = await cacheKey(request);
   for (;;) {
     const cached = tokens.get(key);
@@ -682,10 +652,7 @@ export async function delegatedToken(
  * but only that token. A 401 that arrives after a newer token replaced it
  * leaves the newer one alone.
  */
-export async function forgetDelegatedToken(
-  request: DelegatedTokenRequest,
-  rejected: string,
-): Promise<void> {
+export async function forgetDelegatedToken(request: DelegatedTokenRequest, rejected: string): Promise<void> {
   const key = await cacheKey(request);
   if (tokens.get(key)?.accessToken === rejected) tokens.delete(key);
 }

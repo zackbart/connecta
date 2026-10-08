@@ -61,24 +61,24 @@ server push, no stream resumability, scope resolved rather than remembered.
 ## Request lifecycle
 
 `src/server.ts` is the composition root: MCP origin check, scheme upgrade, route
-table, security headers. Route *order* is the contract — several routes would
+table, security headers. Route _order_ is the contract — several routes would
 behave differently if they were reachable in another order — so read the table
 top to bottom.
 
-| Order | Route | Notes |
-| --- | --- | --- |
-| 0 | MCP Origin check | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted. |
-| 0 | HTTPS upgrade | 308 to an HTTPS `publicUrl`, with path and query *assigned* onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS. |
-| 0 | Cloudflare Access (Worker, when enabled) | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`. |
-| 1 | `/oauth/client-metadata/<connectorId>` | Public GET-only CIMD for configured self-hosted OAuth connectors; fixed `publicUrl`, no auth or storage. |
-| 1 | Mounted UI routes | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes. |
-| 1 | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI. |
-| 2 | MCP preflight | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth. |
-| 2 | Other `OPTIONS` | Auth metadata first, otherwise compatibility CORS preflight. |
-| 3 | `/.well-known/*` | Auth metadata, or 404. |
-| 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata. |
-| 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
-| 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
+| Order | Route                                                     | Notes                                                                                                                                                                                                                                                              |
+| ----- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0     | MCP Origin check                                          | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted.                                                                                          |
+| 0     | HTTPS upgrade                                             | 308 to an HTTPS `publicUrl`, with path and query _assigned_ onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS.                                             |
+| 0     | Cloudflare Access (Worker, when enabled)                  | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`.                                                                                                                                                               |
+| 1     | `/oauth/client-metadata/<connectorId>`                    | Public GET-only CIMD for configured self-hosted OAuth connectors; fixed `publicUrl`, no auth or storage.                                                                                                                                                           |
+| 1     | Mounted UI routes                                         | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes.                                                                                                                                             |
+| 1     | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI.                                                                                                                          |
+| 2     | MCP preflight                                             | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth.                                                                                                                                                                                                       |
+| 2     | Other `OPTIONS`                                           | Auth metadata first, otherwise compatibility CORS preflight.                                                                                                                                                                                                       |
+| 3     | `/.well-known/*`                                          | Auth metadata, or 404.                                                                                                                                                                                                                                             |
+| 4     | `/health`                                                 | Open and payload-free: health, executor, admission, and deployment metadata.                                                                                                                                                                                       |
+| 6     | `/mcp`, `/mcp/<pool>`                                     | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
+| 7     | Other paths                                               | 404. Custom HTTP routes belong to the deployment.                                                                                                                                                                                                                  |
 
 Every response leaves through `withSecurityHeaders`. HTML uses one common
 security-header helper, including status and error pages. Operator shells
@@ -99,7 +99,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
    configured request lifetime, starting before classification. Other requests
    take one permit from the deployment-wide pool, taken before auth so an
    unauthenticated flood costs a permit rather than a Clerk lookup, and held
-   until the response *body* completes, the caller leaves, or its configured
+   until the response _body_ completes, the caller leaves, or its configured
    lifetime ends, not until the handler returns.
 2. **Authorize.** Machine tokens precede interactive providers. A provider's
    synchronous credential recognition selects the sole verifier for an explicit
@@ -166,13 +166,13 @@ request-scoped sent-credential set and pass through `redactAgentOutput` before
 serialization. The SDK's `server/discover` response and registered meta-tool
 results use that same set; connector contexts retain only an opaque scope.
 
-| Refusal | HTTP status | Application code | Previous code |
-| --- | --- | --- | --- |
-| Request capacity exhausted | 503 | `-33001` | `-31001` |
-| Server shutting down | 503 | `-33002` | `-31002` |
-| Request lifetime exceeded | 504 | `-33003` | none |
-| Pool missing or refused | 404 | `-33004` | none |
-| Origin or admitted access forbidden | 403 | `-33005` | none |
+| Refusal                             | HTTP status | Application code | Previous code |
+| ----------------------------------- | ----------- | ---------------- | ------------- |
+| Request capacity exhausted          | 503         | `-33001`         | `-31001`      |
+| Server shutting down                | 503         | `-33002`         | `-31002`      |
+| Request lifetime exceeded           | 504         | `-33003`         | none          |
+| Pool missing or refused             | 404         | `-33004`         | none          |
+| Origin or admitted access forbidden | 403         | `-33005`         | none          |
 
 These allocations are outside JSON-RPC's reserved `-32768..-32000` range and
 MCP's `-32020..-32099` range. The prior admission codes were also outside those
@@ -189,15 +189,15 @@ legacy initialization, and tool calls.
 The meta-tool handlers are thin. The work sits in six modules the registry owns
 or hands out, and a change usually belongs in exactly one of them:
 
-| Module | Owns |
-| --- | --- |
-| `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, request-local complete-catalog reads, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
-| `src/catalog-cache.ts` | SQL-backed SDK tools/resource/template listing cache, intake redaction, TTL bounds, host auth partitions, invalidation generations, and completed-refresh observations. |
-| `src/catalog-service.ts` | Request-local listing, search, and describe. Caches catalogs inside one request and fans discovery probes out under deadlines. |
-| `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
-| `src/catalog.ts` | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows. |
-| `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
-| `src/program-writes.ts` | Trusted-pool write accounting: write budgets, dispatch draining, and known or unknown outcomes. |
+| Module                   | Owns                                                                                                                                                                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/registry.ts`        | The connector set, identity-scoped views, personal storage partitions, address resolution, request-local complete-catalog reads, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
+| `src/catalog-cache.ts`   | SQL-backed SDK tools/resource/template listing cache, intake redaction, TTL bounds, host auth partitions, invalidation generations, and completed-refresh observations.                                                          |
+| `src/catalog-service.ts` | Request-local listing, search, and describe. Caches catalogs inside one request and fans discovery probes out under deadlines.                                                                                                   |
+| `src/invocation.ts`      | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record.                                                                         |
+| `src/catalog.ts`         | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows.                                                                                                                               |
+| `src/result-shapes.ts`   | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none.                                                                                              |
+| `src/program-writes.ts`  | Trusted-pool write accounting: write budgets, dispatch draining, and known or unknown outcomes.                                                                                                                                  |
 
 `src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same two
 services, `CatalogService` and `InvocationService`. That is the point: a
@@ -211,7 +211,7 @@ quietly diverges is how generated code would mint a capability.
 
 Request admission (`src/executor-admission.ts`, applied in `src/routes/mcp.ts`)
 bounds the MCP envelope: one deployment-wide FIFO pool, plus a deliberately
-smaller code pool a program takes a *second* permit from, so one request cannot
+smaller code pool a program takes a _second_ permit from, so one request cannot
 trade ordinary capacity for unbounded sandboxes. `admission.code` is only a
 fallback — an executor implementing `acquire()` owns a bounded pool already, its
 settings win, and connecta warns the fallback was ignored. Invalid bounds throw
@@ -252,16 +252,16 @@ queue. Health checks and subsequent MCP requests confirmed the same isolate ID.
 The [recorded observations](https://github.com/zackbart/connecta/blob/a0ac904513fac735582b4bc9c817a48300134328/scripts/probes/worker-disconnect-2026-09-25.json)
 contain all twelve cases, including served flags and client-end timing.
 
-| Response and flag | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
-| --- | --- | --- | --- |
-| Heartbeats, no flag | neither | neither | active 1; 503 |
-| Idle with a pending timer, no flag | neither | neither | active 1; 503 |
-| Heartbeats, request signal enabled | abort only | both | active 0; 200 |
-| Idle with a pending timer, request signal enabled | abort only | both | active 0; 200 |
-| One chunk, then no timer or I/O, either configuration | neither | neither | active 1; 503 |
+| Response and flag                                     | Raw stream abort / cancel | Connecta source abort / cancel | Admission after response; next request |
+| ----------------------------------------------------- | ------------------------- | ------------------------------ | -------------------------------------- |
+| Heartbeats, no flag                                   | neither                   | neither                        | active 1; 503                          |
+| Idle with a pending timer, no flag                    | neither                   | neither                        | active 1; 503                          |
+| Heartbeats, request signal enabled                    | abort only                | both                           | active 0; 200                          |
+| Idle with a pending timer, request signal enabled     | abort only                | both                           | active 0; 200                          |
+| One chunk, then no timer or I/O, either configuration | neither                   | neither                        | active 1; 503                          |
 
 The last row is a different failure. The client observed the response end
-*before* its planned disconnect, although the source never closed itself.
+_before_ its planned disconnect, although the source never closed itself.
 The runtime ended the response without running JavaScript cleanup. This does
 not show a missing abort on a still-live request. The other cases remained open
 until the client aborted. Admission was sampled 1.5 seconds later, followed by
@@ -429,7 +429,6 @@ requires that same owner and the recorded pool's grants. Ownerless private
 observations cannot be disclosed. Public-hinted shared-auth catalogs retain
 shared history within their admitted pool and endpoint.
 
-
 Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge
@@ -458,7 +457,7 @@ produce instances that take the same catalog, read-only, credential, storage,
 invocation, result-size, and activity paths. Every one is deployment
 configuration, never runtime registration. `authScope: "shared" | "personal"`
 partitions connecta-owned context — state, credentials, OAuth, catalogs, observed
-shapes — by principal, and *only* connecta-owned context: a secret a custom
+shapes — by principal, and _only_ connecta-owned context: a secret a custom
 handler closes over is shared JavaScript state, and `remoteMcp()` refuses the
 literal-headers-plus-personal version of that mistake. Visibility
 (`identity.connectorAccess`) is a separate rule; hiding a connector does not
@@ -545,6 +544,7 @@ schemas), but withholds a tool name outside the grammar as it does in records.
 `test/operator-record-sources.node.test.ts` is a secondary lint over every other
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
 the next one.
+
 ## Configuration
 
 `ConnectaConfig` is one schema (`src/config.ts`, combinators in
@@ -718,7 +718,7 @@ domain-wide delegation
 (`src/providers/google/`, first consumed by `./providers/gmail`) hands the
 admitted identity to a deployment-config `subject` function and mints a
 service-account token as whatever Workspace address it returns. The caller
-carries whether an inbound provider *authenticated* it: an open deployment
+carries whether an inbound provider _authenticated_ it: an open deployment
 admits everyone as the anonymous actor, and the function is never asked about
 them. No caller, an unauthenticated one, or no address fails `auth_required`
 before any request leaves. The provider never chooses the account and a
@@ -800,7 +800,7 @@ and `npm run check:declarations` fails if what remains names an Effect type.
   to `ctx.waitUntil` when there is one.
 
 Beside them sit `withDeadlineEffect`, which aborts the operation's own signal
-with the labelled timeout error *before* interrupting it, so work that honors
+with the labelled timeout error _before_ interrupting it, so work that honors
 the signal sees the same reason the caller does, and `fromSignal`, which turns
 an `AbortSignal` into a failure to race against. Nothing runs Effect at module
 scope, where a Worker may not start work, and nothing logs through
@@ -817,18 +817,18 @@ storage is the root's namespaced to its principal.
 
 ### What runs on Effect
 
-| Area | Shape |
-| --- | --- |
+| Area                                                                   | Shape                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, when its admitted-request lifetime ends in that request, or at once if the handler fails first. If workerd runs none of those callbacks, the next request reclaims only the expired admission record; it cannot close another request's Scope. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
-| Admission (`executor-admission.ts`, `call-admission.ts`) | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires. |
-| One tool call (`invocation.ts`) | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`. |
-| `execute_code` (`execute.ts`) | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own. |
-| Discovery (`catalog-service.ts`) | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency. |
-| Registry (`registry.ts`) | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight. |
-| Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |
-| Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook. |
-| Operator and activity data (`routes/operator.ts`) | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation. |
-| QuickJS pool (`executors/quickjs.ts`, Node only) | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`. |
+| Admission (`executor-admission.ts`, `call-admission.ts`)               | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires.                                                                                                                                                                                                                                                                                                                                    |
+| One tool call (`invocation.ts`)                                        | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`.                                                                                                                                                                                                                                                                                                     |
+| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own.                                                                                                                                                                                                                                                                      |
+| Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency.                                                                                                                                                                                    |
+| Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
+| Remote MCP (`connectors/remote-mcp.ts`)                                | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
+| Downstream OAuth (`auth/downstream-oauth.ts`)                          | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook.                                                                                                                                                                                                                                                                                                                                                                                                |
+| Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
+| QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ### What stays plain
 

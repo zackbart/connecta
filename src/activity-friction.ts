@@ -1,8 +1,6 @@
 import type { AgentFriction } from "./activity.js";
 /** Coarse recovery class derived without inspecting payloads or error prose. */
-export function agentFrictionForCode(
-  code: string | undefined,
-): AgentFriction | undefined {
+export function agentFrictionForCode(code: string | undefined): AgentFriction | undefined {
   switch (code) {
     case "unknown_address":
     case "unknown_tool":

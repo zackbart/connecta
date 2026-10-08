@@ -267,9 +267,7 @@ const COMMENT_PAGE_FIELDS = "objectId,revisionId,commentsViewMode,comments,comme
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -277,9 +275,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -322,7 +318,8 @@ function deliverable<T>(
  */
 function appliedDeliverable<T>(result: T, tool: string, reread: string): T {
   const bytes = jsonBytes(result);
-  if (bytes > RESULT_BUDGET_BYTES) throw appliedButUnreadable(tool, `its result is ${bytes} bytes, more than one result can carry`, reread);
+  if (bytes > RESULT_BUDGET_BYTES)
+    throw appliedButUnreadable(tool, `its result is ${bytes} bytes, more than one result can carry`, reread);
   return result;
 }
 
@@ -416,7 +413,8 @@ function decodeCursor(
   expected: { k: Cursor["k"]; p: string; g?: string; raw: boolean },
 ): Cursor | undefined {
   if (value === undefined) return undefined;
-  const refuse = (why: string) => new ConnectorCallError("invalid_args", `${why} Omit cursor to start from the beginning.`);
+  const refuse = (why: string) =>
+    new ConnectorCallError("invalid_args", `${why} Omit cursor to start from the beginning.`);
   let cursor: Cursor;
   try {
     const base64 = String(value).replace(/-/g, "+").replace(/_/g, "/");
@@ -440,7 +438,11 @@ function decodeCursor(
   }
   if (cursor.k !== expected.k) {
     const tool = Object.hasOwn(CURSOR_TOOLS, cursor.k) ? CURSOR_TOOLS[cursor.k] : undefined;
-    throw refuse(tool ? `cursor belongs to another tool (${tool}).` : "cursor is not one this connection issued; pass page.nextCursor back unchanged.");
+    throw refuse(
+      tool
+        ? `cursor belongs to another tool (${tool}).`
+        : "cursor is not one this connection issued; pass page.nextCursor back unchanged.",
+    );
   }
   if (cursor.p !== expected.p) throw refuse("cursor continues a different presentation.");
   if ((cursor.g ?? undefined) !== expected.g) throw refuse("cursor continues a different page.");
@@ -527,14 +529,7 @@ function matrixOf(transform: unknown): Matrix {
 function compose(parent: Matrix, child: Matrix): Matrix {
   const [a, b, c, d, e, f] = parent;
   const [ca, cb, cc, cd, ce, cf] = child;
-  return [
-    a * ca + c * cb,
-    b * ca + d * cb,
-    a * cc + c * cd,
-    b * cc + d * cd,
-    a * ce + c * cf + e,
-    b * ce + d * cf + f,
-  ];
+  return [a * ca + c * cb, b * ca + d * cb, a * cc + c * cd, b * cc + d * cd, a * ce + c * cf + e, b * ce + d * cf + f];
 }
 
 type ElementKind = "shape" | "table" | "wordArt" | "image" | "video" | "chart" | "line" | "other";
@@ -677,16 +672,20 @@ async function projectSlide(
     // Decorative lines and empty boxes carry nothing to read; they are
     // counted, not listed. An empty placeholder is kept: its id is where
     // insertText fills a new slide's title or body.
-    if (leaf.kind === "line" || (!leaf.text && !alt && !placeholder && (leaf.kind === "shape" || leaf.kind === "wordArt"))) {
+    if (
+      leaf.kind === "line" ||
+      (!leaf.text && !alt && !placeholder && (leaf.kind === "shape" || leaf.kind === "wordArt"))
+    ) {
       omitted += 1;
       continue;
     }
     if (placeholder && TITLE_PLACEHOLDERS.has(placeholder) && title === undefined && leaf.text) {
       const line = leaf.text.replace(/\n+/g, " ");
       const keep = headOf(line, Math.min(MAX_TITLE_CHARS, maxChars));
-      title = keep.length < line.length
-        ? `${keep}\n[… ${line.length - keep.length} more characters; the title element's text has them]`
-        : line;
+      title =
+        keep.length < line.length
+          ? `${keep}\n[… ${line.length - keep.length} more characters; the title element's text has them]`
+          : line;
     }
     const row = describeLeaf(leaf, RAW_HAS_IT);
     if (row["altText"] !== alt) truncated = true;
@@ -697,7 +696,14 @@ async function projectSlide(
         truncated = true;
         row["text"] = `${kept}\n[… ${leaf.text.length - kept.length} more characters truncated; ${why}]`;
         row["truncated"] = true;
-        row["textCursor"] = encodeCursor({ k: "page", p: deck.presentationId, g: slideId, s: await slideState(), i: position, o: kept.length });
+        row["textCursor"] = encodeCursor({
+          k: "page",
+          p: deck.presentationId,
+          g: slideId,
+          s: await slideState(),
+          i: position,
+          o: kept.length,
+        });
       } else {
         row["text"] = kept;
       }
@@ -882,7 +888,12 @@ function layoutNames(presentation: JsonRecord): Map<string, string> {
  * Rows from `start` that fit `room` bytes and `limit` rows, as a page of
  * them and the index the next page starts at.
  */
-function rowsWithin(rows: readonly JsonRecord[], start: number, limit: number, room: number): { rows: JsonRecord[]; next: number } {
+function rowsWithin(
+  rows: readonly JsonRecord[],
+  start: number,
+  limit: number,
+  room: number,
+): { rows: JsonRecord[]; next: number } {
   const out: JsonRecord[] = [];
   let used = 2;
   let next = start;
@@ -941,7 +952,10 @@ function rawItems(page: JsonRecord): JsonRecord[] {
   const { pageElements, ...properties } = page;
   const slide = asRecord(properties["slideProperties"]);
   if (slide["notesPage"]) {
-    properties["slideProperties"] = { ...slide, notesPage: compact({ objectId: text(asRecord(slide["notesPage"])["objectId"]) }) };
+    properties["slideProperties"] = {
+      ...slide,
+      notesPage: compact({ objectId: text(asRecord(slide["notesPage"])["objectId"]) }),
+    };
   }
   return [properties, ...asArray(pageElements).map(asRecord)];
 }
@@ -958,7 +972,12 @@ interface PageRows {
  * in reading order, with its text continued across pages wherever one page
  * cannot hold it.
  */
-function projectedRows(leaves: readonly Leaf[], start: { i: number; o: number }, limit: number, room: number): PageRows {
+function projectedRows(
+  leaves: readonly Leaf[],
+  start: { i: number; o: number },
+  limit: number,
+  room: number,
+): PageRows {
   const elements: JsonRecord[] = [];
   let used = 2;
   let index = start.i;
@@ -989,9 +1008,10 @@ function projectedRows(leaves: readonly Leaf[], start: { i: number; o: number },
     // measured against everything else the row carries.
     const shell = { ...row, text: "", truncated: true, textLength: leaf.text.length };
     const available = room - used - 1 - (jsonBytes(shell) - 2);
-    const cut = available > 2
-      ? prefixWithin(rest, available, (dropped) => `\n[… ${dropped} more characters continue on the next page]`)
-      : { text: "", kept: 0 };
+    const cut =
+      available > 2
+        ? prefixWithin(rest, available, (dropped) => `\n[… ${dropped} more characters continue on the next page]`)
+        : { text: "", kept: 0 };
     if (cut.kept === 0 && elements.length > 0) break;
     if (cut.kept === rest.length) {
       const whole = { ...row, text: rest };
@@ -1002,7 +1022,11 @@ function projectedRows(leaves: readonly Leaf[], start: { i: number; o: number },
       continue;
     }
     if (cut.kept === 0) {
-      throw new ConnectorCallError("connector_call_failed", "get_page could not fit any of an element's text in one result.", { retryable: false });
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "get_page could not fit any of an element's text in one result.",
+        { retryable: false },
+      );
     }
     elements.push({ ...shell, text: cut.text });
     return { elements, next: { i: index, o: offset + cut.kept } };
@@ -1063,9 +1087,13 @@ function rawRows(
     const cut = available > 2 ? prefixWithin(json.slice(offset), available, () => "") : { text: "", kept: 0 };
     if (cut.kept === 0) {
       if (rows > 0) break;
-      throw new ConnectorCallError("connector_call_failed", `${layout.tool} could not fit any part of a raw item in one result.`, {
-        retryable: false,
-      });
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        `${layout.tool} could not fit any part of a raw item in one result.`,
+        {
+          retryable: false,
+        },
+      );
     }
     const chunk = { json: cut.text, offset, length: json.length };
     if (index === 0 && layout.propertiesFirst) out.propertiesJson = chunk;
@@ -1141,7 +1169,10 @@ function afterUnknownCreate(error: unknown, lookFor: string): unknown {
   if (!(error instanceof ConnectorCallError) || !outcome?.dispatched || outcome.phase === "refused") {
     return error;
   }
-  return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, { retryable: error.retryable, cause: error });
+  return new ConnectorCallError(error.code, `${error.message} ${lookFor}`, {
+    retryable: error.retryable,
+    cause: error,
+  });
 }
 
 /**
@@ -1168,10 +1199,19 @@ function wholeId(value: unknown): string | undefined {
  * only their ids.
  * Nesting deeper than any reply Slides sends is cut where it starts.
  */
-function pruned(value: unknown, key: string, path: string, mode: "short" | "ids", cut: string[], depth: number): unknown {
+function pruned(
+  value: unknown,
+  key: string,
+  path: string,
+  mode: "short" | "ids",
+  cut: string[],
+  depth: number,
+): unknown {
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "string") {
-    const keep = ID_KEY.test(key) ? wholeId(value) !== undefined : mode === "short" && jsonBytes(value) <= MAX_NAME_BYTES;
+    const keep = ID_KEY.test(key)
+      ? wholeId(value) !== undefined
+      : mode === "short" && jsonBytes(value) <= MAX_NAME_BYTES;
     if (keep) return value;
     cut.push(path);
     return undefined;
@@ -1302,7 +1342,9 @@ function commentSaveFields(response: JsonRecord, sentComments: boolean): { comme
   const state = text(response["commentUpdateState"]);
   const settled = sentComments ? state === "ALL_SAVED" : state === undefined || COMMENTS_SETTLED.has(state);
   if (settled) return {};
-  return { commentUpdateState: label(state ?? COMMENT_STATE_UNSPECIFIED, MAX_NAME_BYTES, "Slides sent a longer state") ?? "" };
+  return {
+    commentUpdateState: label(state ?? COMMENT_STATE_UNSPECIFIED, MAX_NAME_BYTES, "Slides sent a longer state") ?? "",
+  };
 }
 
 /** What a write whose comments did not all save tells its caller. */
@@ -1520,9 +1562,13 @@ function threadRows(
   let { i, j, o } = start;
   const fits = (row: JsonRecord) => used + jsonBytes(row) + 1 <= room;
   const unfit = () =>
-    new ConnectorCallError("connector_call_failed", "list_comments could not fit any of a comment thread in one result; raw: true pages it in JSON chunks.", {
-      retryable: false,
-    });
+    new ConnectorCallError(
+      "connector_call_failed",
+      "list_comments could not fit any of a comment thread in one result; raw: true pages it in JSON chunks.",
+      {
+        retryable: false,
+      },
+    );
   while (i < threads.length && out.length < limit) {
     const thread = threads[i]!;
     // Where this row starts: a row that places nothing leaves the next page
@@ -1580,7 +1626,11 @@ function threadRows(
  * binding to the exact JSON of both makes either a `conflict`, never a page
  * that skips, repeats, or places a thread where it no longer is.
  */
-function commentsState(revisionId: unknown, comments: readonly unknown[], pages: readonly JsonRecord[]): Promise<string> {
+function commentsState(
+  revisionId: unknown,
+  comments: readonly unknown[],
+  pages: readonly JsonRecord[],
+): Promise<string> {
   return stateOf(undefined, () => [
     text(revisionId) ?? null,
     comments,
@@ -1729,7 +1779,8 @@ const CURSOR_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: 4096,
   pattern: "^[A-Za-z0-9_-]+$",
-  description: "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged.",
+  description:
+    "Opaque page.nextCursor, or a textCursor-style cursor, this connection returned. Pass it back unchanged.",
 };
 
 function limitProperty(maximum: number, fallback: number, what: string): JsonSchema {
@@ -1926,7 +1977,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           },
           raw: {
             type: "boolean",
-            description: "Return this page's slides as Slides sends them, every style and transform, in place of the projection. No layouts or masters.",
+            description:
+              "Return this page's slides as Slides sends them, every style and transform, in place of the projection. No layouts or masters.",
           },
         },
         ["presentationId"],
@@ -2013,10 +2065,12 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           notesMasterId: text(asRecord(presentation["notesMaster"])["objectId"]),
           ...preview,
         });
-        const issue = (i: number) => encodeCursor({ k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
+        const issue = (i: number) =>
+          encodeCursor({ k: "deck", p: presentationId, s: state, raw: raw ? 1 : undefined, i });
         // A page ends at the slide limit or at the byte budget, whichever is
         // first; the budget counts the header and the longest cursor.
-        let used = jsonBytes({ ...header, slides: [] }) + pageEnvelopeBytes({ k: "deck", p: presentationId, s: state, i: 0 });
+        let used =
+          jsonBytes({ ...header, slides: [] }) + pageEnvelopeBytes({ k: "deck", p: presentationId, s: state, i: 0 });
         const slides: JsonRecord[] = [];
         let next = start;
         while (next < all.length && slides.length < limit) {
@@ -2051,7 +2105,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           cursor: CURSOR_PROPERTY,
           raw: {
             type: "boolean",
-            description: "The page and its top-level elements as Slides sends them; one too large is sent in JSON chunks.",
+            description:
+              "The page and its top-level elements as Slides sends them; one too large is sent in JSON chunks.",
           },
         },
         ["presentationId", "pageObjectId"],
@@ -2107,7 +2162,14 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const room =
           RESULT_BUDGET_BYTES -
           jsonBytes({ ...header, elements: [] }) -
-          pageEnvelopeBytes({ k: "page", p: presentationId, g: pageObjectId, s: state, raw: raw ? 1 : undefined, i: 0 }) -
+          pageEnvelopeBytes({
+            k: "page",
+            p: presentationId,
+            g: pageObjectId,
+            s: state,
+            raw: raw ? 1 : undefined,
+            i: 0,
+          }) -
           64;
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_ELEMENTS;
         const start = { i: cursor?.i ?? 0, o: cursor?.o ?? 0 };
@@ -2184,7 +2246,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           pageEnvelopeBytes({ k: "layouts", p: presentationId, s: state, i: 0 });
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_LAYOUTS;
         const shown = rowsWithin(rows, cursor?.i ?? 0, limit, room);
-        const next = shown.next < rows.length ? encodeCursor({ k: "layouts", p: presentationId, s: state, i: shown.next }) : null;
+        const next =
+          shown.next < rows.length ? encodeCursor({ k: "layouts", p: presentationId, s: state, i: shown.next }) : null;
         return deliverable({ ...header, layouts: shown.rows, page: nextPage(next) }, "list_layouts");
       },
     },
@@ -2294,7 +2357,15 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const room =
           RESULT_BUDGET_BYTES -
           jsonBytes({ ...header, threads: [] }) -
-          pageEnvelopeBytes({ k: "comments", p: presentationId, ...scope, s: state, raw: raw ? 1 : undefined, i: 0, j: 0 }) -
+          pageEnvelopeBytes({
+            k: "comments",
+            p: presentationId,
+            ...scope,
+            s: state,
+            raw: raw ? 1 : undefined,
+            i: 0,
+            j: 0,
+          }) -
           64;
         const limit = typeof args["limit"] === "number" ? args["limit"] : DEFAULT_THREADS;
         let shown: { threads: JsonRecord[]; next: { i: number; j?: number; o?: number } | undefined };
@@ -2344,7 +2415,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           size: {
             type: "string",
             enum: ["SMALL", "MEDIUM", "LARGE", "WIDTH2000_PX"],
-            description: "Width: SMALL 200px, MEDIUM 800px, LARGE 1600px, WIDTH2000_PX 2000px; Slides chooses when omitted.",
+            description:
+              "Width: SMALL 200px, MEDIUM 800px, LARGE 1600px, WIDTH2000_PX 2000px; Slides chooses when omitted.",
           },
         },
         ["presentationId", "slideObjectId"],
@@ -2438,7 +2510,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const lookInDrive = "search Drive for the deck by its title";
         const id = wholeId(presentation["presentationId"]);
         if (id === undefined) {
-          throw appliedButUnreadable("create_presentation", "Google returned no usable id for the new deck", lookInDrive);
+          throw appliedButUnreadable(
+            "create_presentation",
+            "Google returned no usable id for the new deck",
+            lookInDrive,
+          );
         }
         const revisionId = presentation["revisionId"];
         const slideIds = asArray(presentation["slides"]).map((slide) => asRecord(slide)["objectId"]);
@@ -2654,7 +2730,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             },
           },
           assigneeEmail: ASSIGNEE_PROPERTY,
-          requiredRevisionId: { ...REVISION_PROPERTY, description: "Refuse, unapplied, if the deck changed since this revision." },
+          requiredRevisionId: {
+            ...REVISION_PROPERTY,
+            description: "Refuse, unapplied, if the deck changed since this revision.",
+          },
         },
         ["presentationId", "objectId", "content"],
       ),
@@ -2677,9 +2756,16 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         const objectId: string = args["objectId"];
         const range = args["textRange"] === undefined ? undefined : asRecord(args["textRange"]);
         if (range && Number(range["endIndex"]) <= Number(range["startIndex"])) {
-          throw new ConnectorCallError("invalid_args", "textRange.endIndex must be greater than startIndex. Nothing was sent.");
+          throw new ConnectorCallError(
+            "invalid_args",
+            "textRange.endIndex must be greater than startIndex. Nothing was sent.",
+          );
         }
-        const textRange = range && { type: "FIXED_RANGE", startIndex: range["startIndex"], endIndex: range["endIndex"] };
+        const textRange = range && {
+          type: "FIXED_RANGE",
+          startIndex: range["startIndex"],
+          endIndex: range["endIndex"],
+        };
         const cell = args["cell"] === undefined ? undefined : asRecord(args["cell"]);
         const location = cell && { rowIndex: cell["rowIndex"], columnIndex: cell["columnIndex"] };
         // One anchor: the object itself, text in a shape, text in a cell, or a whole cell.
@@ -2731,7 +2817,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     },
     {
       name: "create_comment_reply",
-      description: "Reply to a comment thread. Adds a post and changes no existing one; to resolve, reopen, or reassign, use update_comment_thread.",
+      description:
+        "Reply to a comment thread. Adds a post and changes no existing one; to resolve, reopen, or reassign, use update_comment_thread.",
       // Additive: a reply is a new post, and the thread's status and
       // assignee stay as they were.
       annotations: { readOnlyHint: false, destructiveHint: false },
@@ -2763,7 +2850,9 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           commentId: COMMENT_ID,
           status: { type: "string", enum: ["RESOLVED", "OPEN"], description: "Resolve the thread, or reopen it." },
           assigneeEmail: { ...ASSIGNEE_PROPERTY, description: "Reassign an assigned thread instead; needs content." },
-          content: commentContentProperty(`Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`),
+          content: commentContentProperty(
+            `Note posted with it, up to ${MAX_COMMENT_BYTES} UTF-8 bytes; required to reassign.`,
+          ),
         },
         ["presentationId", "commentId"],
       ),
@@ -2772,14 +2861,21 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         // Exactly one change per post. Slides requires text on reassignment;
         // only RESOLVE and REOPEN may go without.
         if ((args["status"] === undefined) === (args["assigneeEmail"] === undefined)) {
-          throw new ConnectorCallError("invalid_args", "Pass exactly one of status and assigneeEmail. Nothing was sent.");
+          throw new ConnectorCallError(
+            "invalid_args",
+            "Pass exactly one of status and assigneeEmail. Nothing was sent.",
+          );
         }
         if (args["assigneeEmail"] !== undefined && args["content"] === undefined) {
-          throw new ConnectorCallError("invalid_args", "A reassignment needs content: Slides requires text on any post that does not resolve or reopen. Nothing was sent.");
+          throw new ConnectorCallError(
+            "invalid_args",
+            "A reassignment needs content: Slides requires text on any post that does not resolve or reopen. Nothing was sent.",
+          );
         }
         return postToThread(client, ctx, "update_comment_thread", args, {
           content: commentText(args["content"], "content"),
-          commentAction: args["status"] === undefined ? undefined : args["status"] === "RESOLVED" ? "RESOLVE" : "REOPEN",
+          commentAction:
+            args["status"] === undefined ? undefined : args["status"] === "RESOLVED" ? "RESOLVE" : "REOPEN",
           assigneeEmail: args["assigneeEmail"],
         });
       },
@@ -2838,7 +2934,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           deleteComment: { commentId: args["commentId"] },
         });
         return appliedDeliverable(
-          compact({ ...written.header, commentId: args["commentId"], note: written.saved ? undefined : COMMENTS_UNSAVED }),
+          compact({
+            ...written.header,
+            commentId: args["commentId"],
+            note: written.saved ? undefined : COMMENTS_UNSAVED,
+          }),
           "delete_comment",
           "list the deck's comments with list_comments to see whether it is gone",
         );
@@ -2851,7 +2951,11 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       // Destructive: the reply is gone.
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: input(
-        { presentationId: PRESENTATION_ID, commentId: COMMENT_ID, postId: { ...POST_ID, description: "postId of the reply, from list_comments." } },
+        {
+          presentationId: PRESENTATION_ID,
+          commentId: COMMENT_ID,
+          postId: { ...POST_ID, description: "postId of the reply, from list_comments." },
+        },
         ["presentationId", "commentId", "postId"],
       ),
       outputSchema: {
@@ -2926,21 +3030,20 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
             `Not a Slides request kind: ${unknown
               .slice(0, 5)
               .map(([index, kind]) => `requests[${index}] "${kind.slice(0, 64)}"`)
-              .join(", ")}. Each request is one of Slides' Request kinds, such as insertText, deleteObject, or createShape; nothing was sent.`,
+              .join(
+                ", ",
+              )}. Each request is one of Slides' Request kinds, such as insertText, deleteObject, or createShape; nothing was sent.`,
           );
         }
-        const response = await batchUpdate(
-          client,
-          ctx,
-          args["presentationId"],
-          requests,
-          args["requiredRevisionId"],
-        );
+        const response = await batchUpdate(client, ctx, args["presentationId"], requests, args["requiredRevisionId"]);
         // Comment changes save apart from the rest of a batch, and Slides
         // reports them on their own: a batch that sent any is settled only
         // when Slides says ALL_SAVED, and one that is not stops being called
         // all or none.
-        const saved = commentSaveFields(response, kinds.some(([, kind]) => COMMENT_KINDS.has(kind)));
+        const saved = commentSaveFields(
+          response,
+          kinds.some(([, kind]) => COMMENT_KINDS.has(kind)),
+        );
         const header = compact({ presentationId: args["presentationId"], ...revisionFields(response), ...saved });
         // One reply per request, in order; most are empty, the create replies
         // carry the new ids. Bounded, ids first: Slides accepted the batch, so
@@ -3043,7 +3146,12 @@ export const slides = asProviderFactory<SlidesOptions>({
   title: "Google Slides",
   kind: "api",
   readme: "Google Slides",
-  bundle: {"baselineGzip":35074,"maxGzip":89685,"note":"./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. The cap uses the existing baseline + 60,000 B policy. Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; the cap stays at 89,685 B, set from the 29,685 B first measurement."},
+  bundle: {
+    "baselineGzip": 35074,
+    "maxGzip": 89685,
+    "note":
+      "./providers/slides starts at 29,685 B gzip (#683): a hand-written api() surface on the shared Workspace delegation layer, like ./providers/gmail, and larger than it for what keeps every read deliverable and recoverable — reading-order projection, element- and character-level continuation, raw JSON chunking, and revision-bound cursors. The cap uses the existing baseline + 60,000 B policy. Comments (#696) — a thread read that pages text across results with a raw mode, six comment writes, partial-save reporting, and ids-first raw replies — move the measured size to 35,074 B; the cap stays at 89,685 B, set from the 29,685 B first measurement.",
+  },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   create: slidesConnector,
@@ -3071,7 +3179,8 @@ function slidesConnector(id: string, options: SlidesOptions): Connector {
     description: `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${connection.purpose}`,
     usageGuide: {
       content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
+      summary:
+        "Each caller's own decks: per-slide text and notes, comments, new slides, text replacement, raw batchUpdate.",
       // Required: whose decks they are, that listing is Drive's, and the
       // revision discipline on writes are conventions no schema can carry.
       required: true,

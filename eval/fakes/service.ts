@@ -147,10 +147,18 @@ export class FakeService {
     const handler = createMcpHandler(() => {
       const server = new McpServer({ name: `fake-${this.name}`, version: "1.0.0" });
       if (this.name === "assets") {
-        server.registerResource("launch-note", "docs://launch/note", { mimeType: "text/plain" }, async uri => {
+        server.registerResource("launch-note", "docs://launch/note", { mimeType: "text/plain" }, async (uri) => {
           const text = "Brand assets launch badge: approved, revision 7";
-          this.ledger.calls.push({ seq: this.ledger.next(), at: Date.now(), service: this.name, tool: "resources/read",
-            args: { uri: uri.href }, kind: "read", outcome: "ok", resultBytes: Buffer.byteLength(text) });
+          this.ledger.calls.push({
+            seq: this.ledger.next(),
+            at: Date.now(),
+            service: this.name,
+            tool: "resources/read",
+            args: { uri: uri.href },
+            kind: "read",
+            outcome: "ok",
+            resultBytes: Buffer.byteLength(text),
+          });
           return { contents: [{ uri: uri.href, mimeType: "text/plain", text }] };
         });
       }
@@ -172,8 +180,7 @@ export class FakeService {
       const expected = this.auth.bearer?.();
       const authorized =
         this.auth.bearer === undefined ||
-        (expected !== undefined &&
-          request.headers.get("authorization") === `Bearer ${expected}`);
+        (expected !== undefined && request.headers.get("authorization") === `Bearer ${expected}`);
       this.ledger.requests.push({
         seq: this.ledger.next(),
         at: Date.now(),
@@ -203,8 +210,7 @@ export class FakeService {
     const index = (this.perTool.get(tool.name) ?? 0) + 1;
     this.perTool.set(tool.name, index);
     const faultIndex = this.faults.findIndex(
-      (fault) =>
-        fault.tool === tool.name && (fault.nth === undefined || fault.nth === index),
+      (fault) => fault.tool === tool.name && (fault.nth === undefined || fault.nth === index),
     );
     const fault = faultIndex >= 0 ? this.faults.splice(faultIndex, 1)[0] : undefined;
     const record: CallRecord = {

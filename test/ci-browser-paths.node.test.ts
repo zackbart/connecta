@@ -92,10 +92,13 @@ describe("CI browser paths", () => {
 describe("CI security paths", () => {
   const inputs = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"];
   const directories = ["", "templates/node/", "examples/worker/", "packages/workspace/", "packages/nested/workspace/"];
-  it.each(directories.flatMap((directory) => inputs.map((input) => `${directory}${input}`)))("audits dependencies when %s changes", (path) => {
-    expect(securityRequired([path])).toBe("true");
-    expect(securityRequired(["src/server.ts", path])).toBe("true");
-  });
+  it.each(directories.flatMap((directory) => inputs.map((input) => `${directory}${input}`)))(
+    "audits dependencies when %s changes",
+    (path) => {
+      expect(securityRequired([path])).toBe("true");
+      expect(securityRequired(["src/server.ts", path])).toBe("true");
+    },
+  );
 
   it.each([
     "src/server.ts",
@@ -111,7 +114,9 @@ describe("CI security paths", () => {
 describe("CI aggregate check", () => {
   // Exercise the actual workflow step, so its condition cannot drift from the test.
   const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const step = workflow.match(/- name: Require all checks to pass\n[\s\S]*?        run: \|\n((?:          .*\n)+)/)?.[1];
+  const step = workflow.match(
+    /- name: Require all checks to pass\n[\s\S]*?        run: \|\n((?:          .*\n)+)/,
+  )?.[1];
   if (!step) throw new Error("CI aggregate check step is missing");
   const script = step.replace(/^          /gm, "");
 
@@ -135,19 +140,22 @@ describe("CI aggregate check", () => {
     ["success", "success", "success", "true", "skipped", "true", 1],
     ["success", "success", "success", "true", "skipped", "", 1],
     ["success", "success", "success", "true", "failure", "false", 1],
-  ])("handles core=%s changes=%s browser=%s required=%s security=%s required=%s", (core, changes, browser, required, security, securityNeeded, status) => {
-    const result = spawnSync("bash", ["-e", "-c", script], {
-      env: {
-        ...process.env,
-        CORE_RESULT: core,
-        CHANGES_RESULT: changes,
-        BROWSER_RESULT: browser,
-        BROWSER_REQUIRED: required,
-        SECURITY_RESULT: security,
-        SECURITY_REQUIRED: securityNeeded,
-      },
-      encoding: "utf8",
-    });
-    expect(result.status, result.stdout + result.stderr).toBe(status);
-  });
+  ])(
+    "handles core=%s changes=%s browser=%s required=%s security=%s required=%s",
+    (core, changes, browser, required, security, securityNeeded, status) => {
+      const result = spawnSync("bash", ["-e", "-c", script], {
+        env: {
+          ...process.env,
+          CORE_RESULT: core,
+          CHANGES_RESULT: changes,
+          BROWSER_RESULT: browser,
+          BROWSER_REQUIRED: required,
+          SECURITY_RESULT: security,
+          SECURITY_REQUIRED: securityNeeded,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stdout + result.stderr).toBe(status);
+    },
+  );
 });

@@ -13,7 +13,12 @@ for (const status of [200, 301, 302, 303, 307, 308, 400, 503]) {
   it(`INV-5 INV-9: native HTTP ${status} revocation removes the grant with one send and no redirect follow`, async () => {
     const server = await nativeOAuthServer(`sdk-revoke-${status}`);
     const storage = memoryStorage();
-    const connector = remoteMcp("svc", { url: `${server.issuer}/mcp`, auth: { type: "oauth" }, redirects: "same-origin", versionNegotiation: "legacy" });
+    const connector = remoteMcp("svc", {
+      url: `${server.issuer}/mcp`,
+      auth: { type: "oauth" },
+      redirects: "same-origin",
+      versionNegotiation: "legacy",
+    });
     const started = await connector.startAuth!(scope(storage));
     const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
     const ctx = scope(storage);
@@ -22,7 +27,7 @@ for (const status of [200, 301, 302, 303, 307, 308, 400, 503]) {
     const disconnect = connector.disconnectAuth!(scope(storage));
     if (status === 200) await disconnect;
     else {
-      const error = await disconnect.catch(error => error);
+      const error = await disconnect.catch((error) => error);
       expect(error.code).toBe("oauth_revocation_failed");
       expect(error.cause).toBeUndefined();
       expect(error.message).not.toContain("REVOCATION_BODY_SENTINEL");
@@ -30,35 +35,55 @@ for (const status of [200, 301, 302, 303, 307, 308, 400, 503]) {
     expect(JSON.parse((await storage.get(oauthGrantKeys.grant))!).body).toBeUndefined();
     await connector.disconnectAuth!(scope(storage));
     const sends = await server.sent();
-    expect(sends.filter(request => request.path === "revoke")).toEqual([{ path: "revoke", grant: null, credential: "old-refresh" }]);
-    expect(sends.some(request => request.path === "revoke-final")).toBe(false);
+    expect(sends.filter((request) => request.path === "revoke")).toEqual([
+      { path: "revoke", grant: null, credential: "old-refresh" },
+    ]);
+    expect(sends.some((request) => request.path === "revoke-final")).toBe(false);
   });
 }
 
 describe("reset revocation snapshot", () => {
-  it.each(["http://mcp.example/revoke", "http://10.0.0.1/revoke", "ftp://mcp.example/revoke"])("INV-5 INV-6: refuses plaintext or unsupported revocation transport before sending to %s", async endpoint => {
-    const storage = memoryStorage();
-    const issuer = "https://auth.example";
-    await seedGrant(storage, { issuer, client: { value: { client_id: "client", client_secret: "SECRET_SENTINEL" } },
-      tokens: { access_token: "ACCESS_SENTINEL", refresh_token: "REFRESH_SENTINEL", token_type: "Bearer" },
-      discovery: { authorizationServerUrl: issuer, authorizationServerMetadata: { issuer, revocation_endpoint: endpoint } } });
-    let sends = 0;
-    const provider = new KvOAuthProvider("svc", storage, "https://connecta.test/oauth/callback/svc");
-    const error = await provider.disconnectAuthorization(async () => { sends++; return new Response(null); }).catch(error => error);
-    expect(error.code).toBe("oauth_revocation_failed");
-    expect(error.message).not.toMatch(/SENTINEL|mcp\.example|10\.0\.0\.1/);
-    expect(error.cause).toBeUndefined();
-    expect(sends).toBe(0);
-    expect(JSON.parse((await storage.get(oauthGrantKeys.grant))!).body).toBeUndefined();
-  });
+  it.each(["http://mcp.example/revoke", "http://10.0.0.1/revoke", "ftp://mcp.example/revoke"])(
+    "INV-5 INV-6: refuses plaintext or unsupported revocation transport before sending to %s",
+    async (endpoint) => {
+      const storage = memoryStorage();
+      const issuer = "https://auth.example";
+      await seedGrant(storage, {
+        issuer,
+        client: { value: { client_id: "client", client_secret: "SECRET_SENTINEL" } },
+        tokens: { access_token: "ACCESS_SENTINEL", refresh_token: "REFRESH_SENTINEL", token_type: "Bearer" },
+        discovery: {
+          authorizationServerUrl: issuer,
+          authorizationServerMetadata: { issuer, revocation_endpoint: endpoint },
+        },
+      });
+      let sends = 0;
+      const provider = new KvOAuthProvider("svc", storage, "https://connecta.test/oauth/callback/svc");
+      const error = await provider
+        .disconnectAuthorization(async () => {
+          sends++;
+          return new Response(null);
+        })
+        .catch((error) => error);
+      expect(error.code).toBe("oauth_revocation_failed");
+      expect(error.message).not.toMatch(/SENTINEL|mcp\.example|10\.0\.0\.1/);
+      expect(error.cause).toBeUndefined();
+      expect(sends).toBe(0);
+      expect(JSON.parse((await storage.get(oauthGrantKeys.grant))!).body).toBeUndefined();
+    },
+  );
 
   it("INV-5 INV-9: concurrent disconnects revoke only the snapshot removed by a winning CAS", async () => {
     const server = await nativeOAuthServer("sdk-revoke-200");
     const storage = memoryStorage();
     await seedGrant(storage, {
-      issuer: server.issuer, client: { value: { client_id: "native-client" } },
+      issuer: server.issuer,
+      client: { value: { client_id: "native-client" } },
       tokens: { access_token: "old-access", refresh_token: "old-refresh", token_type: "Bearer" },
-      discovery: { authorizationServerUrl: server.issuer, authorizationServerMetadata: { issuer: server.issuer, revocation_endpoint: `${server.issuer}/revoke` } },
+      discovery: {
+        authorizationServerUrl: server.issuer,
+        authorizationServerMetadata: { issuer: server.issuer, revocation_endpoint: `${server.issuer}/revoke` },
+      },
     });
     await storage.set(oauthRefreshSpentKeys.spent("permanent-fingerprint"), "permanent-record");
     const first = new KvOAuthProvider("svc", storage, "https://connecta.test/oauth/callback/svc");
@@ -68,7 +93,7 @@ describe("reset revocation snapshot", () => {
       return fetch(input, init);
     };
     await Promise.all([first.disconnectAuthorization(send), second.disconnectAuthorization(send)]);
-    expect((await server.sent()).filter(request => request.path === "revoke")).toHaveLength(1);
+    expect((await server.sent()).filter((request) => request.path === "revoke")).toHaveLength(1);
     expect(await storage.get(oauthRefreshSpentKeys.spent("permanent-fingerprint"))).toBe("permanent-record");
   });
 });

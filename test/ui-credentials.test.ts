@@ -5,9 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { ConnectorContext } from "../src/types.js";
 import { machineAuth } from "./helpers/machine-auth.js";
-import {
-  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-} from "../src/credential-rules.js";
+import { STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR } from "../src/credential-rules.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta } from "./helpers.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
@@ -27,7 +25,7 @@ import {
 } from "./fixtures/ui.js";
 
 describe("status UI credential management", () => {
-  it.each([false, true])("closes the credential test scope when the hook throws=%s", async throws => {
+  it.each([false, true])("closes the credential test scope when the hook throws=%s", async (throws) => {
     const storage = memoryStorage();
     await new CredentialVault(storage, CREDENTIAL_KEY).set("key", "test-secret", "operator");
     let active = 0;
@@ -86,7 +84,9 @@ describe("status UI credential management", () => {
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
     });
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -114,11 +114,7 @@ describe("status UI credential management", () => {
     // the notice prints as muted copy, not the `.msg` block an error gets.
     expect(html).toMatch(/src="\/ui\/assets\/[^" ]+\.js"/);
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/superset/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/superset/test", { method: "POST" });
     expect(test.status).toBe(200);
     await expect(test.json()).resolves.toEqual({ ok: true });
     // The hook sees what the vault holds, exactly as a real call would.
@@ -126,7 +122,6 @@ describe("status UI credential management", () => {
       { email: "operator@example.com", apiKey: "live-key-secret" },
       expect.anything(),
     );
-
   });
 
   it("keeps a single-value credential usable when an old named field lingers", async () => {
@@ -152,7 +147,9 @@ describe("status UI credential management", () => {
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
     });
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -161,24 +158,15 @@ describe("status UI credential management", () => {
     expect(credential).not.toHaveProperty("error");
     expect(credential.notice).toContain("region");
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/legacy/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/legacy/test", { method: "POST" });
     expect(test.status).toBe(200);
-    expect(testCredential).toHaveBeenCalledWith(
-      "current-secret",
-      expect.anything(),
-    );
+    expect(testCredential).toHaveBeenCalledWith("current-secret", expect.anything());
   });
 
   it("treats duplicate named declarations with true key-set semantics", async () => {
-    const testCredentials = vi.fn(
-      async (values: Record<string, string>) => ({
-        ok: values.apiKey === "duplicate-field-secret",
-      }),
-    );
+    const testCredentials = vi.fn(async (values: Record<string, string>) => ({
+      ok: values.apiKey === "duplicate-field-secret",
+    }));
     const connector = api("duplicate", {
       description: "Duplicate field declaration",
       credential: {
@@ -199,20 +187,18 @@ describe("status UI credential management", () => {
       vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
-    const save = await credentialRequest(
-      connecta,
-      "/ui/credentials/duplicate",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          values: { apiKey: "duplicate-field-secret" },
-        }),
-      },
-    );
+    const save = await credentialRequest(connecta, "/ui/credentials/duplicate", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        values: { apiKey: "duplicate-field-secret" },
+      }),
+    });
     expect(save.status).toBe(200);
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -228,18 +214,11 @@ describe("status UI credential management", () => {
     });
     expect(payload.connectors[0].credential).not.toHaveProperty("error");
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/duplicate/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/duplicate/test", { method: "POST" });
     expect(test.status).toBe(200);
     await expect(test.json()).resolves.toEqual({ ok: true });
     expect(testCredentials).toHaveBeenCalledTimes(1);
-    expect(testCredentials).toHaveBeenCalledWith(
-      { apiKey: "duplicate-field-secret" },
-      expect.anything(),
-    );
+    expect(testCredentials).toHaveBeenCalledWith({ apiKey: "duplicate-field-secret" }, expect.anything());
 
     expect(testCredentials).toHaveBeenCalledTimes(1);
   });
@@ -251,12 +230,11 @@ describe("status UI credential management", () => {
       { email: "operator@example.com", apiKey: "old-key-secret" },
       "user_123",
     );
-    const { connecta, testCredential } = makeShapeDriftConnecta(
-      storage,
-      "single",
-    );
+    const { connecta, testCredential } = makeShapeDriftConnecta(storage, "single");
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -276,11 +254,7 @@ describe("status UI credential management", () => {
     });
     expect(payload.connectors[0]).not.toHaveProperty("message");
 
-    const driftedTest = await credentialRequest(
-      connecta,
-      "/ui/credentials/drift/test",
-      { method: "POST" },
-    );
+    const driftedTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
     expect(driftedTest.status).toBe(409);
     await expect(driftedTest.json()).resolves.toEqual({
       error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -288,17 +262,15 @@ describe("status UI credential management", () => {
     });
     expect(testCredential).not.toHaveBeenCalled();
 
-    const replacement = await credentialRequest(
-      connecta,
-      "/ui/credentials/drift",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: "replacement-secret" }),
-      },
-    );
+    const replacement = await credentialRequest(connecta, "/ui/credentials/drift", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "replacement-secret" }),
+    });
     expect(replacement.status).toBe(200);
-    const recoveredData = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const recoveredData = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -308,35 +280,21 @@ describe("status UI credential management", () => {
       removable: true,
       testable: true,
     });
-    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty(
-      "error",
-    );
+    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty("error");
     expect(recoveredPayload.connectors[0].status).not.toBe("auth_required");
-    const recoveredTest = await credentialRequest(
-      connecta,
-      "/ui/credentials/drift/test",
-      { method: "POST" },
-    );
+    const recoveredTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
     expect(recoveredTest.status).toBe(200);
-    expect(testCredential).toHaveBeenCalledWith(
-      "replacement-secret",
-      expect.anything(),
-    );
+    expect(testCredential).toHaveBeenCalledWith("replacement-secret", expect.anything());
   });
 
   it("detects single-to-named storage drift and recovers after replacement", async () => {
     const storage = memoryStorage();
-    await new CredentialVault(storage, CREDENTIAL_KEY).set(
-      "drift",
-      "old-single-secret",
-      "user_123",
-    );
-    const { connecta, testCredentials } = makeShapeDriftConnecta(
-      storage,
-      "multiple",
-    );
+    await new CredentialVault(storage, CREDENTIAL_KEY).set("drift", "old-single-secret", "user_123");
+    const { connecta, testCredentials } = makeShapeDriftConnecta(storage, "multiple");
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -352,11 +310,7 @@ describe("status UI credential management", () => {
       ],
     });
 
-    const driftedTest = await credentialRequest(
-      connecta,
-      "/ui/credentials/drift/test",
-      { method: "POST" },
-    );
+    const driftedTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
     expect(driftedTest.status).toBe(409);
     await expect(driftedTest.json()).resolves.toEqual({
       error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -368,17 +322,15 @@ describe("status UI credential management", () => {
       email: "operator@example.com",
       apiKey: "replacement-key",
     };
-    const replacement = await credentialRequest(
-      connecta,
-      "/ui/credentials/drift",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ values }),
-      },
-    );
+    const replacement = await credentialRequest(connecta, "/ui/credentials/drift", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    });
     expect(replacement.status).toBe(200);
-    const recoveredData = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const recoveredData = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -392,14 +344,8 @@ describe("status UI credential management", () => {
         { name: "apiKey", configured: true },
       ],
     });
-    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty(
-      "error",
-    );
-    const recoveredTest = await credentialRequest(
-      connecta,
-      "/ui/credentials/drift/test",
-      { method: "POST" },
-    );
+    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty("error");
+    const recoveredTest = await credentialRequest(connecta, "/ui/credentials/drift/test", { method: "POST" });
     expect(recoveredTest.status).toBe(200);
     expect(testCredentials).toHaveBeenCalledWith(values, expect.anything());
   });
@@ -420,7 +366,9 @@ describe("status UI credential management", () => {
     const raw = await storage.get("conn:vaulted:credential:v1");
     expect(raw).not.toContain("valid-secret-9876");
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -434,30 +382,16 @@ describe("status UI credential management", () => {
     expect(JSON.stringify(payload)).not.toContain("valid-secret-9876");
 
     const connector = connecta.registry.getConnector("vaulted")!;
-    await expect(
-      connector.callTool(
-        "whoami",
-        {},
-        connecta.registry.contextFor("vaulted", BASE),
-      ),
-    ).resolves.toEqual({ credential: "[redacted]" });
+    await expect(connector.callTool("whoami", {}, connecta.registry.contextFor("vaulted", BASE))).resolves.toEqual({
+      credential: "[redacted]",
+    });
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/vaulted/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/vaulted/test", { method: "POST" });
     await expect(test.json()).resolves.toEqual({ ok: true });
 
-    const remove = await credentialRequest(
-      connecta,
-      "/ui/credentials/vaulted",
-      { method: "DELETE" },
-    );
+    const remove = await credentialRequest(connecta, "/ui/credentials/vaulted", { method: "DELETE" });
     expect(remove.status).toBe(204);
-    expect(
-      await connecta.registry.contextFor("vaulted", BASE).credential?.get(),
-    ).toBeNull();
+    expect(await connecta.registry.contextFor("vaulted", BASE).credential?.get()).toBeNull();
   });
 
   it("stores, renders, tests, and exposes named credential fields", async () => {
@@ -482,11 +416,11 @@ describe("status UI credential management", () => {
         },
       },
     });
-    expect(await storage.get("conn:multi:credential:v1")).not.toContain(
-      "operator@example.com",
-    );
+    expect(await storage.get("conn:multi:credential:v1")).not.toContain("operator@example.com");
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -498,19 +432,12 @@ describe("status UI credential management", () => {
     expect(JSON.stringify(payload)).not.toContain("operator@example.com");
 
     const configured = connecta.registry.getConnector("multi")!;
-    await expect(
-      configured.callTool(
-        "credentials",
-        {},
-        connecta.registry.contextFor("multi", BASE),
-      ),
-    ).resolves.toEqual({ email: "[redacted]", apiKey: "[redacted]" });
+    await expect(configured.callTool("credentials", {}, connecta.registry.contextFor("multi", BASE))).resolves.toEqual({
+      email: "[redacted]",
+      apiKey: "[redacted]",
+    });
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/multi/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/multi/test", { method: "POST" });
     await expect(test.json()).resolves.toEqual({ ok: true });
   });
 
@@ -519,21 +446,18 @@ describe("status UI credential management", () => {
     // route used to prefer `testCredentials` and hand it the reserved
     // `{ value }` map. The shape picks the hook now, so the single-value hook
     // runs against the string it was written to expect.
-    const { connecta, testCredential, testCredentials } =
-      makeBothHooksConnecta("single");
+    const { connecta, testCredential, testCredentials } = makeBothHooksConnecta("single");
 
-    const save = await credentialRequest(
-      connecta,
-      "/ui/credentials/bothhooks",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: "both-secret-9876" }),
-      },
-    );
+    const save = await credentialRequest(connecta, "/ui/credentials/bothhooks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "both-secret-9876" }),
+    });
     expect(save.status).toBe(200);
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -543,11 +467,7 @@ describe("status UI credential management", () => {
       testable: true,
     });
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/bothhooks/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/bothhooks/test", { method: "POST" });
     // Only `ok` leaves the host; the mock calls below say which hook ran.
     await expect(test.json()).resolves.toEqual({ ok: true });
     // The route ran it, and so did the liveness sweep the /ui/data request
@@ -561,27 +481,18 @@ describe("status UI credential management", () => {
   });
 
   it("runs testCredentials for named fields that declare both hooks", async () => {
-    const { connecta, testCredential, testCredentials } =
-      makeBothHooksConnecta("multiple");
+    const { connecta, testCredential, testCredentials } = makeBothHooksConnecta("multiple");
 
-    const save = await credentialRequest(
-      connecta,
-      "/ui/credentials/bothhooks",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          values: { email: "operator@example.com", apiKey: "api-key-1234" },
-        }),
-      },
-    );
+    const save = await credentialRequest(connecta, "/ui/credentials/bothhooks", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        values: { email: "operator@example.com", apiKey: "api-key-1234" },
+      }),
+    });
     expect(save.status).toBe(200);
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/bothhooks/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/bothhooks/test", { method: "POST" });
     await expect(test.json()).resolves.toEqual({ ok: true });
     expect(testCredentials).toHaveBeenCalledTimes(1);
     expect(testCredential).not.toHaveBeenCalled();
@@ -590,20 +501,18 @@ describe("status UI credential management", () => {
   it("offers no Test action for named fields with only the single-value hook", async () => {
     const { connecta, testCredential } = makeFieldsWithSingleHookConnecta();
 
-    const save = await credentialRequest(
-      connecta,
-      "/ui/credentials/fieldsonly",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          values: { email: "operator@example.com", apiKey: "api-key-1234" },
-        }),
-      },
-    );
+    const save = await credentialRequest(connecta, "/ui/credentials/fieldsonly", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        values: { email: "operator@example.com", apiKey: "api-key-1234" },
+      }),
+    });
     expect(save.status).toBe(200);
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -615,11 +524,7 @@ describe("status UI credential management", () => {
 
     // The old behavior: a shown button whose click answered 409 "configure the
     // credential before testing it" on a fully configured credential.
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/fieldsonly/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/fieldsonly/test", { method: "POST" });
     expect(test.status).toBe(400);
     expect((await test.json()) as any).toMatchObject({
       error: expect.stringContaining("testCredentials(values, ctx)"),
@@ -630,18 +535,16 @@ describe("status UI credential management", () => {
   it("offers no Test action for a single value with only the named-set hook", async () => {
     const { connecta, testCredentials } = makeSingleWithFieldsHookConnecta();
 
-    const save = await credentialRequest(
-      connecta,
-      "/ui/credentials/singleonly",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: "single-secret-9876" }),
-      },
-    );
+    const save = await credentialRequest(connecta, "/ui/credentials/singleonly", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "single-secret-9876" }),
+    });
     expect(save.status).toBe(200);
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -651,11 +554,7 @@ describe("status UI credential management", () => {
       testable: false,
     });
 
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/singleonly/test",
-      { method: "POST" },
-    );
+    const test = await credentialRequest(connecta, "/ui/credentials/singleonly/test", { method: "POST" });
     expect(test.status).toBe(400);
     expect((await test.json()) as any).toMatchObject({
       error: expect.stringContaining("testCredential(value, ctx)"),
@@ -668,7 +567,9 @@ describe("status UI credential management", () => {
     const { connecta, storage } = makeMultiCredentialConnecta();
     await storage.set("conn:multi:credential:v1", "corrupt-ciphertext");
 
-    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -683,11 +584,7 @@ describe("status UI credential management", () => {
       ],
     });
 
-    const remove = await credentialRequest(
-      connecta,
-      "/ui/credentials/multi",
-      { method: "DELETE" },
-    );
+    const remove = await credentialRequest(connecta, "/ui/credentials/multi", { method: "DELETE" });
     expect(remove.status).toBe(204);
     expect(await storage.get("conn:multi:credential:v1")).toBeNull();
   });
@@ -734,7 +631,9 @@ describe("status UI credential management", () => {
     );
     expect(noOrigin.status).toBe(403);
 
-    const bearerData = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const bearerData = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -744,15 +643,11 @@ describe("status UI credential management", () => {
 
   it("rejects undeclared slots and never enables wildcard CORS", async () => {
     const { connecta } = makeCredentialConnecta();
-    const missing = await credentialRequest(
-      connecta,
-      "/ui/credentials/not-declared",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: "secret" }),
-      },
-    );
+    const missing = await credentialRequest(connecta, "/ui/credentials/not-declared", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "secret" }),
+    });
     expect(missing.status).toBe(404);
 
     const preflight = await connecta.fetch(
@@ -780,11 +675,11 @@ describe("status UI credential management", () => {
       },
     });
     expect(warn).not.toHaveBeenCalled();
-    expect(
-      connecta.registry.contextFor("vaulted", BASE).credential,
-    ).toBeUndefined();
+    expect(connecta.registry.contextFor("vaulted", BASE).credential).toBeUndefined();
 
-    const response = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+    const response = await fetchTestUiDetails(
+      connecta,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );

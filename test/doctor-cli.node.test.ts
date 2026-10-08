@@ -18,12 +18,7 @@ import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 // print "QuickJS executed" against every deployment, including the Workers
 // shape whose sandbox is a Dynamic Worker (#368), so the executor line is
 // exercised end to end: real CLI, real HTTP, one deployment per sandbox.
-const CLI = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "bin",
-  "connecta.mjs",
-);
+const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "connecta.mjs");
 const TOKEN = "doctor-cli-token";
 const run = promisify(execFile);
 
@@ -79,16 +74,12 @@ async function doctorAgainst(
   if (!address || typeof address === "string") {
     throw new Error("Expected a TCP listen address.");
   }
-  const { stdout } = await run(
-    process.execPath,
-    [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`],
-    {
-      env: {
-        ...process.env,
-        ...(options.env ?? { CONNECTA_TOKEN: TOKEN }),
-      },
+  const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], {
+    env: {
+      ...process.env,
+      ...(options.env ?? { CONNECTA_TOKEN: TOKEN }),
     },
-  );
+  });
   return stdout.trim();
 }
 
@@ -166,30 +157,51 @@ describe("connecta doctor's executor line", () => {
         response.end(JSON.stringify({ status: "ok", connectors: 0 }));
         return;
       }
-      if (request.method === "GET") { response.writeHead(405); response.end(); return; }
-      if (request.method === "DELETE") { response.end("{}"); return; }
+      if (request.method === "GET") {
+        response.writeHead(405);
+        response.end();
+        return;
+      }
+      if (request.method === "DELETE") {
+        response.end("{}");
+        return;
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks).toString());
       methods.push(body.method);
-      if (body.method === "notifications/initialized") { response.writeHead(202); response.end(); return; }
+      if (body.method === "notifications/initialized") {
+        response.writeHead(202);
+        response.end();
+        return;
+      }
       let result;
       if (body.method === "server/discover") {
         response.writeHead(404);
-        response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }));
+        response.end(
+          JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }),
+        );
         return;
       }
-      if (body.method === "initialize") result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "legacy", version: "1" } };
-      if (body.method === "tools/list") result = { tools: META_TOOL_NAMES.map(name => ({ name, inputSchema: { type: "object" } })) };
+      if (body.method === "initialize")
+        result = {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "legacy", version: "1" },
+        };
+      if (body.method === "tools/list")
+        result = { tools: META_TOOL_NAMES.map((name) => ({ name, inputSchema: { type: "object" } })) };
       if (body.method === "tools/call") result = { content: [{ type: "text", text: '{"result":42}' }] };
       response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    teardown.push(() => new Promise<void>(done => server.close(() => done())));
+    teardown.push(() => new Promise<void>((done) => server.close(() => done())));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected TCP address");
-    const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], { env: { ...process.env, CONNECTA_TOKEN: TOKEN } });
+    const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], {
+      env: { ...process.env, CONNECTA_TOKEN: TOKEN },
+    });
     expect(stdout).toContain(`prescribed 6-tool surface, MCP 2025-11-25, package ${CONNECTA_VERSION}.`);
     expect(methods).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list", "tools/call"]);
   });
@@ -205,9 +217,7 @@ describe("connecta doctor's executor line", () => {
         },
       }),
     ).rejects.toMatchObject({
-      stderr: expect.stringContaining(
-        "Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET",
-      ),
+      stderr: expect.stringContaining("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET"),
     });
   });
 });
@@ -239,14 +249,16 @@ describe("connecta doctor's credential destinations", () => {
     teardown.push(() => new Promise<void>((done) => source.close(() => done())));
     const sourceAddress = source.address();
     if (!sourceAddress || typeof sourceAddress === "string") throw new Error("Expected TCP address");
-    await expect(run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${sourceAddress.port}`], {
-      env: {
-        ...process.env,
-        CONNECTA_TOKEN: "synthetic-bearer",
-        CF_ACCESS_CLIENT_ID: "synthetic-id",
-        CF_ACCESS_CLIENT_SECRET: "synthetic-secret",
-      },
-    })).rejects.toMatchObject({ stderr: expect.stringContaining("redirect") });
+    await expect(
+      run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${sourceAddress.port}`], {
+        env: {
+          ...process.env,
+          CONNECTA_TOKEN: "synthetic-bearer",
+          CF_ACCESS_CLIENT_ID: "synthetic-id",
+          CF_ACCESS_CLIENT_SECRET: "synthetic-secret",
+        },
+      }),
+    ).rejects.toMatchObject({ stderr: expect.stringContaining("redirect") });
     expect(received).toEqual([]);
   });
 });
@@ -255,7 +267,7 @@ describe("connecta doctor --config", () => {
   async function deploymentUrl(app: ReturnType<typeof createConnecta>) {
     const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
     teardown.push(async () => {
-      await new Promise<void>(done => server.close(() => done()));
+      await new Promise<void>((done) => server.close(() => done()));
       await app.close();
     });
     await once(server, "listening");
@@ -268,13 +280,22 @@ describe("connecta doctor --config", () => {
     const { config, storage, vault } = secretBearingDeployment();
     await vault.set("vaulted_mcp", SECRETS.storedCredential, "operator");
     await storage.set("access-token:sentinel", SECRETS.storedAccessToken);
-    for (const connector of config.connectors) connector.status = async () => ({ state: "error", message: SECRETS.headerValue });
+    for (const connector of config.connectors)
+      connector.status = async () => ({ state: "error", message: SECRETS.headerValue });
     config.publicUrl = `http://localhost/?token=${SECRETS.publicUrlQuery}`;
     const app = createConnecta(config);
     const url = await deploymentUrl(app);
-    for (const args of [["--config", "--url", url], ["--url", url, "--config"]]) {
+    for (const args of [
+      ["--config", "--url", url],
+      ["--url", url, "--config"],
+    ]) {
       const { stdout, stderr } = await run(process.execPath, [CLI, "doctor", ...args], {
-        env: { ...process.env, CONNECTA_TOKEN: SECRETS.machineToken, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+        env: {
+          ...process.env,
+          CONNECTA_TOKEN: SECRETS.machineToken,
+          CF_ACCESS_CLIENT_ID: "",
+          CF_ACCESS_CLIENT_SECRET: "",
+        },
       });
       expect(JSON.parse(stdout)).toEqual(app.describeConfig());
       expect(stderr).toBe("");
@@ -288,12 +309,36 @@ describe("connecta doctor --config", () => {
   it("INV-4: prints the caller's scoped snapshot and does not execute a diagnostic program", async () => {
     let executed = 0;
     const app = createConnecta({
-      connectors: [api("visible", { tools: [{ name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null }] }), api("hidden", { tools: [{ name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null }] })],
-      executor: customExecutor({ execute: async () => { executed++; return { result: null }; } }, { lifecycle: "self-managed" }),
-      auth: machineAuth(TOKEN), ui: operatorUi(), logger: "silent", identity: { connectorAccess: () => ["visible"] },
+      connectors: [
+        api("visible", {
+          tools: [
+            { name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null },
+          ],
+        }),
+        api("hidden", {
+          tools: [
+            { name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null },
+          ],
+        }),
+      ],
+      executor: customExecutor(
+        {
+          execute: async () => {
+            executed++;
+            return { result: null };
+          },
+        },
+        { lifecycle: "self-managed" },
+      ),
+      auth: machineAuth(TOKEN),
+      ui: operatorUi(),
+      logger: "silent",
+      identity: { connectorAccess: () => ["visible"] },
     });
     const url = await deploymentUrl(app);
-    const { stdout } = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], { env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" } });
+    const { stdout } = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
+      env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+    });
     expect(JSON.parse(stdout).connectors.map((c: { id: string }) => c.id)).toEqual(["visible"]);
     expect(stdout).not.toContain("hidden");
     expect(executed).toBe(0);
@@ -307,11 +352,13 @@ describe("connecta doctor --config", () => {
       });
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
-      teardown.push(() => new Promise<void>(done => server.close(() => done())));
+      teardown.push(() => new Promise<void>((done) => server.close(() => done())));
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected TCP address");
       try {
-        await run(process.execPath, [CLI, "doctor", "--config", "--url", `http://127.0.0.1:${address.port}`], { env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" } });
+        await run(process.execPath, [CLI, "doctor", "--config", "--url", `http://127.0.0.1:${address.port}`], {
+          env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+        });
         throw new Error("Expected failure");
       } catch (error) {
         const result = error as { stdout: string; stderr: string };

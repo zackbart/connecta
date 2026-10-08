@@ -1,15 +1,7 @@
 import { skill } from "./skill.generated.js";
-import {
-  remoteMcp,
-  withCredentialDefaults,
-  type RemoteMcpAuth,
-} from "../../connectors/remote-mcp.js";
+import { remoteMcp, withCredentialDefaults, type RemoteMcpAuth } from "../../connectors/remote-mcp.js";
 import { reviewedCatalog } from "../../catalog-drift.js";
-import type {
-  Connector,
-  ToolClassification,
-  ConnectorCallAdmissionPolicy,
-} from "../../types.js";
+import type { Connector, ToolClassification, ConnectorCallAdmissionPolicy } from "../../types.js";
 import { keys, optionsOf, strings, variants } from "../../config-schema.js";
 import { CREDENTIAL } from "../../connectors/option-shapes.js";
 import { defineProvider, type ProviderContext } from "../../provider.js";
@@ -65,9 +57,7 @@ export type StripeOptions = StripeOAuthOptions | StripeHeaderOptions;
  * The `maxConcurrency` figures are Connecta's own choice — Stripe says
  * per-account and per-endpoint concurrency limits exist but publishes no number.
  */
-const STRIPE_ADMISSION: Readonly<
-  Record<StripeMode, ConnectorCallAdmissionPolicy>
-> = {
+const STRIPE_ADMISSION: Readonly<Record<StripeMode, ConnectorCallAdmissionPolicy>> = {
   production: {
     rules: [
       {
@@ -98,24 +88,70 @@ const STRIPE_ADMISSION: Readonly<
  */
 const STRIPE_CLASSIFICATION: ToolClassification = {
   tools: {
-    "stripe_api_search": {"verdict": "read", "reason": "Searches API method contracts and object records; it does not invoke mutating methods."},
-    "stripe_api_details": {"verdict": "read", "reason": "Reads the parameter contract for an API method; it does not execute that method."},
-    "stripe_api_read": {"verdict": "read", "reason": "The vendor restricts this generic tool to HTTP GET; all mutating methods use stripe_api_write."},
-    "get_stripe_account_info": {"verdict": "read", "reason": "Reads metadata for the selected Stripe account."},
-    "get_balance_summary": {"verdict": "read", "reason": "Retrieves Stripe balance summary information without changing vendor state."},
-    "list_metrics": {"verdict": "read", "reason": "Retrieves Stripe metrics information without changing vendor state."},
-    "explain_metric": {"verdict": "read", "reason": "Explains an existing metric definition without creating an analytics run."},
-    "metric_drilldown": {"verdict": "read", "reason": "Reads the breakdown of an existing metric."},
-    "show_metric_app": {"verdict": "read", "reason": "Displays an existing metric app without changing its data."},
-    "list_available_accounts_or_orgs": {"verdict": "read", "reason": "Retrieves Stripe available accounts or orgs information without changing vendor state."},
-    "manage_stripe_accounts": {"verdict": "read", "reason": "Selects account context for the session; the reviewed contract does not mutate payment or account records."},
-    "search_stripe_documentation": {"verdict": "read", "reason": "Searches Stripe reference documentation without accessing payment mutations."},
-    "stripe_api_write": {"verdict": "destructive", "reason": "Can dispatch POST, PATCH, PUT, or DELETE across the Stripe API, including edits and cancellations."},
-    "create_refund": {"verdict": "destructive", "reason": "Moves money and changes an existing payment; a refund cannot be undone."},
-    "stripe_implementation_planner": {"verdict": "write", "reason": "Creates or continues provider-side planning state."},
-    "stripe_analytics": {"verdict": "write", "reason": "Mixes retrieval with durable query-run creation, so the whole tool is a write."},
-    "stripe_report": {"verdict": "write", "reason": "May create durable report-run state, so retrieval paths cannot make the whole tool read-only."},
-    "send_stripe_mcp_feedback": {"verdict": "write", "reason": "Submits feedback to Stripe, creating provider-side state."},
+    "stripe_api_search": {
+      "verdict": "read",
+      "reason": "Searches API method contracts and object records; it does not invoke mutating methods.",
+    },
+    "stripe_api_details": {
+      "verdict": "read",
+      "reason": "Reads the parameter contract for an API method; it does not execute that method.",
+    },
+    "stripe_api_read": {
+      "verdict": "read",
+      "reason": "The vendor restricts this generic tool to HTTP GET; all mutating methods use stripe_api_write.",
+    },
+    "get_stripe_account_info": { "verdict": "read", "reason": "Reads metadata for the selected Stripe account." },
+    "get_balance_summary": {
+      "verdict": "read",
+      "reason": "Retrieves Stripe balance summary information without changing vendor state.",
+    },
+    "list_metrics": {
+      "verdict": "read",
+      "reason": "Retrieves Stripe metrics information without changing vendor state.",
+    },
+    "explain_metric": {
+      "verdict": "read",
+      "reason": "Explains an existing metric definition without creating an analytics run.",
+    },
+    "metric_drilldown": { "verdict": "read", "reason": "Reads the breakdown of an existing metric." },
+    "show_metric_app": { "verdict": "read", "reason": "Displays an existing metric app without changing its data." },
+    "list_available_accounts_or_orgs": {
+      "verdict": "read",
+      "reason": "Retrieves Stripe available accounts or orgs information without changing vendor state.",
+    },
+    "manage_stripe_accounts": {
+      "verdict": "read",
+      "reason":
+        "Selects account context for the session; the reviewed contract does not mutate payment or account records.",
+    },
+    "search_stripe_documentation": {
+      "verdict": "read",
+      "reason": "Searches Stripe reference documentation without accessing payment mutations.",
+    },
+    "stripe_api_write": {
+      "verdict": "destructive",
+      "reason": "Can dispatch POST, PATCH, PUT, or DELETE across the Stripe API, including edits and cancellations.",
+    },
+    "create_refund": {
+      "verdict": "destructive",
+      "reason": "Moves money and changes an existing payment; a refund cannot be undone.",
+    },
+    "stripe_implementation_planner": {
+      "verdict": "write",
+      "reason": "Creates or continues provider-side planning state.",
+    },
+    "stripe_analytics": {
+      "verdict": "write",
+      "reason": "Mixes retrieval with durable query-run creation, so the whole tool is a write.",
+    },
+    "stripe_report": {
+      "verdict": "write",
+      "reason": "May create durable report-run state, so retrieval paths cannot make the whole tool read-only.",
+    },
+    "send_stripe_mcp_feedback": {
+      "verdict": "write",
+      "reason": "Submits feedback to Stripe, creating provider-side state.",
+    },
   },
 };
 
@@ -129,18 +165,10 @@ const TEST_KEY = /\b(?:sk|rk|pk)_test_/;
  * operator-managed key is not in the deployment file, so its declared mode
  * stands alone and a key pointed at the other environment fails at Stripe.
  */
-function assertModeMatchesKey(
-  id: string,
-  mode: StripeMode,
-  auth: RemoteMcpAuth,
-): void {
+function assertModeMatchesKey(id: string, mode: StripeMode, auth: RemoteMcpAuth): void {
   if (auth.type !== "headers") return;
   for (const value of Object.values(auth.headers)) {
-    const keyMode = LIVE_KEY.test(value)
-      ? "production"
-      : TEST_KEY.test(value)
-        ? "sandbox"
-        : undefined;
+    const keyMode = LIVE_KEY.test(value) ? "production" : TEST_KEY.test(value) ? "sandbox" : undefined;
     if (keyMode !== undefined && keyMode !== mode) {
       throw new Error(
         `stripe("${id}") declares mode "${mode}" but its auth headers carry a ` +
@@ -162,9 +190,7 @@ function resolveAuth(id: string, options: StripeOptions): RemoteMcpAuth {
   const connectedAccount = options.connectedAccount?.trim();
   if (connectedAccount === undefined || connectedAccount === "") return auth;
   if (!connectedAccount.startsWith("acct_")) {
-    throw new Error(
-      `stripe("${id}") connectedAccount must be a Stripe account id ("acct_...").`,
-    );
+    throw new Error(`stripe("${id}") connectedAccount must be a Stripe account id ("acct_...").`);
   }
   if (auth.type === "oauth") {
     throw new Error(
@@ -188,24 +214,15 @@ function resolveAuth(id: string, options: StripeOptions): RemoteMcpAuth {
   };
 }
 
-function oauthUsageGuide(
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function oauthUsageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `# Stripe usage
 
 Scope: live and sandbox accounts. Connector purpose: ${purpose}${skill.fragments.guide_0}${sharedUsageGuide("100 requests per second in live mode and 25 in sandbox mode")}
-${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
-  }`;
+${accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""}`;
 }
 
-const MODE_COPY: Readonly<
-  Record<StripeMode, { title: string; blurb: string; warning: string }>
-> = {
+const MODE_COPY: Readonly<Record<StripeMode, { title: string; blurb: string; warning: string }>> = {
   production: {
     title: "Stripe (production)",
     blurb: "production — live money and real customers",
@@ -220,11 +237,7 @@ const MODE_COPY: Readonly<
   },
 };
 
-function fixedModeUsageGuide(
-  mode: StripeMode,
-  purpose: string,
-  instructions: string | undefined,
-): string {
+function fixedModeUsageGuide(mode: StripeMode, purpose: string, instructions: string | undefined): string {
   const copy = MODE_COPY[mode];
   const accountInstructions = instructions?.trim();
   return `# Stripe usage
@@ -232,17 +245,12 @@ function fixedModeUsageGuide(
 Mode: ${mode}. Connector purpose: ${purpose}
 
 ${copy.warning}${skill.fragments.guide_1}${sharedUsageGuide(`${mode === "production" ? "100" : "25"} requests per second`)}
-${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
-  }`;
+${accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""}`;
 }
 
 function sharedUsageGuide(rate: string): string {
   return `${skill.fragments.guide_2}${rate}${skill.fragments.guide_3}`;
 }
-
 
 /** The closed options stripe() accepts; see `assertKnownOptions`. */
 const STRIPE_OPTIONS = optionsOf<StripeOptions>()({
@@ -263,7 +271,7 @@ export const stripe = defineProvider<StripeOptions>({
   title: "Stripe",
   kind: "mcp",
   readme: "Stripe",
-  bundle: {"baselineGzip":129103,"maxGzip":189103},
+  bundle: { "baselineGzip": 129103, "maxGzip": 189103 },
   skill,
   options: STRIPE_OPTIONS,
   classify: STRIPE_CLASSIFICATION,
@@ -280,10 +288,7 @@ function stripeConnector(id: string, options: StripeOptions, provider: ProviderC
     );
   }
   if (auth.type !== "oauth" && mode !== "production" && mode !== "sandbox") {
-    throw new Error(
-      `stripe("${id}") with headers or credential auth requires mode ` +
-        `"production" or "sandbox".`,
-    );
+    throw new Error(`stripe("${id}") with headers or credential auth requires mode ` + `"production" or "sandbox".`);
   }
   // Only a literal header can be inspected. An operator-managed credential is
   // not readable at construction — there is nothing in the deployment file to
@@ -326,7 +331,4 @@ function stripeConnector(id: string, options: StripeOptions, provider: ProviderC
 }
 
 /** @deprecated Read `stripe.definition.classify` instead. Kept for existing imports. */
-export const STRIPE_VETTED_CATALOG = reviewedCatalog(
-  stripe.definition.classify!,
-  'defineProvider("stripe")',
-);
+export const STRIPE_VETTED_CATALOG = reviewedCatalog(stripe.definition.classify!, 'defineProvider("stripe")');

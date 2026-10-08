@@ -33,14 +33,8 @@ export function actorKey(actor: ActivityActor): string {
  * the actor's directory. An actor no provider can claim unambiguously gets no
  * lookup at all.
  */
-export function labelLookups(
-  actors: readonly ActivityActor[],
-  auth: readonly InboundAuth[],
-): LabelLookup[] {
-  const identities = new Map<
-    string,
-    { kind: string; id: string; namespace?: string }
-  >();
+export function labelLookups(actors: readonly ActivityActor[], auth: readonly InboundAuth[]): LabelLookup[] {
+  const identities = new Map<string, { kind: string; id: string; namespace?: string }>();
   for (const actor of actors) {
     if (!actor.id) continue;
     identities.set(actorKey(actor), {
@@ -54,23 +48,13 @@ export function labelLookups(
     const sameKindProviders = auth
       .map((provider, index) => ({ provider, index }))
       .filter(({ provider }) => provider.kind === identity.kind);
-    const candidates = sameKindProviders.filter(({ provider }) =>
-      Boolean(provider.activityActorLabel),
-    );
+    const candidates = sameKindProviders.filter(({ provider }) => Boolean(provider.activityActorLabel));
     const eligible = identity.namespace
-      ? candidates.filter(
-          ({ provider }) =>
-            activityActorNamespace(provider) === identity.namespace,
-        )
+      ? candidates.filter(({ provider }) => activityActorNamespace(provider) === identity.namespace)
       : (() => {
-          const directoryKey = ({
-            provider,
-            index,
-          }: (typeof sameKindProviders)[number]) => {
+          const directoryKey = ({ provider, index }: (typeof sameKindProviders)[number]) => {
             const namespace = activityActorNamespace(provider);
-            return namespace === undefined
-              ? `provider:${index}`
-              : `namespace:${namespace}`;
+            return namespace === undefined ? `provider:${index}` : `namespace:${namespace}`;
           };
           // Every same-kind provider participates in the ambiguity check,
           // even if it cannot resolve labels. Otherwise a legacy ID owned
@@ -79,9 +63,7 @@ export function labelLookups(
           const directories = new Set(sameKindProviders.map(directoryKey));
           if (directories.size !== 1) return [];
           const [directory] = directories;
-          return candidates.filter(
-            (candidate) => directoryKey(candidate) === directory,
-          );
+          return candidates.filter((candidate) => directoryKey(candidate) === directory);
         })();
     // One namespace is one directory. Use its first configured resolver so
     // duplicate gate adapters over the same Clerk instance do not multiply

@@ -28,13 +28,8 @@ interface BrowserClerk {
     signUpFallbackRedirectUrl: string;
     afterSignOutUrl: string;
   }): Promise<void>;
-  addListener(
-    listener: (resources: { session?: BrowserClerkSession | null }) => void,
-  ): void;
-  redirectToSignIn(options: {
-    signInFallbackRedirectUrl: string;
-    signUpFallbackRedirectUrl: string;
-  }): void;
+  addListener(listener: (resources: { session?: BrowserClerkSession | null }) => void): void;
+  redirectToSignIn(options: { signInFallbackRedirectUrl: string; signUpFallbackRedirectUrl: string }): void;
   signOut(options: { redirectUrl: string }): Promise<unknown>;
 }
 
@@ -55,8 +50,7 @@ interface ShellConfig {
 }
 
 const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;
-export const { auth, mcpUrl, initialPage, titleSuffix, productName,
-  productDescription } = config;
+export const { auth, mcpUrl, initialPage, titleSuffix, productName, productDescription } = config;
 
 /** Where a bearer operator's token lives between visits. */
 export const TOKEN_KEY = "connecta:token";

@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 // are fine — the rule applies to src/, not to this file.
 
 const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
-const { discoverProviders } = await import(discoveryModule) as {
+const { discoverProviders } = (await import(discoveryModule)) as {
   discoverProviders(root: string): Promise<{ name: string; index: string }[]>;
 };
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -48,9 +48,7 @@ function relativeSpecifiers(source: string): string[] {
 /** Resolve an ESM specifier (`./x.js`) to its on-disk TypeScript source. */
 function resolveToTs(fromFile: string, spec: string): string {
   const base = resolve(dirname(fromFile), spec);
-  const candidates = base.endsWith(".js")
-    ? [base.slice(0, -3) + ".ts"]
-    : [base + ".ts", join(base, "index.ts"), base];
+  const candidates = base.endsWith(".js") ? [base.slice(0, -3) + ".ts"] : [base + ".ts", join(base, "index.ts"), base];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
@@ -65,7 +63,9 @@ function importGraph(entry: string): Set<string> {
     const file = queue.pop()!;
     if (visited.has(file)) continue;
     visited.add(file);
-    const source = ts.transpileModule(readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
+    const source = ts.transpileModule(readFileSync(file, "utf8"), {
+      compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
+    }).outputText;
     for (const spec of relativeSpecifiers(source)) {
       const target = resolveToTs(file, spec);
       if (!visited.has(target)) queue.push(target);
@@ -85,18 +85,9 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
   it("INV-12: contains no `node:` builtin imports or requires", () => {
     for (const file of graph) {
       const source = readFileSync(file, "utf8");
-      expect(
-        FORBIDDEN_NODE_IMPORT.test(source),
-        `${file} imports a node: builtin`,
-      ).toBe(false);
-      expect(
-        FORBIDDEN_NODE_REQUIRE.test(source),
-        `${file} requires a node: builtin`,
-      ).toBe(false);
-      expect(
-        FORBIDDEN_NODE_DYNAMIC_IMPORT.test(source),
-        `${file} dynamically imports a node: builtin`,
-      ).toBe(false);
+      expect(FORBIDDEN_NODE_IMPORT.test(source), `${file} imports a node: builtin`).toBe(false);
+      expect(FORBIDDEN_NODE_REQUIRE.test(source), `${file} requires a node: builtin`).toBe(false);
+      expect(FORBIDDEN_NODE_DYNAMIC_IMPORT.test(source), `${file} dynamically imports a node: builtin`).toBe(false);
     }
   });
 
@@ -123,9 +114,24 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(workerExecutor)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
-    for (const file of ["ui.ts", "operator-ui/generated.ts", "credentials.ts", "activity.ts", "access-tokens.ts", "routes/access-tokens.ts"]) expect(graph.has(join(SRC, file)), file).toBe(false);
+    for (const file of [
+      "ui.ts",
+      "operator-ui/generated.ts",
+      "credentials.ts",
+      "activity.ts",
+      "access-tokens.ts",
+      "routes/access-tokens.ts",
+    ])
+      expect(graph.has(join(SRC, file)), file).toBe(false);
     const withUi = importGraph(join(SRC, "ui.ts"));
-    for (const file of ["credentials.ts", "activity.ts", "routes/activity.ts", "access-tokens.ts", "routes/access-tokens.ts"]) expect(withUi.has(join(SRC, file)), `UI imports ${file}`).toBe(false);
+    for (const file of [
+      "credentials.ts",
+      "activity.ts",
+      "routes/activity.ts",
+      "access-tokens.ts",
+      "routes/access-tokens.ts",
+    ])
+      expect(withUi.has(join(SRC, file)), `UI imports ${file}`).toBe(false);
   });
 
   it("never imports this package by its own name", () => {
@@ -143,17 +149,11 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
       });
     // Import positions only: the name also appears in doc comments and in
     // error messages that tell a deployment which subpath to reach for.
-    const selfImports = [
-      /^\s*(?:import|export)[^;]*?["']@zackbart\/connecta/m,
-      /\bimport\(\s*["']@zackbart\/connecta/,
-    ];
+    const selfImports = [/^\s*(?:import|export)[^;]*?["']@zackbart\/connecta/m, /\bimport\(\s*["']@zackbart\/connecta/];
     for (const file of walk(SRC)) {
       const source = readFileSync(file, "utf8");
       for (const pattern of selfImports) {
-        expect(
-          pattern.test(source),
-          `${file} imports @zackbart/connecta instead of a relative path`,
-        ).toBe(false);
+        expect(pattern.test(source), `${file} imports @zackbart/connecta instead of a relative path`).toBe(false);
       }
     }
   });
@@ -222,8 +222,7 @@ function allSpecifiers(source: string): string[] {
   return specs;
 }
 
-const isEffectSpecifier = (spec: string) =>
-  /^effect(?:\/|$)/.test(spec) || spec.startsWith("@effect/");
+const isEffectSpecifier = (spec: string) => /^effect(?:\/|$)/.test(spec) || spec.startsWith("@effect/");
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -277,8 +276,9 @@ function testGraph(entry: string): Set<string> {
       if (!spec.startsWith(".")) continue;
       const base = resolve(dirname(file), spec);
       const stem = base.replace(/\.js$/, "");
-      const target = [`${stem}.ts`, `${stem}.tsx`, join(base, "index.ts"), base]
-        .find((candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate));
+      const target = [`${stem}.ts`, `${stem}.tsx`, join(base, "index.ts"), base].find(
+        (candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate),
+      );
       if (target && !visited.has(target)) queue.push(target);
     }
   }
@@ -306,10 +306,7 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     for (const file of graph) {
       for (const spec of allSpecifiers(sourceOf(file))) {
         if (!isEffectSpecifier(spec)) continue;
-        expect(
-          ROOT_EFFECT_ALLOWED.has(spec),
-          `${file} is reachable from index.ts and imports ${spec}`,
-        ).toBe(true);
+        expect(ROOT_EFFECT_ALLOWED.has(spec), `${file} is reachable from index.ts and imports ${spec}`).toBe(true);
       }
     }
   });
@@ -329,21 +326,18 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     // Logging goes through the configured Logger, which is what honors
     // `logger: "silent"` and keeps the line format a deployment greps for.
     for (const file of everySource) {
-      expect(/\bEffect\.log/.test(codeOnly(file)), `${file} calls Effect.log*`)
-        .toBe(false);
+      expect(/\bEffect\.log/.test(codeOnly(file)), `${file} calls Effect.log*`).toBe(false);
     }
   });
 
   it("keeps effect/testing out of every suite the Workers project runs", () => {
-    for (const suite of readdirSync(HERE, { recursive: true })
-      .filter((file): file is string => typeof file === "string" &&
-        file.endsWith(".test.ts") && !file.endsWith(".node.test.ts"))) {
+    for (const suite of readdirSync(HERE, { recursive: true }).filter(
+      (file): file is string =>
+        typeof file === "string" && file.endsWith(".test.ts") && !file.endsWith(".node.test.ts"),
+    )) {
       for (const file of testGraph(join(HERE, suite))) {
         for (const spec of allSpecifiers(sourceOf(file))) {
-          expect(
-            /^effect\/testing(?:\/|$)/.test(spec),
-            `${file} (reached from ${suite}) imports ${spec}`,
-          ).toBe(false);
+          expect(/^effect\/testing(?:\/|$)/.test(spec), `${file} (reached from ${suite}) imports ${spec}`).toBe(false);
         }
       }
     }

@@ -4,10 +4,7 @@
 // of a different request" (verified on workerd; see P1-S12). The signal here
 // throws the same way whenever it is read from inside the releasing call.
 import { describe, expect, it } from "vitest";
-import {
-  ConnectorCallAdmissionController,
-  type CallAdmissionPermit,
-} from "../src/call-admission.js";
+import { ConnectorCallAdmissionController, type CallAdmissionPermit } from "../src/call-admission.js";
 
 function otherRequestsSignal(): {
   signal: AbortSignal;

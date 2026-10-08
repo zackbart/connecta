@@ -5,9 +5,7 @@
     {
       "type": "oauth-discovery",
       "setup": "https://mcp.basecamp.com/.well-known/oauth-protected-resource/mcp",
-      "endpoints": [
-        "https://mcp.basecamp.com/mcp"
-      ],
+      "endpoints": ["https://mcp.basecamp.com/mcp"],
       "reviewed": [
         "get_basecamp_guide",
         "get_me",

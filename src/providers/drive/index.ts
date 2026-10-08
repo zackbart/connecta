@@ -158,9 +158,7 @@ type JsonRecord = Record<string, any>;
 type ContentFormat = "markdown" | "csv" | "text" | "base64" | "unavailable";
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -168,9 +166,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -262,7 +258,10 @@ function projectFile(
     driveId: cuts.id("driveId", file["driveId"]),
     size: sizeOf(file["size"]),
     modifiedTime: cuts.label("modifiedTime", file["modifiedTime"]),
-    owners: cuts.labels("owners", asArray(file["owners"]).map((owner) => asRecord(owner)["emailAddress"])),
+    owners: cuts.labels(
+      "owners",
+      asArray(file["owners"]).map((owner) => asRecord(owner)["emailAddress"]),
+    ),
     trashed: bool(file["trashed"]),
     webViewLink: cuts.label("webViewLink", file["webViewLink"]),
     shortcutTargetId: cuts.id("shortcutTargetId", shortcut["targetId"]),
@@ -286,14 +285,13 @@ function projectFileDetail(value: unknown, fallbackId: string): JsonRecord {
   return projectFile(value, fallbackId, DETAIL_NAME_BYTES, (file, cuts) => {
     const modifier = asRecord(file["lastModifyingUser"]);
     const granted = asRecord(file["capabilities"]);
-    const capabilities = compact(
-      Object.fromEntries(CAPABILITIES.map((name) => [name, bool(granted[name])])),
-    );
+    const capabilities = compact(Object.fromEntries(CAPABILITIES.map((name) => [name, bool(granted[name])])));
     return {
       description: cuts.label("description", file["description"], DETAIL_DESCRIPTION_BYTES),
       createdTime: cuts.label("createdTime", file["createdTime"]),
       modifiedBy:
-        cuts.label("modifiedBy", text(modifier["emailAddress"])) ?? cuts.label("modifiedBy", text(modifier["displayName"])),
+        cuts.label("modifiedBy", text(modifier["emailAddress"])) ??
+        cuts.label("modifiedBy", text(modifier["displayName"])),
       shared: bool(file["shared"]),
       starred: bool(file["starred"]),
       capabilities: Object.keys(capabilities).length > 0 ? capabilities : undefined,
@@ -385,9 +383,13 @@ function decodeCursor(cursor: string): Resume {
       typeof page === "string" && FINGERPRINT.test(page) && typeof last === "string" && FINGERPRINT.test(last);
     if (
       (token === null || (typeof token === "string" && token !== "")) &&
-      Number.isSafeInteger(skip) && (skip as number) >= 0 &&
-      Number.isSafeInteger(size) && (size as number) >= 1 && (size as number) <= MAX_PAGE_SIZE &&
-      typeof scope === "string" && FINGERPRINT.test(scope) &&
+      Number.isSafeInteger(skip) &&
+      (skip as number) >= 0 &&
+      Number.isSafeInteger(size) &&
+      (size as number) >= 1 &&
+      (size as number) <= MAX_PAGE_SIZE &&
+      typeof scope === "string" &&
+      FINGERPRINT.test(scope) &&
       // A cursor inside a page proves which page; one at a boundary has nothing to prove.
       ((skip as number) > 0 ? midPage : page === null && last === null)
     ) {
@@ -450,9 +452,10 @@ async function pageOf(
   const maxBytes: number = args["maxBytes"] ?? DEFAULT_RESULT_BYTES;
   const size: number = args["limit"] ?? DEFAULT_PAGE_SIZE;
   const scope = await fingerprint({ ...binding, size });
-  const resume: Resume = typeof args["cursor"] === "string"
-    ? decodeCursor(args["cursor"])
-    : { token: null, skip: 0, size, scope, page: null, last: null };
+  const resume: Resume =
+    typeof args["cursor"] === "string"
+      ? decodeCursor(args["cursor"])
+      : { token: null, skip: 0, size, scope, page: null, last: null };
   if (resume.scope !== scope) {
     throw new ConnectorCallError(
       "invalid_args",
@@ -479,11 +482,12 @@ async function pageOf(
   }
   const rows = fetched.rows.slice(resume.skip);
   const build = (count: number): JsonRecord => {
-    const nextCursor = count < rows.length
-      ? encodeCursor({ ...resume, skip: resume.skip + count, page, last: lasts[resume.skip + count - 1] ?? "" })
-      : fetched.next
-        ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
-        : null;
+    const nextCursor =
+      count < rows.length
+        ? encodeCursor({ ...resume, skip: resume.skip + count, page, last: lasts[resume.skip + count - 1] ?? "" })
+        : fetched.next
+          ? encodeCursor({ token: fetched.next, skip: 0, size: resume.size, scope, page: null, last: null })
+          : null;
     return { [key]: rows.slice(0, count), ...fetched.extra, page: { hasMore: nextCursor !== null, nextCursor } };
   };
   if (jsonBytes(build(rows.length)) <= maxBytes) return build(rows.length);
@@ -525,12 +529,7 @@ const TEXT_TYPES = new Set([
 
 function isText(mimeType: string): boolean {
   const type = mimeType.toLowerCase();
-  return (
-    type.startsWith("text/") ||
-    TEXT_TYPES.has(type) ||
-    type.endsWith("+json") ||
-    type.endsWith("+xml")
-  );
+  return type.startsWith("text/") || TEXT_TYPES.has(type) || type.endsWith("+json") || type.endsWith("+xml");
 }
 
 /** Whether the UTF-16 unit at `index` opens a surrogate pair that is whole. */
@@ -876,7 +875,10 @@ function media(args: JsonRecord): { bytes: Uint8Array; type: string } | undefine
  * whole as bytes, never a stream, so the shared client's single 401 replay
  * can send it again unchanged.
  */
-function multipart(metadata: JsonRecord, content: { bytes: Uint8Array; type: string }): {
+function multipart(
+  metadata: JsonRecord,
+  content: { bytes: Uint8Array; type: string },
+): {
   body: Uint8Array;
   contentType: string;
 } {
@@ -986,7 +988,8 @@ const MIME_PROPERTY: JsonSchema = {
 const ROLE_PROPERTY: JsonSchema = {
   type: "string",
   enum: ["reader", "commenter", "writer", "fileOrganizer", "organizer"],
-  description: "Access granted. fileOrganizer and organizer exist only on shared drives. Ownership is never granted here.",
+  description:
+    "Access granted. fileOrganizer and organizer exist only on shared drives. Ownership is never granted here.",
 };
 
 const PERMISSION_ID = idProperty("Permission id from list_permissions.");
@@ -1157,7 +1160,9 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
             description:
               "Where to look: user (default; My Drive and shared with me), drive (one shared drive, with driveId), allDrives (slower, may be incomplete), domain.",
           },
-          driveId: idProperty("Shared drive id from list_shared_drives; required with corpora drive, refused otherwise."),
+          driveId: idProperty(
+            "Shared drive id from list_shared_drives; required with corpora drive, refused otherwise.",
+          ),
           orderBy: ORDER_PROPERTY,
           includeTrashed: INCLUDE_TRASHED,
           limit: LIMIT_PROPERTY,
@@ -1176,10 +1181,14 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           );
         }
         const query = text(args["query"]);
-        const q = args["includeTrashed"] === true
-          ? query
-          : query ? `(${query}) and trashed = false` : "trashed = false";
-        return await list(ctx, "search_files", args, { q, corpora, driveId: args["driveId"], orderBy: args["orderBy"] });
+        const q =
+          args["includeTrashed"] === true ? query : query ? `(${query}) and trashed = false` : "trashed = false";
+        return await list(ctx, "search_files", args, {
+          q,
+          corpora,
+          driveId: args["driveId"],
+          orderBy: args["orderBy"],
+        });
       },
     },
     {
@@ -1311,28 +1320,33 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         required: ["permissions", "page"],
       },
       handler: async (args, ctx) =>
-        await pageOf("permissions", args, { tool: "list_permissions", fileId: args["fileId"] }, async (pageToken, pageSize) => {
-          const listing = asRecord(
-            await client.json(
-              {
-                method: "GET",
-                path: `${filePath(args["fileId"])}/permissions`,
-                query: {
-                  ...ALL_DRIVES,
-                  fields: `nextPageToken,permissions(${PERMISSION_FIELDS})`,
-                  pageSize,
-                  pageToken,
+        await pageOf(
+          "permissions",
+          args,
+          { tool: "list_permissions", fileId: args["fileId"] },
+          async (pageToken, pageSize) => {
+            const listing = asRecord(
+              await client.json(
+                {
+                  method: "GET",
+                  path: `${filePath(args["fileId"])}/permissions`,
+                  query: {
+                    ...ALL_DRIVES,
+                    fields: `nextPageToken,permissions(${PERMISSION_FIELDS})`,
+                    pageSize,
+                    pageToken,
+                  },
                 },
-              },
-              ctx,
-            ),
-          );
-          return {
-            ids: asArray(listing["permissions"]).map((permission) => String(asRecord(permission)["id"] ?? "")),
-            rows: asArray(listing["permissions"]).map((permission) => projectPermission(permission)),
-            next: text(listing["nextPageToken"]),
-          };
-        }),
+                ctx,
+              ),
+            );
+            return {
+              ids: asArray(listing["permissions"]).map((permission) => String(asRecord(permission)["id"] ?? "")),
+              rows: asArray(listing["permissions"]).map((permission) => projectPermission(permission)),
+              next: text(listing["nextPageToken"]),
+            };
+          },
+        ),
     },
     {
       name: "list_shared_drives",
@@ -1406,12 +1420,12 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     },
     {
       name: "create_folder",
-      description: "Create a new, empty Drive folder, in My Drive or inside another folder. Shares nothing beyond what the parent folder already grants.",
+      description:
+        "Create a new, empty Drive folder, in My Drive or inside another folder. Shares nothing beyond what the parent folder already grants.",
       annotations: additive,
-      inputSchema: input(
-        { name: NAME_PROPERTY, parentId: PARENT_PROPERTY, description: DESCRIPTION_PROPERTY },
-        ["name"],
-      ),
+      inputSchema: input({ name: NAME_PROPERTY, parentId: PARENT_PROPERTY, description: DESCRIPTION_PROPERTY }, [
+        "name",
+      ]),
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) =>
         projectFile(
@@ -1449,11 +1463,15 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           parentId: PARENT_PROPERTY,
           content: CONTENT_PROPERTY,
           contentBase64: CONTENT_BASE64_PROPERTY,
-          mimeType: { ...MIME_PROPERTY, description: `${MIME_PROPERTY.description} Defaults to text/plain or application/octet-stream.` },
+          mimeType: {
+            ...MIME_PROPERTY,
+            description: `${MIME_PROPERTY.description} Defaults to text/plain or application/octet-stream.`,
+          },
           convertTo: {
             type: "string",
             enum: ["document", "spreadsheet", "presentation"],
-            description: "Import as a Google type: markdown, HTML, or text to document; CSV to spreadsheet. Without content, an empty one.",
+            description:
+              "Import as a Google type: markdown, HTML, or text to document; CSV to spreadsheet. Without content, an empty one.",
           },
           description: DESCRIPTION_PROPERTY,
         },
@@ -1471,7 +1489,10 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         });
         if (!content) {
           if (args["mimeType"] !== undefined) {
-            throw new ConnectorCallError("invalid_args", "mimeType describes content; pass content or contentBase64 with it.");
+            throw new ConnectorCallError(
+              "invalid_args",
+              "mimeType describes content; pass content or contentBase64 with it.",
+            );
           }
           return projectFile(
             await adding(
@@ -1553,16 +1574,19 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       // Destructive: the old name or description is overwritten, and a
       // rename can break what finds the file by name.
       annotations: destructive,
-      inputSchema: input(
-        { fileId: FILE_ID, name: NAME_PROPERTY, description: DESCRIPTION_PROPERTY },
-        ["fileId"],
-      ),
+      inputSchema: input({ fileId: FILE_ID, name: NAME_PROPERTY, description: DESCRIPTION_PROPERTY }, ["fileId"]),
       outputSchema: FILE_SCHEMA,
       handler: async (args, ctx) => {
         if (args["name"] === undefined && args["description"] === undefined) {
           throw new ConnectorCallError("invalid_args", "Pass name, description, or both.");
         }
-        return patch(ctx, args["fileId"], compact({ name: args["name"], description: args["description"] }), {}, IDEMPOTENT);
+        return patch(
+          ctx,
+          args["fileId"],
+          compact({ name: args["name"], description: args["description"] }),
+          {},
+          IDEMPOTENT,
+        );
       },
     },
     {
@@ -1589,10 +1613,15 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           ),
         );
         const from = idsOf(current["parents"]).filter((id) => id !== args["folderId"]);
-        return patch(ctx, args["fileId"], {}, {
-          addParents: args["folderId"],
-          removeParents: from.length > 0 ? from.join(",") : undefined,
-        });
+        return patch(
+          ctx,
+          args["fileId"],
+          {},
+          {
+            addParents: args["folderId"],
+            removeParents: from.length > 0 ? from.join(",") : undefined,
+          },
+        );
       },
     },
     {
@@ -1606,7 +1635,7 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
       inputSchema: input(
         {
           fileId: FILE_ID,
-          name: { ...NAME_PROPERTY, description: "Name of the copy; defaults to Drive's \"Copy of …\"." },
+          name: { ...NAME_PROPERTY, description: 'Name of the copy; defaults to Drive\'s "Copy of …".' },
           parentId: { ...PARENT_PROPERTY, description: "Folder for the copy; defaults to the original's." },
         },
         ["fileId"],
@@ -1642,7 +1671,8 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
     },
     {
       name: "restore_file",
-      description: "Restore (untrash) a trashed Drive file or folder to where it was. Cannot recover a file already deleted from the trash.",
+      description:
+        "Restore (untrash) a trashed Drive file or folder to where it was. Cannot recover a file already deleted from the trash.",
       // Additive: brings back exactly what was there, losing nothing.
       annotations: additive,
       inputSchema: input({ fileId: FILE_ID }, ["fileId"]),
@@ -1660,7 +1690,8 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           type: {
             type: "string",
             enum: ["user", "group", "domain", "anyone"],
-            description: "Grantee kind: user or group needs emailAddress, domain needs domain, anyone means anyone with the link.",
+            description:
+              "Grantee kind: user or group needs emailAddress, domain needs domain, anyone means anyone with the link.",
           },
           role: ROLE_PROPERTY,
           emailAddress: {
@@ -1679,11 +1710,13 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
           },
           allowFileDiscovery: {
             type: "boolean",
-            description: "For domain or anyone: whether it appears in search rather than needing the link. Defaults to false.",
+            description:
+              "For domain or anyone: whether it appears in search rather than needing the link. Defaults to false.",
           },
           sendNotificationEmail: {
             type: "boolean",
-            description: "Email a user or group that it was shared. Defaults to false; Drive requires it for a non-Google address.",
+            description:
+              "Email a user or group that it was shared. Defaults to false; Drive requires it for a non-Google address.",
           },
           emailMessage: {
             type: "string",
@@ -1700,34 +1733,43 @@ function tools(client: GoogleWorkspaceClient, upload: GoogleWorkspaceClient): Ap
         const refuse = (message: string): never => {
           throw new ConnectorCallError("invalid_args", message);
         };
-        if (person !== (args["emailAddress"] !== undefined)) refuse("emailAddress goes with type user or group, and only with them.");
-        if ((type === "domain") !== (args["domain"] !== undefined)) refuse("domain goes with type domain, and only with it.");
-        if (person && args["allowFileDiscovery"] !== undefined) refuse("allowFileDiscovery applies to type domain or anyone only.");
-        if (!person && args["sendNotificationEmail"] !== undefined) refuse("sendNotificationEmail applies to a user or group only.");
+        if (person !== (args["emailAddress"] !== undefined))
+          refuse("emailAddress goes with type user or group, and only with them.");
+        if ((type === "domain") !== (args["domain"] !== undefined))
+          refuse("domain goes with type domain, and only with it.");
+        if (person && args["allowFileDiscovery"] !== undefined)
+          refuse("allowFileDiscovery applies to type domain or anyone only.");
+        if (!person && args["sendNotificationEmail"] !== undefined)
+          refuse("sendNotificationEmail applies to a user or group only.");
         const notify = person ? args["sendNotificationEmail"] === true : undefined;
-        if (args["emailMessage"] !== undefined && notify !== true) refuse("emailMessage needs sendNotificationEmail true.");
+        if (args["emailMessage"] !== undefined && notify !== true)
+          refuse("emailMessage needs sendNotificationEmail true.");
         return projectPermission(
-          await adding(() => client.json(
-            {
-              method: "POST",
-              path: `${filePath(args["fileId"])}/permissions`,
-              query: {
-                ...ALL_DRIVES,
-                fields: PERMISSION_FIELDS,
-                // Drive's default is to email; this connection's is not to.
-                sendNotificationEmail: notify,
-                emailMessage: args["emailMessage"],
-              },
-              body: compact({
-                type,
-                role: args["role"],
-                emailAddress: args["emailAddress"],
-                domain: args["domain"],
-                allowFileDiscovery: person ? undefined : args["allowFileDiscovery"] === true,
-              }),
-            },
-            ctx,
-          ), "Check list_permissions before sharing again: the share may already be in place, and its notification sent."),
+          await adding(
+            () =>
+              client.json(
+                {
+                  method: "POST",
+                  path: `${filePath(args["fileId"])}/permissions`,
+                  query: {
+                    ...ALL_DRIVES,
+                    fields: PERMISSION_FIELDS,
+                    // Drive's default is to email; this connection's is not to.
+                    sendNotificationEmail: notify,
+                    emailMessage: args["emailMessage"],
+                  },
+                  body: compact({
+                    type,
+                    role: args["role"],
+                    emailAddress: args["emailAddress"],
+                    domain: args["domain"],
+                    allowFileDiscovery: person ? undefined : args["allowFileDiscovery"] === true,
+                  }),
+                },
+                ctx,
+              ),
+            "Check list_permissions before sharing again: the share may already be in place, and its notification sent.",
+          ),
         );
       },
     },
@@ -1871,7 +1913,12 @@ export const drive = asProviderFactory<DriveOptions>({
   title: "Google Drive",
   kind: "api",
   readme: "Google Drive",
-  bundle: {"baselineGzip":28955,"maxGzip":88955,"note":"./providers/drive starts at 28,955 B gzip (#680): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with two confined transports (API and upload host) and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 28955,
+    "maxGzip": 88955,
+    "note":
+      "./providers/drive starts at 28,955 B gzip (#680): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with two confined transports (API and upload host) and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   create: driveConnector,
@@ -1901,7 +1948,8 @@ function driveConnector(id: string, options: DriveOptions): Connector {
     description: `Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — ${connection.purpose}`,
     usageGuide: {
       content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
+      summary:
+        "Each caller's own Drive: query syntax, Docs as Markdown, capped content, recoverable trash, quiet sharing.",
       // Required: whose Drive it is, the first-sheet CSV, and what
       // update_file_content replaces are conventions no schema can carry.
       required: true,

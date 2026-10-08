@@ -31,11 +31,7 @@ import {
   type ConfigOutput,
 } from "./config-schema.js";
 import { assertExecutor } from "./executor-contract.js";
-import type {
-  AccessTokensModule,
-  ActivityModule,
-  OperatorSurface,
-} from "./module-contracts.js";
+import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
 import { memoryStorage } from "./storage/memory.js";
 import type {
   AuthenticatedIdentity,
@@ -96,12 +92,14 @@ function resolveLogger(logger: Logger | "silent" | undefined): Logger {
   if (logger === "silent") {
     return { debug() {}, info() {}, warn() {}, error() {} };
   }
-  return logger ?? {
-    debug: (...a) => console.debug("[connecta]", ...a),
-    info: (...a) => console.info("[connecta]", ...a),
-    warn: (...a) => console.warn("[connecta]", ...a),
-    error: (...a) => console.error("[connecta]", ...a),
-  };
+  return (
+    logger ?? {
+      debug: (...a) => console.debug("[connecta]", ...a),
+      info: (...a) => console.info("[connecta]", ...a),
+      warn: (...a) => console.warn("[connecta]", ...a),
+      error: (...a) => console.error("[connecta]", ...a),
+    }
+  );
 }
 
 const discovery = {
@@ -239,35 +237,33 @@ const identity = {
    * connector or address grant wins over the guarded form. An address naming
    * a tool the catalog lacks is unreachable and warned once, never widened.
    */
-  connectorAccess: fn<
-    (
-      identity: Readonly<AuthenticatedIdentity>,
-    ) => "all" | readonly ConnectorGrant[] | Promise<"all" | readonly ConnectorGrant[]>
-  >(),
+  connectorAccess:
+    fn<
+      (
+        identity: Readonly<AuthenticatedIdentity>,
+      ) => "all" | readonly ConnectorGrant[] | Promise<"all" | readonly ConnectorGrant[]>
+    >(),
   /** Global payload-free activity reads. Defaults to interactive humans. */
   activityAccess: fn<(principal: Readonly<IdentityReference>) => boolean | Promise<boolean>>(),
   /** Shared credential and OAuth administration. Defaults to none. */
-  credentialAdministration: fn<
-    (identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>
-  >(),
+  credentialAdministration:
+    fn<(identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>>(),
   /** Client-token lifecycle management by interactive humans. Defaults to false. */
-  accessTokenManagement: fn<
-    (identity: Readonly<AuthenticatedIdentity>) => boolean | Promise<boolean>
-  >(),
+  accessTokenManagement: fn<(identity: Readonly<AuthenticatedIdentity>) => boolean | Promise<boolean>>(),
   /** Connecting or changing the caller's personal account. Defaults to none. */
-  personalConnection: fn<
-    (identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>
-  >(),
+  personalConnection:
+    fn<(identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>>(),
 };
 
-const trust = () => opaque<"trusted" | "read-only", "trusted" | "read-only">({
-  check: (value, path) => {
-    if (value !== "trusted" && value !== "read-only") {
-      throw new ConfigError(`${path} must be "trusted" or "read-only".`);
-    }
-  },
-  resolve: value => value ?? "read-only",
-});
+const trust = () =>
+  opaque<"trusted" | "read-only", "trusted" | "read-only">({
+    check: (value, path) => {
+      if (value !== "trusted" && value !== "read-only") {
+        throw new ConfigError(`${path} must be "trusted" or "read-only".`);
+      }
+    },
+    resolve: (value) => value ?? "read-only",
+  });
 
 const pool = {
   /** Programs may write only in trusted pools. Default read-only. */
@@ -277,9 +273,7 @@ const pool = {
     opaque<readonly string[]>({
       check: (value, path) => {
         if (!Array.isArray(value)) {
-          throw new ConfigError(
-            `${path} must be an array of connector ids or connector.tool addresses.`,
-          );
+          throw new ConfigError(`${path} must be an array of connector ids or connector.tool addresses.`);
         }
       },
     }),
@@ -317,11 +311,13 @@ const connectaConfig = {
           if (isObject(value) && Object.hasOwn(value, "approval")) {
             throw new ConfigError(`${path}.approval was removed; configure pool trust instead.`);
           }
-          if (!isObject(value) || typeof value.id !== "string" ||
-            typeof value.listTools !== "function" || typeof value.callTool !== "function") {
-            throw new ConfigError(
-              `${path} must be a Connector: an object with an id, listTools, and callTool.`,
-            );
+          if (
+            !isObject(value) ||
+            typeof value.id !== "string" ||
+            typeof value.listTools !== "function" ||
+            typeof value.callTool !== "function"
+          ) {
+            throw new ConfigError(`${path} must be a Connector: an object with an id, listTools, and callTool.`);
           }
         },
       }),
@@ -332,23 +328,34 @@ const connectaConfig = {
     check: (value, path) => {
       const list = Array.isArray(value) ? value : [value];
       list.forEach((provider, index) => {
-        if (!isObject(provider) || typeof provider.kind !== "string" ||
+        if (
+          !isObject(provider) ||
+          typeof provider.kind !== "string" ||
           typeof provider.authorize !== "function" ||
-          ["recognizesCredential", "handleMetadata", "challenge"].some(key => provider[key] !== undefined && typeof provider[key] !== "function")) {
+          ["recognizesCredential", "handleMetadata", "challenge"].some(
+            (key) => provider[key] !== undefined && typeof provider[key] !== "function",
+          )
+        ) {
           throw new ConfigError(
             `${Array.isArray(value) ? `${path}[${index}]` : path} must be an inbound auth adapter.`,
           );
         }
-        if (provider.recognizesCredential !== undefined && Object.prototype.toString.call(provider.recognizesCredential) === "[object AsyncFunction]") {
-          throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.recognizesCredential must be synchronous.`);
+        if (
+          provider.recognizesCredential !== undefined &&
+          Object.prototype.toString.call(provider.recognizesCredential) === "[object AsyncFunction]"
+        ) {
+          throw new ConfigError(
+            `${Array.isArray(value) ? `${path}[${index}]` : path}.recognizesCredential must be synchronous.`,
+          );
         }
         if ("finalRefusals" in provider) {
-          throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.finalRefusals is retired; use synchronous recognizesCredential.`);
+          throw new ConfigError(
+            `${Array.isArray(value) ? `${path}[${index}]` : path}.finalRefusals is retired; use synchronous recognizesCredential.`,
+          );
         }
       });
     },
-    resolve: (value) =>
-      normalizeAuth(value === undefined ? [] : Array.isArray(value) ? value : [value]),
+    resolve: (value) => normalizeAuth(value === undefined ? [] : Array.isArray(value) ? value : [value]),
   }),
   /** Code-derived connection visibility and independent management permissions. */
   identity: object(identity),
@@ -357,13 +364,17 @@ const connectaConfig = {
   /** Trust of the default /mcp endpoint. Default read-only. */
   trust: trust(),
   /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
-  classification: record(record(opaque<"read" | "write">({
-    check: (value, path) => {
-      if (value !== "read" && value !== "write") {
-        throw new ConfigError(`${path} must be "read" or "write".`);
-      }
-    },
-  }))),
+  classification: record(
+    record(
+      opaque<"read" | "write">({
+        check: (value, path) => {
+          if (value !== "read" && value !== "write") {
+            throw new ConfigError(`${path} must be "read" or "write".`);
+          }
+        },
+      }),
+    ),
+  ),
   /**
    * The deployment's one store: `d1Storage(env.CONNECTA_DB)` from
    * `@zackbart/connecta/d1` on Workers, `sqliteStorage(path)` from
@@ -400,9 +411,7 @@ const connectaConfig = {
   allowedOrigins: opaque<readonly string[] | "*">({
     check: (value) => {
       if (value !== "*" && (!Array.isArray(value) || !value.every(isExactOrigin))) {
-        throw new ConfigError(
-          'ConnectaConfig.allowedOrigins must be an array of exact HTTP(S) origins or "*".',
-        );
+        throw new ConfigError('ConnectaConfig.allowedOrigins must be an array of exact HTTP(S) origins or "*".');
       }
     },
   }),
@@ -430,8 +439,10 @@ const connectaConfig = {
   /** Optional connection UI, created by operatorUi() from /ui. */
   ui: opaque<OperatorSurface>({
     check: (value) => {
-      if (!hasMethods(value, ["handle", "credentialHandoffUrl"]) ||
-        !Array.isArray((value as Record<string, unknown>).reservedPaths)) {
+      if (
+        !hasMethods(value, ["handle", "credentialHandoffUrl"]) ||
+        !Array.isArray((value as Record<string, unknown>).reservedPaths)
+      ) {
         throw new ConfigError("ConnectaConfig.ui must be created with operatorUi(...)");
       }
     },
@@ -546,19 +557,22 @@ export interface ResolvedConfig extends Omit<Parsed, "serverInfo"> {
 }
 
 /** Pause-only options #672 removed with `resume_execution`. */
-const RETIRED_PAUSE_OPTIONS = [
-  "ConnectaConfig.execute.resumableWrites",
-  "ConnectaConfig.execute.pausedRunTtlSeconds",
-];
+const RETIRED_PAUSE_OPTIONS = ["ConnectaConfig.execute.resumableWrites", "ConnectaConfig.execute.pausedRunTtlSeconds"];
 
 function rejectUnknownOptions(paths: string[]): void {
   if (paths.length === 0) return;
   throw new ConfigError(
     `Unknown Connecta configuration option${paths.length === 1 ? "" : "s"}:\n` +
       paths.map((path) => `- ${path}`).join("\n") +
-      (paths.includes("ConnectaConfig.credentials") ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials." : "") +
-      (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : "") +
-      (paths.includes("ConnectaConfig.execute.approval") ? "\nexecute.approval was removed. Set trust: \"trusted\" on a pool to allow program writes; the default is read-only." : "") +
+      (paths.includes("ConnectaConfig.credentials")
+        ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials."
+        : "") +
+      (paths.includes("ConnectaConfig.branding")
+        ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui."
+        : "") +
+      (paths.includes("ConnectaConfig.execute.approval")
+        ? '\nexecute.approval was removed. Set trust: "trusted" on a pool to allow program writes; the default is read-only.'
+        : "") +
       (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
         ? "\nPrograms no longer pause at writes, so there is nothing to configure: read-only pools route writes through call_destructive_tool; trusted pools allow program writes (issue #672). Delete the option."
         : ""),
@@ -567,7 +581,10 @@ function rejectUnknownOptions(paths: string[]): void {
 
 /** Checks that span fields; each value is already individually valid. */
 function assertCoherent(config: Parsed): void {
-  if (config.discovery.catalogMinTtlSeconds > config.discovery.catalogMaxTtlSeconds || config.discovery.catalogMaxTtlSeconds > 86_400) {
+  if (
+    config.discovery.catalogMinTtlSeconds > config.discovery.catalogMaxTtlSeconds ||
+    config.discovery.catalogMaxTtlSeconds > 86_400
+  ) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
   }
 }
@@ -620,9 +637,7 @@ export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; res
  * The factory runs when the entry calls it, never at import, so a Worker can
  * import it at global scope. Validation still happens in createConnecta.
  */
-export function defineConfig<Env>(
-  factory: (env: Env) => ConnectaConfig,
-): (env: Env) => ConnectaConfig {
+export function defineConfig<Env>(factory: (env: Env) => ConnectaConfig): (env: Env) => ConnectaConfig {
   return factory;
 }
 

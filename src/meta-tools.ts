@@ -3,10 +3,7 @@ import type { AuthElicitation } from "./auth-elicitation.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { z } from "zod";
-import type {
-  ActivityCallSource,
-  ActivityRequestContext,
-} from "./activity.js";
+import type { ActivityCallSource, ActivityRequestContext } from "./activity.js";
 import { advertisedSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
@@ -23,10 +20,7 @@ import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
-import {
-  InvocationService,
-  type InvocationTiming,
-} from "./invocation.js";
+import { InvocationService, type InvocationTiming } from "./invocation.js";
 import {
   isValidMaxResultBytes,
   MIN_MAX_RESULT_BYTES,
@@ -34,24 +28,14 @@ import {
   type RegistryView,
   type ResultIdentity,
 } from "./registry.js";
-import {
-  hasConnectorGuides,
-  SkillsRegistry,
-} from "./skills.js";
-import {
-  DEFAULT_PROBE_TIMEOUT_MS,
-  normalizeTimeoutMs,
-} from "./timeout.js";
+import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
+import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import { AUTHORIZE_OUTPUT, CALL_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
 
-export {
-  MAX_DESCRIBE_ADDRESSES,
-  MAX_DISCOVERY_RESULT_BYTES,
-  MAX_SEARCH_LIMIT,
-};
+export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
 
 interface TextContent {
   type: "text";
@@ -94,10 +78,7 @@ function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
   return result;
 }
 
-async function discoveryResult(
-  operation: () => unknown | Promise<unknown>,
-  hint: string,
-): Promise<ToolResult> {
+async function discoveryResult(operation: () => unknown | Promise<unknown>, hint: string): Promise<ToolResult> {
   try {
     const value = await operation();
     const text = boundedDiscoveryText(value, hint);
@@ -144,10 +125,7 @@ function isValidResultOffset(value: number): boolean {
  * (issue #38). An offset at or past `bytes.length` is left alone — there is no
  * character there to split.
  */
-export function alignStartToCharBoundary(
-  bytes: Uint8Array,
-  offset: number,
-): number {
+export function alignStartToCharBoundary(bytes: Uint8Array, offset: number): number {
   let o = offset;
   while (o > 0 && isContinuationByte(bytes[o])) o--;
   return o;
@@ -155,12 +133,7 @@ export function alignStartToCharBoundary(
 
 /** End boundary for UTF-8-safe, forward-progressing result pages. See
  * documentation/meta-tools.md#result-representation. */
-export function alignEndToCharBoundary(
-  bytes: Uint8Array,
-  offset: number,
-  end: number,
-  total: number,
-): number {
+export function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: number, total: number): number {
   if (end >= total) return total;
   // A window that reaches no further than `offset` yields no bytes and no
   // progress; widen it to one byte and let the codepoint walk below finish it.
@@ -206,10 +179,7 @@ const RESULT_MAX_CHUNKS = 32;
 
 /** Chunk width for a result of `totalBytes`, always a multiple of three. */
 function resultChunkBytes(totalBytes: number): number {
-  return Math.max(
-    RESULT_CHUNK_BYTES,
-    Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3,
-  );
+  return Math.max(RESULT_CHUNK_BYTES, Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3);
 }
 
 /**
@@ -260,8 +230,7 @@ interface ResultStash {
 }
 
 /** Opens a write's notice, ahead of any paging instruction. */
-const WRITE_ALREADY_RAN =
-  "This write already ran: do not call it again to see its result.";
+const WRITE_ALREADY_RAN = "This write already ran: do not call it again to see its result.";
 
 /**
  * How the inline preview relates to what `connecta.result` pages: a byte prefix of
@@ -269,10 +238,7 @@ const WRITE_ALREADY_RAN =
  * different stashed text (several text blocks, whose envelope pages from 0);
  * or no preview at all.
  */
-type PreviewShape =
-  | { kind: "prefix"; bytes: number }
-  | { kind: "text-of-envelope" }
-  | { kind: "none" };
+type PreviewShape = { kind: "prefix"; bytes: number } | { kind: "text-of-envelope" } | { kind: "none" };
 
 /**
  * Offers a read the route meta-tools.md prefers for finding something in it:
@@ -285,11 +251,7 @@ type PreviewShape =
 const READ_REDUCE_FIRST =
   "To find something specific, repeat this read inside execute_code with connecta.call and filter or search the result there, returning only what matters";
 
-function pagingHint(
-  results: ResultStash,
-  totalBytes: number,
-  preview: PreviewShape,
-): string {
+function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
   if (!results.write) {
     const [shown, full] =
       preview.kind === "prefix"
@@ -318,17 +280,14 @@ function pagingHint(
  * documentation/meta-tools.md#result-representation). It is one compact JSON
  * line with no raw newline, so the preview starts after the first `\n`.
  */
-async function stashResult(
-  bytes: Uint8Array,
-  results: ResultStash,
-  preview: PreviewShape,
-) {
+async function stashResult(bytes: Uint8Array, results: ResultStash, preview: PreviewShape) {
   const totalBytes = bytes.length;
-  if (!results.pageable) return {
-    truncated: true,
-    totalBytes,
-    hint: `${WRITE_ALREADY_RAN} Paging is unavailable for write results on read-only pools.`,
-  };
+  if (!results.pageable)
+    return {
+      truncated: true,
+      totalBytes,
+      hint: `${WRITE_ALREADY_RAN} Paging is unavailable for write results on read-only pools.`,
+    };
   const id = crypto.randomUUID();
   try {
     // Base64 permits byte-range decoding, and splitting the envelope across
@@ -343,7 +302,7 @@ async function stashResult(
       if (offset === 0) chunks[0] += chunk;
       else chunks.push(chunk);
     }
-    if (!await results.set(id, chunks, RESULT_TTL_SECONDS)) {
+    if (!(await results.set(id, chunks, RESULT_TTL_SECONDS))) {
       throw new Error("Result stash capacity exhausted");
     }
   } catch {
@@ -372,7 +331,9 @@ async function stashResult(
       tool: "execute_code",
       // A byte may cost six JSON characters when escaped. Leave room for the
       // result id, page counters, and continuation metadata in the returned page.
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })` },
+      arguments: {
+        code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })`,
+      },
     },
   };
 }
@@ -389,7 +350,10 @@ function headOf(bytes: Uint8Array, cap: number): Uint8Array {
 
 /** One text block: the notice line, then the preview. */
 function noticeFirst(notice: object, preview: string): ToolResult {
-  return { content: [{ type: "text", text: `${JSON.stringify(notice)}\n${preview}` }], structuredContent: { ...notice, format: "text" } };
+  return {
+    content: [{ type: "text", text: `${JSON.stringify(notice)}\n${preview}` }],
+    structuredContent: { ...notice, format: "text" },
+  };
 }
 
 /**
@@ -421,38 +385,31 @@ async function guardEncoded(
 }
 
 /** {@link guardEncoded} over a string that has not been measured yet. */
-async function guardText(
-  text: string,
-  results: ResultStash,
-  cap: number,
-): Promise<GuardedResult<ToolResult>> {
+async function guardText(text: string, results: ResultStash, cap: number): Promise<GuardedResult<ToolResult>> {
   // `JSON.stringify`'s type says `string` where its behavior says `string |
   // undefined`, so TypeScript alone does not keep a non-string out of here.
   // Normalizing at the door means the size check below always measures exactly
   // the text that is emitted, and no future caller can launder a non-string
   // through it the way issue #42 describes.
-  const serialized: string =
-    typeof text === "string" ? text : serializeResultText(text);
+  const serialized: string = typeof text === "string" ? text : serializeResultText(text);
   const body = results.secrets?.text(serialized) ?? serialized;
   return guardEncoded(body, enc.encode(body), results, cap);
 }
 
 /** Store an oversized JSON value and replace it with a page handle. */
-async function guardValue(
-  value: unknown,
-  results: ResultStash,
-  cap: number,
-): Promise<GuardedResult<unknown>> {
+async function guardValue(value: unknown, results: ResultStash, cap: number): Promise<GuardedResult<unknown>> {
   const serialized = serializeResultText(value);
   const text = results.secrets?.text(serialized) ?? serialized;
   const bytes = enc.encode(text);
   if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
   const notice = await stashResult(bytes, results, { kind: "none" });
   return {
-    result: notice.resultId ? notice : {
-      ...notice,
-      preview: escapedHeadOf(bytes, cap),
-    },
+    result: notice.resultId
+      ? notice
+      : {
+          ...notice,
+          preview: escapedHeadOf(bytes, cap),
+        },
     truncated: true,
   };
 }
@@ -647,18 +604,21 @@ function metaToolsForRequest(
 ) {
   // Already normalized and warned about at registry construction.
   const globalCap = registry.maxResultBytes;
-  const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs) ?? CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
-  const probeTimeoutMs =
-    normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
-  const discoveryConcurrency = resolveDiscoveryConcurrency(
-    opts.discoveryConcurrency,
-  );
+  const defaultToolTimeoutMs =
+    normalizeTimeoutMs(opts.defaultToolTimeoutMs) ?? CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
+  const probeTimeoutMs = normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
+  const discoveryConcurrency = resolveDiscoveryConcurrency(opts.discoveryConcurrency);
   // createMetaTools() is called once per inbound MCP request. Sharing this
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
   const requestScope = opts.requestScope ?? {};
   const sentSecrets = sentSecretsForRequest(requestScope);
-  const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: opts.requestSignal, probeTimeoutMs, defer: opts.defer });
+  const skills = new SkillsRegistry(registry, baseUrl, {
+    requestScope,
+    requestSignal: opts.requestSignal,
+    probeTimeoutMs,
+    defer: opts.defer,
+  });
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
     probeTimeoutMs,
@@ -691,107 +651,99 @@ function metaToolsForRequest(
   }
 
   /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
-  async function runCall(
-    call: CallArgs,
-    source: ActivityCallSource,
-  ): Promise<RunCallOutcome> {
+  async function runCall(call: CallArgs, source: ActivityCallSource): Promise<RunCallOutcome> {
     const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
-    const outcome = await invocation.invoke<ProcessedCallResult>(
-      call.address,
-      call.args ?? {},
-      {
-        source,
-        sentSecrets,
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        ...(opts.requestSignal !== undefined
-          ? { requestSignal: opts.requestSignal }
-          : {}),
-        unwrapResult: call.resultMode === "value",
-        ...(opts.downstreamInput ? { processInputRequired: async (result, resolved, secrets) => {
-          await captureDownstreamInput(requestScope, resolved.connector.id,
-            `${resolved.connector.id}.${resolved.toolName}`, result, secrets);
-          return { toolResult: { content: [] } };
-        } } : {}),
-        processResult: async (result, resolved, secrets, format) => {
-          // Result-size cap for THIS call: the connector's own override wins,
-          // then the deployment-wide value, then the built-in default (already
-          // folded into `globalCap`). Resolved per call so one request can
-          // mix a tight-capped connector with siblings on the global cap. An
-          // override the registry already warned about at startup is dropped
-          // here, so the connector simply inherits `globalCap`.
-          const cap = resolveMaxResultBytes(
-            resolved.connector.maxResultBytes,
-            globalCap,
-          );
-          const results: ResultStash = {
-            secrets,
-            pageable: resolved.definition.classification === "read" || opts.trust === "trusted",
-            binding: {
-              identity: registry.resultIdentity(), baseUrl,
-              connector: resolved.connector.id, tool: resolved.definition.name,
-              classification: resolved.definition.classification === "read" ? "read" : "write",
+    const outcome = await invocation.invoke<ProcessedCallResult>(call.address, call.args ?? {}, {
+      source,
+      sentSecrets,
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
+      unwrapResult: call.resultMode === "value",
+      ...(opts.downstreamInput
+        ? {
+            processInputRequired: async (result, resolved, secrets) => {
+              await captureDownstreamInput(
+                requestScope,
+                resolved.connector.id,
+                `${resolved.connector.id}.${resolved.toolName}`,
+                result,
+                secrets,
+              );
+              return { toolResult: { content: [] } };
             },
-            write: resolved.definition.classification !== "read",
-            cap,
-            set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
-            // The catalog entry, never `toolName`: a record names a tool
-            // only through the grammar check (src/operator-record.ts).
-            warn: () => logFailure(
+          }
+        : {}),
+      processResult: async (result, resolved, secrets, format) => {
+        // Result-size cap for THIS call: the connector's own override wins,
+        // then the deployment-wide value, then the built-in default (already
+        // folded into `globalCap`). Resolved per call so one request can
+        // mix a tight-capped connector with siblings on the global cap. An
+        // override the registry already warned about at startup is dropped
+        // here, so the connector simply inherits `globalCap`.
+        const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, globalCap);
+        const results: ResultStash = {
+          secrets,
+          pageable: resolved.definition.classification === "read" || opts.trust === "trusted",
+          binding: {
+            identity: registry.resultIdentity(),
+            baseUrl,
+            connector: resolved.connector.id,
+            tool: resolved.definition.name,
+            classification: resolved.definition.classification === "read" ? "read" : "write",
+          },
+          write: resolved.definition.classification !== "read",
+          cap,
+          set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
+          // The catalog entry, never `toolName`: a record names a tool
+          // only through the grammar check (src/operator-record.ts).
+          warn: () =>
+            logFailure(
               registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
               "result paging unavailable",
               failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
             ),
+        };
+        const processed = (
+          toolResult: ToolResult,
+          truncated: boolean,
+          value?: { value: unknown },
+        ): ProcessedCallResult => ({
+          toolResult,
+          ...value,
+          ...(truncated ? { friction: "result_too_large" } : {}),
+        });
+        if (call.resultMode === "value") {
+          let value = result;
+          const guarded = await guardValue(value, results, cap);
+          value = guarded.result;
+          return processed(jsonResult({ ok: true, data: value, format }), guarded.truncated, { value });
+        }
+        if (resolved.connector.kind === "mcp") {
+          const mcpResult = result as {
+            content?: TextContent[];
+            structuredContent?: unknown;
           };
-          const processed = (
-            toolResult: ToolResult,
-            truncated: boolean,
-            value?: { value: unknown },
-          ): ProcessedCallResult => ({
-            toolResult,
-            ...value,
-            ...(truncated ? { friction: "result_too_large" } : {}),
-          });
-          if (call.resultMode === "value") {
-            let value = result;
-            const guarded = await guardValue(value, results, cap);
-            value = guarded.result;
-            return processed(
-              jsonResult({ ok: true, data: value, format }),
-              guarded.truncated,
-              { value },
-            );
-          }
-          if (resolved.connector.kind === "mcp") {
-            const mcpResult = result as {
-              content?: TextContent[];
-              structuredContent?: unknown;
-            };
-            let content = mcpResult?.content ?? [];
-            if (
-              !content.some((block) => block.type === "text") &&
-              mcpResult?.structuredContent !== undefined
-            ) {
-              content = [...content, {
+          let content = mcpResult?.content ?? [];
+          if (!content.some((block) => block.type === "text") && mcpResult?.structuredContent !== undefined) {
+            content = [
+              ...content,
+              {
                 type: "text",
                 text: JSON.stringify(mcpResult.structuredContent),
-              }];
-            }
-            const guarded = await guardContent(content, results, cap);
-            guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
-            return processed(guarded.result, guarded.truncated);
+              },
+            ];
           }
-          const value = result;
-          const guarded = await guardText(
-            serializeResultText(value),
-            results,
-            cap,
-          );
+          const guarded = await guardContent(content, results, cap);
           guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
-          return processed(guarded.result, guarded.truncated, { value });
-        },
-        activityFriction: (processed) => processed.friction,
+          return processed(guarded.result, guarded.truncated);
+        }
+        const value = result;
+        const guarded = await guardText(serializeResultText(value), results, cap);
+        guarded.result.structuredContent = { ...guarded.result.structuredContent, format };
+        return processed(guarded.result, guarded.truncated, { value });
       },
-    );
+      activityFriction: (processed) => processed.friction,
+    });
     if (!outcome.ok) {
       const structuredRecovery = outcome.error.nextAction !== undefined;
       const recoveryRequired =
@@ -801,26 +753,21 @@ function metaToolsForRequest(
         outcome.error.details !== undefined ||
         // So does a conflict's `current`: where things stand is the retry.
         outcome.error.current !== undefined ||
-        [
-          "auth_required",
-          "invalid_args",
-          "input_required_unsupported",
-        ].includes(outcome.error.code);
+        ["auth_required", "invalid_args", "input_required_unsupported"].includes(outcome.error.code);
       // Every mode carries the complete repair envelope in both MCP forms.
-      const makeFailedResult = () => jsonResult({
-        ok: false,
-        error: outcome.error,
-        durationMs: outcome.durationMs,
-        attempts: outcome.attempts,
-        ...(call.diagnostics ? { timing: outcome.timing } : {}),
-      });
+      const makeFailedResult = () =>
+        jsonResult({
+          ok: false,
+          error: outcome.error,
+          durationMs: outcome.durationMs,
+          attempts: outcome.attempts,
+          ...(call.diagnostics ? { timing: outcome.timing } : {}),
+        });
       let failedResult = makeFailedResult();
       // Errors repeat in text and structuredContent. Account for
       // both copies and JSON escaping when the bounded provider reason is large.
       if (!recoveryRequired) {
-        const cap = resolveMaxResultBytes(
-          outcome.resolved?.connector.maxResultBytes, globalCap,
-        );
+        const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
         let budget = 512;
         while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
           budget = Math.floor(budget / 2);
@@ -853,33 +800,29 @@ function metaToolsForRequest(
       durationMs: outcome.durationMs,
       attempts: outcome.attempts,
       timing: outcome.timing,
-      ...(Object.prototype.hasOwnProperty.call(outcome.value, "value")
-        ? { value: outcome.value.value }
-        : {}),
+      ...(Object.prototype.hasOwnProperty.call(outcome.value, "value") ? { value: outcome.value.value } : {}),
     };
   }
 
   return {
     async skills(args: SkillArgs = {}): Promise<ToolResult> {
       try {
-      if (!args.name) {
-        const listing = await skills.summaries();
-        return {
-          structuredContent: { skills: listing },
-          content: [
-            {
-              type: "text",
-              text:
-                'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
-                listing
-                  .map((skill) => `- \`${skill.name}\` — ${skill.description}`)
-                  .join("\n"),
-            },
-          ],
-        };
-      }
-      const text = await skills.text(args.name);
-      return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+        if (!args.name) {
+          const listing = await skills.summaries();
+          return {
+            structuredContent: { skills: listing },
+            content: [
+              {
+                type: "text",
+                text:
+                  'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
+                  listing.map((skill) => `- \`${skill.name}\` — ${skill.description}`).join("\n"),
+              },
+            ],
+          };
+        }
+        const text = await skills.text(args.name);
+        return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
       } catch (error) {
         return errorResult(error instanceof ConnectorCallError ? error.message : "Skills are unavailable.");
       }
@@ -887,9 +830,9 @@ function metaToolsForRequest(
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
       if (args.connector !== undefined && enc.encode(args.connector).length > 512) {
-        return discoveryErrorResult(new DiscoveryPolicyError(
-          "invalid_args", "connector must be at most 512 UTF-8 bytes.",
-        ));
+        return discoveryErrorResult(
+          new DiscoveryPolicyError("invalid_args", "connector must be at most 512 UTF-8 bytes."),
+        );
       }
       return discoveryResult(
         async () =>
@@ -910,18 +853,13 @@ function metaToolsForRequest(
     async callDestructiveTool(args: DestructiveCallArgs): Promise<ToolResult> {
       // `reason` is read by the host's approval view and stops there — runCall
       // forwards only the call arguments, so it never reaches the connector.
-      return (
-        await runCall(args, "call_destructive_tool")
-      ).toolResult;
+      return (await runCall(args, "call_destructive_tool")).toolResult;
     },
 
     async readResult(args: GetResultArgs, options: { signal?: AbortSignal | undefined } = {}): Promise<ToolResult> {
       // Defense for in-process callers too: guest paging validates these domains
       // before calling here, while internal consumers may call readResult directly.
-      if (
-        args.maxBytes !== undefined &&
-        !isValidMaxResultBytes(args.maxBytes)
-      ) {
+      if (args.maxBytes !== undefined && !isValidMaxResultBytes(args.maxBytes)) {
         return errorResult(
           `Invalid maxBytes ${args.maxBytes}: must be a whole number of bytes ` +
             `>= ${MIN_MAX_RESULT_BYTES}. Omit it to use the deployment default.`,
@@ -950,8 +888,11 @@ function metaToolsForRequest(
       const read = async (key: string): Promise<string | null | false> => {
         options.signal?.throwIfAborted();
         let value: string | null | false;
-        try { value = await results.get(key) ?? null; }
-        catch { value = false; }
+        try {
+          value = (await results.get(key)) ?? null;
+        } catch {
+          value = false;
+        }
         // A storage driver may finish its pending read after cancellation. No
         // subsequent chunk read or decode may start when that happens (INV-7).
         options.signal?.throwIfAborted();
@@ -966,30 +907,47 @@ function metaToolsForRequest(
       const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
       if (!header) return denied();
       let binding: ResultBinding;
-      try { binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), char => char.charCodeAt(0)))); }
-      catch { return denied(); }
+      try {
+        binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), (char) => char.charCodeAt(0))));
+      } catch {
+        return denied();
+      }
       const identity = registry.resultIdentity();
-      if (!binding || binding.baseUrl !== baseUrl || !binding.identity ||
-        binding.identity.subject !== identity.subject || binding.identity.principal !== identity.principal ||
-        binding.identity.endpoint !== identity.endpoint || binding.identity.origin !== identity.origin ||
-        typeof binding.connector !== "string" || typeof binding.tool !== "string" ||
-        !["read", "write"].includes(binding.classification)) return denied();
+      if (
+        !binding ||
+        binding.baseUrl !== baseUrl ||
+        !binding.identity ||
+        binding.identity.subject !== identity.subject ||
+        binding.identity.principal !== identity.principal ||
+        binding.identity.endpoint !== identity.endpoint ||
+        binding.identity.origin !== identity.origin ||
+        typeof binding.connector !== "string" ||
+        typeof binding.tool !== "string" ||
+        !["read", "write"].includes(binding.classification)
+      )
+        return denied();
       const allowed = async (): Promise<boolean> => {
         options.signal?.throwIfAborted();
         try {
           const address = `${binding.connector}.${binding.tool}`;
-          if (!await registry.recheckResultAccess(address, binding.classification, options.signal)) return false;
+          if (!(await registry.recheckResultAccess(address, binding.classification, options.signal))) return false;
           if (!registry.getConnector(binding.connector)) return false;
-          const tools = await registry.getTools(binding.connector, baseUrl, requestScope,
-            options.signal ? { signal: options.signal } : {});
-          const tool = tools.find(tool => tool.name === binding.tool);
-          return Boolean(tool && ((binding.classification === "read" && tool.classification === "read") || opts.trust === "trusted"));
+          const tools = await registry.getTools(
+            binding.connector,
+            baseUrl,
+            requestScope,
+            options.signal ? { signal: options.signal } : {},
+          );
+          const tool = tools.find((tool) => tool.name === binding.tool);
+          return Boolean(
+            tool && ((binding.classification === "read" && tool.classification === "read") || opts.trust === "trusted"),
+          );
         } catch {
           options.signal?.throwIfAborted();
           return false;
         }
       };
-      if (!await allowed()) return denied();
+      if (!(await allowed())) return denied();
       const requestedOffset = args.offset ?? 0;
       const cap = Number(header[4]);
       if (!isValidMaxResultBytes(cap)) return denied();
@@ -1000,15 +958,20 @@ function metaToolsForRequest(
       {
         total = Number(header[2]);
         const chunkBytes = Number(header[3]);
-        if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(chunkBytes) || chunkBytes < 3 || chunkBytes % 3 !== 0) return denied();
+        if (
+          !Number.isSafeInteger(total) ||
+          total < 0 ||
+          !Number.isSafeInteger(chunkBytes) ||
+          chunkBytes < 3 ||
+          chunkBytes % 3 !== 0
+        )
+          return denied();
         start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
         const end = Math.min(total, requestedOffset + maxBytes + 4);
         bytes = new Uint8Array(Math.max(0, end - start));
         const lastChunk = Math.floor(Math.max(end - 1, start) / chunkBytes);
         for (let index = Math.floor(start / chunkBytes); index <= lastChunk; index++) {
-          const encoded = index === 0
-            ? stored.slice(header[0].length)
-            : await read(resultKeys.chunk(args.id, index));
+          const encoded = index === 0 ? stored.slice(header[0].length) : await read(resultKeys.chunk(args.id, index));
           if (encoded === false) return unavailableResult();
           if (encoded === null) {
             // A chunk expired or was evicted under its own header; the id can no
@@ -1020,7 +983,7 @@ function metaToolsForRequest(
           // alignment because every chunk boundary is a multiple of three.
           const from = Math.max(start, chunkStart) - chunkStart;
           const to = Math.min(end, chunkStart + chunkBytes, total) - chunkStart;
-          const binary = atob(encoded.slice(from / 3 * 4, Math.ceil(to / 3) * 4));
+          const binary = atob(encoded.slice((from / 3) * 4, Math.ceil(to / 3) * 4));
           for (let at = from; at < to; at++) {
             bytes[chunkStart + at - start] = binary.charCodeAt(at - from);
           }
@@ -1038,12 +1001,7 @@ function metaToolsForRequest(
       // never split across pages (which would emit U+FFFD on both sides).
       // `nextOffset` is this aligned end, so it is a valid boundary for the
       // next call and paging reassembles the original byte-for-byte.
-      const end = start + alignEndToCharBoundary(
-        bytes,
-        offset - start,
-        offset - start + maxBytes,
-        total - start,
-      );
+      const end = start + alignEndToCharBoundary(bytes, offset - start, offset - start + maxBytes, total - start);
       const slice = dec.decode(bytes.subarray(offset - start, end - start));
       const hasMore = end < total;
       // The same notice-first shape as a truncated call: one line of header,
@@ -1056,11 +1014,9 @@ function metaToolsForRequest(
         bytes: Math.max(0, end - offset),
         totalBytes: total,
         hasMore,
-        ...(hasMore
-          ? { nextOffset: end }
-          : {}),
+        ...(hasMore ? { nextOffset: end } : {}),
       };
-      if (!await allowed()) return denied();
+      if (!(await allowed())) return denied();
       const page = noticeFirst(pageHeader, slice);
       page.structuredContent = { ...pageHeader, text: slice, format: "text" };
       return page;
@@ -1082,11 +1038,7 @@ function metaToolsForRequest(
               "or deployment configuration before retrying.",
           });
         }
-        const ctx = registry.contextFor(
-          connector.id,
-          baseUrl,
-          requestScope,
-        );
+        const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
         if (!ctx.credential || !opts.credentialHandoffUrl) {
           return jsonResult({
             connector: connector.id,
@@ -1103,9 +1055,7 @@ function metaToolsForRequest(
         })) ?? [
           {
             name: "value",
-            guidance:
-              connector.credential.description ??
-              connector.credential.label,
+            guidance: connector.credential.description ?? connector.credential.label,
           },
         ];
         return jsonResult({
@@ -1124,11 +1074,20 @@ function metaToolsForRequest(
               : "Shared credential mutation requires a signed-in human with access to this connector."),
         });
       }
-      if (opts.oauthConnectUnavailable || !opts.oauthConnectUrl) return jsonResult({
-        connector: connector.id, recovery: "unavailable",
-        message: opts.oauthConnectUnavailable ?? "OAuth connection requires an interactive provider and a credential vault with a handoff signing key.",
-      });
-      if (!opts.canManageAuth?.(connector.id)) return jsonResult({ connector: connector.id, recovery: "unavailable", message: "Your identity is not permitted to manage authentication for this connection." });
+      if (opts.oauthConnectUnavailable || !opts.oauthConnectUrl)
+        return jsonResult({
+          connector: connector.id,
+          recovery: "unavailable",
+          message:
+            opts.oauthConnectUnavailable ??
+            "OAuth connection requires an interactive provider and a credential vault with a handoff signing key.",
+        });
+      if (!opts.canManageAuth?.(connector.id))
+        return jsonResult({
+          connector: connector.id,
+          recovery: "unavailable",
+          message: "Your identity is not permitted to manage authentication for this connection.",
+        });
       try {
         return jsonResult({
           connector: connector.id,
@@ -1136,7 +1095,8 @@ function metaToolsForRequest(
           status: "auth_required",
           authorizationUrl: await opts.oauthConnectUrl(connector.id, args.force),
           instructions:
-            "Open authorizationUrl in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " + oauthFollowUp(connector.id),
+            "Open authorizationUrl in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " +
+            oauthFollowUp(connector.id),
         });
       } catch (err) {
         return errorResult(msg(err));
@@ -1147,13 +1107,13 @@ function metaToolsForRequest(
 
 const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC =
-  'Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a connecta.result action.';
+  "Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a connecta.result action.";
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
-  'List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.';
+  "List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.";
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1164,23 +1124,14 @@ const SKILLS_DESC =
  * Registration is per connection and reads the configured connector set.
  */
 const GUIDE_NOTES = {
-  skills:
-    " Also lists this deployment's connector guides by exact name.",
-  search:
-    " A result with guideRequired: true requires its exact named connector guide before the call.",
-  destructive:
-    " Fetch any exact connector guide named by discovery before the call.",
+  skills: " Also lists this deployment's connector guides by exact name.",
+  search: " A result with guideRequired: true requires its exact named connector guide before the call.",
+  destructive: " Fetch any exact connector guide named by discovery before the call.",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */
-function describedFor(
-  registry: RegistryView,
-  base: string,
-  note: keyof typeof GUIDE_NOTES,
-): string {
-  return hasConnectorGuides(registry.listConnectors())
-    ? base + GUIDE_NOTES[note]
-    : base;
+function describedFor(registry: RegistryView, base: string, note: keyof typeof GUIDE_NOTES): string {
+  return hasConnectorGuides(registry.listConnectors()) ? base + GUIDE_NOTES[note] : base;
 }
 
 /**
@@ -1249,7 +1200,6 @@ const AUTHORIZE_INPUT = advertisedSchema(
   }),
 );
 
-
 /**
  * Register the five explicit meta-tools onto an McpServer instance.
  * `registerExecuteTool` adds the sixth, `execute_code`. Broad discovery and
@@ -1317,11 +1267,7 @@ export function registerMetaTools(
   server.registerTool(
     "search_tools",
     {
-      description: describedFor(
-        registry,
-        SEARCH_DESC,
-        "search",
-      ),
+      description: describedFor(registry, SEARCH_DESC, "search"),
       inputSchema: SEARCH_INPUT,
       outputSchema: SEARCH_OUTPUT,
       annotations: READ_ONLY_REMOTE,
@@ -1353,11 +1299,7 @@ export function registerMetaTools(
   server.registerTool(
     "call_destructive_tool",
     {
-      description: describedFor(
-        registry,
-        CALL_DESTRUCTIVE_DESC,
-        "destructive",
-      ),
+      description: describedFor(registry, CALL_DESTRUCTIVE_DESC, "destructive"),
       inputSchema: CALL_DESTRUCTIVE_INPUT,
       outputSchema: CALL_OUTPUT,
       annotations: {
@@ -1397,10 +1339,10 @@ export function registerMetaTools(
     async (args, request) => {
       bindRequest(request);
       return ctx.authElicitation
-        ? ctx.authElicitation.run("authorize_connector", args, request, () => mt.authorizeConnector(args as AuthorizeArgs))
+        ? ctx.authElicitation.run("authorize_connector", args, request, () =>
+            mt.authorizeConnector(args as AuthorizeArgs),
+          )
         : mt.authorizeConnector(args as AuthorizeArgs);
     },
   );
-
-
 }

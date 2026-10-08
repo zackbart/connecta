@@ -1,8 +1,4 @@
-import type {
-  OAuthClientInformationMixed,
-  OAuthDiscoveryState,
-  OAuthTokens,
-} from "@modelcontextprotocol/client";
+import type { OAuthClientInformationMixed, OAuthDiscoveryState, OAuthTokens } from "@modelcontextprotocol/client";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { oauthV2Keys, type OAuthV2ValueKey } from "../storage/keys.js";
 import type { KVStorage } from "../types.js";
@@ -15,7 +11,12 @@ import type { KVStorage } from "../types.js";
 /** A grant body as layout 3 stores it. */
 export interface MigratedGrantBody {
   issuer?: string;
-  client?: { value: OAuthClientInformationMixed; binding?: string; carried?: true; registrationPath?: "cimd" | "dcr" | "static" };
+  client?: {
+    value: OAuthClientInformationMixed;
+    binding?: string;
+    carried?: true;
+    registrationPath?: "cimd" | "dcr" | "static";
+  };
   tokens?: OAuthTokens;
   discovery?: OAuthDiscoveryState;
 }
@@ -48,9 +49,8 @@ function parse(raw: string): unknown {
 export function discoveryIssuer(state: unknown): string | undefined {
   if (!plainObject(state) || typeof state.authorizationServerUrl !== "string") return undefined;
   const metadata = state.authorizationServerMetadata;
-  const issuer = plainObject(metadata) && typeof metadata.issuer === "string"
-    ? metadata.issuer
-    : state.authorizationServerUrl;
+  const issuer =
+    plainObject(metadata) && typeof metadata.issuer === "string" ? metadata.issuer : state.authorizationServerUrl;
   return issuer === "" ? undefined : issuer;
 }
 
@@ -118,21 +118,23 @@ export async function readV2Grant(
   const named = discovery ? discoveryIssuer(discovery.value) : undefined;
   const credentials = [client, tokens].filter((value) => value !== undefined);
   const issuer = credentials[0]?.issuer ?? named;
-  const consistent = credentials.every((value) =>
-    value.issuer !== undefined && value.issuer === issuer && plainObject(value.value),
-  ) && (named === undefined || named === issuer);
+  const consistent =
+    credentials.every((value) => value.issuer !== undefined && value.issuer === issuer && plainObject(value.value)) &&
+    (named === undefined || named === issuer);
   if (!consistent || issuer === undefined) return { disconnected: false, body: {} };
   return {
     disconnected: false,
     body: {
       issuer,
-      ...(client ? {
-        client: {
-          value: client.value as OAuthClientInformationMixed,
-          ...(client.binding !== undefined ? { binding: client.binding } : {}),
-          ...(client.carried ? { carried: true as const } : {}),
-        },
-      } : {}),
+      ...(client
+        ? {
+            client: {
+              value: client.value as OAuthClientInformationMixed,
+              ...(client.binding !== undefined ? { binding: client.binding } : {}),
+              ...(client.carried ? { carried: true as const } : {}),
+            },
+          }
+        : {}),
       ...(tokens ? { tokens: tokens.value as OAuthTokens } : {}),
       ...(discovery && named !== undefined ? { discovery: discovery.value as OAuthDiscoveryState } : {}),
     },

@@ -43,20 +43,12 @@
  * 6. Pass the key to the provider from the deployment's secrets, and map the
  *    admitted identity to a Workspace address in `subject`.
  */
-import {
-  guardedFetch,
-  retryAfterMs,
-  type GuardedRequest,
-} from "../../../connectors/guarded-fetch.js";
+import { guardedFetch, retryAfterMs, type GuardedRequest } from "../../../connectors/guarded-fetch.js";
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
 import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../../errors.js";
-import type {
-  AuthenticatedIdentity,
-  ConnectorCallAdmissionPolicy,
-  ConnectorContext,
-} from "../../../types.js";
+import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import {
   delegatedToken,
   forgetDelegatedToken,
@@ -141,10 +133,7 @@ export interface WorkspaceConnection {
 const ADDRESS = /^[^\s@<>()",;:\\[\]]+@[^\s@<>()",;:\\[\]]+\.[^\s@<>()",;:\\[\]]+$/;
 
 /** Validate the shared options at construction; throws on a structural mistake. */
-export function workspaceConnection(
-  factory: string,
-  options: GoogleWorkspaceOptions,
-): WorkspaceConnection {
+export function workspaceConnection(factory: string, options: GoogleWorkspaceOptions): WorkspaceConnection {
   const purpose = options?.purpose?.trim();
   if (!purpose) throw new Error(`${factory}() requires a non-empty purpose.`);
   const account = parseServiceAccount(`${factory}()`, options.serviceAccount);
@@ -167,11 +156,7 @@ export function workspaceConnection(
  * The Workspace address this call acts as, resolved from config and the
  * admitted caller only. Throws before any network call when there is none.
  */
-async function subjectFor(
-  provider: string,
-  subject: GoogleWorkspaceSubject,
-  ctx: ConnectorContext,
-): Promise<string> {
+async function subjectFor(provider: string, subject: GoogleWorkspaceSubject, ctx: ConnectorContext): Promise<string> {
   if (typeof subject === "string") return subject;
   const caller = callerOf(ctx);
   if (!caller) {
@@ -218,9 +203,7 @@ async function subjectFor(
 // --- API failures ------------------------------------------------------------------
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -279,7 +262,7 @@ const googleReasons = new WeakMap<ConnectorCallError, readonly string[]>();
  * on these, never on the error's message.
  */
 export function googleReasonsOf(error: unknown): readonly string[] {
-  return error instanceof ConnectorCallError ? googleReasons.get(error) ?? [] : [];
+  return error instanceof ConnectorCallError ? (googleReasons.get(error) ?? []) : [];
 }
 
 /**
@@ -853,8 +836,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         // A caller that has left gets neither: the 401 it saw is reported as
         // it was, and no new token is minted for a request nobody awaits.
         const failed = error instanceof TokenRejected ? error.failure : error;
-        const unauthorized =
-          !ctx.signal?.aborted && (error instanceof TokenRejected || facts.status === 401);
+        const unauthorized = !ctx.signal?.aborted && (error instanceof TokenRejected || facts.status === 401);
         if (!unauthorized) throw settled(failed, facts, headed.method, ctx, requestOptions);
         // Only the token this request carried; a newer one stays.
         await forgetDelegatedToken(delegated, token);
@@ -865,27 +847,31 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     }
   }
 
-
   return {
     json: (request, ctx, requestOptions) =>
-      call(request, ctx, "application/json", async (response) => {
-        // Read first, parse second: a body that breaks off while it is being
-        // read is a transport failure (a GET may read again), and only text
-        // that arrived whole and still is not JSON is malformed.
-        const body = await response.text();
-        if (body.trim() === "") return undefined;
-        try {
-          return JSON.parse(body) as unknown;
-        } catch {
-          throw new ConnectorCallError(
-            "connector_call_failed",
-            `${provider} returned a successful response that is not JSON.`,
-            { retryable: false },
-          );
-        }
-      }, requestOptions),
-    bytes: (request, ctx, accept = "*/*", requestOptions) =>
-      read(request, ctx, accept, requestOptions),
+      call(
+        request,
+        ctx,
+        "application/json",
+        async (response) => {
+          // Read first, parse second: a body that breaks off while it is being
+          // read is a transport failure (a GET may read again), and only text
+          // that arrived whole and still is not JSON is malformed.
+          const body = await response.text();
+          if (body.trim() === "") return undefined;
+          try {
+            return JSON.parse(body) as unknown;
+          } catch {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              `${provider} returned a successful response that is not JSON.`,
+              { retryable: false },
+            );
+          }
+        },
+        requestOptions,
+      ),
+    bytes: (request, ctx, accept = "*/*", requestOptions) => read(request, ctx, accept, requestOptions),
     text: async (request, ctx, accept = "text/plain, */*", requestOptions) => {
       const { bytes, ...rest } = await read(request, ctx, accept, requestOptions);
       let text: string;

@@ -3,9 +3,7 @@ import { notFoundResponse } from "./branding.js";
 import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
 import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
-import {
-  routeOAuthCallback,
-} from "./routes/oauth.js";
+import { routeOAuthCallback } from "./routes/oauth.js";
 import { routeOAuthClientMetadata } from "./routes/oauth-client-metadata.js";
 import { routeConnect } from "./routes/connect.js";
 import { runEdge } from "./runtime/run.js";
@@ -33,10 +31,7 @@ export type { ServerOptions } from "./routes/shared.js";
  */
 export function createFetchHandler(
   opts: ServerOptions,
-): (
-  request: Request,
-  runtimeContext?: RuntimeExecutionContext,
-) => Promise<Response> {
+): (request: Request, runtimeContext?: RuntimeExecutionContext) => Promise<Response> {
   const { registry } = opts;
   const { auth, publicUrl } = opts.config;
   const routeMcp = createMcpRoute(opts);
@@ -48,9 +43,7 @@ export function createFetchHandler(
     // The executor is required, so code admission always has a shape to
     // report: either the executor's own pool or the fallback controller
     // wrapped around it at construction.
-    const codeAdmission = isAdmittingExecutor(opts.executor)
-      ? opts.executor.admissionSnapshot?.()
-      : undefined;
+    const codeAdmission = isAdmittingExecutor(opts.executor) ? opts.executor.admissionSnapshot?.() : undefined;
     return Response.json({
       status: "ok",
       connectors: registry.listConnectors().length,
@@ -59,18 +52,14 @@ export function createFetchHandler(
       // executor it just exercised rather than assuming one, and a
       // deployment whose executor identifies as nothing omits the key
       // instead of inviting a guess (#368).
-      ...(opts.executorName !== undefined
-        ? { executor: { name: opts.executorName } }
-        : {}),
+      ...(opts.executorName !== undefined ? { executor: { name: opts.executorName } } : {}),
       admission: {
         policy: "global-fifo",
         requests: opts.requestAdmission.snapshot(),
         code: codeAdmission ?? { managedByExecutor: true },
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",
-          aggregate: aggregateCallAdmissionSnapshots(
-            Object.values(registry.callAdmissionSnapshot()),
-          ),
+          aggregate: aggregateCallAdmissionSnapshots(Object.values(registry.callAdmissionSnapshot())),
         },
         reservedRoutes: [
           "/health",
@@ -135,9 +124,7 @@ export function createFetchHandler(
       const url = new URL(request.url);
       const baseUrl = publicUrl ?? url.origin;
       const path = url.pathname;
-      const defer = runtimeContext
-        ? runtimeContext.waitUntil.bind(runtimeContext)
-        : undefined;
+      const defer = runtimeContext ? runtimeContext.waitUntil.bind(runtimeContext) : undefined;
 
       const originRefusal = routeMcp.rejectOrigin(request);
       if (originRefusal) {
@@ -150,12 +137,7 @@ export function createFetchHandler(
       // external DNS, TLS, and the tunnel in front of connecta — so /health is
       // exempt. It is unauthenticated, returns no user data, and sets no
       // cookies, so forcing HTTPS on it protects nothing.
-      if (
-        publicUrl &&
-        path !== "/health" &&
-        new URL(publicUrl).protocol === "https:" &&
-        url.protocol === "http:"
-      ) {
+      if (publicUrl && path !== "/health" && new URL(publicUrl).protocol === "https:" && url.protocol === "http:") {
         // Assign the path and query onto the configured URL instead of resolving
         // attacker-controlled text against it. A pathname beginning with `//`
         // (including a backslash form normalized by URL parsing) is an authority
@@ -167,14 +149,16 @@ export function createFetchHandler(
         target.pathname = path === "/ui" ? "/" : url.pathname;
         target.search = url.search;
         target.hash = "";
-        return Effect.succeed(withSecurityHeaders(
-          new Response(null, {
-            status: 308,
-            headers: { Location: target.toString() },
-          }),
-          url,
-          path,
-        ));
+        return Effect.succeed(
+          withSecurityHeaders(
+            new Response(null, {
+              status: 308,
+              headers: { Location: target.toString() },
+            }),
+            url,
+            path,
+          ),
+        );
       }
 
       const context: RouteContext = {
@@ -186,15 +170,10 @@ export function createFetchHandler(
         defer,
         runtimeContext,
       };
-      return Effect.map(route(context), (response) =>
-        withSecurityHeaders(response, url, path),
-      );
+      return Effect.map(route(context), (response) => withSecurityHeaders(response, url, path));
     });
 
-  return function fetch(
-    request: Request,
-    runtimeContext?: RuntimeExecutionContext,
-  ): Promise<Response> {
+  return function fetch(request: Request, runtimeContext?: RuntimeExecutionContext): Promise<Response> {
     return runEdge(serve(request, runtimeContext), { signal: request.signal });
   };
 }

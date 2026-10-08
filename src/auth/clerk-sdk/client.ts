@@ -23,24 +23,27 @@ export interface ClerkGateClient {
 type ClerkAuth =
   | { isAuthenticated: false }
   | {
-    isAuthenticated: true;
-    tokenType: "session_token";
-    userId: string;
-    sessionClaims: { azp?: string };
-  }
+      isAuthenticated: true;
+      tokenType: "session_token";
+      userId: string;
+      sessionClaims: { azp?: string };
+    }
   | {
-    isAuthenticated: true;
-    tokenType: "oauth_token";
-    userId: string;
-    clientId: string;
-    getToken(): Promise<string>;
-  };
+      isAuthenticated: true;
+      tokenType: "oauth_token";
+      userId: string;
+      clientId: string;
+      getToken(): Promise<string>;
+    };
 
 /** Only the bundled SDK operations Connecta calls, not the full upstream API. */
 export interface ClerkSdkClient extends ClerkGateClient {
-  authenticateRequest(request: Request, options: {
-    acceptsToken: "session_token" | "oauth_token";
-  }): Promise<{
+  authenticateRequest(
+    request: Request,
+    options: {
+      acceptsToken: "session_token" | "oauth_token";
+    },
+  ): Promise<{
     status: "signed-in" | "signed-out" | "handshake";
     reason: string | null;
     headers: Headers;
@@ -58,9 +61,11 @@ export interface ClerkClientOptions {
 }
 
 /** The generated JavaScript is untyped; this boundary owns its declarations. */
-export function createClerkClient(options: ClerkClientOptions & {
-  fetch: typeof fetch;
-  telemetry: { disabled: true };
-}): ClerkSdkClient {
+export function createClerkClient(
+  options: ClerkClientOptions & {
+    fetch: typeof fetch;
+    telemetry: { disabled: true };
+  },
+): ClerkSdkClient {
   return createGeneratedClerkClient(options);
 }

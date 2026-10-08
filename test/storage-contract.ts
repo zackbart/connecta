@@ -58,9 +58,9 @@ export function compareAndSetContract(
         () => storage.compareAndSet(key, null, null),
       ];
       for (const operation of operations) {
-        await expect(operation()).rejects.toThrow(new TypeError(
-          "Storage keys and list prefixes must not contain U+0000 (NUL)",
-        ));
+        await expect(operation()).rejects.toThrow(
+          new TypeError("Storage keys and list prefixes must not contain U+0000 (NUL)"),
+        );
       }
     }
     expect(await storage.get("a")).toBe("original");
@@ -77,8 +77,7 @@ export function compareAndSetContract(
     for (const [index, value] of NUL_VALUES.entries()) {
       expect(await storage.get(`nul:${index}`)).toBe(value);
     }
-    expect(await storage.list("nul:"))
-      .toEqual(NUL_VALUES.map((_, index) => `nul:${index}`).sort());
+    expect(await storage.list("nul:")).toEqual(NUL_VALUES.map((_, index) => `nul:${index}`).sort());
 
     await storage.set("cas", "a\0b");
     expect(await storage.compareAndSet("cas", "a", "x")).toBe(false);
@@ -90,8 +89,7 @@ export function compareAndSetContract(
     expect(await storage.compareAndSet("cas", null, "\0é\0next")).toBe(true);
     expect(await storage.get("cas")).toBe("\0é\0next");
     expect(await storage.compareAndSet("cas", "\0é\0nex", "x")).toBe(false);
-    expect(await storage.compareAndSet("cas", "\0é\0next", "then\0", { ttlSeconds: 60 }))
-      .toBe(true);
+    expect(await storage.compareAndSet("cas", "\0é\0next", "then\0", { ttlSeconds: 60 })).toBe(true);
     expect(await storage.get("cas")).toBe("then\0");
     expect(await storage.compareAndSet("cas", "then\0", null)).toBe(true);
     expect(await storage.get("cas")).toBeNull();
@@ -100,9 +98,7 @@ export function compareAndSetContract(
   it("lets exactly one of 50 concurrent claims on an absent key win", async () => {
     const storage = await open();
     const results = await Promise.all(
-      Array.from({ length: 50 }, (_, i) =>
-        storage.compareAndSet("claim", null, `owner-${i}`),
-      ),
+      Array.from({ length: 50 }, (_, i) => storage.compareAndSet("claim", null, `owner-${i}`)),
     );
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(await storage.get("claim")).toBe(`owner-${results.indexOf(true)}`);
@@ -163,9 +159,7 @@ export function compareAndSetContract(
   it("honors ttlSeconds on the value it writes", async () => {
     const advance = fakeClock();
     const storage = await open();
-    expect(
-      await storage.compareAndSet("lease", null, "held", { ttlSeconds: 10 }),
-    ).toBe(true);
+    expect(await storage.compareAndSet("lease", null, "held", { ttlSeconds: 10 })).toBe(true);
     await advance(9_000);
     expect(await storage.get("lease")).toBe("held");
     expect(await storage.compareAndSet("lease", null, "thief")).toBe(false);
@@ -195,9 +189,7 @@ export function compareAndSetContract(
     expect(await storage.compareAndSet("rev", "1", "2")).toBe(true);
     await advance(60_000);
     expect(await storage.get("rev")).toBe("2");
-    expect(
-      await storage.compareAndSet("rev", "2", "3", { ttlSeconds: 1 }),
-    ).toBe(true);
+    expect(await storage.compareAndSet("rev", "2", "3", { ttlSeconds: 1 })).toBe(true);
     await advance(2_000);
     expect(await storage.get("rev")).toBeNull();
   });

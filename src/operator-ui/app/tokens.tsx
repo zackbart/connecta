@@ -1,10 +1,5 @@
 import { useState } from "react";
-import {
-  accessTokenUnavailableCopy,
-  formatDate,
-  type OperatorState,
-  type UiAccessToken,
-} from "../view.js";
+import { accessTokenUnavailableCopy, formatDate, type OperatorState, type UiAccessToken } from "../view.js";
 import { CopyButton, Empty, NoticeLine, Unavailable } from "./parts.js";
 import {
   createAccessToken,
@@ -51,21 +46,14 @@ function CreateForm({ busy }: { busy: boolean }) {
 
 function Reveal({ token }: { token: string }) {
   return (
-    <section
-      id="tokenReveal"
-      className="token-reveal"
-      aria-labelledby="tokenRevealHeading"
-    >
+    <section id="tokenReveal" className="token-reveal" aria-labelledby="tokenRevealHeading">
       <div className="token-reveal-head">
         <h2 id="tokenRevealHeading" tabIndex={-1}>
           Copy this token now
         </h2>
         <span className="cap">Shown once</span>
       </div>
-      <p className="meta">
-        Store it in the MCP client before leaving this page. It cannot be
-        displayed again.
-      </p>
+      <p className="meta">Store it in the MCP client before leaving this page. It cannot be displayed again.</p>
       <div className="endpoint-row token-secret">
         <code id="createdToken" className="mono">
           {token}
@@ -79,31 +67,18 @@ function Reveal({ token }: { token: string }) {
   );
 }
 
-function TokenCard({
-  token,
-  renaming,
-  busy,
-}: {
-  token: UiAccessToken;
-  renaming: boolean;
-  busy: boolean;
-}) {
+function TokenCard({ token, renaming, busy }: { token: UiAccessToken; renaming: boolean; busy: boolean }) {
   const [name, setName] = useState(token.name);
   const revoked = Boolean(token.revokedAt);
   return (
-    <section
-      className={revoked ? "token-card revoked" : "token-card"}
-      aria-labelledby={`access-token-${token.id}`}
-    >
+    <section className={revoked ? "token-card revoked" : "token-card"} aria-labelledby={`access-token-${token.id}`}>
       <div className="token-card-head">
         <div>
           <h2 id={`access-token-${token.id}`}>{token.name}</h2>
           <p className="mono">{token.tokenPrefix}…</p>
         </div>
         <div className="cap">
-          {revoked
-            ? `Revoked ${formatDate(token.revokedAt)}`
-            : `Created ${formatDate(token.createdAt)}`}
+          {revoked ? `Revoked ${formatDate(token.revokedAt)}` : `Created ${formatDate(token.createdAt)}`}
         </div>
       </div>
       <div className="credential-actions">
@@ -119,12 +94,7 @@ function TokenCard({
           Rename
         </button>
         {revoked ? null : (
-          <button
-            className="btn danger"
-            type="button"
-            disabled={busy}
-            onClick={() => void revokeAccessToken(token.id)}
-          >
+          <button className="btn danger" type="button" disabled={busy} onClick={() => void revokeAccessToken(token.id)}>
             Revoke
           </button>
         )}
@@ -152,12 +122,7 @@ function TokenCard({
           <button className="btn" type="submit" disabled={busy}>
             Save name
           </button>
-          <button
-            className="btn"
-            type="button"
-            disabled={busy}
-            onClick={() => renameAccessToken(null)}
-          >
+          <button className="btn" type="button" disabled={busy} onClick={() => renameAccessToken(null)}>
             Cancel
           </button>
         </form>
@@ -171,26 +136,22 @@ export function TokensPage({ state, embedded = false }: { state: OperatorState; 
   return (
     <section id="tokensView">
       <div className="lead">
-        {embedded ? null : <h1 id="tokensHeading" className="" tabIndex={-1}>
-          Access tokens
-        </h1>}
+        {embedded ? null : (
+          <h1 id="tokensHeading" className="" tabIndex={-1}>
+            Access tokens
+          </h1>
+        )}
         <div className="lead-copy">
           <p className="activity-copy">
-            Create named Bearer tokens for MCP clients. Each secret is shown
-            once; revoke it when that client should lose access.
+            Create named Bearer tokens for MCP clients. Each secret is shown once; revoke it when that client should
+            lose access.
           </p>
           <NoticeLine id="tokenNotice" notice={state.tokenNotice} />
           {!available ? (
-            <Unavailable>
-              {accessTokenUnavailableCopy(state.data?.accessTokenManagement)}
-            </Unavailable>
+            <Unavailable>{accessTokenUnavailableCopy(state.data?.accessTokenManagement)}</Unavailable>
           ) : (
             <div id="tokenAvailable">
-              {state.createdToken ? (
-                <Reveal token={state.createdToken} />
-              ) : (
-                <CreateForm busy={state.tokenBusy} />
-              )}
+              {state.createdToken ? <Reveal token={state.createdToken} /> : <CreateForm busy={state.tokenBusy} />}
               <div
                 id="tokenList"
                 className="token-ledger"
@@ -200,18 +161,12 @@ export function TokensPage({ state, embedded = false }: { state: OperatorState; 
                   <Empty>Loading access tokens…</Empty>
                 ) : state.tokenPhase === "error" ? (
                   <p className="empty">
-                    <button
-                      className="btn"
-                      type="button"
-                      onClick={() => void loadAccessTokens()}
-                    >
+                    <button className="btn" type="button" onClick={() => void loadAccessTokens()}>
                       Try loading access tokens again
                     </button>
                   </p>
                 ) : state.tokens.length === 0 ? (
-                  <Empty>
-                    No access tokens yet. Name the first MCP client above.
-                  </Empty>
+                  <Empty>No access tokens yet. Name the first MCP client above.</Empty>
                 ) : (
                   state.tokens.map((token) => (
                     <TokenCard

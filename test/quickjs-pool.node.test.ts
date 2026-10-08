@@ -85,9 +85,7 @@ let behaviour: Behaviour;
 let children: ScriptedChild[];
 let forkedAt: number[];
 
-function scriptChildren(
-  options: { ready?: boolean; obeys?: ReadonlySet<NodeJS.Signals> } = {},
-): void {
+function scriptChildren(options: { ready?: boolean; obeys?: ReadonlySet<NodeJS.Signals> } = {}): void {
   forkMock.mockImplementation(() => {
     const child = new ScriptedChild(() => behaviour, options.obeys);
     children.push(child);
@@ -116,9 +114,7 @@ describe("QuickJS pool crash backoff", () => {
     scriptChildren();
     const executor = quickJsExecutor();
     behaviour = "crash";
-    await expect(executor.execute("async () => 1", [])).rejects.toThrow(
-      "QuickJS child exited unexpectedly (code 1).",
-    );
+    await expect(executor.execute("async () => 1", [])).rejects.toThrow("QuickJS child exited unexpectedly (code 1).");
     expect(forkedAt).toHaveLength(1);
 
     for (const delay of [100, 200, 400, 800, 1_600, 3_200, 5_000, 5_000]) {

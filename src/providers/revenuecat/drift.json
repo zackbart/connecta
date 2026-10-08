@@ -8,13 +8,9 @@
       "inventory": {
         "url": "https://www.revenuecat.com/docs/tools/mcp/tools-reference.md",
         "format": "table",
-        "acknowledgedUnclassified": [
-          "render-paywall-screenshot"
-        ]
+        "acknowledgedUnclassified": ["render-paywall-screenshot"]
       },
-      "endpoints": [
-        "https://mcp.revenuecat.ai/mcp"
-      ],
+      "endpoints": ["https://mcp.revenuecat.ai/mcp"],
       "reviewed": [
         "get-account-billing",
         "get-app",

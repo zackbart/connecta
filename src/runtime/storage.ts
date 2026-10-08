@@ -25,9 +25,7 @@ import { runEdge } from "./run.js";
 import { Logger, Storage } from "./services.js";
 
 /** Read one key; null when absent. */
-export function storageGet(
-  key: string,
-): Effect.Effect<string | null, unknown, Storage> {
+export function storageGet(key: string): Effect.Effect<string | null, unknown, Storage> {
   return Storage.use((storage) =>
     Effect.tryPromise({
       // Promise.resolve keeps an adapter that answers synchronously working,
@@ -53,9 +51,7 @@ export function storageSet(
 }
 
 /** Delete one key. */
-export function storageDelete(
-  key: string,
-): Effect.Effect<void, unknown, Storage> {
+export function storageDelete(key: string): Effect.Effect<void, unknown, Storage> {
   return Storage.use((storage) =>
     Effect.tryPromise({
       try: () => Promise.resolve(storage.delete(key)),
@@ -90,14 +86,10 @@ interface Partition {
 // partition past its owner.
 const partitions = new WeakMap<Partition, Context.Context<Storage | Logger>>();
 
-function partitionContext(
-  partition: Partition,
-): Context.Context<Storage | Logger> {
+function partitionContext(partition: Partition): Context.Context<Storage | Logger> {
   let context = partitions.get(partition);
   if (!context) {
-    context = Context.make(Storage, partition.storage).pipe(
-      Context.add(Logger, partition.logger),
-    );
+    context = Context.make(Storage, partition.storage).pipe(Context.add(Logger, partition.logger));
     partitions.set(partition, context);
   }
   return context;
@@ -108,9 +100,6 @@ function partitionContext(
  * Promise boundary. Resolves and rejects as runEdge does: the original error,
  * never a wrapper.
  */
-export function runOnPartition<A, E>(
-  effect: Effect.Effect<A, E, Storage | Logger>,
-  partition: Partition,
-): Promise<A> {
+export function runOnPartition<A, E>(effect: Effect.Effect<A, E, Storage | Logger>, partition: Partition): Promise<A> {
   return runEdge(Effect.provideContext(effect, partitionContext(partition)));
 }

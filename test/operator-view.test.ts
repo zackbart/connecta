@@ -51,9 +51,7 @@ describe("status UI filtering", () => {
   ];
 
   it("keeps an identity-matching zero-tool connector and hides nonmatches", () => {
-    expect(filterUiConnectors(connectors, "notion")).toEqual([
-      { connector: connectors[0], tools: [] },
-    ]);
+    expect(filterUiConnectors(connectors, "notion")).toEqual([{ connector: connectors[0], tools: [] }]);
     expect(filterUiConnectors(connectors, "missing")).toEqual([]);
   });
 
@@ -75,9 +73,7 @@ describe("operator page routing and capabilities", () => {
     expect(operatorPageForPath("/activity")).toBe("activity");
     expect(operatorPageForPath("/ui")).toBeUndefined();
     expect(operatorPageForPath("/ui/data")).toBeUndefined();
-    expect(operatorPageTitle("connections", "Acme Connecta")).toBe(
-      "Connectors — Acme Connecta",
-    );
+    expect(operatorPageTitle("connections", "Acme Connecta")).toBe("Connectors — Acme Connecta");
   });
 
   it("orders credential capability states without revealing topology to bearer", () => {
@@ -113,8 +109,6 @@ describe("operator page routing and capabilities", () => {
 });
 
 describe("operator app state", () => {
-
-
   function event(address: string, actor?: UiActivityEvent["actor"]) {
     return {
       occurredAt: "2026-07-23T12:00:00.000Z",
@@ -240,19 +234,13 @@ describe("operator app state", () => {
 
   it("summarizes activity as counts and never as payloads", () => {
     expect(activitySummary([])).toBe("");
-    expect(
-      activitySummary([
-        event("calc.add"),
-        event("calc.add"),
-        event("notes.list"),
-      ]),
-    ).toBe("3 loaded calls · 2 tools");
+    expect(activitySummary([event("calc.add"), event("calc.add"), event("notes.list")])).toBe(
+      "3 loaded calls · 2 tools",
+    );
   });
 
   it("lets only http(s) values become an href", () => {
-    expect(safeHttpHref("https://provider.test/oauth?x=1")).toBe(
-      "https://provider.test/oauth?x=1",
-    );
+    expect(safeHttpHref("https://provider.test/oauth?x=1")).toBe("https://provider.test/oauth?x=1");
     expect(safeHttpHref("http://provider.test")).toBe("http://provider.test");
     for (const hostile of [
       "javascript:alert(1)",
@@ -279,25 +267,15 @@ describe("operator app state", () => {
       inputSchema: { type: "object" },
     } as unknown as Parameters<typeof driftCounts>[0];
     const rendered = JSON.stringify(driftCounts(smuggled));
-    expect(driftCounts(smuggled).every((c) => typeof c.count === "number")).toBe(
-      true,
-    );
+    expect(driftCounts(smuggled).every((c) => typeof c.count === "number")).toBe(true);
     expect(rendered).not.toContain("billing.delete_customer");
     expect(rendered).not.toContain("inputSchema");
     expect(driftSummary(smuggled)).not.toContain("billing");
   });
 
   it("names each unavailable capability without revealing topology", () => {
-    expect(credentialUnavailableCopy("no_slots")).toContain(
-      "No connectors declare operator-managed credential slots",
-    );
-    expect(credentialUnavailableCopy("vault_not_configured")).toContain(
-      "Configure a vault",
-    );
-    expect(credentialUnavailableCopy("requires_operator")).toContain(
-      "interactive user",
-    );
-
-
+    expect(credentialUnavailableCopy("no_slots")).toContain("No connectors declare operator-managed credential slots");
+    expect(credentialUnavailableCopy("vault_not_configured")).toContain("Configure a vault");
+    expect(credentialUnavailableCopy("requires_operator")).toContain("interactive user");
   });
 });

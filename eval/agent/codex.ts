@@ -42,10 +42,12 @@ export interface CodexOptions {
 }
 
 export async function codexVersion(): Promise<string> {
-  return await new Promise(resolve => {
+  return await new Promise((resolve) => {
     const child = spawn("codex", ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
     let output = "";
-    child.stdout.on("data", chunk => { output += String(chunk); });
+    child.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
     child.on("close", () => resolve(output.trim()));
     child.on("error", () => resolve("unavailable"));
   });
@@ -55,7 +57,7 @@ function mcpResultText(value: unknown): string {
   if (!value || typeof value !== "object") return JSON.stringify(value ?? "");
   const result = value as { content?: { type?: string; text?: string }[] };
   return Array.isArray(result.content)
-    ? result.content.map(block => block.type === "text" ? block.text ?? "" : JSON.stringify(block)).join("\n")
+    ? result.content.map((block) => (block.type === "text" ? (block.text ?? "") : JSON.stringify(block))).join("\n")
     : JSON.stringify(value);
 }
 
@@ -63,26 +65,54 @@ function mcpResultText(value: unknown): string {
 function codexEvent(event: { method?: string; params?: Record<string, any> }): StreamEvent[] {
   const item = event.params?.item;
   if (event.method === "item/started" && item?.type === "mcpToolCall") {
-    return [{ type: "assistant", message: { content: [{
-      type: "tool_use", id: item.id, name: `mcp__${item.server}__${item.tool}`,
-      input: item.arguments ?? {},
-    }] } }];
+    return [
+      {
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: item.id,
+              name: `mcp__${item.server}__${item.tool}`,
+              input: item.arguments ?? {},
+            },
+          ],
+        },
+      },
+    ];
   }
   if (event.method === "item/completed" && item?.type === "mcpToolCall") {
-    return [{ type: "user", message: { content: [{
-      type: "tool_result", tool_use_id: item.id,
-      is_error: item.status !== "completed" || Boolean(item.error) || item.result?.isError === true,
-      content: item.error ? [{ type: "text", text: JSON.stringify(item.error) }] :
-        item.result?.content ?? [{ type: "text", text: mcpResultText(item.result) }],
-    }] } }];
+    return [
+      {
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: item.id,
+              is_error: item.status !== "completed" || Boolean(item.error) || item.result?.isError === true,
+              content: item.error
+                ? [{ type: "text", text: JSON.stringify(item.error) }]
+                : (item.result?.content ?? [{ type: "text", text: mcpResultText(item.result) }]),
+            },
+          ],
+        },
+      },
+    ];
   }
   if (event.method === "item/completed" && item?.type === "agentMessage" && item.text) {
     return [{ type: "assistant", message: { phase: item.phase, content: [{ type: "text", text: item.text }] } }];
   }
   if (event.method === "turn/completed") {
     const turn = event.params?.turn;
-    return [{ type: "result", subtype: turn?.status === "completed" ? "success" : String(turn?.status ?? "error"),
-      result: turn?.error?.message ?? "", codex_error_info: turn?.error?.codexErrorInfo }];
+    return [
+      {
+        type: "result",
+        subtype: turn?.status === "completed" ? "success" : String(turn?.status ?? "error"),
+        result: turn?.error?.message ?? "",
+        codex_error_info: turn?.error?.codexErrorInfo,
+      },
+    ];
   }
   return [];
 }
@@ -113,28 +143,28 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     'approval_policy = "on-request"',
     'sandbox_mode = "read-only"',
     'web_search = "disabled"',
-    ...SYSTEM_SKILLS.flatMap(name => ['[[skills.config]]', `name = ${JSON.stringify(name)}`, 'enabled = false']),
-    '[plugins]',
-    '[features]',
-    'apps = false',
-    'multi_agent = false',
-    'goals = false',
-    'hooks = false',
-    'remote_plugin = false',
-    'plugins = false',
-    'skip_host_skill_discovery = true',
-    'daemon_auto_start = false',
-    'shell_tool = false',
-    'unified_exec = false',
-    '[apps._default]',
-    'enabled = false',
-    '[mcp_servers.connecta]',
+    ...SYSTEM_SKILLS.flatMap((name) => ["[[skills.config]]", `name = ${JSON.stringify(name)}`, "enabled = false"]),
+    "[plugins]",
+    "[features]",
+    "apps = false",
+    "multi_agent = false",
+    "goals = false",
+    "hooks = false",
+    "remote_plugin = false",
+    "plugins = false",
+    "skip_host_skill_discovery = true",
+    "daemon_auto_start = false",
+    "shell_tool = false",
+    "unified_exec = false",
+    "[apps._default]",
+    "enabled = false",
+    "[mcp_servers.connecta]",
     `url = ${JSON.stringify(options.mcpUrl)}`,
-    'required = true',
+    "required = true",
     `enabled_tools = ${JSON.stringify([...new Set([...options.allowedTools, ...options.deniedTools])])}`,
     'default_tools_approval_mode = "approve"',
     `http_headers = { Authorization = ${JSON.stringify(`Bearer ${options.token}`)} }`,
-    ...options.deniedTools.flatMap(tool => [
+    ...options.deniedTools.flatMap((tool) => [
       `[mcp_servers.connecta.tools.${JSON.stringify(tool)}]`,
       'approval_mode = "prompt"',
     ]),
@@ -150,7 +180,8 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   const argv = options.testHost?.args ?? ["app-server", "--stdio"];
   const started = performance.now();
   const child = spawn(options.testHost?.executable ?? "codex", argv, {
-    cwd, stdio: ["pipe", "pipe", "pipe"],
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
     env: { PATH: process.env.PATH, HOME: root, CODEX_HOME: codexHome, TZ: "UTC" },
   });
   const events: StreamEvent[] = [];
@@ -164,18 +195,28 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   const toolByItem = new Map<string, string>();
   let turnDone: ((value: Record<string, unknown>) => void) | undefined;
   let stopWaiting: (() => void) | undefined;
-  const stopped = new Promise<undefined>(resolve => { stopWaiting = () => resolve(undefined); });
-  const send = (value: unknown) => child.stdin.write(`${JSON.stringify(value)}\n`);
-  const request = (method: string, params: unknown): Promise<any> => new Promise((resolve, reject) => {
-    const id = nextId++;
-    pending.set(id, { resolve, reject });
-    send({ id, method, params });
+  const stopped = new Promise<undefined>((resolve) => {
+    stopWaiting = () => resolve(undefined);
   });
-  const push = (event: StreamEvent) => { events.push(event); options.onEvent?.(event); };
+  const send = (value: unknown) => child.stdin.write(`${JSON.stringify(value)}\n`);
+  const request = (method: string, params: unknown): Promise<any> =>
+    new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      send({ id, method, params });
+    });
+  const push = (event: StreamEvent) => {
+    events.push(event);
+    options.onEvent?.(event);
+  };
   const lines = createInterface({ input: child.stdout });
-  lines.on("line", line => {
+  lines.on("line", (line) => {
     let message: Record<string, any>;
-    try { message = JSON.parse(line) as Record<string, any>; } catch { return; }
+    try {
+      message = JSON.parse(line) as Record<string, any>;
+    } catch {
+      return;
+    }
     if (message.method === undefined && typeof message.id === "number" && pending.has(message.id)) {
       const waiter = pending.get(message.id)!;
       pending.delete(message.id);
@@ -187,13 +228,13 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       const tool = toolByItem.get(String(message.params?.itemId));
       const deny = tool === undefined || options.deniedTools.includes(tool);
       const questions = message.params?.questions ?? [];
-      const choices: (readonly [string, string | undefined])[] = questions.map((question: {
-        id: string; options?: { label: string }[];
-      }) => {
-        const declined = question.options?.find(option => /decline|deny|reject|cancel/i.test(option.label));
-        const accepted = question.options?.find(option => /accept|approve|allow/i.test(option.label));
-        return [question.id, deny ? declined?.label : accepted?.label] as const;
-      });
+      const choices: (readonly [string, string | undefined])[] = questions.map(
+        (question: { id: string; options?: { label: string }[] }) => {
+          const declined = question.options?.find((option) => /decline|deny|reject|cancel/i.test(option.label));
+          const accepted = question.options?.find((option) => /accept|approve|allow/i.test(option.label));
+          return [question.id, deny ? declined?.label : accepted?.label] as const;
+        },
+      );
       if (deny) push({ type: "codex_denial", tool: tool ?? "unknown" });
       if (choices.some(([, answer]) => answer === undefined)) {
         send({ id: message.id, error: { code: -32000, message: "Eval host refused an unrecognized approval prompt" } });
@@ -210,8 +251,14 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       push({ type: "codex_denial", tool: "mcpServer/elicitation/request" });
       return;
     }
-    if (["item/commandExecution/requestApproval", "item/fileChange/requestApproval",
-      "item/permissions/requestApproval"].includes(String(message.method)) && message.id !== undefined) {
+    if (
+      [
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
+      ].includes(String(message.method)) &&
+      message.id !== undefined
+    ) {
       send({ id: message.id, error: { code: -32000, message: "Eval host refused approval" } });
       push({ type: "codex_denial", tool: String(message.method) });
       return;
@@ -224,8 +271,10 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     if (message.method === "item/started" && message.params?.item?.type === "mcpToolCall") {
       toolByItem.set(String(message.params.item.id), String(message.params.item.tool));
     }
-    if (message.method === "item/started" &&
-      ["commandExecution", "fileChange"].includes(String(message.params?.item?.type))) {
+    if (
+      message.method === "item/started" &&
+      ["commandExecution", "fileChange"].includes(String(message.params?.item?.type))
+    ) {
       push({ type: "result", subtype: "error", result: "Codex attempted a tool outside fake connecta" });
       child.kill("SIGTERM");
       return;
@@ -241,9 +290,11 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       done?.(message.params?.turn ?? {});
     }
   });
-  child.stderr.on("data", chunk => { stderrTail = (stderrTail + String(chunk)).slice(-4_000); });
-  const exited = new Promise<number | null>(resolve => {
-    child.on("close", code => {
+  child.stderr.on("data", (chunk) => {
+    stderrTail = (stderrTail + String(chunk)).slice(-4_000);
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    child.on("close", (code) => {
       stopWaiting?.();
       for (const waiter of pending.values()) waiter.reject(new Error("Codex app-server exited"));
       pending.clear();
@@ -253,7 +304,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       done?.({ status: "failed", error: { message: "Codex app-server exited" } });
       resolve(code);
     });
-    child.on("error", error => {
+    child.on("error", (error) => {
       stopWaiting?.();
       for (const waiter of pending.values()) waiter.reject(error);
       pending.clear();
@@ -278,34 +329,60 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   options.signal?.addEventListener("abort", onAbort, { once: true });
   if (options.signal?.aborted) onAbort();
   try {
-    await request("initialize", { clientInfo: { name: "connecta_eval", title: "Connecta eval", version: "1" },
-      capabilities: { experimentalApi: true } });
+    await request("initialize", {
+      clientInfo: { name: "connecta_eval", title: "Connecta eval", version: "1" },
+      capabilities: { experimentalApi: true },
+    });
     send({ method: "initialized" });
     const inventory = async () => {
       const skillResult = await request("skills/list", { cwds: [cwd], forceReload: true });
       const pluginResult = await request("plugin/installed", { cwds: [cwd] });
-      if (!Array.isArray(skillResult.data) || skillResult.data.length !== 1 || skillResult.data[0]?.cwd !== cwd ||
-        !Array.isArray(skillResult.data[0]?.skills) || !Array.isArray(skillResult.data[0]?.errors) ||
-        skillResult.data[0].errors.length || !Array.isArray(pluginResult.marketplaces) ||
-        !Array.isArray(pluginResult.marketplaceLoadErrors) || pluginResult.marketplaceLoadErrors.length ||
-        pluginResult.marketplaces.some((m: any) => !Array.isArray(m.plugins))) {
+      if (
+        !Array.isArray(skillResult.data) ||
+        skillResult.data.length !== 1 ||
+        skillResult.data[0]?.cwd !== cwd ||
+        !Array.isArray(skillResult.data[0]?.skills) ||
+        !Array.isArray(skillResult.data[0]?.errors) ||
+        skillResult.data[0].errors.length ||
+        !Array.isArray(pluginResult.marketplaces) ||
+        !Array.isArray(pluginResult.marketplaceLoadErrors) ||
+        pluginResult.marketplaceLoadErrors.length ||
+        pluginResult.marketplaces.some((m: any) => !Array.isArray(m.plugins))
+      ) {
         throw new Error("Codex skill/plugin inventory could not be verified");
       }
-      const skills = skillResult.data[0].skills.map((s: any) => ({ name: String(s.name ?? "<unknown>"), enabled: s.enabled }));
-      const plugins = pluginResult.marketplaces.flatMap((m: any) => m.plugins.map((p: any) =>
-        ({ name: String(p.name ?? "<unknown>"), id: String(p.id ?? "<unknown>"), enabled: p.enabled })));
+      const skills = skillResult.data[0].skills.map((s: any) => ({
+        name: String(s.name ?? "<unknown>"),
+        enabled: s.enabled,
+      }));
+      const plugins = pluginResult.marketplaces.flatMap((m: any) =>
+        m.plugins.map((p: any) => ({
+          name: String(p.name ?? "<unknown>"),
+          id: String(p.id ?? "<unknown>"),
+          enabled: p.enabled,
+        })),
+      );
       push({ type: "eval_inventory", skillInventory: skills, pluginInventory: plugins });
-      const unexpected = { skills: skills.filter((s: any) => s.enabled !== false),
-        plugins: plugins.filter((p: any) => p.enabled !== false) };
+      const unexpected = {
+        skills: skills.filter((s: any) => s.enabled !== false),
+        plugins: plugins.filter((p: any) => p.enabled !== false),
+      };
       if (unexpected.skills.length || unexpected.plugins.length) {
-        throw new Error(`Codex loaded plugins or skills outside the fake MCP config: ${JSON.stringify(unexpected).replaceAll(options.token, "<redacted>")}`);
+        throw new Error(
+          `Codex loaded plugins or skills outside the fake MCP config: ${JSON.stringify(unexpected).replaceAll(options.token, "<redacted>")}`,
+        );
       }
       return { skills, plugins };
     };
     await inventory();
     const thread = await request("thread/start", {
-      model: options.model, cwd, approvalPolicy: "on-request", sandbox: "read-only", ephemeral: true,
-      baseInstructions: "Complete the user's task using only the connecta MCP tools. Do not use shell, files, web, or other services.",
+      model: options.model,
+      cwd,
+      approvalPolicy: "on-request",
+      sandbox: "read-only",
+      ephemeral: true,
+      baseInstructions:
+        "Complete the user's task using only the connecta MCP tools. Do not use shell, files, web, or other services.",
       allowProviderModelFallback: false,
     });
     model = thread.model;
@@ -314,22 +391,40 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     const status = await request("mcpServerStatus/list", { threadId: thread.thread.id });
     const servers = status.data as { name: string; tools: Record<string, unknown>; toolsError?: string }[];
     if (servers.length !== 1 || servers[0]?.name !== "connecta" || servers[0].toolsError) {
-      throw new Error(`isolated Codex MCP inventory: ${JSON.stringify(servers.map(server => ({
-        name: server.name, tools: Object.keys(server.tools ?? {}), toolsError: server.toolsError,
-      })))}`);
+      throw new Error(
+        `isolated Codex MCP inventory: ${JSON.stringify(
+          servers.map((server) => ({
+            name: server.name,
+            tools: Object.keys(server.tools ?? {}),
+            toolsError: server.toolsError,
+          })),
+        )}`,
+      );
     }
-    loadedTools = Object.keys(servers[0].tools).map(tool => `mcp__connecta__${tool}`);
+    loadedTools = Object.keys(servers[0].tools).map((tool) => `mcp__connecta__${tool}`);
     assertSurface(loadedTools);
-    push({ type: "system", subtype: "init", model,
-      agent_version: options.testHost?.version ?? await codexVersion(), tools: loadedTools,
-      skillInventory: verifiedInventory.skills, pluginInventory: verifiedInventory.plugins });
+    push({
+      type: "system",
+      subtype: "init",
+      model,
+      agent_version: options.testHost?.version ?? (await codexVersion()),
+      tools: loadedTools,
+      skillInventory: verifiedInventory.skills,
+      pluginInventory: verifiedInventory.plugins,
+    });
     let prompt: string | undefined = options.firstPrompt;
     let turn = 0;
     while (prompt !== undefined && !timedOut && !options.signal?.aborted) {
       turnStarts.push(events.length);
-      const completed = new Promise<Record<string, unknown>>(resolve => { turnDone = resolve; });
-      await request("turn/start", { threadId: thread.thread.id, input: [{ type: "text", text: prompt }],
-        model: options.model, ...(options.effort ? { effort: options.effort } : {}) });
+      const completed = new Promise<Record<string, unknown>>((resolve) => {
+        turnDone = resolve;
+      });
+      await request("turn/start", {
+        threadId: thread.thread.id,
+        input: [{ type: "text", text: prompt }],
+        model: options.model,
+        ...(options.effort ? { effort: options.effort } : {}),
+      });
       const result = await completed;
       turnDone = undefined;
       turn += 1;
@@ -349,7 +444,16 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   }
   const exitCode = await exited;
   await rm(root, { recursive: true, force: true });
-  return { events, turnStarts, exitCode, timedOut, aborted: options.signal?.aborted ?? false,
+  return {
+    events,
+    turnStarts,
+    exitCode,
+    timedOut,
+    aborted: options.signal?.aborted ?? false,
     stderrTail: stderrTail.replaceAll(options.token, "<redacted>"),
-    wallMs: Math.round(performance.now() - started), argv, model, loadedTools };
+    wallMs: Math.round(performance.now() - started),
+    argv,
+    model,
+    loadedTools,
+  };
 }

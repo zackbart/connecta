@@ -5,12 +5,7 @@ import { connectorWith } from "./fixtures/connectors.js";
 import { customExecutor, createConnecta } from "../src/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import {
-  detectCatalogDrift,
-  observedCatalogDrift,
-  vettedCatalog,
-  vettedSchemaDigest,
-} from "../src/catalog-drift.js";
+import { detectCatalogDrift, observedCatalogDrift, vettedCatalog, vettedSchemaDigest } from "../src/catalog-drift.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
 // From the root entry on purpose: a deployment writing an activity store reaches
@@ -41,12 +36,7 @@ function tool(name: string, annotations?: ToolDef["annotations"]): ToolDef {
 
 /** The whole reviewed catalog, exactly as the release recorded it. */
 function currentCatalog(): ToolDef[] {
-  return [
-    tool("list_issues"),
-    tool("get_issue"),
-    tool("save_issue"),
-    tool("create_issue_label"),
-  ];
+  return [tool("list_issues"), tool("get_issue"), tool("save_issue"), tool("create_issue_label")];
 }
 
 /**
@@ -80,8 +70,6 @@ const context = {
   baseUrl: BASE,
 };
 
-
-
 describe("vettedCatalog()", () => {
   it("refuses a name classified as both a read and a write", () => {
     expect(() =>
@@ -114,10 +102,7 @@ describe("detectCatalogDrift()", () => {
   });
 
   it("counts a tool no release classified", async () => {
-    const counts = await detectCatalogDrift(reviewed(), [
-      ...currentCatalog(),
-      tool("merge_issues"),
-    ]);
+    const counts = await detectCatalogDrift(reviewed(), [...currentCatalog(), tool("merge_issues")]);
     expect(counts.unclassifiedTools).toBe(1);
     expect(counts.unservedTools).toBe(0);
   });
@@ -163,12 +148,9 @@ describe("detectCatalogDrift()", () => {
       writes: WRITES,
       schemaDigests: { get_issue: digest },
     });
-    expect((await detectCatalogDrift(catalog, currentCatalog())).schemaChanges)
-      .toBe(0);
+    expect((await detectCatalogDrift(catalog, currentCatalog())).schemaChanges).toBe(0);
     const changed = currentCatalog().map((t) =>
-      t.name === "get_issue"
-        ? { ...t, inputSchema: { type: "object", required: ["id"] } }
-        : t,
+      t.name === "get_issue" ? { ...t, inputSchema: { type: "object", required: ["id"] } } : t,
     );
     expect((await detectCatalogDrift(catalog, changed)).schemaChanges).toBe(1);
   });
@@ -254,13 +236,8 @@ describe("reviewedFixture()", () => {
   });
 
   it("classifies exactly as the provider lists say", async () => {
-    const { connector } = proxy("linear_test", () => [
-      ...currentCatalog(),
-      tool("merge_issues"),
-    ]);
-    const byName = new Map(
-      (await servedTools(connector, context)).map((t) => [t.name, t.annotations]),
-    );
+    const { connector } = proxy("linear_test", () => [...currentCatalog(), tool("merge_issues")]);
+    const byName = new Map((await servedTools(connector, context)).map((t) => [t.name, t.annotations]));
     expect(byName.get("list_issues")).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
@@ -277,15 +254,9 @@ describe("reviewedFixture()", () => {
   });
 
   it("observes drift on the listing it was already serving", async () => {
-    const served: ToolDef[][] = [
-      currentCatalog(),
-      [...currentCatalog(), tool("merge_issues")],
-    ];
+    const served: ToolDef[][] = [currentCatalog(), [...currentCatalog(), tool("merge_issues")]];
     let listing = 0;
-    const { connector, listings } = proxy(
-      "linear_test",
-      () => served[Math.min(listing++, served.length - 1)]!,
-    );
+    const { connector, listings } = proxy("linear_test", () => served[Math.min(listing++, served.length - 1)]!);
     expect(observedCatalogDrift(connector)).toBeUndefined();
 
     await servedTools(connector, context);
@@ -322,8 +293,9 @@ describe("Connector.classification", () => {
       ...connectorWith({ id: "custom", tools: async () => [] }),
       classification: { tools: { list: "readonly" } } as never,
     };
-    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger }))
-      .toThrow('[connecta] connector "custom" classify tool "list" needs verdict');
+    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger })).toThrow(
+      '[connecta] connector "custom" classify tool "list" needs verdict',
+    );
   });
 
   it("INV-11: a registry refuses a classification on static tools", () => {
@@ -332,8 +304,9 @@ describe("Connector.classification", () => {
       staticTools: [tool("list_issues")],
       classification: { tools: { list_issues: "read" } },
     };
-    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger }))
-      .toThrow(/declares both staticTools and a classification/);
+    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger })).toThrow(
+      /declares both staticTools and a classification/,
+    );
   });
 
   it("INV-1: classifies a custom connector's listing on every read, into fresh objects", async () => {
@@ -362,9 +335,7 @@ describe("drift on the registry surface", () => {
   it("reports counts through connector status after a refresh", async () => {
     let drifting = false;
     const { connector } = proxy("linear_test", () =>
-      drifting
-        ? [...currentCatalog(), tool("merge_issues")]
-        : currentCatalog(),
+      drifting ? [...currentCatalog(), tool("merge_issues")] : currentCatalog(),
     );
     const registry = new Registry([connector], {
       storage: memoryStorage(),
@@ -411,7 +382,9 @@ describe("drift on the registry surface", () => {
     const store = { record() {}, recordCatalogDrift: drift };
     const connecta = createConnecta({
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
-      connectors: [connector], storage: memoryStorage(), logger: silentLogger,
+      connectors: [connector],
+      storage: memoryStorage(),
+      logger: silentLogger,
       activity: activityHistory({ store }),
     });
     await connecta.registry.getTools("linear_test", BASE);
@@ -419,7 +392,6 @@ describe("drift on the registry surface", () => {
     await connecta.close();
   });
 });
-
 
 describe("the connector seam is projected, not echoed", () => {
   /**
@@ -429,7 +401,7 @@ describe("the connector seam is projected, not echoed", () => {
    * enumerable property nor what `observedAt` holds at runtime.
    */
   const leaky = (): Connector =>
-    (connectorWith({
+    connectorWith({
       id: "leaky",
       tools: [],
       call: async () => null,
@@ -444,23 +416,22 @@ describe("the connector seam is projected, not echoed", () => {
           downstreamError: "prose from a downstream",
         };
       },
-    })) as unknown as Connector;
+    }) as unknown as Connector;
 
-  const REPORT_KEYS = [
-    "annotationConflicts",
-    "observedAt",
-    "schemaChanges",
-    "unclassifiedTools",
-    "unservedTools",
-  ];
+  const REPORT_KEYS = ["annotationConflicts", "observedAt", "schemaChanges", "unclassifiedTools", "unservedTools"];
 
   it("INV-6: health neither reads nor reports a connector drift seam", async () => {
     const connector = leaky();
-    const drift = vi.fn(() => { throw new Error("downstream payload"); });
+    const drift = vi.fn(() => {
+      throw new Error("downstream payload");
+    });
     connector.catalogDrift = drift;
     const connecta = createConnecta({
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
-      storage: memoryStorage(), logger: silentLogger, publicUrl: BASE, connectors: [connector],
+      storage: memoryStorage(),
+      logger: silentLogger,
+      publicUrl: BASE,
+      connectors: [connector],
     });
     const health = await (await connecta.fetch(new Request(`${BASE}/health`))).json();
     expect(health).not.toHaveProperty("catalogDrift");
@@ -499,9 +470,7 @@ function sortedJson(value: unknown): unknown {
 }
 
 async function sha256(text: string): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
-  );
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
   return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -534,29 +503,36 @@ describe("schema digests", () => {
       outputSchema: { type: "object", "é": true, "Z": [{ y: 1, x: 2 }] },
     };
     expect(await vettedSchemaDigest(tool)).toBe(
-      await sha256(JSON.stringify(sortedJson({
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-      }))),
+      await sha256(
+        JSON.stringify(
+          sortedJson({
+            inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema,
+          }),
+        ),
+      ),
     );
   });
 
   it("INV-1: digest every leaf of a schema deeper than the host stack", async () => {
     const first = await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("string", 10_000) });
     expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("number", 10_000) }))
-      .not.toBe(first);
+    expect(await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("number", 10_000) })).not.toBe(first);
   });
 
   it("INV-1: refuse to digest a schema past the node bound rather than hash part of it", async () => {
-    await expect(vettedSchemaDigest({
-      name: "wide",
-      inputSchema: { enum: Array.from({ length: 100_000 }, (_, index) => index) },
-    })).rejects.toThrow(/more than 100000 values/);
-    await expect(vettedSchemaDigest({
-      name: "wide",
-      inputSchema: { enum: Array.from({ length: 99_990 }, (_, index) => index) },
-    })).resolves.toMatch(/^sha256:/);
+    await expect(
+      vettedSchemaDigest({
+        name: "wide",
+        inputSchema: { enum: Array.from({ length: 100_000 }, (_, index) => index) },
+      }),
+    ).rejects.toThrow(/more than 100000 values/);
+    await expect(
+      vettedSchemaDigest({
+        name: "wide",
+        inputSchema: { enum: Array.from({ length: 99_990 }, (_, index) => index) },
+      }),
+    ).resolves.toMatch(/^sha256:/);
   });
 
   describe.each(Object.keys(DIGESTED_READ) as Array<keyof typeof DIGESTED_READ>)("(%s)", (path) => {
@@ -576,10 +552,14 @@ describe("schema digests", () => {
         inputSchema: { enum: Array.from({ length: 100_000 }, (_, index) => index) },
       };
       // The digest a release could have recorded for exactly this schema.
-      const recorded = await sha256(JSON.stringify(sortedJson({
-        inputSchema: wide.inputSchema,
-        outputSchema: null,
-      })));
+      const recorded = await sha256(
+        JSON.stringify(
+          sortedJson({
+            inputSchema: wide.inputSchema,
+            outputSchema: null,
+          }),
+        ),
+      );
       const connector = DIGESTED_READ[path](recorded, wide);
       expect((await servedTools(connector, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
     });

@@ -11,9 +11,7 @@
         "start": "## Tools",
         "end": "### Supported API methods"
       },
-      "endpoints": [
-        "https://mcp.stripe.com/"
-      ],
+      "endpoints": ["https://mcp.stripe.com/"],
       "reviewed": [
         "stripe_api_search",
         "stripe_api_details",

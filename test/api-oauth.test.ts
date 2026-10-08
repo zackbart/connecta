@@ -19,15 +19,24 @@ const API = "https://api.provider.test";
 const SEAL_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
 describe("OAuth handoff lifetime", () => {
-  it.each(["personal", "shared"] as const)("does not reapply a completed restart link for %s", async authScope => {
+  it.each(["personal", "shared"] as const)("does not reapply a completed restart link for %s", async (authScope) => {
     const provider = fakeProvider();
     install(provider);
     const connector = ccb({ authScope });
     const storage = memoryStorage();
-    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, auth: callbackAuth, vault: new CredentialVault(storage, SEAL_KEY), logger: "silent" });
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      publicUrl: BASE,
+      auth: callbackAuth,
+      vault: new CredentialVault(storage, SEAL_KEY),
+      logger: "silent",
+    });
     try {
-      const issued = await app.fetch(new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }));
-      const { authorizationUrl } = await issued.json() as { authorizationUrl: string };
+      const issued = await app.fetch(
+        new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }),
+      );
+      const { authorizationUrl } = (await issued.json()) as { authorizationUrl: string };
       const started = await app.fetch(new Request(authorizationUrl));
       expect(started.status).toBe(302);
       const consent = started.headers.get("Location")!;
@@ -40,43 +49,63 @@ describe("OAuth handoff lifetime", () => {
       const replay = await app.fetch(new Request(authorizationUrl));
       expect(replay.status).toBe(400);
       expect((await connector.status!(target!.registry.contextFor("ccb", BASE))).state).toBe("ok");
-    } finally { await app.close(); }
+    } finally {
+      await app.close();
+    }
   });
 
-  it.each([true, false])("INV-4 INV-5: error callbacks terminate static consent only after verification (PKCE %s)", async pkce => {
-    const provider = fakeProvider();
-    install(provider);
-    const connector = ccb({ oauth: { ...OAUTH, pkce } });
-    const app = createTestConnecta({ connectors: [connector], storage: memoryStorage(), publicUrl: BASE, auth: callbackAuth, logger: "silent" });
-    try {
-      const ctx = () => app.registry.contextFor("ccb", BASE);
-      const begun = await connector.startAuth!(ctx());
-      const consent = begun.authorizationUrl!;
-      const state = new URL(consent).searchParams.get("state")!;
-      await bindCallback(app, "ccb", state);
-      const key = await consentKey(state);
-      const before = await ctx().storage.get(key);
-      for (const query of [new URLSearchParams({ state: "bad-state", error: "access_denied" }), new URLSearchParams({ state, iss: "https://wrong.example", error: "access_denied" })]) {
-        expect((await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${query}`))).status).toBe(400);
-        expect(await ctx().storage.get(key)).toBe(before);
+  it.each([true, false])(
+    "INV-4 INV-5: error callbacks terminate static consent only after verification (PKCE %s)",
+    async (pkce) => {
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb({ oauth: { ...OAUTH, pkce } });
+      const app = createTestConnecta({
+        connectors: [connector],
+        storage: memoryStorage(),
+        publicUrl: BASE,
+        auth: callbackAuth,
+        logger: "silent",
+      });
+      try {
+        const ctx = () => app.registry.contextFor("ccb", BASE);
+        const begun = await connector.startAuth!(ctx());
+        const consent = begun.authorizationUrl!;
+        const state = new URL(consent).searchParams.get("state")!;
+        await bindCallback(app, "ccb", state);
+        const key = await consentKey(state);
+        const before = await ctx().storage.get(key);
+        for (const query of [
+          new URLSearchParams({ state: "bad-state", error: "access_denied" }),
+          new URLSearchParams({ state, iss: "https://wrong.example", error: "access_denied" }),
+        ]) {
+          expect((await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${query}`))).status).toBe(400);
+          expect(await ctx().storage.get(key)).toBe(before);
+        }
+        const refused = await app.fetch(
+          new Request(`${BASE}/oauth/callback/ccb?${new URLSearchParams({ state, error: "access_denied" })}`),
+        );
+        expect(await refused.text()).toContain('data-oauth-callback="denied"');
+        const consumed = JSON.parse((await ctx().storage.get(key))!);
+        expect(consumed.consumed).toBe(true);
+        expect(consumed.verifier).toBeUndefined();
+        await bindCallback(app, "ccb", state);
+        const code = provider.consent(consent);
+        const replay = await app.fetch(
+          new Request(`${BASE}/oauth/callback/ccb?${new URLSearchParams({ state, code })}`),
+        );
+        expect(replay.status).toBe(400);
+        expect(await replay.text()).toContain('data-oauth-callback="invalid_callback"');
+        expect(provider.tokenRequests).toHaveLength(0);
+        const continued = await connector.startAuth!(ctx());
+        expect(new URL(continued.authorizationUrl!).searchParams.get("state")).not.toBe(state);
+      } finally {
+        await app.close();
       }
-      const refused = await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${new URLSearchParams({ state, error: "access_denied" })}`));
-      expect(await refused.text()).toContain('data-oauth-callback="denied"');
-      const consumed = JSON.parse((await ctx().storage.get(key))!);
-      expect(consumed.consumed).toBe(true);
-      expect(consumed.verifier).toBeUndefined();
-      await bindCallback(app, "ccb", state);
-      const code = provider.consent(consent);
-      const replay = await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${new URLSearchParams({ state, code })}`));
-      expect(replay.status).toBe(400);
-      expect(await replay.text()).toContain('data-oauth-callback="invalid_callback"');
-      expect(provider.tokenRequests).toHaveLength(0);
-      const continued = await connector.startAuth!(ctx());
-      expect(new URL(continued.authorizationUrl!).searchParams.get("state")).not.toBe(state);
-    } finally { await app.close(); }
-  });
+    },
+  );
 
-  it.each(["personal", "shared"] as const)("consumes a %s callback handoff atomically", async authScope => {
+  it.each(["personal", "shared"] as const)("consumes a %s callback handoff atomically", async (authScope) => {
     const provider = fakeProvider();
     let exchanges = 0;
     vi.stubGlobal("fetch", async (input: string | URL | Request, init: RequestInit = {}) => {
@@ -90,7 +119,9 @@ describe("OAuth handoff lifetime", () => {
     const originalVerify = connector.verifyState!;
     let verifications = 0;
     let releaseVerify!: () => void;
-    const verifyGate = new Promise<void>(resolve => { releaseVerify = resolve; });
+    const verifyGate = new Promise<void>((resolve) => {
+      releaseVerify = resolve;
+    });
     connector.verifyState = async (state, ctx) => {
       const matched = await originalVerify(state, ctx);
       if (++verifications === 2) releaseVerify();
@@ -98,18 +129,31 @@ describe("OAuth handoff lifetime", () => {
       return matched;
     };
     const storage = memoryStorage();
-    const app = createTestConnecta({ connectors: [connector], storage, publicUrl: BASE, auth: callbackAuth, vault: new CredentialVault(storage, SEAL_KEY), logger: "silent" });
+    const app = createTestConnecta({
+      connectors: [connector],
+      storage,
+      publicUrl: BASE,
+      auth: callbackAuth,
+      vault: new CredentialVault(storage, SEAL_KEY),
+      logger: "silent",
+    });
     try {
-      const issued = await app.fetch(new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }));
-      const { authorizationUrl } = await issued.json() as { authorizationUrl: string };
+      const issued = await app.fetch(
+        new Request(`${BASE}/ui/oauth/ccb?mode=restart`, { method: "POST", headers: { Origin: BASE } }),
+      );
+      const { authorizationUrl } = (await issued.json()) as { authorizationUrl: string };
       const begun = await app.fetch(new Request(authorizationUrl));
       const consent = begun.headers.get("Location")!;
       const state = new URL(consent).searchParams.get("state")!;
       const codes = [provider.consent(consent), provider.consent(consent)];
-      const results = await Promise.all(codes.map(code => app.fetch(new Request(`${BASE}/oauth/callback/ccb?state=${state}&code=${code}`))));
-      expect(results.map(response => response.status).sort()).toEqual([200, 400]);
+      const results = await Promise.all(
+        codes.map((code) => app.fetch(new Request(`${BASE}/oauth/callback/ccb?state=${state}&code=${code}`))),
+      );
+      expect(results.map((response) => response.status).sort()).toEqual([200, 400]);
       expect(exchanges).toBe(1);
-    } finally { await app.close(); }
+    } finally {
+      await app.close();
+    }
   });
 });
 
@@ -141,9 +185,7 @@ function ccb(overrides: Partial<ApiOptions> = {}): Connector {
 }
 
 async function s256(verifier: string): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
-  );
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
   return btoa(String.fromCharCode(...digest))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
@@ -198,10 +240,7 @@ function fakeProvider() {
     if (url.href === TOKEN) {
       const params = new URLSearchParams(String(init.body));
       tokenRequests.push({ params, authorization: headers.get("authorization") });
-      if (
-        control.rejectClient ||
-        headers.get("authorization") !== `Basic ${btoa("church-client:church-secret")}`
-      ) {
+      if (control.rejectClient || headers.get("authorization") !== `Basic ${btoa("church-client:church-secret")}`) {
         return Response.json({ error: "invalid_client" }, { status: 401 });
       }
       if (params.get("grant_type") === "authorization_code") {
@@ -210,7 +249,7 @@ function fakeProvider() {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
         codes.delete(params.get("code")!);
-        if (code.challenge !== null && code.challenge !== await s256(params.get("code_verifier") ?? "")) {
+        if (code.challenge !== null && code.challenge !== (await s256(params.get("code_verifier") ?? ""))) {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
         return Response.json(issue(params.get("code")!.split("-")[1]!));
@@ -267,7 +306,11 @@ async function authorize(
   const code = provider.consent(authorizationUrl.href, owner);
   const callback = ctx();
   expect(await connector.verifyState!(authorizationUrl.searchParams.get("state"), callback)).toBe(true);
-  await connector.finishAuth!(code, callback, new URLSearchParams({ code, state: authorizationUrl.searchParams.get("state")! }));
+  await connector.finishAuth!(
+    code,
+    callback,
+    new URLSearchParams({ code, state: authorizationUrl.searchParams.get("state")! }),
+  );
 }
 
 async function failure(promise: Promise<unknown>) {
@@ -280,21 +323,43 @@ async function failure(promise: Promise<unknown>) {
 }
 
 describe("api() oauth construction", () => {
-  const build = (oauth: Record<string, unknown>, extra: Partial<ApiOptions> = {}) =>
-    () => api("ccb", { oauth: { ...OAUTH, ...oauth } as ApiOAuthConfig, tools: [], ...extra });
+  const build =
+    (oauth: Record<string, unknown>, extra: Partial<ApiOptions> = {}) =>
+    () =>
+      api("ccb", { oauth: { ...OAUTH, ...oauth } as ApiOAuthConfig, tools: [], ...extra });
 
   it.each([
-    ["a cleartext authorization endpoint", { authorizationEndpoint: "http://oauth.provider.test/authorize" }, /authorizationEndpoint must be an absolute https URL/],
-    ["a token endpoint carrying credentials", { tokenEndpoint: "https://user:pw@api.provider.test/token" }, /tokenEndpoint must be/],
+    [
+      "a cleartext authorization endpoint",
+      { authorizationEndpoint: "http://oauth.provider.test/authorize" },
+      /authorizationEndpoint must be an absolute https URL/,
+    ],
+    [
+      "a token endpoint carrying credentials",
+      { tokenEndpoint: "https://user:pw@api.provider.test/token" },
+      /tokenEndpoint must be/,
+    ],
     ["an empty client id", { clientId: " " }, /clientId must be a non-empty string/],
     ["an empty secret from an unset variable", { clientSecret: "" }, /clientSecret must be a non-empty string/],
     ["a secret on a public client", { tokenEndpointAuthMethod: "none" }, /public client sends no secret/],
-    ["a confidential method with no secret", { clientSecret: undefined, tokenEndpointAuthMethod: "client_secret_post" }, /needs a clientSecret/],
-    ["an override of the grant's own parameter", { authorizationParams: { redirect_uri: "https://evil.test" } }, /may not set "redirect_uri"/],
+    [
+      "a confidential method with no secret",
+      { clientSecret: undefined, tokenEndpointAuthMethod: "client_secret_post" },
+      /needs a clientSecret/,
+    ],
+    [
+      "an override of the grant's own parameter",
+      { authorizationParams: { redirect_uri: "https://evil.test" } },
+      /may not set "redirect_uri"/,
+    ],
     ["no api origin", { apiOrigins: [] }, /apiOrigins must name at least one origin/],
     ["an api origin with a path", { apiOrigins: [`${API}/v2`] }, /exact origins/],
     ["a malformed scope", { scope: "a  b" }, /scope must contain space-separated scope tokens/],
-    ["a token header the grant owns", { tokenRequestHeaders: { Authorization: "Basic x" } }, /may not set "Authorization"/],
+    [
+      "a token header the grant owns",
+      { tokenRequestHeaders: { Authorization: "Basic x" } },
+      /may not set "Authorization"/,
+    ],
     ["a token header with an invalid name", { tokenRequestHeaders: { "Bad Name": "x" } }, /invalid header name/],
     ["a multi-line token header", { tokenRequestHeaders: { Accept: "a\r\nX-Injected: 1" } }, /single-line string/],
   ])("refuses %s", (_label, oauth, message) => {
@@ -317,7 +382,15 @@ describe("api() oauth construction", () => {
 
   it("exposes the OAuth hooks the callback route, operator UI, and authorize_connector key on", () => {
     const connector = ccb();
-    for (const hook of ["status", "startAuth", "disconnectAuth", "verifyState", "verifyCallbackIssuer", "consumeAuthError", "finishAuth"] as const) {
+    for (const hook of [
+      "status",
+      "startAuth",
+      "disconnectAuth",
+      "verifyState",
+      "verifyCallbackIssuer",
+      "consumeAuthError",
+      "finishAuth",
+    ] as const) {
       expect(connector[hook]).toBeTypeOf("function");
     }
     expect(api("plain", { tools: [] }).startAuth).toBeUndefined();
@@ -407,15 +480,20 @@ describe("api() oauth agent recovery", () => {
     const provider = fakeProvider();
     install(provider);
     const registry = makeRegistry([ccb()]);
-    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true, oauthConnectUrl: async id => `${BASE}/connect/${id}?h=test` });
-    const failed = JSON.parse(
-      (await mt.callTool({ address: "ccb.whoami" })).content[0]!.text,
-    ) as { error: { code: string; recovery?: string } };
+    const mt = createMetaTools(registry, BASE, {
+      canManageAuth: () => true,
+      oauthConnectUrl: async (id) => `${BASE}/connect/${id}?h=test`,
+    });
+    const failed = JSON.parse((await mt.callTool({ address: "ccb.whoami" })).content[0]!.text) as {
+      error: { code: string; recovery?: string };
+    };
     expect(failed.error).toMatchObject({ code: "downstream_oauth_required", recovery: "oauth" });
 
-    const recovery = JSON.parse(
-      (await mt.authorizeConnector({ connector: "ccb" })).content[0]!.text,
-    ) as { recovery: string; status: string; authorizationUrl: string };
+    const recovery = JSON.parse((await mt.authorizeConnector({ connector: "ccb" })).content[0]!.text) as {
+      recovery: string;
+      status: string;
+      authorizationUrl: string;
+    };
     expect(recovery).toMatchObject({ recovery: "oauth", status: "auth_required" });
     expect(recovery.authorizationUrl.startsWith(`${BASE}/connect/ccb?`)).toBe(true);
 
@@ -449,12 +527,14 @@ describe("api() oauth callback exchange", () => {
       vault: new CredentialVault(storage, SEAL_KEY),
     });
     try {
-      const startResponse = await connecta.fetch(new Request(`${BASE}/ui/oauth/ccb`, {
-        method: "POST",
-        headers: { Authorization: "Bearer operator", Origin: BASE },
-      }));
+      const startResponse = await connecta.fetch(
+        new Request(`${BASE}/ui/oauth/ccb`, {
+          method: "POST",
+          headers: { Authorization: "Bearer operator", Origin: BASE },
+        }),
+      );
       expect(startResponse.status).toBe(200);
-      const link = (await startResponse.json() as { authorizationUrl: string }).authorizationUrl;
+      const link = ((await startResponse.json()) as { authorizationUrl: string }).authorizationUrl;
       const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer operator" } }));
       expect(begun.status).toBe(302);
       const authorizationUrl = begun.headers.get("Location")!;
@@ -465,7 +545,11 @@ describe("api() oauth callback exchange", () => {
       expect(forged.status).toBe(400);
       expect(provider.tokenRequests).toEqual([]);
 
-      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, { headers: { Authorization: "Bearer operator" } }));
+      const callback = await connecta.fetch(
+        new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, {
+          headers: { Authorization: "Bearer operator" },
+        }),
+      );
       expect(callback.status).toBe(200);
       const exchange = provider.tokenRequests.at(-1)!;
       expect(exchange.authorization).toBe(`Basic ${btoa("church-client:church-secret")}`);
@@ -495,22 +579,27 @@ describe("api() oauth callback exchange", () => {
     const accept = "application/vnd.ccbchurch.v2+json";
     const connector = api("ccb", {
       oauth: { ...OAUTH, tokenRequestHeaders: { Accept: accept } },
-      tools: [{
-        name: "whoami",
-        description: "Read the signed-in individual",
-        annotations: { readOnlyHint: true },
-        async handler(_args, ctx) {
-          return (await ctx.oauth!.fetch(`${API}/me`)).status;
+      tools: [
+        {
+          name: "whoami",
+          description: "Read the signed-in individual",
+          annotations: { readOnlyHint: true },
+          async handler(_args, ctx) {
+            return (await ctx.oauth!.fetch(`${API}/me`)).status;
+          },
         },
-      }],
+      ],
     });
     const registry = makeRegistry([connector]);
     const ctx = () => registry.contextFor("ccb", BASE);
     const seen: Array<{ url: string; accept: string | null }> = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init: RequestInit = {}) => {
-      seen.push({ url: String(input), accept: new Headers(init.headers).get("accept") });
-      return provider.fetchStub(input, init);
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+        seen.push({ url: String(input), accept: new Headers(init.headers).get("accept") });
+        return provider.fetchStub(input, init);
+      }),
+    );
     await authorize(connector, ctx, provider);
     provider.expireAccess();
     expect(await connector.callTool("whoami", {}, ctx())).toBe(200);
@@ -575,7 +664,8 @@ describe("api() oauth callback exchange", () => {
     });
     const connecta = createTestConnecta({
       connectors: [api("ccb", { oauth: { ...OAUTH, tokenEndpointAuthMethod: "client_secret_post" }, tools: [] })],
-      storage: memoryStorage(), auth: callbackAuth,
+      storage: memoryStorage(),
+      auth: callbackAuth,
       publicUrl: BASE,
       logger: { debug() {}, info() {}, warn, error() {} },
     });
@@ -587,7 +677,11 @@ describe("api() oauth callback exchange", () => {
       const state = authorizationUrl.searchParams.get("state")!;
       await bindCallback(connecta, "ccb", state);
       warn.mockClear();
-      const callback = await connecta.fetch(new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, { headers: { Authorization: "Bearer operator" } }));
+      const callback = await connecta.fetch(
+        new Request(`${BASE}/oauth/callback/ccb?code=${code}&state=${state}`, {
+          headers: { Authorization: "Bearer operator" },
+        }),
+      );
       expect(callback.status).toBe(500);
       expect(await callback.text()).not.toContain("church-secret");
       expect(warn).toHaveBeenCalledTimes(1);
@@ -718,14 +812,17 @@ describe("api() oauth refresh", () => {
     const NEW_TOKEN = "https://new-auth.test/oauth/token";
     const provider = fakeProvider();
     const sentToNew: URLSearchParams[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init: RequestInit = {}) => {
-      const url = String(input);
-      if (url === NEW_TOKEN) {
-        sentToNew.push(new URLSearchParams(String(init.body)));
-        return Response.json({ error: "invalid_grant" }, { status: 400 });
-      }
-      return provider.fetchStub(url === OLD_TOKEN ? TOKEN : input, init);
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+        const url = String(input);
+        if (url === NEW_TOKEN) {
+          sentToNew.push(new URLSearchParams(String(init.body)));
+          return Response.json({ error: "invalid_grant" }, { status: 400 });
+        }
+        return provider.fetchStub(url === OLD_TOKEN ? TOKEN : input, init);
+      }),
+    );
     const storage = memoryStorage();
     const before = ccb({ oauth: { ...OAUTH, tokenEndpoint: OLD_TOKEN } });
     const first = makeRegistry([before], { storage });
@@ -737,9 +834,9 @@ describe("api() oauth refresh", () => {
     const gate = deferred<void>();
     provider.control.refreshGate = gate.promise;
     const controller = new AbortController();
-    const call = failure(before.callTool(
-      "whoami", {}, first.contextFor("ccb", BASE, {}, { signal: controller.signal }),
-    ));
+    const call = failure(
+      before.callTool("whoami", {}, first.contextFor("ccb", BASE, {}, { signal: controller.signal })),
+    );
     await vi.waitFor(() => {
       expect(provider.tokenRequests.some((r) => r.params.get("grant_type") === "refresh_token")).toBe(true);
     });
@@ -789,7 +886,9 @@ describe("api() oauth access boundaries", () => {
     const registry = makeRegistry([exfiltrate]);
     await authorize(exfiltrate, () => registry.contextFor("ccb", BASE), provider);
 
-    const away = await failure(exfiltrate.callTool("follow", { url: "https://collector.test/steal" }, registry.contextFor("ccb", BASE)));
+    const away = await failure(
+      exfiltrate.callTool("follow", { url: "https://collector.test/steal" }, registry.contextFor("ccb", BASE)),
+    );
     expect(away.error).toBeInstanceOf(ConnectorCallError);
     expect(away.classified.message).toContain("https://collector.test is not one of them");
     const shadowed = await failure(exfiltrate.callTool("shadow", {}, registry.contextFor("ccb", BASE)));
@@ -800,12 +899,17 @@ describe("api() oauth access boundaries", () => {
   it("gives handlers no oauth accessor on a connector without oauth", async () => {
     const seen: unknown[] = [];
     const plain = api("plain", {
-      tools: [{
-        name: "peek",
-        description: "Report the handler context",
-        annotations: { readOnlyHint: true },
-        handler: (_args, ctx) => { seen.push(ctx.oauth); return null; },
-      }],
+      tools: [
+        {
+          name: "peek",
+          description: "Report the handler context",
+          annotations: { readOnlyHint: true },
+          handler: (_args, ctx) => {
+            seen.push(ctx.oauth);
+            return null;
+          },
+        },
+      ],
     });
     await plain.callTool("peek", {}, makeRegistry([plain]).contextFor("plain", BASE));
     expect(seen).toEqual([undefined]);
@@ -912,7 +1016,9 @@ describe("api() oauth reset and disconnect", () => {
     const code = provider.consent(second.href);
     const callback = ctx();
     expect(await connector.verifyState!(second.searchParams.get("state"), callback)).toBe(true);
-    await expect(connector.finishAuth!(code, callback, new URLSearchParams({ code, state: second.searchParams.get("state")! }))).rejects.toThrow();
+    await expect(
+      connector.finishAuth!(code, callback, new URLSearchParams({ code, state: second.searchParams.get("state")! })),
+    ).rejects.toThrow();
     const third = new URL((await connector.startAuth!(ctx(), { force: true })).authorizationUrl!);
 
     // The client is configuration: a refusal is the deployment's to fix, so
@@ -937,7 +1043,9 @@ describe("api() oauth reset and disconnect", () => {
     expect(await connector.verifyState!(first.searchParams.get("state"), callback)).toBe(true);
     await connector.startAuth!(ctx(), { force: true });
     const exchanges = provider.tokenRequests.length;
-    await expect(connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! }))).rejects.toThrow(/authorization changed .* try again/);
+    await expect(
+      connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! })),
+    ).rejects.toThrow(/authorization changed .* try again/);
     expect(provider.tokenRequests.length).toBe(exchanges);
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
@@ -956,7 +1064,9 @@ describe("api() oauth reset and disconnect", () => {
     // The live epoch holds the replacement flow's verifier, so the old code's
     // exchange is refused; a PKCE-less one would land in the retired epoch,
     // where no reader looks.
-    await expect(connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! }))).rejects.toThrow();
+    await expect(
+      connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! })),
+    ).rejects.toThrow();
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
 });

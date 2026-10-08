@@ -109,8 +109,7 @@ export const resultKeys = {
     ttl: { kind: "fixed", seconds: RESULT_TTL_SECONDS },
     durable: false,
   },
-  chunk: (id: string, index: number) =>
-    validateStorageKey(index === 0 ? `result:${id}` : `result:${id}#${index}`),
+  chunk: (id: string, index: number) => validateStorageKey(index === 0 ? `result:${id}` : `result:${id}#${index}`),
 } as const satisfies Keyed;
 
 // --- root families --------------------------------------------------------
@@ -161,15 +160,24 @@ export const catalogKeys = {
 /** SDK catalog response cache, complete manifests published after their chunks. */
 export const responseCacheKeys = {
   family: {
-    name: "response-cache", scope: "root", prefixes: ["response-cache:v1:"],
-    version: { number: 1, in: "key" }, codec: textCodec,
-    ttl: { kind: "configured", by: "bounded downstream ttlMs; generations and hash refresh baselines expire after 48 hours" }, durable: false,
+    name: "response-cache",
+    scope: "root",
+    prefixes: ["response-cache:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: {
+      kind: "configured",
+      by: "bounded downstream ttlMs; generations and hash refresh baselines expire after 48 hours",
+    },
+    durable: false,
   },
   prefix: (id: string) => validateStorageKey(`response-cache:v1:${id}:`),
   generation: (id: string) => validateStorageKey(`response-cache:v1:${id}:generation`),
-  namespace: (id: string, config: string, generation: string) => validateStorageKey(`response-cache:v1:${id}:${config}:${generation}:`),
+  namespace: (id: string, config: string, generation: string) =>
+    validateStorageKey(`response-cache:v1:${id}:${config}:${generation}:`),
   entry: (namespace: string, partition: string) => validateStorageKey(`${namespace}${partition}`),
-  refreshDigest: (id: string, config: string, partition: string) => validateStorageKey(`response-cache:v1:${id}:refresh-digest:${config}:${partition}`),
+  refreshDigest: (id: string, config: string, partition: string) =>
+    validateStorageKey(`response-cache:v1:${id}:refresh-digest:${config}:${partition}`),
   chunk: (entry: string, revision: string, index: number) => validateStorageKey(`${entry}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
@@ -318,8 +326,7 @@ export const oauthRefreshKeys = {
     durable: true,
   },
   prefix: "oauth:refresh:",
-  lease: (epoch: string, tokenDigest: string) =>
-    validateStorageKey(`oauth:refresh:${epoch}:${tokenDigest}`),
+  lease: (epoch: string, tokenDigest: string) => validateStorageKey(`oauth:refresh:${epoch}:${tokenDigest}`),
 } as const satisfies Keyed;
 
 /** One fingerprint's dispatch and resolution across epochs. Never expire or delete these records. */
@@ -348,8 +355,7 @@ export const oauthRefreshActiveKeys = {
     durable: false,
   },
   prefix: "oauth:refresh-active:",
-  holder: (epoch: string, holder: string) =>
-    validateStorageKey(`oauth:refresh-active:${epoch}:${holder}`),
+  holder: (epoch: string, holder: string) => validateStorageKey(`oauth:refresh-active:${epoch}:${holder}`),
 } as const satisfies Keyed;
 
 /** The values layout 2 stored, each under its historical key. */
@@ -374,12 +380,7 @@ export const oauthV2Keys = {
   family: {
     name: "oauth-v2",
     scope: "connector",
-    prefixes: [
-      ...Object.values(oauthV2Field),
-      "oauth:generation",
-      "oauth:cleanup:",
-      "oauth:cleanup-at:",
-    ],
+    prefixes: [...Object.values(oauthV2Field), "oauth:generation", "oauth:cleanup:", "oauth:cleanup-at:"],
     version: { number: 2, in: "value" },
     codec: textCodec,
     ttl: { kind: "durable" },
@@ -492,9 +493,8 @@ export function familyOfKey(key: string): string {
       break;
     }
   }
-  const family = KEY_FAMILIES.find((candidate) =>
-    candidate.scope === scope &&
-    candidate.prefixes.some((prefix) => rest.startsWith(prefix))
+  const family = KEY_FAMILIES.find(
+    (candidate) => candidate.scope === scope && candidate.prefixes.some((prefix) => rest.startsWith(prefix)),
   );
   if (family) return family.name;
   return scope === "connector" ? "connector-owned" : "unclassified";

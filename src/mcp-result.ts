@@ -14,10 +14,7 @@ interface McpishResult {
  * JSON-parsed when possible. Downstream `isError` results become exceptions.
  * Non-MCP connectors already return plain values.
  */
-export function downstreamValue(
-  kind: Connector["kind"],
-  result: unknown,
-): { data: unknown; format: "json" | "text" } {
+export function downstreamValue(kind: Connector["kind"], result: unknown): { data: unknown; format: "json" | "text" } {
   if (kind !== "mcp" || result == null || typeof result !== "object") {
     return { data: result, format: typeof result === "string" ? "text" : "json" };
   }

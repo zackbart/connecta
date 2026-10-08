@@ -46,9 +46,7 @@ export interface HostCallPayload {
   args: unknown[];
 }
 
-export type HostResultPayload =
-  | { ok: true; value: unknown }
-  | { ok: false; error: string; call?: CallErrorDetails };
+export type HostResultPayload = { ok: true; value: unknown } | { ok: false; error: string; call?: CallErrorDetails };
 
 export interface ExecutionPayload {
   outcome: ExecuteResult;
@@ -59,11 +57,7 @@ export interface ExecutionPayload {
   timedOut?: boolean;
 }
 
-export function hostCallLabel(payload: {
-  namespace: string;
-  functionName: string;
-  args: unknown[];
-}): string {
+export function hostCallLabel(payload: { namespace: string; functionName: string; args: unknown[] }): string {
   if (payload.namespace === "connecta" && payload.functionName === "call") {
     return String(payload.args[0]);
   }
@@ -74,20 +68,14 @@ export function serializedBytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-export function stringifyBounded(
-  value: unknown,
-  label: string,
-  limit = MAX_QUICKJS_IPC_BYTES,
-): string {
+export function stringifyBounded(value: unknown, label: string, limit = MAX_QUICKJS_IPC_BYTES): string {
   const json = JSON.stringify(value);
   if (json === undefined) {
     throw new TypeError(`${label} is not JSON-serializable.`);
   }
   const bytes = serializedBytes(json);
   if (bytes > limit) {
-    throw new RangeError(
-      `${label} is ${bytes} UTF-8 bytes, over the ${limit}-byte IPC limit.`,
-    );
+    throw new RangeError(`${label} is ${bytes} UTF-8 bytes, over the ${limit}-byte IPC limit.`);
   }
   return json;
 }

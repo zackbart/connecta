@@ -158,9 +158,7 @@ const DOCS_MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -168,9 +166,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -193,12 +189,7 @@ const ID_RULES = {
   tabId: { pattern: /^[A-Za-z0-9._-]+$/, max: 128 },
 } as const;
 
-function keptId(
-  value: unknown,
-  kind: keyof typeof ID_RULES,
-  name: string,
-  dropped: string[],
-): string | undefined {
+function keptId(value: unknown, kind: keyof typeof ID_RULES, name: string, dropped: string[]): string | undefined {
   const id = text(value);
   if (id === undefined) return undefined;
   const rule = ID_RULES[kind];
@@ -212,9 +203,7 @@ const TITLE_BYTES = 4 * 1024;
 
 function boundedTitle(value: unknown): string | undefined {
   const title = text(value);
-  return title === undefined
-    ? undefined
-    : clampText(title, TITLE_BYTES, (more) => `… [${more} more characters]`);
+  return title === undefined ? undefined : clampText(title, TITLE_BYTES, (more) => `… [${more} more characters]`);
 }
 
 function droppedField(dropped: string[]): string[] | undefined {
@@ -269,13 +258,7 @@ interface Marks {
  * element of a kind Google added after this rendering was written. Every
  * paragraph element kind Docs v1 defines renders as something.
  */
-const NOT_RENDERED = [
-  "headers",
-  "footers",
-  "positioned_objects",
-  "suggestion_marks",
-  "unknown_elements",
-] as const;
+const NOT_RENDERED = ["headers", "footers", "positioned_objects", "suggestion_marks", "unknown_elements"] as const;
 
 const AUTO_TEXT: Readonly<Record<string, string>> = {
   PAGE_NUMBER: "[page number]",
@@ -403,11 +386,7 @@ function preview(value: string): string {
 }
 
 /** Render structural elements as markdown-ish lines, collecting index rows. */
-function renderContent(
-  content: unknown,
-  state: RenderState,
-  cell?: { row: number; column: number },
-): string[] {
+function renderContent(content: unknown, state: RenderState, cell?: { row: number; column: number }): string[] {
   const lines: string[] = [];
   for (const value of asArray(content)) {
     const element = asRecord(value);
@@ -437,7 +416,9 @@ function renderContent(
         }),
       );
     } else if (element["table"]) {
-      state.rows?.push(compact({ type: "table" as const, startIndex: start, endIndex: end, row: cell?.row, column: cell?.column }));
+      state.rows?.push(
+        compact({ type: "table" as const, startIndex: start, endIndex: end, row: cell?.row, column: cell?.column }),
+      );
       const rows = asArray(asRecord(element["table"])["tableRows"]);
       rows.forEach((rowValue, rowIndex) => {
         const cells = asArray(asRecord(rowValue)["tableCells"]).map((cellValue, columnIndex) =>
@@ -683,7 +664,12 @@ async function sendWrite(
 ): Promise<JsonRecord> {
   let reply: { text: string };
   try {
-    reply = await client.text(request, ctx, "application/json", revisionGuarded ? { revisionGuarded: true } : undefined);
+    reply = await client.text(
+      request,
+      ctx,
+      "application/json",
+      revisionGuarded ? { revisionGuarded: true } : undefined,
+    );
   } catch (error) {
     // A cancelled call is the caller's own decision; its reason stays whole.
     if (ctx.signal?.aborted) throw error;
@@ -824,7 +810,8 @@ const REVISION_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: 512,
   pattern: "^\\S+$",
-  description: "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied.",
+  description:
+    "revisionId from get_document or a previous edit. If the document has changed since, the edit fails conflict and nothing is applied.",
 };
 
 const TEXT_PROPERTY: JsonSchema = {
@@ -968,7 +955,8 @@ function delivered(name: string, args: JsonRecord, result: unknown): unknown {
     small["replies"] = [];
     small["repliesTruncated"] = true;
   }
-  small["notice"] = `Google Docs applied this ${name === "create_document" ? "create" : "edit"}, but its full result (${bytes} bytes) is too large to return. Do not repeat it; re-read the document with get_document.`;
+  small["notice"] =
+    `Google Docs applied this ${name === "create_document" ? "create" : "edit"}, but its full result (${bytes} bytes) is too large to return. Do not repeat it; re-read the document with get_document.`;
   return small;
 }
 
@@ -1009,7 +997,8 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             minLength: 3,
             maxLength: 12,
             pattern: "^e:[0-9]{1,9}$",
-            description: "Opaque page.nextCursor from a withIndexes read; pass it back unchanged with the same arguments, and maxChars: 0 to skip the text again.",
+            description:
+              "Opaque page.nextCursor from a withIndexes read; pass it back unchanged with the same arguments, and maxChars: 0 to skip the text again.",
           },
           raw: {
             type: "boolean",
@@ -1018,7 +1007,8 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
           suggestions: {
             type: "string",
             enum: ["inline", "accepted", "rejected"],
-            description: "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits).",
+            description:
+              "How suggested edits read: inline (editors' default; the indexes edits use), or a preview with all accepted or all rejected (indexes not valid for edits).",
           },
         },
         ["documentId"],
@@ -1040,7 +1030,10 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
       handler: async (args, ctx) => {
         const documentId = String(args["documentId"]);
         const raw = args["raw"] === true;
-        if (raw && (args["maxChars"] !== undefined || args["withIndexes"] !== undefined || args["cursor"] !== undefined)) {
+        if (
+          raw &&
+          (args["maxChars"] !== undefined || args["withIndexes"] !== undefined || args["cursor"] !== undefined)
+        ) {
           throw new ConnectorCallError(
             "invalid_args",
             "raw returns Google's resource untouched, so maxChars, withIndexes, and cursor do not apply; send raw alone, or read the rendering.",
@@ -1173,17 +1166,11 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
         // that may have left a document behind says so and is not retryable.
         const title = String(args["title"]);
         const createdButUnknown = `Google Docs created the document (HTTP 2xx), but its reply could not be read, so its id is unknown. Do not create it again; find "${title}" in Drive (a Google Drive connection's search) and use that id.`;
-        const created = await sendWrite(
-          client,
-          ctx,
-          { method: "POST", path: "/documents", body: { title } },
-          false,
-          {
-            unknown: (detail) =>
-              `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
-            applied: createdButUnknown,
-          },
-        );
+        const created = await sendWrite(client, ctx, { method: "POST", path: "/documents", body: { title } }, false, {
+          unknown: (detail) =>
+            `Whether the document was created is unknown: ${detail} Google may have created "${title}". Do not create it again until a Drive search for that title shows it is missing.`,
+          applied: createdButUnknown,
+        });
         const dropped: string[] = [];
         // An id that could not be passed back is no id at all.
         const documentId = keptId(created["documentId"], "documentId", "documentId", dropped);
@@ -1264,7 +1251,8 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             type: "integer",
             minimum: 1,
             maximum: 10_000_000,
-            description: "UTF-16 index inside an existing paragraph, from get_document withIndexes; 1 is the body's start. Not a table's start index.",
+            description:
+              "UTF-16 index inside an existing paragraph, from get_document withIndexes; 1 is the body's start. Not a table's start index.",
           },
           text: TEXT_PROPERTY,
           tabId: tabIdProperty("Tab the index belongs to; omit for the first tab."),
@@ -1349,7 +1337,9 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
           ],
           revision(args),
         );
-        const changed = integer(asRecord(asRecord(asArray(reply["replies"])[0])["replaceAllText"])["occurrencesChanged"]);
+        const changed = integer(
+          asRecord(asRecord(asArray(reply["replies"])[0])["replaceAllText"])["occurrencesChanged"],
+        );
         // Google omits a zero count from the reply.
         return { ...savedEdit(args["documentId"], reply), occurrencesChanged: changed ?? 0 };
       },
@@ -1373,13 +1363,15 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
               minProperties: 1,
               maxProperties: 1,
               propertyNames: { enum: [...REQUEST_KINDS] },
-              description: "One Docs API Request, exactly one kind (insertText, deleteContentRange, updateTextStyle, …), e.g. {\"deleteContentRange\":{\"range\":{\"startIndex\":5,\"endIndex\":9}}}. Indexes are UTF-16, from get_document withIndexes.",
+              description:
+                'One Docs API Request, exactly one kind (insertText, deleteContentRange, updateTextStyle, …), e.g. {"deleteContentRange":{"range":{"startIndex":5,"endIndex":9}}}. Indexes are UTF-16, from get_document withIndexes.',
             },
             description: `Requests in order, 1 to ${MAX_REQUESTS} (connecta's cap). Later requests see earlier ones' index shifts.`,
           },
           requiredRevisionId: {
             ...REVISION_PROPERTY,
-            description: "revisionId from get_document or a previous edit; required, so raw edits are planned against what was read. If the document has changed, it fails conflict and nothing is applied.",
+            description:
+              "revisionId from get_document or a previous edit; required, so raw edits are planned against what was read. If the document has changed, it fails conflict and nothing is applied.",
           },
         },
         ["documentId", "requests", "requiredRevisionId"],
@@ -1456,7 +1448,12 @@ export const docs = asProviderFactory<DocsOptions>({
   title: "Google Docs",
   kind: "api",
   readme: "Google Docs",
-  bundle: {"baselineGzip":27149,"maxGzip":87149,"note":"./providers/docs starts at 27,149 B gzip (#681): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 27149,
+    "maxGzip": 87149,
+    "note":
+      "./providers/docs starts at 27,149 B gzip (#681): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   create: docsConnector,

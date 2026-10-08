@@ -2,15 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
-import {
-  copyFile,
-  lstat,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,17 +12,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const providers = await discoverProviders(root);
 const work = await mkdtemp(join(tmpdir(), "connecta-package-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-const rootManifest = JSON.parse(
-  await readFile(join(root, "package.json"), "utf8"),
-);
-const templateManifest = JSON.parse(
-  await readFile(join(root, "templates", "node", "package.json"), "utf8"),
-);
+const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+const templateManifest = JSON.parse(await readFile(join(root, "templates", "node", "package.json"), "utf8"));
 
-if (
-  templateManifest.dependencies?.["@zackbart/connecta"] !==
-  rootManifest.version
-) {
+if (templateManifest.dependencies?.["@zackbart/connecta"] !== rootManifest.version) {
   throw new Error("Node template must pin the package's current version");
 }
 
@@ -44,9 +29,7 @@ function run(command, args, cwd, env = {}) {
 }
 
 async function assertInstallScriptsApproved(directory, manifest) {
-  const lock = JSON.parse(
-    await readFile(join(directory, "package-lock.json"), "utf8"),
-  );
+  const lock = JSON.parse(await readFile(join(directory, "package-lock.json"), "utf8"));
   const approvals = manifest.allowScripts ?? {};
   const unapproved = [];
   for (const [path, entry] of Object.entries(lock.packages ?? {})) {
@@ -55,9 +38,7 @@ async function assertInstallScriptsApproved(directory, manifest) {
     // Lockfiles retain optional packages for every platform. A package npm did
     // not install here cannot run a script here and has no manifest to inspect.
     if (!existsSync(installedManifestPath)) continue;
-    const installedManifest = JSON.parse(
-      await readFile(installedManifestPath, "utf8"),
-    );
+    const installedManifest = JSON.parse(await readFile(installedManifestPath, "utf8"));
     const declaresInstallScript = ["preinstall", "install", "postinstall"].some(
       (name) => typeof installedManifest.scripts?.[name] === "string",
     );
@@ -74,20 +55,11 @@ async function assertInstallScriptsApproved(directory, manifest) {
     }
   }
   if (unapproved.length) {
-    throw new Error(
-      `Node template has unapproved install scripts: ${unapproved.join(", ")}`,
-    );
+    throw new Error(`Node template has unapproved install scripts: ${unapproved.join(", ")}`);
   }
 }
 
-function expectFailure(
-  command,
-  args,
-  cwd,
-  expected,
-  env = {},
-  timeout = 10_000,
-) {
+function expectFailure(command, args, cwd, expected, env = {}, timeout = 10_000) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
@@ -97,12 +69,7 @@ function expectFailure(
     killSignal: "SIGKILL",
   });
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  if (
-    result.error ||
-    result.signal ||
-    result.status === 0 ||
-    !output.includes(expected)
-  ) {
+  if (result.error || result.signal || result.status === 0 || !output.includes(expected)) {
     throw new Error(
       `Expected command failure containing ${JSON.stringify(expected)}; ` +
         `status=${String(result.status)} signal=${String(result.signal)} ` +
@@ -132,9 +99,7 @@ async function freePort() {
   if (!address || typeof address === "string") {
     throw new Error("Could not allocate a package-smoke port");
   }
-  await new Promise((resolvePromise, reject) =>
-    server.close((error) => error ? reject(error) : resolvePromise()),
-  );
+  await new Promise((resolvePromise, reject) => server.close((error) => (error ? reject(error) : resolvePromise())));
   return address.port;
 }
 
@@ -142,9 +107,7 @@ async function waitForHealth(url, child, output) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
-      throw new Error(
-        `Generated deployment exited before health was ready:\n${output()}`,
-      );
+      throw new Error(`Generated deployment exited before health was ready:\n${output()}`);
     }
     try {
       const response = await fetch(url, {
@@ -156,9 +119,7 @@ async function waitForHealth(url, child, output) {
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
   }
-  throw new Error(
-    `Generated deployment did not become healthy within 15s:\n${output()}`,
-  );
+  throw new Error(`Generated deployment did not become healthy within 15s:\n${output()}`);
 }
 
 function dockerReady() {
@@ -183,10 +144,7 @@ async function waitForContainerHealth(url, timeoutMs, describe) {
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
   }
-  throw new Error(
-    `Generated container did not become healthy within ${timeoutMs}ms:\n` +
-      describe(),
-  );
+  throw new Error(`Generated container did not become healthy within ${timeoutMs}ms:\n` + describe());
 }
 
 async function stopChild(child) {
@@ -205,13 +163,7 @@ async function stopChild(child) {
 }
 
 try {
-  const packed = JSON.parse(
-    run(
-      npm,
-      ["pack", "--json", "--ignore-scripts", "--pack-destination", work],
-      root,
-    ),
-  )[0];
+  const packed = JSON.parse(run(npm, ["pack", "--json", "--ignore-scripts", "--pack-destination", work], root))[0];
   const archive = join(work, packed.filename);
   const paths = new Set(packed.files.map((file) => file.path));
   // The generated operator UI bundle is an internal string constant no export
@@ -219,8 +171,7 @@ try {
   // one (scripts/prune-declarations.mjs). Packed, it means pruning stopped.
   if (paths.has("dist/operator-ui/generated.d.ts")) {
     throw new Error(
-      "Packed package ships dist/operator-ui/generated.d.ts; the build " +
-        "should have pruned it as unreachable",
+      "Packed package ships dist/operator-ui/generated.d.ts; the build " + "should have pruned it as unreachable",
     );
   }
 
@@ -259,10 +210,7 @@ try {
     "dist/executors/quickjs-runtime.js",
     "dist/auth/cloudflare-access.js",
     "dist/auth/cloudflare-access.d.ts",
-    ...providers.flatMap(({ name }) => [
-      `dist/providers/${name}/index.js`,
-      `dist/providers/${name}/index.d.ts`,
-    ]),
+    ...providers.flatMap(({ name }) => [`dist/providers/${name}/index.js`, `dist/providers/${name}/index.d.ts`]),
     "dist/d1.js",
     "dist/d1.d.ts",
     "dist/sqlite.js",
@@ -281,7 +229,8 @@ try {
     // maps that pointed back at it, and both went with it. A packed .map is
     // therefore either dangling or a sign the build config drifted back.
     if (
-      path.startsWith("src/") || path.endsWith(".map") ||
+      path.startsWith("src/") ||
+      path.endsWith(".map") ||
       /(?:^|\/)(?:fixtures|provider\.test|provider\.node\.test)\.(?:js|d\.ts)$/.test(path) ||
       path.endsWith("provider-smoke.generated.mjs")
     ) {
@@ -296,10 +245,7 @@ try {
     // Two deployment shapes, no third: the Node one is the template (Docker
     // files included), the Worker one is the example. A packed examples/node
     // or examples/docker means a redundant scaffold grew back (#344).
-    if (
-      path.startsWith("examples/node/") ||
-      path.startsWith("examples/docker/")
-    ) {
+    if (path.startsWith("examples/node/") || path.startsWith("examples/docker/")) {
       throw new Error(`Redundant deployment scaffold leaked into ${path}`);
     }
     // A Cloudflare-named connector or storage path fails anywhere in the
@@ -340,24 +286,11 @@ try {
   await writeFile(packedManifest, [...paths].join("\n"));
   run(
     process.execPath,
-    [
-      join(root, "scripts", "check-doc-links.mjs"),
-      "--packed",
-      "--root",
-      root,
-      "--files",
-      packedManifest,
-    ],
+    [join(root, "scripts", "check-doc-links.mjs"), "--packed", "--root", root, "--files", packedManifest],
     root,
   );
-  await writeFile(
-    join(work, "package.json"),
-    JSON.stringify({ private: true, type: "module" }),
-  );
-  await copyFile(
-    join(root, "scripts", "provider-smoke.generated.mjs"),
-    join(work, "provider-smoke.generated.mjs"),
-  );
+  await writeFile(join(work, "package.json"), JSON.stringify({ private: true, type: "module" }));
+  await copyFile(join(root, "scripts", "provider-smoke.generated.mjs"), join(work, "provider-smoke.generated.mjs"));
   await writeFile(
     join(work, "smoke.mjs"),
     `
@@ -534,20 +467,12 @@ try {
 }
 `,
   );
-  run(
-    npm,
-    ["install", "--ignore-scripts", "--omit=optional", archive],
-    work,
-  );
+  run(npm, ["install", "--ignore-scripts", "--omit=optional", archive], work);
   // The declarations a consumer compiles against, as installed: no Effect
   // type anywhere under dist/, reachable or not, and nothing left unpruned.
   run(
     process.execPath,
-    [
-      join(root, "scripts", "check-declarations.mjs"),
-      "--dist",
-      join(work, "node_modules", "@zackbart", "connecta"),
-    ],
+    [join(root, "scripts", "check-declarations.mjs"), "--dist", join(work, "node_modules", "@zackbart", "connecta")],
     root,
   );
   for (const declaration of ["auth/clerk.d.ts", "auth/clerk-sdk/client.d.ts"]) {
@@ -564,45 +489,25 @@ try {
   ).version;
   const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(effectRange);
   const installed = /^(\d+)\.(\d+)\.(\d+)$/.exec(installedEffect);
-  const satisfies = caret && installed && installed[1] === caret[1] &&
+  const satisfies =
+    caret &&
+    installed &&
+    installed[1] === caret[1] &&
     (Number(installed[2]) > Number(caret[2]) ||
       (installed[2] === caret[2] && Number(installed[3]) >= Number(caret[3])));
   if (!satisfies) {
-    throw new Error(
-      `Installed effect ${installedEffect} does not satisfy ${effectRange}`,
-    );
+    throw new Error(`Installed effect ${installedEffect} does not satisfy ${effectRange}`);
   }
-  const consumerLock = JSON.parse(
-    await readFile(join(work, "package-lock.json"), "utf8"),
-  );
-  const nestedEffect = Object.keys(consumerLock.packages ?? {}).filter((path) =>
-    path.endsWith("/node_modules/effect"),
-  );
+  const consumerLock = JSON.parse(await readFile(join(work, "package-lock.json"), "utf8"));
+  const nestedEffect = Object.keys(consumerLock.packages ?? {}).filter((path) => path.endsWith("/node_modules/effect"));
   if (nestedEffect.length) {
-    throw new Error(
-      `A second copy of effect was installed: ${nestedEffect.join(", ")}`,
-    );
+    throw new Error(`A second copy of effect was installed: ${nestedEffect.join(", ")}`);
   }
-  const installedBin = join(
-    work,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "connecta.cmd" : "connecta",
-  );
+  const installedBin = join(work, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta");
   run(installedBin, ["init", "generated-deployment"], work);
-  expectFailure(
-    installedBin,
-    ["init", "generated-deployment"],
-    work,
-    "Refusing to overwrite existing path",
-  );
-  const generatedPackage = JSON.parse(
-    await readFile(join(work, "generated-deployment", "package.json"), "utf8"),
-  );
-  if (
-    generatedPackage.dependencies?.["@zackbart/connecta"] !==
-    packed.version
-  ) {
+  expectFailure(installedBin, ["init", "generated-deployment"], work, "Refusing to overwrite existing path");
+  const generatedPackage = JSON.parse(await readFile(join(work, "generated-deployment", "package.json"), "utf8"));
+  if (generatedPackage.dependencies?.["@zackbart/connecta"] !== packed.version) {
     throw new Error("Initializer did not pin the packed Connecta version");
   }
   for (const generated of [
@@ -621,9 +526,7 @@ try {
   }
   if (
     process.platform !== "win32" &&
-    !(await lstat(
-      join(work, "generated-deployment", "CLAUDE.md"),
-    )).isSymbolicLink()
+    !(await lstat(join(work, "generated-deployment", "CLAUDE.md"))).isSymbolicLink()
   ) {
     throw new Error("Initializer did not link CLAUDE.md to AGENTS.md");
   }
@@ -631,10 +534,7 @@ try {
   // Substitute the tarball under test for the registry pin, then exercise the
   // generated deployment exactly as a consumer would.
   generatedPackage.dependencies["@zackbart/connecta"] = `file:${archive}`;
-  await writeFile(
-    join(work, "generated-deployment", "package.json"),
-    JSON.stringify(generatedPackage, null, 2) + "\n",
-  );
+  await writeFile(join(work, "generated-deployment", "package.json"), JSON.stringify(generatedPackage, null, 2) + "\n");
   const generatedRoot = join(work, "generated-deployment");
   run(npm, ["install", "--ignore-scripts"], generatedRoot);
   await assertInstallScriptsApproved(generatedRoot, generatedPackage);
@@ -659,39 +559,39 @@ try {
       "const missing: ConnectaConfig = { connectors: [] };",
       "// @ts-expect-error unknown nested option",
       "const typo: ConnectaConfig = { connectors: [], executor, discovery: { concurrncy: 2 } };",
-    "// @ts-expect-error legacy top-level activityReadGate",
-    "const legacy0: ConnectaConfig = { connectors: [], executor, activityReadGate: 1 };",
-    "void legacy0;",
-    "// @ts-expect-error legacy top-level activityDeploymentId",
-    "const legacy1: ConnectaConfig = { connectors: [], executor, activityDeploymentId: 1 };",
-    "void legacy1;",
-    "// @ts-expect-error legacy top-level credentialEncryptionKey",
-    "const legacy2: ConnectaConfig = { connectors: [], executor, credentialEncryptionKey: 1 };",
-    "void legacy2;",
-    "// @ts-expect-error legacy top-level credentialHealth",
-    "const legacy3: ConnectaConfig = { connectors: [], executor, credentialHealth: 1 };",
-    "void legacy3;",
-    "// @ts-expect-error legacy top-level toolCacheTtlSeconds",
-    "const legacy4: ConnectaConfig = { connectors: [], executor, toolCacheTtlSeconds: 1 };",
-    "void legacy4;",
-    "// @ts-expect-error legacy top-level persistToolCatalog",
-    "const legacy5: ConnectaConfig = { connectors: [], executor, persistToolCatalog: 1 };",
-    "void legacy5;",
-    "// @ts-expect-error legacy top-level toolCatalogStaleSeconds",
-    "const legacy6: ConnectaConfig = { connectors: [], executor, toolCatalogStaleSeconds: 1 };",
-    "void legacy6;",
-    "// @ts-expect-error legacy top-level probeTimeoutMs",
-    "const legacy7: ConnectaConfig = { connectors: [], executor, probeTimeoutMs: 1 };",
-    "void legacy7;",
-    "// @ts-expect-error legacy top-level defaultToolTimeoutMs",
-    "const legacy8: ConnectaConfig = { connectors: [], executor, defaultToolTimeoutMs: 1 };",
-    "void legacy8;",
-    "// @ts-expect-error legacy top-level maxResultBytes",
-    "const legacy9: ConnectaConfig = { connectors: [], executor, maxResultBytes: 1 };",
-    "void legacy9;",
-    "// @ts-expect-error legacy top-level surface",
-    "const legacy10: ConnectaConfig = { connectors: [], executor, surface: 1 };",
-    "void legacy10;",
+      "// @ts-expect-error legacy top-level activityReadGate",
+      "const legacy0: ConnectaConfig = { connectors: [], executor, activityReadGate: 1 };",
+      "void legacy0;",
+      "// @ts-expect-error legacy top-level activityDeploymentId",
+      "const legacy1: ConnectaConfig = { connectors: [], executor, activityDeploymentId: 1 };",
+      "void legacy1;",
+      "// @ts-expect-error legacy top-level credentialEncryptionKey",
+      "const legacy2: ConnectaConfig = { connectors: [], executor, credentialEncryptionKey: 1 };",
+      "void legacy2;",
+      "// @ts-expect-error legacy top-level credentialHealth",
+      "const legacy3: ConnectaConfig = { connectors: [], executor, credentialHealth: 1 };",
+      "void legacy3;",
+      "// @ts-expect-error legacy top-level toolCacheTtlSeconds",
+      "const legacy4: ConnectaConfig = { connectors: [], executor, toolCacheTtlSeconds: 1 };",
+      "void legacy4;",
+      "// @ts-expect-error legacy top-level persistToolCatalog",
+      "const legacy5: ConnectaConfig = { connectors: [], executor, persistToolCatalog: 1 };",
+      "void legacy5;",
+      "// @ts-expect-error legacy top-level toolCatalogStaleSeconds",
+      "const legacy6: ConnectaConfig = { connectors: [], executor, toolCatalogStaleSeconds: 1 };",
+      "void legacy6;",
+      "// @ts-expect-error legacy top-level probeTimeoutMs",
+      "const legacy7: ConnectaConfig = { connectors: [], executor, probeTimeoutMs: 1 };",
+      "void legacy7;",
+      "// @ts-expect-error legacy top-level defaultToolTimeoutMs",
+      "const legacy8: ConnectaConfig = { connectors: [], executor, defaultToolTimeoutMs: 1 };",
+      "void legacy8;",
+      "// @ts-expect-error legacy top-level maxResultBytes",
+      "const legacy9: ConnectaConfig = { connectors: [], executor, maxResultBytes: 1 };",
+      "void legacy9;",
+      "// @ts-expect-error legacy top-level surface",
+      "const legacy10: ConnectaConfig = { connectors: [], executor, surface: 1 };",
+      "void legacy10;",
       "const app: Connecta = createConnecta(defineConfig((_env: { X?: string }) => config)({}));",
       "const snapshot: ConnectaConfigDescription = app.describeConfig();",
       "const close: () => Promise<void> = app.close;",
@@ -702,12 +602,7 @@ try {
     ].join("\n"),
   );
   run(npm, ["run", "typecheck"], generatedRoot);
-  const generatedTsx = join(
-    generatedRoot,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "tsx.cmd" : "tsx",
-  );
+  const generatedTsx = join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
   expectFailure(
     generatedTsx,
     ["src/index.ts"],
@@ -715,14 +610,8 @@ try {
     "needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
     { CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: "sk_test_incomplete" },
   );
-  const generatedEntry = await readFile(
-    join(generatedRoot, "src", "index.ts"),
-    "utf8",
-  );
-  const generatedConfig = await readFile(
-    join(generatedRoot, "src", "connecta.config.ts"),
-    "utf8",
-  );
+  const generatedEntry = await readFile(join(generatedRoot, "src", "index.ts"), "utf8");
+  const generatedConfig = await readFile(join(generatedRoot, "src", "connecta.config.ts"), "utf8");
   const configImport = 'from "./connecta.config.js"';
   if (!generatedEntry.includes(configImport)) {
     throw new Error("Generated entry no longer imports src/connecta.config.ts");
@@ -740,8 +629,7 @@ try {
   // Strip the comment with the line it annotates; leaving it orphaned above a
   // deleted executor would make the fixture read as a deliberate omission.
   const executorLine =
-    "    // Required: model-written programs run in a bounded QuickJS child.\n" +
-    "    executor: quickJsExecutor(),\n";
+    "    // Required: model-written programs run in a bounded QuickJS child.\n" + "    executor: quickJsExecutor(),\n";
   if (!generatedConfig.includes(executorLine)) {
     throw new Error("Generated deployment is missing its required executor");
   }
@@ -750,17 +638,27 @@ try {
     [await writeVariant("no-executor", generatedConfig.replace(executorLine, ""))],
     generatedRoot,
     "ConnectaConfig.executor is required",
-    { CONNECTA_DATABASE: join(generatedRoot, "invalid-config.sqlite"), CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: "" },
+    {
+      CONNECTA_DATABASE: join(generatedRoot, "invalid-config.sqlite"),
+      CLERK_PUBLISHABLE_KEY: "",
+      CLERK_SECRET_KEY: "",
+    },
   );
   expectFailure(
     generatedTsx,
-    [await writeVariant(
-      "removed-surface",
-      generatedConfig.replace(executorLine, `${executorLine}    surface: "classic",\n`),
-    )],
+    [
+      await writeVariant(
+        "removed-surface",
+        generatedConfig.replace(executorLine, `${executorLine}    surface: "classic",\n`),
+      ),
+    ],
     generatedRoot,
     "ConnectaConfig.surface",
-    { CONNECTA_DATABASE: join(generatedRoot, "invalid-config.sqlite"), CLERK_PUBLISHABLE_KEY: "", CLERK_SECRET_KEY: "" },
+    {
+      CONNECTA_DATABASE: join(generatedRoot, "invalid-config.sqlite"),
+      CLERK_PUBLISHABLE_KEY: "",
+      CLERK_SECRET_KEY: "",
+    },
   );
 
   const port = await freePort();
@@ -810,21 +708,27 @@ try {
   deployment.stdout.on("data", retainOutput);
   deployment.stderr.on("data", retainOutput);
   try {
-    await waitForHealth(
-      `http://127.0.0.1:${port}/health`,
-      deployment,
-      () => serverOutput,
-    );
+    await waitForHealth(`http://127.0.0.1:${port}/health`, deployment, () => serverOutput);
     const shell = await fetch(`http://127.0.0.1:${port}/`);
     const html = await shell.text();
-    if (shell.status !== 200 || html.length > 5000 || !shell.headers.get("content-security-policy")?.startsWith("script-src 'self'")) {
+    if (
+      shell.status !== 200 ||
+      html.length > 5000 ||
+      !shell.headers.get("content-security-policy")?.startsWith("script-src 'self'")
+    ) {
       throw new Error("Installed package did not serve a small same-origin operator shell");
     }
-    const assets = [...html.matchAll(/(?:src|href)="(\/ui\/assets\/[^" ]+)"/g)].map(match => match[1]);
-    if (!assets.some(path => path.endsWith(".js")) || !assets.some(path => path.endsWith(".css"))) throw new Error("Installed shell missing hashed assets");
+    const assets = [...html.matchAll(/(?:src|href)="(\/ui\/assets\/[^" ]+)"/g)].map((match) => match[1]);
+    if (!assets.some((path) => path.endsWith(".js")) || !assets.some((path) => path.endsWith(".css")))
+      throw new Error("Installed shell missing hashed assets");
     for (const path of assets) {
       const response = await fetch(`http://127.0.0.1:${port}${path}`);
-      if (response.status !== 200 || !response.headers.get("cache-control")?.includes("immutable") || !(await response.arrayBuffer()).byteLength) throw new Error(`Installed asset failed: ${path}`);
+      if (
+        response.status !== 200 ||
+        !response.headers.get("cache-control")?.includes("immutable") ||
+        !(await response.arrayBuffer()).byteLength
+      )
+        throw new Error(`Installed asset failed: ${path}`);
     }
     const generatedConnecta = join(
       generatedRoot,
@@ -833,16 +737,12 @@ try {
       process.platform === "win32" ? "connecta.cmd" : "connecta",
     );
     await assertClosed(`http://127.0.0.1:${port}`);
-    const smokeToken = provisionedToken(run(
-      generatedTsx, ["src/provision-token.ts", "package-smoke-machine"],
-      generatedRoot, serverEnv,
-    ));
-    const doctorOutput = run(
-      generatedConnecta,
-      ["doctor", "--url", `http://127.0.0.1:${port}`],
-      generatedRoot,
-      { CONNECTA_TOKEN: smokeToken },
+    const smokeToken = provisionedToken(
+      run(generatedTsx, ["src/provision-token.ts", "package-smoke-machine"], generatedRoot, serverEnv),
     );
+    const doctorOutput = run(generatedConnecta, ["doctor", "--url", `http://127.0.0.1:${port}`], generatedRoot, {
+      CONNECTA_TOKEN: smokeToken,
+    });
     if (!doctorOutput.includes("QuickJS executed")) {
       throw new Error(`Doctor did not prove execution: ${doctorOutput}`);
     }
@@ -853,20 +753,20 @@ try {
   // Exercise the installed package and real QuickJS with an original v0.23
   // secret. Only the template's access-token module, over the migrated
   // database, can admit this doctor request; CONNECTA_TOKEN has no server role.
-  const legacyTokens = JSON.parse(await readFile(
-    join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8",
-  ));
+  const legacyTokens = JSON.parse(await readFile(join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8"));
   // The v0.23 records arrive the way a 0.28 Node deployment kept them, in a
   // `fileStorage` JSON state file, and reach SQLite through the installed
   // CLI's one-shot migration: the upgrade path the template documents.
   const legacyStateFile = join(generatedRoot, "legacy-token-state.json");
-  await writeFile(legacyStateFile, JSON.stringify(Object.fromEntries(
-    Object.entries(legacyTokens.records).map(([key, value]) => [key, { value }]),
-  )));
+  await writeFile(
+    legacyStateFile,
+    JSON.stringify(Object.fromEntries(Object.entries(legacyTokens.records).map(([key, value]) => [key, { value }]))),
+  );
   const legacyState = join(generatedRoot, "legacy-token-state.sqlite");
   const migrated = run(
     join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-    ["migrate-state", legacyStateFile, legacyState], generatedRoot,
+    ["migrate-state", legacyStateFile, legacyState],
+    generatedRoot,
   );
   const recordCount = Object.keys(legacyTokens.records).length;
   if (!migrated.includes(`Imported ${recordCount} entries`)) {
@@ -879,7 +779,9 @@ try {
     env: { ...process.env, ...serverEnv, CONNECTA_DATABASE: legacyState, PORT: String(legacyPort) },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const retainLegacyOutput = chunk => { legacyOutput = (legacyOutput + chunk.toString()).slice(-8_000); };
+  const retainLegacyOutput = (chunk) => {
+    legacyOutput = (legacyOutput + chunk.toString()).slice(-8_000);
+  };
   legacyDeployment.stdout.on("data", retainLegacyOutput);
   legacyDeployment.stderr.on("data", retainLegacyOutput);
   try {
@@ -887,12 +789,15 @@ try {
     await assertClosed(`http://127.0.0.1:${legacyPort}`);
     const doctorOutput = run(
       join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
-      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`], generatedRoot,
+      ["doctor", "--url", `http://127.0.0.1:${legacyPort}`],
+      generatedRoot,
       { CONNECTA_TOKEN: legacyTokens.bound.token },
     );
     if (!doctorOutput.includes("QuickJS executed")) throw new Error("Legacy token doctor did not prove execution");
     console.log("v0.23 token compatibility: doctor passed with the original secret");
-  } finally { await stopChild(legacyDeployment); }
+  } finally {
+    await stopChild(legacyDeployment);
+  }
 
   // The generated deployment is also the container: `connecta init` ships the
   // Dockerfile and Compose file, so the source that just answered over tsx has
@@ -906,17 +811,11 @@ try {
           "CI must exercise `connecta init` + `docker compose up`.",
       );
     }
-    console.log(
-      "package smoke: Docker unavailable — skipped the generated-container check",
-    );
+    console.log("package smoke: Docker unavailable — skipped the generated-container check");
   } else {
     await copyFile(archive, join(generatedRoot, packed.filename));
-    generatedPackage.dependencies["@zackbart/connecta"] =
-      `file:./${packed.filename}`;
-    await writeFile(
-      join(generatedRoot, "package.json"),
-      JSON.stringify(generatedPackage, null, 2) + "\n",
-    );
+    generatedPackage.dependencies["@zackbart/connecta"] = `file:./${packed.filename}`;
+    await writeFile(join(generatedRoot, "package.json"), JSON.stringify(generatedPackage, null, 2) + "\n");
     // `connecta init` leaves no lockfile, and the local install above wrote one
     // pinned to a tarball outside the build context. Remove it so the image
     // resolves exactly what a freshly initialized project resolves.
@@ -934,73 +833,76 @@ try {
           "the container smoke fixture cannot be built",
       );
     }
-    await writeFile(
-      dockerfilePath,
-      dockerfile.replace(
-        manifestCopy,
-        `COPY ${packed.filename} ./\n${manifestCopy}`,
-      ),
-    );
+    await writeFile(dockerfilePath, dockerfile.replace(manifestCopy, `COPY ${packed.filename} ./\n${manifestCopy}`));
 
     const containerPort = await freePort();
     // Inject a static value only in the smoke fixture to prove even an
     // inherited CONNECTA_TOKEN cannot become server authentication.
     const staticEnvOverride = join(generatedRoot, "static-env.override.yml");
-    await writeFile(staticEnvOverride,
-      `services:\n  connecta:\n    environment:\n      CONNECTA_TOKEN: ${staticToken}\n`);
-    const compose = ["compose", "-p", `connecta-smoke-${process.pid}`,
-      "-f", "docker-compose.yml", "-f", staticEnvOverride];
+    await writeFile(
+      staticEnvOverride,
+      `services:\n  connecta:\n    environment:\n      CONNECTA_TOKEN: ${staticToken}\n`,
+    );
+    const compose = [
+      "compose",
+      "-p",
+      `connecta-smoke-${process.pid}`,
+      "-f",
+      "docker-compose.yml",
+      "-f",
+      staticEnvOverride,
+    ];
     const composeEnv = {
       ...serverEnv,
       CONNECTA_DATABASE: "/data/connecta.sqlite",
       PORT: String(containerPort),
     };
     const composeLogs = () => {
-      const logs = spawnSync(
-        "docker",
-        [...compose, "logs", "--no-color", "--tail", "200"],
-        {
-          cwd: generatedRoot,
-          encoding: "utf8",
-          env: { ...process.env, ...composeEnv },
-        },
-      );
+      const logs = spawnSync("docker", [...compose, "logs", "--no-color", "--tail", "200"], {
+        cwd: generatedRoot,
+        encoding: "utf8",
+        env: { ...process.env, ...composeEnv },
+      });
       return `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
     };
     try {
       run("docker", [...compose, "up", "-d", "--build"], generatedRoot, composeEnv);
-      await waitForContainerHealth(
-        `http://127.0.0.1:${containerPort}/health`,
-        120_000,
-        composeLogs,
-      );
+      await waitForContainerHealth(`http://127.0.0.1:${containerPort}/health`, 120_000, composeLogs);
       await assertClosed(`http://127.0.0.1:${containerPort}`);
       // A trusted one-shot container, using the installed package API and the
       // service's named volume, exactly as the template documents.
-      const containerToken = provisionedToken(run("docker", [...compose,
-        "run", "--rm", "--no-deps", "-T", "connecta",
-        "npm", "run", "--silent", "provision-token", "--", "container-smoke-machine",
-      ], generatedRoot, composeEnv));
-      run("docker", [...compose, "restart", "connecta"], generatedRoot, composeEnv);
-      await waitForContainerHealth(
-        `http://127.0.0.1:${containerPort}/health`, 120_000, composeLogs,
+      const containerToken = provisionedToken(
+        run(
+          "docker",
+          [
+            ...compose,
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "connecta",
+            "npm",
+            "run",
+            "--silent",
+            "provision-token",
+            "--",
+            "container-smoke-machine",
+          ],
+          generatedRoot,
+          composeEnv,
+        ),
       );
+      run("docker", [...compose, "restart", "connecta"], generatedRoot, composeEnv);
+      await waitForContainerHealth(`http://127.0.0.1:${containerPort}/health`, 120_000, composeLogs);
       await assertClosed(`http://127.0.0.1:${containerPort}`);
       const containerDoctor = run(
-        join(
-          generatedRoot,
-          "node_modules",
-          ".bin",
-          process.platform === "win32" ? "connecta.cmd" : "connecta",
-        ),
+        join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
         ["doctor", "--url", `http://127.0.0.1:${containerPort}`],
         generatedRoot,
         { CONNECTA_TOKEN: containerToken },
       );
       if (!containerDoctor.includes("QuickJS executed")) {
-        throw new Error(
-          `Containerized deployment did not prove execution: ${containerDoctor}`,
-        );
+        throw new Error(`Containerized deployment did not prove execution: ${containerDoctor}`);
       }
     } finally {
       spawnSync("docker", [...compose, "down", "-v", "--remove-orphans"], {
@@ -1012,14 +914,7 @@ try {
   }
 
   const coreDeclarations = await readFile(
-    join(
-      work,
-      "node_modules",
-      "@zackbart",
-      "connecta",
-      "dist",
-      "index.d.ts",
-    ),
+    join(work, "node_modules", "@zackbart", "connecta", "dist", "index.d.ts"),
     "utf8",
   );
   for (const removedDeclaration of [
@@ -1028,23 +923,16 @@ try {
     "CredentialCheckResult",
     "CredentialHealthConfig",
     "CredentialHealthRecord",
-    "ConnectaAccessTokensConfig", "CreatedAccessToken", "ConnectaCredentialsConfig",
+    "ConnectaAccessTokensConfig",
+    "CreatedAccessToken",
+    "ConnectaCredentialsConfig",
   ]) {
     if (coreDeclarations.includes(removedDeclaration)) {
-      throw new Error(
-        `Packed core declarations still expose removed credential liveness API: ${removedDeclaration}`,
-      );
+      throw new Error(`Packed core declarations still expose removed credential liveness API: ${removedDeclaration}`);
     }
   }
   const typeDeclarations = await readFile(
-    join(
-      work,
-      "node_modules",
-      "@zackbart",
-      "connecta",
-      "dist",
-      "types.d.ts",
-    ),
+    join(work, "node_modules", "@zackbart", "connecta", "dist", "types.d.ts"),
     "utf8",
   );
   for (const declaration of [
@@ -1052,9 +940,7 @@ try {
     "export interface ExecutorLease {",
   ]) {
     if (!typeDeclarations.includes(declaration)) {
-      throw new Error(
-        `Packed executor declarations are missing: ${declaration}`,
-      );
+      throw new Error(`Packed executor declarations are missing: ${declaration}`);
     }
   }
   for (const dependency of [
@@ -1080,16 +966,7 @@ try {
   }
   run(process.execPath, ["smoke.mjs"], work);
 
-  run(
-    npm,
-    [
-      "install",
-      "--ignore-scripts",
-      "@clerk/backend@3.23.1",
-      "quickjs-emscripten@^0.32.0",
-    ],
-    work,
-  );
+  run(npm, ["install", "--ignore-scripts", "@clerk/backend@3.23.1", "quickjs-emscripten@^0.32.0"], work);
   run(process.execPath, ["optional.mjs"], work);
 
   // A Workers deployment installs its executor by hand, so the peer range in
@@ -1104,17 +981,13 @@ try {
         "consumer has no published range to install against",
     );
   }
-  const published = JSON.parse(
-    run(npm, ["view", "@cloudflare/codemode", "versions", "--json"], work),
-  );
+  const published = JSON.parse(run(npm, ["view", "@cloudflare/codemode", "versions", "--json"], work));
   const floor = codemodeRange
     .split("||")
     .map((arm) => arm.trim().replace(/^\^/, ""))
     .sort(compareVersions)[0];
   const unsupported = (Array.isArray(published) ? published : [published])
-    .filter(
-      (version) => !version.includes("-") && compareVersions(version, floor) < 0,
-    )
+    .filter((version) => !version.includes("-") && compareVersions(version, floor) < 0)
     .sort(compareVersions)
     .pop();
   if (!unsupported) {
@@ -1133,20 +1006,14 @@ try {
   );
   run(
     npm,
-    [
-      "install",
-      "--ignore-scripts",
-      `@cloudflare/codemode@${rootManifest.devDependencies["@cloudflare/codemode"]}`,
-    ],
+    ["install", "--ignore-scripts", `@cloudflare/codemode@${rootManifest.devDependencies["@cloudflare/codemode"]}`],
     work,
   );
   if (!existsSync(join(work, "node_modules", "@cloudflare", "codemode"))) {
     throw new Error("A supported @cloudflare/codemode version did not install");
   }
 
-  console.log(
-    `package smoke passed (${packed.entryCount} files, ${packed.size} bytes)`,
-  );
+  console.log(`package smoke passed (${packed.entryCount} files, ${packed.size} bytes)`);
 } finally {
   await rm(work, { recursive: true, force: true });
 }

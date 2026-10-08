@@ -69,24 +69,44 @@ export type ClassificationCode =
   | "program_error";
 
 const CLASSIFICATION_CODE_TABLE = {
-  timeout: true, auth_required: true, downstream_oauth_required: true,
-  oauth_revocation_failed: true, provider_permission_denied: true, rate_limited: true, unavailable: true,
-  invalid_args: true, not_found: true, conflict: true,
-  resource_template_ambiguous: true, resource_match_budget_exceeded: true,
-  input_required_unsupported: true, input_required_invalid: true, input_required_limit: true, connector_call_failed: true,
-  executor_overloaded: true, executor_cancelled: true, executor_closed: true,
-  cancelled: true, unknown_address: true, unknown_tool: true,
-  ambiguous_tool_alias: true, catalog_lookup_failed: true,
-  result_too_large: true, destructive_tool_requires_approval: true,
+  timeout: true,
+  auth_required: true,
+  downstream_oauth_required: true,
+  oauth_revocation_failed: true,
+  provider_permission_denied: true,
+  rate_limited: true,
+  unavailable: true,
+  invalid_args: true,
+  not_found: true,
+  conflict: true,
+  resource_template_ambiguous: true,
+  resource_match_budget_exceeded: true,
+  input_required_unsupported: true,
+  input_required_invalid: true,
+  input_required_limit: true,
+  connector_call_failed: true,
+  executor_overloaded: true,
+  executor_cancelled: true,
+  executor_closed: true,
+  cancelled: true,
+  unknown_address: true,
+  unknown_tool: true,
+  ambiguous_tool_alias: true,
+  catalog_lookup_failed: true,
+  result_too_large: true,
+  destructive_tool_requires_approval: true,
   auth_replay_refused: true,
-  write_outcome_unknown: true, result_processing_failed: true,
-  budget_exceeded: true, executor_failed: true, program_error: true,
+  write_outcome_unknown: true,
+  result_processing_failed: true,
+  budget_exceeded: true,
+  executor_failed: true,
+  program_error: true,
 } as const satisfies Record<ClassificationCode, true>;
 
 /** `value` when it is a code connecta assigns, else undefined. */
 export function classificationCode(value: unknown): ClassificationCode | undefined {
   return typeof value === "string" && Object.hasOwn(CLASSIFICATION_CODE_TABLE, value)
-    ? value as ClassificationCode
+    ? (value as ClassificationCode)
     : undefined;
 }
 
@@ -133,8 +153,12 @@ function boundedRepair(details: ArgumentRepairDetails | undefined): ArgumentRepa
   try {
     const text = JSON.stringify(details);
     return new TextEncoder().encode(text).length <= 4096
-      ? JSON.parse(text) as ArgumentRepairDetails
-      : { issues: [], truncated: true, exampleUnavailable: "Repair detail exceeds the response budget. Inspect the published inputSchema." };
+      ? (JSON.parse(text) as ArgumentRepairDetails)
+      : {
+          issues: [],
+          truncated: true,
+          exampleUnavailable: "Repair detail exceeds the response budget. Inspect the published inputSchema.",
+        };
   } catch {
     return undefined;
   }
@@ -145,10 +169,7 @@ const MAX_ARGUMENT_ISSUE_PATH_CHARS = 256;
 const MAX_ARGUMENT_ISSUE_CODE_CHARS = 64;
 const MAX_ARGUMENT_ISSUE_EXPECTED_CHARS = 128;
 
-function boundedIssueText(
-  value: string,
-  maxChars: number,
-): { value: string; truncated: boolean } {
+function boundedIssueText(value: string, maxChars: number): { value: string; truncated: boolean } {
   if (value.length <= maxChars) return { value, truncated: false };
   return {
     value: `${value.slice(0, Math.max(0, maxChars - 1))}…`,
@@ -192,10 +213,7 @@ const echoDecoder = new TextDecoder();
  * Short strings — the common case, and the one that has to stay exact — are
  * returned unchanged and untagged.
  */
-export function boundedEchoText(
-  value: string,
-  maxBytes: number = MAX_ECHOED_BYTES,
-): string {
+export function boundedEchoText(value: string, maxBytes: number = MAX_ECHOED_BYTES): string {
   const bytes = echoEncoder.encode(value);
   if (bytes.length <= maxBytes) return value;
   // Never split a codepoint: walk back off UTF-8 continuation bytes (10xxxxxx)
@@ -221,40 +239,23 @@ export function echoedCallArgs(args: unknown): { args?: unknown } {
     return {};
   }
   if (text === undefined) return {};
-  return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES
-    ? { args: JSON.parse(text) as unknown }
-    : {};
+  return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES ? { args: JSON.parse(text) as unknown } : {};
 }
 
-function boundedValidation(
-  details: ArgumentValidationDetails | undefined,
-): ArgumentValidationDetails | undefined {
+function boundedValidation(details: ArgumentValidationDetails | undefined): ArgumentValidationDetails | undefined {
   if (!details) return undefined;
-  let truncated =
-    details.truncated === true ||
-    details.issues.length > MAX_ARGUMENT_VALIDATION_ISSUES;
-  const issues = details.issues
-    .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
-    .map((issue) => {
-      const path = boundedIssueText(
-        issue.path,
-        MAX_ARGUMENT_ISSUE_PATH_CHARS,
-      );
-      const code = boundedIssueText(
-        issue.code,
-        MAX_ARGUMENT_ISSUE_CODE_CHARS,
-      );
-      const expected = boundedIssueText(
-        issue.expected,
-        MAX_ARGUMENT_ISSUE_EXPECTED_CHARS,
-      );
-      truncated ||= path.truncated || code.truncated || expected.truncated;
-      return {
-        path: path.value,
-        code: code.value,
-        expected: expected.value,
-      };
-    });
+  let truncated = details.truncated === true || details.issues.length > MAX_ARGUMENT_VALIDATION_ISSUES;
+  const issues = details.issues.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map((issue) => {
+    const path = boundedIssueText(issue.path, MAX_ARGUMENT_ISSUE_PATH_CHARS);
+    const code = boundedIssueText(issue.code, MAX_ARGUMENT_ISSUE_CODE_CHARS);
+    const expected = boundedIssueText(issue.expected, MAX_ARGUMENT_ISSUE_EXPECTED_CHARS);
+    truncated ||= path.truncated || code.truncated || expected.truncated;
+    return {
+      path: path.value,
+      code: code.value,
+      expected: expected.value,
+    };
+  });
   return {
     issues,
     ...(truncated ? { truncated: true as const } : {}),
@@ -280,31 +281,39 @@ interface UnavailableDetails {
 
 /** The network errnos `networkErrorCode` reports, and `timeout`. */
 export const NETWORK_ERROR_CODES: ReadonlySet<string> = new Set([
-  "ECONNREFUSED", "ENOTFOUND", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN",
-  "EAI_FAIL", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN", "EHOSTDOWN",
-  "ECONNABORTED", "EPIPE", "EACCES", "EPERM",
-  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
-  "UND_ERR_SOCKET", "timeout",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "EHOSTDOWN",
+  "ECONNABORTED",
+  "EPIPE",
+  "EACCES",
+  "EPERM",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET",
+  "timeout",
 ]);
 
 function networkCode(value: unknown): string | undefined {
-  return typeof value === "string" && value.length <= 32 && NETWORK_ERROR_CODES.has(value)
-    ? value
-    : undefined;
+  return typeof value === "string" && value.length <= 32 && NETWORK_ERROR_CODES.has(value) ? value : undefined;
 }
 
-function sanitizedUnavailableDetails(
-  details: UnavailableDetails | undefined,
-): UnavailableDetails | undefined {
+function sanitizedUnavailableDetails(details: UnavailableDetails | undefined): UnavailableDetails | undefined {
   if (!details) return undefined;
   let host: string | undefined;
   if (typeof details.host === "string") {
     try {
       const url = new URL(details.host);
-      if (
-        (url.protocol === "https:" || url.protocol === "http:") &&
-        echoEncoder.encode(url.origin).length <= 253
-      ) host = url.origin;
+      if ((url.protocol === "https:" || url.protocol === "http:") && echoEncoder.encode(url.origin).length <= 253)
+        host = url.origin;
     } catch {
       // An invalid or oversized origin is absent, never a clipped destination.
     }
@@ -316,18 +325,14 @@ function sanitizedUnavailableDetails(
 /** Runtime fields only: provider prose cannot supply an errno or a deadline. */
 export function networkErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
-  if (
-    error instanceof Error &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  ) {
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
     return "timeout";
   }
   const runtime = error as { code?: unknown; cause?: unknown };
   const cause = runtime.cause;
-  return networkCode(runtime.code) ?? (
-    cause && typeof cause === "object"
-      ? networkCode((cause as { code?: unknown }).code)
-      : undefined
+  return (
+    networkCode(runtime.code) ??
+    (cause && typeof cause === "object" ? networkCode((cause as { code?: unknown }).code) : undefined)
   );
 }
 
@@ -383,10 +388,7 @@ export class WithheldTextError extends Error {
 }
 
 /** Agent-visible recovery class for downstream credential failures. */
-export type AuthRecoveryMode =
-  | "oauth"
-  | "operator_config"
-  | "unavailable";
+export type AuthRecoveryMode = "oauth" | "operator_config" | "unavailable";
 
 const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   timeout: true,
@@ -394,7 +396,8 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   unavailable: true,
   auth_required: false,
   downstream_oauth_required: false,
-  oauth_revocation_failed: false, provider_permission_denied: false,
+  oauth_revocation_failed: false,
+  provider_permission_denied: false,
   invalid_args: false,
   not_found: false,
   conflict: false,
@@ -486,18 +489,13 @@ export class ConnectorCallError extends Error {
       current?: Readonly<Record<string, number>>;
     } = {},
   ) {
-    super(
-      message,
-      opts.cause !== undefined ? { cause: opts.cause } : undefined,
-    );
+    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "ConnectorCallError";
     this.code = code;
     this.retryable = opts.retryable ?? RETRYABLE_BY_CODE[code];
     this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
-    this.details =
-      code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
-    this.validation =
-      code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
+    this.details = code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
+    this.validation = code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
     this.repair = code === "invalid_args" ? boundedRepair(opts.repair) : undefined;
     this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;
   }
@@ -526,50 +524,55 @@ export interface CallErrorDetails {
   /** An auth failure followed a write's downstream send. Reconcile before retry. */
   reconciliationRequired?: true;
   /** The single model-facing entry point for every credential class. */
-  nextAction?: {
-    tool: "authorize_connector";
-    arguments: { connector: string };
-    operatorHandoff: string;
-  } | {
-    tool: "search_tools";
-    arguments: {
-      query: string;
-      connector?: string;
-      includeSchemas: "compact";
-    };
-    purpose: string;
-  } | {
-    tool: "call_tool" | "call_destructive_tool";
-    arguments: {
-      address: string;
-      /**
-       * The caller's own arguments, echoed only when they fit
-       * the shared echo budget — and then whole, never clipped. Absent
-       * means "re-send exactly what you sent": a half-copied argument object
-       * routed into a human approval prompt would describe a call nobody made.
-       */
-      args?: unknown;
-    };
-    purpose: string;
-  } | {
-    /**
-     * The same scoped discovery as the `search_tools` route above, addressed to
-     * a caller inside `execute_code`, which cannot call a tool. Which of the two
-     * a routing failure emits follows the route the caller took, not the
-     * deployment's advertised surface.
-     */
-    function: "connecta.search";
-    arguments: {
-      query: string;
-      connector?: string;
-      includeSchemas: "compact";
-    };
-    purpose: string;
-  } | {
-    function: "connecta.call";
-    addresses: string[];
-    purpose: string;
-  };
+  nextAction?:
+    | {
+        tool: "authorize_connector";
+        arguments: { connector: string };
+        operatorHandoff: string;
+      }
+    | {
+        tool: "search_tools";
+        arguments: {
+          query: string;
+          connector?: string;
+          includeSchemas: "compact";
+        };
+        purpose: string;
+      }
+    | {
+        tool: "call_tool" | "call_destructive_tool";
+        arguments: {
+          address: string;
+          /**
+           * The caller's own arguments, echoed only when they fit
+           * the shared echo budget — and then whole, never clipped. Absent
+           * means "re-send exactly what you sent": a half-copied argument object
+           * routed into a human approval prompt would describe a call nobody made.
+           */
+          args?: unknown;
+        };
+        purpose: string;
+      }
+    | {
+        /**
+         * The same scoped discovery as the `search_tools` route above, addressed to
+         * a caller inside `execute_code`, which cannot call a tool. Which of the two
+         * a routing failure emits follows the route the caller took, not the
+         * deployment's advertised surface.
+         */
+        function: "connecta.search";
+        arguments: {
+          query: string;
+          connector?: string;
+          includeSchemas: "compact";
+        };
+        purpose: string;
+      }
+    | {
+        function: "connecta.call";
+        addresses: string[];
+        purpose: string;
+      };
   /** Configured connectors in this request's registry view only. */
   configuredConnectors?: string[];
   /** Agent-only uncertain write, never copied to an operator record. */
@@ -597,9 +600,7 @@ export function classifyCallError(
       code: err.code,
       message: err.message,
       retryable: err.retryable,
-      ...(err.retryAfterMs !== undefined
-        ? { retryAfterMs: err.retryAfterMs }
-        : {}),
+      ...(err.retryAfterMs !== undefined ? { retryAfterMs: err.retryAfterMs } : {}),
       ...(err.validation ? { validation: err.validation } : {}),
       ...(err.repair ? { repair: err.repair } : {}),
       ...(err.details ? { details: err.details } : {}),
@@ -616,9 +617,12 @@ export function classifyCallError(
   const message = err instanceof Error ? err.message : String(err);
   const network = networkErrorCode(err);
   return {
-    code: network === "timeout" || network === "ETIMEDOUT" || network?.endsWith("_TIMEOUT")
-      ? "timeout"
-      : network ? "unavailable" : fallbackCode,
+    code:
+      network === "timeout" || network === "ETIMEDOUT" || network?.endsWith("_TIMEOUT")
+        ? "timeout"
+        : network
+          ? "unavailable"
+          : fallbackCode,
     message,
     retryable: network !== undefined,
   };

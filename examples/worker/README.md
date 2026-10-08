@@ -13,11 +13,11 @@ migrations, and secrets.
 
 ## Files
 
-| File | What it is |
-| --- | --- |
-| `src/index.ts` | the Worker entrypoint — starts the configuration, under 30 lines |
-| `src/connecta.config.ts` | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)` |
-| `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
+| File                                                   | What it is                                                                                                                       |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                                         | the Worker entrypoint — starts the configuration, under 30 lines                                                                 |
+| `src/connecta.config.ts`                               | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)`                                                   |
+| `wrangler.jsonc`                                       | Worker name, vars, bindings, `compatibility_flags`                                                                               |
 | `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028)) |
 
 Keep `enable_request_signal` in `wrangler.jsonc`. On Workers it lets a live
@@ -532,7 +532,7 @@ or raw error messages. The Worker entrypoint already forwards `ctx` to
 `connecta.fetch`, which lets async activity writes settle on `waitUntil`.
 
 `friction` is stored rather than derived because one of its classes belongs to
-a call that *succeeded*: a result too large to return inline is friction for
+a call that _succeeded_: a result too large to return inline is friction for
 the agent and carries no error code. Rows written before the column derive
 their friction from `error_code`, and `error_code IS NOT NULL` remains an
 honest count of failures. `approval` is history, set only on `approved` rows
