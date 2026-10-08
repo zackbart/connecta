@@ -442,11 +442,11 @@ export class SkillsRegistry {
     const timeoutMs = this.options.probeTimeoutMs ?? 20_000;
     const operationScope = {};
     sentSecretsForRequest(this.scope).include(sentSecretsForRequest(operationScope));
-    return runEdge(Effect.scoped(withDeadlineEffect(signal => Effect.gen({ self: this }, function* () {
+    return runEdge(withDeadlineEffect(signal => Effect.scoped(Effect.gen({ self: this }, function* () {
       const ctx = this.registry.contextFor(connector.id, this.baseUrl, operationScope, { signal, timeoutMs, ...(this.options.defer ? { defer: this.options.defer } : {}) });
       yield* closeScopeOnExit(connector, ctx, this.options.defer);
       return yield* Effect.tryPromise({ try: () => read(ctx), catch: error => error instanceof ConnectorCallError && error.code === "auth_required" ? new ConnectorCallError("auth_required", "Downstream skills require authorization.") : new ConnectorCallError("unavailable", "Downstream skills are unavailable.") });
-    }), { timeoutMs, signal: this.options.requestSignal, timeoutError: new ConnectorCallError("unavailable", "Downstream skills timed out.") })), { signal: this.options.requestSignal });
+    })), { timeoutMs, ...(this.options.requestSignal ? { signal: this.options.requestSignal } : {}), timeoutError: new ConnectorCallError("unavailable", "Downstream skills timed out.") }), { signal: this.options.requestSignal });
   }
 
   private async records(): Promise<SkillRecord[]> {
