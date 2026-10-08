@@ -11,8 +11,9 @@
 // cannot interleave with another request's: of fifty concurrent claims on an
 // absent key, exactly one changes a row.
 //
-// Expiry is judged by the caller's clock at each call, the same `Date.now()`
-// the core uses. An expired row reads as absent at once and is removed
+// The database clock creates and checks KV expiry inside each statement.
+// Isolate clock skew cannot shorten another holder's TTL. An expired row reads
+// as absent at once and is removed
 // physically by later writes, a bounded batch at a time, so no request starts
 // a background job and no cron is required.
 //
@@ -125,12 +126,12 @@ export const KV_SCHEMA: readonly string[] = [
 /** Expired rows one write removes on its way. */
 const SWEEP_ROWS = 16;
 
-function expiresAt(now: number, ttlSeconds?: number): number | null {
+function ttlMillis(ttlSeconds?: number): number | null {
   if (ttlSeconds !== undefined && !Number.isFinite(ttlSeconds)) {
     throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
   }
   if (!ttlSeconds) return null;
-  const expiry = now + ttlSeconds * 1000;
+  const expiry = ttlSeconds * 1000;
   if (!Number.isFinite(expiry)) {
     throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
   }
@@ -145,14 +146,15 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
   const ensure = schemaOnce(driver, async (d) => {
     await d.batch(KV_SCHEMA.map((statement) => sql(statement)));
   });
-  // Parameters are positional in both drivers; bind each occurrence in SQL order.
-  const live = "(expires_at_ms IS NULL OR expires_at_ms > ?)";
-  const current = async (key: string, now: number) => {
+  // SQLite and D1 evaluate 'now' in the database, never in a caller isolate.
+  const now = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
+  const live = `(expires_at_ms IS NULL OR expires_at_ms > ${now})`;
+  const expiryValue = `(${now} + ?)`;
+  const current = async (key: string) => {
     const [row] = await driver.all<{ value: string; value_bytes: TextBytes | null }>(
       sql(
         `SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ? AND ${live}`,
         key,
-        now,
       ),
     );
     return row
@@ -164,23 +166,21 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
     async get(key) {
       validateStorageKey(key);
       await ensure();
-      return current(key, Date.now());
+      return current(key);
     },
     async set(key, value, opts) {
       validateStorageKey(key);
       await ensure();
-      const now = Date.now();
-      const expiry = expiresAt(now, opts?.ttlSeconds);
+      const expiry = ttlMillis(opts?.ttlSeconds);
       await driver.batch([
         sql(
           `DELETE FROM connecta_kv WHERE key IN (
-            SELECT key FROM connecta_kv WHERE expires_at_ms <= ? LIMIT ${SWEEP_ROWS}
+            SELECT key FROM connecta_kv WHERE expires_at_ms <= ${now} LIMIT ${SWEEP_ROWS}
           )`,
-          now,
         ),
         sql(
           `INSERT INTO connecta_kv (key, value, expires_at_ms)
-           VALUES (?, ?, ?)
+           VALUES (?, ?, ${expiryValue})
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms`,
           key,
@@ -206,7 +206,6 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
           prefix,
           prefix,
           prefix,
-          Date.now(),
         ),
       );
       // Sort in JavaScript: SQLite orders UTF-8 bytes, the contract orders
@@ -216,26 +215,24 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
     async compareAndSet(key, expected, next, opts) {
       validateStorageKey(key);
       await ensure();
-      const now = Date.now();
       if (next === null && expected === null) {
         // Nothing to write; the claim holds exactly when no live row exists.
-        return (await current(key, now)) === null;
+        return (await current(key)) === null;
       }
       if (next === null) {
         return (await driver.run(sql(
           `DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`,
           key,
-          now,
           expected,
         ))) > 0;
       }
       let expiry: number | null;
       try {
-        expiry = expiresAt(now, opts?.ttlSeconds);
+        expiry = ttlMillis(opts?.ttlSeconds);
       } catch (error) {
         // Invalid write options do not change a failed comparison's result.
         // Ordinary claims still use one atomic statement without this read.
-        if ((await current(key, now)) !== expected) return false;
+        if ((await current(key)) !== expected) return false;
         throw error;
       }
       if (expected === null) {
@@ -243,24 +240,22 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
         // upsert's WHERE false, so nothing changes and the claim is refused.
         return (await driver.run(sql(
           `INSERT INTO connecta_kv (key, value, expires_at_ms)
-           VALUES (?, ?, ?)
+           VALUES (?, ?, ${expiryValue})
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms
            WHERE connecta_kv.expires_at_ms IS NOT NULL
-             AND connecta_kv.expires_at_ms <= ?`,
+             AND connecta_kv.expires_at_ms <= ${now}`,
           key,
           next,
           expiry,
-          now,
         ))) > 0;
       }
       return (await driver.run(sql(
-        `UPDATE connecta_kv SET value = ?, expires_at_ms = ?
+        `UPDATE connecta_kv SET value = ?, expires_at_ms = ${expiryValue}
          WHERE key = ? AND ${live} AND value = ?`,
         next,
         expiry,
         key,
-        now,
         expected,
       ))) > 0;
     },

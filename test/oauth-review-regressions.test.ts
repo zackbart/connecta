@@ -155,7 +155,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     const p = provider(storage, coordinator);
     await p.beginFlow(); await p.tokens({ issuer: A });
     const key = oauthRefreshKeys.lease((await storedGrant(storage))!.epoch, await oauthStateDigest(tokens.refresh_token));
-    await storage.set(key, JSON.stringify({ connectaOAuthRefresh: 1, holder: "crashed", expiresAt: Date.now() + OAUTH_REFRESH_LEASE_SECONDS * 1000 }));
+    await storage.set(key, JSON.stringify({ connectaOAuthRefresh: 1, holder: "crashed", state: "claimed", expiresAt: Date.now() + OAUTH_REFRESH_LEASE_SECONDS * 1000 }));
     const fetch = vi.fn(async () => Response.json({ ...tokens, refresh_token: "new-refresh" }));
     const request = coordinator.coordinatedFetch(p, fetch)(`${A}/token`, refreshInit);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -247,10 +247,10 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     const p = provider(storage, coordinator);
     await p.beginFlow(); await p.tokens({ issuer: A });
     const key = oauthRefreshKeys.lease((await storedGrant(storage))!.epoch, await oauthStateDigest(tokens.refresh_token));
-    await storage.set(key, JSON.stringify({ connectaOAuthRefresh: 1, holder: "crashed-after-rotation", expiresAt: Date.now() - 1 }));
+    await storage.set(key, JSON.stringify({ connectaOAuthRefresh: 1, holder: "crashed-after-rotation", state: "dispatched", expiresAt: Date.now() - 1 }));
     const fetch = vi.fn(async () => Response.json({ error: "invalid_grant" }, { status: 400 }));
-    expect((await coordinator.coordinatedFetch(p, fetch)(`${A}/token`, refreshInit)).status).toBe(400);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    await expect(coordinator.coordinatedFetch(p, fetch)(`${A}/token`, refreshInit)).rejects.toThrow(/authorization required/);
+    expect(fetch).not.toHaveBeenCalled();
     expect(await provider(storage).tokens()).toBeUndefined();
   });
 

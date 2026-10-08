@@ -407,7 +407,8 @@ describe("OAuthRefreshCoordinator", () => {
       { status: "rejected", reason },
       { status: "rejected", reason },
     ]);
-    expect(firstSignal).toBe(owner.signal);
+    expect(firstSignal?.aborted).toBe(true);
+    expect(firstSignal?.reason).toBe(reason);
     expect(joiner.listeners()).toBe(0);
     const later = await flow(storage, coordinator);
     expect((await refresh(coordinator, later, fetch)).status).toBe(200);
@@ -642,6 +643,7 @@ describe("OAuthRefreshCoordinator", () => {
     await server.entered;
     const stale = await flow(storage, coordinator);
     const joining = refresh(coordinator, await flow(storage, coordinator), server.fetch);
+    joining.catch(() => {});
     await drain();
     await new KvOAuthProvider("svc", storage, REDIRECT, coordinator).resetAuthorization(disconnect);
     // Woken at the reset, not at the answer, which has not come.

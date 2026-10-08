@@ -25,15 +25,16 @@ export const NUL_VALUES: readonly string[] = [
  * adapter's own suite calls this inside its `describe`, so the same contract
  * runs against memory, namespaced, SQLite, and D1 storage.
  *
- * Expiry is driven by faking `Date` alone. Every adapter computes expiry from
- * `Date.now()` in the calling process, and leaving real timers alone keeps a
- * local D1 proxy's I/O untouched.
+ * Memory expiry uses a fake Date. SQL fixtures move stored expiry directly:
+ * their database clock is independent of the caller's clock.
  */
 export function compareAndSetContract(
   open: () => KVStorage | Promise<KVStorage>,
+  advanceStoredExpiry?: (ms: number) => Promise<void>,
 ): void {
   const start = Date.parse("2026-01-01T00:00:00.000Z");
   const fakeClock = () => {
+    if (advanceStoredExpiry) return advanceStoredExpiry;
     vi.useFakeTimers({ toFake: ["Date"], now: start });
     return (ms: number) => vi.setSystemTime(Date.now() + ms);
   };
@@ -148,13 +149,13 @@ export function compareAndSetContract(
     const storage = await open();
     await storage.set("lease", "stale", { ttlSeconds: 1 });
     expect(await storage.compareAndSet("lease", null, "fresh")).toBe(false);
-    advance(2_000);
+    await advance(2_000);
     expect(await storage.compareAndSet("lease", "stale", "revived")).toBe(false);
     expect(await storage.compareAndSet("lease", null, "fresh")).toBe(true);
     expect(await storage.get("lease")).toBe("fresh");
 
     await storage.set("gone", "stale", { ttlSeconds: 1 });
-    advance(2_000);
+    await advance(2_000);
     expect(await storage.compareAndSet("gone", null, null)).toBe(true);
     expect(await storage.get("gone")).toBeNull();
   });
@@ -165,10 +166,10 @@ export function compareAndSetContract(
     expect(
       await storage.compareAndSet("lease", null, "held", { ttlSeconds: 10 }),
     ).toBe(true);
-    advance(9_000);
+    await advance(9_000);
     expect(await storage.get("lease")).toBe("held");
     expect(await storage.compareAndSet("lease", null, "thief")).toBe(false);
-    advance(2_000);
+    await advance(2_000);
     expect(await storage.get("lease")).toBeNull();
     expect(await storage.list("lease")).toEqual([]);
     expect(await storage.compareAndSet("lease", null, "next")).toBe(true);
@@ -192,12 +193,12 @@ export function compareAndSetContract(
     const storage = await open();
     await storage.set("rev", "1", { ttlSeconds: 1 });
     expect(await storage.compareAndSet("rev", "1", "2")).toBe(true);
-    advance(60_000);
+    await advance(60_000);
     expect(await storage.get("rev")).toBe("2");
     expect(
       await storage.compareAndSet("rev", "2", "3", { ttlSeconds: 1 }),
     ).toBe(true);
-    advance(2_000);
+    await advance(2_000);
     expect(await storage.get("rev")).toBeNull();
   });
 }

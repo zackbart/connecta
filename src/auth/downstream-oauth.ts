@@ -18,7 +18,7 @@ import {
 import { inheritOAuthSealer } from "../oauth-sealing.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
-import { OAUTH_FLOW_TTL_SECONDS, OAUTH_REFRESH_LEASE_SECONDS, oauthFlowKeys, oauthGrantKeys, oauthRefreshKeys } from "../storage/keys.js";
+import { OAUTH_FLOW_TTL_SECONDS, OAUTH_REFRESH_LEASE_SECONDS, oauthFlowKeys, oauthGrantKeys, oauthRefreshKeys, oauthRefreshActiveKeys } from "../storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../types.js";
 import {
   isRefreshTokenRequest,
@@ -109,19 +109,40 @@ interface RefreshLease {
 interface StoredRefreshLease {
   connectaOAuthRefresh: 1;
   holder: string;
+  state: "claimed" | "dispatched";
+  activeKey?: string;
   expiresAt: number;
   verdict?: RefreshFailure;
   completed?: true;
 }
 
-/** Wait in this request's own I/O context, with bounded backoff and abort. */
-function refreshBackoff(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return runEdge(signal
-    ? Effect.raceAllFirst([
-        Effect.sleep(ms),
-        fromSignal(signal),
-      ])
-    : Effect.sleep(ms));
+const REFRESH_REQUEST_DEADLINE_MS = 20_000;
+const REFRESH_WAIT_DEADLINE_MS = 35_000;
+
+/** One deadline covers preparation, shared claims, and local joiners. */
+interface RefreshWait {
+  signal: AbortSignal;
+  run<T>(operation: () => Promise<T>): Promise<T>;
+  close(): void;
+}
+
+function refreshWait(signal?: AbortSignal): RefreshWait {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), REFRESH_WAIT_DEADLINE_MS);
+  const abort = () => deadline.abort(aborted(signal));
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  return {
+    signal: deadline.signal,
+    run: <T>(operation: () => Promise<T>) => runEdge(Effect.raceAllFirst<Effect.Effect<T, unknown>>([
+      fromSignal(deadline.signal),
+      Effect.tryPromise({ try: operation, catch: (error) => error }),
+    ])),
+    close: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    },
+  };
 }
 
 interface RefreshFlight {
@@ -148,17 +169,15 @@ function aborted(signal: AbortSignal | undefined): unknown {
 function waitForRefreshFlight(
   flight: RefreshFlight,
   signal?: AbortSignal,
+  deadline?: AbortSignal,
 ): Promise<RefreshFlightOutcome> {
   const settled = Deferred.await(flight.outcome);
   // The abort goes first, so a caller that has already left never joins.
-  return runEdge(
-    signal
-      ? Effect.raceAllFirst<Effect.Effect<RefreshFlightOutcome, unknown>>([
-          fromSignal(signal),
-          settled,
-        ])
-      : settled,
-  );
+  return runEdge(Effect.raceAllFirst<Effect.Effect<RefreshFlightOutcome, unknown>>([
+    ...(signal ? [fromSignal(signal)] : []),
+    ...(deadline ? [fromSignal(deadline)] : []),
+    settled,
+  ]));
 }
 
 /** Tokens as a token response the SDK parses: only the client stamps an issuer. */
@@ -237,55 +256,56 @@ export class OAuthRefreshCoordinator {
     baseFetch: FetchLike,
     signal: AbortSignal | undefined,
   ): Promise<Response> {
-    // A verdict belongs to one refresh; never let an older one decide this.
-    provider.recordRefreshFailure(undefined);
-    const epoch = await provider.flowEpoch();
-    const requested = requestedRefreshToken(init);
-    for (let attempt = 0; attempt < 8; attempt++) {
-      if (signal?.aborted) throw aborted(signal);
-      const joined = this.flights.get(epoch);
-      if (joined) {
-        const outcome = await waitForRefreshFlight(joined, signal);
-        if (outcome.status === "failed") {
-          // A joined caller inherits the owner's verdict, so every scope on
-          // one flight ends the same way: auth_required or a retryable outage.
-          provider.recordRefreshFailure(outcome.verdict);
-          throw outcome.error;
+    const waiting = refreshWait(signal);
+    try {
+      // A verdict belongs to one refresh; never let an older one decide this.
+      provider.recordRefreshFailure(undefined);
+      const epoch = await waiting.run(() => provider.flowEpoch());
+      const requested = requestedRefreshToken(init);
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (signal?.aborted) throw aborted(signal);
+        const joined = this.flights.get(epoch);
+        if (joined) {
+          const outcome = await waitForRefreshFlight(joined, signal, waiting.signal);
+          if (outcome.status === "failed") {
+            provider.recordRefreshFailure(outcome.verdict);
+            throw outcome.error;
+          }
+          if (outcome.status === "refreshed") return provider.adoptRefresh(outcome.tokens);
+          continue;
         }
-        if (outcome.status === "refreshed") return provider.adoptRefresh(outcome.tokens);
-        continue;
+        // Preparation reads share the same bound as later claim waits.
+        const current = await waiting.run(() => provider.storedTokens());
+        if (this.flights.has(epoch)) continue;
+        if (
+          current?.refresh_token &&
+          (current.refresh_token !== requested || provider.refreshedSinceRead(current, epoch))
+        ) {
+          return provider.adoptRefresh(current);
+        }
+        if (current?.refresh_token !== requested) {
+          return Response.json(
+            { error: "invalid_grant", error_description: "Refresh token is no longer active." },
+            { status: 400 },
+          );
+        }
+        const redemption = this.redeem(provider, epoch, requested, input, init, baseFetch, signal, waiting);
+        if (!signal) return await redemption;
+        // An answer still commits when the owner leaves after dispatch.
+        redemption.catch(() => {});
+        return await runEdge(Effect.raceAllFirst<Effect.Effect<Response, unknown>>([
+          Effect.tryPromise({ try: () => redemption, catch: (error) => error }),
+          fromSignal(signal),
+        ]));
       }
-      // Throws once a reset has fenced the epoch.
-      const current = await provider.storedTokens();
-      // A flight another request began during the read is joined next turn.
-      if (this.flights.has(epoch)) continue;
-      // Another request rotated or refreshed since this flow read its tokens:
-      // hand on what it stored rather than redeem a token it may have spent.
-      if (
-        current?.refresh_token &&
-        (current.refresh_token !== requested || provider.refreshedSinceRead(current, epoch))
-      ) {
-        return provider.adoptRefresh(current);
-      }
-      // Tokenless, or a refresh token this flow never read: the SDK would
-      // merge the requested one back into a success, so refuse it.
-      if (current?.refresh_token !== requested) {
-        return Response.json(
-          { error: "invalid_grant", error_description: "Refresh token is no longer active." },
-          { status: 400 },
-        );
-      }
-      const redemption = this.redeem(provider, epoch, requested, input, init, baseFetch, signal);
-      if (!signal) return redemption;
-      // The owner may leave before the answer; the redemption still commits
-      // one that arrives, and settles the flight for whoever joined it.
-      redemption.catch(() => {});
-      return runEdge(Effect.raceAllFirst<Effect.Effect<Response, unknown>>([
-        Effect.tryPromise({ try: () => redemption, catch: (error) => error }),
-        fromSignal(signal),
-      ]));
+      throw provider.refreshContended();
+    } catch (error) {
+      if (signal?.aborted) throw aborted(signal);
+      if (waiting.signal.aborted) throw provider.refreshContended();
+      throw error;
+    } finally {
+      waiting.close();
     }
-    throw provider.refreshContended();
   }
 
   private async redeem(
@@ -296,6 +316,7 @@ export class OAuthRefreshCoordinator {
     init: RequestInit | undefined,
     baseFetch: FetchLike,
     signal: AbortSignal | undefined,
+    waiting: RefreshWait,
   ): Promise<Response> {
     const flight: RefreshFlight = { outcome: Deferred.makeUnsafe() };
     this.flights.set(epoch, flight);
@@ -315,9 +336,9 @@ export class OAuthRefreshCoordinator {
     const issuer = provider.refreshIssuer(epoch);
     let lease: RefreshLease;
     try {
-      const claim = await provider.claimRefresh(epoch, requested, signal);
+      const claim = await provider.claimRefresh(epoch, requested, signal, waiting);
       if (claim instanceof Response) {
-        const tokens = await provider.storedTokens();
+        const tokens = await waiting.run(() => provider.storedTokens());
         if (tokens) settle({ status: "refreshed", tokens });
         else settle({ status: "retired" });
         return claim;
@@ -330,12 +351,63 @@ export class OAuthRefreshCoordinator {
     const releaseLease = async (verdict?: RefreshFailure, completed = false) => {
       await provider.releaseRefresh(lease, verdict, completed);
     };
-    let response: Response;
     let outcome: RefreshResponseOutcome;
+    const deadline = new AbortController();
+    let timedOut = false;
+    let dispatched = false;
+    const request = new AbortController();
+    const parents = [deadline.signal, ...(signal ? [signal] : []), ...(init?.signal ? [init.signal] : [])];
+    const abortRequest = () => {
+      const parent = parents.find((parent) => parent.aborted);
+      if (parent) request.abort(parent.reason);
+    };
+    for (const parent of parents) parent.addEventListener("abort", abortRequest, { once: true });
+    abortRequest();
+    const requestSignal = request.signal;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      response = await provider.dispatchRefresh(lease, () => baseFetch(input, signal ? { ...init, signal } : init));
-      outcome = await refreshResponseOutcome(response);
+      const read = provider.dispatchRefresh(lease, () => {
+        if (requestSignal.aborted) throw aborted(requestSignal);
+        dispatched = true;
+        // Preparation remains bounded through the send transition. After
+        // dispatch, caller cancellation must not prevent an answer's commit.
+        waiting.close();
+        // Start the deadline at dispatch, including the response body read.
+        timer = setTimeout(() => {
+          timedOut = true;
+          deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
+        }, REFRESH_REQUEST_DEADLINE_MS);
+        return baseFetch(input, { ...init, signal: requestSignal });
+      }, waiting).then((response) => {
+        if (deadline.signal.aborted) {
+          void response.body?.cancel().catch(() => {});
+          throw aborted(deadline.signal);
+        }
+        return refreshResponseOutcome(response, deadline.signal);
+      });
+      outcome = await runEdge(Effect.raceAllFirst<Effect.Effect<RefreshResponseOutcome, unknown>>([
+        Effect.tryPromise({ try: () => read, catch: (error) => error }),
+        fromSignal(deadline.signal),
+      ]));
+      if (deadline.signal.aborted) throw aborted(deadline.signal);
     } catch (error) {
+      if (!dispatched) {
+        // A cancelled or timed-out unsent holder leaves a safely expiring
+        // claim. Cleanup must not retain its local flight or partition pin.
+        if (!waiting.signal.aborted && !requestSignal.aborted) {
+          await waiting.run(() => releaseLease()).catch(() => {});
+        }
+        const failure = !signal?.aborted && waiting.signal.aborted ? provider.refreshContended() : error;
+        fail(failure, provider.refreshVerdict());
+        throw failure;
+      }
+      if (timedOut) {
+        // The provider may have consumed the token without returning its answer.
+        await provider.discardRefusedGrant(requested, epoch);
+        await releaseLease({ kind: "dead" });
+        fail(error, { kind: "dead" });
+        throw error;
+      }
       // No answer at all — the network, or a body too large to be one — is an
       // outage. This owner's own cancellation, and a refusal connecta itself
       // raised (a redirect the policy forbids), are not.
@@ -351,6 +423,9 @@ export class OAuthRefreshCoordinator {
       await releaseLease(verdict);
       fail(error, verdict);
       throw error;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      for (const parent of parents) parent.removeEventListener("abort", abortRequest);
     }
     // An answer exists from here on, and is committed whatever the owner does.
     if (outcome.failure) {
@@ -622,6 +697,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     /** SDK uses this only when the authorization server advertises support. */
     clientMetadataUrl?: string,
     private readonly scope?: string,
+    /** Isolate-local clock, used only for claims that have never been sent. */
+    private readonly refreshNow: () => number = Date.now,
   ) {
     if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
   }
@@ -1010,6 +1087,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** @internal Other requests kept refreshing faster than this one could join. */
   refreshContended(): ConnectorCallError {
+    this.recordRefreshFailure({ kind: "contended" });
     return new ConnectorCallError(
       "unavailable",
       `Connector "${this.connectorId}" could not refresh its OAuth grant while other requests were; retry.`,
@@ -1025,6 +1103,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   private authorizationRefused(): Error {
     const failure = this.refreshFailure;
+    if (failure?.kind === "contended") return this.refreshContended();
     if (failure?.kind === "transient") return this.refreshOutage(failure);
     if (failure?.kind === "unstored") return this.credentialWriteError();
     return new UnauthorizedError(
@@ -1363,95 +1442,134 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /** @internal A shared-storage claim precedes every refresh dispatch. */
-  async claimRefresh(epoch: string, requested: string | null, signal?: AbortSignal): Promise<RefreshLease | Response> {
-    const key = oauthRefreshKeys.lease(epoch, await oauthStateDigest(requested ?? ""));
-    const deadline = Date.now() + (OAUTH_REFRESH_LEASE_SECONDS + 5) * 1000;
+  async claimRefresh(epoch: string, requested: string | null, signal?: AbortSignal, sharedWait?: RefreshWait): Promise<RefreshLease | Response> {
+    const waiting = sharedWait ?? refreshWait(signal);
+    const wait = waiting.run;
     let delay = 10;
     let waited = false;
-    while (Date.now() < deadline) {
-      if (signal?.aborted) throw aborted(signal);
-      const current = await this.storedTokens();
-      if (current?.refresh_token !== requested || (current && this.refreshedSinceRead(current, epoch))) {
-        return current ? this.adoptRefresh(current) : Response.json({ error: "invalid_grant" }, { status: 400 });
-      }
-      const raw = await this.storage.get(key);
-      const stored = raw === null ? undefined : parsed(raw);
-      const active = plainObject(stored) && typeof stored.expiresAt === "number" && stored.expiresAt > Date.now();
-      if (active && stored.completed === true) {
-        if (waited && current) return this.adoptRefresh(current);
-        await this.storage.compareAndSet(key, raw, null);
-        continue;
-      }
-      if (active && plainObject(stored.verdict)) {
-        if (!waited) {
-          await this.storage.compareAndSet(key, raw, null);
+    try {
+      const key = oauthRefreshKeys.lease(epoch, await wait(() => oauthStateDigest(requested ?? "")));
+      while (!waiting.signal.aborted) {
+        if (signal?.aborted) throw aborted(signal);
+        const current = await wait(() => this.storedTokens());
+        if (current?.refresh_token !== requested || (current && this.refreshedSinceRead(current, epoch))) {
+          return current ? this.adoptRefresh(current) : Response.json({ error: "invalid_grant" }, { status: 400 });
+        }
+        const raw = await wait(() => this.storage.get(key));
+        const stored = raw === null ? undefined : parsed(raw);
+        if (plainObject(stored) && stored.completed === true) {
+          if (waited && current) return this.adoptRefresh(current);
+          await wait(() => this.storage.compareAndSet(key, raw, null));
           continue;
         }
-        const verdict = stored.verdict as unknown as RefreshFailure;
-        this.recordRefreshFailure(verdict);
-        if (verdict.kind === "transient") throw this.refreshOutage(verdict);
-        if (verdict.kind === "unstored") throw this.credentialWriteError();
-        throw new UnauthorizedError("OAuth refresh grant is no longer active.");
-      }
-      if (!active) {
-        const claimed = JSON.stringify({
-          connectaOAuthRefresh: 1,
-          holder: crypto.randomUUID(),
-          expiresAt: Date.now() + OAUTH_REFRESH_LEASE_SECONDS * 1000,
-        } satisfies StoredRefreshLease);
-        let won: boolean;
-        try {
-          won = await this.storage.compareAndSet(key, raw, claimed, { ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS });
-        } catch {
-          throw this.credentialWriteError();
+        if (plainObject(stored) && plainObject(stored.verdict)) {
+          const verdict = stored.verdict as unknown as RefreshFailure;
+          // A dispatched token with an ambiguous outcome is permanently spent.
+          if (!waited && verdict.kind !== "dead") {
+            await wait(() => this.storage.compareAndSet(key, raw, null));
+            continue;
+          }
+          this.recordRefreshFailure(verdict);
+          if (verdict.kind === "transient") throw this.refreshOutage(verdict);
+          if (verdict.kind === "unstored") throw this.credentialWriteError();
+          if (verdict.kind === "contended") throw this.refreshContended();
+          await wait(() => this.discardRefusedGrant(requested, epoch));
+          throw new UnauthorizedError("OAuth refresh grant is no longer active.");
         }
-        if (won) {
-          // A rotation may have committed between the first read and claim.
-          try {
-            const latest = await this.storedTokens();
-            if (latest?.refresh_token !== requested || (latest && this.refreshedSinceRead(latest, epoch))) {
-              await this.releaseRefresh({ key, raw: claimed });
-              return latest ? this.adoptRefresh(latest) : Response.json({ error: "invalid_grant" }, { status: 400 });
+        if (plainObject(stored) && stored.state !== "claimed") {
+          // Never compare another isolate's clock for a sent request. The
+          // durable record survives expiry of this storage-owned liveness key.
+          const active = typeof stored.activeKey === "string" ? await wait(() => this.storage.get(stored.activeKey as string)) : null;
+          if (active === null) {
+            const refused = JSON.stringify({ ...stored, verdict: { kind: "dead" } });
+            if (await wait(() => this.storage.compareAndSet(key, raw, refused))) {
+              this.recordRefreshFailure({ kind: "dead" });
+              await wait(() => this.discardRefusedGrant(requested, epoch));
+              throw new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
             }
-            if (signal?.aborted) throw aborted(signal);
-            return { key, raw: claimed };
-          } catch (error) {
-            await this.releaseRefresh({ key, raw: claimed });
-            throw error;
+            continue;
+          }
+        } else if (raw === null || (plainObject(stored) && typeof stored.expiresAt === "number" && stored.expiresAt <= this.refreshNow())) {
+          // Clock skew can replace an unsent claim; its dispatch CAS then loses.
+          const claimed = JSON.stringify({
+            connectaOAuthRefresh: 1,
+            holder: crypto.randomUUID(),
+            state: "claimed",
+            expiresAt: this.refreshNow() + OAUTH_REFRESH_LEASE_SECONDS * 1000,
+          } satisfies StoredRefreshLease);
+          let won: boolean;
+          try {
+            won = await wait(() => this.storage.compareAndSet(key, raw, claimed));
+          } catch {
+            throw this.credentialWriteError();
+          }
+          if (won) {
+            try {
+              const latest = await wait(() => this.storedTokens());
+              if (latest?.refresh_token !== requested || (latest && this.refreshedSinceRead(latest, epoch))) {
+                await wait(() => this.releaseRefresh({ key, raw: claimed }));
+                return latest ? this.adoptRefresh(latest) : Response.json({ error: "invalid_grant" }, { status: 400 });
+              }
+              if (signal?.aborted) throw aborted(signal);
+              return { key, raw: claimed };
+            } catch (error) {
+              // An unsent claim can expire safely. A caller that has left must
+              // settle its local flight without awaiting cleanup storage.
+              if (!waiting.signal.aborted && !signal?.aborted) {
+                await wait(() => this.releaseRefresh({ key, raw: claimed }));
+              }
+              throw error;
+            }
           }
         }
+        waited = true;
+        await runEdge(Effect.raceAllFirst([
+          Effect.sleep(delay), fromSignal(waiting.signal), ...(signal ? [fromSignal(signal)] : []),
+        ]));
+        delay = Math.min(250, delay * 2);
       }
-      waited = true;
-      await refreshBackoff(delay, signal);
-      delay = Math.min(250, delay * 2);
+    } catch (error) {
+      if (signal?.aborted) throw aborted(signal);
+      if (!waiting.signal.aborted) throw error;
+    } finally {
+      if (!sharedWait) waiting.close();
     }
     throw this.refreshContended();
   }
 
-  /** @internal Check lease ownership in the same reaction that dispatches. */
-  dispatchRefresh(lease: RefreshLease, send: () => Promise<Response>): Promise<Response> {
-    return this.storage.get(lease.key).then((raw) => {
-      const stored = raw === null ? undefined : parsed(raw);
-      if (raw !== lease.raw || !plainObject(stored) || typeof stored.expiresAt !== "number" || stored.expiresAt <= Date.now()) {
-        throw this.refreshContended();
-      }
+  /** @internal Only the successful claimed-to-dispatched CAS may send. */
+  async dispatchRefresh(lease: RefreshLease, send: () => Promise<Response>, waiting: RefreshWait): Promise<Response> {
+    const stored = parsed(lease.raw) as StoredRefreshLease;
+    const epoch = await waiting.run(() => this.flowEpoch());
+    const activeKey = oauthRefreshActiveKeys.holder(epoch, stored.holder);
+    await waiting.run(() => this.storage.set(activeKey, JSON.stringify({ connectaOAuthRefresh: 1 }), { ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS }));
+    const dispatched = JSON.stringify({ ...stored, state: "dispatched", activeKey } satisfies StoredRefreshLease);
+    const { sent } = await waiting.run(() => this.storage.compareAndSet(lease.key, lease.raw, dispatched).then((won) => {
+      if (!won) throw this.refreshContended();
+      lease.raw = dispatched;
+      // A storage operation can finish after its waiter left. Its CAS may
+      // have won, but it must never send from that abandoned preparation.
+      if (waiting.signal.aborted) throw aborted(waiting.signal);
       const sent = send();
-      // workerd can report the inner rejection before promise adoption.
       sent.catch(() => {});
-      return sent;
-    });
+      // Keep the preparation race separate from the HTTP response promise.
+      return { sent };
+    }));
+    return sent;
   }
 
-  /** @internal Release by CAS; a failure verdict remains briefly for waiters. */
+  /** @internal Release by CAS after a commit or a classified failure. */
   async releaseRefresh(lease: RefreshLease, verdict?: RefreshFailure, completed = false): Promise<void> {
     // Persist typed verdict facts only. Never persist downstream causes or text.
     const safe = verdict?.kind === "transient"
       ? { kind: verdict.kind, reason: verdict.reason, ...(verdict.status !== undefined ? { status: verdict.status } : {}), ...(verdict.retryAfterMs !== undefined ? { retryAfterMs: verdict.retryAfterMs } : {}) }
       : verdict;
+    const stored = parsed(lease.raw) as StoredRefreshLease;
     const next = safe || completed ? JSON.stringify({
-      ...(parsed(lease.raw) as StoredRefreshLease), ...(safe ? { verdict: safe } : {}), ...(completed ? { completed: true as const } : {}),
+      ...stored, ...(safe ? { verdict: safe } : {}), ...(completed ? { completed: true as const } : {}),
     } satisfies StoredRefreshLease) : null;
-    await this.storage.compareAndSet(lease.key, lease.raw, next, { ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS }).catch(() => false);
+    const released = await this.storage.compareAndSet(lease.key, lease.raw, next).catch(() => false);
+    if (released && stored.activeKey) await this.storage.delete(stored.activeKey).catch(() => {});
   }
 
   /** @internal The same typed verdict for local and cross-isolate joiners. */
@@ -1589,18 +1707,18 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private async sweepRefreshLeases(): Promise<void> {
     try {
       const records: Array<[string, string]> = [];
-      for (const key of await this.storage.list(oauthRefreshKeys.prefix)) {
+      for (const key of [...await this.storage.list(oauthRefreshKeys.prefix), ...await this.storage.list(oauthRefreshActiveKeys.prefix)]) {
         const raw = await this.storage.get(key);
         if (raw !== null) records.push([key, raw]);
       }
       const live = epochOf(await this.storage.get(GRANT));
       for (const [key, raw] of records) {
-        if (!key.startsWith(`${oauthRefreshKeys.prefix}${live}:`)) {
+        if (![oauthRefreshKeys.prefix, oauthRefreshActiveKeys.prefix].some((prefix) => key.startsWith(`${prefix}${live}:`))) {
           await this.storage.compareAndSet(key, raw, null);
         }
       }
     } catch {
-      // Stale leases cannot grant credentials and expire within 30 seconds.
+      // Stale dispatch records cannot grant credentials: epochs never recur.
     }
   }
 

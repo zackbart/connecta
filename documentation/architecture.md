@@ -28,9 +28,10 @@ cancellation. A shared-storage CAS lease prevents independent isolates from
 redeeming the same refresh token concurrently. The holder commits an accepted
 rotation to the grant by CAS before releasing waiters, even when the owner
 cancels after the answer. Contenders read the committed tokens or typed
-verdict. A lease expires after 30 seconds so a crashed holder does not block
-later attempts. A crash after provider rotation but before persistence requires
-re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
+verdict. An unsent claim can be taken over after expiry. Dispatch uses a CAS
+transition to a durable record and a 20-second HTTP deadline. A sent request
+whose 120-second storage-owned liveness record expired without a commit is
+never retried and requires re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
 contracts.
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
@@ -244,7 +245,9 @@ marker refuses stale copies afterward.
 required, and `createConnecta` refuses storage missing one (INV-11).
 `compareAndSet(key, expected, next, options?)` is an atomic claim: `null` means
 absent (expired counts) on the way in and delete on the way out, and a
-successful write takes the same optional `ttlSeconds` as `set`. Each SQL claim
+successful write takes the same optional `ttlSeconds` as `set`. SQL TTLs are
+created and checked by the database clock inside each statement, so isolate
+clock skew cannot expire a live holder's record. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
 read-then-write fallback: artifact head swaps, access-token issuance and

@@ -480,23 +480,45 @@ Refresh classification uses the token endpoint's answer, not the SDK's parsing:
 | Valid refresh that cannot be stored | Retryable `unavailable` with fixed text; leave the stored grant untouched. |
 
 Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
-shared-storage lease at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
+shared-storage record at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
 claimed by CAS before dispatch. The connector and owner namespace partitions
-the key. It expires after 30 seconds. Contenders wait at most 35 seconds with
-10 ms to 250 ms backoff, reading the committed tokens or typed verdict; they
-never redeem while another holder owns the lease. The first request
-redeems and stores an accepted rotation by compare-and-set before releasing
-anyone, even if it was cancelled after the answer or the SDK redirects instead
-of saving; later requests join its outcome. A request whose read predates a
-stored refresh is handed that refresh instead of redeeming again. Across
-isolates the lease also prevents concurrent redemption, and the grant
-compare-and-set keeps a stale rotation from replacing a newer one. The holder
-releases by CAS after committing; a brief completion record hands waiting
-isolates the outcome even when the token response is byte-identical. A later
-request may claim a fresh attempt. Verdict records contain fixed typed facts,
-never tokens or downstream text. Lease expiry recovers a crashed holder. If
-the holder crashes after the provider rotated but before storage commits,
-connecta cannot recover that response; the next refusal requires re-consent.
+the key. The record moves from `claimed` to `dispatched` by CAS in the reaction
+that sends the HTTP request. Only an expired `claimed` record can be taken
+over: that holder has sent nothing, and its later dispatch CAS will fail.
+
+A dispatched record is durable. Its separate holder record under
+`oauth:refresh-active:<epoch>:<holder>` has a storage-owned 120-second TTL.
+SQLite and D1 create and check that expiry with the database clock inside each
+statement. Custom shared stores must use a storage-owned clock as well.
+Connecta never uses cross-isolate wall-clock comparisons to permit takeover
+of a dispatched record. The refresh HTTP request, including its response body,
+has a 20-second deadline. Contenders wait at most 35 seconds with 10 ms to
+250 ms backoff and read committed tokens or typed verdicts. A waiter that
+reaches its deadline returns retryable `unavailable`, keeping the grant and
+starting no consent. One deadline covers the initial epoch and grant reads,
+shared claim acquisition, dispatch preparation, and runtime-local joiners waiting
+for a holder's grant commit. Sending ends preparation's wait and cancellation
+scope; the holder's HTTP deadline applies next. Cancellation before sending
+settles the local flight without waiting for cleanup storage; an unsent claim
+left behind can expire and be taken over. Late preparation never sends.
+
+The holder stores an accepted rotation by grant CAS before releasing anyone,
+even if it was cancelled after the answer or the SDK redirects instead of
+saving. The grant CAS keeps stale rotations from replacing newer grants.
+Release also uses CAS. A completion record hands waiting isolates the outcome
+even when the token response is byte-identical; a later request can claim a
+fresh attempt after that confirmed commit. Verdict records contain typed facts,
+never tokens or downstream text.
+
+A dispatched holder can crash after the authorization server consumed the
+refresh token and before the grant commit. Once its shared-storage liveness
+record expires, connecta records a permanent refusal for that fingerprint and
+conditionally removes the grant's tokens. It never resends that token. The
+connector reports `auth_required` with the normal `authorize_connector` recovery.
+A refresh HTTP deadline also has an unknown outcome and requires re-consent.
+A late answer cannot restore the discarded grant. No implementation can recover
+a rotating token response the authorization server sent but connecta did not
+commit. Restart and Disconnect advance the epoch and sweep stale refresh records.
 All in-flight joiners get the same verdict even if the sender is cancelled
 after the answer; newcomers join a refusal instead of resending its token. The
 SDK's parse failures and `server_error` otherwise fall through to consent;

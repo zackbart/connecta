@@ -13,7 +13,8 @@ export interface KVStorage {
   get(key: string): Promise<string | null>;
   /**
    * Write `value`. With `opts.ttlSeconds` the entry reads as absent once that
-   * many seconds pass; omitted or zero means no expiry.
+   * many seconds pass; omitted or zero means no expiry. Shared stores must
+   * create and check expiry with a storage-owned clock, not each caller's clock.
    */
   set(
     key: string,

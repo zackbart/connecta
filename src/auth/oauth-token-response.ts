@@ -51,13 +51,19 @@ export class OversizedRefreshResponse extends Error {
   }
 }
 
-async function readRefreshResponse(response: Response): Promise<unknown> {
+async function readRefreshResponse(response: Response, signal?: AbortSignal): Promise<unknown> {
   if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
     void response.body?.cancel().catch(() => {});
     throw new OversizedRefreshResponse();
   }
   const reader = response.clone().body?.getReader();
   if (!reader) return undefined;
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+    void response.body?.cancel().catch(() => {});
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   const decoder = new TextDecoder();
   let size = 0;
   let text = "";
@@ -77,6 +83,7 @@ async function readRefreshResponse(response: Response): Promise<unknown> {
     }
     return JSON.parse(text + decoder.decode());
   } finally {
+    signal?.removeEventListener("abort", cancel);
     reader.releaseLock();
   }
 }
@@ -97,6 +104,8 @@ async function readRefreshResponse(response: Response): Promise<unknown> {
  */
 export type RefreshFailure =
   | { kind: "dead" }
+  /** A waiter exhausted its deadline without changing the grant. */
+  | { kind: "contended" }
   | {
       kind: "transient";
       /** Completes "the authorization server …" in the agent-facing message. */
@@ -249,11 +258,12 @@ export type RefreshResponseOutcome =
  */
 export async function refreshResponseOutcome(
   response: Response,
+  signal?: AbortSignal,
 ): Promise<RefreshResponseOutcome> {
   if (!response.ok) {
     let code: string | undefined;
     try {
-      code = oauthErrorCode(await readRefreshResponse(response));
+      code = oauthErrorCode(await readRefreshResponse(response, signal));
     } catch {
       // Not JSON, or too large to be an OAuth error: the status decides.
     }
@@ -280,7 +290,7 @@ export async function refreshResponseOutcome(
   }
   let parsed: unknown;
   try {
-    parsed = await readRefreshResponse(response);
+    parsed = await readRefreshResponse(response, signal);
   } catch (error) {
     if (error instanceof OversizedRefreshResponse) throw error;
     return {
