@@ -1376,7 +1376,7 @@ describe("remoteMcp() destination guard", () => {
     const construct = () => remoteMcp(id, {
         url,
         ...(authenticated
-          ? { auth: { type: "headers" as const, headers: { authorization: "Bearer secret" } } }
+          ? { auth: { type: "headers" as const, headers: { authorization: "Bearer destination-credential" } } }
           : {}),
         ...(requireHttps ? { requireHttps: true } : {}),
         logger,
