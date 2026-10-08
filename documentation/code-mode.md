@@ -985,7 +985,11 @@ upstream result shaping. Both construct `failure.call` from retained typed
 values, never from a guest result or printed text. Host failure details are
 bounded before bridging (`E1`), including JSON escapes. No frame parser or
 prose matching participates in classification. The guest cannot import runner
-modules or repeat privileged initialization.
+modules or repeat privileged initialization. QuickJS checks host interrupt and
+deadline facts before describing a rejection. It retains a private native Error
+brand check and reads only own string data descriptors for diagnostics; guest
+accessors, serialization hooks, and Proxy traps do not run. Other thrown objects
+receive a fixed description.
 
 ## Verification
 

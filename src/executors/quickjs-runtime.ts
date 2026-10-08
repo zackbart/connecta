@@ -145,13 +145,6 @@ function setupScript(providers: ExecutorProvider[]): string {
   return lines.join("\n");
 }
 
-/** True when a dumped error is QuickJS's deadline-interrupt signal. */
-function isInterrupt(dumped: unknown): boolean {
-  if (!dumped || typeof dumped !== "object") return false;
-  const e = dumped as { name?: unknown; message?: unknown };
-  return e.name === "InternalError" && e.message === "interrupted";
-}
-
 function formatGuestError(dumped: unknown): string {
   if (dumped && typeof dumped === "object") {
     const e = dumped as { name?: unknown; message?: unknown };
@@ -388,10 +381,44 @@ export async function executeQuickJs(
         return wallInterrupted || cpuInterrupted;
       });
 
+      // Keep this diagnostic function in a host-owned handle. Error.isError
+      // checks the native brand without Proxy traps. Own data descriptors of
+      // native Errors are safe to read; accessors and arbitrary thrown objects
+      // get a fixed description instead of dump's guest serialization/getters.
+      const describeError = ctx.unwrapResult(runGuest(() => ctx.evalCode(`(() => {
+        const isError = Error.isError;
+        const descriptor = Object.getOwnPropertyDescriptor;
+        const prototypeOf = Object.getPrototypeOf;
+        const hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+        const slice = Function.prototype.call.bind(String.prototype.slice);
+        const stringify = JSON.stringify;
+        const prototypes = [
+          [Error.prototype, "Error"], [TypeError.prototype, "TypeError"],
+          [SyntaxError.prototype, "SyntaxError"], [ReferenceError.prototype, "ReferenceError"],
+          [RangeError.prototype, "RangeError"], [EvalError.prototype, "EvalError"],
+          [URIError.prototype, "URIError"], [AggregateError.prototype, "AggregateError"]
+        ];
+        return (error) => {
+          if (!isError(error)) return "null";
+          const text = (key, fallback, limit) => {
+            const own = descriptor(error, key);
+            return own && hasOwn(own, "value") && typeof own.value === "string"
+              ? slice(own.value, 0, limit) : fallback;
+          };
+          const prototype = prototypeOf(error);
+          let name = "Error";
+          for (let i = 0; i < prototypes.length; i++) {
+            if (prototype === prototypes[i][0]) { name = prototypes[i][1]; break; }
+          }
+          return stringify({ __proto__: null, name: text("name", name, 64),
+            message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
+        };
+      })()`)));
       const logs: string[] = [];
       const bridge = installBridge(ctx, providers, logs, onLog);
       const finish = <T extends ExecuteResult>(r: T): T => {
         bridge.aborted = true;
+        describeError.dispose();
         for (const failure of bridge.failures) failure.error.dispose();
         bridge.failures.length = 0;
         // Outstanding host calls still hold deferred-promise handles; their
@@ -415,19 +442,33 @@ export async function executeQuickJs(
         }
         return logs.length > 0 ? { ...r, logs } : r;
       };
-      const fail = (error: string, dumped?: unknown): ExecuteResult => {
-        const name = dumped && typeof dumped === "object" && "name" in dumped && typeof dumped.name === "string" ? dumped.name : "Error";
-        const stack = dumped && typeof dumped === "object" && "stack" in dumped && typeof dumped.stack === "string" ? dumped.stack : "";
-        const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
-        return finish({ result: undefined, error, failure: { name, ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}) } });
-      };
-      const rejected = (error: QuickJSHandle): ExecuteResult => {
+      const rejected = (error: QuickJSHandle): QuickJsExecutionResult => {
+        // Interrupt/deadline facts are host state, never inferred by inspecting
+        // the thrown value. Do not reenter a guest whose budget has ended.
+        if (wallInterrupted || Date.now() >= deadline) return timedOut();
+        if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
         const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
-        const dumped = ctx.dump(error);
-        const name = dumped && typeof dumped === "object" && typeof dumped.name === "string" ? dumped.name.slice(0, 64) : "Error";
-        const stack = dumped && typeof dumped === "object" && typeof dumped.stack === "string" ? dumped.stack : "";
+        let description: unknown = { name: "Error", message: "Program threw a value." };
+        const type = ctx.typeof(error);
+        if (type === "string") description = ctx.getString(error).slice(0, 4000);
+        else if (type === "number") description = ctx.getNumber(error);
+        else if (type === "undefined") description = "undefined";
+        else if (type === "boolean") description = ctx.eq(error, ctx.true);
+        else if (ctx.eq(error, ctx.null)) description = null;
+        else {
+          const described = runGuest(() => ctx.callFunction(describeError, ctx.undefined, error));
+          if (described.error) described.error.dispose();
+          else {
+            description = JSON.parse(ctx.getString(described.value)) ?? description;
+            described.value.dispose();
+          }
+          if (wallInterrupted || Date.now() >= deadline) return timedOut();
+          if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
+        }
+        const name = description && typeof description === "object" && "name" in description && typeof description.name === "string" ? description.name : "Error";
+        const stack = description && typeof description === "object" && "stack" in description && typeof description.stack === "string" ? description.stack : "";
         const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
-        return { result: undefined, error: formatGuestError(dumped).slice(0, 4_000), failure: {
+        return { result: undefined, error: formatGuestError(description).slice(0, 4000), failure: {
           name, ...(call ? { call } : {}), ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}),
         } };
       };
@@ -440,11 +481,10 @@ export async function executeQuickJs(
 
       const setup = runGuest(() => ctx.evalCode(setupScript(providers)));
       if (setup.error) {
-        const detail = formatGuestError(ctx.dump(setup.error));
+        const rejection = rejected(setup.error);
         setup.error.dispose();
-        if (wallInterrupted) return finish(timedOut());
-        if (cpuInterrupted) return fail(cpuTimeoutError);
-        return fail(`Sandbox setup failed: ${detail}`);
+        return finish(rejection.timedOut || cpuInterrupted ? rejection
+          : { ...rejection, error: `Sandbox setup failed: ${rejection.error}` });
       }
       setup.value.dispose();
 
@@ -452,11 +492,9 @@ export async function executeQuickJs(
         ctx.evalCode(`Promise.resolve((\n${normalizeCode(code)}\n)())`),
       );
       if (evaluated.error) {
-        const dumped = ctx.dump(evaluated.error);
+        const rejection = rejected(evaluated.error);
         evaluated.error.dispose();
-        if (isInterrupt(dumped) && wallInterrupted) return finish(timedOut());
-        if (isInterrupt(dumped) && cpuInterrupted) return fail(cpuTimeoutError);
-        return fail(formatGuestError(dumped), dumped);
+        return finish(rejection);
       }
       const promiseHandle = evaluated.value;
 
@@ -471,14 +509,7 @@ export async function executeQuickJs(
           const jobs = runGuest(() => ctx.runtime.executePendingJobs());
           if (jobs.error) {
             const rejection = rejected(jobs.error);
-            const dumped = ctx.dump(jobs.error);
             jobs.error.dispose();
-            if (isInterrupt(dumped) && wallInterrupted) {
-              return timedOut();
-            }
-            if (isInterrupt(dumped) && cpuInterrupted) {
-              return { result: undefined, error: cpuTimeoutError };
-            }
             return rejection;
           }
           const state = ctx.getPromiseState(promiseHandle);
@@ -489,14 +520,7 @@ export async function executeQuickJs(
           }
           if (state.type === "rejected") {
             const rejection = rejected(state.error);
-            const dumped = ctx.dump(state.error);
             state.error.dispose();
-            if (isInterrupt(dumped) && wallInterrupted) {
-              return timedOut();
-            }
-            if (isInterrupt(dumped) && cpuInterrupted) {
-              return { result: undefined, error: cpuTimeoutError };
-            }
             return rejection;
           }
           if (bridge.pending === 0) {

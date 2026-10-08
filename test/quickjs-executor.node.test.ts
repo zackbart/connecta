@@ -1,4 +1,5 @@
 // Node-only: runs the Node QuickJS child-process executor.
+import { QuickJSContext } from "quickjs-emscripten";
 import { ConnectorCallError } from "../src/errors.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { api } from "../src/connectors/api.js";
@@ -270,6 +271,72 @@ describe("quickJsExecutor", () => {
     );
     expect(out.result).toBeUndefined();
     expect(out.error).toContain("guest sad");
+  });
+
+  it.each(["native-error", "plain-object", "proxy"] as const)("INV-3 INV-7: describes a rejected %s without guest getters or serialization", async (kind) => {
+    const ex = quickJsExecutor({ timeoutMs: 1000, cpuTimeMs: 100 });
+    const thrown = kind === "native-error" ? `new Error("original")`
+      : kind === "plain-object" ? `{}` : `new Proxy(new Error("proxy"), {
+        get() { console.log("proxy getter ran"); while (true) {} },
+        getOwnPropertyDescriptor() { console.log("proxy descriptor ran"); while (true) {} },
+        getPrototypeOf() { console.log("proxy prototype ran"); while (true) {} }
+      })`;
+    const out = await ex.execute(`async () => {
+      const error = ${thrown};
+      ${kind === "proxy" ? "" : `Object.defineProperties(error, {
+        name: { get() { console.log("name getter ran"); while (true) {} } },
+        message: { get() { console.log("message getter ran"); while (true) {} } },
+        stack: { get() { console.log("stack getter ran"); while (true) {} } },
+        toJSON: { value() { console.log("toJSON ran"); while (true) {} } }
+      });`}
+      Object.defineProperty(Object.prototype, "value", { get() { console.log("descriptor getter ran"); while (true) {} } });
+      throw error;
+    }`, []);
+    expect(out).toMatchObject({ error: "Program threw a value.", failure: { name: "Error" } });
+    expect(out.logs).toBeUndefined();
+    expect(out.failure?.timeout).toBeUndefined();
+  });
+
+  it("[E6] keeps native Error data and source locations in safe rejection descriptions", async () => {
+    const out = await quickJsExecutor().execute(`async () => {
+      throw new TypeError("native data");
+    }`, []);
+    expect(out).toMatchObject({ error: "TypeError: native data", failure: { name: "TypeError", line: 2 } });
+  });
+
+  it("INV-3 INV-6: accessor edits do not replace a retained typed host rejection", async () => {
+    const result = await createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", quickJsExecutor(), silentLogger)({
+      code: `async () => {
+        try { await connecta.call("missing.read"); }
+        catch (error) {
+          Object.defineProperties(error, {
+            name: { get() { console.log("name getter ran"); while (true) {} } },
+            message: { get() { console.log("message getter ran"); while (true) {} } },
+            stack: { get() { console.log("stack getter ran"); while (true) {} } }
+          });
+          throw error;
+        }
+      }`,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { code: "unknown_address" },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
+    expect(result.structuredContent).not.toHaveProperty("logs");
+  });
+
+  it.each(["cpu", "wall"] as const)("INV-7: checks %s interruption before inspecting a rejected handle", async (budget) => {
+    await prepareQuickJs();
+    const dump = vi.spyOn(QuickJSContext.prototype, "dump");
+    try {
+      const out = await executeQuickJs(`async () => { await Promise.resolve(); while (true) {} }`, [], {
+        timeoutMs: budget === "wall" ? 25 : 5000,
+        cpuTimeMs: budget === "cpu" ? 25 : 5000,
+        memoryLimitBytes: 64 * 1024 * 1024, maxStackSizeBytes: 1024 * 1024,
+      });
+      expect(out.error).toBe(budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.");
+      expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
+      expect(dump).not.toHaveBeenCalled();
+    } finally { dump.mockRestore(); }
   });
 
   it("captures console output as logs", async () => {
