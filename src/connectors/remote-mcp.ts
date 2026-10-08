@@ -39,7 +39,7 @@ import {
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
-import { redactSentSecrets, sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
+import { redactCatalog, redactSentSecrets, sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
@@ -1114,9 +1114,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
-  // A cached transport may dispatch concurrent calls. Register the auth it
-  // actually sends with every call currently using that authenticated client,
-  // including a token rotated by an SDK OAuth flow. Never keep a finished call.
+  // A cached transport may dispatch concurrent calls and listings. Register
+  // its actual sent auth with every operation using that client, including
+  // handshake/discovery requests and OAuth rotations. Remove settled users.
   const activeSecrets = new WeakMap<ConnectionState, Set<SentSecrets>>();
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
     const recipients = new Set([sentSecretsFor(ctx), ...activeSecrets.get(entryFor(ctx)) ?? []]);
@@ -2244,8 +2244,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       // Publish definitions only after the full walk succeeds. A later-page
       // failure must not leave a partial validation/header view behind.
-      state.toolDefinitions = new Map(listed.map((tool) => [tool.name, tool]));
-      return listed.map((t) => ({
+      const clean = redactCatalog(ctx, listed);
+      state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
+      return clean.map((t) => ({
         name: t.name,
         ...(t.title !== undefined ? { title: t.title } : {}),
         ...(t.icons !== undefined
@@ -2493,8 +2494,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
   }
 
-  const callTool = connector.callTool;
-  connector.callTool = async (name, args, ctx, options) => {
+  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>): Promise<T> => {
     trackCredentialReads(ctx);
     const secrets = sentSecretsFor(ctx);
     if (opts.auth?.type === "headers") {
@@ -2504,19 +2504,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let active = activeSecrets.get(state);
     if (!active) { active = new Set(); activeSecrets.set(state, active); }
     active.add(secrets);
-    try { return redactSentSecrets(ctx, await callTool(name, args, ctx, options)); }
+    try { return redactSentSecrets(ctx, await run()); }
     catch (error) { throw redactSentSecrets(ctx, error); }
     finally { active.delete(secrets); }
   };
+  const callTool = connector.callTool;
+  connector.callTool = (name, args, ctx, options) =>
+    withActiveSecrets(ctx, () => callTool(name, args, ctx, options));
   const listTools = connector.listTools;
-  connector.listTools = async (ctx) => {
-    trackCredentialReads(ctx);
-    if (opts.auth?.type === "headers") {
-      for (const value of Object.values(opts.auth.headers)) sentSecretsFor(ctx).header(value);
-    }
-    try { return redactSentSecrets(ctx, await listTools(ctx)); }
-    catch (error) { throw redactSentSecrets(ctx, error); }
-  };
+  connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
 
   if (isOauth) {
     // Pin before the first asynchronous storage/discovery read, not only once

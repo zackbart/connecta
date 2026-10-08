@@ -64,6 +64,7 @@ import {
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
+import { redactCatalog, trackCredentialReads } from "./sent-secrets.js";
 import {
   GUIDE_SUMMARY_LENGTH,
   normalizeGuideSummary,
@@ -1489,9 +1490,10 @@ export class Registry implements RegistryView {
     flight?: CatalogRefreshFlight,
   ): Promise<ToolDef[]> {
     const generation = this.catalogGeneration(id);
-    // What the connector reports, decorators included. Both cache layers keep
-    // exactly this listing, and loadTools classifies it on every read.
-    const tools = (await connector.listTools(ctx)).map(tool => {
+    // Track custom/provider slot reads too. Sanitize all listing strings before
+    // drift observation, snapshotting, either cache, or an agent sees them.
+    trackCredentialReads(ctx);
+    const tools = redactCatalog(ctx, await connector.listTools(ctx)).map(tool => {
       const { classification: _ignored, ...fact } = tool;
       return fact;
     });

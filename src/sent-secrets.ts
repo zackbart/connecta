@@ -1,6 +1,7 @@
 // Credentials used by one call. Memory only; never part of a context's public
 // shape, a failure record, storage, or a log. Web APIs only.
 import { carryFailureFacts } from "./operator-record.js";
+import { ConnectorCallError } from "./errors.js";
 import type { ConnectorContext } from "./types.js";
 
 const REDACTED = "[redacted]";
@@ -268,6 +269,19 @@ export function trackCredentialReads(ctx: ConnectorContext): void {
 
 export function redactSentSecrets<T>(ctx: ConnectorContext, value: T): T {
   return sentSecretsFor(ctx).redact(value);
+}
+
+/** Sanitize listing facts before any cache or consumer receives them. A name
+ * cannot be rewritten without changing dispatch, and dropping one entry would
+ * publish a partial catalog, so refuse the complete listing instead. */
+export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext, tools: T[]): T[] {
+  const redacted = redactSentSecrets(ctx, tools);
+  if (redacted.some((tool, index) => tool.name !== tools[index]!.name)) {
+    throw new ConnectorCallError("connector_call_failed",
+      "Downstream catalog contains a tool name that echoes a sent credential; refusing the complete catalog.",
+      { retryable: false });
+  }
+  return redacted;
 }
 
 /** Register only after the transport has assembled the request it sends. */
