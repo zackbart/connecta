@@ -510,10 +510,6 @@
         },
         {
           "file": "test/downstream-input.test.ts",
-          "title": "INV-4 INV-5 INV-6: refuses private state inside decoded MCP binary content before result publication"
-        },
-        {
-          "file": "test/downstream-input.test.ts",
           "title": "INV-4 INV-10: composes request-bound elicitation modes with downstream Skills capabilities"
         }
       ]

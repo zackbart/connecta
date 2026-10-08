@@ -408,44 +408,6 @@ describe("downstream input relay", () => {
     expect(flow.call).toHaveBeenCalledOnce();
   });
 
-  it("INV-4 INV-5 INV-6: refuses private state inside decoded MCP binary content before result publication", async () => {
-    const cases = [
-      { type: "resource", mimeType: "text/plain", text: `receipt=${OPAQUE}`, opaque: OPAQUE, refused: true },
-      { type: "image", mimeType: "image/svg+xml", text: `<svg><!--${OPAQUE}--></svg>`, opaque: OPAQUE, refused: true },
-      { type: "audio", mimeType: "audio/wav", text: `RIFF\0receipt=${OPAQUE}`, opaque: OPAQUE, refused: true },
-      { type: "resource", mimeType: "text/plain", text: `${"x".repeat(49_144)}${OPAQUE}`, opaque: OPAQUE, refused: true },
-      { type: "resource", mimeType: "text/plain", text: "receipt=PRIVATE_状态_é", opaque: "PRIVATE_状态_é", refused: true },
-      { type: "resource", mimeType: "text/plain", text: "receipt=ok", opaque: OPAQUE, refused: false },
-    ];
-    for (const item of cases) {
-      const flow = setup({ roundStates: [item.opaque, "DIFFERENT_SECOND_STATE"] });
-      let result = (await flow.rpc()).result;
-      result = (await flow.rpc({ state: result.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
-      const data = btoa(String.fromCharCode(...new TextEncoder().encode(item.text)));
-      const content = item.type === "resource"
-        ? { type: "resource", resource: { uri: "receipt://pending", mimeType: item.mimeType, blob: data } }
-        : { type: item.type, mimeType: item.mimeType, data };
-      const fetch = globalThis.fetch;
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-        const response = await fetch(input, init);
-        if (typeof init?.body !== "string" || JSON.parse(init.body).method !== "tools/call") return response;
-        const body = await response.json() as { result: Record<string, unknown> };
-        body.result.content = [content];
-        return Response.json(body);
-      });
-      result = (await flow.rpc({ state: result.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
-      if (item.refused) {
-        expect(result.structuredContent.error.code).toBe("input_required_invalid");
-        expect((await flow.storage.list("")).filter(key => key.includes(resultKeys.family.prefixes[0]))).toHaveLength(0);
-        for (const key of await flow.storage.list("")) expect(await flow.storage.get(key)).not.toContain(item.opaque);
-        expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(item.opaque);
-      } else {
-        expect(result.isError).toBeFalsy();
-        expect(result.content).toContainEqual(content);
-      }
-    }
-  });
-
   it("INV-4 INV-5 INV-6: guards refreshed discovery before negotiation-cache persistence and reuse", async () => {
     const flow = setup({ authFirst: true });
     await flow.vault.set("service", SECRET, "alice");

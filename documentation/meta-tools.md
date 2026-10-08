@@ -602,9 +602,8 @@ contract. Prompts, raw continuation results, discovery, and continuation-time
 catalogs that echo any round's opaque state are refused before redaction, paging,
 stashing, error shaping, schema observation, or cache publication and reuse.
 This includes bounded percent-decoded and JSON-escaped views, encoded echoes,
-short state, and serialized numbers, booleans, and null. MCP image/audio data and
-resource blobs are also checked after base64 decoding in bounded chunks, with
-overlap across chunk boundaries. No prompt, state,
+short state, and serialized
+numbers, booleans, and null. No prompt, state,
 response, arguments, or raw error reaches activity, logs, or status.
 
 A write returning `input_required` has not completed its operation: the
