@@ -24,6 +24,7 @@ import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkQueuedWriteAtExhaustion,
+  checkSharedPreludes,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
@@ -277,6 +278,10 @@ describe.skipIf(!workerExecutor)(
       expect(lateReads).toBe(0);
     });
     for (const custom of [false, true]) {
+      it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {
+        const executor = required(workerExecutor);
+        await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+      });
       for (const contractCase of CONTRACT_CASES) {
         it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
           const harness = contractHarness();

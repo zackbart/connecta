@@ -82,17 +82,18 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             const names = hostProviders.map(provider => provider.name).join(", ");
             const globals = hostProviders.map(provider => `globalThis[${JSON.stringify(provider.name)}] = ${provider.name};`).join("\n");
             let isolated = source.slice(0, index) + "__connecta_program" + source.slice(index + executableCode.length);
-            const helpers: string[] = [];
+            const preludes: string[] = [];
             let firstInitializer: string | undefined;
-            for (const [providerIndex, provider] of hostProviders.entries()) {
+            for (const provider of hostProviders) {
               if (!provider.prelude) continue;
-              const name = `__connecta_initialize_${providerIndex}`;
-              const call = `${name}(${names});`;
               if (!isolated.includes(provider.prelude)) throw new Error("Worker provider setup was unavailable.");
-              helpers.push(`const ${name} = (${names}) => {\n${provider.prelude}\n};`);
+              preludes.push(provider.prelude);
+              const call = firstInitializer ? "" : `__connecta_initialize(${names});`;
               isolated = isolated.replace(provider.prelude, call);
-              firstInitializer ??= call;
+              firstInitializer ||= call;
             }
+            // Successive preludes share lexical bindings in both executors.
+            const initializer = preludes.length ? `const __connecta_initialize = (${names}) => {\n${preludes.join("\n")}\n};\n` : "";
             const before = firstInitializer ? isolated.indexOf(firstInitializer) : isolated.indexOf("    try {\n      const result = await Promise.race");
             if (before < 0) throw new Error("Worker provider setup was unavailable.");
             // Exported class methods and the guest callback must contain no
@@ -101,7 +102,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               ? 'import __connecta_user_program from "./connecta-guest.js";\n'
               : 'import __connecta_program from "./connecta-guest.js";\n';
             const wrapper = guest ? `const __connecta_program = (${guest.wrapper});\n` : "";
-            const main = imports + helpers.join("\n") + "\n" + wrapper + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
+            const main = imports + initializer + wrapper + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
             return track(Reflect.apply(Reflect.get(target, key), target, [{ ...definition, modules: {
               ...definition.modules,
               "executor.js": main,

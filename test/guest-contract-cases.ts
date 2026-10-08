@@ -14,6 +14,16 @@ import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 export const CONTRACT_BASE = "https://connecta.contract";
 
+/** Provider preludes run together before a guest's callback in both sandboxes. */
+export async function checkSharedPreludes(executor: Executor): Promise<void> {
+  const result = await executor.execute("async () => combineFromPrelude(2, 3)", [
+    { name: "first", fns: { noop: async () => 1 }, prelude: "const combine = (a, b) => a + b;" },
+    { name: "second", fns: { noop: async () => 2 }, prelude: "globalThis.combineFromPrelude = (a, b) => combine(a, b);" },
+  ]);
+  expect(result.error).toBeUndefined();
+  expect(result.result).toBe(5);
+}
+
 /** Review regression: a write passed its gate but is still in admission. */
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
@@ -884,7 +894,7 @@ return fs;
         }
       }
       return { privateLiterals: /__connecta_run_[a-f0-9]{32}|connecta-error:[a-f0-9]{32}:/.test(sources.join("\\n")),
-        privateBindings: typeof __connecta_program !== "undefined" || typeof __connecta_initialize_0 !== "undefined" || typeof __connecta_user_program !== "undefined" };
+        privateBindings: typeof __connecta_program !== "undefined" || typeof __connecta_initialize !== "undefined" || typeof __connecta_user_program !== "undefined" };
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);

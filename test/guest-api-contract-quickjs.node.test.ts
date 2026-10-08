@@ -9,6 +9,7 @@ import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkQueuedWriteAtExhaustion,
+  checkSharedPreludes,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
@@ -37,6 +38,9 @@ describe("guest API contract (QuickJS executor)", () => {
     await checkQueuedWriteAtExhaustion(executor);
   });
   for (const custom of [false, true]) {
+    it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {
+      await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
     for (const contractCase of CONTRACT_CASES) {
       it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
         const harness = contractHarness();
