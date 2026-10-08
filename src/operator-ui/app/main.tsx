@@ -21,16 +21,22 @@ import {
   type OperatorState,
 } from "../view.js";
 import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
+import { ConnectorsPage } from "./connectors.js";
+import { ConfigPage } from "./config-page.js";
+import { AccessPage } from "./access.js";
+import { ToolsPage } from "./tools.js";
+import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
-import { ConnectionsPage } from "./connections.js";
+import { ConnectorDetailPage } from "./connector-detail.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
   boot,
   focusHandled,
   forgetBearer,
   getState,
+  loadOperatorContract,
   loadActivity,
   loadAccessTokens,
   signIn,
@@ -60,6 +66,8 @@ function visiblePages(state: OperatorState): OperatorPage[] {
   // artifact origin, a first visit — only what this page can vouch for shows.
   const hint = state.data ? null : navHint();
   return OPERATOR_PAGES.filter((page) => {
+    if (page === "activity" && state.contract) return state.contract.you.permissions.activity;
+    if (page === "artifacts" && state.contract) return state.contract.you.permissions.artifacts;
     if (page === "tokens") return state.data?.accessTokenManagement === "available";
     if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
     if (page === "artifacts") {
@@ -197,11 +205,17 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "config") return <ConfigPage state={state} />;
+  if (state.page === "access") return <AccessPage state={state} />;
+  if (state.page === "tools") return <ToolsPage state={state} />;
+  if (state.page === "connector") return <ConnectorDetailPage state={state} />;
+  if (state.page === "connections") return <ConnectorsPage state={state} />;
+  if (state.page === "overview") return <OverviewPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
   if (state.page === "artifacts") return <ArtifactsPage state={state} />;
   if (state.page === "artifact") return <ArtifactPage state={state} />;
-  return <ConnectionsPage state={state} />;
+  return <OverviewPage state={state} />;
 }
 
 function OperatorApp() {
@@ -219,12 +233,14 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (state.page === "tokens" && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
+    if (!isArtifactPage(state.page) && state.data && state.contractPhase === "idle") void loadOperatorContract();
+    if ((state.page === "tokens" || (state.page === "access" && state.contract?.you.permissions.accessTokenManagement)) && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }
     if (
-      state.page === "activity" &&
+      (state.page === "activity" || state.page === "connector") &&
       state.data?.activityEnabled &&
+      state.contract?.you.permissions.activity &&
       state.activityPhase === "idle"
     ) {
       void loadActivity(true);
@@ -271,7 +287,7 @@ function mount(id: string, view: ReactNode): void {
 
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
-const routes = ["/", "/tokens", "/activity", "/artifacts", "/artifacts/$"].map(path =>
+const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity", "/artifacts", "/artifacts/$"].map(path =>
   createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
 );
 const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultPendingMinMs: 0 });

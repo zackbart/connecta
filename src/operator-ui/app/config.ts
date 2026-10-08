@@ -57,7 +57,7 @@ interface ShellConfig {
 
 const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;
 export const { auth, mcpUrl, initialPage, homeUrl, titleSuffix, productName,
-  productDescription, productOperatorLabel } = config;
+  productDescription } = config;
 
 /** Where a bearer operator's token lives between visits. */
 export const TOKEN_KEY = "connecta:token";

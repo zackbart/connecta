@@ -324,7 +324,7 @@ describe("branding in served pages", () => {
     })).fetch(new Request(`${BASE}/`));
     const body = await res.text();
     expect(body).toContain(
-      "<title>Connections — Acme MCP — Acme Inc</title>",
+      "<title>Overview — Acme MCP — Acme Inc</title>",
     );
     expect(body).toContain('content="#101010"');
     expect(body).toContain('href="https://acme.example"');

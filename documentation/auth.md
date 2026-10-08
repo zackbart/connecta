@@ -356,7 +356,7 @@ longer live; one left behind cannot complete and expires with its link.
 | --- | --- |
 | `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it. |
 | `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending consent can be reused; otherwise authorization begins in the current epoch. |
-| `GET /connect/<id>?h=...` | Verifies the signed handoff, browser identity, connector visibility, and management permission before calling `startAuth`. Redirects the verified browser to consent. |
+| `GET /connect/<id>?h=...` | Verifies the signed handoff and, when signed in, browser identity, connector visibility and management permission. With the UI mounted, hands off to `/connectors/<id>?h=...#auth` without consuming the link or starting OAuth; Clerk sign-in uses that shell. The Auth tab continues with `start=1`, which repeats verification, consumes the link and calls `startAuth`. Without the UI, the original browser visit starts consent. Explicit `POST /ui/oauth/<id>` actions return a signed link with `start=1` when the UI is mounted. |
 | `DELETE /ui/oauth/<id>` | Disconnects and invalidates the cached catalog, even if the browser leaves. |
 
 `authorize_connector` issues the same browser link, with `force` carried in the

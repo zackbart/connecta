@@ -52,6 +52,8 @@ export interface ArtifactsModule {
 
 /** The artifacts module's resolved policy, as `describeConfig()` reports it. */
 export interface ArtifactsModuleDescription {
+  /** Construction-time presence for described fields, keyed by relative dot path. */
+  optionSources?: Readonly<Record<string, "default" | "config">>;
   /** Exact origins pages may load scripts, stylesheets, and fonts from. */
   allowlist: { scripts: string[]; styles: string[]; fonts: string[] };
   /** Every resolved page limit, by name. */
@@ -65,5 +67,5 @@ export interface AccessTokensModule {
   readonly auth: import("./types.js").InboundAuth;
   handle(context: RouteContext): Promise<Response | null>;
   /** Token policy for `describeConfig()`; never token material. */
-  describe?(): { maxActive: number };
+  describe?(): { maxActive: number; optionSources?: Readonly<Record<string, "default" | "config">> };
 }

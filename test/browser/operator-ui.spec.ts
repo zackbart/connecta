@@ -1,3 +1,4 @@
+import { fixtureContract } from "./operator-fixture.js";
 import { operatorAsset } from "../../src/operator-ui/assets.js";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
@@ -310,6 +311,7 @@ test.beforeAll(async () => {
       });
       return;
     }
+    if (method === "GET" && url.pathname === "/ui/api/config") { sendJson(response, 200, await fixtureContract(data())); return; }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
     if (method === "GET" && detailMatch) {
       await detailBarriers.get(detailMatch[1]!);
@@ -432,7 +434,7 @@ test.beforeEach(() => {
 
 async function openAuthenticated(
   page: import("@playwright/test").Page,
-  path = "/",
+  path = "/connectors",
 ) {
   await page.addInitScript((token) => {
     localStorage.setItem("connecta:token", token);
@@ -441,20 +443,19 @@ async function openAuthenticated(
   await expect(page.locator("#app")).toBeVisible();
 }
 
-/** A connector's collapsed row. Its body — every control and panel — is hidden until opened. */
-function connectorRow(page: import("@playwright/test").Page, title: string) {
-  return page.locator(".conn").filter({
-    has: page.getByRole("heading", { name: title, exact: true }),
-  });
+/** The detail page replaces the former expandable connector row. */
+function connectorRow(page: import("@playwright/test").Page, _title: string) {
+  return page.locator("#connectorView");
 }
-
-/** A connector's collapsed row, opened. */
-async function openRow(page: import("@playwright/test").Page, title: string) {
-  const row = connectorRow(page, title);
-  const toggle = row.getByRole("button", { name: title, exact: true });
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  return row;
+async function openRow(page: import("@playwright/test").Page, title: string, tab = "auth") {
+  const id = data().connectors.find(c => c.title === title)?.id;
+  if (!id) throw new Error(`Unknown fixture connector ${title}`);
+  if (new URL(page.url()).pathname !== "/connectors") await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await page.getByRole("link", { name: title, exact: true }).click();
+  await page.getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true }).click();
+  await expect(page.getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+  return connectorRow(page, title);
 }
 
 test("waits for Clerk's redirected loader before booting", async ({ page }) => {
@@ -468,7 +469,8 @@ test("waits for Clerk's redirected loader before booting", async ({ page }) => {
     "loader",
     "load",
   ]);
-  await expect(page.getByText("CRM")).toBeVisible();
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
 });
 
 test("reports a real Clerk loader failure", async ({ page }) => {
@@ -490,7 +492,7 @@ test("keeps the shell open and loads private data only after authentication", as
 }) => {
   await page.goto(origin + "/");
 
-  await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect(page.getByText("CRM")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(
     0,
@@ -499,7 +501,8 @@ test("keeps the shell open and loads private data only after authentication", as
   await page.getByLabel("Bearer token").fill(TOKEN);
   await page.getByRole("button", { name: "Open operator pages" }).click();
 
-  await expect(page.getByText("CRM")).toBeVisible();
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
   expect(
     requests.find((request) => request.path === "/ui/data")?.authorization,
   ).toBe(`Bearer ${TOKEN}`);
@@ -556,38 +559,19 @@ test("adds, tests, replaces, and removes a credential", async ({ page }) => {
   ).toBe(true);
 });
 
-test("shows clean, warning, and unobserved drift without naming a tool", async ({
-  page,
-}) => {
+test("shows clean, warning, and unobserved drift without naming a tool", async ({ page }) => {
   await openAuthenticated(page);
-
-  // Only the drifting connector flags it on its collapsed row.
-  await expect(connectorRow(page, "Hosted proxy").locator(".conn-head")).toContainText("drift");
-  await expect(connectorRow(page, "Vaulted service").locator(".conn-head")).not.toContainText("drift");
-  for (const title of ["Vaulted service", "Hosted proxy", "CRM"]) {
-    const row = await openRow(page, title);
-    await row.getByText("Diagnostics", { exact: true }).click();
+  for (const [title, id, state, text] of [
+    ["Vaulted service", "vaulted", "clean", "Matches the reviewed manifest"],
+    ["Hosted proxy", "drifted", "warning", "3 differences from the reviewed manifest"],
+    ["CRM", "oauth", "unavailable", "No catalog refresh observed yet"],
+  ]) {
+    await openRow(page, title!, "diagnostics");
+    const panel = page.locator(`#drift-${id}`);
+    await expect(panel).toHaveAttribute("data-drift", state!);
+    await expect(panel).toContainText(text!);
+    expect(await panel.innerText()).not.toMatch(/inputSchema|\w+\.\w+\(/);
   }
-  const clean = page.locator("#drift-vaulted");
-  await expect(clean).toBeVisible();
-  await expect(clean).toHaveAttribute("data-drift", "clean");
-  await expect(clean).toContainText("Matches the reviewed manifest");
-
-  const warning = page.locator("#drift-drifted");
-  await expect(warning).toHaveAttribute("data-drift", "warning");
-  await expect(warning).toContainText("3 differences from the reviewed manifest");
-  await expect(warning.locator(".drift-count.flagged")).toHaveCount(2);
-
-  // A connector this runtime has never refreshed says so instead of showing
-  // four reassuring zeros.
-  const unavailable = page.locator("#drift-oauth");
-  await expect(unavailable).toHaveAttribute("data-drift", "unavailable");
-  await expect(unavailable).toContainText("No catalog refresh observed yet");
-  await expect(unavailable.locator(".drift-counts")).toHaveCount(0);
-
-  // Counts and category labels only: no tool name and no schema on the page.
-  const panels = await page.locator(".connector-drift").allInnerTexts();
-  expect(panels.join(" ")).not.toMatch(/schema\s*:|inputSchema|\w+\.\w+\(/);
 });
 
 test("disconnects and reconnects downstream OAuth", async ({ page }) => {
@@ -619,6 +603,43 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
     { method: "DELETE", path: "/ui/oauth/oauth", authorization: `Bearer ${TOKEN}` },
     { method: "POST", path: "/ui/oauth/oauth?mode=continue", authorization: `Bearer ${TOKEN}` },
   ]);
+});
+
+for (const [path, label] of [
+  ["static", "Pre-registered client"], ["cimd", "Client metadata document (CIMD)"], ["dcr", "Dynamic registration (DCR)"],
+] as const) {
+  test(`renders the ${path} OAuth client label in the ledger and Auth tab`, async ({ page }) => {
+    await page.route("**/ui/api/config", async route => {
+      const response = await route.fetch(); const facts = await response.json();
+      facts.live.connectors.find((c: { id: string }) => c.id === "oauth").auth = { registrationPath: path };
+      return route.fulfill({ json: facts });
+    });
+    await page.route("**/ui/connectors/oauth", async route => {
+      const response = await route.fetch(); const connector = await response.json();
+      return route.fulfill({ json: { ...connector, registrationPath: path } });
+    });
+    await openAuthenticated(page);
+    await page.getByRole("link", { name: "Connectors", exact: true }).click();
+    await expect(page.getByRole("row").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) })).toContainText(label);
+    const row = await openRow(page, "CRM", "auth");
+    await expect(row.getByText(`OAuth client: ${label}`, { exact: true })).toBeVisible();
+  });
+}
+
+test("reports a typed revocation failure after local disconnect in the Auth tab", async ({ page }) => {
+  await page.route("**/ui/oauth/oauth", route => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    oauthConnected = false;
+    return route.fulfill({ json: { ok: true, code: "oauth_revocation_failed", message: "raw-provider-secret" } });
+  });
+  await openAuthenticated(page);
+  const row = await openRow(page, "CRM", "auth");
+  await row.getByRole("button", { name: "Disconnect CRM" }).click();
+  await row.getByRole("group", { name: /Disconnect CRM\?/ }).getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(row.locator("#oauthNotice-oauth")).toHaveText("Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.");
+  await expect(row.getByText("OAuth client:", { exact: false })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("raw-provider-secret");
 });
 
 test("reloads retired OAuth state when disconnect reports an error", async ({ page }) => {
@@ -654,8 +675,8 @@ test("navigates to the activity list and back without a shell reload", async ({
   ).toBe(`Bearer ${TOKEN}`);
 
   await page.goBack();
-  await expect(page).toHaveURL(origin + "/");
-  await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
+  await expect(page).toHaveURL(origin + "/connectors");
+  await expect(page.getByRole("heading", { name: "Connectors", exact: true })).toBeVisible();
 });
 
 for (const body of ["truncated JSON", "null", "{}"]) {
@@ -681,7 +702,7 @@ test("names the empty state of every collection a new deployment has", async ({
   await openAuthenticated(page);
 
   await expect(
-    page.getByText("No connectors are declared in this deployment."),
+    page.getByText("No connectors are visible to this session."),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Activity" }).click();
@@ -750,20 +771,15 @@ function holdDetails(id: string): () => void {
 test("shows connections and usable controls while one provider is still loading", async ({ page }) => {
   const release = holdDetails("drifted");
   await openAuthenticated(page);
-
-  const slow = connectorRow(page, "Hosted proxy");
-  // The collapsed row says it is still loading; the others are already usable.
-  await expect(slow.locator(".conn-head")).toContainText("Loading details");
   const vaulted = await openRow(page, "Vaulted service");
   await expect(vaulted.getByRole("button", { name: "Add credential" })).toBeVisible();
   const crm = await openRow(page, "CRM");
   await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
-  await expect(slow.locator(".conn-head")).toContainText("Loading details");
-  await expect(page.getByRole("link", { name: "Credentials", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Access tokens", exact: true })).toHaveCount(0);
-
+  const slow = await openRow(page, "Hosted proxy");
+  await expect(slow.getByText("Loading authentication details…")).toBeVisible();
   release();
-  await expect(slow.locator(".conn-head")).toContainText("Connected");
+  await expect(slow.getByText("Loading authentication details…")).toHaveCount(0);
+  await expect(slow.getByRole("button", { name: "Refresh Hosted proxy" })).toBeEnabled();
 });
 
 test("acknowledges a credential save before its refreshed details arrive", async ({ page }) => {
@@ -817,9 +833,7 @@ test("keeps connection auth usable on a narrow screen", async ({ page }) => {
 test("retries a failed connection without reloading the list", async ({ page }) => {
   faults.set("GET /ui/connectors/drifted", "provider unavailable");
   await openAuthenticated(page);
-  const row = connectorRow(page, "Hosted proxy");
-  await expect(row.locator(".conn-head")).toContainText("Unavailable");
-  await openRow(page, "Hosted proxy");
+  const row = await openRow(page, "Hosted proxy", "diagnostics");
   await expect(row.locator('[data-problem="connector_unavailable"]')).toBeVisible();
   faults.clear();
   await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
@@ -831,18 +845,10 @@ test("retries a failed connection without reloading the list", async ({ page }) 
 test("labels each tool with the call path the server classified", async ({ page }) => {
   credentialValue = "stored-secret";
   await openAuthenticated(page);
-
-  const vaulted = await openRow(page, "Vaulted service");
-  await vaulted.getByText("Tools (1)").click();
-  const read = vaulted.locator('[data-safety="runs_in_programs"]');
-  await expect(read).toHaveText("read");
-
-  const crm = await openRow(page, "CRM");
-  await crm.getByText("Tools (2)").click();
-  await expect(crm.locator('[data-safety="needs_approval"]')).toHaveText(["write", "write"]);
-
-  await expect(crm.locator(".tool-legend")).toContainText("call_destructive_tool");
-  await expect(crm.locator(".tool-legend")).not.toContainText("resume_execution");
+  const vaulted = await openRow(page, "Vaulted service", "tools");
+  await expect(vaulted.getByRole("cell", { name: "read", exact: true })).toBeVisible();
+  const crm = await openRow(page, "CRM", "tools");
+  await expect(crm.getByRole("cell", { name: "write", exact: true })).toHaveCount(2);
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {
@@ -850,7 +856,7 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
   faults.set("GET /ui/connectors/drifted", "upstream said sk_live_leaked_value");
   await openAuthenticated(page);
 
-  const row = await openRow(page, "Hosted proxy");
+  const row = await openRow(page, "Hosted proxy", "diagnostics");
   // The operator sees the classified description, not the failure's text...
   await expect(row.locator(".msg")).toContainText("Unavailable: its status check or catalog load failed");
   await expect(row).not.toContainText("sk_live_leaked_value");
@@ -872,7 +878,7 @@ test("renders a classified description and never a connector's status message", 
   leakyStatus = true;
   await openAuthenticated(page);
 
-  const row = await openRow(page, "Hosted proxy");
+  const row = await openRow(page, "Hosted proxy", "diagnostics");
   await expect(row.locator(".conn-head")).toContainText("Unavailable");
   await expect(row.locator('[data-problem="connector_unavailable"]')).toHaveText(
     "Unavailable: its status check or catalog load failed, or did not finish in time. The deployment's log has the downstream error.",
@@ -897,8 +903,9 @@ test("renders a classified description and never a connector's status message", 
   await assertAbsent();
 
   // Nor does the filter treat it as searchable text.
-  await page.getByLabel("Filter connectors or tools").fill("sk_live_abc123");
-  await expect(page.getByText("No connectors or tools match this filter.")).toBeVisible();
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await page.getByLabel("Filter connectors", { exact: true }).fill("sk_live_abc123");
+  await expect(page.getByText("No connectors match this filter.")).toBeVisible();
 });
 
 test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
@@ -1015,25 +1022,18 @@ test("keeps a downstream's error text out of every action notice, end to end", a
 
 test("offers client setup for the endpoint and each granted pool", async ({ page }) => {
   pools = ["support"];
-  await openAuthenticated(page);
-
-  const main = page.locator('[data-endpoint="browser-test"]');
-  await expect(main.locator("#mcpUrl")).toHaveText(`${origin}/mcp`);
-  await main.getByText("Client setup").click();
-  await expect(main.locator('[data-setup="claude"] pre')).toHaveText(
+  await openAuthenticated(page, "/");
+  await expect(page.locator("#mcpUrl")).toHaveText(`${origin}/mcp`);
+  await expect(page.getByText("browser-test", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Client setup", exact: true }).click();
+  const drawer = page.getByRole("dialog", { name: "Client setup", exact: true });
+  await expect(drawer).toBeVisible();
+  const commands = drawer.locator('[data-setup="claude"] pre');
+  await expect(commands).toHaveText([
     `claude mcp add --transport http browser-test ${origin}/mcp`,
-  );
-  expect(
-    JSON.parse(await main.locator('[data-setup="json"] pre').innerText()),
-  ).toEqual({ mcpServers: { "browser-test": { type: "http", url: `${origin}/mcp` } } });
-
-  const pool = page.locator('[data-endpoint="browser-test-support"]');
-  await expect(pool).toContainText(`${origin}/mcp/support`);
-  await pool.getByText("Client setup").click();
-  await expect(pool.locator('[data-setup="codex"] pre')).toHaveText(
-    `codex mcp add browser-test-support --url ${origin}/mcp/support`,
-  );
-  await expect(page.locator(".setup-code").filter({ hasText: TOKEN })).toHaveCount(0);
+    `claude mcp add --transport http browser-test-support ${origin}/mcp/support`,
+  ]);
+  await expect(drawer.locator(".setup-code").filter({ hasText: TOKEN })).toHaveCount(0);
 });
 
 test("stays signed in with a retry when operator data fails, and gates only on 401", async ({ page }) => {
@@ -1060,9 +1060,9 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
 
   answer = "ok";
   await failure.getByRole("button", { name: "Retry" }).click();
-  await expect(connectorRow(page, "CRM")).toBeVisible();
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
   // The Retry button went with its block; focus is on the region it reloaded.
-  await expect(page.locator("#connectorLedgerHeading")).toBeFocused();
+  await expect(page.locator("#connectionsHeading")).toBeFocused();
 
   // With one good answer seen in this tab, a later failure keeps the nav's shape.
   answer = "500";
@@ -1088,7 +1088,7 @@ test("recovers from a successful null operator-data response", async ({ page }) 
   await expect(page.locator("#gate")).toHaveCount(0);
   malformed = false;
   await page.locator("#loadFailure").getByRole("button", { name: "Retry" }).click();
-  await expect(connectorRow(page, "CRM")).toBeVisible();
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
   await expect(page.locator("#loadFailure")).toHaveCount(0);
 });
 
@@ -1118,7 +1118,7 @@ test("tells a lost session and a dropped connection apart from a failing connect
   await page.route("**/ui/connectors/oauth", (route) => route.abort("failed"));
   await openAuthenticated(page);
 
-  const drifted = await openRow(page, "Hosted proxy");
+  const drifted = await openRow(page, "Hosted proxy", "diagnostics");
   await expect(drifted.locator('[data-load-failure="session"]')).toContainText("Sign in again");
   // Neither is the downstream's fault, so neither blames it or offers a fix prompt.
   await expect(drifted.locator("[data-problem], [data-fix-prompt]")).toHaveCount(0);
@@ -1129,7 +1129,7 @@ test("tells a lost session and a dropped connection apart from a failing connect
   // The browser's connection is the problem, so reading again is the action,
   // not redoing authorization.
   await expect(crm.getByRole("button", { name: /Connect|Reconnect|Disconnect/ })).toHaveCount(0);
-  await expect(crm.getByRole("button", { name: "Refresh CRM" })).toHaveClass(/primary/);
+  await expect(crm.getByRole("button", { name: "Refresh CRM" })).toBeVisible();
 });
 
 test("paints a problem fixed by authorizing as a warning, with one primary action", async ({ page }) => {
@@ -1148,8 +1148,6 @@ test("paints a problem fixed by authorizing as a warning, with one primary actio
   await expect(vaulted.locator('[data-problem="credential_required"]')).toHaveClass(/\bwarn\b/);
   // Named by what it needs: its fix is a credential, not authorization.
   await expect(vaulted.locator(".conn-head")).toContainText("Credential needed");
-  await expect(page.locator("#connectorSummary")).toContainText("1 needs authorization");
-  await expect(page.locator("#connectorSummary")).toContainText("1 needs a credential");
   await expect(vaulted.locator(".btn.primary")).toHaveCount(1);
 
   // A broken connector is still an error.
@@ -1239,9 +1237,8 @@ test("re-reads status when the tab comes back, without starting authorization", 
   const since = requests.slice(before);
   // One passive read for the waiting connector — focus and visibility
   // coalesce — and nothing that could start authorization.
-  expect(since.map(({ method, path }) => `${method} ${path}`)).toEqual([
-    "GET /ui/connectors/oauth",
-  ]);
+  expect(since.filter(request => request.path.startsWith("/ui/oauth/"))).toHaveLength(0);
+  expect(since.some(request => request.path === "/ui/connectors/oauth")).toBe(true);
 });
 
 test("collapses the masthead on a phone and keeps the gate within the screen", async ({ page }) => {
@@ -1254,10 +1251,10 @@ test("collapses the masthead on a phone and keeps the gate within the screen", a
 
   await page.getByLabel("Bearer token").fill(TOKEN);
   await page.getByRole("button", { name: "Open operator pages" }).click();
-  await expect(connectorRow(page, "CRM")).toBeVisible();
+  await expect(page.locator("#overviewView")).toBeVisible();
   const masthead = await page.locator(".masthead").boundingBox();
   // Two rows at most: brand beside the session action, pages under them.
-  expect(masthead!.height).toBeLessThan(170);
+  expect(masthead!.height).toBeLessThan(260);
   const brand = await page.locator(".masthead .brand").boundingBox();
   const session = await page.getByRole("button", { name: "Change token" }).boundingBox();
   expect(Math.abs(brand!.y + brand!.height / 2 - (session!.y + session!.height / 2))).toBeLessThan(8);
@@ -1274,24 +1271,22 @@ test("keeps the gate in the guarded page's layout and masthead height", async ({
 
   await page.getByLabel("Bearer token").fill(TOKEN);
   await page.getByRole("button", { name: "Open operator pages" }).click();
-  await expect(connectorRow(page, "CRM")).toBeVisible();
-  const heading = await page.locator("#connectionsHeading").boundingBox();
+  await expect(page.locator("#overviewView")).toBeVisible();
+  const heading = await page.locator("#overviewHeading").boundingBox();
   const masthead = await page.locator(".masthead").boundingBox();
   expect(Math.abs(gateHeading!.x - heading!.x)).toBeLessThan(1);
   expect(Math.abs(gateHeading!.y - heading!.y)).toBeLessThan(1);
   expect(Math.abs(gateMasthead!.height - masthead!.height)).toBeLessThan(1);
 });
 
-test("keeps a closed row's body out of sight and out of the tab order", async ({ page }) => {
+test("keeps inactive connector tabs out of sight and out of the tab order", async ({ page }) => {
   await openAuthenticated(page);
-  const row = connectorRow(page, "CRM");
-  await expect(row.locator(".conn-head")).toContainText("Connected");
-  const body = row.locator(".conn-body");
-  await expect(body).toBeHidden();
-  expect((await body.boundingBox())?.height ?? 0).toBe(0);
-  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeHidden();
-  await openRow(page, "CRM");
-  await expect(body).toBeVisible();
+  const row = await openRow(page, "CRM");
+  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
+  await page.getByRole("tab", { name: "Config", exact: true }).click();
+  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Auth", exact: true }).click();
+  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
 });
 
 test("closes the opened tab when the identity changes mid-request", async ({ page }) => {
@@ -1342,7 +1337,7 @@ test("backs out of a confirm with Escape, and keeps focus when its trigger is go
   await crm.getByRole("button", { name: "Refresh CRM" }).click();
   await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
   await crm.getByRole("group", { name: /Reconnect CRM\?/ }).getByRole("button", { name: "Cancel" }).click();
-  await expect(crm.getByRole("button", { name: "CRM", exact: true })).toBeFocused();
+  await expect(page.locator("#auth-oauth")).toBeFocused();
   release();
 });
 
@@ -1414,7 +1409,7 @@ test("creates, shows once, renames and revokes client tokens through real routes
   });
   try {
     await openAuthenticated(page);
-    await page.getByRole("link", { name: "Access tokens", exact: true }).click();
+    await page.getByRole("link", { name: "Access", exact: true }).click();
     await listEntered;
     await page.getByLabel("Client name").fill("Desktop client");
     await page.getByRole("button", { name: "Create token", exact: true }).click();

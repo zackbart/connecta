@@ -1,3 +1,4 @@
+import type { OperatorUiContract } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
 import type {
   CredentialManagementCapability,
@@ -19,7 +20,22 @@ import type { FixPromptKind } from "./fix-prompts.js";
  * browser.
  */
 
+const REGISTRATION_LABELS: Record<NonNullable<UiConnector["registrationPath"]>, string> = {
+  cimd: "Client metadata document (CIMD)",
+  dcr: "Dynamic registration (DCR)",
+  static: "Pre-registered client",
+};
+
+export function registrationPathLabel(path: NonNullable<UiConnector["registrationPath"]>): string {
+  return REGISTRATION_LABELS[path];
+}
+
 export type OperatorPage =
+  | "overview"
+  | "tools"
+  | "access"
+  | "config"
+  | "connector"
   | "tokens"
   | "connections"
   | "activity"
@@ -28,17 +44,25 @@ export type OperatorPage =
 
 /** Pages the nav lists. A single artifact is reached from the library, not the nav. */
 export const OPERATOR_PAGES: readonly OperatorPage[] = [
+  "overview",
   "connections",
-  "tokens",
+  "tools",
+  "access",
   "activity",
   "artifacts",
+  "config",
 ];
 
 export const PAGE_META: Readonly<
   Record<OperatorPage, { path: string; label: string }>
 > = {
+  overview: { path: "/", label: "Overview" },
+  connector: { path: "/connectors", label: "Connector" },
+  tools: { path: "/tools", label: "Tools" },
+  access: { path: "/access", label: "Access" },
+  config: { path: "/config", label: "Config" },
   tokens: { path: "/tokens", label: "Access tokens" },
-  connections: { path: "/", label: "Connections" },
+  connections: { path: "/connectors", label: "Connectors" },
   activity: { path: "/activity", label: "Activity" },
   artifacts: { path: "/artifacts", label: "Artifacts" },
   artifact: { path: "/artifacts", label: "Artifact" },
@@ -67,6 +91,8 @@ export function checkingCopy(page: OperatorPage): string {
 }
 
 export function pageForPath(path: string): OperatorPage {
+  if (/^\/connectors\/[a-z0-9_-]+$/.test(path)) return "connector";
+  if (path === "/tokens") return "tokens";
   if (path.startsWith("/artifacts/")) return "artifact";
   const match = OPERATOR_PAGES.find((page) => PAGE_META[page].path === path);
   return match ?? "connections";
@@ -101,6 +127,10 @@ export interface UiActivityActor {
 }
 
 export interface UiActivityEvent {
+  id?: string;
+  requestId?: string;
+  classification?: "read" | "write";
+  resultBytes?: number;
   occurredAt: string;
   actor?: UiActivityActor;
   connectorId: string;
@@ -427,6 +457,9 @@ export interface OperatorState {
    */
   focusIfLost: string | null;
   data: UiData | null;
+  contract: OperatorUiContract | null;
+  contractPhase: LoadPhase;
+  health: "loading" | "ok" | "unavailable";
   connectorFilter: string;
   oauthNotice: Notice | null;
   /** The connector row `oauthNotice` answers, which is where it renders. */
@@ -485,6 +518,9 @@ export function initialState(page: OperatorPage): OperatorState {
 function identityScopedState() {
   return {
     data: null,
+    contract: null,
+    contractPhase: "idle" as LoadPhase,
+    health: "loading" as const,
     connectorFilter: "",
     oauthNotice: null,
     oauthNoticeFor: null,
@@ -585,7 +621,7 @@ export function connectorStatusLabel(status: string, problem?: UiProblem): strin
   return "Unavailable";
 }
 
-export function toolCountLabel(count: number): string {
+function toolCountLabel(count: number): string {
   return `${count} ${count === 1 ? "tool" : "tools"}`;
 }
 

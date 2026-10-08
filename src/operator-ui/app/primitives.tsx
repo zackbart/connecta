@@ -14,14 +14,14 @@ export function Button({ className, variant = "default", asChild, ...props }: Co
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={classes("input", className)} {...props} />;
 }
-export function Dialog({ open, onOpenChange, title, description, children, returnFocusTo }: {
+export function Dialog({ open, onOpenChange, title, description, children, returnFocusTo, drawer }: {
   open: boolean; onOpenChange: (open: boolean) => void; title: string;
-  description: string; children: ReactNode; returnFocusTo: RefObject<HTMLElement | null>;
+  description: string; drawer?: boolean; children: ReactNode; returnFocusTo: RefObject<HTMLElement | null>;
 }) {
   return <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="dialog-overlay" />
-      <DialogPrimitive.Content className="dialog-content"
+      <DialogPrimitive.Content className={drawer ? "dialog-content drawer-content" : "dialog-content"}
         onCloseAutoFocus={event => { event.preventDefault(); if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus(); }}>
         <DialogPrimitive.Title className="text-base font-semibold">{title}</DialogPrimitive.Title>
         <DialogPrimitive.Description className="text-sm text-muted">{description}</DialogPrimitive.Description>
@@ -31,12 +31,12 @@ export function Dialog({ open, onOpenChange, title, description, children, retur
     </DialogPrimitive.Portal>
   </DialogPrimitive.Root>;
 }
-export function Tabs({ value, onValueChange, items }: {
-  value: string; onValueChange: (value: string) => void;
+export function Tabs({ value, onValueChange, items, label = "Color scheme" }: {
+  label?: string; value: string; onValueChange: (value: string) => void;
   items: { value: string; label: string; content: ReactNode }[];
 }) {
   return <TabsPrimitive.Root value={value} onValueChange={onValueChange}>
-    <TabsPrimitive.List className="tabs-list" aria-label="Color scheme">
+    <TabsPrimitive.List className="tabs-list" aria-label={label}>
       {items.map(item => <TabsPrimitive.Trigger key={item.value} value={item.value} className="tabs-trigger">{item.label}</TabsPrimitive.Trigger>)}
     </TabsPrimitive.List>
     {items.map(item => <TabsPrimitive.Content key={item.value} value={item.value} className="tabs-content">{item.content}</TabsPrimitive.Content>)}

@@ -107,6 +107,11 @@ describe("linear() before and after defineProvider", () => {
       auth: { type: "headers", headers: { Authorization: "Bearer secret" } },
     });
     expect(connector.describe?.()).toEqual({
+      optionSources: {
+        "source.kind": "default", "auth.mode": "config", "auth.header": "default",
+        "auth.scheme": "default", "credential.label": "default",
+        "transport.versionNegotiation": "default", "transport.redirects": "default", "transport.requireHttps": "config",
+      },
       source: { kind: "remote-mcp", provider: "linear" },
       endpoint: { origin: "https://mcp.linear.app", path: "/mcp/readonly" },
       auth: { mode: "headers", headerNames: ["Authorization"] },

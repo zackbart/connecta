@@ -1,3 +1,4 @@
+import { fixtureContract } from "./operator-fixture.js";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -31,7 +32,7 @@ test.beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", origin);
     const clerk = url.searchParams.has("clerk");
-    const access = url.searchParams.has("access") || new URL(request.headers.referer ?? origin).searchParams.has("access");
+    const access = request.headers["x-test-access"] === "1" || url.searchParams.has("access") || new URL(request.headers.referer ?? origin).searchParams.has("access");
     const result = await (access ? accessApp : apps[clerk ? 1 : 0]!).fetch(new Request(url, { method: request.method ?? "GET", headers: request.headers as Record<string, string> }), undefined,
       access ? { waitUntil() {}, access: { aud: "app", getIdentity: async () => ({ user_uuid: "access-operator" }) } } : undefined);
     response.writeHead(result.status, Object.fromEntries(result.headers));
@@ -46,21 +47,26 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await new Promise<void>(resolve => server.close(() => resolve())); });
 
 async function openShell(page: Page, scheme = "light", clerk = false) {
+  await page.route("**/ui/api/config", async route => route.fulfill({ json: await fixtureContract(fixture) }));
   await page.route("**/ui/data", route => route.fulfill({ json: { ...fixture, connectors: fixture.connectors.map(c => ({ ...c, status: "loading", toolCount: 0 })) } }));
   await page.route("**/ui/connectors/*", route => route.fulfill({ json: fixture.connectors.find(c => route.request().url().split("/").pop() === c.id) }));
   await page.addInitScript(`localStorage.setItem('connecta:token', ${JSON.stringify(TOKEN)}); localStorage.setItem('connecta:scheme', ${JSON.stringify(scheme)});`);
   await page.goto(origin + (clerk ? "/?clerk" : "/"));
-  await expect(page.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await expect(page.getByText("Slack", { exact: true })).toBeVisible();
   await page.evaluate("document.fonts.ready");
 }
 
 test("operator shell admits ambient Access without sending a stored token", async ({ page }) => {
+  // Preserve the trusted edge context after the router drops fixture query parameters.
+  await page.context().setExtraHTTPHeaders({ "X-Test-Access": "1" });
   await page.addInitScript("localStorage.setItem('connecta:token', 'stale-token');");
   const dataRequest = page.waitForRequest(request => new URL(request.url()).pathname === "/ui/data");
-  await page.goto(`${origin}/?access`);
+  await page.goto(`${origin}/access?access`);
   const request = await dataRequest;
   expect(request.headers()["authorization"]).toBeUndefined();
-  await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
+  await expect(page.locator("#inboundHeading + .rows")).toContainText("cloudflare-access");
   await expect(page.getByText("Checking your session…")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });
@@ -81,7 +87,7 @@ test("command palette filters, traps focus and restores its trigger", async ({ p
   await expect(dialog).toBeVisible();
   await page.getByPlaceholder("Search pages…").fill("Act");
   await expect(page.getByRole("option", { name: "Activity" })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Connections" })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "Connectors" })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   await page.keyboard.press("Meta+k");

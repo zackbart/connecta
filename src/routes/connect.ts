@@ -66,10 +66,17 @@ async function connect(context: RouteContext): Promise<Response> {
   const id = context.path.slice("/connect/".length);
   const handoff = await verifyOAuthHandoff(opts, baseUrl, id, context.url.searchParams.get("h"));
   if (!handoff) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+  const authPage = () => {
+    const target = new URL(`/connectors/${id}`, baseUrl);
+    target.searchParams.set("h", context.url.searchParams.get("h")!);
+    target.hash = "auth";
+    return new Response(null, { status: 302, headers: { Location: target.href, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  };
   const authz = await authorizeUiIdentity(request, baseUrl, opts.config.auth, "OAuth connection", runtimeContext, opts.config.identity);
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
     if (authz.response.status === 401 && authorizationCredential(request).kind === "absent" && !runtimeContext?.access) {
+      if (opts.config.ui) return authPage();
       const signIn = clerkSignIn(context);
       if (signIn) return signIn;
     }
@@ -81,6 +88,7 @@ async function connect(context: RouteContext): Promise<Response> {
     return refuse("Sign in as the user who requested this connection and has permission to manage it.");
   }
   if (!connector.startAuth) return refuse("unknown OAuth connector", 404);
+  if (opts.config.ui && context.url.searchParams.get("start") !== "1") return withSessionCookies(authPage(), authz.sessionCookies);
   const registry = opts.registry.scoped({ connectorIds: [id], principalKey: authz.principalKey, ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}) });
   const scope = {};
   let ctx = registry.contextFor(id, baseUrl, scope, context.defer ? { defer: context.defer } : {});

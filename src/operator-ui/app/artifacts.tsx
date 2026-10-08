@@ -1,3 +1,5 @@
+import type { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "./primitives.js";
 import { useLayoutEffect, useRef } from "react";
 import type { UiArtifactRow, UiArtifactView } from "../model.js";
 import {
@@ -23,29 +25,18 @@ import {
  * sandboxed frame, which gets it by postMessage and can reach nothing here.
  */
 
-function ArtifactRow({ row }: { row: UiArtifactRow }) {
-  const refresh = artifactRefreshBadge(row.freshness?.last);
-  return (
-    <article className="artifact-row">
-      <div>
-        <a className="artifact-title" href={`/artifacts/${row.id}`}>
-          {row.title}
-        </a>
-        <div className="artifact-meta">
-          <span className="mono">{row.id}</span> · version {row.viewVersion} · updated{" "}
-          <time dateTime={row.updatedAt}>{formatDate(row.updatedAt)}</time> by {row.updatedBy.label}
-        </div>
-      </div>
-      <div className="artifact-badges">
-        <Badge>{row.kind === "markdown" ? "Markdown" : "HTML"}</Badge>
-        {row.freshness?.state === "stale" ? <Badge tone="warn">Stale data</Badge>
-          : row.freshness?.state === "current" ? <Badge>Current data</Badge> : null}
-        {refresh ? <Badge tone={refresh.tone}>{refresh.label}</Badge> : null}
-        {row.archived ? <Badge tone="warn">Archived</Badge> : null}
-      </div>
-    </article>
-  );
-}
+const artifactColumns: ColumnDef<UiArtifactRow>[] = [
+  { accessorKey: "title", header: "Artifact", cell: ({ row }) => <div className="table-name"><a className="artifact-title" href={`/artifacts/${row.original.id}`}>{row.original.title}</a><span className="meta mono">{row.original.id}</span></div> },
+  { accessorKey: "kind", header: "Type", cell: ({ row }) => <Badge>{row.original.kind === "markdown" ? "Markdown" : "HTML"}</Badge> },
+  { accessorKey: "viewVersion", header: "Version" },
+  { accessorKey: "updatedAt", header: "Updated", cell: ({ row }) => <time dateTime={row.original.updatedAt}>{formatDate(row.original.updatedAt)}</time> },
+  { id: "by", header: "By", cell: ({ row }) => row.original.updatedBy.label },
+  { id: "state", header: "Status", cell: ({ row }) => {
+    const artifact = row.original;
+    const refresh = artifactRefreshBadge(artifact.freshness?.last);
+    return <div className="artifact-badges">{artifact.archived ? <Badge tone="warn">Archived</Badge> : <Badge>Active</Badge>}{artifact.freshness?.state === "stale" ? <Badge tone="warn">Stale data</Badge> : artifact.freshness?.state === "current" ? <Badge>Current data</Badge> : null}{refresh ? <Badge tone={refresh.tone}>{refresh.label}</Badge> : null}</div>;
+  } },
+];
 
 export function ArtifactsPage({ state }: { state: OperatorState }) {
   const loading = state.artifactPhase === "loading";
@@ -108,7 +99,7 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
             </StateBlock>
           ) : (
             <div id="artifactList" className="activity-list" aria-busy={loading ? "true" : "false"}>
-              {rows.map((row) => <ArtifactRow key={row.id} row={row} />)}
+              <DataTable data={rows} columns={artifactColumns} label="Artifacts" />
             </div>
           )}
           {/* A failed "Load more" keeps what already loaded and says so under

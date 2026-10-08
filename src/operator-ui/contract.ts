@@ -61,6 +61,8 @@ export interface OperatorUiContract {
   schemaVersion: 1;
   /** describeConfig's allowlisted snapshot, restricted to this caller's view. */
   config: ConnectaConfigDescription;
+  /** Leaf provenance, built from the same allowlisted snapshot and scoped with it. */
+  configSources?: Record<string, "default" | "config">;
   live: {
     connectors: OperatorConnectorOverlay[];
     /** Last-call lookup scans at most 1,000 recent rows. No payload or actor is returned. */

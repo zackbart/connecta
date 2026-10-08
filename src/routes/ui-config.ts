@@ -1,3 +1,4 @@
+import { configValuePaths } from "../config-value-sources.js";
 import { Effect } from "effect";
 import type { ActivityOutcome } from "../activity.js";
 import { intersectAccess, type ConnectorAccess } from "../connector-access.js";
@@ -145,6 +146,7 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
     const contract: OperatorUiContract = {
       schemaVersion: 1,
       config,
+      configSources: Object.fromEntries(configValuePaths(config).map(path => [path, opts.configValueSources?.[path] ?? "config"])),
       live: { connectors: rows, activity },
       you: {
         interactive: authz.identity.interactive,

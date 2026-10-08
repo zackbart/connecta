@@ -1,3 +1,4 @@
+import type { OperatorUiContract } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
 import type {
@@ -286,6 +287,45 @@ async function loadData(): Promise<void> {
   set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
   rememberNav(data);
   void loadConnectorDetails(data, current, token);
+}
+
+/** The typed read model uses the same token and identity fence as mutations. */
+let contractRevision = 0;
+export async function loadOperatorContract(): Promise<void> {
+  const identityCurrent = fence();
+  const revision = ++contractRevision;
+  const current = () => identityCurrent() && revision === contractRevision;
+  set({ contractPhase: "loading" });
+  try {
+    const token = await sessionToken();
+    if (!current()) return;
+    const contract = await queryClient.fetchQuery({
+      queryKey: ["operator-config", state.generation, revision],
+      queryFn: async ({ signal }) => {
+        const response = await fetch("/ui/api/config", { headers: requestHeaders(token), credentials: "same-origin", signal });
+        if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
+        if (!response.ok) throw new RequestFailure("refused");
+        const value = await response.json() as OperatorUiContract;
+        if (value.schemaVersion !== 1 || !value.config || !value.you || !Array.isArray(value.live?.connectors)) throw new RequestFailure("refused");
+        return value;
+      },
+    });
+    if (current()) set({ contract, contractPhase: "ready" });
+  } catch (error) {
+    if (!current()) return;
+    if (error instanceof RequestFailure && error.kind === "session") return gate(failure("Your session cannot read this configuration. Sign in again."));
+    set({ contract: null, contractPhase: "error" });
+  }
+}
+
+export async function loadHealth(): Promise<void> {
+  const current = fence();
+  set({ health: "loading" });
+  try {
+    const response = await fetch("/health", { credentials: "same-origin" });
+    const facts = await response.json() as { status?: unknown };
+    if (current()) set({ health: response.ok && facts.status === "ok" ? "ok" : "unavailable" });
+  } catch { if (current()) set({ health: "unavailable" }); }
 }
 
 /**
@@ -851,7 +891,7 @@ function loadCurrent(): Promise<void> {
  */
 export function retryLoad(): Promise<void> {
   set({
-    pendingFocus: state.page === "connections" ? "connectorLedgerHeading" : `${state.page}Heading`,
+    pendingFocus: `${state.page}Heading`,
   });
   return loadCurrent();
 }
@@ -859,7 +899,7 @@ export function retryLoad(): Promise<void> {
 /** Retry for a collection page, with focus kept on its heading. */
 export function retryCollection(): Promise<void> {
   set({ pendingFocus: `${state.page}Heading` });
-  if (state.page === "activity") return loadActivity(true);
+  if (state.page === "activity" || state.page === "connector") return loadActivity(true);
   if (state.page === "artifact") return loadArtifactView();
   return loadArtifacts(true);
 }
@@ -1041,7 +1081,7 @@ function applyDetail(id: string, outcome: DetailOutcome): void {
       patch.oauthBlocked = null;
     }
   }
-  set({ ...patch, data: { ...state.data, connectors } });
+  set({ ...patch, data: { ...state.data, connectors }, ...(state.contract ? { contractPhase: "idle" } : {}) });
 }
 
 let detailGeneration = 0;
@@ -1162,9 +1202,9 @@ export function createAccessToken(name: string): Promise<boolean> {
           issued,
           ...state.tokens.filter((token) => token.id !== issued.id),
         ],
-        createdToken: state.page === "tokens" ? payload.token : null,
+        createdToken: (state.page === "tokens" || state.page === "access") ? payload.token : null,
         tokenNotice: info("Access token created."),
-        pendingFocus: state.page === "tokens" ? "tokenRevealHeading" : null,
+        pendingFocus: (state.page === "tokens" || state.page === "access") ? "tokenRevealHeading" : null,
       };
     },
     failed: () => tokenFailure(failure("Access token could not be created. Check the name, capacity, and storage.")),

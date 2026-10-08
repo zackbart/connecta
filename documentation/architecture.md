@@ -990,10 +990,17 @@ compiling and configuring the real thing.
 
 `GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
 from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
-source. The response has `schemaVersion: 1`, `config`, `live`, and `you`.
+source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
 `config` is the construction-time `describeConfig()` snapshot, filtered to
 visible connectors, granted tools, classification overrides, and admitted
 pools. Pool tools are the intersection with the caller's identity grants.
+`configSources` labels each serialized leaf as `default` or `config`, based on
+option presence rather than equality with the default. Factory descriptions carry
+relative `optionSources` paths so resolved module and transport defaults retain
+their provenance. The snapshot copies only resolved values; the UI consumes
+these presence facts separately. Its paths use connector
+ids and pool names and are filtered after disclosure; hidden values leave no
+provenance keys. It contains no source code or credential material.
 Every response is private, `no-store` JSON. Only GET is allowed, with the
 same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
 
@@ -1028,5 +1035,13 @@ and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-still owns the existing page behavior; the new Phase 4 pages remain planned work
-in #708. The typed data contract above is preserved.
+owns authenticated reads and existing mutations. Overview, Connectors, connector
+detail, Tools, Access and Config consume the typed contract. Activity and
+Artifacts retain their authenticated data routes. Connector detail tabs live
+in the URL hash; Activity filters live in the query string and apply to loaded
+history. Calls group only by recorded request ids, with missing ids shown as
+separate calls. Classification and result size are shown only when recorded.
+The Access adapter reports inbound provider kinds, admitted pools, grants, trust
+and endpoint setup; token controls retain their existing permission gate.
+Configuration remains in deployment code. The UI mutates only credentials,
+OAuth connections and client tokens through the existing routes.
