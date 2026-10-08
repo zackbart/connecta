@@ -802,9 +802,9 @@ for (const [ctor, label] of [
  *
  * The SDK learns authorization-server, token, and registration URLs from the
  * downstream's own metadata and fetches them through the transport's fetch,
- * so this sits on that fetch: above `redirectSafeFetch`, whose same-origin
- * rule keeps every hop on the host checked here, and below the refresh
- * coordinator. The typed local refusal proves that this guard sent nothing;
+ * so this sits below the refresh coordinator on both send paths. Resource
+ * redirects stay same-origin; credential-bearing token requests bypass the
+ * redirect wrapper. The typed local refusal proves that this guard sent nothing;
  * failures after an HTTP dispatch keep their permanent ambiguous verdict.
  */
 function learnedUrlSafeFetch(
@@ -817,7 +817,7 @@ function learnedUrlSafeFetch(
     if (reason !== undefined) {
       throw new RemoteMcpDestinationError(connectorId, reason);
     }
-    return await baseFetch(input, init);
+    return byteReadResponse(await baseFetch(input, init));
   };
 }
 
@@ -1615,9 +1615,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         onInsufficientScope: "throw",
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
-          learnedUrlSafeFetch(id, url, guardedFetch),
+          learnedUrlSafeFetch(id, url, fetch),
           signal,
           ctx.defer,
+          learnedUrlSafeFetch(id, url, guardedFetch),
         ),
       });
       boundOAuthFlows(transport, url, [signal, ctx.signal]);

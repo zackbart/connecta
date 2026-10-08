@@ -144,7 +144,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
       [`${scopes.connector("svc")}${oauthGrantKeys.grant}`, "grant"],
       [`${scopes.connector("svc")}${oauthFlowKeys.flow("digest")}`, "consent", 900],
       [`${scopes.connector("svc")}${oauthRefreshKeys.lease("epoch", "digest")}`, "lease"],
-      [`${scopes.connector("svc")}${oauthRefreshSpentKeys.spent("digest")}`, '{"connectaOAuthRefreshSpent":1}'],
+      [`${scopes.connector("svc")}${oauthRefreshSpentKeys.spent("epoch", "digest")}`, '{"connectaOAuthRefreshSpent":1}'],
       [`${scopes.connector("svc")}${oauthRefreshActiveKeys.holder("epoch", "holder")}`, "active", 120],
       [`${scopes.connector("svc")}custom:thing`, "mine"],
       [oauthHandoffKeys.handoff("svc", "hash"), "principal", 900],

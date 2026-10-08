@@ -11,7 +11,6 @@ import type {
   ApiOAuthConfig,
   ApiOAuthHooks,
 } from "../connectors/api-connector.js";
-import { redirectSafeFetch } from "../connectors/remote-mcp.js";
 import { ConnectorCallError, msg } from "../errors.js";
 import {
   oauthPartitionFor,
@@ -389,24 +388,24 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * from configuration the token endpoint is the only URL the SDK fetches here;
    * the check keeps the headers on it even if that ever changes.
    */
-  const tokenEndpointFetch = (input: string | URL, init: RequestInit = {}) => {
+  const tokenEndpointFetch = async (input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
     if (
       settings.tokenRequestHeaders.length === 0 ||
       `${url.origin}${url.pathname}` !== settings.identity
     ) {
-      return fetch(input, init);
+      return byteReadResponse(await fetch(input, { ...init, redirect: "manual" }));
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-    return fetch(input, { ...init, headers });
+    return byteReadResponse(await fetch(input, { ...init, headers, redirect: "manual" }));
   };
 
   /**
    * The SDK's `auth()` over this provider. The token endpoint is fetched
    * through the refresh coordinator, with permanent spent fingerprints,
-   * rotation commits, and re-consent verdicts, above a fetch that refuses every redirect, as the
-   * `remoteMcp()` default does.
+   * rotation commits, and re-consent verdicts. Credential-bearing requests
+   * never follow redirects in either OAuth adapter.
    */
   const runAuth = (
     provider: StaticOAuthProvider,
@@ -418,7 +417,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       ...exchange,
       fetchFn: coordinatorFor(ctx).coordinatedFetch(
         provider,
-        redirectSafeFetch(id, "none", tokenEndpointFetch),
+        tokenEndpointFetch,
         ctx.signal,
         ctx.defer,
       ),

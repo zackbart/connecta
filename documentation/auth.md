@@ -474,18 +474,30 @@ A crash during cleanup cannot restore the disconnected grant.
 A refresh token is spent when dispatch begins. Every refresh request passes
 through `KvOAuthProvider.dispatchRefresh`. Before sending, the gate wins the
 lease's `claimed` to `dispatched` CAS and a separate create-only CAS at
-`oauth:refresh-spent:<sha256(refresh_token)>`. The latter must succeed before
-any HTTP request leaves. Connector and owner storage namespaces partition both
+`oauth:refresh-spent:<epoch>:<sha256(refresh_token)>`. The latter must succeed
+before any HTTP request leaves. Connector and owner storage namespaces partition both
 records. Spent records have **no TTL**, contain no token, and are never cleared
 by completion, failure, migration cleanup, Restart, Disconnect, or epoch sweeps.
-The spent key excludes the epoch, so reintroducing the same token in a later
-grant cannot permit another send. Copy these durable records during storage
-migration.
+The key includes the grant epoch. Reintroducing the same token within that
+epoch cannot permit another send,
+even after a reset swept its lease. A deliberate re-consent in a new epoch
+can use a byte-identical refresh token returned by the provider. Reset never
+deletes spent records or moves old credentials into a new epoch. Copy these
+durable records during storage migration.
+
+Credential-bearing token-endpoint requests never follow redirects, regardless
+of `remoteMcp()`'s `redirects` setting. The send gate uses `redirect: "manual"`
+and bypasses the resource redirect wrapper for refresh, authorization-code,
+and client-credentials grants and token revocation. Static `api()` OAuth uses
+the same gate and manual fetch. Any 3xx is a definitive failure, even if its
+body contains tokens. Fetch has already sent the request body; a refresh
+fingerprint stays spent in its epoch and the grant requires re-consent. A
+redirected code exchange is refused and its SDK retry cannot resend the code.
 
 | Outcome after dispatch | Result |
 | --- | --- |
 | Valid tokens durably committed | Release waiters with the committed tokens. Only a new refresh fingerprint can be dispatched next. |
-| Provider failure of any status, network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Record re-consent and conditionally remove the spent token's grant. This includes complete 5xx, 408, 425, and 429 responses. |
+| Provider failure of any status, network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Record re-consent and conditionally remove the spent token's grant. This includes every 3xx without following it, complete 5xx, 408, 425, and 429 responses. |
 | Valid rotation whose grant commit retries are exhausted | `auth_required`. Keep the fingerprint spent and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK. |
 | Epoch changed during commit | Drop the response tokens. Restart, Disconnect, or issuer replacement determines the newer grant. |
 
@@ -535,7 +547,7 @@ recording or token cleanup fails. Restart and Disconnect sweep obsolete lease
 and liveness records while retaining every spent record. The SDK receives
 sanitized failure responses, and provider hooks preserve the re-consent verdict
 for passive calls. A source-level guard pins both OAuth adapters to this single
-send gate.
+send gate, manual token fetches, and a separate resource redirect path.
 
 Refresh and failed code-exchange answers are rebuilt from the OAuth `error`
 code alone with fixed text. The SDK logs descriptions below the configured

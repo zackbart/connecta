@@ -18,6 +18,15 @@ export function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
   return tokenGrantType(init) === "refresh_token";
 }
 
+/** Grant exchanges and revocation forms carry credentials that must not be replayed. */
+export function isOAuthCredentialRequest(init: RequestInit | undefined): boolean {
+  if (tokenGrantType(init) !== undefined) return true;
+  if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
+  const body = init?.body;
+  const form = body instanceof URLSearchParams ? body : typeof body === "string" ? new URLSearchParams(body) : undefined;
+  return form?.has("token") === true;
+}
+
 function sdkAcceptsOAuthTokens(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
@@ -156,6 +165,9 @@ function sdkTokenFailure(
  * code becomes `server_error`, the classes the SDK already gave them.
  */
 export async function sdkSafeTokenResponse(response: Response): Promise<Response> {
+  if (response.status >= 300 && response.status < 400) {
+    return sdkTokenFailure(response, "invalid_request", 400);
+  }
   let parsed: unknown;
   try {
     parsed = await readRefreshResponse(response);
@@ -195,6 +207,13 @@ export async function refreshResponseOutcome(
   response: Response,
   signal?: AbortSignal,
 ): Promise<RefreshResponseOutcome> {
+  if (response.status >= 300 && response.status < 400) {
+    return {
+      failure: new Error("OAuth token endpoint redirected; authorization required."),
+      verdict: { kind: "dead" },
+      forSdk: sdkTokenFailure(response, "invalid_grant", 400),
+    };
+  }
   if (!response.ok) {
     let code: string | undefined;
     try {

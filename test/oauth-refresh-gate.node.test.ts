@@ -24,7 +24,7 @@ function method(node: ts.Node): string | undefined {
   return undefined;
 }
 
-it("routes every production refresh send through the permanent spent CAS gate (INV-5) (INV-9)", () => {
+it("routes every production refresh send through the epoch-scoped spent CAS gate without redirects (INV-5) (INV-9)", () => {
   const coordinator = source("auth/downstream-oauth.ts");
   const calls = nodes(coordinator).filter(ts.isCallExpression);
   const sends = calls.filter((call) => call.expression.getText() === "baseFetch");
@@ -38,6 +38,14 @@ it("routes every production refresh send through the permanent spent CAS gate (I
     if (ts.isCallExpression(parent) && parent.expression.getText() === "provider.dispatchRefresh") gated = true;
   }
   expect(gated).toBe(true);
+  for (const send of sends) {
+    const init = send.arguments[1]!;
+    expect(ts.isObjectLiteralExpression(init)).toBe(true);
+    const redirect = nodes(init).find((node) => ts.isPropertyAssignment(node) && node.name.getText() === "redirect") as ts.PropertyAssignment;
+    expect(redirect?.initializer.getText()).toBe('"manual"');
+  }
+  expect(generic.getText()).toContain("const tokenRequest = isOAuthCredentialRequest(init)");
+  expect(generic.getText()).toContain(": resourceFetch(input,");
   expect(calls.filter((call) => call.expression.getText().endsWith(".dispatchRefresh"))).toHaveLength(1);
   const gate = nodes(coordinator).find((node) => ts.isMethodDeclaration(node) && node.name.getText() === "dispatchRefresh")!;
   const gateCalls = nodes(gate).filter(ts.isCallExpression);
@@ -48,6 +56,7 @@ it("routes every production refresh send through the permanent spent CAS gate (I
   expect(spent.arguments[2]!.getText()).toBe("JSON.stringify({ connectaOAuthRefreshSpent: 1 })");
   expect(gate.getText()).toContain("if (!unspent)");
   expect(gate.getText().indexOf("if (!unspent)")).toBeLessThan(gate.getText().indexOf("const sent = send()"));
+  expect(coordinator.getText()).toContain("oauthRefreshSpentKeys.spent(epoch, digest)");
 
   // OAuth forms come from the SDK. A new direct refresh form is a new send path.
   const production = files("").map((path) => ({ path, nodes: nodes(source(path)) }));
@@ -64,6 +73,18 @@ it("routes every production refresh send through the permanent spent CAS gate (I
   ).map((call) => ({ path, call: call as ts.CallExpression })));
   expect(sdkAuthCalls.map(({ path }) => path)).toEqual(["auth/static-oauth.ts"]);
   expect(sdkAuthCalls[0]!.call.arguments[1]!.getText()).toContain("fetchFn: coordinatorFor(ctx).coordinatedFetch(");
-  const remote = source("connectors/remote-mcp.ts").getText();
-  expect(remote).toContain("authProvider: oauthProvider,\n        fetch: refreshCoordinatorFor(ctx).coordinatedFetch(");
+  const remote = source("connectors/remote-mcp.ts");
+  const adapters = nodes(remote).filter(ts.isCallExpression).filter((call) => call.expression.getText() === "refreshCoordinatorFor(ctx).coordinatedFetch");
+  expect(adapters).toHaveLength(1);
+  expect(adapters[0]!.arguments[1]!.getText()).toBe("learnedUrlSafeFetch(id, url, fetch)");
+  expect(adapters[0]!.arguments[4]!.getText()).toBe("learnedUrlSafeFetch(id, url, guardedFetch)");
+  const learned = nodes(remote).find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "learnedUrlSafeFetch")!;
+  expect(learned.getText()).not.toContain("redirectSafeFetch");
+  expect(sdkAuthCalls[0]!.call.arguments[1]!.getText()).toContain("provider,\n        tokenEndpointFetch,");
+  const staticOAuth = source("auth/static-oauth.ts");
+  expect(staticOAuth.getText()).not.toContain("redirectSafeFetch");
+  const tokenEndpoint = nodes(staticOAuth).find((node) => ts.isVariableDeclaration(node) && node.name.getText() === "tokenEndpointFetch")!;
+  const staticSends = nodes(tokenEndpoint).filter(ts.isCallExpression).filter((call) => call.expression.getText() === "fetch");
+  expect(staticSends).toHaveLength(2);
+  for (const send of staticSends) expect(send.arguments[1]!.getText()).toContain('redirect: "manual"');
 });

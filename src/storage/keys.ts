@@ -343,7 +343,7 @@ export const oauthRefreshKeys = {
     validateStorageKey(`oauth:refresh:${epoch}:${tokenDigest}`),
 } as const satisfies Keyed;
 
-/** A dispatched token is spent across all epochs. Never expire or delete these records. */
+/** A dispatched token is spent in its grant epoch. Never expire or delete these records. */
 export const oauthRefreshSpentKeys = {
   family: {
     name: "oauth-refresh-spent",
@@ -354,7 +354,7 @@ export const oauthRefreshSpentKeys = {
     ttl: { kind: "durable" },
     durable: true,
   },
-  spent: (tokenDigest: string) => validateStorageKey(`oauth:refresh-spent:${tokenDigest}`),
+  spent: (epoch: string, tokenDigest: string) => validateStorageKey(`oauth:refresh-spent:${epoch}:${tokenDigest}`),
 } as const satisfies Keyed;
 
 /** Expiry is storage-owned; dispatched fingerprints themselves never expire. */

@@ -12,6 +12,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { oauthRefreshSpentKeys } from "../src/storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { storedGrant } from "./fixtures/oauth.js";
 import { required } from "./helpers.js";
 
 afterEach(() => {
@@ -406,7 +407,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     // The fingerprint passed the dispatch gate before the local URL guard
     // refused it. That gate never reopens, even without an HTTP exchange.
     expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toBeUndefined();
-    expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-old")))).not.toBeNull();
+    expect(await storage.get(oauthRefreshSpentKeys.spent((await storedGrant(storage))!.epoch, await oauthStateDigest("refresh-old")))).not.toBeNull();
   });
 
   it("keeps a public https authorization server working", async () => {

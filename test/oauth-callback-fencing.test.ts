@@ -729,11 +729,11 @@ describe("a layout 2 migration racing a restart", () => {
 
     const keys = await backing.list("");
     for (const key of keys) {
-      expect(key).not.toContain(restart.epoch);
+      if (!key.startsWith("oauth:refresh-spent:")) expect(key).not.toContain(restart.epoch);
       expect(await backing.get(key), key).not.toContain(restart.epoch);
       expect(oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)), key).toBe(false);
     }
-    expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-1"))]);
+    expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(restart.epoch, await oauthStateDigest("refresh-1"))]);
   });
 });
 

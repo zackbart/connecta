@@ -32,8 +32,12 @@ detached from caller cancellation, and the runtime passes its completion and
 commit to Workers `waitUntil`. Contenders read the committed tokens or typed
 verdict. An unsent claim can be taken over after expiry. Dispatch uses a lease CAS
 transition and a create-only CAS of the token fingerprint into permanent spent
-storage before sending. Spent records have no TTL, exclude the epoch, and survive
-Restart and Disconnect. The HTTP deadline is 20 seconds. A sent request
+storage before sending. Spent records have no TTL, include the grant epoch,
+and survive Restart and Disconnect. A new consent in a new epoch can use an
+identical refresh token; the old epoch cannot send it again. Credential-bearing
+token requests use manual fetch and bypass resource redirect handling. Every
+3xx requires re-consent after a refresh and refuses a code exchange. The HTTP
+deadline is 20 seconds. A sent request
 whose 120-second storage-owned liveness record expired without a commit is
 never retried and requires re-consent. Valid rotations retry their grant commit
 up to 32 times without another HTTP request; exhausted commits and all dispatched

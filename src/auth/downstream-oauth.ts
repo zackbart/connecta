@@ -22,6 +22,7 @@ import { OAUTH_FLOW_TTL_SECONDS, OAUTH_REFRESH_LEASE_SECONDS, oauthFlowKeys, oau
 import type { ConnectorContext, KVStorage } from "../types.js";
 import {
   isRefreshTokenRequest,
+  isOAuthCredentialRequest,
   refreshResponseOutcome,
   sdkSafeTokenResponse,
   tokenGrantType,
@@ -229,6 +230,7 @@ export class OAuthRefreshCoordinator {
     baseFetch: FetchLike,
     requestSignal?: AbortSignal,
     defer?: ConnectorContext["defer"],
+    resourceFetch: FetchLike = baseFetch,
   ): FetchLike {
     return async (input, init) => {
       // Freeze the form before any await: classification and the spent digest
@@ -241,6 +243,7 @@ export class OAuthRefreshCoordinator {
         return this.refresh(provider, input, init, baseFetch, signal, defer);
       }
       const grantType = tokenGrantType(init);
+      const tokenRequest = isOAuthCredentialRequest(init);
       const exchange = grantType === "authorization_code";
       if (exchange) {
         const answered = await provider.claimCodeExchange();
@@ -253,12 +256,16 @@ export class OAuthRefreshCoordinator {
             ? AbortSignal.any([requestSignal, init.signal])
             : requestSignal
           : init?.signal;
-        return baseFetch(input, { ...init, ...(signal ? { signal } : {}) });
+        // Credential-bearing OAuth requests use the raw send path. A redirect
+        // is a dispatched failure, never authority to send the form again.
+        return tokenRequest
+          ? baseFetch(input, { ...init, redirect: "manual", ...(signal ? { signal } : {}) })
+          : resourceFetch(input, { ...init, ...(signal ? { signal } : {}) });
       };
       // Awaited here so workerd associates a rejection with the fetch the SDK
       // is already awaiting, not with an adopted inner promise.
       const response = await (exchange ? provider.dispatchCodeExchange(dispatch, input) : dispatch());
-      if (grantType === undefined) return response;
+      if (!tokenRequest) return response;
       // A code exchange's failure is the SDK's to log as well.
       const forSdk = await sdkSafeTokenResponse(response);
       if (exchange && forSdk !== response) provider.recordCodeExchangeRefusal(forSdk);
@@ -391,7 +398,7 @@ export class OAuthRefreshCoordinator {
         timer = setTimeout(() => {
           deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
         }, REFRESH_REQUEST_DEADLINE_MS);
-        return baseFetch(input, { ...init, signal: deadline.signal });
+        return baseFetch(input, { ...init, redirect: "manual", signal: deadline.signal });
       }, waiting).then((response) => {
         if (deadline.signal.aborted) {
           void response.body?.cancel().catch(() => {});
@@ -1439,7 +1446,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     try {
       const digest = await wait(() => oauthStateDigest(requested ?? ""));
       const key = oauthRefreshKeys.lease(epoch, digest);
-      const spentKey = oauthRefreshSpentKeys.spent(digest);
+      const spentKey = oauthRefreshSpentKeys.spent(epoch, digest);
       while (!waiting.signal.aborted) {
         if (signal?.aborted) throw aborted(signal);
         const current = await wait(() => this.storedTokens());
@@ -1536,7 +1543,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     });
     void transition.catch(() => {});
     await waiting.run(() => transition);
-    // This CAS is the only authority to send this fingerprint, across epochs.
+    // This CAS is the only authority to send this fingerprint in this epoch.
     // No TTL and no cleanup path: even a lost storage answer cannot permit replay.
     const preparation = this.storage.compareAndSet(lease.spentKey, null, JSON.stringify({ connectaOAuthRefreshSpent: 1 })).catch(() => {
       this.recordRefreshFailure({ kind: "dead" });

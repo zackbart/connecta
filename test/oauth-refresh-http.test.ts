@@ -139,14 +139,14 @@ describe.each([["memory", false], ["delayed", true]] as const)("native HTTP refr
     await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
     await server.finish();
     expect(await (await first).json()).toEqual(next);
-    expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
-    expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest("changed-during-preparation")))).toBeNull();
+    expect(await storage.get(oauthRefreshSpentKeys.spent("v3:seeded", await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
+    expect(await storage.get(oauthRefreshSpentKeys.spent("v3:seeded", await oauthStateDigest("changed-during-preparation")))).toBeNull();
   });
 
   it.each(["lost spent answer", "refused spent write"])("never sends unless the spent CAS returns success, %s (INV-5) (INV-6)", async (failure) => {
     const backing = store(delayed);
     await seedGrant(backing, { issuer: ISSUER, tokens });
-    const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+    const spentKey = oauthRefreshSpentKeys.spent("v3:seeded", await oauthStateDigest(tokens.refresh_token));
     const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, value, options) => {
       if (key === spentKey) {
         if (failure === "lost spent answer") await backing.compareAndSet(key, expected, value, options);
@@ -184,7 +184,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("native HTTP refr
     const waiter = await isolate(storage);
     const first = owner.refresh(server.url).catch((error: unknown) => error);
     await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
-    const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+    const spentKey = oauthRefreshSpentKeys.spent("v3:seeded", await oauthStateDigest(tokens.refresh_token));
     const spent = await backing.get(spentKey);
     expect(JSON.parse(spent!)).toEqual({ connectaOAuthRefreshSpent: 1 });
     const waiting = [local, waiter].map((isolate) => isolate.refresh(server.url).catch((error: unknown) => error));
@@ -197,11 +197,11 @@ describe.each([["memory", false], ["delayed", true]] as const)("native HTTP refr
     expect(commits).toBe(32);
     expect((await storedGrant(backing))!.body!.tokens).toEqual(failure === "CAS false" ? tokens : undefined);
     for (let attempt = 0; attempt < 3; attempt++) {
-      // Include epoch sweeps and reinsertion after both reset operations.
+      // Reset sweeps must retain the old epoch's spent record.
       const resetter = await isolate(backing);
       if (attempt) await resetter.provider.resetAuthorization(attempt === 2);
-      const epoch = (await storedGrant(backing))!.epoch;
-      await seedGrant(backing, { issuer: ISSUER, tokens }, epoch.startsWith("disconnected:") ? `v3:reconnected-${attempt}` : epoch);
+      // A stale grant write restoring that epoch still cannot reopen dispatch.
+      await seedGrant(backing, { issuer: ISSUER, tokens }, "v3:seeded");
       const newcomer = await isolate(storage);
       await expect(newcomer.refresh(server.url)).rejects.toBeInstanceOf(UnauthorizedError);
       expect((await storedGrant(backing))!.body!.tokens).toEqual(failure === "CAS false" ? tokens : undefined);
@@ -268,7 +268,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("native HTTP refr
     await newcomer.refresh(server.url).catch(() => {});
     expect(await backing.get(oauthGrantKeys.grant)).toBe(current);
     expect(await server.sent()).toEqual([tokens.refresh_token]);
-    expect(await backing.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
+    expect(await backing.get(oauthRefreshSpentKeys.spent("v3:seeded", await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
   });
 
 });
