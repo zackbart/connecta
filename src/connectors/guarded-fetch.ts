@@ -13,6 +13,7 @@
  * public surface. Web APIs only.
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
+import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
 
@@ -533,11 +534,12 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         );
       }
       headers[name] = value;
+      sentSecretsFor(ctx).header(value);
     }
 
     let response: Response;
     try {
-      response = await send(url.toString(), {
+      const init: RequestInit = {
         method: request.method,
         headers,
         ...(request.body !== undefined
@@ -550,7 +552,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         // never one. Refused below rather than followed.
         redirect: "manual",
         ...(ctx.signal ? { signal: ctx.signal } : {}),
-      }, ctx);
+      };
+      sentSecretsFor(ctx).request(url, init);
+      response = await send(url.toString(), init, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;
       throw unavailableCallError(

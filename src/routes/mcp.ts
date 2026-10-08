@@ -24,6 +24,7 @@ import type { ConnectorAccess } from "../connector-access.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
 import { msg } from "../errors.js";
 import { failureRecord, logFailure } from "../operator-record.js";
+import { redactAgentOutput, sentSecretsForRequest } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
 import {
@@ -344,6 +345,8 @@ function serveMcp(
   runtimeContext?: RuntimeExecutionContext,
   trust: import("../tool-safety.js").PoolTrust = "read-only",
 ): Effect.Effect<Response, never, Scope.Scope> {
+  const requestScope = {};
+  const sentSecrets = sentSecretsForRequest(requestScope);
   // Every McpServer the request builds is fresh and closes with its scope.
   // The modern handler tears its own down after the exchange; the legacy
   // transport never does, and neither may stay wired to an ended request.
@@ -379,6 +382,7 @@ function serveMcp(
       : undefined;
     registerMetaTools(server, registry, {
       baseUrl,
+      requestScope,
       canManageAuth,
       oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
       oauthConnectUnavailable: oauthConnectUnavailable(opts),
@@ -396,6 +400,7 @@ function serveMcp(
     });
     registerExecuteTool(server, registry, {
       baseUrl,
+      requestScope,
       executor: opts.executor,
       logger: opts.config.logger,
       ...(activity ? { activity } : {}),
@@ -449,7 +454,23 @@ function serveMcp(
 
   return Effect.addFinalizer(() => Effect.sync(() => {
     for (const server of servers) void server.close().catch(() => {});
-  })).pipe(Effect.andThen(Effect.promise(exchange)));
+  })).pipe(Effect.andThen(Effect.promise(async () => {
+    const response = await exchange();
+    // Both SDK transports serialize here. This also covers SDK-generated
+    // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
+    if (!response.body) return response;
+    let body = await response.text();
+    if (response.headers.get("Content-Type")?.includes("application/json")) {
+      // Structured redaction also joins text blocks before a secret split
+      // across them can cross the serialization boundary.
+      try { body = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body))); }
+      catch { /* Non-JSON diagnostics still pass through the text boundary. */ }
+    }
+    const text = redactAgentOutput(sentSecrets, body);
+    const headers = new Headers(response.headers);
+    headers.delete("Content-Length");
+    return new Response(text, { status: response.status, statusText: response.statusText, headers });
+  })));
 }
 
 export function createMcpRoute(

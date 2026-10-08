@@ -49,7 +49,7 @@ export interface StripeOAuthOptions extends StripeCommonOptions {
  * exactly one, so both declare it.
  */
 export interface StripeHeaderOptions extends StripeCommonOptions {
-  auth: Exclude<RemoteMcpAuth, { type: "oauth" }>;
+  auth: Exclude<RemoteMcpAuth, { type: "oauth" | "request" }>;
   mode: StripeMode;
   /** Act as one Connect account by sending Stripe's `Stripe-Account` header. */
   connectedAccount?: string;
@@ -172,7 +172,7 @@ function resolveAuth(id: string, options: StripeOptions): RemoteMcpAuth {
         `requires a restricted API key for Stripe-Account calls.`,
     );
   }
-  if (auth.type === "credential") {
+  if (auth.type === "credential" || auth.type === "request") {
     // `Stripe-Account` is a second header beside the credential's own, and the
     // credential shape assembles exactly one. A Connect connector therefore
     // still takes its restricted key as a literal header.

@@ -947,7 +947,8 @@ describe("remoteMcp() connector", () => {
       },
     });
     const registry = makeRegistry([c]);
-    const firstRequest = createMetaTools(registry, BASE);
+    // The route supplies this identity to all handlers in one HTTP request.
+    const firstRequest = createMetaTools(registry, BASE, { requestScope: {} });
     const firstResults = await Promise.all([
       firstRequest.callTool({ address: "down.echo", args: { text: "first" } }),
       firstRequest.callTool({

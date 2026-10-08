@@ -327,7 +327,43 @@ change who owns its auth.
 A failure has two audiences with two rules. The agent that made a call may read
 the downstream's own answer to it: a JSON-RPC error message, an HTTP 4xx
 refusal, `isError` content, or the words a handler put in a
-`ConnectorCallError`. Anything else (a transport, parser, stream, validator, or
+`ConnectorCallError`. Each upstream request owns a memory-only sent-secrets
+set. Every connector context links its local set into that request, including
+listing, discovery, registry refresh, OAuth refresh, and provider handlers.
+Direct meta-tool invocations and program runs get fresh request identities;
+all operations within one HTTP request share its identity. Credential-slot reads, static
+auth headers, and outbound bearer tokens join the set, including tokens
+rotated during a call. Before any diagnostic is truncated or returned, the
+agent boundary replaces these values and their auth prefixes, mixed JSON
+escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
+transports register sensitive headers and query values after assembling the
+request; custom API handlers use `ctx.fetch`. Values shorter than eight
+characters do not enter the matcher, because a short Basic username would
+rewrite ordinary prose. Connecta's own messages never quote a credential.
+The matcher is cached until its set changes; the empty set has a fast path.
+`redactAgentOutput` is the agent-facing choke point. Every meta-tool exit,
+including errors, and every host-to-guest value or rejection passes through
+it. Both MCP transports also pass their serialized response through it, covering
+JSON-RPC errors, HTTP diagnostics, structured content, and paging responses.
+Per-call redaction remains before diagnostic truncation, paging, emits and
+artifact writes. Paging stores only request-redacted text before encoding
+chunks, so a later request needs no original credentials. Programs retain the
+request set only for the run so later outputs cannot reconstruct an echo.
+Discovery registers sent credentials under the same rules, including
+`server/discover`, legacy initialization, and every `tools/list` page on a
+reused transport. Remote MCP sanitizes the complete listing before retaining
+request-local definitions. Registry intake also sanitizes custom, API and
+provider listings before drift observation, fingerprinting or either catalog
+cache. Failed listings are redacted at the same intake before a shared refresh
+publishes its failure to another request. Successful catalog caches and result
+stashes retain only intake-redacted values; there is no tool-response cache.
+Every nested string and object key passes through the redactor,
+including titles, descriptions, schemas and annotations. If a tool name would
+change, the complete catalog is refused. Rewriting a name changes dispatch;
+dropping only that tool would publish a partial catalog, against INV-8. Later
+cached reads need no credential set because the stored facts are already clean.
+Echoed sensitive header lines are also withheld. The set is never persisted
+or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
 Operators read logs, status messages, and activity, and none of them carries
@@ -423,23 +459,28 @@ connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
 (`test/purity.node.test.ts`). The factory carries its `definition`, which build and
-check tools read instead of keeping provider lists. All nineteen providers
+check tools read instead of keeping provider lists. All twenty providers
 live in their own folders. The eight hosted implementations, including the
 MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
 `remoteMcp({ classify })`. The eleven API-only factories retain an internal
-adapter to the same definition and description-stamping path. The mixed
-providers still select one interface; capability reconciliation is planned in
+adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement. The other
+mixed providers still select one interface; capability reconciliation is planned in
 [#705 item 5d](https://github.com/zackbart/connecta/issues/705).
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
-reason?, schemaDigest? } } }`, validated at construction. It fails closed
+reason?, schemaDigest? } }, unlisted?: "hide" }`, validated at construction. It fails closed
 (INV-1): a reviewed read fills silence but yields to an explicit write
 annotation, a reviewed write stays a write whatever the downstream claims, an
 unlisted tool is a read only when it says so, and a reviewed tool whose
 `schemaDigest` no longer matches, or cannot be checked, is a write on discovery
 and every invocation path until a release reviews it again. A digest covers
-the whole schema; one too large to hash whole is unchecked.
+the whole schema; one too large to hash whole is unchecked. `unlisted: "hide"`
+removes every unreviewed name, even an explicitly annotated read, on every
+registry read, including persisted catalogs. `remoteMcp` also refuses direct
+calls to unlisted names before authentication. Tool classification does not
+authorize targets; providers such as GitHub check arguments and configured
+scopes separately before minting credentials.
 
 Connectors report facts; the registry is the only classifier. A reviewed
 connector carries its review as data, the deep-frozen

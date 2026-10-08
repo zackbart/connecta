@@ -1285,7 +1285,7 @@ describe("server /mcp end-to-end", () => {
     expect(retried.result.isError).toBeFalsy();
     expect(JSON.parse(retried.result.content[0].text)).toMatchObject({
       ok: true,
-      data: { account: "service-account" },
+      data: { account: "[redacted]" },
     });
   });
 

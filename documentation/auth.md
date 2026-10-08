@@ -601,9 +601,27 @@ is told from the reviewed findings, never the validator's sentence. Every
 withheld error keeps its original classification, and no connector error keeps
 a runtime, stream, or parser error as `cause`.
 
-The JSON-RPC and 4xx exception is deliberate: tool results already carry that
-server's text verbatim, so redacting its errors buys nothing, and agents need
-the prose to correct their arguments.
+The JSON-RPC and 4xx exception preserves diagnostics agents need to correct
+their arguments. Core redacts credentials used by that call before these
+messages, nested causes/data, or tool results reach an agent or guest program.
+The memory-only set covers credential-slot values, static auth headers,
+outbound bearer tokens, and their JSON-escaped, URL-encoded, base64 and
+base64url forms. Final outgoing requests register Authorization,
+Proxy-Authorization, Cookie, and headers or query parameters whose names
+contain `key`, `token`, `secret`, `auth`, `signature`, or `session`. Custom
+`api()` handlers use `ctx.fetch` for this tracking; `ctx.oauth.fetch` and
+maintained-provider transports track the final request too. Credential-slot
+reads cover values sent in headers, queries, or bodies. Echoed sensitive
+header lines are also withheld.
+
+Only values of at least eight characters enter the matcher. Short values such
+as Basic usernames would corrupt ordinary text; Connecta's own messages never
+quote credential values, regardless of length. One matcher is cached until
+the secret set changes, and an empty set skips matching. Redaction runs after
+JSON unwrapping or joining text blocks and on final serialized text and every
+structured string, before result paging, emits, program outputs/errors/logs,
+or artifact writes. See
+[the agent boundary](./architecture.md#errors-and-records).
 
 ## URLs a downstream advertises
 
@@ -998,3 +1016,23 @@ configured token endpoint healthy without downstream probes and never start
 authorization. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.
+
+## Request-local downstream Bearer tokens
+
+`remoteMcp({ auth: { type: "request", token: async (ctx) => … } })` resolves
+its token before connecting and before reusing a client. The callback receives
+the operation's cancellation context, never an agent-selected credential owner.
+Only shared ownership is accepted. Tokens remain inside the request's hardened
+transport, are not stored or described, and a changed token replaces the client.
+This mode refuses cleartext non-loopback origins. Optional `auth.headers` carry
+static protocol/catalog controls and cannot set Authorization.
+
+The GitHub provider validates each tool's owner/repo and scope access before
+resolving an installation token. It creates one token-bound MCP client for that
+operation and closes it before returning. Completed installation/token caches
+contain bounded runtime values only, partitioned by key fingerprint, owner
+installation, repositories and permissions. No request promise or transport
+is retained across requests, and rejected writes are never replayed. An omitted
+`app.privateKey` uses the encrypted connector vault's `privateKey` field;
+`describe()` includes neither the key nor the minted tokens. The maintained
+provider skill explains App permissions and installation prerequisites.

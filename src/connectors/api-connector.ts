@@ -10,6 +10,7 @@ import { array, assertKnownOptions, instance, keys, optionsOf, strings } from ".
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
+import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -129,6 +130,8 @@ export interface ApiOAuthAccess {
 
 /** The context an `api()` handler receives. */
 export interface ApiHandlerContext extends ConnectorContext {
+  /** Fetch with final outgoing credential headers and query values registered. */
+  fetch: typeof fetch;
   /** Present exactly when the connector declares `oauth`. */
   oauth?: ApiOAuthAccess;
 }
@@ -367,10 +370,11 @@ export function apiConnector(
         }
       : {}),
     staticTools: defs,
-    async listTools() {
-      return defs;
+    async listTools(ctx) {
+      return redactCatalog(ctx, defs);
     },
     async callTool(name, args, ctx) {
+      trackCredentialReads(ctx);
       const tool = byName.get(name);
       if (!tool) {
         throw new Error(`Unknown tool "${name}" on connector "${id}"`);
@@ -391,19 +395,20 @@ export function apiConnector(
       // its first await never sits handler-less for the thenable-adoption
       // microtask — workerd and vitest both report that gap as an unhandled
       // rejection even though the caller catches the failure.
-      // The accessor closes over the registry's own context, not this copy,
-      // so the grant it reaches is the one that context's owner holds.
-      const handlerCtx: ApiHandlerContext = oauth
-        ? { ...ctx, oauth: oauth.access(ctx) }
-        : ctx;
+      // Preserve the registry's context identity: private caller/provenance
+      // markers belong to it, as does the grant its accessor reaches.
+      const handlerCtx: ApiHandlerContext = Object.assign(ctx, {
+        fetch: sentSecretsFetch(ctx),
+        ...(oauth ? { oauth: oauth.access(ctx) } : {}),
+      });
       try {
-        return await tool.handler(input, handlerCtx);
+        return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));
       } catch (error) {
         // The request's own abort reason, by identity, is the caller's.
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
-        if (error instanceof ConnectorCallError) throw error;
+        if (error instanceof ConnectorCallError) throw redactSentSecrets(ctx, error);
         if (!networkErrorCode(error)) {
           // Anything else is a runtime's, parser's, or stream's account of
           // what the handler read (a JSON parser quotes the reply it choked

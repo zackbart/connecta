@@ -78,11 +78,17 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   const remote = source("connectors/remote-mcp.ts");
   const adapters = nodes(remote).filter(ts.isCallExpression).filter((call) => call.expression.getText() === "refreshCoordinatorFor(ctx).coordinatedFetch");
   expect(adapters).toHaveLength(1);
-  expect(adapters[0]!.arguments[1]!.getText()).toBe("learnedUrlSafeFetch(id, url, fetch)");
+  expect(adapters[0]!.arguments[1]!.getText()).toBe("learnedUrlSafeFetch(id, url, trackedFetch)");
   expect(adapters[0]!.arguments[4]!.getText()).toBe("learnedUrlSafeFetch(id, url, guardedFetch)");
   const learned = nodes(remote).find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "learnedUrlSafeFetch")!;
   expect(learned.getText()).not.toContain("redirectSafeFetch");
-  expect(sdkAuthCalls[0]!.call.arguments[1]!.getText()).toContain("provider,\n        tokenEndpointFetch,");
+  const tracked = nodes(remote).find((node) => ts.isVariableDeclaration(node) && node.name.getText() === "trackedFetch")!;
+  expect(tracked.getText()).toContain("trackSentRequest(ctx, input, init)");
+  expect(tracked.getText()).toContain("await fetch(input, init)");
+  expect(tracked.getText()).not.toContain("redirectSafeFetch");
+  // Bind the active listing/call context for sent-credential tracking while
+  // keeping every token send beneath the refresh coordinator's CAS gate.
+  expect(sdkAuthCalls[0]!.call.arguments[1]!.getText()).toContain("provider,\n        (input, init) => tokenEndpointFetch(ctx, input, init),");
   const staticOAuth = source("auth/static-oauth.ts");
   expect(staticOAuth.getText()).not.toContain("redirectSafeFetch");
   const tokenEndpoint = nodes(staticOAuth).find((node) => ts.isVariableDeclaration(node) && node.name.getText() === "tokenEndpointFetch")!;

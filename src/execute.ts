@@ -37,6 +37,7 @@ import {
   type WriteDecision,
 } from "./invocation.js";
 import { normalizeProgramSource } from "./program-source.js";
+import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { underAnySignal } from "./timeout.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
@@ -425,6 +426,7 @@ export async function buildSandboxProviders(
 }
 
 interface SandboxLimits {
+  sentSecrets?: SentSecrets;
   signal?: AbortSignal | undefined;
   maxHostCalls?: number | undefined;
   hostCallTimeoutMs?: number | undefined;
@@ -488,6 +490,7 @@ function sandboxProvider(
   limits: SandboxLimits,
   requestScope: object = {},
 ): ExecutorProvider {
+  const sentSecrets = sentSecretsForRequest(requestScope, limits.sentSecrets);
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
   const hostAccessSignal = limits.dispatchController
@@ -531,6 +534,7 @@ function sandboxProvider(
   /** Budget and account for writes admitted by the pool trust decision. */
   const invocationContext = (sending: { settle?: SettleWrite }) => ({
     source: "execute_code" as const,
+    sentSecrets,
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
@@ -575,7 +579,7 @@ function sandboxProvider(
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation.pipeline(
         String(address),
-        args ?? {},
+        sentSecrets.redact(args ?? {}),
         invocationContext(sending),
       ).pipe(
         Effect.onExit((exit) =>
@@ -654,7 +658,7 @@ function sandboxProvider(
               true,
             );
           }
-          limits.emitCollector.accept(block);
+          limits.emitCollector.accept(sentSecrets.redact(block));
         },
         catch: (err) => err,
       }),
@@ -705,7 +709,7 @@ function sandboxProvider(
   const framed = (err: unknown): Effect.Effect<never, unknown> =>
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
-      const failure = boundedGuestFailure(err);
+      const failure = boundedGuestFailure(sentSecrets.redact(err));
       const frame = framedGuestFailure(failureSecret, failure);
       limits.onInvocationFailure?.(failure);
       return Effect.fail(frame);
@@ -736,12 +740,12 @@ function sandboxProvider(
           ).then(
             (value) => {
               if (counted) hostCalls.succeeded++;
-              return budgetFailure ? stopped : value;
+              return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
             },
             (err: unknown) => {
               if (counted) hostCalls.failed++;
               if (budgetFailure) return stopped;
-              throw err;
+              throw redactAgentOutput(sentSecrets, err);
             },
           );
           // The executor owns this promise, and a program may abandon a call
@@ -893,6 +897,8 @@ function leased(
 
 /** The execute_code configuration a runner enforces. */
 interface RunnerConfig {
+  /** An HTTP request shares its scope with every registered tool. */
+  requestScope?: object | undefined;
   /** Nested runners must never queue behind the program holding their parent slot. */
   waitForAdmission?: boolean | undefined;
   /** Refresh only: a refused host call fails the whole run even if guest code catches it. */
@@ -955,8 +961,10 @@ export function createExecuteTool(
     program: string,
     diagnosticsRequested: boolean | undefined,
     callerSignal: AbortSignal | undefined,
+    requestScope: object,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
+      const sentSecrets = sentSecretsForRequest(requestScope);
       const diagnostics = diagnosticsRequested
         ? new ExecuteDiagnostics()
         : undefined;
@@ -976,7 +984,6 @@ export function createExecuteTool(
       // closing it releases the lease and then aborts the signal, so
       // nothing the run started outlives the request.
       const run = Effect.gen(function* () {
-        const requestScope = {};
         // Per-call signals cancel individual fetches, but do not close the
         // shared transport. Close its scope after the run's signal ends, on
         // every exit, using the existing bounded cleanup and deferred tail.
@@ -1007,6 +1014,7 @@ export function createExecuteTool(
           if (diagnostics) diagnostics.setupMs = elapsed;
         }, Effect.sync(() =>
           sandboxProvider(registry, baseUrl, activity, {
+            sentSecrets,
             signal,
             onHostCallBudgetExceeded: (failure) => {
               budgetFailure = failure;
@@ -1050,14 +1058,14 @@ export function createExecuteTool(
             : executor.execute(program, [provider])
           ).then(
             (outcome) => {
-              executorLogs = outcome?.logs;
-              return outcome;
+              executorLogs = sentSecrets.redact(outcome?.logs);
+              return sentSecrets.redact(outcome);
             },
             (err: unknown) => {
               if (err !== null && typeof err === "object" && "logs" in err) {
-                executorLogs = err.logs;
+                executorLogs = sentSecrets.redact(err.logs);
               }
-              throw err;
+              throw sentSecrets.redact(err);
             },
           ),
           signal,
@@ -1097,10 +1105,10 @@ export function createExecuteTool(
         }
         if (Exit.isFailure(exit)) {
           return programWrites.finish(
-            failedRun(Cause.squash(exit.cause), logger, reported),
+            failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported),
           );
         }
-        const finished = finishedRun(exit.value, reported);
+        const finished = finishedRun(sentSecrets.redact(exit.value), reported);
         if (config.failOnInvocationFailure && invocationFailures.length > 0) {
           const refusal = invocationFailures[0]!;
           return failureResponse(refusal.details.message, {
@@ -1108,22 +1116,24 @@ export function createExecuteTool(
           });
         }
         return programWrites.finish(finished);
-      });
+      }).pipe(Effect.map((result) => redactAgentOutput(sentSecrets, result)));
     });
 
-  return ({ code, diagnostics }, options = {}) => {
-    // A code-unit count above the cap is already too large in UTF-8. Check
-    // that first so a huge direct-call string is never encoded in full.
-    if (code.length > EXECUTE_MAX_CODE_BYTES ||
-      new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
-      const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-      return Promise.resolve(failureResponse(message, {
-        code: { code: "invalid_args", message, retryable: false },
-      }));
-    }
-    return runEdge(Effect.suspend(() =>
-      play(normalizeProgramSource(code), diagnostics, options.signal)));
-  };
+  return agentOutputOperations((requestScope) => ({
+    execute: ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
+      // A code-unit count above the cap is already too large in UTF-8. Check
+      // that first so a huge direct-call string is never encoded in full.
+      if (code.length > EXECUTE_MAX_CODE_BYTES ||
+        new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
+        const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+        return Promise.resolve(failureResponse(message, {
+          code: { code: "invalid_args", message, retryable: false },
+        }));
+      }
+      return runEdge(Effect.suspend(() =>
+        play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)));
+    },
+  }), config.requestScope).execute;
 }
 
 interface RunReport {
@@ -1415,6 +1425,7 @@ export function registerExecuteTool(
     logger: Logger;
     activity?: ActivityRequestContext | undefined;
     requestSignal?: AbortSignal | undefined;
+    requestScope?: object | undefined;
     discoveryConcurrency?: number | undefined;
     /**
      * The deployment's configured per-connector probe deadline. Programs probe
@@ -1477,6 +1488,7 @@ export function registerExecuteTool(
       defer: ctx.defer,
       trust: ctx.trust,
       maxWrites,
+      requestScope: ctx.requestScope,
     },
   );
   server.registerTool(

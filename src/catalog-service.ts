@@ -1246,7 +1246,7 @@ export class CatalogService {
         error.recovery = connector.startAuth
           ? "oauth"
           : this.registry.credentialUiAvailable() && connector.credential &&
-              this.registry.contextFor(connector.id, this.baseUrl).credential
+              this.registry.contextFor(connector.id, this.baseUrl, this.requestScope).credential
             ? "operator_config"
             : "unavailable";
         error.nextAction = {

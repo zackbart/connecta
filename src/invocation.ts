@@ -37,6 +37,7 @@ import {
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
+import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 
 function defined<T extends object>(
   values: T,
@@ -215,6 +216,8 @@ export type WriteDecision =
 
 export interface InvocationContext<T> {
   source: ActivityCallSource;
+  /** The owning program retains these credentials only until its run ends. */
+  sentSecrets?: SentSecrets;
   trust?: PoolTrust | undefined;
   timeoutMs?: number;
   requestSignal?: AbortSignal;
@@ -228,6 +231,7 @@ export interface InvocationContext<T> {
   processResult?: (
     value: unknown,
     resolved: ResolvedCatalogTool,
+    sentSecrets: SentSecrets,
   ) => T | Promise<T>;
   /**
    * Optional payload-free friction class derived from a *successful* result —
@@ -312,6 +316,8 @@ export class InvocationService {
       let attempts = 0;
       let dispatchedToConnector = false;
       let answered = false;
+      const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
+      context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
       let unrecorded = false;
       let resolved: ResolvedCatalogTool | undefined;
@@ -460,7 +466,7 @@ export class InvocationService {
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
-        const details = enrich(error, target);
+        const details = sentSecrets.redact(enrich(error, target));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -601,6 +607,8 @@ export class InvocationService {
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
             if (context.source === "execute_code") markProgramCall(connectorContext);
+            trackCredentialReads(connectorContext);
+            sentSecrets.include(sentSecretsFor(connectorContext));
             if (
               target.connector.credential &&
               !connectorContext.credential
@@ -634,18 +642,19 @@ export class InvocationService {
                 (elapsed) => { admissionMs += elapsed; },
                 admitted(this.registry, target, args, admissionSignal),
               );
-              const raw = yield* timed(
+              const reply = yield* timed(
                 (elapsed) => { connectorMs += elapsed; },
                 Effect.tryPromise({
                   try: () => Promise.resolve(call()),
                   catch: (error) => error,
                 }),
               );
+              const raw = sentSecrets.redact(reply);
               // isError is checked here for BOTH result shapes so every adapter
               // reports the same downstream-failure wording, and the throw lands
               // inside the attempt where it feeds health.
               assertRawMcpSuccess(target.connector.kind, raw);
-              return { raw, observed: unwrapMcpResult(target.connector.kind, raw) };
+              return { raw, observed: sentSecrets.redact(unwrapMcpResult(target.connector.kind, raw)) };
             }),
           ));
           if (Exit.isFailure(attempt)) {
@@ -655,7 +664,7 @@ export class InvocationService {
             answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
-              : carryFailureFacts(attemptError, classifyCallError(attemptError));
+              : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
           }
           observedResult = attempt.value.observed;
           result = context.unwrapResult ? observedResult : attempt.value.raw;
@@ -683,7 +692,7 @@ export class InvocationService {
         const failure = Cause.squash(dispatched.cause);
         return failed(context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : carryFailureFacts(failure, classifyCallError(failure)));
+          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure))));
       }
       if (dispatched.value) return failed(dispatched.value);
       // A dispatch that returned no refusal resolved a concrete tool.
@@ -697,7 +706,7 @@ export class InvocationService {
       const processResult = context.processResult;
       const processing: Effect.Effect<T, unknown> = processResult
         ? Effect.tryPromise({
-            try: () => Promise.resolve(processResult(result, completed)) as Promise<T>,
+            try: () => Promise.resolve(processResult(sentSecrets.redact(result), completed, sentSecrets)) as Promise<T>,
             catch: (error) => error,
           })
         : Effect.succeed(result as T);
@@ -725,7 +734,7 @@ export class InvocationService {
         );
       if (Exit.isFailure(processed)) return unprocessable();
       try {
-        const value = processed.value;
+        const value = sentSecrets.redact(processed.value);
         const diagnostics = timing();
         const friction = context.activityFriction?.(value);
         record("success", friction ? { friction } : {});

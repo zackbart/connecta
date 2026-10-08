@@ -774,7 +774,7 @@ describe("ctx.oauth.fetch", () => {
       const url = String(input instanceof Request ? input.url : input);
       // The token endpoint labels its answer with a planted type too.
       if (url === TOKEN) {
-        return new Response(JSON.stringify({ access_token: "a", token_type: "Bearer", expires_in: 3600 }), {
+        return new Response(JSON.stringify({ access_token: "oauth-access-credential-42", token_type: "Bearer", expires_in: 3600 }), {
           headers: { "content-type": `application/${planted("token-ct")}` },
         });
       }

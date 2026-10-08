@@ -39,6 +39,7 @@ import {
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
+import { redactCatalog, redactSentSecrets, sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
@@ -118,6 +119,13 @@ interface RemoteMcpCredentialAuth {
 }
 
 export type RemoteMcpAuth =
+  | {
+      type: "request";
+      /** Resolve a Bearer token inside this request. Never persisted or described. */
+      token: (ctx: ConnectorContext) => Promise<string>;
+      /** Static protocol/catalog headers, never Authorization. */
+      headers?: Record<string, string>;
+    }
   | { type: "headers"; headers: Record<string, string> }
   | RemoteMcpCredentialAuth
   | {
@@ -476,7 +484,7 @@ function requiresAuthorization(error: unknown): boolean {
 }
 
 /** Classify SDK/runtime facts, dropping every SDK payload and cause chain. */
-function downstreamCallError(error: unknown, httpStatus?: number, wait?: number, oauthStep?: OAuthStep): unknown {
+function downstreamCallError(error: unknown, httpStatus?: number, wait?: number, oauthStep?: OAuthStep, secrets?: SentSecrets): unknown {
   if (error instanceof ConnectorCallError) {
     return hasSdkPayload(error.cause) ? carryFailureFacts(error, withheldAs(error.message, error)) : error;
   }
@@ -522,7 +530,7 @@ function downstreamCallError(error: unknown, httpStatus?: number, wait?: number,
       status === 401 && !(error instanceof RegistrationRejectedError) ? "auth_required"
         : status === 429 ? "rate_limited" : status === 408 && !(error instanceof RegistrationRejectedError)
         ? "timeout" : "connector_call_failed",
-      boundedEchoText(message),
+      boundedEchoText(secrets?.text(message) ?? message),
       { retryable: [429, 502, 503, 504].includes(status) ||
           (status === 408 && !(error instanceof RegistrationRejectedError)),
         ...(wait !== undefined ? { retryAfterMs: wait } : {}) },
@@ -534,7 +542,7 @@ function downstreamCallError(error: unknown, httpStatus?: number, wait?: number,
   // ProtocolError.data is server-chosen even when its message is allowed.
   if (error instanceof ProtocolError) {
     return new ConnectorCallError(error.code === -32602 ? "invalid_args" : "connector_call_failed",
-      boundedEchoText(error.message));
+      boundedEchoText(secrets?.text(error.message) ?? error.message));
   }
   return new ConnectorCallError("connector_call_failed", "The downstream operation failed.");
 }
@@ -1032,7 +1040,7 @@ interface ConnectionState {
   client: Client | null;
   transport: Transport | null;
   /**
-   * The last complete raw catalog, retained only for this request scope.
+   * The last complete redacted catalog, retained only for this request scope.
    *
    * SDK v2 exposes `toolDefinition` as the public call-time seam for output
    * validation and header mirroring, replacing the v1 private
@@ -1106,6 +1114,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
+  // A cached transport may dispatch concurrent calls and listings. Register
+  // its actual sent auth with every operation using that client, including
+  // handshake/discovery requests and OAuth rotations. Remove settled users.
+  const activeSecrets = new WeakMap<ConnectionState, Set<SentSecrets>>();
+  const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
+    const recipients = new Set([sentSecretsFor(ctx), ...activeSecrets.get(entryFor(ctx)) ?? []]);
+    for (const secrets of recipients) secrets.request(input, init);
+  };
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
   // Long-lived enough for distinct request scopes in this connector runtime to
@@ -1121,6 +1137,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         "this shape sends one secret in one header and reads the reserved " +
         "`value` field only.",
     );
+  }
+  const requestAuth = opts.auth?.type === "request" ? opts.auth : undefined;
+  if (requestAuth && (typeof requestAuth.token !== "function" || opts.authScope === "personal")) {
+    throw new Error(`remoteMcp(${JSON.stringify(id)}) requires a request token callback and shared authScope.`);
+  }
+  if (requestAuth?.headers) {
+    try {
+      if (Object.keys(requestAuth.headers).some((name) => name.toLowerCase() === "authorization")) throw new Error();
+      new Headers(requestAuth.headers);
+    } catch { throw new Error(`remoteMcp(${JSON.stringify(id)}) requires valid request auth headers without Authorization.`); }
   }
   const credentialConfig: ConnectorCredentialConfig = credentialAuth?.credential ?? {
     label: "API key",
@@ -1157,7 +1183,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const insecureDestination =
     destination.protocol !== "https:" && !isLoopbackHost(destination.hostname);
   if (insecureDestination) {
-    if (opts.requireHttps) {
+    if (opts.requireHttps || requestAuth) {
       throw new Error(
         `[connecta] connector "${id}" url ${opts.url} is not https:// (and not loopback) — refusing to connect (requireHttps).`,
       );
@@ -1252,6 +1278,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * one, and the error's class, classified as `verdict` would have been.
    */
   const atMcpBoundary = (
+    ctx: ConnectorContext,
     err: unknown,
     step: "MCP handshake" | "tools/list" | "tools/call",
     transport: Transport | undefined,
@@ -1262,7 +1289,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (failureRecord({}, err).step?.startsWith("OAuth ")) return downstreamCallError(err);
     const httpStatus = err instanceof SdkHttpError ? err.status : undefined;
     const facts = { step, origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}) };
-    const classified = downstreamCallError(err);
+    const classified = downstreamCallError(redactSentSecrets(ctx, err), undefined, undefined, undefined, sentSecretsFor(ctx));
     const verdict = isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
       ? carryFailureFacts(err, authRequiredError()) : classified;
     if (ownAbortReasonAsSdkReports(err, signals)) {
@@ -1271,13 +1298,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (err instanceof InsufficientScopeError) {
       return attachFailureFacts(carryFailureFacts(err, verdict), facts);
     }
+    if (requestAuth && httpStatus === 401) {
+      return attachFailureFacts(new ConnectorCallError("auth_required", "The downstream rejected this request's Bearer token."), facts);
+    }
     if (
       ownAbortReason(err, signals) ||
       keepsItsText(err, transport)
     ) {
-      return attachFailureFacts(carryFailureFacts(err,
+      return attachFailureFacts(carryFailureFacts(err, redactSentSecrets(ctx,
         err instanceof UnauthorizedError || (ownAbortReason(err, signals) && !hasSdkPayload(err))
-          ? err : verdict), facts);
+          ? err : verdict)), facts);
     }
     // The SDK wraps a failure of connecta's own fetch (a refused redirect, an
     // unreachable host) in an error of its own, such as the version probe's;
@@ -1313,6 +1343,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * than run flows unbounded.
    */
   const boundOAuthFlows = (
+    ctx: ConnectorContext,
     transport: StreamableHTTPClientTransport,
     endpoint: URL,
     /** The request's and connection's signals: only their reasons pass as written. */
@@ -1341,7 +1372,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ): Promise<T> => {
       const trail: OAuthTrail = {};
       try {
-        return await start((fetchFn) => tracedOAuthFetch(trail, endpoint, fetchFn));
+        return await start((fetchFn) => tracedOAuthFetch(trail, endpoint, async (input, init) => {
+          trackSentRequest(ctx, input, init);
+          return await fetchFn(input, init);
+        }));
       } catch (err) {
         throw withoutAuthorizationServerText(err, trail, signals);
       }
@@ -1393,6 +1427,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * without a redeploy. The value stays in the caller's local scope.
    */
   const readCredential = async (ctx: ConnectorContext): Promise<string> => {
+    if (requestAuth) {
+      let value: string;
+      try { value = await requestAuth.token(ctx); } catch (error) {
+        if (error instanceof ConnectorCallError) throw error;
+        throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
+      }
+      ctx.signal?.throwIfAborted();
+      if (typeof value !== "string" || !value.trim() || Array.from(value).some((char) => { const code = char.charCodeAt(0); return code <= 32 || (code >= 127 && code <= 159); })) {
+        throw new ConnectorCallError("auth_required", "The request token is empty or cannot be sent as a Bearer header.");
+      }
+      return value;
+    }
     if (!ctx.credential) {
       throw new CredentialRequiredError(
         `Connector "${id}" needs an operator-managed credential, but ` +
@@ -1497,7 +1543,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       );
     } catch (err) {
       if (!isCursorShapeError(err)) {
-        throw atMcpBoundary(err, "tools/list", client.transport, [ctx.signal]);
+        throw atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
       }
       // No cause: the validator's error describes the downstream's page.
       throw new Error(
@@ -1591,6 +1637,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
+    const trackedFetch: FetchLike = async (input, init) => {
+      trackSentRequest(ctx, input, init);
+      return await fetch(input, init);
+    };
     // A runtime refusing the assembled header quotes it, and the transport
     // error below keeps none of what the runtime said. So whether the
     // rejection quoted the credential is decided here, first, and survives
@@ -1599,10 +1649,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       id,
       opts.redirects,
       credentialFramed === null
-        ? fetch
+        ? trackedFetch
         : async (input, init) => {
             try {
-              return await fetch(input, init);
+              return await trackedFetch(input, init);
             } catch (err) {
               throw withoutCredential(err, credentialValue, credentialFramed);
             }
@@ -1615,20 +1665,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         onInsufficientScope: "throw",
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
-          learnedUrlSafeFetch(id, url, fetch),
+          learnedUrlSafeFetch(id, url, trackedFetch),
           signal,
           ctx.defer,
           learnedUrlSafeFetch(id, url, guardedFetch),
         ),
       });
-      boundOAuthFlows(transport, url, [signal, ctx.signal]);
+      boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
       return transport;
     }
     const headers =
       opts.auth?.type === "headers"
         ? opts.auth.headers
-        : credentialAuth && credentialFramed !== null
-          ? { [credentialHeader]: credentialFramed }
+        : (credentialAuth || requestAuth) && credentialFramed !== null
+          ? { ...requestAuth?.headers, [credentialHeader]: credentialFramed }
           : undefined;
     return new StreamableHTTPClientTransport(url, {
       ...(headers ? { requestInit: { headers } } : {}),
@@ -1726,7 +1776,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let credentialValue: string | null = null;
     let credentialFramed: string | null = null;
     let credentialDigest: string | null = null;
-    if (credentialAuth) {
+    if (credentialAuth || requestAuth) {
       credentialValue = await readCredential(ctx);
       credentialFramed = credentialHeaderValue(
         credentialScheme,
@@ -1889,6 +1939,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         yield* promised(() => c.connect(t, { signal: handshakeAbort.signal })).pipe(
           Effect.mapError((err) =>
             atMcpBoundary(
+              ctx,
               // First, while the runtime's text can still be read for it.
               withoutCredential(err, credentialValue, credentialFramed),
               "MCP handshake",
@@ -1985,7 +2036,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // token even though the document itself is public.
   const describedClientMetadataUrl = describedUrl(clientMetadataUrl);
   const authDescription: ConnectorAuthDescription =
-    opts.auth?.type === "headers"
+    requestAuth
+      ? { mode: "request", header: "Authorization", scheme: "Bearer", ...(requestAuth.headers ? { headerNames: Object.keys(requestAuth.headers) } : {}) }
+      : opts.auth?.type === "headers"
       ? { mode: "headers", headerNames: Object.keys(opts.auth.headers) }
       : credentialAuth
         ? { mode: "credential", header: credentialHeader, scheme: credentialScheme }
@@ -2100,8 +2153,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // or rotation can null it before this call resumes, and teardown is
       // caught instead by the `closed` check before every page.
       const client = await ensureConnected(ctx, state);
-      // Retain raw SDK tools for direct same-scope calls; the returned catalog
-      // keeps only the metadata needed across requests.
+      // Collect SDK tools for same-scope calls; sanitize the completed walk
+      // before retaining definitions or returning cross-request metadata.
       const listed: ListedTool[] = [];
       const names = new Set<string>();
       const spent = new Set<string>();
@@ -2191,8 +2244,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       // Publish definitions only after the full walk succeeds. A later-page
       // failure must not leave a partial validation/header view behind.
-      state.toolDefinitions = new Map(listed.map((tool) => [tool.name, tool]));
-      return listed.map((t) => ({
+      const clean = redactCatalog(ctx, listed);
+      state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
+      return clean.map((t) => ({
         name: t.name,
         ...(t.title !== undefined ? { title: t.title } : {}),
         ...(t.icons !== undefined
@@ -2235,6 +2289,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
+      if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
+        throw new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist.");
+      }
       const state = stateFor(ctx);
       const client = await ensureConnected(ctx, state);
       try {
@@ -2265,7 +2322,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             },
           )
           .catch((err: unknown) => {
-            throw atMcpBoundary(err, "tools/call", client.transport, [ctx.signal]);
+            throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
           throw new ConnectorCallError(
@@ -2283,7 +2340,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (state.client === client) state.authRequired = true;
           if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
-        throw downstreamCallError(err);
+        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
       }
     },
 
@@ -2436,6 +2493,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     };
   }
+
+  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>): Promise<T> => {
+    trackCredentialReads(ctx);
+    const secrets = sentSecretsFor(ctx);
+    if (opts.auth?.type === "headers") {
+      for (const value of Object.values(opts.auth.headers)) secrets.header(value);
+    }
+    const state = entryFor(ctx);
+    let active = activeSecrets.get(state);
+    if (!active) { active = new Set(); activeSecrets.set(state, active); }
+    active.add(secrets);
+    try { return redactSentSecrets(ctx, await run()); }
+    catch (error) { throw redactSentSecrets(ctx, error); }
+    finally { active.delete(secrets); }
+  };
+  const callTool = connector.callTool;
+  connector.callTool = (name, args, ctx, options) =>
+    withActiveSecrets(ctx, () => callTool(name, args, ctx, options));
+  const listTools = connector.listTools;
+  connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
 
   if (isOauth) {
     // Pin before the first asynchronous storage/discovery read, not only once

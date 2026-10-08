@@ -440,7 +440,7 @@ describe("status UI credential management", () => {
         {},
         connecta.registry.contextFor("vaulted", BASE),
       ),
-    ).resolves.toEqual({ credential: "valid-secret-9876" });
+    ).resolves.toEqual({ credential: "[redacted]" });
 
     const test = await credentialRequest(
       connecta,
@@ -504,7 +504,7 @@ describe("status UI credential management", () => {
         {},
         connecta.registry.contextFor("multi", BASE),
       ),
-    ).resolves.toEqual(values);
+    ).resolves.toEqual({ email: "[redacted]", apiKey: "[redacted]" });
 
     const test = await credentialRequest(
       connecta,

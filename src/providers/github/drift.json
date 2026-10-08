@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "provider": "github",
+  "checks": [
+    {
+      "type": "manual",
+      "source": "https://github.com/github/github-mcp-server",
+      "rationale": "The hosted catalog requires an installation token and can differ from the OSS release. Credential-free review checks the exact names, arguments, method subsets, annotations and repository permissions in hosted.ts against the official README and pkg/github handlers. Do not accept a new upstream tool automatically or probe operational tools.",
+      "evidence": {
+        "reviewedAt": "2026-10-07",
+        "inventory": "https://github.com/github/github-mcp-server#tools",
+        "host": "https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md",
+        "annotations": "https://github.com/github/github-mcp-server/blob/main/pkg/toolvalidation/readonlyhint.go",
+        "notes": "The hosted endpoint version is negotiated at runtime. The local exact allowlist is authoritative for exposure; vendor schemas/results remain live. File writes and merge additionally enforce the configured workflow boundary. Search and release writes belong only to the REST complement."
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.github.com/en/rest/apps/apps",
+      "rationale": "Review touched REST contracts for App installation discovery, repository_ids access-token narrowing and metadata-only name resolution, installation repositories, search, release writes, SHA-guarded PR merge with explicit workflow-write scope. Manual review remains visible; public documentation checks never mint tokens.",
+      "evidence": {
+        "reviewedAt": "2026-10-07",
+        "apiVersion": "2022-11-28",
+        "tokenContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app",
+        "repositoryListContract": "https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-app-installation",
+        "jwtContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app"
+      }
+    }
+  ]
+}

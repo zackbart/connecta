@@ -98,6 +98,7 @@ interface VettedToolRecord {
  * compares against cannot disagree.
  */
 export interface VettedCatalog {
+  unlisted?: "hide";
   /** Manifest format. Bumped when the comparison itself changes shape. */
   version: 1;
   tools: ReadonlyMap<string, VettedToolRecord>;
@@ -300,8 +301,10 @@ function parseClassification(
   }
   if (!isRecord(classification)) fail("must be an object with a tools record.");
   for (const key of Object.keys(classification)) {
-    if (key !== "tools") fail(`has unknown key "${key}"; only "tools" is accepted.`);
+    if (key !== "tools" && key !== "unlisted") fail(`has unknown key "${key}"; only "tools" and "unlisted" are accepted.`);
   }
+  const unlisted = classification.unlisted;
+  if (unlisted !== undefined && unlisted !== "hide") fail('unlisted must be "hide" when set.');
   const input: unknown = classification.tools;
   if (!isRecord(input)) fail("tools must be a record of tool name to verdict.");
   const tools = new Map<string, VettedToolRecord>();
@@ -343,8 +346,8 @@ function parseClassification(
           });
   }
   return {
-    catalog: { version: 1, tools },
-    frozen: Object.freeze({ tools: Object.freeze(frozen) }),
+    catalog: { version: 1, tools, ...(unlisted ? { unlisted } : {}) },
+    frozen: Object.freeze({ tools: Object.freeze(frozen), ...(unlisted ? { unlisted } : {}) }),
   };
 }
 
@@ -587,7 +590,8 @@ export async function classifyCatalog(
     }
   }
   const unverified = lapsed;
-  return facts.map((fact) => servedTool(catalog, fact, unverified, overrides?.[fact.name]));
+  return facts.filter((fact) => catalog.unlisted !== "hide" || catalog.tools.has(fact.name))
+    .map((fact) => servedTool(catalog, fact, unverified, overrides?.[fact.name]));
 }
 
 /**

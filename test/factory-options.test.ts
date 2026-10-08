@@ -158,7 +158,7 @@ describe("built-in factory options", () => {
 describe("discriminated factory options", () => {
   const url = "https://mcp.example/mcp";
   const headers = { "X-Key": SECRET };
-  const MCP_AUTH = '"headers", "credential", "oauth"';
+  const MCP_AUTH = '"request", "headers", "credential", "oauth"';
   const STRIPE_AUTH = '"oauth", "headers", "credential"';
   const SURFACE = '"api", "mcp"';
 

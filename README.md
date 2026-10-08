@@ -63,7 +63,7 @@ Fifty issues in, one small object out. Your context window notices.
   services in a config file; your client never changes.
 - **Wrap any HTTP API by hand.** A few lines per tool. No OpenAPI conversion —
   generated tool sprawl is the problem, not the fix.
-- **Use maintained connections** for <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel<!-- providers:end -->: known endpoints, auth defaults, and
+- **Use maintained connections** for <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel<!-- providers:end -->: known endpoints, auth defaults, and
   vetted read/write classifications, imported one at a time.
   Cloudflare, Notion, and Vercel each let the deployment choose their
   hand-written API interface or official hosted MCP. Planning Center, Overflow,

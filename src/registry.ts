@@ -64,6 +64,7 @@ import {
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
+import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
 import {
   GUIDE_SUMMARY_LENGTH,
   normalizeGuideSummary,
@@ -918,6 +919,8 @@ export class Registry implements RegistryView {
       requestScope,
       ...callOptions,
     };
+    sentSecretsFor(context);
+    trackCredentialReads(context);
     attachOAuthPartition(context, this.oauthPartition);
     // Downstream OAuth state is sealed under the vault key, bound to this
     // connector and owner. The sealer rides beside the context, not on it.
@@ -1489,9 +1492,18 @@ export class Registry implements RegistryView {
     flight?: CatalogRefreshFlight,
   ): Promise<ToolDef[]> {
     const generation = this.catalogGeneration(id);
-    // What the connector reports, decorators included. Both cache layers keep
-    // exactly this listing, and loadTools classifies it on every read.
-    const tools = (await connector.listTools(ctx)).map(tool => {
+    // Track custom/provider slot reads too. Sanitize all listing strings before
+    // drift observation, snapshotting, either cache, or an agent sees them.
+    trackCredentialReads(ctx);
+    let listed: ToolDef[];
+    try {
+      listed = await connector.listTools(ctx);
+    } catch (error) {
+      // Shared refresh flights may return this failure to another request.
+      // Sanitize it at intake, before publishing either success or failure.
+      throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
+    }
+    const tools = redactCatalog(ctx, listed).map(tool => {
       const { classification: _ignored, ...fact } = tool;
       return fact;
     });
@@ -1772,6 +1784,7 @@ export class Registry implements RegistryView {
     baseUrl: string,
     expectedGeneration: number,
     options: CatalogReadOptions,
+    requestScope?: object,
   ): void {
     const connector = this.connectors.get(id);
     const defer = options.defer;
@@ -1794,7 +1807,9 @@ export class Registry implements RegistryView {
               ),
             );
           }
-          const ctx = this.contextFor(id, baseUrl, {}, {
+          const refreshScope = {};
+          if (requestScope) sentSecretsForRequest(requestScope).include(sentSecretsForRequest(refreshScope));
+          const ctx = this.contextFor(id, baseUrl, refreshScope, {
             signal,
             timeoutMs: options.refreshTimeoutMs,
             defer,
@@ -2011,6 +2026,7 @@ export class Registry implements RegistryView {
         baseUrl,
         requestGeneration,
         readOptions,
+        requestScope,
       );
       // Invalidation can land synchronously while the refresh is attached.
       // Repeat the authority check at the exact stale publication point.
