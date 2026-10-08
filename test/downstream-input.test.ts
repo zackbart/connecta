@@ -26,7 +26,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; catalogEcho?: boolean; skills?: boolean } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; continuationTimeout?: boolean; catalogEcho?: boolean; skills?: boolean } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
@@ -36,6 +36,7 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
   const key = options.key ?? "question";
   const call = vi.fn();
   const continuationSend = vi.fn();
+  const completedWrite = vi.fn();
   const tokenRefresh = vi.fn();
   let catalogs = 0;
   const requests: Record<string, any>[] = [];
@@ -50,11 +51,14 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
         const responses = context.mcpReq.inputResponses;
         call(name, args, state, responses);
         const round = state === undefined ? 0 : (options.roundStates?.indexOf(typeof state === "string" ? state : "") ?? 0) + 1;
-        if (state && !options.repeat && (!options.roundStates || round >= options.roundStates.length)) return {
-          content: [{ type: "text", text: options.completeText ?? JSON.stringify({ done: true, responses }) }],
-          structuredContent: options.completeStructured ?? (options.output ? { done: true } : { done: true, responses }),
-          ...(options.completeError ? { isError: true } : {}),
-        };
+        if (state && !options.repeat && (!options.roundStates || round >= options.roundStates.length)) {
+          if (!read) completedWrite();
+          return {
+            content: [{ type: "text", text: options.completeText ?? JSON.stringify({ done: true, responses }) }],
+            structuredContent: options.completeStructured ?? (options.output ? { done: true } : { done: true, responses }),
+            ...(options.completeError ? { isError: true } : {}),
+          };
+        }
         return inputRequired({ requestState: options.roundStates?.[round] ?? options.opaque ?? OPAQUE,
           inputRequests: { [key]: options.url
             ? inputRequired.elicitUrl({ message: options.message ?? "Open this page", url: options.url })
@@ -74,6 +78,11 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     }
     if (request?.method === "tools/call" && request.params.inputResponses !== undefined) {
       continuationSend(request);
+      if (options.continuationTimeout) {
+        const reply = await downstream.fetch(input as string, init);
+        await reply.body?.cancel();
+        throw new DOMException("PRIVATE_TRANSPORT_TIMEOUT", "TimeoutError");
+      }
       if (options.failureStatus && new Headers(init?.headers).get("authorization") !== "Bearer REFRESHED_ACCESS_CREDENTIAL") {
         return new Response(null, { status: options.failureStatus, headers: options.failureStatus === 307
           ? { Location: `${downstream.url}?redirected=true` }
@@ -136,7 +145,7 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
     return readJsonRpc(await app.fetch(opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request));
   };
-  return { rpc, call, requests, logs, activity, storage, vault, continuationSend, tokenRefresh,
+  return { rpc, call, requests, logs, activity, storage, vault, continuationSend, completedWrite, tokenRefresh,
     seedOAuth: () => seedGrant(storage, { issuer: "https://auth.test", client: { value: { client_id: "relay-client", redirect_uris: [`${BASE}/oauth/callback/service`], token_endpoint_auth_method: "none" } },
       tokens: { access_token: SECRET, refresh_token: "INITIAL_REFRESH_CREDENTIAL", token_type: "Bearer" },
     }, "v3:seeded", scopes.connector("service")),
@@ -453,7 +462,14 @@ describe("downstream input relay", () => {
       const result = (await flow.rpc(retryOpts)).result;
       expect(result.isError).toBe(true);
       expect(result.structuredContent.error.retryable).toBe(false);
-      if (failureStatus === 401) expect(result.structuredContent.error).toMatchObject({ code: "downstream_oauth_required", reconciliationRequired: true });
+      if (failureStatus === 401) expect(result.structuredContent.error).toMatchObject({
+        code: "downstream_oauth_required", reconciliationRequired: true,
+        nextAction: {
+          tool: "authorize_connector", arguments: { connector: "service" },
+          operatorHandoff: "Give the URL and instructions it returns to the operator.",
+        },
+        retry: "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+      });
       expect(flow.continuationSend).toHaveBeenCalledOnce();
       expect(flow.tokenRefresh).not.toHaveBeenCalled();
       expect((await flow.rpc(retryOpts)).result.isError).toBe(true);
@@ -469,6 +485,83 @@ describe("downstream input relay", () => {
     expect(result.isError, JSON.stringify(result)).toBeFalsy();
     expect(read.continuationSend).toHaveBeenCalledTimes(2);
     expect(read.tokenRefresh).toHaveBeenCalledOnce();
+  });
+
+  it.each([429, 502, 503, 504, "timeout"] as const)("INV-4 INV-6 INV-9: makes a spent continuation non-retryable after %s with recovery appropriate to reads and writes", async failure => {
+    for (const write of [false, true]) {
+      const flow = setup(failure === "timeout" ? { continuationTimeout: true } : { failureStatus: failure });
+      const opts = { name: write ? "call_destructive_tool" : "call_tool", args: { address: `service.${write ? "write" : "read"}`, args: { id: 1 } } };
+      const first = (await flow.rpc(opts)).result;
+      expect(first.resultType).toBe("input_required");
+      const continuation = { ...opts, state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } };
+      const result = (await flow.rpc(continuation)).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent.error).toMatchObject({
+        code: failure === 429 ? "rate_limited" : failure === "timeout" ? write ? "write_outcome_unknown" : "unavailable" : "connector_call_failed",
+        retryable: false,
+      });
+      expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+      const replay = (await flow.rpc(continuation)).result;
+      expect(replay.isError).toBe(true);
+      expect(replay.content[0].text).toContain("Invalid or expired requestState");
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+      expect(JSON.stringify([result, flow.logs, flow.activity.record.mock.calls])).not.toContain("PRIVATE_TRANSPORT_TIMEOUT");
+      if (failure === "timeout" && write) {
+        expect(result.structuredContent.error.uncertainCall).toEqual({ address: "service.write", args: { id: 1 } });
+        expect(result.structuredContent.error.retry).toContain("Check whether the write took effect first");
+      }
+      if (write) {
+        // The underlying transport failure supplies no nextAction. In particular,
+        // losing a completed write's response must not direct another write.
+        expect(result.structuredContent.error).not.toHaveProperty("nextAction");
+        if (failure === "timeout") {
+          expect(flow.completedWrite).toHaveBeenCalledOnce();
+          expect(flow.call).toHaveBeenCalledTimes(2);
+          expect(flow.call).toHaveBeenLastCalledWith("write", { id: 1 }, OPAQUE, { question: { action: "accept" } });
+        }
+      } else {
+        expect(result.structuredContent.error.nextAction).toEqual({
+          tool: opts.name,
+          arguments: opts.args,
+          purpose: "Re-issue the original direct call without requestState or inputResponses to start a fresh input round. Do not resend this continuation.",
+        });
+        expect(result.structuredContent.error).not.toHaveProperty("retry");
+        const next = result.structuredContent.error.nextAction;
+        const fresh = (await flow.rpc({ name: next.tool, args: next.arguments })).result;
+        expect(fresh.resultType).toBe("input_required");
+        expect(fresh.requestState).not.toBe(first.requestState);
+        expect(flow.continuationSend).toHaveBeenCalledOnce();
+      }
+    }
+  });
+
+  it("INV-4 INV-9: preserves auth recovery prerequisites for a failed read continuation", async () => {
+    const flow = setup({ failContinuationAuth: true });
+    const first = (await flow.rpc()).result;
+    const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+    expect(result.structuredContent.error).toMatchObject({
+      code: "auth_required", retryable: false,
+      nextAction: {
+        tool: "authorize_connector", arguments: { connector: "service" },
+        operatorHandoff: "Give the URL and instructions it returns to the operator.",
+      },
+      retry: "Retry service.read after the operator completes recovery.",
+    });
+    expect(flow.continuationSend).toHaveBeenCalledOnce();
+  });
+
+  it.each([429, 502, 503, 504])("INV-9: preserves first-call retryability after HTTP %s", async failureStatus => {
+    const flow = setup();
+    const fetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body === "string" && JSON.parse(init.body).method === "tools/call") return new Response(null, { status: failureStatus });
+      return fetch(input, init);
+    });
+    const result = (await flow.rpc()).result;
+    expect(result.structuredContent.error).toMatchObject({ code: failureStatus === 429 ? "rate_limited" : "connector_call_failed", retryable: true });
+    expect(result.structuredContent.error).not.toHaveProperty("nextAction");
+    expect(flow.continuationSend).not.toHaveBeenCalled();
   });
 
   it("INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads", async () => {
