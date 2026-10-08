@@ -228,14 +228,14 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     }));
     const gate = deferred<void>();
     const entered = deferred<void>();
-    const fetch = vi.fn(async () => { entered.resolve(); await gate.promise; throw new Error("DOWNSTREAM_SECRET_SENTINEL"); });
+    const fetch = vi.fn(async () => { entered.resolve(); await gate.promise; return Response.json({ error: "server_error", error_description: "DOWNSTREAM_SECRET_SENTINEL" }, { status: 503 }); });
     const requests = coordinators.map((coordinator, n) => coordinator.coordinatedFetch(providers[n]!, fetch)(`${A}/token`, refreshInit).catch(() => undefined));
     await entered.promise;
     await new Promise((resolve) => setTimeout(resolve, 100));
     gate.resolve();
     await Promise.all(requests);
     expect(fetch).toHaveBeenCalledTimes(1);
-    for (const p of providers) expect(p.refreshVerdict()).toMatchObject({ kind: "transient", reason: "could not be reached" });
+    for (const p of providers) expect(p.refreshVerdict()).toMatchObject({ kind: "transient", reason: "answered HTTP 503" });
     for (const key of await storage.list("oauth:refresh:")) expect(await storage.get(key)).not.toContain("DOWNSTREAM_SECRET_SENTINEL");
     expect((await storedGrant(storage))!.body!.tokens).toEqual(tokens);
   });

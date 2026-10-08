@@ -34,6 +34,7 @@ import {
   assertOAuthScope,
   authorizingContext,
   KvOAuthProvider,
+  OAuthRequestNotSentError,
   refreshCoordinatorsByPartition,
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
@@ -749,7 +750,7 @@ export function redirectSafeFetch(
   };
 }
 
-class RemoteMcpDestinationError extends ConnectorCallError {
+class RemoteMcpDestinationError extends OAuthRequestNotSentError {
   constructor(connectorId: string, reason: string) {
     super(
       "connector_call_failed",
@@ -803,8 +804,8 @@ for (const [ctor, label] of [
  * downstream's own metadata and fetches them through the transport's fetch,
  * so this sits on that fetch: above `redirectSafeFetch`, whose same-origin
  * rule keeps every hop on the host checked here, and below the refresh
- * coordinator, which already treats a non-retryable `ConnectorCallError` as
- * connecta's own refusal rather than a token-endpoint verdict.
+ * coordinator. The typed local refusal proves that this guard sent nothing;
+ * failures after an HTTP dispatch keep their permanent ambiguous verdict.
  */
 function learnedUrlSafeFetch(
   connectorId: string,
@@ -1616,6 +1617,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           oauthProvider,
           learnedUrlSafeFetch(id, url, guardedFetch),
           signal,
+          ctx.defer,
         ),
       });
       boundOAuthFlows(transport, url, [signal, ctx.signal]);
@@ -1646,8 +1648,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // `scope` is deliberately left as it is — see ConnectionState.
   };
 
-  // The context has no deferred-work hook. Detached exits start this bounded
-  // best-effort tail immediately; closeScope awaits its own tail so the core
+  // Detached exits start this bounded best-effort tail immediately;
+  // closeScope awaits its own tail so the core
   // can pass it to the runtime's deferred channel. Terminating and closing are
   // each bounded, so no close waits more than two seconds in all.
   const closingSessions = new WeakMap<Transport, Deferred.Deferred<void>>();

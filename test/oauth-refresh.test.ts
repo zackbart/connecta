@@ -301,16 +301,6 @@ describe("OAuthRefreshCoordinator", () => {
       () => Response.json({ error: "server_error", error_description: "temporarily down" }, { status: 503 }),
       "answered HTTP 503",
     ],
-    [
-      "a 2xx that is no token response",
-      () => Response.json({ access_token: "access-bad", token_type: "Bearer", refresh_token: 123 }),
-      "answered without a token response",
-    ],
-    [
-      "a failed fetch",
-      (): Response => { throw new TypeError("fetch failed"); },
-      "could not be reached",
-    ],
   ])("settles joined scopes with the owner's verdict on %s and lets a later refresh retry", async (_name, failure, reason) => {
     const storage = await grantStore();
     const coordinator = new OAuthRefreshCoordinator();
@@ -376,43 +366,34 @@ describe("OAuthRefreshCoordinator", () => {
     expect((await storedGrant(storage))?.body?.tokens).toMatchObject({ refresh_token: "refresh-new" });
   });
 
-  it("aborts an aborted owner's token request and fails its joined scopes; a later refresh redeems again", async () => {
+  it("completes an aborted owner's dispatched request and commits for its joined scopes without replay", async () => {
     const storage = await grantStore();
     const coordinator = new OAuthRefreshCoordinator();
     let firstSignal: AbortSignal | null | undefined;
-    const server = tokenServer();
-    // The first request hangs until its signal ends it, as fetch does.
+    const gate = deferred<void>();
+    const server = tokenServer(async () => { await gate.promise; return Response.json(bearer("access-new", "refresh-new")); });
     const fetch: FetchLike = (input, init) => {
-      if (server.redeemed.length > 0) return server.fetch(input, init);
       firstSignal = init?.signal;
-      void server.fetch(input, init);
-      return new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        const onAbort = () => {
-          signal?.removeEventListener("abort", onAbort);
-          reject(signal?.reason);
-        };
-        signal?.addEventListener("abort", onAbort, { once: true });
-      });
+      return server.fetch(input, init);
     };
     const owner = trackedAbortSignal();
     const joiner = trackedAbortSignal();
+    const stale = await flow(storage, coordinator);
     const owning = refresh(coordinator, await flow(storage, coordinator), fetch, "refresh-old", owner.signal);
     await server.entered;
     const joining = refresh(coordinator, await flow(storage, coordinator), fetch, "refresh-old", joiner.signal);
     await vi.waitFor(() => expect(joiner.listeners()).toBe(1));
     const reason = new DOMException("Owner scope ended", "AbortError");
     owner.controller.abort(reason);
-    await expect(Promise.allSettled([owning, joining])).resolves.toEqual([
-      { status: "rejected", reason },
-      { status: "rejected", reason },
-    ]);
-    expect(firstSignal?.aborted).toBe(true);
-    expect(firstSignal?.reason).toBe(reason);
+    await expect(owning).rejects.toBe(reason);
+    expect(firstSignal?.aborted).toBe(false);
+    gate.resolve();
+    expect(await (await joining).json()).toEqual(bearer("access-new", "refresh-new"));
     expect(joiner.listeners()).toBe(0);
-    const later = await flow(storage, coordinator);
-    expect((await refresh(coordinator, later, fetch)).status).toBe(200);
-    expect(server.redeemed).toEqual(["refresh-old", "refresh-old"]);
+    expect(owner.listeners()).toBe(0);
+    expect((await storedGrant(storage))?.body?.tokens).toMatchObject({ refresh_token: "refresh-new" });
+    expect(await (await refresh(coordinator, stale, fetch)).json()).toEqual(bearer("access-new", "refresh-new"));
+    expect(server.redeemed).toEqual(["refresh-old"]);
   });
 
   it("never starts a token request from a scope already aborted", async () => {
@@ -670,7 +651,7 @@ describe("OAuthRefreshCoordinator", () => {
     else expect(grant?.body?.tokens).toBeUndefined();
   });
 
-  it("bounds a successful token response's read: an oversized answer is an outage and the owner is released", async () => {
+  it("bounds a successful token response's read and permanently refuses its ambiguous oversized answer", async () => {
     const storage = await grantStore();
     const coordinator = new OAuthRefreshCoordinator();
     let pulled = 0;
@@ -682,14 +663,15 @@ describe("OAuthRefreshCoordinator", () => {
       },
     }));
     const owner = await flow(storage, coordinator, { passive: true });
-    await expect(refresh(coordinator, owner, oversized)).rejects.toThrow("exceeded 65536 bytes");
+    await expect(refresh(coordinator, owner, oversized)).rejects.toBeInstanceOf(UnauthorizedError);
     expect(pulled).toBeLessThan(100);
     await expect(owner.state()).rejects.toThrow(
-      'Connector "svc" could not refresh its OAuth grant: the authorization server answered with an oversized response. The grant is kept; retry later.',
+      'Authorization required',
     );
     const server = tokenServer();
-    expect((await refresh(coordinator, await flow(storage, coordinator), server.fetch)).status).toBe(200);
-    expect(server.redeemed).toEqual(["refresh-old"]);
+    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
+    expect((await refresh(coordinator, await flow(storage, coordinator), server.fetch)).status).toBe(400);
+    expect(server.redeemed).toEqual([]);
   });
 
   it("shares exactly one rotating-token grant in each of two waves of eight scopes", async () => {

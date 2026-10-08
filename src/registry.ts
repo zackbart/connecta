@@ -345,7 +345,7 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
 
 export type ConnectorOperationOptions = Pick<
   ConnectorContext,
-  "signal" | "timeoutMs"
+  "signal" | "timeoutMs" | "defer"
 >;
 
 /** Agent-only catalog behavior. This never enters a ConnectorContext. */
@@ -1793,6 +1793,7 @@ export class Registry implements RegistryView {
           const ctx = this.contextFor(id, baseUrl, {}, {
             signal,
             timeoutMs: options.refreshTimeoutMs,
+            defer,
           });
           yield* closeScopeOnExit(connector, ctx, defer);
           return yield* Effect.tryPromise({

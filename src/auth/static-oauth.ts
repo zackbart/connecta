@@ -420,6 +420,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         provider,
         redirectSafeFetch(id, "none", tokenEndpointFetch),
         ctx.signal,
+        ctx.defer,
       ),
     });
 

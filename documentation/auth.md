@@ -476,7 +476,8 @@ Refresh classification uses the token endpoint's answer, not the SDK's parsing:
 | Answer | Outcome |
 | --- | --- |
 | Dead grant: 4xx except 408, 425, 429; or 2xx with OAuth `error` | `auth_required`. Delete refused tokens before releasing refresh waiters, preventing requests or isolates from resending them; the next `authorize_connector` goes straight to consent. |
-| Outage: 5xx, 408, 425, 429, network failure, or 2xx without a token response | Retryable `unavailable`, or `rate_limited` for 429, with `retryAfterMs` from `Retry-After` when present. Keep the grant; passive calls write no consent URL. |
+| Outage: complete 5xx, 408, 425, or 429 failure response without evidence of issued tokens | Retryable `unavailable`, or `rate_limited` for 429, with `retryAfterMs` from `Retry-After` when present. Keep the grant; passive calls write no consent URL. |
+| Ambiguous after dispatch: network or response-body loss, malformed or oversized success, deadline expiry, failure response carrying tokens, or process crash | `auth_required`. Permanently refuse the refresh fingerprint by shared-storage CAS and conditionally delete its grant tokens. Newcomers cannot clear the refusal; re-consent is required. |
 | Valid refresh that cannot be stored | Retryable `unavailable` with fixed text; leave the stored grant untouched. |
 
 Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
@@ -502,9 +503,14 @@ scope; the holder's HTTP deadline applies next. Cancellation before sending
 settles the local flight without waiting for cleanup storage; an unsent claim
 left behind can expire and be taken over. Late preparation never sends.
 
-The holder stores an accepted rotation by grant CAS before releasing anyone,
-even if it was cancelled after the answer or the SDK redirects instead of
-saving. The grant CAS keeps stale rotations from replacing newer grants.
+Once the request is dispatched, the holder detaches the HTTP exchange from
+both the caller's and the SDK's cancellation signals. The caller still receives
+its normal cancellation result. The exchange runs through its 20-second deadline
+and stores an accepted rotation by grant CAS before releasing waiters, even if
+the caller left before the response or the SDK redirects instead of saving.
+The runtime's deferred-work hook passes this completion, including the commit,
+to Workers `waitUntil`. Paths without that hook still finish in a background
+promise. The grant CAS keeps stale rotations from replacing newer grants.
 Release also uses CAS. A completion record hands waiting isolates the outcome
 even when the token response is byte-identical; a later request can claim a
 fresh attempt after that confirmed commit. Verdict records contain typed facts,
@@ -515,8 +521,14 @@ refresh token and before the grant commit. Once its shared-storage liveness
 record expires, connecta records a permanent refusal for that fingerprint and
 conditionally removes the grant's tokens. It never resends that token. The
 connector reports `auth_required` with the normal `authorize_connector` recovery.
-A refresh HTTP deadline also has an unknown outcome and requires re-consent.
-A late answer cannot restore the discarded grant. No implementation can recover
+A network failure after dispatch, a lost response body, and the 20-second HTTP
+deadline also have unknown outcomes. The holder records the permanent fingerprint
+refusal by CAS before removing its grant tokens. A newcomer never clears this
+refusal, including if a later grant write reintroduces that fingerprint in the
+same epoch. A complete failure response without evidence of token issuance keeps
+the existing outage classification. A failure response carrying issued tokens
+may hide a rotation and requires re-consent. A late answer cannot restore the
+discarded grant. No implementation can recover
 a rotating token response the authorization server sent but connecta did not
 commit. Restart and Disconnect advance the epoch and sweep stale refresh records.
 All in-flight joiners get the same verdict even if the sender is cancelled

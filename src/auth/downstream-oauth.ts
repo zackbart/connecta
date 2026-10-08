@@ -17,16 +17,14 @@ import {
 } from "../oauth-partition.js";
 import { inheritOAuthSealer } from "../oauth-sealing.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
-import { fromSignal, runEdge } from "../runtime/run.js";
+import { detach, fromSignal, runEdge } from "../runtime/run.js";
 import { OAUTH_FLOW_TTL_SECONDS, OAUTH_REFRESH_LEASE_SECONDS, oauthFlowKeys, oauthGrantKeys, oauthRefreshKeys, oauthRefreshActiveKeys } from "../storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../types.js";
 import {
   isRefreshTokenRequest,
-  OversizedRefreshResponse,
   refreshResponseOutcome,
   sdkSafeTokenResponse,
   tokenGrantType,
-  transientFailure,
   type RefreshFailure,
   type RefreshResponseOutcome,
   type TransientRefreshFailure,
@@ -76,6 +74,9 @@ export class OAuthCallbackClaimedError extends ConnectorCallError {
     this.name = "OAuthCallbackClaimedError";
   }
 }
+
+/** A local destination guard proved that no OAuth HTTP request left. */
+export class OAuthRequestNotSentError extends ConnectorCallError {}
 
 /** A 256-bit random opaque value, hex-encoded — used for the OAuth `state`. */
 function randomState(): string {
@@ -129,6 +130,7 @@ interface RefreshWait {
 function refreshWait(signal?: AbortSignal): RefreshWait {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), REFRESH_WAIT_DEADLINE_MS);
+  let closed = false;
   const abort = () => deadline.abort(aborted(signal));
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
@@ -139,6 +141,8 @@ function refreshWait(signal?: AbortSignal): RefreshWait {
       Effect.tryPromise({ try: operation, catch: (error) => error }),
     ])),
     close: () => {
+      if (closed) return;
+      closed = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
     },
@@ -218,10 +222,14 @@ export class OAuthRefreshCoordinator {
     provider: KvOAuthProvider,
     baseFetch: FetchLike,
     requestSignal?: AbortSignal,
+    defer?: ConnectorContext["defer"],
   ): FetchLike {
     return async (input, init) => {
       if (isRefreshTokenRequest(init)) {
-        return this.refresh(provider, input, init, baseFetch, requestSignal);
+        const signal = requestSignal && init?.signal
+          ? AbortSignal.any([requestSignal, init.signal])
+          : requestSignal ?? init?.signal ?? undefined;
+        return this.refresh(provider, input, init, baseFetch, signal, defer);
       }
       const grantType = tokenGrantType(init);
       const exchange = grantType === "authorization_code";
@@ -255,6 +263,7 @@ export class OAuthRefreshCoordinator {
     init: RequestInit | undefined,
     baseFetch: FetchLike,
     signal: AbortSignal | undefined,
+    defer: ConnectorContext["defer"],
   ): Promise<Response> {
     const waiting = refreshWait(signal);
     try {
@@ -290,9 +299,14 @@ export class OAuthRefreshCoordinator {
           );
         }
         const redemption = this.redeem(provider, epoch, requested, input, init, baseFetch, signal, waiting);
+        // The refresh owns its completion after dispatch, including storage.
+        // Attach it before yielding so a cancelled Worker keeps that work alive.
+        try {
+          detach(Effect.promise(() => redemption), defer ? { waitUntil: defer } : undefined);
+        } catch {
+          // A missing or refusing runtime hook still leaves the promise running.
+        }
         if (!signal) return await redemption;
-        // An answer still commits when the owner leaves after dispatch.
-        redemption.catch(() => {});
         return await runEdge(Effect.raceAllFirst<Effect.Effect<Response, unknown>>([
           Effect.tryPromise({ try: () => redemption, catch: (error) => error }),
           fromSignal(signal),
@@ -353,31 +367,21 @@ export class OAuthRefreshCoordinator {
     };
     let outcome: RefreshResponseOutcome;
     const deadline = new AbortController();
-    let timedOut = false;
     let dispatched = false;
-    const request = new AbortController();
-    const parents = [deadline.signal, ...(signal ? [signal] : []), ...(init?.signal ? [init.signal] : [])];
-    const abortRequest = () => {
-      const parent = parents.find((parent) => parent.aborted);
-      if (parent) request.abort(parent.reason);
-    };
-    for (const parent of parents) parent.addEventListener("abort", abortRequest, { once: true });
-    abortRequest();
-    const requestSignal = request.signal;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const read = provider.dispatchRefresh(lease, () => {
-        if (requestSignal.aborted) throw aborted(requestSignal);
+        if (signal?.aborted) throw aborted(signal);
+        if (init?.signal?.aborted) throw aborted(init.signal);
         dispatched = true;
         // Preparation remains bounded through the send transition. After
         // dispatch, caller cancellation must not prevent an answer's commit.
         waiting.close();
         // Start the deadline at dispatch, including the response body read.
         timer = setTimeout(() => {
-          timedOut = true;
           deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
         }, REFRESH_REQUEST_DEADLINE_MS);
-        return baseFetch(input, { ...init, signal: requestSignal });
+        return baseFetch(input, { ...init, signal: deadline.signal });
       }, waiting).then((response) => {
         if (deadline.signal.aborted) {
           void response.body?.cancel().catch(() => {});
@@ -385,6 +389,8 @@ export class OAuthRefreshCoordinator {
         }
         return refreshResponseOutcome(response, deadline.signal);
       });
+      // The deadline can settle the race before a late fetch/body rejects.
+      void read.catch(() => {});
       outcome = await runEdge(Effect.raceAllFirst<Effect.Effect<RefreshResponseOutcome, unknown>>([
         Effect.tryPromise({ try: () => read, catch: (error) => error }),
         fromSignal(deadline.signal),
@@ -394,38 +400,29 @@ export class OAuthRefreshCoordinator {
       if (!dispatched) {
         // A cancelled or timed-out unsent holder leaves a safely expiring
         // claim. Cleanup must not retain its local flight or partition pin.
-        if (!waiting.signal.aborted && !requestSignal.aborted) {
+        if (!waiting.signal.aborted && !signal?.aborted && !init?.signal?.aborted) {
           await waiting.run(() => releaseLease()).catch(() => {});
         }
         const failure = !signal?.aborted && waiting.signal.aborted ? provider.refreshContended() : error;
         fail(failure, provider.refreshVerdict());
         throw failure;
       }
-      if (timedOut) {
-        // The provider may have consumed the token without returning its answer.
-        await provider.discardRefusedGrant(requested, epoch);
-        await releaseLease({ kind: "dead" });
-        fail(error, { kind: "dead" });
+      if (error instanceof OAuthRequestNotSentError) {
+        // A local guard refused the destination before any HTTP exchange.
+        await releaseLease();
+        fail(error);
         throw error;
       }
-      // No answer at all — the network, or a body too large to be one — is an
-      // outage. This owner's own cancellation, and a refusal connecta itself
-      // raised (a redirect the policy forbids), are not.
-      const verdict = signal?.aborted || (error instanceof ConnectorCallError && !error.retryable)
-        ? undefined
-        : transientFailure(
-            error instanceof OversizedRefreshResponse
-              ? "answered with an oversized response"
-              : "could not be reached",
-            undefined,
-            error,
-          );
-      await releaseLease(verdict);
-      fail(error, verdict);
-      throw error;
+      // A sent request without a definitive answer may have rotated the token.
+      // Persist the refusal before dropping tokens, so interrupted cleanup or a
+      // later write of the same fingerprint cannot make it redeemable again.
+      const failure = new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
+      await releaseLease({ kind: "dead" });
+      await provider.discardRefusedGrant(requested, epoch);
+      fail(failure, { kind: "dead" });
+      throw failure;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
-      for (const parent of parents) parent.removeEventListener("abort", abortRequest);
     }
     // An answer exists from here on, and is committed whatever the owner does.
     if (outcome.failure) {
@@ -1112,20 +1109,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   private refreshOutage(failure: TransientRefreshFailure): ConnectorCallError {
-    const { cause } = failure;
     return new ConnectorCallError(
       failure.status === 429 ? "rate_limited" : "unavailable",
       `Connector "${this.connectorId}" could not refresh its OAuth grant: the ` +
         `authorization server ${failure.reason}. The grant is kept; retry later.`,
-      {
-        ...(cause !== undefined ? { cause } : {}),
-        ...(failure.retryAfterMs !== undefined
-          ? { retryAfterMs: failure.retryAfterMs }
-          : {}),
-        ...(cause instanceof ConnectorCallError && cause.details
-          ? { details: cause.details }
-          : {}),
-      },
+      failure.retryAfterMs !== undefined ? { retryAfterMs: failure.retryAfterMs } : {},
     );
   }
 

@@ -54,6 +54,7 @@ export default defineConfig({
         },
         test: {
           name: "node",
+          globalSetup: ["./test/fixtures/oauth-http-server.ts"],
           include: TEST_INCLUDE,
           exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },
@@ -79,6 +80,7 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
+          globalSetup: ["./test/fixtures/oauth-http-server.ts"],
           include: TEST_INCLUDE,
           exclude: [...NODE_ONLY_EXCLUDE, "**/node_modules/**", "**/dist/**", "**/.claude/**", "**/worktrees/**"],
         },

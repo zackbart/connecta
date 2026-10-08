@@ -82,13 +82,13 @@ async function connect(context: RouteContext): Promise<Response> {
   if (!connector.startAuth) return refuse("unknown OAuth connector", 404);
   const registry = opts.registry.scoped({ connectorIds: [id], principalKey: authz.principalKey, ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}) });
   const scope = {};
-  let ctx = registry.contextFor(id, baseUrl, scope);
+  let ctx = registry.contextFor(id, baseUrl, scope, context.defer ? { defer: context.defer } : {});
   const timeoutError = new ConnectorCallError("timeout", "OAuth authorization start timed out");
   try {
     if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
     const status = await runEdge(withDeadlineEffect(signal => Effect.tryPromise({
       try: async () => {
-        ctx = registry.contextFor(id, baseUrl, scope, { signal });
+        ctx = registry.contextFor(id, baseUrl, scope, { signal, ...(context.defer ? { defer: context.defer } : {}) });
         const started = await connector.startAuth!(ctx, { force: handoff.force });
         if (signal.aborted) throw signal.reason;
         if (started.authorizationUrl) {

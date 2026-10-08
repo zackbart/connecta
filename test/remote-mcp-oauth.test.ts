@@ -2216,15 +2216,6 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       { code: "rate_limited", retryAfterMs: 30_000 },
     ],
     ["429 without Retry-After", () => new Response("slow down", { status: 429 }), { code: "rate_limited" }],
-    [
-      "a network error",
-      () => {
-        throw new TypeError("fetch failed", {
-          cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
-        });
-      },
-      { code: "unavailable" },
-    ],
   ];
 
   it.each(transientAnswers)(
@@ -2259,6 +2250,28 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       expect(await reader(storage).tokens()).toMatchObject({ refresh_token: "refresh-new" });
     },
   );
+
+  it("requires re-consent after a dispatched network failure and never resends the refresh token (INV-5)", async () => {
+    const storage = await seededStorage();
+    const answer = { current: (): Response => { throw new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+    }); } };
+    const server = downstream(answer);
+    const c = connector();
+    const passive = scope(storage);
+    const { classified } = await failureOf(c.listTools(passive));
+    expect(classified).toMatchObject({ code: "auth_required", retryable: false });
+    expect(await reader(storage).tokens()).toBeUndefined();
+    expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
+    await expect(c.status!(passive)).resolves.toMatchObject({ state: "auth_required" });
+    await c.closeScope?.(passive);
+    answer.current = () => Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
+    const later = scope(storage);
+    await expect(c.listTools(later)).rejects.toMatchObject({ code: "auth_required" });
+    await c.closeScope?.(later);
+    expect(server.counts.token).toBe(1);
+    expect(server.redeemed).toEqual(["refresh-old"]);
+  });
 
   it("refreshes a grant an earlier release bound, without the SDK warning on the console", async () => {
     // From v0.9.0 to v0.28.1 a grant from before binding was bound on its

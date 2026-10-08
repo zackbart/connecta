@@ -191,8 +191,8 @@ async function finishOAuthCallback(
   // nor touches storage for an unknown id, which is what lets the refusals
   // below borrow it to equalize their cost.
   const connectorContext = callbackRegistry
-    ? callbackRegistry.contextFor(id, baseUrl)
-    : opts.registry.contextFor(id, baseUrl);
+    ? callbackRegistry.contextFor(id, baseUrl, {}, context.defer ? { defer: context.defer } : {})
+    : opts.registry.contextFor(id, baseUrl, {}, context.defer ? { defer: context.defer } : {});
   const refused = () => html("invalid_callback", opts);
   if (!connector || !connector.finishAuth) {
     await equalizeRefusalCost(connectorContext, state);

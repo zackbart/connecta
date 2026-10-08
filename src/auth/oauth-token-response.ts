@@ -45,19 +45,20 @@ function sdkAcceptsOAuthTokens(value: unknown): boolean {
 
 const MAX_REFRESH_RESPONSE_BYTES = 65_536;
 
-export class OversizedRefreshResponse extends Error {
+class OversizedRefreshResponse extends Error {
   constructor() {
     super(`OAuth refresh response exceeded ${MAX_REFRESH_RESPONSE_BYTES} bytes.`);
   }
 }
 
-async function readRefreshResponse(response: Response, signal?: AbortSignal): Promise<unknown> {
+async function readRefreshResponse(response: Response, signal?: AbortSignal, clone = true): Promise<unknown> {
   if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
     void response.body?.cancel().catch(() => {});
     throw new OversizedRefreshResponse();
   }
-  const reader = response.clone().body?.getReader();
+  const reader = (clone ? response.clone() : response).body?.getReader();
   if (!reader) return undefined;
+  void reader.closed.catch(() => {});
   const cancel = () => {
     void reader.cancel().catch(() => {});
     void response.body?.cancel().catch(() => {});
@@ -96,9 +97,13 @@ async function readRefreshResponse(response: Response, signal?: AbortSignal): Pr
  * GitHub answers `bad_refresh_token`. Only consent repairs that, so the call is
  * `auth_required` and the refused token is never sent again.
  *
- * `transient`: the server could not answer now — 5xx, 408, 425, 429, a network
- * failure, or a 2xx that is not a token response. The grant is kept and the
- * call is a retryable outage; a passive call never turns it into consent.
+ * `transient`: a complete failure response — 5xx, 408, 425, or 429 —
+ * without evidence of issued tokens. The grant is kept and the call is a
+ * retryable outage; a passive call never turns it into consent.
+ *
+ * A sent request without a definitive response is permanently `dead` too:
+ * network and body loss, malformed success, and deadline expiry may hide a
+ * rotation. The coordinator records that refusal before removing the tokens.
  *
  * `unstored`: the server answered with a rotation storage would not keep.
  */
@@ -112,7 +117,6 @@ export type RefreshFailure =
       reason: string;
       status?: number;
       retryAfterMs?: number;
-      cause?: unknown;
     }
   /** A valid rotation storage refused to keep: retryable, grant untouched. */
   | { kind: "unstored" };
@@ -139,10 +143,9 @@ function oauthErrorCode(body: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-export function transientFailure(
+function transientFailure(
   reason: string,
   response?: Response,
-  cause?: unknown,
 ): TransientRefreshFailure {
   const wait = response ? retryAfterMs(response.headers) : undefined;
   return {
@@ -150,7 +153,6 @@ export function transientFailure(
     reason,
     ...(response ? { status: response.status } : {}),
     ...(wait !== undefined ? { retryAfterMs: wait } : {}),
-    ...(cause !== undefined ? { cause } : {}),
   };
 }
 
@@ -232,7 +234,7 @@ export type RefreshResponseOutcome =
   | { failure?: undefined; tokens: OAuthTokens };
 
 /**
- * Classify the token endpoint's answer once, on a clone, and keep the parsed
+ * Classify the token endpoint's answer once with a bounded read, and keep the parsed
  * tokens: a valid response has already consumed the rotating refresh token, so
  * the coordinator stores it before releasing anyone, rather than trusting the
  * SDK's later `saveTokens` to arrive on a request that may already be cancelled.
@@ -263,9 +265,16 @@ export async function refreshResponseOutcome(
   if (!response.ok) {
     let code: string | undefined;
     try {
-      code = oauthErrorCode(await readRefreshResponse(response, signal));
-    } catch {
-      // Not JSON, or too large to be an OAuth error: the status decides.
+      const body = await readRefreshResponse(response, signal, false);
+      if (body && typeof body === "object" && ("access_token" in body || "refresh_token" in body)) {
+        // A provider issuing tokens while reporting failure may have rotated.
+        throw new Error("OAuth refresh failure response may contain a rotation.");
+      }
+      code = oauthErrorCode(body);
+    } catch (error) {
+      // Complete non-JSON failures keep their status classification. A lost
+      // body or evidence of issued tokens cannot prove an unspent token.
+      if (!(error instanceof SyntaxError)) throw error;
     }
     const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
     if (
@@ -288,17 +297,9 @@ export async function refreshResponseOutcome(
       forSdk: sdkTokenFailure(response, "server_error"),
     };
   }
-  let parsed: unknown;
-  try {
-    parsed = await readRefreshResponse(response, signal);
-  } catch (error) {
-    if (error instanceof OversizedRefreshResponse) throw error;
-    return {
-      failure: new Error("OAuth refresh response did not contain JSON tokens."),
-      verdict: transientFailure("answered without a token response", response),
-      forSdk: sdkTokenFailure(response, "server_error"),
-    };
-  }
+  // A successful HTTP status may have consumed the token even when its
+  // body cannot be read or parsed. The coordinator refuses the fingerprint.
+  const parsed = await readRefreshResponse(response, signal, false);
   if (sdkAcceptsOAuthTokens(parsed)) {
     // An `issuer` names the server a grant is bound to, and only the client
     // stamps it — never the server answering, as the SDK's own parse agrees.
@@ -312,9 +313,5 @@ export async function refreshResponseOutcome(
       forSdk: sdkTokenFailure(response, "invalid_grant", 400),
     };
   }
-  return {
-    failure: new Error("OAuth refresh response did not match the token schema."),
-    verdict: transientFailure("answered without a token response", response),
-    forSdk: sdkTokenFailure(response, "server_error"),
-  };
+  throw new Error("OAuth refresh response did not match the token schema.");
 }

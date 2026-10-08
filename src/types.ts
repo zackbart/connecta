@@ -232,6 +232,8 @@ export interface ConnectorContext {
   requestScope?: object;
   /** Best-effort cancellation signal for this connector operation. */
   signal?: AbortSignal;
+  /** Runtime hook keeping a dispatched OAuth refresh alive through its commit. */
+  defer?: (promise: Promise<unknown>) => void;
   /** Requested connector-operation deadline in milliseconds. */
   timeoutMs?: number;
 }

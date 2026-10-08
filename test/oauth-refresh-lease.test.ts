@@ -168,6 +168,29 @@ describe.each([["memory", false], ["delayed", true]] as const)("refresh dispatch
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it.each([200, 503])("permanently refuses a lost HTTP %i response stream before newcomers can resend (INV-5)", async (status) => {
+    const storage = store(delayed);
+    await seedGrant(storage, { issuer: ISSUER, tokens });
+    const a = await isolate(storage);
+    const b = await isolate(storage);
+    const key = await leaseKey(storage);
+    const send = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"access_token":"new-access",'));
+        controller.error(new Error("Response body lost"));
+      },
+    }), { status }));
+    await expect(a.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(a.provider.refreshVerdict()).toEqual({ kind: "dead" });
+    expect((await storedGrant(storage))!.body!.tokens).toBeUndefined();
+    const refused = await storage.get(key);
+    expect(JSON.parse(refused!)).toMatchObject({ state: "dispatched", verdict: { kind: "dead" } });
+    await seedGrant(storage, { issuer: ISSUER, tokens });
+    await expect(b.fetch(send)(`${ISSUER}/token`, init)).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(await storage.get(key)).toBe(refused);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("returns retryable unavailable through SDK fallback when a waiter reaches 35 seconds, keeping the grant (INV-5)", async () => {
     const storage = store(delayed);
     await seedGrant(storage, { issuer: ISSUER, tokens, client: { value: { client_id: "client" } }, discovery: {

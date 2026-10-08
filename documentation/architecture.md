@@ -27,7 +27,9 @@ Joined scopes share the outcome while keeping their own request I/O and
 cancellation. A shared-storage CAS lease prevents independent isolates from
 redeeming the same refresh token concurrently. The holder commits an accepted
 rotation to the grant by CAS before releasing waiters, even when the owner
-cancels after the answer. Contenders read the committed tokens or typed
+cancels after dispatch. The HTTP exchange uses its own 20-second deadline,
+detached from caller cancellation, and the runtime passes its completion and
+commit to Workers `waitUntil`. Contenders read the committed tokens or typed
 verdict. An unsent claim can be taken over after expiry. Dispatch uses a CAS
 transition to a durable record and a 20-second HTTP deadline. A sent request
 whose 120-second storage-owned liveness record expired without a commit is
@@ -691,7 +693,7 @@ storage is the root's namespaced to its principal.
 | Discovery (`catalog-service.ts`) | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency. |
 | Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes, bounded by its owner's deadline (the default probe timeout when it has none); persisted-catalog writes take per-connector turns, each a Deferred its own request completes. Same-request loads share one read the way discovery's do. |
 | Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |
-| Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred; the owner's redemption is a fiber its abort interrupts, and committing an answer that already exists is uninterruptible. |
+| Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook. |
 | Operator and activity data (`routes/operator.ts`) | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation. |
 | QuickJS pool (`executors/quickjs.ts`, Node only) | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`. |
 
