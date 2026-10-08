@@ -1,5 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { test, expect, type Page } from "@playwright/test";
 import { createTestConnecta } from "../helpers.js";
 import { bearerToken } from "../../src/auth/bearer.js";
@@ -9,6 +11,7 @@ import { renderUiHtml, type UiData } from "../../src/ui.js";
 
 const TOKEN = "shell-fixture-token";
 const CLERK = "https://clerk.example.com";
+const CLERK_KEY = `pk_live_${Buffer.from("clerk.example.com$").toString("base64")}`;
 let server: Server;
 let origin: string;
 const fixture: UiData = {
@@ -29,7 +32,7 @@ test.beforeAll(async () => {
     const result = await apps[clerk ? 1 : 0]!.fetch(new Request(url, { method: request.method ?? "GET", headers: request.headers as Record<string, string> }));
     response.writeHead(result.status, Object.fromEntries(result.headers));
     // Stable fixture URL makes visual snapshots independent of the ephemeral port.
-    if (url.pathname === "/") response.end(renderUiHtml(clerk ? { kind: "clerk", publishableKey: "pk_test_fixture", frontendApiUrl: CLERK } : undefined, "https://connecta.example/mcp"));
+    if (url.pathname === "/") response.end(renderUiHtml(clerk ? { kind: "clerk", publishableKey: CLERK_KEY, frontendApiUrl: CLERK } : undefined, "https://connecta.example/mcp"));
     else response.end(Buffer.from(await result.arrayBuffer()));
   });
   server.listen(0, "127.0.0.1");
@@ -147,7 +150,7 @@ test("configured Clerk loader and its child script work under self CSP; inline a
   await openShell(page, "light", true);
   await expect.poll(() => page.evaluate("window.__clerkChild")).toBe(true);
   const response = await page.request.get(origin + "/?clerk");
-  expect(response.headers()["content-security-policy"]).toContain(`script-src 'self' ${CLERK};`);
+  expect(response.headers()["content-security-policy"]).toContain(`script-src 'self' ${CLERK} https://challenges.cloudflare.com;`);
   const violations = await page.evaluate(`new Promise(resolve => {
     const blocked = []; document.addEventListener('securitypolicyviolation', event => {
       blocked.push(event.blockedURI); if (blocked.length === 2) resolve(blocked);
@@ -157,4 +160,50 @@ test("configured Clerk loader and its child script work under self CSP; inline a
   })`);
   expect(violations).toEqual(expect.arrayContaining(["inline", "https://foreign.invalid/script.js"]));
   expect(await page.evaluate("window.__inlineRan")).toBeUndefined();
+});
+
+test("real Clerk 6.38.1 loads CAPTCHA and its frame without CSP violations", async ({ page }) => {
+  const sdk = gunzipSync(readFileSync(new URL("./fixtures/clerk-js-6.38.1.js.gz", import.meta.url)));
+  await page.addInitScript(`window.__cspViolations = []; document.addEventListener('securitypolicyviolation', event => {
+    window.__cspViolations.push({ directive: event.effectiveDirective, uri: event.blockedURI });
+  });`);
+  await page.route(`${CLERK}/**`, route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("clerk.browser.js")) return route.fulfill({ contentType: "text/javascript", body: sdk });
+    if (path === "/v1/environment") return route.fulfill({ json: { response: {
+      object: "environment",
+      auth_config: {},
+      display_config: {
+        captcha_heartbeat: true, captcha_provider: "turnstile", captcha_widget_type: "invisible",
+        captcha_public_key: "fixture-site-key", captcha_public_key_invisible: "fixture-invisible-key",
+      },
+      user_settings: { sign_up: { captcha_enabled: true } },
+    } } });
+    if (path === "/v1/client") return route.fulfill({ json: { response: {
+      object: "client", id: "client_fixture", sessions: [], sign_in: {}, sign_up: {}, captcha_bypass: false,
+    } } });
+    return route.fulfill({ json: { response: {} } });
+  });
+  let scriptRequests = 0;
+  let frameRequests = 0;
+  await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit", route => {
+    scriptRequests++;
+    return route.fulfill({ contentType: "text/javascript", body: `window.turnstile = {
+      render: (container, options) => {
+        const frame = document.createElement('iframe'); frame.src = 'https://challenges.cloudflare.com/fixture-frame';
+        document.body.append(frame); queueMicrotask(() => options.callback('fixture-captcha-token')); return 'fixture-widget';
+      }, remove: () => {}, reset: () => {}, getResponse: () => 'fixture-captcha-token',
+    };` });
+  });
+  await page.route("https://challenges.cloudflare.com/fixture-frame", route => {
+    frameRequests++;
+    return route.fulfill({ contentType: "text/html", body: "<!doctype html><title>CAPTCHA fixture</title>" });
+  });
+  await page.goto(origin + "/?clerk");
+  await expect.poll(() => scriptRequests).toBe(1);
+  await expect.poll(() => frameRequests).toBe(1);
+  await expect.poll(() => page.evaluate("window.Clerk.loaded")).toBe(true);
+  expect(await page.evaluate("window.Clerk.version")).toBe("6.38.1");
+  expect(await page.evaluate("window.Clerk.__internal_environment.userSettings.signUp.captcha_enabled")).toBe(true);
+  expect(await page.evaluate("window.__cspViolations")).toEqual([]);
 });

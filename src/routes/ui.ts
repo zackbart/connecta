@@ -1,5 +1,6 @@
 import { operatorAsset } from "../operator-ui/assets.js";
 import { isSafeHttpsUrl } from "../branding.js";
+import { htmlSecurityHeaders } from "../html-security.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import { Effect } from "effect";
 import { CONNECTA_VERSION } from "../version.js";
@@ -132,15 +133,10 @@ export async function routeUi(
         : renderUiHtml(uiAuth, mcpUrl, opts.config.ui?.branding, undefined, operatorPage, { homeUrl, iconOrigin }),
       {
         status: 200,
-        headers: {
+        headers: htmlSecurityHeaders({
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
-          "Content-Security-Policy":
-            `script-src 'self'${clerkOrigin ? ` ${clerkOrigin}` : ""}; ` +
-            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'" +
-            (artifactPage ? "; frame-src 'self'" : ""),
-          "X-Content-Type-Options": "nosniff",
-        },
+        }, { ...(clerkOrigin ? { clerkOrigin } : {}), frameSelf: artifactPage }),
       },
     );
   }

@@ -321,14 +321,20 @@ describe("status UI", () => {
     expect(scriptSrcs(await res.text())).toEqual([SCRIPT_PATH]);
   });
 
-  it("adds only the configured Clerk loader origin to script-src", async () => {
+  it("scopes Clerk CAPTCHA, images and workers to pages with a validated loader", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage: memoryStorage(), publicUrl: BASE,
     });
     const res = await c.fetch(new Request(`${BASE}/`));
-    expect(res.headers.get("content-security-policy")).toMatch(/^script-src 'self' https:\/\/clerk.example.com;/);
+    const policy = res.headers.get("content-security-policy")!;
+    expect(policy).toContain("script-src 'self' https://clerk.example.com https://challenges.cloudflare.com;");
+    expect(policy).toContain("frame-src https://challenges.cloudflare.com");
+    expect(policy).toContain("connect-src 'self' https://clerk.example.com;");
+    expect(policy).toContain("img-src 'self' https://img.clerk.com;");
+    expect(policy).toContain("worker-src 'self' blob:;");
+    expect(policy.split(";")[0]).not.toMatch(/unsafe-inline|unsafe-eval|\*/);
     const tags = (await res.text()).match(/<script[^>]*>/g) ?? [];
     const clerkTag = tags.find(tag => tag.includes("data-clerk"));
     // The blocking loader settles before the deferred application boots.
@@ -362,6 +368,7 @@ describe("status UI", () => {
       expect(body).not.toContain("clerk.browser.js");
       // Nor may it reach the page through the inline AUTH object.
       expect(body).not.toContain(frontendApiUrl);
+      expect(res.headers.get("content-security-policy")).not.toMatch(/cloudflare|clerk|blob:/);
     }
   });
 
