@@ -11,6 +11,8 @@
     "node_modules",
     "test",
     "examples",
-    "src/operator-ui/app"
+    "src/operator-ui/app",
+    "src/providers/**/*.test.ts",
+    "src/providers/*/fixtures.ts"
   ]
 }

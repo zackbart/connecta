@@ -11,8 +11,8 @@ export function assertSuiteCollection({ node, workers, details }) {
   const files = [...new Set([...node, ...workers])];
   for (const file of files) {
     const { realFile = file, inWorktree = false } = details[file];
-    if ([file, realFile].some((path) => !path.startsWith("test/") || /(^|\/)(node_modules|dist|\.claude|worktrees)(\/|$)/.test(path)) || inWorktree) {
-      errors.push(`${file}: collected suites must be under test/ and outside node_modules, dist, and nested worktrees`);
+    if ([file, realFile].some((path) => !(path.startsWith("test/") || /^src\/providers\/[^/]+\//.test(path)) || /(^|\/)(node_modules|dist|\.claude|worktrees)(\/|$)/.test(path)) || inWorktree) {
+      errors.push(`${file}: collected suites must be under test/ or src/providers/<name>/ and outside node_modules, dist, and nested worktrees`);
     }
     const nodeOnly = file.endsWith(".node.test.ts");
     if (nodeOnly !== (node.includes(file) && !workers.includes(file))) {

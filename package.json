@@ -3,7 +3,7 @@
   "version": "0.28.1",
   "type": "module",
   "sideEffects": false,
-  "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
+  "description": "One MCP to rule them all \u2014 a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
   "license": "MIT",
   "engines": {
     "node": ">=22.13.0"
@@ -183,7 +183,7 @@
     "build:operator-ui": "node scripts/build-operator-ui.mjs",
     "check:operator-ui": "node scripts/build-operator-ui.mjs --check",
     "check:clerk-sdk": "node scripts/build-clerk-sdk.mjs --check",
-    "build": "npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json && node scripts/prune-declarations.mjs",
+    "build": "npm run providers:generate && npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json && node scripts/prune-declarations.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.operator-ui.json --noEmit",
     "test": "vitest run",
     "test:browser:install": "playwright install chromium",
@@ -205,13 +205,15 @@
     "eval:smoke": "tsx eval/run-smoke.ts",
     "eval:perf": "tsx eval/run-perf.ts",
     "eval:report": "tsx eval/report.ts",
-    "check:core": "npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:clerk-sdk && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
+    "check:core": "npm run check:providers-generated && npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:clerk-sdk && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
     "check:fast": "node scripts/check-fast.mjs",
     "check": "npm run check:core && npm run test:browser",
     "release:check": "npm run check && npm run check:security && npm run check:package",
     "prepack": "npm run check",
     "check:changes": "node scripts/changelog.mjs --check && node scripts/check-node-suites.mjs && node --test scripts/changelog.test.mjs",
-    "changelog:assemble": "node scripts/changelog.mjs"
+    "changelog:assemble": "node scripts/changelog.mjs",
+    "providers:generate": "tsx scripts/generate-providers.mjs",
+    "check:providers-generated": "tsx scripts/generate-providers.mjs --check"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

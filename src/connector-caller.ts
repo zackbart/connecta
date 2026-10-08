@@ -9,7 +9,7 @@
 // - the built-in artifacts connector, because every version it writes records
 //   who wrote it;
 // - maintained providers that act *as* the caller downstream — Google
-//   Workspace through domain-wide delegation (`src/providers/google/`) — which
+//   Workspace through domain-wide delegation (`src/providers/_shared/google/`) — which
 //   hand the identity to a deployment-config function that names the
 //   downstream subject (PRINCIPLES.md INV-3, #678). The
 //   provider never decides whose account to open; config does, from this.

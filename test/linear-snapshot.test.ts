@@ -33,7 +33,7 @@ vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => {
   };
 });
 
-import { linear, type LinearOptions } from "../src/providers/linear.js";
+import { linear, type LinearOptions } from "../src/providers/linear/index.js";
 
 const OLD_VERDICT = { read: "read-only", write: "additive", destructive: "destructive" } as const;
 const variants = before.variants as Record<string, ToolAnnotations | null>;

@@ -51,7 +51,11 @@ to pass or be intentionally skipped.
 - `src/registry.ts`, `src/catalog-service.ts`, and `src/invocation.ts` own
   catalogs, discovery, calls, and enforcement.
 - `src/connectors/` owns `remoteMcp()` and `api()`; `src/providers/` owns
-  maintained integrations. `src/auth/` owns auth adapters and downstream OAuth.
+  maintained integrations, one folder each with `index.ts`, `SKILL.md`,
+  `drift.json`, tests and fixtures. `_shared/` holds internal implementation.
+  `src/provider.ts` owns their definition and construction path; run
+  `providers:generate` for lists and `check:providers-generated` for freshness.
+  `src/auth/` owns auth adapters and downstream OAuth.
 - `src/runtime/` is the Effect core. Only `src/runtime/run.ts` starts fibers.
 - `src/node.ts`, `src/sqlite.ts`, and `src/executors/quickjs*` are
   Node-only. They must remain unreachable from `src/index.ts`.
@@ -81,7 +85,7 @@ checks health, executor, and the current meta-tool set.
 
 ## Tests
 
-Suites live in `test/`. Node runs every `*.test.ts`; workerd runs the same
+Suites live in `test/` and `src/providers/<name>/`. Node runs every `*.test.ts`; workerd runs the same
 files except `*.node.test.ts`, each of which starts with `// Node-only: <reason>`;
 `check:changes` checks Vitest collection and reasons. Cite the `INV-n` IDs a
 test enforces in its title. The full Node run's coverage reporter rejects

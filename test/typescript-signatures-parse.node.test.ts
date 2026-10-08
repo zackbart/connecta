@@ -6,7 +6,7 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { typescriptSignature } from "../src/catalog.js";
-import { notion } from "../src/providers/notion.js";
+import { notion } from "../src/providers/notion/index.js";
 import type { JsonSchema } from "../src/types.js";
 import { PATHOLOGICAL_CORPUS, PROVIDER_CORPUS } from "./fixtures/schema-corpus.js";
 import { silentLogger } from "./helpers.js";

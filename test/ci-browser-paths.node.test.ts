@@ -52,8 +52,8 @@ describe("CI browser paths", () => {
   });
 
   it.each([
-    "src/providers/notion.ts",
-    "src/providers/google/workspace.ts",
+    "src/providers/notion/index.ts",
+    "src/providers/_shared/google/workspace.ts",
     "test/providers/new-provider.test.ts",
     "test/notion-provider.test.ts",
     "test/notion-provider.node.test.ts",
@@ -78,7 +78,7 @@ describe("CI browser paths", () => {
   });
 
   it("requires every path to be safe, regardless of order", () => {
-    expect(browserRequired(["README.md", "src/providers/notion.ts"])).toBe("false");
+    expect(browserRequired(["README.md", "src/providers/notion/index.ts"])).toBe("false");
     expect(browserRequired(["README.md", "src/server.ts"])).toBe("true");
     expect(browserRequired(["src/server.ts", "README.md"])).toBe("true");
   });
