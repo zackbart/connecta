@@ -1,7 +1,7 @@
 import { skill } from "./skill.generated.js";
-import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
+import { apiConnector as api, type ApiTool } from "../../connectors/api-connector.js";
 import { remoteMcp } from "../../connectors/remote-mcp.js";
-import { vettedCatalog, withVettedCatalog } from "../../catalog-drift.js";
+import { reviewedCatalog } from "../../catalog-drift.js";
 import {
   guardedFetch,
   retryAfterMs,
@@ -10,13 +10,14 @@ import {
 import { ConnectorCallError } from "../../errors.js";
 import type {
   Connector,
+  ToolClassification,
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
   JsonSchema,
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { asProviderFactory } from "../../provider.js";
+import { defineProvider, type ProviderContext } from "../../provider.js";
 
 /** Notion's REST origin. Every tool below speaks to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -1759,47 +1760,50 @@ Workspace purpose: ${purpose}${skill.fragments.guide_0}${
   }`;
 }
 
-/** Release-reviewed Notion MCP inventory and safety verdicts. */
-export const NOTION_MCP_VETTED_CATALOG = vettedCatalog({
-  reads: new Set([
-    "notion-search",
-    "notion-search-skills",
-    "notion-fetch",
-    "notion-download-attachment",
-    "notion-query-data-sources",
-    "notion-query-meeting-notes",
-    "notion-search-agents",
-    "notion-list-agents",
-    "notion-query-sessions",
-    "notion-search-sessions",
-    "notion-get-session-status",
-    "notion-wait-session",
-    "notion-list-session-events",
-    "notion-read-session-event",
-    "notion-get-comments",
-    "notion-get-teams",
-    "notion-get-users",
-    "notion-get-async-task",
-  ]),
-  writes: new Map([
-    ["notion-create-file-upload", "additive"],
-    ["notion-create-attachment", "additive"],
-    ["notion-create-pages", "additive"],
-    ["notion-duplicate-page", "additive"],
-    ["notion-create-database", "additive"],
-    ["notion-create-folder", "additive"],
-    ["notion-create-view", "additive"],
-    ["notion-spawn-session", "additive"],
-    ["notion-send-message-to-session", "additive"],
-    ["notion-create-comment", "additive"],
-    ["notion-update-page", "destructive"],
-    ["notion-convert-page-to-skill", "destructive"],
-    ["notion-move-pages", "destructive"],
-    ["notion-update-data-source", "destructive"],
-    ["notion-update-view", "destructive"],
-    ["notion-stop-session", "destructive"],
-  ]),
-});
+/**
+ * Reviewed in #705's provider audit against https://developers.notion.com/guides/mcp/mcp-supported-tools.
+ * Retains the release-reviewed inventory, including names absent from today's
+ * public reference. Live annotations were not reverified without credentials.
+ * No schema digest is asserted without a captured schema to review.
+ */
+const NOTION_MCP_CLASSIFICATION: ToolClassification = {
+  tools: {
+    "notion-search": {"verdict": "read", "reason": "Retrieves Notion  information without changing vendor state."},
+    "notion-search-skills": {"verdict": "read", "reason": "Retrieves Notion skills information without changing vendor state."},
+    "notion-fetch": {"verdict": "read", "reason": "Retrieves Notion fetch information without changing vendor state."},
+    "notion-download-attachment": {"verdict": "read", "reason": "Reads attachment content; creating uploads and attachments uses separate writes."},
+    "notion-query-data-sources": {"verdict": "read", "reason": "Retrieves Notion query data sources information without changing vendor state."},
+    "notion-query-meeting-notes": {"verdict": "read", "reason": "Retrieves Notion query meeting notes information without changing vendor state."},
+    "notion-search-agents": {"verdict": "read", "reason": "Retrieves Notion agents information without changing vendor state."},
+    "notion-list-agents": {"verdict": "read", "reason": "Retrieves Notion agents information without changing vendor state."},
+    "notion-query-sessions": {"verdict": "read", "reason": "Retrieves Notion query sessions information without changing vendor state."},
+    "notion-search-sessions": {"verdict": "read", "reason": "Retrieves Notion sessions information without changing vendor state."},
+    "notion-get-session-status": {"verdict": "read", "reason": "Retrieves Notion session status information without changing vendor state."},
+    "notion-wait-session": {"verdict": "read", "reason": "Waits for existing session state; it does not start or message a session."},
+    "notion-list-session-events": {"verdict": "read", "reason": "Retrieves Notion session events information without changing vendor state."},
+    "notion-read-session-event": {"verdict": "read", "reason": "Retrieves Notion read session event information without changing vendor state."},
+    "notion-get-comments": {"verdict": "read", "reason": "Retrieves Notion comments information without changing vendor state."},
+    "notion-get-teams": {"verdict": "read", "reason": "Retrieves Notion teams information without changing vendor state."},
+    "notion-get-users": {"verdict": "read", "reason": "Retrieves Notion users information without changing vendor state."},
+    "notion-get-async-task": {"verdict": "read", "reason": "Retrieves Notion async task information without changing vendor state."},
+    "notion-create-file-upload": {"verdict": "write", "reason": "Allocates upload state for a workspace file."},
+    "notion-create-attachment": {"verdict": "write", "reason": "create attachment creates or appends Notion state; it has side effects."},
+    "notion-create-pages": {"verdict": "write", "reason": "create pages creates or appends Notion state; it has side effects."},
+    "notion-duplicate-page": {"verdict": "write", "reason": "duplicate page creates or appends Notion state; it has side effects."},
+    "notion-create-database": {"verdict": "write", "reason": "create database creates or appends Notion state; it has side effects."},
+    "notion-create-folder": {"verdict": "write", "reason": "create folder creates or appends Notion state; it has side effects."},
+    "notion-create-view": {"verdict": "write", "reason": "create view creates or appends Notion state; it has side effects."},
+    "notion-spawn-session": {"verdict": "write", "reason": "Starts asynchronous agent work and creates session state."},
+    "notion-send-message-to-session": {"verdict": "write", "reason": "Appends a message to a running session and may trigger further work."},
+    "notion-create-comment": {"verdict": "write", "reason": "create comment creates or appends Notion state; it has side effects."},
+    "notion-update-page": {"verdict": "destructive", "reason": "update page changes existing Notion state or removes it."},
+    "notion-convert-page-to-skill": {"verdict": "destructive", "reason": "Changes the role and content of an existing workspace page."},
+    "notion-move-pages": {"verdict": "destructive", "reason": "move pages changes existing Notion state or removes it."},
+    "notion-update-data-source": {"verdict": "destructive", "reason": "update data source changes existing Notion state or removes it."},
+    "notion-update-view": {"verdict": "destructive", "reason": "update view changes existing Notion state or removes it."},
+    "notion-stop-session": {"verdict": "destructive", "reason": "Stops an existing session and interrupts its work."},
+  },
+};
 
 function mcpUsageGuide(
   purpose: string,
@@ -1817,18 +1821,16 @@ function notionMcp(
   id: string,
   purpose: string,
   options: NotionMcpOptions,
+  provider: ProviderContext,
 ): Connector {
   const connector = remoteMcp(id, {
     url: NOTION_MCP_ENDPOINT,
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
-    }),
+    ...provider.connectorOptions,
     title: options.title ?? "Notion (MCP)",
     description: `Notion's official hosted MCP interface: ${purpose}`,
     auth: { type: "oauth" },
     requireHttps: true,
+    classify: provider.classify,
     usageGuide: {
       content: mcpUsageGuide(purpose, options.instructions),
       summary:
@@ -1836,7 +1838,7 @@ function notionMcp(
       required: true,
     },
   });
-  return withVettedCatalog(connector, NOTION_MCP_VETTED_CATALOG);
+  return connector;
 }
 
 function notionApi(
@@ -1910,7 +1912,7 @@ const NOTION_OPTIONS = variants("surface", {
 }, "api");
 
 /** A maintained Notion connection using the selected provider interface. */
-export const notion = asProviderFactory<NotionConnectionOptions>({
+export const notion = defineProvider<NotionConnectionOptions>({
   name: "notion",
   title: "Notion",
   kind: "composed",
@@ -1918,15 +1920,19 @@ export const notion = asProviderFactory<NotionConnectionOptions>({
   bundle: {"baselineGzip":145300,"maxGzip":205300},
   skill,
   options: NOTION_OPTIONS,
+  classify: NOTION_MCP_CLASSIFICATION,
   create: notionConnector,
 });
 
-function notionConnector(id: string, options: NotionConnectionOptions): Connector {
+function notionConnector(id: string, options: NotionConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("notion() requires a non-empty workspace purpose.");
-  }
   return options.surface === "mcp"
-    ? notionMcp(id, purpose, options)
+    ? notionMcp(id, purpose, options, provider)
     : notionApi(id, purpose, options);
 }
+
+/** @deprecated Read `notion.definition.classify` instead. Kept for existing imports. */
+export const NOTION_MCP_VETTED_CATALOG = reviewedCatalog(
+  notion.definition.classify!,
+  'defineProvider("notion")',
+);

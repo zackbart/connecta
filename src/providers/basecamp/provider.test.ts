@@ -95,7 +95,7 @@ describe("basecamp()", () => {
 
   it("rejects an empty purpose at construction (P2)", () => {
     expect(() => connection({ purpose: "  " })).toThrow(
-      "a non-empty account purpose",
+      "a non-empty purpose",
     );
   });
 
@@ -191,7 +191,7 @@ describe("basecamp()", () => {
     expect(guide).toContain("Do not call `create_stream_ticket`");
     expect(guide).toContain("not a fixed set");
     expect(guide).toContain("`Retry-After`");
-    expect(guide).toContain("call_destructive_tool");
+    expect(guide).toContain("configured pool trust policy");
     expect(guide).toContain("authorize_connector");
   });
 

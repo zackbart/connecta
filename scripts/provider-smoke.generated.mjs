@@ -5,7 +5,7 @@ var options = { "purpose": "Audit fixture", "clientMetadataUrl": "https://connec
 var fixture = {
   name: "basecamp",
   options,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "personal", "options": { "authScope": "personal" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "personal", "options": { "authScope": "personal" } }],
   create(id = "fixture", overrides = {}) {
     return basecamp(id, { ...options, ...overrides });
   },
@@ -44,7 +44,7 @@ var options4 = { "purpose": "Audit fixture" };
 var fixture4 = {
   name: "cloudflare",
   options: options4,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
   create(id = "fixture", overrides = {}) {
     return cloudflare(id, { ...options4, ...overrides });
   },
@@ -137,7 +137,7 @@ var options10 = { "purpose": "Audit fixture" };
 var fixture10 = {
   name: "mixpanel",
   options: options10,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "eu", "options": { "region": "eu" } }, { "label": "in", "options": { "region": "in" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "eu", "options": { "region": "eu" } }, { "label": "in", "options": { "region": "in" } }],
   create(id = "fixture", overrides = {}) {
     return mixpanel(id, { ...options10, ...overrides });
   },
@@ -150,7 +150,7 @@ var options11 = { "purpose": "Audit fixture" };
 var fixture11 = {
   name: "notion",
   options: options11,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
   create(id = "fixture", overrides = {}) {
     return notion(id, { ...options11, ...overrides });
   },
@@ -189,7 +189,7 @@ var options14 = { "purpose": "Audit fixture" };
 var fixture14 = {
   name: "revenuecat",
   options: options14,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
     return revenuecat(id, { ...options14, ...overrides });
   },
@@ -228,7 +228,7 @@ var options17 = { "purpose": "Audit fixture" };
 var fixture17 = {
   name: "stripe",
   options: options17,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production", "auth": { "type": "headers", "headers": { "Authorization": "Bearer rk_live_fixture" } } } }, { "label": "sandbox", "options": { "mode": "sandbox", "auth": { "type": "headers", "headers": { "Authorization": "Bearer rk_test_fixture" } } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production", "auth": { "type": "headers", "headers": { "Authorization": "Bearer rk_live_fixture" } } } }, { "label": "sandbox", "options": { "mode": "sandbox", "auth": { "type": "headers", "headers": { "Authorization": "Bearer rk_test_fixture" } } } }],
   create(id = "fixture", overrides = {}) {
     return stripe(id, { ...options17, ...overrides });
   },
@@ -254,7 +254,7 @@ var options19 = { "purpose": "Audit fixture" };
 var fixture19 = {
   name: "vercel",
   options: options19,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "empty-title", "options": { "title": "" } }, { "label": "blank-title", "options": { "title": " " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
   create(id = "fixture", overrides = {}) {
     return vercel(id, { ...options19, ...overrides });
   },

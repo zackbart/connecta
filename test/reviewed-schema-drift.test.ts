@@ -3,8 +3,8 @@
 // checked, the tool is a write on every public path (INV-1): discovery at the
 // top level and inside a program, `call_tool`, and a program's call. The
 // registry applies this rule to every connector's `classification`, so each
-// case runs through `remoteMcp({ classify })` and the legacy
-// `withVettedCatalog()`. The rule
+// case runs through `remoteMcp({ classify })` and a custom connector
+// declaring the public classification field. The rule
 // holds for a catalog a restarted process finds in storage too: the cache
 // keeps downstream facts, and every read classifies them again.
 

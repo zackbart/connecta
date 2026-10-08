@@ -10,9 +10,9 @@ import { skill } from "./skill.generated.js";
  * those rows with Vercel's published OpenAPI document at
  * https://openapi.vercel.sh/ without needing a credential.
  */
-import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
+import { apiConnector as api, type ApiTool } from "../../connectors/api-connector.js";
 import { remoteMcp } from "../../connectors/remote-mcp.js";
-import { vettedCatalog, withVettedCatalog } from "../../catalog-drift.js";
+import { reviewedCatalog } from "../../catalog-drift.js";
 import {
   guardedFetch,
   retryAfterMs,
@@ -23,13 +23,14 @@ import { ConnectorCallError } from "../../errors.js";
 import { withDeadline } from "../../timeout.js";
 import type {
   Connector,
+  ToolClassification,
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
   JsonSchema,
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { asProviderFactory } from "../../provider.js";
+import { defineProvider, type ProviderContext } from "../../provider.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
 export const VERCEL_API_BASE_URL = "https://api.vercel.com";
@@ -1404,57 +1405,48 @@ ${
   }`;
 }
 
-/** Reads reviewed against Vercel's official MCP tool reference. */
-const MCP_READ_ONLY_TOOLS = new Set([
-  "search_vercel_documentation",
-  "list_teams",
-  "list_projects",
-  "get_project",
-  "list_deployments",
-  "get_deployment",
-  "get_deployment_build_logs",
-  "get_runtime_logs",
-  "get_runtime_errors",
-  "get_web_analytics",
-  "list_agent_run_projects",
-  "list_agent_runs",
-  "get_agent_run",
-  "get_agent_run_trace",
-  "check_domain_availability_and_price",
-  "get_purchase_quote",
-  "get_domain_order",
-  "list_toolbar_threads",
-  "get_toolbar_thread",
-  // Returns CLI guidance. Any later CLI execution is outside this MCP call.
-  "use_vercel_cli",
-]);
-
-/** Writes reviewed against Vercel's official MCP tool reference. */
-const MCP_WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> =
-  new Map([
-    // These only append state.
-    ["reply_to_toolbar_thread", "additive"],
-    ["add_toolbar_reaction", "additive"],
-    // Deploying to production, billing, access grants, imports, and edits can
-    // all change existing state, even where the provider uses a create verb.
-    ["deploy_to_vercel", "destructive"],
-    ["buy_pro", "destructive"],
-    ["buy_credits", "destructive"],
-    ["buy_addon", "destructive"],
-    ["buy_domain", "destructive"],
-    ["get_access_to_vercel_url", "destructive"],
-    // A GET against application code is not guaranteed to be observational.
-    ["web_fetch_vercel_url", "destructive"],
-    ["import-claude-design-from-url", "destructive"],
-    ["change_toolbar_thread_resolve_status", "destructive"],
-    ["edit_toolbar_message", "destructive"],
-  ]);
-
-/** Release-reviewed Vercel MCP inventory and safety verdicts. */
-export const VERCEL_MCP_VETTED_CATALOG = vettedCatalog({
-  reads: MCP_READ_ONLY_TOOLS,
-  writes: MCP_WRITE_TOOLS,
-});
+/**
+ * Reviewed in #705's provider audit against https://vercel.com/docs/mcp/vercel-mcp/tools.
+ * Retains the release-reviewed inventory, including names absent from today's
+ * public reference. Live annotations were not reverified without credentials.
+ * No schema digest is asserted without a captured schema to review.
+ */
+const VERCEL_MCP_CLASSIFICATION: ToolClassification = {
+  tools: {
+    "search_vercel_documentation": {"verdict": "read", "reason": "Retrieves Vercel vercel documentation information without changing vendor state."},
+    "list_teams": {"verdict": "read", "reason": "Retrieves Vercel teams information without changing vendor state."},
+    "list_projects": {"verdict": "read", "reason": "Retrieves Vercel projects information without changing vendor state."},
+    "get_project": {"verdict": "read", "reason": "Retrieves Vercel project information without changing vendor state."},
+    "list_deployments": {"verdict": "read", "reason": "Retrieves Vercel deployments information without changing vendor state."},
+    "get_deployment": {"verdict": "read", "reason": "Retrieves Vercel deployment information without changing vendor state."},
+    "get_deployment_build_logs": {"verdict": "read", "reason": "Retrieves Vercel deployment build logs information without changing vendor state."},
+    "get_runtime_logs": {"verdict": "read", "reason": "Retrieves Vercel runtime logs information without changing vendor state."},
+    "get_runtime_errors": {"verdict": "read", "reason": "Retrieves Vercel runtime errors information without changing vendor state."},
+    "get_web_analytics": {"verdict": "read", "reason": "Retrieves Vercel web analytics information without changing vendor state."},
+    "list_agent_run_projects": {"verdict": "read", "reason": "Retrieves Vercel agent run projects information without changing vendor state."},
+    "list_agent_runs": {"verdict": "read", "reason": "Retrieves Vercel agent runs information without changing vendor state."},
+    "get_agent_run": {"verdict": "read", "reason": "Retrieves Vercel agent run information without changing vendor state."},
+    "get_agent_run_trace": {"verdict": "read", "reason": "Retrieves Vercel agent run trace information without changing vendor state."},
+    "check_domain_availability_and_price": {"verdict": "read", "reason": "Retrieves Vercel check domain availability and price information without changing vendor state."},
+    "get_purchase_quote": {"verdict": "read", "reason": "Reads a purchase quote; billing changes require a separate purchase tool."},
+    "get_domain_order": {"verdict": "read", "reason": "Retrieves Vercel domain order information without changing vendor state."},
+    "list_toolbar_threads": {"verdict": "read", "reason": "Retrieves Vercel toolbar threads information without changing vendor state."},
+    "get_toolbar_thread": {"verdict": "read", "reason": "Retrieves Vercel toolbar thread information without changing vendor state."},
+    "use_vercel_cli": {"verdict": "read", "reason": "Returns CLI guidance only; any subsequent CLI execution is outside this tool."},
+    "reply_to_toolbar_thread": {"verdict": "write", "reason": "reply to toolbar thread creates or appends Vercel state; it has side effects."},
+    "add_toolbar_reaction": {"verdict": "write", "reason": "add toolbar reaction creates or appends Vercel state; it has side effects."},
+    "deploy_to_vercel": {"verdict": "destructive", "reason": "Can change a live deployment and the project serving production traffic."},
+    "buy_pro": {"verdict": "destructive", "reason": "buy pro changes existing Vercel state or removes it."},
+    "buy_credits": {"verdict": "destructive", "reason": "buy credits changes existing Vercel state or removes it."},
+    "buy_addon": {"verdict": "destructive", "reason": "buy addon changes existing Vercel state or removes it."},
+    "buy_domain": {"verdict": "destructive", "reason": "buy domain changes existing Vercel state or removes it."},
+    "get_access_to_vercel_url": {"verdict": "destructive", "reason": "Creates an access grant; the returned access URL is a credential."},
+    "web_fetch_vercel_url": {"verdict": "destructive", "reason": "Invokes application code, whose side effects cannot be established from HTTP GET alone."},
+    "import-claude-design-from-url": {"verdict": "destructive", "reason": "Imports into a project and can change existing live project state."},
+    "change_toolbar_thread_resolve_status": {"verdict": "destructive", "reason": "change toolbar thread resolve status changes existing Vercel state or removes it."},
+    "edit_toolbar_message": {"verdict": "destructive", "reason": "edit toolbar message changes existing Vercel state or removes it."},
+  },
+};
 
 function mcpUsageGuide(
   purpose: string,
@@ -1472,18 +1464,16 @@ function vercelMcp(
   id: string,
   purpose: string,
   options: VercelMcpOptions,
+  provider: ProviderContext,
 ): Connector {
   const connector = remoteMcp(id, {
     url: VERCEL_MCP_ENDPOINT,
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
-    }),
+    ...provider.connectorOptions,
     title: options.title ?? "Vercel (MCP)",
     description: `Vercel's official hosted MCP surface: ${purpose}`,
     auth: { type: "oauth" },
     requireHttps: true,
+    classify: provider.classify,
     usageGuide: {
       content: mcpUsageGuide(purpose, options.instructions),
       summary:
@@ -1491,7 +1481,7 @@ function vercelMcp(
       required: true,
     },
   });
-  return withVettedCatalog(connector, VERCEL_MCP_VETTED_CATALOG);
+  return connector;
 }
 
 function vercelApi(
@@ -1566,7 +1556,7 @@ const VERCEL_OPTIONS = variants("surface", {
 }, "api");
 
 /** A maintained Vercel connection using the selected provider surface. */
-export const vercel = asProviderFactory<VercelConnectionOptions>({
+export const vercel = defineProvider<VercelConnectionOptions>({
   name: "vercel",
   title: "Vercel",
   kind: "composed",
@@ -1574,15 +1564,19 @@ export const vercel = asProviderFactory<VercelConnectionOptions>({
   bundle: {"baselineGzip":143649,"maxGzip":203649},
   skill,
   options: VERCEL_OPTIONS,
+  classify: VERCEL_MCP_CLASSIFICATION,
   create: vercelConnector,
 });
 
-function vercelConnector(id: string, options: VercelConnectionOptions): Connector {
+function vercelConnector(id: string, options: VercelConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("vercel() requires a non-empty account purpose.");
-  }
   return options.surface === "mcp"
-    ? vercelMcp(id, purpose, options)
+    ? vercelMcp(id, purpose, options, provider)
     : vercelApi(id, purpose, options);
 }
+
+/** @deprecated Read `vercel.definition.classify` instead. Kept for existing imports. */
+export const VERCEL_MCP_VETTED_CATALOG = reviewedCatalog(
+  vercel.definition.classify!,
+  'defineProvider("vercel")',
+);

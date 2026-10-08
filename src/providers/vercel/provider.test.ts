@@ -130,7 +130,7 @@ function guide(connector: Connector): ConnectorUsageGuide {
 describe("vercel() construction", () => {
   it("rejects blank purpose and invalid page defaults", () => {
     expect(() => vercel("hosting", { purpose: "   " })).toThrow(
-      "a non-empty account purpose",
+      "a non-empty purpose",
     );
     expect(() =>
       vercel("hosting", { purpose: "apps", defaultPageSize: 101 }),

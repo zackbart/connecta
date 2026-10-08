@@ -20,28 +20,6 @@ const mocks = vi.hoisted(() => ({
   schemasAsReviewed: true,
 }));
 
-vi.mock("../../catalog-drift.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../catalog-drift.js")>();
-  return {
-    ...actual,
-    withVettedCatalog: (
-      connector: Parameters<typeof actual.withVettedCatalog>[0],
-      catalog: Parameters<typeof actual.withVettedCatalog>[1],
-    ) =>
-      actual.withVettedCatalog(
-        connector,
-        mocks.schemasAsReviewed
-          ? {
-              ...catalog,
-              tools: new Map(
-                [...catalog.tools].map(([name, { verdict }]) => [name, { verdict }]),
-              ),
-            }
-          : catalog,
-      ),
-  };
-});
-
 vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   // Only the constructor is stubbed. `withCredentialDefaults` is pure option
   // shaping — part of what these tests assert the provider resolved — so it
@@ -60,6 +38,15 @@ import { connectorGuideSummary } from "../../skills.js";
 describe("mixpanel()", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
+    const construct = mocks.remoteMcp.getMockImplementation()!;
+    mocks.remoteMcp.mockImplementation((id, options) => construct(id, {
+      ...options,
+      classify: mocks.schemasAsReviewed
+        ? { tools: Object.fromEntries(Object.entries(mixpanel.definition.classify!.tools).map(
+            ([name, entry]) => [name, typeof entry === "string" ? entry : { verdict: entry.verdict, reason: entry.reason }],
+          )) }
+        : options.classify,
+    }));
     mocks.schemasAsReviewed = true;
   });
 
@@ -276,7 +263,7 @@ describe("mixpanel()", () => {
 
   it("rejects an empty account purpose at construction", () => {
     expect(() => mixpanel("analytics", { purpose: "  " })).toThrow(
-      "a non-empty account purpose",
+      "a non-empty purpose",
     );
   });
 });

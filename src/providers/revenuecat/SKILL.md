@@ -7,6 +7,7 @@
 
 <!-- fragment: guide_0 -->
 
+- Inspect result framing before accessing fields. A text result is not automatically an object; parse it only if the returned text is valid JSON. Do not iterate fields that the response does not contain.
 - Resolve ids before acting; never guess one. `list-projects` yields the `project_id` every project-scoped call takes. `list-apps`, `list-products`, `list-entitlements`, `list-offerings`, `list-paywalls`, `list-audiences`, and `list-customers` yield the ids their `get-`, `update-`, `archive-`, and `delete-` counterparts expect. A plausible-looking id belongs to another project or to nobody.
 - Customers are addressed by the app user id your SDK set, not by an internal key. Find one with `list-customers` before `get-customer`, and carry the id it returned unchanged.
 - Customer and subscription objects are large, and a customer's history is larger. Page with the cursor the list returned rather than raising the page size, and reduce inside `execute_code` — select the fields the question needs and return those, not the whole object.
@@ -15,9 +16,9 @@
 - `create-paywall-ai` and `edit-paywall-ai` are asynchronous. Poll the task id they return with `get-paywall-ai-task` rather than assuming the work finished when the call returned.
 - Store changes ride the plan workflow, not the deprecated direct tools: `create-product-store-state-plan`, then `plan-product-store-state-plan`, then `apply-product-store-state-plan`. Every step past the create is asynchronous — read the plan back with `get-product-store-state-plan` between steps instead of assuming the last one finished.
 - This connection's tool list is not a fixed set. RevenueCat gates parts of its MCP catalog by plan, platform, and beta enrollment — paywall AI editing, benchmarks, experiments, virtual currencies, and the account-billing tools are the usual absentees — so search this connector for what it actually exposes rather than assuming a documented tool is here.
-- `render-paywall-screenshot` is unclassified on purpose because RevenueCat's reference gives it no access column. The current server marks it read-only, which Connecta preserves; without that annotation it fails closed onto `call_destructive_tool`.
+- `render-paywall-screenshot` is unclassified on purpose because RevenueCat's reference gives it no access column. An explicit, uncontradicted live read annotation qualifies it as a read; otherwise it fails closed as a write. The public reference alone cannot establish that rendering has no side effects.
 - RevenueCat meters API v2 per minute and per domain, and the domains differ: 480 requests per minute for customer information and virtual currencies, 60 for project configuration and audiences, 25 for charts and metrics. It answers a breach with `429`, a `Retry-After` header, and a `backoff_ms` field. Back off on that rather than retrying immediately, and expect chart sweeps to hit the ceiling long before customer reads do.
-- Treat every create, update, archive, unarchive, attach, detach, delete, publish, unpublish, grant, assign, and submit operation as a write. Connecta routes the maintained write catalog through `call_destructive_tool`; newly added tools also fail closed until a release classifies them.
+- Treat every create, update, archive, unarchive, attach, detach, delete, publish, unpublish, grant, assign, and submit operation as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.
 - An `auth_required` failure means this connector's RevenueCat authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument, a permission gap, or a plan restriction comes back in RevenueCat's own words instead — read it rather than re-authorizing.
 <!-- endfragment -->
 

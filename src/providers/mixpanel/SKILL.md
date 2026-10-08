@@ -11,7 +11,7 @@
 <!-- fragment: guide_1 -->
 
 
-- Start with `Get-Projects`, then use `Get-Business-Context` for the selected project before interpreting its events or metrics.
+- Start with `List-Organizations`, then supply the returned organization id where the live `Get-Projects` schema requires it. Resolve the project and workspace, then read `Get-Business-Context` before interpreting events or metrics.
 - Resolve ids before acting; never guess one. `Get-Projects` yields the project id every other call is scoped by, and `List-Dashboards`, `List-Cohorts`, `List-Metrics`, `List-Experiments`, and `List-Feature-Flags` yield the ids their `Get-`, `Update-`, and `Delete-` counterparts expect.
 - Discover names with `Get-Events`, `List-Properties`, and `Get-Property-Values`; do not guess event or property spelling.
 - `Get-Business-Context` requires either `project_id` or `organization_id`. Its schema marks both optional, but the hosted tool rejects a call with neither.
@@ -22,8 +22,10 @@
 - `false` on a boolean property may be an absent property: Mixpanel renders a missing value as `false` in boolean breakdowns, and server-imported events often lack client-side properties entirely. Confirm the property is present with `List-Properties` or `Get-Property-Values` before treating `false` as a signal, and say when a conclusion rests on that ambiguity.
 - Breakdown responses nest `$overall` and per-segment series objects. Flatten to one row per complete breakdown combination inside `execute_code` before returning, and drop `$overall` unless the question asks for the total.
 - Use `Get-Report` when the request names an existing saved report. Use `Run-Query` for a new question.
+- Dashboard row and cell ids are opaque. Read the full layout before editing and preserve grouping and order. Report cells need a project-local `query_id`; duplicate within the same project when possible. Cross-project reconstruction needs new queries in the target project.
+- Query ids can expire. Build the dashboard promptly and rerun a query if its id is rejected as expired; no fixed TTL is guaranteed.
 - This account's tool list is not a fixed set. Mixpanel gates parts of its MCP catalog by plan and beta enrollment — experiments, feature flags, session replay, and issue triage are the usual absentees — so search this connector for what it actually exposes rather than assuming a documented tool is here.
 - Mixpanel meters MCP traffic per user per hour, shared with everything else that credential does. Reuse discovery results within a run and avoid speculative fan-out.
 - An `auth_required` failure means this connector's Mixpanel authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Mixpanel's own words instead — read it rather than re-authorizing.
-- Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write. Connecta routes the maintained write catalog through `call_destructive_tool`; newly added tools also fail closed until classified.
+- Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.
 <!-- endfragment -->

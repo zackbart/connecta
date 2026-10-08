@@ -138,7 +138,7 @@ function toolNamed(tools: ToolDef[], name: string): ToolDef {
 describe("cloudflare() construction", () => {
   it("rejects an empty account purpose", () => {
     expect(() => cloudflare("edge", { purpose: "   " })).toThrow(
-      "a non-empty account purpose",
+      "a non-empty purpose",
     );
   });
 
@@ -186,7 +186,7 @@ describe("cloudflare() construction", () => {
     );
     expect(connector.kind).toBe("mcp");
     expect(structuredGuide(connector).content).toContain("search");
-    expect(structuredGuide(connector).content).toContain("approval");
+    expect(structuredGuide(connector).content).toContain("classifies every `execute` call as a write");
     expect(calls).toEqual([]);
   });
 

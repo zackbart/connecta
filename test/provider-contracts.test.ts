@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import hosted from "./fixtures/hosted-presets-abc0d176.json";
 import before from "./fixtures/providers-before-5b.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import { providerContract, type ContractFixture } from "./fixtures/provider-contract.js";
@@ -10,7 +11,8 @@ import { providerFixtures } from "./providers.generated.js";
 // Phase 2 item 1 removes classifications from raw connector descriptions and
 // revises Breeze/Cloudflare write routing guides. Keep those explicit changes
 // separate so the original migration baseline still guards every other field.
-describe.each(providerFixtures as unknown as ContractFixture[])("$name provider contract", (fixture) => {
+// Converted hosted providers have their subsequent baseline in hosted-presets.test.ts.
+describe.each(providerFixtures.filter((fixture) => !Object.hasOwn(hosted.providers, fixture.name)) as unknown as ContractFixture[])("$name provider contract", (fixture) => {
   it("INV-1: preserves provider contracts with explicit classifier and trust changes", async () => {
     const actual = await providerContract(fixture);
     const snapshot = await Promise.all(actual.map(async (row) => Object.fromEntries(await Promise.all(

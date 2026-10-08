@@ -24,6 +24,7 @@
 <!-- fragment: guide_2 -->
 
 
+- Resolve account and zone ids independently. Defaults do not constrain token permissions. Distinguish missing or revoked credentials from missing product permissions, and honor supplied rate-limit waits.
 - The catalog contains `search` and `execute`. Search runs code against
   Cloudflare's OpenAPI document. Execute runs code that may call any authorized
   Cloudflare API endpoint.

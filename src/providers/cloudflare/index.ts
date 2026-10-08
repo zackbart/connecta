@@ -10,13 +10,13 @@ import { skill } from "./skill.generated.js";
  * alone keep this provider Workers-clean. `test/package-surface.node.test.ts` pins
  * it: no `cloudflare` package in any dependency field, every import relative.
  */
-import { apiConnector as api, defined, type ApiTool } from "../../connectors/api-connector.js";
+import { apiConnector as api, type ApiTool } from "../../connectors/api-connector.js";
 import {
   remoteMcp,
   withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../../connectors/remote-mcp.js";
-import { vettedCatalog, withVettedCatalog } from "../../catalog-drift.js";
+import { reviewedCatalog } from "../../catalog-drift.js";
 import {
   guardedFetch,
   retryAfterMs,
@@ -26,6 +26,7 @@ import {
 import { ConnectorCallError } from "../../errors.js";
 import type {
   Connector,
+  ToolClassification,
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
   ConnectorCredentialConfig,
@@ -33,7 +34,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { CREDENTIAL, PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../../connectors/option-shapes.js";
-import { asProviderFactory } from "../../provider.js";
+import { defineProvider, type ProviderContext } from "../../provider.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
@@ -3696,13 +3697,18 @@ Account purpose: ${purpose}
   }`;
 }
 
-export const CLOUDFLARE_MCP_VETTED_CATALOG = vettedCatalog({
-  reads: new Set(["search"]),
-  // `execute` can send any method to more than 2,500 API endpoints. Its input
-  // schema cannot prove a particular program is observational, so it stays on
-  // the approval path even when that program happens to issue only GETs.
-  writes: new Map([["execute", "destructive"]]),
-});
+/**
+ * Reviewed in #705's provider audit against https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/.
+ * Retains the release-reviewed inventory, including names absent from today's
+ * public reference. Live annotations were not reverified without credentials.
+ * No schema digest is asserted without a captured schema to review.
+ */
+const CLOUDFLARE_MCP_CLASSIFICATION: ToolClassification = {
+  tools: {
+    "search": {"verdict": "read", "reason": "Searches the Cloudflare OpenAPI contract without executing API methods."},
+    "execute": {"verdict": "destructive", "reason": "Can mix HTTP methods across the Cloudflare API; no input schema proves a program only reads."},
+  },
+};
 
 function mcpUsageGuide(
   purpose: string,
@@ -3722,14 +3728,11 @@ function cloudflareMcp(
   id: string,
   purpose: string,
   options: CloudflareMcpOptions,
+  provider: ProviderContext,
 ): Connector {
   const connector = remoteMcp(id, {
     url: CLOUDFLARE_MCP_ENDPOINT,
-    ...defined({
-      authScope: options.authScope,
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
-    }),
+    ...provider.connectorOptions,
     title: options.title ?? "Cloudflare (MCP)",
     description: `Cloudflare's official whole-API MCP interface: ${purpose}`,
     auth: withCredentialDefaults(options.auth ?? { type: "oauth" }, {
@@ -3741,14 +3744,15 @@ function cloudflareMcp(
       },
     }),
     requireHttps: true,
+    classify: provider.classify,
     usageGuide: {
       content: mcpUsageGuide(purpose, options.instructions),
       summary:
-        "Official whole-API MCP. Search the OpenAPI document, then approve each mixed-method execute program.",
+        "Official whole-API MCP. Search the OpenAPI document; execute programs always classify as writes.",
       required: true,
     },
   });
-  return withVettedCatalog(connector, CLOUDFLARE_MCP_VETTED_CATALOG);
+  return connector;
 }
 
 function cloudflareApi(
@@ -3861,7 +3865,7 @@ const CLOUDFLARE_OPTIONS = variants("surface", {
 }, "api");
 
 /** A maintained Cloudflare connection using the selected provider interface. */
-export const cloudflare = asProviderFactory<CloudflareConnectionOptions>({
+export const cloudflare = defineProvider<CloudflareConnectionOptions>({
   name: "cloudflare",
   title: "Cloudflare",
   kind: "composed",
@@ -3869,18 +3873,23 @@ export const cloudflare = asProviderFactory<CloudflareConnectionOptions>({
   bundle: {"baselineGzip":151186,"maxGzip":211186},
   skill,
   options: CLOUDFLARE_OPTIONS,
+  classify: CLOUDFLARE_MCP_CLASSIFICATION,
   create: cloudflareConnector,
 });
 
 function cloudflareConnector(
   id: string,
   options: CloudflareConnectionOptions,
+  provider: ProviderContext,
 ): Connector {
   const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("cloudflare() requires a non-empty account purpose.");
-  }
   return options.surface === "mcp"
-    ? cloudflareMcp(id, purpose, options)
+    ? cloudflareMcp(id, purpose, options, provider)
     : cloudflareApi(id, purpose, options);
 }
+
+/** @deprecated Read `cloudflare.definition.classify` instead. Kept for existing imports. */
+export const CLOUDFLARE_MCP_VETTED_CATALOG = reviewedCatalog(
+  cloudflare.definition.classify!,
+  'defineProvider("cloudflare")',
+);

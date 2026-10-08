@@ -202,7 +202,7 @@ describe("stripe()", () => {
     expect(guide).toContain(
       "If the account, mode, or supported selector is ambiguous, stop and ask",
     );
-    expect(guide).toContain("carry its `stripe_context` and `livemode` unchanged");
+    expect(guide).toContain("carry the exact context fields required by the live schema unchanged");
     expect(availableAccounts.map(({ livemode }) => livemode)).toEqual([
       true,
       false,
@@ -396,7 +396,7 @@ describe("stripe()", () => {
 
   it("rejects an empty purpose and an unknown static mode at construction", () => {
     expect(() => stripe("billing", { purpose: "  " })).toThrow(
-      "a non-empty account purpose",
+      "a non-empty purpose",
     );
     expect(() =>
       stripe("billing", {

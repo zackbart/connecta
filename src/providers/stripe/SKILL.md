@@ -8,9 +8,9 @@
 <!-- fragment: guide_0 -->
 
 
-This OAuth session may expose both live and sandbox Stripe accounts. Call `list_available_accounts_or_orgs`, then carry its exact `stripe_context` and `livemode` into every account-scoped call. A live-mode write moves real money; a sandbox write changes test data. Never infer the account or mode from connector metadata.
+This OAuth session may expose both live and sandbox Stripe accounts. Discover the live account-selection tools, select the intended account and mode, then carry exact context fields such as `stripe_context` and `livemode` wherever the schema requires them. A live-mode write moves real money; a sandbox write changes test data. Never infer the account or mode from connector metadata.
 
-- Call `list_available_accounts_or_orgs` before every account-scoped read or write. Select the intended result, then carry its `stripe_context` and `livemode` unchanged. If the account, mode, or supported selector is ambiguous, stop and ask; never guess.
+- Discover account and mode with the live account-selection tools before every account-scoped read or write. The published inventory has changed account-tool names; do not assume `list_available_accounts_or_orgs` is available. Select the intended result and carry the exact context fields required by the live schema unchanged. If the account, mode, or supported selector is ambiguous, stop and ask; never guess.
 - Organization accounts are not Stripe Connect connected accounts. A Connect call requires a separate connector with a deployment-configured restricted key plus Stripe's documented `Stripe-Account` header; OAuth does not support that path.
 <!-- endfragment -->
 
@@ -24,8 +24,8 @@ This OAuth session may expose both live and sandbox Stripe accounts. Call `list_
 
 - Four generic tools reach any Stripe API method. Find the method with `stripe_api_search`, read its parameters with `stripe_api_details`, then call `stripe_api_read` (GET) or `stripe_api_write` (POST/PATCH/PUT/DELETE). Never guess a path or a parameter name — `stripe_api_details` is cheaper than a rejected write.
 - Prefer a dedicated tool when one covers the task: `get_balance_summary` for balances and `stripe_analytics` for Sigma or Metrics reporting. Use `stripe_api_search` for everything else instead of assuming a retired dedicated tool still exists.
-- `stripe_implementation_planner` and the query-execution intents of `stripe_analytics` create provider-side planning or query-run state. Connecta therefore routes both through `call_destructive_tool` as non-destructive writes; their retrieval paths stay behind the same tool boundary.
-- `stripe_api_write` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; expect approval on every call.
+- `stripe_implementation_planner` and the query-execution intents of `stripe_analytics` create provider-side planning or query-run state. Connecta therefore classifies both as writes and enforces the configured pool trust policy; their retrieval paths stay behind the same tool boundary.
+- `stripe_api_write` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; execution follows the configured pool trust policy.
 - Lists are cursor-paginated: `limit` defaults to 10 and caps at 100, `starting_after` and `ending_before` take an object id and are mutually exclusive, and `has_more` says whether to continue. Page inside `execute_code`.
 - Any `stripe_api_read` list or `stripe_api_search` that returns full objects belongs inside `execute_code`, projected to the fields the question needs before `return`. Neither `limit` nor `expand` substitutes for that: an unprojected list of customers or invoices truncates long before it answers, and a projected one keeps the customer's name, email, and address out of the transcript.
 - Search filters on a documented per-resource field set, not on arbitrary attributes. Charges search takes `amount`, `created`, `currency`, `customer`, `status`, `refunded`, `disputed`, `metadata`, `billing_details.address.postal_code`, and `payment_method_details.<source>.*` card fields — there is no `payment_intent` field. When the field you want is not searchable, retrieve the parent object and follow its reference (the PaymentIntent's `latest_charge`) instead of retrying the search with another spelling.
@@ -40,6 +40,6 @@ This OAuth session may expose both live and sandbox Stripe accounts. Call `list_
 <!-- fragment: guide_3 -->
 , and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
 - Use `search_stripe_documentation` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
-- Treat every create, update, delete, refund, and report run as a write. Connecta routes the maintained write catalog through `call_destructive_tool`; newly added tools also fail closed until classified.
+- Treat every create, update, delete, refund, and report run as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.
 - An `auth_required` failure means this connector's Stripe authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
 <!-- endfragment -->

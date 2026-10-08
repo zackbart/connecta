@@ -52,7 +52,7 @@ headers. A rate-limit failure carries that delay when Vercel supplies it.
 
 Official MCP surface: tool names, descriptions, argument schemas, and result
 schemas come from Vercel's live server. Connecta preserves that catalog and
-only fills in release-reviewed safety annotations when Vercel leaves them out.
+applies release-reviewed classification. Reviewed writes stay writes even when Vercel claims they only read.
 
 Account purpose: <!-- endfragment -->
 
@@ -62,6 +62,8 @@ Account purpose: <!-- endfragment -->
 - Discover the live catalog before assuming a tool exists. Vercel can change
   the surface independently of a Connecta release, and account features may
   affect what the authorization can reach.
+- Complete authorization and grant access to the owning team before acting. Listing this server does not prove team access. A configured API `teamId` is a routing default, not an authorization boundary.
+- MCP pagination and arguments follow the live MCP schemas; do not apply API pagination or argument shapes to them.
 - Resolve team, project, deployment, run, thread, and order ids with the list
   and get tools. Do not guess opaque ids.
 - Diagnose deployments with `get_deployment`, then build logs, runtime error
@@ -71,7 +73,7 @@ Account purpose: <!-- endfragment -->
 - `get_access_to_vercel_url` creates a temporary access grant. Treat the URL
   it returns as a credential and do not expose it outside the requested task.
 - `deploy_to_vercel` and `import-claude-design-from-url` can create or update
-  live projects. Read the target and deployment mode before approving them.
+  live projects. Read the target and deployment mode before invoking them.
 - An `auth_required` failure means this connector's OAuth grant is missing or
   expired. Run `authorize_connector` for this connector id, then retry.
 <!-- endfragment -->

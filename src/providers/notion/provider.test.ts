@@ -310,7 +310,7 @@ describe("notion() tool surface", () => {
 
   it("rejects a missing purpose or an out-of-range page size", () => {
     expect(() => notion("workspace", { purpose: "  " })).toThrow(
-      "a non-empty workspace purpose",
+      "a non-empty purpose",
     );
     expect(() =>
       notion("workspace", { purpose: "Docs", defaultPageSize: 500 }),

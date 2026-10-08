@@ -1,14 +1,14 @@
 import { skill } from "./skill.generated.js";
 import { remoteMcp } from "../../connectors/remote-mcp.js";
-import { vettedCatalog, withVettedCatalog } from "../../catalog-drift.js";
-import { defined } from "../../connectors/api-connector.js";
+import { reviewedCatalog } from "../../catalog-drift.js";
 import type {
   Connector,
+  ToolClassification,
   ConnectorCallAdmissionPolicy,
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { asProviderFactory } from "../../provider.js";
+import { defineProvider, type ProviderContext } from "../../provider.js";
 
 /**
  * Basecamp's one hosted MCP endpoint, streamable HTTP.
@@ -72,335 +72,245 @@ export interface BasecampOptions {
 }
 
 /**
- * Reviewed reads, listed by name (P5), from the live `tools/list` captured
- * 2026-10-05 (227 tools, every one explicitly annotated by the server). Each
- * read below carries the server's own `readOnlyHint: true`; the
- * classification agrees rather than argues. A superset by design: tools gated
- * by account type or feature cost nothing when absent, while an unlisted new
- * one fails closed.
+ * Retains the 227-tool live tools/list review captured on 2026-10-05,
+ * including the server's explicit read annotations. Basecamp publishes no
+ * inventory; credential-free checks can only verify OAuth discovery.
+ * Reviewed in #705's provider audit against https://mcp.basecamp.com/.well-known/oauth-protected-resource/mcp.
+ * Retains the release-reviewed inventory, including names absent from today's
+ * public reference. Live annotations were not reverified without credentials.
+ * No schema digest is asserted without a captured schema to review.
  */
-const READ_ONLY_TOOLS = new Set([
-  // Orientation and identity
-  "get_basecamp_guide",
-  "get_me",
-  "get_account",
-  "get_my_profile",
-  "get_my_preferences",
-  "get_by_url",
-  "search",
-  "search_mentions",
-  // People
-  "get_person",
-  "list_people",
-  "list_pingable_people",
-  "list_assignable_people",
-  "list_project_people",
-  "get_out_of_office",
-  // Projects, docks, and templates
-  "list_projects",
-  "get_project",
-  "get_project_tools",
-  "get_dock_tool",
-  "get_project_construction",
-  "list_templates",
-  "get_template",
-  "list_folders",
-  "get_folder",
-  // My work and notifications. Reading the Hey! menu changes nothing; the
-  // write that does is `mark_as_read`, below.
-  "get_my_assignments",
-  "get_my_completed_assignments",
-  "get_my_due_assignments",
-  "get_my_day",
-  "get_catchup",
-  "get_my_notifications",
-  "get_bubble_ups",
-  "get_my_note",
-  "list_my_bookmarks",
-  "list_my_drafts",
-  "get_bookmark",
-  "get_question_reminders",
-  // Answers the same question as the reads above and renders it in a panel
-  // for clients that draw one; connecta relays the data and draws nothing.
-  "show_my_work",
-  // Activity and feeds. Both feed cursors are held by the caller and passed
-  // back, so polling advances nothing on Basecamp's side.
-  "get_progress_report",
-  "get_project_timeline",
-  "get_person_progress",
-  "list_feed_events",
-  "get_event_inbox",
-  "list_everything_feed",
-  "list_everything_todos",
-  "list_everything_cards",
-  "summarize_recording",
-  // Mints a short-lived, single-connection WebSocket ticket for the event
-  // feed's live lane, and the server files it read-only. Reviewed rather than
-  // copied: it writes no Basecamp record, and what the ticket unlocks is a
-  // read of the same feed `list_feed_events` already serves on this path.
-  // Filing it destructive would be the only lever that overrides the server
-  // (an additive verdict cannot), and it would buy a standing annotation
-  // conflict on every refresh for a tool connecta's one-request calls cannot
-  // use anyway — so the guide tells agents not to call it instead.
-  "create_stream_ticket",
-  // To-dos
-  "get_todoset",
-  "list_todolists",
-  "get_todolist",
-  "list_todolist_groups",
-  "get_todolist_group",
-  "list_todos",
-  "get_todo",
-  "get_assigned_todos",
-  "get_overdue_todos",
-  "get_hill_chart",
-  // Messages
-  "get_message_board",
-  "list_messages",
-  "get_message",
-  "list_message_types",
-  "get_message_type",
-  // Comments and boosts
-  "list_comments",
-  "get_comment",
-  "list_recording_boosts",
-  "list_event_boosts",
-  "get_boost",
-  // Card tables
-  "get_card_table",
-  "get_card_column",
-  "list_cards",
-  "get_card",
-  "get_card_step",
-  // Chat
-  "get_campfire",
-  "list_campfire_lines",
-  "get_campfire_line",
-  "list_campfire_uploads",
-  // Schedules
-  "get_schedule",
-  "list_schedule_entries",
-  "get_schedule_entry",
-  "get_schedule_entry_occurrence",
-  "get_upcoming_schedule",
-  "get_calendar",
-  "list_lineup_markers",
-  // Docs and files
-  "get_vault",
-  "list_vaults",
-  "list_documents",
-  "get_document",
-  "list_uploads",
-  "get_upload",
-  "list_upload_versions",
-  "get_cloud_file",
-  "get_google_document",
-  // Check-ins
-  "get_questionnaire",
-  "list_questions",
-  "get_question",
-  "list_question_answerers",
-  "list_answers",
-  "get_answer",
-  "get_answers_by_person",
-  // Timesheets
-  "get_timesheet_report",
-  "get_project_timesheet",
-  "get_recording_timesheet",
-  "get_timesheet_entry",
-  // Gauges
-  "list_gauges",
-  "list_gauge_needles",
-  "get_gauge_needle",
-]);
-
-/**
- * Reviewed writes with their destructive verdict. Most follow the server's
- * own explicit annotation, which is also what the verb says: `create_*` brings
- * a record into being, and `update_*`, `trash_*`, `delete_*`, `destroy_*`,
- * moves, repositions, and toggles act on one that exists. The four rows that
- * part from the server carry their reason.
- *
- * Trash and permanent deletion are both destructive, because both take a
- * record out of everyone's view; the difference — `trash_*` is restorable for
- * 25 days, `delete_*`/`destroy_*` and `remove_account_logo` are not — is the
- * guide's to say, not a third verdict's.
- */
-const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
-  // Account and profile
-  ["update_account_name", "destructive"],
-  ["remove_account_logo", "destructive"],
-  ["update_my_profile", "destructive"],
-  ["update_my_preferences", "destructive"],
-  // "The first update creates the note", but every later one replaces it.
-  ["update_my_note", "destructive"],
-  ["enable_out_of_office", "destructive"],
-  ["disable_out_of_office", "destructive"],
-  // Projects, docks, and templates
-  ["create_project", "additive"],
-  ["create_project_from_template", "additive"],
-  ["update_project", "destructive"],
-  // Grants and revokes access, and can create people — that is, invite an
-  // outside address into the account (the server marks it open-world).
-  ["update_project_access", "destructive"],
-  ["trash_project", "destructive"],
-  ["create_template", "additive"],
-  ["update_template", "destructive"],
-  ["delete_template", "destructive"],
-  ["enable_dock_tool", "destructive"],
-  ["disable_dock_tool", "destructive"],
-  ["update_dock_tool", "destructive"],
-  ["reposition_dock_tool", "destructive"],
-  ["trash_dock_tool", "destructive"],
-  // Destructive where the server says additive: "optionally filing projects
-  // into it" moves projects that already sit on the person's home screen, so
-  // the call can rearrange existing state as well as create a folder.
-  ["create_folder", "destructive"],
-  ["update_folder", "destructive"],
-  ["delete_folder", "destructive"],
-  // My work. Prioritizing adds an assignment to the person's own list and
-  // removes nothing — RevenueCat's attach/detach argument — so it is additive
-  // where the server says destructive; deprioritizing and reordering are the
-  // halves that move existing state. The server's explicit `destructiveHint`
-  // still stands at runtime: the classification fills silence and does not
-  // soften an annotation, so this verdict is the release's record, not an
-  // overrule.
-  ["prioritize_assignment", "additive"],
-  ["deprioritize_assignment", "destructive"],
-  ["reorder_up_next", "destructive"],
-  // Flips the read state of existing notifications, which is how a person
-  // knows what they have not seen yet — and no tool flips it back.
-  ["mark_as_read", "destructive"],
-  ["create_bookmark", "additive"],
-  ["delete_bookmark", "destructive"],
-  // To-dos
-  ["create_todolist", "additive"],
-  ["update_todolist", "destructive"],
-  ["reposition_todolist", "destructive"],
-  ["trash_todolist", "destructive"],
-  ["create_todolist_group", "additive"],
-  ["update_todolist_group", "destructive"],
-  ["reposition_todolist_group", "destructive"],
-  ["trash_todolist_group", "destructive"],
-  ["create_todo", "additive"],
-  ["create_todoset_todo", "additive"],
-  ["update_todo", "destructive"],
-  ["complete_todo", "destructive"],
-  ["uncomplete_todo", "destructive"],
-  ["reposition_todo", "destructive"],
-  ["trash_todo", "destructive"],
-  ["update_hill_chart_settings", "destructive"],
-  // Messages
-  ["create_message", "additive"],
-  ["update_message", "destructive"],
-  ["pin_message", "destructive"],
-  ["unpin_message", "destructive"],
-  ["archive_message", "destructive"],
-  ["unarchive_message", "destructive"],
-  ["trash_message", "destructive"],
-  ["create_message_type", "additive"],
-  ["update_message_type", "destructive"],
-  ["delete_message_type", "destructive"],
-  // Comments and boosts
-  ["create_comment", "additive"],
-  ["update_comment", "destructive"],
-  ["trash_comment", "destructive"],
-  ["create_recording_boost", "additive"],
-  ["create_event_boost", "additive"],
-  ["delete_boost", "destructive"],
-  // Card tables
-  ["create_card_column", "additive"],
-  ["update_card_column", "destructive"],
-  ["move_card_column", "destructive"],
-  ["set_card_column_color", "destructive"],
-  ["enable_card_column_on_hold", "destructive"],
-  ["disable_card_column_on_hold", "destructive"],
-  // Watching a column adds the person to its subscribers and removes nothing:
-  // additive for the same reason as `prioritize_assignment`, with the server's
-  // explicit `destructiveHint` still the one a caller sees. Two endpoints, one
-  // effect, so both names get the same verdict; the unwatching halves stay
-  // destructive.
-  ["watch_column", "additive"],
-  ["subscribe_to_card_column", "additive"],
-  ["unwatch_column", "destructive"],
-  ["unsubscribe_from_card_column", "destructive"],
-  ["create_wormhole", "additive"],
-  ["update_wormhole", "destructive"],
-  ["delete_wormhole", "destructive"],
-  ["create_card", "additive"],
-  ["update_card", "destructive"],
-  ["move_card", "destructive"],
-  ["trash_card", "destructive"],
-  ["create_card_step", "additive"],
-  ["update_card_step", "destructive"],
-  ["complete_card_step", "destructive"],
-  ["uncomplete_card_step", "destructive"],
-  ["reposition_card_step", "destructive"],
-  ["delete_card_step", "destructive"],
-  // Chat
-  ["create_campfire_line", "additive"],
-  ["create_campfire_upload", "additive"],
-  ["delete_campfire_line", "destructive"],
-  // Schedules
-  ["create_schedule_entry", "additive"],
-  ["update_schedule_entry", "destructive"],
-  ["trash_schedule_entry", "destructive"],
-  ["update_schedule_settings", "destructive"],
-  ["update_calendar", "destructive"],
-  ["create_lineup_marker", "additive"],
-  ["update_lineup_marker", "destructive"],
-  ["delete_lineup_marker", "destructive"],
-  // Docs and files. `create_attachment` uploads bytes and returns the
-  // `attachable_sgid` that `create_upload` files into a vault.
-  ["create_vault", "additive"],
-  ["update_vault", "destructive"],
-  ["create_document", "additive"],
-  ["update_document", "destructive"],
-  ["trash_document", "destructive"],
-  ["create_attachment", "additive"],
-  ["create_upload", "additive"],
-  ["update_upload", "destructive"],
-  ["trash_upload", "destructive"],
-  ["create_cloud_file", "additive"],
-  ["update_cloud_file", "destructive"],
-  ["create_google_document", "additive"],
-  ["update_google_document", "destructive"],
-  // Check-ins
-  ["create_question", "additive"],
-  ["update_question", "destructive"],
-  ["pause_question", "destructive"],
-  ["resume_question", "destructive"],
-  ["update_question_notification_settings", "destructive"],
-  ["create_answer", "additive"],
-  ["update_answer", "destructive"],
-  // Timesheets
-  ["create_timesheet_entry", "additive"],
-  ["update_timesheet_entry", "destructive"],
-  ["destroy_timesheet_entry", "destructive"],
-  // Gauges
-  ["toggle_gauge", "destructive"],
-  ["create_gauge_needle", "additive"],
-  ["update_gauge_needle", "destructive"],
-  ["destroy_gauge_needle", "destructive"],
-]);
-
-/**
- * One release-reviewed manifest, used both to classify a live tool and as the
- * baseline the runtime drift check compares against, so the annotation a
- * caller gets and the verdict a check reads can never disagree (P13). Names
- * and verdicts only — no schemas are vendored; the live `tools/list` response
- * stays authoritative.
- *
- * Basecamp publishes no tool inventory, so this list has no public document
- * to be checked against before a release. Catalog drift is visible at runtime
- * only — as unclassified-tool and unserved-name counts on connector status and
- * `/health` — and the credential-free provider check reads the OAuth
- * discovery metadata the server does publish instead.
- */
-export const BASECAMP_VETTED_CATALOG = vettedCatalog({
-  reads: READ_ONLY_TOOLS,
-  writes: WRITE_TOOLS,
-});
+const BASECAMP_CLASSIFICATION: ToolClassification = {
+  tools: {
+    "get_basecamp_guide": {"verdict": "read", "reason": "Reads Basecamp reference guidance; it does not change account state."},
+    "get_me": {"verdict": "read", "reason": "Reads the signed-in identity and connected account label."},
+    "get_account": {"verdict": "read", "reason": "Retrieves Basecamp account information without changing vendor state."},
+    "get_my_profile": {"verdict": "read", "reason": "Retrieves Basecamp my profile information without changing vendor state."},
+    "get_my_preferences": {"verdict": "read", "reason": "Retrieves Basecamp my preferences information without changing vendor state."},
+    "get_by_url": {"verdict": "read", "reason": "Resolves a Basecamp URL and reads its record; it does not change the target."},
+    "search": {"verdict": "read", "reason": "Searches Basecamp records without modifying them."},
+    "search_mentions": {"verdict": "read", "reason": "Retrieves Basecamp mentions information without changing vendor state."},
+    "get_person": {"verdict": "read", "reason": "Retrieves Basecamp person information without changing vendor state."},
+    "list_people": {"verdict": "read", "reason": "Retrieves Basecamp people information without changing vendor state."},
+    "list_pingable_people": {"verdict": "read", "reason": "Retrieves Basecamp pingable people information without changing vendor state."},
+    "list_assignable_people": {"verdict": "read", "reason": "Retrieves Basecamp assignable people information without changing vendor state."},
+    "list_project_people": {"verdict": "read", "reason": "Retrieves Basecamp project people information without changing vendor state."},
+    "get_out_of_office": {"verdict": "read", "reason": "Retrieves Basecamp out of office information without changing vendor state."},
+    "list_projects": {"verdict": "read", "reason": "Retrieves Basecamp projects information without changing vendor state."},
+    "get_project": {"verdict": "read", "reason": "Retrieves Basecamp project information without changing vendor state."},
+    "get_project_tools": {"verdict": "read", "reason": "Retrieves Basecamp project tools information without changing vendor state."},
+    "get_dock_tool": {"verdict": "read", "reason": "Retrieves Basecamp dock tool information without changing vendor state."},
+    "get_project_construction": {"verdict": "read", "reason": "Retrieves Basecamp project construction information without changing vendor state."},
+    "list_templates": {"verdict": "read", "reason": "Retrieves Basecamp templates information without changing vendor state."},
+    "get_template": {"verdict": "read", "reason": "Retrieves Basecamp template information without changing vendor state."},
+    "list_folders": {"verdict": "read", "reason": "Retrieves Basecamp folders information without changing vendor state."},
+    "get_folder": {"verdict": "read", "reason": "Retrieves Basecamp folder information without changing vendor state."},
+    "get_my_assignments": {"verdict": "read", "reason": "Retrieves Basecamp my assignments information without changing vendor state."},
+    "get_my_completed_assignments": {"verdict": "read", "reason": "Retrieves Basecamp my completed assignments information without changing vendor state."},
+    "get_my_due_assignments": {"verdict": "read", "reason": "Retrieves Basecamp my due assignments information without changing vendor state."},
+    "get_my_day": {"verdict": "read", "reason": "Retrieves Basecamp my day information without changing vendor state."},
+    "get_catchup": {"verdict": "read", "reason": "Retrieves Basecamp catchup information without changing vendor state."},
+    "get_my_notifications": {"verdict": "read", "reason": "Retrieves Basecamp my notifications information without changing vendor state."},
+    "get_bubble_ups": {"verdict": "read", "reason": "Retrieves Basecamp bubble ups information without changing vendor state."},
+    "get_my_note": {"verdict": "read", "reason": "Retrieves Basecamp my note information without changing vendor state."},
+    "list_my_bookmarks": {"verdict": "read", "reason": "Retrieves Basecamp my bookmarks information without changing vendor state."},
+    "list_my_drafts": {"verdict": "read", "reason": "Retrieves Basecamp my drafts information without changing vendor state."},
+    "get_bookmark": {"verdict": "read", "reason": "Retrieves Basecamp bookmark information without changing vendor state."},
+    "get_question_reminders": {"verdict": "read", "reason": "Retrieves Basecamp question reminders information without changing vendor state."},
+    "show_my_work": {"verdict": "read", "reason": "Retrieves Basecamp my work information without changing vendor state."},
+    "get_progress_report": {"verdict": "read", "reason": "Retrieves Basecamp progress report information without changing vendor state."},
+    "get_project_timeline": {"verdict": "read", "reason": "Retrieves Basecamp project timeline information without changing vendor state."},
+    "get_person_progress": {"verdict": "read", "reason": "Retrieves Basecamp person progress information without changing vendor state."},
+    "list_feed_events": {"verdict": "read", "reason": "Retrieves Basecamp feed events information without changing vendor state."},
+    "get_event_inbox": {"verdict": "read", "reason": "Retrieves Basecamp event inbox information without changing vendor state."},
+    "list_everything_feed": {"verdict": "read", "reason": "Retrieves Basecamp everything feed information without changing vendor state."},
+    "list_everything_todos": {"verdict": "read", "reason": "Retrieves Basecamp everything todos information without changing vendor state."},
+    "list_everything_cards": {"verdict": "read", "reason": "Retrieves Basecamp everything cards information without changing vendor state."},
+    "summarize_recording": {"verdict": "read", "reason": "Retrieves Basecamp recording information without changing vendor state."},
+    "create_stream_ticket": {"verdict": "read", "reason": "Mints a WebSocket credential, which is a side effect even without a persistent record."},
+    "get_todoset": {"verdict": "read", "reason": "Retrieves Basecamp todoset information without changing vendor state."},
+    "list_todolists": {"verdict": "read", "reason": "Retrieves Basecamp todolists information without changing vendor state."},
+    "get_todolist": {"verdict": "read", "reason": "Retrieves Basecamp todolist information without changing vendor state."},
+    "list_todolist_groups": {"verdict": "read", "reason": "Retrieves Basecamp todolist groups information without changing vendor state."},
+    "get_todolist_group": {"verdict": "read", "reason": "Retrieves Basecamp todolist group information without changing vendor state."},
+    "list_todos": {"verdict": "read", "reason": "Retrieves Basecamp todos information without changing vendor state."},
+    "get_todo": {"verdict": "read", "reason": "Retrieves Basecamp todo information without changing vendor state."},
+    "get_assigned_todos": {"verdict": "read", "reason": "Retrieves Basecamp assigned todos information without changing vendor state."},
+    "get_overdue_todos": {"verdict": "read", "reason": "Retrieves Basecamp overdue todos information without changing vendor state."},
+    "get_hill_chart": {"verdict": "read", "reason": "Retrieves Basecamp hill chart information without changing vendor state."},
+    "get_message_board": {"verdict": "read", "reason": "Retrieves Basecamp message board information without changing vendor state."},
+    "list_messages": {"verdict": "read", "reason": "Retrieves Basecamp messages information without changing vendor state."},
+    "get_message": {"verdict": "read", "reason": "Retrieves Basecamp message information without changing vendor state."},
+    "list_message_types": {"verdict": "read", "reason": "Retrieves Basecamp message types information without changing vendor state."},
+    "get_message_type": {"verdict": "read", "reason": "Retrieves Basecamp message type information without changing vendor state."},
+    "list_comments": {"verdict": "read", "reason": "Retrieves Basecamp comments information without changing vendor state."},
+    "get_comment": {"verdict": "read", "reason": "Retrieves Basecamp comment information without changing vendor state."},
+    "list_recording_boosts": {"verdict": "read", "reason": "Retrieves Basecamp recording boosts information without changing vendor state."},
+    "list_event_boosts": {"verdict": "read", "reason": "Retrieves Basecamp event boosts information without changing vendor state."},
+    "get_boost": {"verdict": "read", "reason": "Retrieves Basecamp boost information without changing vendor state."},
+    "get_card_table": {"verdict": "read", "reason": "Retrieves Basecamp card table information without changing vendor state."},
+    "get_card_column": {"verdict": "read", "reason": "Retrieves Basecamp card column information without changing vendor state."},
+    "list_cards": {"verdict": "read", "reason": "Retrieves Basecamp cards information without changing vendor state."},
+    "get_card": {"verdict": "read", "reason": "Retrieves Basecamp card information without changing vendor state."},
+    "get_card_step": {"verdict": "read", "reason": "Retrieves Basecamp card step information without changing vendor state."},
+    "get_campfire": {"verdict": "read", "reason": "Retrieves Basecamp campfire information without changing vendor state."},
+    "list_campfire_lines": {"verdict": "read", "reason": "Retrieves Basecamp campfire lines information without changing vendor state."},
+    "get_campfire_line": {"verdict": "read", "reason": "Retrieves Basecamp campfire line information without changing vendor state."},
+    "list_campfire_uploads": {"verdict": "read", "reason": "Retrieves Basecamp campfire uploads information without changing vendor state."},
+    "get_schedule": {"verdict": "read", "reason": "Retrieves Basecamp schedule information without changing vendor state."},
+    "list_schedule_entries": {"verdict": "read", "reason": "Retrieves Basecamp schedule entries information without changing vendor state."},
+    "get_schedule_entry": {"verdict": "read", "reason": "Retrieves Basecamp schedule entry information without changing vendor state."},
+    "get_schedule_entry_occurrence": {"verdict": "read", "reason": "Retrieves Basecamp schedule entry occurrence information without changing vendor state."},
+    "get_upcoming_schedule": {"verdict": "read", "reason": "Retrieves Basecamp upcoming schedule information without changing vendor state."},
+    "get_calendar": {"verdict": "read", "reason": "Retrieves Basecamp calendar information without changing vendor state."},
+    "list_lineup_markers": {"verdict": "read", "reason": "Retrieves Basecamp lineup markers information without changing vendor state."},
+    "get_vault": {"verdict": "read", "reason": "Retrieves Basecamp vault information without changing vendor state."},
+    "list_vaults": {"verdict": "read", "reason": "Retrieves Basecamp vaults information without changing vendor state."},
+    "list_documents": {"verdict": "read", "reason": "Retrieves Basecamp documents information without changing vendor state."},
+    "get_document": {"verdict": "read", "reason": "Retrieves Basecamp document information without changing vendor state."},
+    "list_uploads": {"verdict": "read", "reason": "Retrieves Basecamp uploads information without changing vendor state."},
+    "get_upload": {"verdict": "read", "reason": "Retrieves Basecamp upload information without changing vendor state."},
+    "list_upload_versions": {"verdict": "read", "reason": "Retrieves Basecamp upload versions information without changing vendor state."},
+    "get_cloud_file": {"verdict": "read", "reason": "Retrieves Basecamp cloud file information without changing vendor state."},
+    "get_google_document": {"verdict": "read", "reason": "Retrieves Basecamp google document information without changing vendor state."},
+    "get_questionnaire": {"verdict": "read", "reason": "Retrieves Basecamp questionnaire information without changing vendor state."},
+    "list_questions": {"verdict": "read", "reason": "Retrieves Basecamp questions information without changing vendor state."},
+    "get_question": {"verdict": "read", "reason": "Retrieves Basecamp question information without changing vendor state."},
+    "list_question_answerers": {"verdict": "read", "reason": "Retrieves Basecamp question answerers information without changing vendor state."},
+    "list_answers": {"verdict": "read", "reason": "Retrieves Basecamp answers information without changing vendor state."},
+    "get_answer": {"verdict": "read", "reason": "Retrieves Basecamp answer information without changing vendor state."},
+    "get_answers_by_person": {"verdict": "read", "reason": "Retrieves Basecamp answers by person information without changing vendor state."},
+    "get_timesheet_report": {"verdict": "read", "reason": "Retrieves Basecamp timesheet report information without changing vendor state."},
+    "get_project_timesheet": {"verdict": "read", "reason": "Retrieves Basecamp project timesheet information without changing vendor state."},
+    "get_recording_timesheet": {"verdict": "read", "reason": "Retrieves Basecamp recording timesheet information without changing vendor state."},
+    "get_timesheet_entry": {"verdict": "read", "reason": "Retrieves Basecamp timesheet entry information without changing vendor state."},
+    "list_gauges": {"verdict": "read", "reason": "Retrieves Basecamp gauges information without changing vendor state."},
+    "list_gauge_needles": {"verdict": "read", "reason": "Retrieves Basecamp gauge needles information without changing vendor state."},
+    "get_gauge_needle": {"verdict": "read", "reason": "Retrieves Basecamp gauge needle information without changing vendor state."},
+    "update_account_name": {"verdict": "destructive", "reason": "update account name changes existing Basecamp state or removes it."},
+    "remove_account_logo": {"verdict": "destructive", "reason": "remove account logo changes existing Basecamp state or removes it."},
+    "update_my_profile": {"verdict": "destructive", "reason": "update my profile changes existing Basecamp state or removes it."},
+    "update_my_preferences": {"verdict": "destructive", "reason": "update my preferences changes existing Basecamp state or removes it."},
+    "update_my_note": {"verdict": "destructive", "reason": "update my note changes existing Basecamp state or removes it."},
+    "enable_out_of_office": {"verdict": "destructive", "reason": "enable out of office changes existing Basecamp state or removes it."},
+    "disable_out_of_office": {"verdict": "destructive", "reason": "disable out of office changes existing Basecamp state or removes it."},
+    "create_project": {"verdict": "write", "reason": "create project creates or appends Basecamp state; it has side effects."},
+    "create_project_from_template": {"verdict": "write", "reason": "create project from template creates or appends Basecamp state; it has side effects."},
+    "update_project": {"verdict": "destructive", "reason": "update project changes existing Basecamp state or removes it."},
+    "update_project_access": {"verdict": "destructive", "reason": "update project access changes existing Basecamp state or removes it."},
+    "trash_project": {"verdict": "destructive", "reason": "trash project changes existing Basecamp state or removes it."},
+    "create_template": {"verdict": "write", "reason": "create template creates or appends Basecamp state; it has side effects."},
+    "update_template": {"verdict": "destructive", "reason": "update template changes existing Basecamp state or removes it."},
+    "delete_template": {"verdict": "destructive", "reason": "delete template changes existing Basecamp state or removes it."},
+    "enable_dock_tool": {"verdict": "destructive", "reason": "enable dock tool changes existing Basecamp state or removes it."},
+    "disable_dock_tool": {"verdict": "destructive", "reason": "disable dock tool changes existing Basecamp state or removes it."},
+    "update_dock_tool": {"verdict": "destructive", "reason": "update dock tool changes existing Basecamp state or removes it."},
+    "reposition_dock_tool": {"verdict": "destructive", "reason": "reposition dock tool changes existing Basecamp state or removes it."},
+    "trash_dock_tool": {"verdict": "destructive", "reason": "trash dock tool changes existing Basecamp state or removes it."},
+    "create_folder": {"verdict": "destructive", "reason": "create folder changes existing Basecamp state or removes it."},
+    "update_folder": {"verdict": "destructive", "reason": "update folder changes existing Basecamp state or removes it."},
+    "delete_folder": {"verdict": "destructive", "reason": "delete folder changes existing Basecamp state or removes it."},
+    "prioritize_assignment": {"verdict": "write", "reason": "prioritize assignment creates or appends Basecamp state; it has side effects."},
+    "deprioritize_assignment": {"verdict": "destructive", "reason": "deprioritize assignment changes existing Basecamp state or removes it."},
+    "reorder_up_next": {"verdict": "destructive", "reason": "reorder up next changes existing Basecamp state or removes it."},
+    "mark_as_read": {"verdict": "destructive", "reason": "mark as read changes existing Basecamp state or removes it."},
+    "create_bookmark": {"verdict": "write", "reason": "create bookmark creates or appends Basecamp state; it has side effects."},
+    "delete_bookmark": {"verdict": "destructive", "reason": "delete bookmark changes existing Basecamp state or removes it."},
+    "create_todolist": {"verdict": "write", "reason": "create todolist creates or appends Basecamp state; it has side effects."},
+    "update_todolist": {"verdict": "destructive", "reason": "update todolist changes existing Basecamp state or removes it."},
+    "reposition_todolist": {"verdict": "destructive", "reason": "reposition todolist changes existing Basecamp state or removes it."},
+    "trash_todolist": {"verdict": "destructive", "reason": "trash todolist changes existing Basecamp state or removes it."},
+    "create_todolist_group": {"verdict": "write", "reason": "create todolist group creates or appends Basecamp state; it has side effects."},
+    "update_todolist_group": {"verdict": "destructive", "reason": "update todolist group changes existing Basecamp state or removes it."},
+    "reposition_todolist_group": {"verdict": "destructive", "reason": "reposition todolist group changes existing Basecamp state or removes it."},
+    "trash_todolist_group": {"verdict": "destructive", "reason": "trash todolist group changes existing Basecamp state or removes it."},
+    "create_todo": {"verdict": "write", "reason": "create todo creates or appends Basecamp state; it has side effects."},
+    "create_todoset_todo": {"verdict": "write", "reason": "create todoset todo creates or appends Basecamp state; it has side effects."},
+    "update_todo": {"verdict": "destructive", "reason": "update todo changes existing Basecamp state or removes it."},
+    "complete_todo": {"verdict": "destructive", "reason": "complete todo changes existing Basecamp state or removes it."},
+    "uncomplete_todo": {"verdict": "destructive", "reason": "uncomplete todo changes existing Basecamp state or removes it."},
+    "reposition_todo": {"verdict": "destructive", "reason": "reposition todo changes existing Basecamp state or removes it."},
+    "trash_todo": {"verdict": "destructive", "reason": "trash todo changes existing Basecamp state or removes it."},
+    "update_hill_chart_settings": {"verdict": "destructive", "reason": "update hill chart settings changes existing Basecamp state or removes it."},
+    "create_message": {"verdict": "write", "reason": "create message creates or appends Basecamp state; it has side effects."},
+    "update_message": {"verdict": "destructive", "reason": "update message changes existing Basecamp state or removes it."},
+    "pin_message": {"verdict": "destructive", "reason": "pin message changes existing Basecamp state or removes it."},
+    "unpin_message": {"verdict": "destructive", "reason": "unpin message changes existing Basecamp state or removes it."},
+    "archive_message": {"verdict": "destructive", "reason": "archive message changes existing Basecamp state or removes it."},
+    "unarchive_message": {"verdict": "destructive", "reason": "unarchive message changes existing Basecamp state or removes it."},
+    "trash_message": {"verdict": "destructive", "reason": "trash message changes existing Basecamp state or removes it."},
+    "create_message_type": {"verdict": "write", "reason": "create message type creates or appends Basecamp state; it has side effects."},
+    "update_message_type": {"verdict": "destructive", "reason": "update message type changes existing Basecamp state or removes it."},
+    "delete_message_type": {"verdict": "destructive", "reason": "delete message type changes existing Basecamp state or removes it."},
+    "create_comment": {"verdict": "write", "reason": "create comment creates or appends Basecamp state; it has side effects."},
+    "update_comment": {"verdict": "destructive", "reason": "update comment changes existing Basecamp state or removes it."},
+    "trash_comment": {"verdict": "destructive", "reason": "trash comment changes existing Basecamp state or removes it."},
+    "create_recording_boost": {"verdict": "write", "reason": "create recording boost creates or appends Basecamp state; it has side effects."},
+    "create_event_boost": {"verdict": "write", "reason": "create event boost creates or appends Basecamp state; it has side effects."},
+    "delete_boost": {"verdict": "destructive", "reason": "delete boost changes existing Basecamp state or removes it."},
+    "create_card_column": {"verdict": "write", "reason": "create card column creates or appends Basecamp state; it has side effects."},
+    "update_card_column": {"verdict": "destructive", "reason": "update card column changes existing Basecamp state or removes it."},
+    "move_card_column": {"verdict": "destructive", "reason": "move card column changes existing Basecamp state or removes it."},
+    "set_card_column_color": {"verdict": "destructive", "reason": "set card column color changes existing Basecamp state or removes it."},
+    "enable_card_column_on_hold": {"verdict": "destructive", "reason": "enable card column on hold changes existing Basecamp state or removes it."},
+    "disable_card_column_on_hold": {"verdict": "destructive", "reason": "disable card column on hold changes existing Basecamp state or removes it."},
+    "watch_column": {"verdict": "write", "reason": "watch column creates or appends Basecamp state; it has side effects."},
+    "subscribe_to_card_column": {"verdict": "write", "reason": "subscribe to card column creates or appends Basecamp state; it has side effects."},
+    "unwatch_column": {"verdict": "destructive", "reason": "unwatch column changes existing Basecamp state or removes it."},
+    "unsubscribe_from_card_column": {"verdict": "destructive", "reason": "unsubscribe from card column changes existing Basecamp state or removes it."},
+    "create_wormhole": {"verdict": "write", "reason": "create wormhole creates or appends Basecamp state; it has side effects."},
+    "update_wormhole": {"verdict": "destructive", "reason": "update wormhole changes existing Basecamp state or removes it."},
+    "delete_wormhole": {"verdict": "destructive", "reason": "delete wormhole changes existing Basecamp state or removes it."},
+    "create_card": {"verdict": "write", "reason": "create card creates or appends Basecamp state; it has side effects."},
+    "update_card": {"verdict": "destructive", "reason": "update card changes existing Basecamp state or removes it."},
+    "move_card": {"verdict": "destructive", "reason": "move card changes existing Basecamp state or removes it."},
+    "trash_card": {"verdict": "destructive", "reason": "trash card changes existing Basecamp state or removes it."},
+    "create_card_step": {"verdict": "write", "reason": "create card step creates or appends Basecamp state; it has side effects."},
+    "update_card_step": {"verdict": "destructive", "reason": "update card step changes existing Basecamp state or removes it."},
+    "complete_card_step": {"verdict": "destructive", "reason": "complete card step changes existing Basecamp state or removes it."},
+    "uncomplete_card_step": {"verdict": "destructive", "reason": "uncomplete card step changes existing Basecamp state or removes it."},
+    "reposition_card_step": {"verdict": "destructive", "reason": "reposition card step changes existing Basecamp state or removes it."},
+    "delete_card_step": {"verdict": "destructive", "reason": "delete card step changes existing Basecamp state or removes it."},
+    "create_campfire_line": {"verdict": "write", "reason": "create campfire line creates or appends Basecamp state; it has side effects."},
+    "create_campfire_upload": {"verdict": "write", "reason": "create campfire upload creates or appends Basecamp state; it has side effects."},
+    "delete_campfire_line": {"verdict": "destructive", "reason": "delete campfire line changes existing Basecamp state or removes it."},
+    "create_schedule_entry": {"verdict": "write", "reason": "create schedule entry creates or appends Basecamp state; it has side effects."},
+    "update_schedule_entry": {"verdict": "destructive", "reason": "update schedule entry changes existing Basecamp state or removes it."},
+    "trash_schedule_entry": {"verdict": "destructive", "reason": "trash schedule entry changes existing Basecamp state or removes it."},
+    "update_schedule_settings": {"verdict": "destructive", "reason": "update schedule settings changes existing Basecamp state or removes it."},
+    "update_calendar": {"verdict": "destructive", "reason": "update calendar changes existing Basecamp state or removes it."},
+    "create_lineup_marker": {"verdict": "write", "reason": "create lineup marker creates or appends Basecamp state; it has side effects."},
+    "update_lineup_marker": {"verdict": "destructive", "reason": "update lineup marker changes existing Basecamp state or removes it."},
+    "delete_lineup_marker": {"verdict": "destructive", "reason": "delete lineup marker changes existing Basecamp state or removes it."},
+    "create_vault": {"verdict": "write", "reason": "create vault creates or appends Basecamp state; it has side effects."},
+    "update_vault": {"verdict": "destructive", "reason": "update vault changes existing Basecamp state or removes it."},
+    "create_document": {"verdict": "write", "reason": "create document creates or appends Basecamp state; it has side effects."},
+    "update_document": {"verdict": "destructive", "reason": "update document changes existing Basecamp state or removes it."},
+    "trash_document": {"verdict": "destructive", "reason": "trash document changes existing Basecamp state or removes it."},
+    "create_attachment": {"verdict": "write", "reason": "create attachment creates or appends Basecamp state; it has side effects."},
+    "create_upload": {"verdict": "write", "reason": "create upload creates or appends Basecamp state; it has side effects."},
+    "update_upload": {"verdict": "destructive", "reason": "update upload changes existing Basecamp state or removes it."},
+    "trash_upload": {"verdict": "destructive", "reason": "trash upload changes existing Basecamp state or removes it."},
+    "create_cloud_file": {"verdict": "write", "reason": "create cloud file creates or appends Basecamp state; it has side effects."},
+    "update_cloud_file": {"verdict": "destructive", "reason": "update cloud file changes existing Basecamp state or removes it."},
+    "create_google_document": {"verdict": "write", "reason": "create google document creates or appends Basecamp state; it has side effects."},
+    "update_google_document": {"verdict": "destructive", "reason": "update google document changes existing Basecamp state or removes it."},
+    "create_question": {"verdict": "write", "reason": "create question creates or appends Basecamp state; it has side effects."},
+    "update_question": {"verdict": "destructive", "reason": "update question changes existing Basecamp state or removes it."},
+    "pause_question": {"verdict": "destructive", "reason": "pause question changes existing Basecamp state or removes it."},
+    "resume_question": {"verdict": "destructive", "reason": "resume question changes existing Basecamp state or removes it."},
+    "update_question_notification_settings": {"verdict": "destructive", "reason": "update question notification settings changes existing Basecamp state or removes it."},
+    "create_answer": {"verdict": "write", "reason": "create answer creates or appends Basecamp state; it has side effects."},
+    "update_answer": {"verdict": "destructive", "reason": "update answer changes existing Basecamp state or removes it."},
+    "create_timesheet_entry": {"verdict": "write", "reason": "create timesheet entry creates or appends Basecamp state; it has side effects."},
+    "update_timesheet_entry": {"verdict": "destructive", "reason": "update timesheet entry changes existing Basecamp state or removes it."},
+    "destroy_timesheet_entry": {"verdict": "destructive", "reason": "destroy timesheet entry changes existing Basecamp state or removes it."},
+    "toggle_gauge": {"verdict": "destructive", "reason": "toggle gauge changes existing Basecamp state or removes it."},
+    "create_gauge_needle": {"verdict": "write", "reason": "create gauge needle creates or appends Basecamp state; it has side effects."},
+    "update_gauge_needle": {"verdict": "destructive", "reason": "update gauge needle changes existing Basecamp state or removes it."},
+    "destroy_gauge_needle": {"verdict": "destructive", "reason": "destroy gauge needle changes existing Basecamp state or removes it."},
+  },
+};
 
 /** The catalog's summary bound; a longer declared value throws (`src/registry.ts`). */
 const SUMMARY_BUDGET = 120;
@@ -444,7 +354,7 @@ One account per authorization: ${purpose}${skill.fragments.guide_0}${grant}${ski
 const BASECAMP_OPTIONS = optionsOf<BasecampOptions>()({ ...PROVIDER_COMMON, ...keys("clientMetadataUrl") });
 
 /** A maintained Basecamp hosted-MCP connection. */
-export const basecamp = asProviderFactory<BasecampOptions>({
+export const basecamp = defineProvider<BasecampOptions>({
   name: "basecamp",
   title: "Basecamp",
   kind: "mcp",
@@ -452,14 +362,12 @@ export const basecamp = asProviderFactory<BasecampOptions>({
   bundle: {"baselineGzip":131228,"maxGzip":191228,"note":"./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy."},
   skill,
   options: BASECAMP_OPTIONS,
+  classify: BASECAMP_CLASSIFICATION,
   create: basecampConnector,
 });
 
-function basecampConnector(id: string, options: BasecampOptions): Connector {
+function basecampConnector(id: string, options: BasecampOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("basecamp() requires a non-empty account purpose.");
-  }
   const clientMetadataUrl = options.clientMetadataUrl;
   if (typeof clientMetadataUrl !== "string" || !clientMetadataUrl.trim()) {
     // A structural mistake, so it throws here rather than at the first
@@ -472,7 +380,7 @@ function basecampConnector(id: string, options: BasecampOptions): Connector {
   const authScope = options.authScope ?? "shared";
   const connector = remoteMcp(id, {
     url: BASECAMP_MCP_ENDPOINT,
-    ...(options.authScope ? { authScope: options.authScope } : {}),
+    ...provider.connectorOptions,
     title: options.title ?? "Basecamp",
     description: `Basecamp projects, to-dos, messages, cards, schedules, and files (one account per authorization) — ${purpose}`,
     // OAuth only (P9's headless alternative knowingly missed). Basecamp issues
@@ -491,6 +399,7 @@ function basecampConnector(id: string, options: BasecampOptions): Connector {
       scope: FALLBACK_SCOPE,
     },
     requireHttps: true,
+    classify: provider.classify,
     usageGuide: {
       content: usageGuide(purpose, authScope, options.instructions),
       // Explicit rather than derived, and purpose-bearing: the derived summary
@@ -501,10 +410,12 @@ function basecampConnector(id: string, options: BasecampOptions): Connector {
       // each call; this guide carries account routing and the id chain, worth
       // reading before a run rather than before every call.
     },
-    ...defined({
-      callAdmission: options.callAdmission,
-      maxResultBytes: options.maxResultBytes,
-    }),
   });
-  return withVettedCatalog(connector, BASECAMP_VETTED_CATALOG);
+  return connector;
 }
+
+/** @deprecated Read `basecamp.definition.classify` instead. Kept for existing imports. */
+export const BASECAMP_VETTED_CATALOG = reviewedCatalog(
+  basecamp.definition.classify!,
+  'defineProvider("basecamp")',
+);
