@@ -186,7 +186,7 @@ describe("public package boundary", () => {
     expect(packageJson.dependencies).not.toHaveProperty("@clerk/backend");
     expect(packageJson.peerDependencies).toHaveProperty(
       "@clerk/backend",
-      "3.12.0",
+      "^3.12.0",
     );
     expect(packageJson.peerDependenciesMeta?.["@clerk/backend"]).toEqual({
       optional: true,

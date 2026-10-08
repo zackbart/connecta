@@ -739,8 +739,11 @@ native text read. SDK diagnostics use the fixed `Clerk authentication failed`
 event and checked `logFailure` records. Its authentication and resource
 serialization logic stays in the SDK; no global fetch, Response, or console is
 patched. Telemetry event and log methods are inert on this client, including
-when telemetry debug output is enabled. The optional `@clerk/backend` peer is
-pinned to `3.12.0` so the gate client's type matches its runtime methods.
+when telemetry debug output is enabled. The optional `@clerk/backend` peer
+accepts `^3.12.0` for the JWT decoder; it does not select the bundled SDK's
+version. `gate` receives Connecta's `ClerkGateClient`, which declares
+`users.getUser` and the user identity, name, and email fields used by Connecta.
+These declarations do not import the consumer's Clerk types.
 
 [`scripts/build-clerk-sdk.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/build-clerk-sdk.mjs) verifies the
 upstream version and source hash, applies the transport and diagnostic hooks,

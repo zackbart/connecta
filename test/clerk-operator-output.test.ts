@@ -178,12 +178,12 @@ describe("Clerk operator output with the real SDK", () => {
     expect(output(spies)).toBe("[]");
   });
 
-  it("preserves the reviewed peer client's endpoint methods", () => {
+  it("preserves the reviewed bundled client's runtime endpoint methods", () => {
     const original = createClerkClient({ publishableKey, secretKey, telemetry: { disabled: true } });
     const isolated = createByteReadingClerkClient({ publishableKey, secretKey });
     for (const key of Object.keys(original)) {
       const before = original[key as keyof typeof original];
-      const after = isolated[key as keyof typeof isolated];
+      const after: unknown = Reflect.get(isolated, key);
       expect(after, key).toBeDefined();
       if (typeof before !== "object" || before === null || key === "telemetry") continue;
       const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(before))

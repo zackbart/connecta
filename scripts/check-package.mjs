@@ -821,11 +821,80 @@ for (const name of [
     join(work, "optional.mjs"),
     `
 const clerk = await import("@zackbart/connecta/auth/clerk");
+const { signJwt } = await import("@clerk/backend/jwt");
 const access = await import("@zackbart/connecta/auth/cloudflare-access");
 const quickjs = await import("@zackbart/connecta/quickjs");
 if (typeof clerk.clerkAuth !== "function") throw new Error("missing Clerk adapter");
 if (typeof access.cloudflareAccessAuth !== "function") throw new Error("missing Cloudflare Access adapter");
 if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing QuickJS adapter");
+// A consumer's newer Clerk version must install and authenticate through the
+// bundled client. Native readers throw so using the installed SDK fails here.
+const pair = await crypto.subtle.generateKey({
+  name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
+  publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256",
+}, true, ["sign", "verify"]);
+const privateKey = await crypto.subtle.exportKey("jwk", pair.privateKey);
+const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey);
+const base = "https://connecta.test";
+const frontend = "https://clerk.example.com";
+const kid = crypto.randomUUID();
+const now = Math.floor(Date.now() / 1000);
+const token = await signJwt({
+  sub: "user_package", sid: "sess_package", iss: frontend, azp: base,
+  exp: now + 300, nbf: now - 5,
+}, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
+const originalFetch = globalThis.fetch;
+const calls = [];
+globalThis.fetch = async (input) => {
+  const url = String(input);
+  calls.push(url);
+  let response;
+  if (url === "https://api.clerk.com/v1/jwks") {
+    response = new Response(JSON.stringify({ keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] }), {
+      headers: { "Content-Type": "application/connecta-package-sentinel" },
+    });
+  } else if (url === "https://api.clerk.com/v1/users/user_package") {
+    response = Response.json({
+      object: "user", id: "user_package", first_name: "Ada", last_name: "Lovelace",
+      primary_email_address_id: "email_package", username: null,
+      email_addresses: [{ object: "email_address", id: "email_package", email_address: "ada@example.com", linked_to: [], verification: { status: "verified" } }],
+      phone_numbers: [], web3_wallets: [], external_accounts: [],
+    });
+  } else {
+    throw new Error("Unexpected packed Clerk request: " + url);
+  }
+  response.json = response.text = () => { throw new Error("Native Clerk body reader used"); };
+  return response;
+};
+try {
+  const adapter = clerk.clerkAuth({
+    publishableKey: "pk_test_" + btoa("clerk.example.com$"), secretKey: "sk_test_fake", publicUrl: base,
+    gate: async (id, client) => {
+      const user = await client.users.getUser(id);
+      return user.id === id && user.fullName === "Ada Lovelace" &&
+        user.emailAddresses[0]?.verification?.status === "verified";
+    },
+  });
+  const result = await adapter.authorize(new Request(base + "/connect/service", {
+    headers: { Authorization: "Bearer " + token },
+  }), base);
+  if (!result.ok || result.userId !== "user_package" || calls.length !== 2) {
+    throw new Error("Packed bundled Clerk authentication or gate lookup failed");
+  }
+  // Exercise the consumer's JWT decoder too, after bundled OAuth verification.
+  for (const [aud, accepted] of [[base + "/mcp", true], ["https://other.test/mcp", false]]) {
+    const oauthToken = await signJwt({
+      sub: "user_package", iss: frontend, client_id: "client_package",
+      scope: "openid profile email", iat: now, exp: now + 300, aud,
+    }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+    const oauthResult = await adapter.authorize(new Request(base + "/mcp", {
+      headers: { Authorization: "Bearer " + oauthToken },
+    }), base);
+    if (oauthResult.ok !== accepted) throw new Error("Packed Clerk OAuth audience check failed");
+  }
+} finally {
+  globalThis.fetch = originalFetch;
+}
 const executor = quickjs.quickJsExecutor({ timeoutMs: 2_000 });
 try {
   const outcome = await executor.execute("async () => 42", []);
@@ -853,6 +922,12 @@ try {
     ],
     root,
   );
+  for (const declaration of ["auth/clerk.d.ts", "auth/clerk-sdk/client.d.ts"]) {
+    const source = await readFile(join(work, "node_modules", "@zackbart", "connecta", "dist", declaration), "utf8");
+    if (source.includes("@clerk/")) {
+      throw new Error("Packed gate declarations reference consumer Clerk types: " + declaration);
+    }
+  }
   // One Effect, inside the declared v4 range. A second copy means two
   // runtimes whose fibers, services, and errors do not recognize each other.
   const effectRange = rootManifest.dependencies?.effect ?? "";
@@ -1311,7 +1386,7 @@ try {
     [
       "install",
       "--ignore-scripts",
-      "@clerk/backend@3.12.0",
+      "@clerk/backend@3.23.1",
       "quickjs-emscripten@^0.32.0",
     ],
     work,
