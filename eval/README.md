@@ -46,7 +46,7 @@ output checks, and simulated URL elicitations.
 Every downstream is a deterministic fake under `fakes/`; no task requires a
 real Mixpanel, RevenueCat, Supabase, GitHub or other third-party account.
 The existing eight tasks keep their state/outcome checks and now require source
-calls and final-answer facts. Thirteen new active tasks cover:
+calls and final-answer facts. Fourteen new active tasks cover:
 
 - a program write in a named trusted pool and refusal in a named read-only pool;
 - `connecta.result` paging beyond a direct-call preview, with one log fetch;
@@ -57,7 +57,8 @@ calls and final-answer facts. Thirteen new active tasks cover:
 - RevenueCat plain text and the authoritative `gives_access` fact;
 - Supabase Production `project_ref`, with a Sandbox decoy;
 - honest GitHub absence, without substituting another service;
-- one known read routed through `call_tool`, with no program or discovery.
+- one known read routed through `call_tool`, with no program or discovery;
+- an advertised MCP resource read through `connecta.read` with its qualified URI.
 
 Each grader has independent required `correct-destination` and
 `answer-evidence` checks. Destination checks require the connector, tool and
@@ -77,11 +78,11 @@ and waits for the scripted operator turn. These tasks prove agent recovery and
 Connecta's MRTR behavior, not native URL-elicitation support in either CLI.
 The fake `/connect` visit completes consent locally; no real OAuth service runs.
 
-`p5-connecta-read` is behind `--include-skipped connecta-read` until #753 merges.
-It reads an advertised fake MCP resource using that PR's proposed qualified URI.
-The skip and reason appear in result JSON, reports and self-test output. Current
-tasks use the `skills` meta-tool and `connecta.skill`; they do not assume the
-in-flight Skills extension or downstream `input_required` relay has shipped.
+`p5-connecta-read` is active against #753's merged resource-read API. Its
+reference and negative variants verify the real QuickJS `connecta.read` bridge
+and qualified URI. Connector guides use #758's Skills registry through the
+supported `connector:<id>` aliases and `connecta.skill`. The six meta-tools,
+including `skills`, remain the runner inventory.
 
 ## Verification without model spend
 

@@ -17,6 +17,11 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
     cases.push({ name: "pages from another retained result", world: withPrograms(world.programs.map(p => ({ ...p,
       calls: p.calls.map(c => c.name === "connecta.result" ? { ...c, args: ["wrong-result", ...c.args.slice(1)] } : c) }))) });
   }
+  if (task.id === "p5-connecta-read") {
+    cases.push({ name: "resource read only in a comment", world: withPrograms([]) });
+    cases.push({ name: "resource read used another URI", world: withPrograms(world.programs.map(p => ({ ...p,
+      calls: p.calls.map(c => c.name === "connecta.read" ? { ...c, args: ["resource://assets/" + encodeURIComponent("docs://other/note")] } : c) }))) });
+  }
   if (task.id === "p5-program-image") cases.push({ name: "image delivered by direct call", trace: { ...trace,
     toolUses: trace.toolUses.map(u => ({ ...u, tool: "call_tool", input: { address: "assets.get_badge_image", args: {} } })) } });
   if (task.id === "p5-fanout-over-budget") {

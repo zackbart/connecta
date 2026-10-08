@@ -230,12 +230,16 @@ const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "
   reference: async ({ call }) => { await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } }); },
 }, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i, runEvidence(4812, "failed", "9f2c1ab")], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
 
-const futureRead = withCorrectness({ ...base, id: "p5-connecta-read", title: "Read and reduce with connecta.read",
-  skip: { flag: "connecta-read", reason: "Requires unmerged #753 resource reads; main has no connecta.read." },
+const resourceRead = withCorrectness({ ...base, id: "p5-connecta-read", title: "Read and reduce with connecta.read",
   world: { assets: true },
   measures: "Read the advertised fake MCP resource through a connector-qualified URI.",
-  prompt: "Use connecta.read to read the brand assets resource docs://launch/note in a program. Report its approval and revision.", grade: () => [],
+  prompt: "Use connecta.read to read the brand assets resource docs://launch/note in a program. Report its approval and revision.",
+  grade: ({ world }) => [
+    check("program-resource-read", "a successful program read the qualified assets URI", world.programs.some(p => p.succeeded && p.calls.some(c =>
+      c.name === "connecta.read" && c.args[0] === "resource://assets/" + encodeURIComponent("docs://launch/note") && c.outcome === "ok"))),
+    check("reads-only", "no downstream writes", world.ledger.calls.every(c => c.kind === "read")),
+  ],
   reference: async ({ call }) => { await call("execute_code", { code: `async () => await connecta.read("resource://assets/" + encodeURIComponent("docs://launch/note"))` }); },
 }, { destination: w => called(w, "assets.resources/read", { uri: "docs://launch/note" }), evidence: [/brand assets/i, /approved/i, /revision\s*7/i], referenceAnswer: "Brand assets launch badge: approved, revision 7." });
 
-export const P5_TASKS: ActiveTask[] = [trusted, refused, paging, rich(false), rich(true), auth(true), auth(false), fanout, mixpanel, revenuecat, supabase, absence, routing, futureRead];
+export const P5_TASKS: ActiveTask[] = [trusted, refused, paging, rich(false), rich(true), auth(true), auth(false), fanout, mixpanel, revenuecat, supabase, absence, routing, resourceRead];
