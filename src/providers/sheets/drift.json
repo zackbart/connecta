@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "provider": "sheets",
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://sheets.googleapis.com/$discovery/rest?version=v4",
+        "format": "google-discovery"
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/spreadsheets"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v4/spreadsheets/{spreadsheetId}",
+          "specRevision": "20260930",
+          "contract": "sha256:bc5c8a6931746d5b5e6fdbe19654bde19e90670833f2cb573fa670520ca6dcfa"
+        },
+        {
+          "method": "POST",
+          "path": "/v4/spreadsheets",
+          "specRevision": "20260930",
+          "contract": "sha256:dab56722b45fc6d533dcc87a8feda6c4340cbb4abba3f72aa37bbff68cab279a"
+        },
+        {
+          "method": "POST",
+          "path": "/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+          "specRevision": "20260930",
+          "contract": "sha256:2850d963330b3af4661894c283db2e8b0826fe6a652fb650b73ca99ccf966714"
+        },
+        {
+          "method": "GET",
+          "path": "/v4/spreadsheets/{spreadsheetId}/values:batchGet",
+          "specRevision": "20260930",
+          "contract": "sha256:253258747cf703dcb3e8ef30c3852a95e5c4fa644c81c48ab81acfa5f0db2d5b"
+        },
+        {
+          "method": "POST",
+          "path": "/v4/spreadsheets/{spreadsheetId}/values:batchUpdate",
+          "specRevision": "20260930",
+          "contract": "sha256:3839e3e5e2157bcdc3aebf38ffc524d345058861972963c3be8c502f1b719c0b"
+        },
+        {
+          "method": "POST",
+          "path": "/v4/spreadsheets/{spreadsheetId}/values:batchClear",
+          "specRevision": "20260930",
+          "contract": "sha256:c02b79e9471dbad3c37f9ef13ce53972afdd9c630f9b79672f2f8c047c6b06e8"
+        },
+        {
+          "method": "POST",
+          "path": "/v4/spreadsheets/{spreadsheetId}/values/{range}:append",
+          "specRevision": "20260930",
+          "contract": "sha256:de88d859a3d49f6862fdb6a367e6f8d3b917881c037747fa411d159e6f4098a2"
+        }
+      ]
+    }
+  ]
+}

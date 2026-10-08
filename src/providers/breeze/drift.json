@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "provider": "breeze",
+  "checks": [
+    {
+      "type": "manual",
+      "source": "https://app.breezechms.com/api",
+      "rationale": "Breeze publishes hand-written HTML, not a machine-readable specification. Argument tables can contradict examples; HTTP GET also performs writes. Review the reference against READ_ENDPOINTS and the named tools' paths before accepting changes.",
+      "evidence": {
+        "reviewedAt": "2026-10-05",
+        "documentedEndpointRows": 42,
+        "distinctDocumentedPaths": 41,
+        "notes": "The Tags section's List People points back at /people. Giving, funds, and pledges left the public reference around September 2023; their parameters remain based on the archived vendor reference and corroborating pyBreezeChMS list_contributions/list_funds implementations. Unauthenticated 403 proves only the controller exists, not that each action works.",
+        "archivedReference": "https://web.archive.org/web/20230607234759/https://app.breezechms.com/api"
+      }
+    }
+  ]
+}

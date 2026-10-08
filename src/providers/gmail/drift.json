@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "provider": "gmail",
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+        "format": "google-discovery"
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/threads",
+          "specRevision": "20260928",
+          "contract": "sha256:8355c6f416e03262594915a0da51deb2da82cd5b08f334371967153fddd88056"
+        },
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/threads/{id}",
+          "specRevision": "20260928",
+          "contract": "sha256:badfddbba2a67a76fec84d34f2c5ef30f1c6a4843f19b7231658b2f59107c518"
+        },
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/messages/{id}",
+          "specRevision": "20260928",
+          "contract": "sha256:df6b555263a6ea860679c86f3eee0648f5ab6f711b830540a896b3fa39d57c64"
+        },
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+          "specRevision": "20260928",
+          "contract": "sha256:235047e99780a97b82c425ce78d3ebb9d11d965f818d88f7999f7fb22cb8acce"
+        },
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/labels",
+          "specRevision": "20260928",
+          "contract": "sha256:2e75b578aec905fe0afa4878e45441d528b65996a0d0e56adc471a2f57e739e5"
+        },
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/drafts",
+          "specRevision": "20260928",
+          "contract": "sha256:90b04234d5d7c500363ceeacb963dfce147336ec7caaf646216e24c730b3d263"
+        },
+        {
+          "method": "GET",
+          "path": "/gmail/v1/users/{userId}/drafts/{id}",
+          "specRevision": "20260928",
+          "contract": "sha256:a91d516bb1fb871d3f4e644cb0f62a54a320f634adb630c1db8ec899b8767a1a"
+        },
+        {
+          "method": "POST",
+          "path": "/gmail/v1/users/{userId}/drafts",
+          "specRevision": "20260928",
+          "contract": "sha256:9cbac4eb5dbb560eb012c0b48df971e8ec80958338931f2b70bda9dc2b3daf81"
+        },
+        {
+          "method": "PUT",
+          "path": "/gmail/v1/users/{userId}/drafts/{id}",
+          "specRevision": "20260928",
+          "contract": "sha256:aca8b1ba77ee4b3f59166cb97716ba1baea4a6f36d4346e8d1eefd47a750d344"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "provider": "ccb",
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json"
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/oauth/token",
+          "specRevision": "v2",
+          "contract": "sha256:3317797fa9abd2fe6dbaa04d723feb3909281d99ed468f4c76efa1fd5171748f"
+        },
+        {
+          "method": "GET",
+          "path": "/me",
+          "specRevision": "v2",
+          "contract": "sha256:dbf6871bb74d127dff691c572df686448806fb03d726abbef8efc4f77d518e36"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals",
+          "specRevision": "v2",
+          "contract": "sha256:8517ab49fdc4fd71412872cf4737f6fb146a93ded952761839f94f343b417fd0"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:aa145e0843112a8ac90507472dbac893daf444f6df640f655af085afec6482f6"
+        },
+        {
+          "method": "GET",
+          "path": "/families",
+          "specRevision": "v2",
+          "contract": "sha256:98171f81e625b0cb17c999c6dc91f6ba25263400d86fba9d92ab0da67fca6e6b"
+        },
+        {
+          "method": "GET",
+          "path": "/families/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:5d4c2deb655a2d30bbef53293e024241dec96092d9cea8041a929de53a78da83"
+        },
+        {
+          "method": "GET",
+          "path": "/groups",
+          "specRevision": "v2",
+          "contract": "sha256:c3beb1e8abb6fbdeefc5f0bc4cf390e358b5547bc86a90e4d771f8af47f12cbc"
+        },
+        {
+          "method": "GET",
+          "path": "/groups/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:4108af4e08b6efced32935130a67436f8ad5c738d0bedf8014e19a1f5be5b84a"
+        },
+        {
+          "method": "GET",
+          "path": "/groups/{id}/members",
+          "specRevision": "v2",
+          "contract": "sha256:dd82c2fa7e246c73719772b25339f83ae2d3224c867b441a4e4cdcb124038ea1"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals/{id}/groups",
+          "specRevision": "v2",
+          "contract": "sha256:6a4e950c885596c976220372c28e835cef9ef2e858be388d3c3fa59cf06a6b08"
+        },
+        {
+          "method": "GET",
+          "path": "/events",
+          "specRevision": "v2",
+          "contract": "sha256:cf35a2afa7c094a56587ff3edda49a928b86d082f93a25b736f85d9fed68f7f1"
+        },
+        {
+          "method": "GET",
+          "path": "/events/{id}",
+          "specRevision": "v2",
+          "contract": "sha256:1c00918e290145409e7bb192519fb02127f493e21a96a02ebd3e356121d4b204"
+        },
+        {
+          "method": "GET",
+          "path": "/events/{id}/attendance/{occurrence}",
+          "specRevision": "v2",
+          "contract": "sha256:b0a1d33bcb30364c0fe947f93d9209865b4f7ff18138db4b4c257b3ba08c80f0"
+        },
+        {
+          "method": "GET",
+          "path": "/events/{id}/attendance/{occurrence}/attendees",
+          "specRevision": "v2",
+          "contract": "sha256:68e9c968bbdb67daeb4a321136c1f0104638cb2ba86ab9560fa014c2d4265884"
+        },
+        {
+          "method": "GET",
+          "path": "/forms",
+          "specRevision": "v2",
+          "contract": "sha256:2a2ce2e879b580c06f98f420f5dfc99c024422799f1f66fdd4b51b07a973095a"
+        },
+        {
+          "method": "GET",
+          "path": "/forms/{id}/responses",
+          "specRevision": "v2",
+          "contract": "sha256:3909a9d80ff1aeadea1137132cb53722f319e70d4bbfab35b6f95c2217b09b1d"
+        },
+        {
+          "method": "GET",
+          "path": "/processes",
+          "specRevision": "v2",
+          "contract": "sha256:470e6ecc2c486adc1a0d7c7a87de5a2041f736396907bf667a7e5e4d2875a77e"
+        },
+        {
+          "method": "GET",
+          "path": "/queues",
+          "specRevision": "v2",
+          "contract": "sha256:e14f6c7085dfae8db8ed435a46c5f33af2f86ae5b0e02a716db02f11e0c135b7"
+        },
+        {
+          "method": "GET",
+          "path": "/queues_individuals",
+          "specRevision": "v2",
+          "contract": "sha256:4d045a15775aa129f99a9f677733a2cf13cbfe868373895ed42e4154a4e16140"
+        },
+        {
+          "method": "GET",
+          "path": "/scheduling/categories",
+          "specRevision": "v2",
+          "contract": "sha256:97f3ae97d5694b2746baf3815c43f90c14875bc55b857534f5f7e44dbd5b1dab"
+        },
+        {
+          "method": "GET",
+          "path": "/scheduling/categories/{id}/schedules",
+          "specRevision": "v2",
+          "contract": "sha256:3ff06077cd757f1084343018c8bfa9d84b709cff687afa3b2d877f6138ca9480"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals/{id}/assignments",
+          "specRevision": "v2",
+          "contract": "sha256:4950cae5a6c9169996f795f55a054700b5140378629962b1ece518a47ef7701a"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals/{id}/notes",
+          "specRevision": "v2",
+          "contract": "sha256:8d17cc202e98296da5efa14faa71008ccde7fb612c9b9720bc603a93646eab44"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals/{id}/metrics/giving",
+          "specRevision": "v2",
+          "contract": "sha256:33b19582af257ddec706271a1bc764b48d8b752b7b29c2049ffbd04da8dc9f4a"
+        },
+        {
+          "method": "GET",
+          "path": "/families/{id}/metrics/giving",
+          "specRevision": "v2",
+          "contract": "sha256:72d06c8288a35e8ac7b0b93b93274532f31712b810d20280249a2f14a920457e"
+        },
+        {
+          "method": "GET",
+          "path": "/individuals/{id}/pledges",
+          "specRevision": "v2",
+          "contract": "sha256:9dbec4cf604ed5557c241c3686cd25de7b985e30df9b17c2ea30abb45bae69af"
+        },
+        {
+          "method": "POST",
+          "path": "/search/assignments/results",
+          "specRevision": "v2",
+          "contract": "sha256:a2b087df14a364fc067064a94ed29e8d23d616dc6fb9c0d567d70a3aa392f4f8"
+        },
+        {
+          "method": "POST",
+          "path": "/search/categories/results",
+          "specRevision": "v2",
+          "contract": "sha256:f3d052e1716ff29e40e5bc2d9c80e9d902c579bef1f2b19afd922b315d2b8cf8"
+        },
+        {
+          "method": "POST",
+          "path": "/search/department_detail/results",
+          "specRevision": "v2",
+          "contract": "sha256:59663501a83c8ff7a8b2db39eb52477be566114927d909c5444ed9afadc60810"
+        },
+        {
+          "method": "POST",
+          "path": "/search/groups/results",
+          "specRevision": "v2",
+          "contract": "sha256:808ae6dfa539250b833caf350011174050faf4734dfd016cbe63914519e87813"
+        },
+        {
+          "method": "POST",
+          "path": "/search/individual_event_attendance/results",
+          "specRevision": "v2",
+          "contract": "sha256:a4ad3f8aea15ca7c266b170ba564aa84ba900d4b5f2cc0f952ae99680e37d4e8"
+        },
+        {
+          "method": "POST",
+          "path": "/search/individual_groups/results",
+          "specRevision": "v2",
+          "contract": "sha256:f71ea633de5ad74fc3d78230d3771669871830287b04a3569b581c548d8fa267"
+        },
+        {
+          "method": "POST",
+          "path": "/search/individuals/results",
+          "specRevision": "v2",
+          "contract": "sha256:e6405913d461b0626ad3038fa0079e657c7422b47fd1a13ac30a9ccfdb9080b2"
+        },
+        {
+          "method": "POST",
+          "path": "/search/organizers/results",
+          "specRevision": "v2",
+          "contract": "sha256:f5f2cf37a596b0c32b2a3c8839700f45c8abfe0761b33270176c31f229ab485e"
+        },
+        {
+          "method": "POST",
+          "path": "/search/positions/results",
+          "specRevision": "v2",
+          "contract": "sha256:c9ae5926b740758cf1c6f0ec6acf9c30b507ae81515d5a732bdce034b022d8ac"
+        },
+        {
+          "method": "POST",
+          "path": "/search/schedules/results",
+          "specRevision": "v2",
+          "contract": "sha256:6edbd8c5ac65f9e73fb2f965215b7d32c18add73f5e5536e5f9a3b18dbdfef0f"
+        },
+        {
+          "method": "POST",
+          "path": "/search/schedules_totals/results",
+          "specRevision": "v2",
+          "contract": "sha256:abd46c9d986745e7edf32ec7aac6296c8ae9db951f5b9696b3b184daf32ce13e"
+        },
+        {
+          "method": "POST",
+          "path": "/search/scheduling_files/results",
+          "specRevision": "v2",
+          "contract": "sha256:2f7c4884938015e8ffefa414377d75d611960b92110b821485a146eb1f46d5df"
+        },
+        {
+          "method": "POST",
+          "path": "/search/scheduling_individuals/results",
+          "specRevision": "v2",
+          "contract": "sha256:5de29c5d12511259b896af922284f8fad00d08c9558d0168bf9e5c0094ad0c39"
+        },
+        {
+          "method": "POST",
+          "path": "/search/songs/results",
+          "specRevision": "v2",
+          "contract": "sha256:d28792b8b68b9bcbf1ff41e2446f7d6b8b7c8bb724c34fdadb7c591faa2afd8c"
+        },
+        {
+          "method": "POST",
+          "path": "/search/volunteers/results",
+          "specRevision": "v2",
+          "contract": "sha256:fad66e467eec8615b374e6085cefe902140c29be05de7bf6c7457380923998b5"
+        }
+      ]
+    }
+  ]
+}
