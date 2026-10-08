@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { Button, Dialog, Tabs } from "./primitives.js";
-import { homeUrl } from "./config.js";
-import { isArtifactPage, PAGE_META, type OperatorPage } from "../view.js";
+import { PAGE_META, type OperatorPage } from "../view.js";
 import { navigate } from "./store.js";
 
 const THEME_KEY = "connecta:scheme";
@@ -16,7 +15,7 @@ function readScheme(): Scheme {
   } catch { /* private browsing */ }
   return "system";
 }
-export function ShellControls({ pages, current }: { pages: OperatorPage[]; current: OperatorPage }) {
+export function ShellControls({ pages }: { pages: OperatorPage[] }) {
   // Each dialog keeps its own return target, including when ⌘K opens over
   // Appearance. Closing the palette returns to the still-open appearance tab.
   const commandReturnFocus = useRef<HTMLElement | null>(null);
@@ -63,9 +62,7 @@ export function ShellControls({ pages, current }: { pages: OperatorPage[]; curre
     appearanceReturnFocus.current = null;
     setAppearanceOpen(false);
     setCommandOpen(false);
-    if (page === "artifacts" || isArtifactPage(current)) {
-      window.location.assign(page === "artifacts" ? PAGE_META[page].path : new URL(PAGE_META[page].path, new URL(homeUrl, window.location.href)).href);
-    } else navigate(page, PAGE_META[page].path);
+    navigate(page, PAGE_META[page].path);
   };
   return <>
     <Button variant="quiet" className="command-trigger" onClick={() => { commandReturnFocus.current = document.activeElement as HTMLElement; setCommandOpen(true); }}>

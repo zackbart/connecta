@@ -48,7 +48,6 @@ interface ShellConfig {
   auth: BrowserAuth;
   mcpUrl: string;
   initialPage: string;
-  homeUrl: string;
   titleSuffix: string;
   productName: string;
   productDescription: string;
@@ -56,7 +55,7 @@ interface ShellConfig {
 }
 
 const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;
-export const { auth, mcpUrl, initialPage, homeUrl, titleSuffix, productName,
+export const { auth, mcpUrl, initialPage, titleSuffix, productName,
   productDescription } = config;
 
 /** Where a bearer operator's token lives between visits. */

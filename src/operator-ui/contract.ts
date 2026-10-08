@@ -52,7 +52,6 @@ export interface OperatorViewer {
   permissions: {
     activity: boolean;
     accessTokenManagement: boolean;
-    artifacts: boolean;
     connectors: Array<{ id: string; use: boolean; manageSharedAuth: boolean; connectPersonal: boolean }>;
   };
 }

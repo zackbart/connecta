@@ -360,37 +360,6 @@
   .activity-result { display: grid; gap: .15rem; justify-items: end; }
   .activity-more { justify-self: start; }
 
-  /* Artifacts */
-
-  .artifact-row {
-    align-items: center;
-    display: grid;
-    gap: .25rem var(--gap);
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding: .6rem var(--pad);
-  }
-  .artifact-row .artifact-title { font-weight: 600; overflow-wrap: anywhere; }
-  .artifact-row .artifact-meta, .artifact-meta { color: var(--muted); font-size: .8125rem; }
-  .artifact-badges { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; }
-  .artifact-head { display: grid; gap: .35rem; margin-bottom: .75rem; }
-  .navlink.inline { font-size: inherit; padding: 0 .2rem; }
-  .artifact-banner {
-    background: color-mix(in srgb, var(--warn) 12%, var(--surface));
-    border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
-    border-radius: var(--radius);
-    color: var(--text);
-    padding: .5rem .75rem;
-  }
-  .artifact-frame {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    display: block;
-    height: calc(100vh - 14rem);
-    min-height: 28rem;
-    width: 100%;
-  }
-
   /* Gate: the guarded page's own lead, with the sign-in form under it. */
 
   .gate-form { max-width: 36rem; }
@@ -417,8 +386,6 @@
     .filter { flex: 1 1 100%; }
     .activity-item { grid-template-columns: minmax(0, 1fr); }
     .activity-result { justify-items: start; }
-    .artifact-row { grid-template-columns: minmax(0, 1fr); }
-    .artifact-badges { justify-content: flex-start; }
   }
 
 /* Client token lifecycle uses the same cards and controls as connection auth. */

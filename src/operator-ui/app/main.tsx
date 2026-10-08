@@ -13,14 +13,13 @@ import {
 import {
   checkingCopy,
   gateCopy,
-  isArtifactPage,
   pageDescription,
   PAGE_META,
   OPERATOR_PAGES,
   type OperatorPage,
   type OperatorState,
 } from "../view.js";
-import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
+import { auth, productDescription, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
 import { ConfigPage } from "./config-page.js";
 import { AccessPage } from "./access.js";
@@ -28,7 +27,6 @@ import { ToolsPage } from "./tools.js";
 import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
-import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
@@ -42,7 +40,6 @@ import {
   signIn,
   signInWithBearer,
   signOut,
-  navHint,
   subscribe,
   configureNavigation,
   routeChanged,
@@ -60,19 +57,10 @@ function useOperatorState(): OperatorState {
 
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
-  // Artifact pages never read /ui/data, and a failing /ui/data has not
-  // answered. The pages that did read it leave a hint for this tab (see
-  // `navHint`), so the nav keeps its shape; with no hint — a dedicated
-  // artifact origin, a first visit — only what this page can vouch for shows.
-  const hint = state.data ? null : navHint();
   return OPERATOR_PAGES.filter((page) => {
     if (page === "activity" && state.contract) return state.contract.you.permissions.activity;
-    if (page === "artifacts" && state.contract) return state.contract.you.permissions.artifacts;
     if (page === "tokens") return state.data?.accessTokenManagement === "available";
-    if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
-    if (page === "artifacts") {
-      return isArtifactPage(state.page) || (hint ? hint.artifacts : Boolean(state.data?.artifactsEnabled));
-    }
+    if (page === "activity") return Boolean(state.data?.activityEnabled);
     return true;
   });
 }
@@ -80,28 +68,11 @@ function visiblePages(state: OperatorState): OperatorPage[] {
 function OperatorNav() {
   const state = useOperatorState();
 
-  const onArtifactPage = isArtifactPage(state.page);
   return (
     <div className="mast-actions">
-      <ShellControls pages={state.session === "ready" ? visiblePages(state) : []} current={state.page} />
+      <ShellControls pages={state.session === "ready" ? visiblePages(state) : []} />
       <nav className="page-nav" aria-label="Operator pages">
         {(state.session === "ready" ? visiblePages(state) : []).map((page) =>
-          // Crossing between artifact pages and the rest is a full navigation:
-          // with a dedicated artifact origin, the two live on different hosts.
-          page === "artifacts" || onArtifactPage ? (
-            <a
-              key={page}
-              className="navlink"
-              href={
-                page === "artifacts"
-                  ? PAGE_META.artifacts.path
-                  : new URL(PAGE_META[page].path, new URL(homeUrl, window.location.href)).href
-              }
-              {...(state.page === page ? { "aria-current": "page" as const } : {})}
-            >
-              {PAGE_META[page].label}
-            </a>
-          ) : (
             <PageLink
               key={page}
               page={page}
@@ -109,8 +80,7 @@ function OperatorNav() {
               current={state.page === page}
             >
               {PAGE_META[page].label}
-            </PageLink>
-          ),
+            </PageLink>,
         )}
       </nav>
       <div hidden={state.session !== "ready"} className="session-actions" aria-label="Session actions">
@@ -148,7 +118,7 @@ function Gate({ state }: { state: OperatorState }) {
               shows while it loads, so the words and the shape do not change
               when the check passes. */}
           {loading ? (
-            <StateBlock id="gateCopy">{checkingCopy(state.page)}</StateBlock>
+            <StateBlock id="gateCopy">{checkingCopy()}</StateBlock>
           ) : (
             <p id="gateCopy" className="meta">
               {gateCopy(auth.kind, signedIn)}
@@ -213,8 +183,6 @@ function CurrentPage({ state }: { state: OperatorState }) {
   if (state.page === "overview") return <OverviewPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
-  if (state.page === "artifacts") return <ArtifactsPage state={state} />;
-  if (state.page === "artifact") return <ArtifactPage state={state} />;
   return <OverviewPage state={state} />;
 }
 
@@ -223,17 +191,14 @@ function OperatorApp() {
   const ready = state.session === "ready";
 
   useEffect(() => {
-    const label = state.page === "artifact" && state.artifactView
-      ? state.artifactView.title
-      : PAGE_META[state.page].label;
-    document.title = `${label} — ${titleSuffix}`;
-  }, [state.page, state.artifactView]);
+    document.title = `${PAGE_META[state.page].label} — ${titleSuffix}`;
+  }, [state.page]);
 
   // Deferred loads: a page fetches its own collection the first time an
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (!isArtifactPage(state.page) && state.data && state.contractPhase === "idle") void loadOperatorContract();
+    if (state.data && state.contractPhase === "idle") void loadOperatorContract();
     if ((state.page === "tokens" || (state.page === "access" && state.contract?.you.permissions.accessTokenManagement)) && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }
@@ -287,7 +252,7 @@ function mount(id: string, view: ReactNode): void {
 
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
-const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity", "/artifacts", "/artifacts/$"].map(path =>
+const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity"].map(path =>
   createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
 );
 const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultPendingMinMs: 0 });

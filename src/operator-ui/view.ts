@@ -2,8 +2,6 @@ import type { OperatorUiContract } from "./contract.js";
 import type { CatalogDriftReport } from "../types.js";
 import type {
   CredentialManagementCapability,
-  UiArtifactRow,
-  UiArtifactView,
   UiConnector,
   UiData,
   UiProblem,
@@ -37,18 +35,15 @@ export type OperatorPage =
   | "connector"
   | "tokens"
   | "connections"
-  | "activity"
-  | "artifacts"
-  | "artifact";
+  | "activity";
 
-/** Pages the nav lists. A single artifact is reached from the library, not the nav. */
+/** Pages the nav lists. */
 export const OPERATOR_PAGES: readonly OperatorPage[] = [
   "overview",
   "connections",
   "tools",
   "access",
   "activity",
-  "artifacts",
   "config",
 ];
 
@@ -63,8 +58,6 @@ export const PAGE_META: Readonly<
   tokens: { path: "/tokens", label: "Access tokens" },
   connections: { path: "/connectors", label: "Connectors" },
   activity: { path: "/activity", label: "Activity" },
-  artifacts: { path: "/artifacts", label: "Artifacts" },
-  artifact: { path: "/artifacts", label: "Artifact" },
 };
 
 /**
@@ -76,46 +69,19 @@ export function pageDescription(page: OperatorPage, productDescription: string):
   if (page === "activity") {
     return "Every connector tool call, by who made it and how it ended. Arguments and results are never stored.";
   }
-  if (isArtifactPage(page)) {
-    return "Pages agents published for the team. Each one keeps every version.";
-  }
   return productDescription;
 }
 
 /** What the gate says while the session is checked, page by page. */
-export function checkingCopy(page: OperatorPage): string {
-  if (page === "artifact") return "Loading artifact…";
-  if (page === "artifacts") return "Loading artifacts…";
+export function checkingCopy(): string {
   return "Checking your session…";
 }
 
 export function pageForPath(path: string): OperatorPage {
   if (/^\/connectors\/[a-z0-9_-]+$/.test(path)) return "connector";
   if (path === "/tokens") return "tokens";
-  if (path.startsWith("/artifacts/")) return "artifact";
   const match = OPERATOR_PAGES.find((page) => PAGE_META[page].path === path);
   return match ?? "connections";
-}
-
-/** Artifact pages load their own data and never ask `/ui/data` whether to open. */
-export function isArtifactPage(page: OperatorPage): boolean {
-  return page === "artifacts" || page === "artifact";
-}
-
-/**
- * Where a viewer's frame gets its page: `/artifacts/<id>` or a snapshot,
- * `/artifacts/<id>/v/<version>?d=<name>:<version>…`, mapped to its API call.
- */
-export function artifactViewRequest(pathname: string, search: string): string | undefined {
-  const match = /^\/artifacts\/([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?:\/v\/(\d{1,9}))?$/.exec(pathname);
-  if (!match?.[1]) return undefined;
-  const params = new URLSearchParams();
-  if (match[2]) {
-    params.set("v", match[2]);
-    for (const pin of new URLSearchParams(search).getAll("d")) params.append("d", pin);
-  }
-  const query = params.toString();
-  return `/artifacts/_api/view/${match[1]}${query ? `?${query}` : ""}`;
 }
 
 export interface UiActivityActor {
@@ -356,7 +322,7 @@ export function loadFailureCopy(
 
 /** A collection page's load failure: fixed words, whatever the route said. */
 export function collectionFailureCopy(
-  collection: "activity" | "artifacts" | "artifact",
+  _collection: "activity",
   facts: RequestFailureFacts,
   productName: string,
 ): string {
@@ -365,10 +331,7 @@ export function collectionFailureCopy(
   }
   if (facts.kind === "session") return "Your session has ended. Sign in again to see this page.";
   if (facts.kind === "forbidden" || facts.status === 404) {
-    if (collection === "artifact") return "There is no artifact here, or this identity can't open it.";
-    return collection === "activity"
-      ? "Activity isn't available to this identity."
-      : "Artifacts aren't available to this identity.";
+    return "Activity isn't available to this identity.";
   }
   return "The deployment answered with an error. Retry in a moment; if it keeps failing, the deployment's log has the reason.";
 }
@@ -491,13 +454,6 @@ export interface OperatorState {
   activityEvents: UiActivityEvent[];
   activityCursor: string | null;
   activitySearch: string;
-  artifactPhase: LoadPhase;
-  artifactNotice: Notice | null;
-  artifactRows: UiArtifactRow[];
-  artifactCursor: string | null;
-  artifactQuery: string;
-  artifactArchived: boolean;
-  artifactView: UiArtifactView | null;
 }
 
 export function initialState(page: OperatorPage): OperatorState {
@@ -547,13 +503,6 @@ function identityScopedState() {
     activityEvents: [],
     activityCursor: null,
     activitySearch: "",
-    artifactPhase: "idle" as LoadPhase,
-    artifactNotice: null,
-    artifactRows: [],
-    artifactCursor: null,
-    artifactQuery: "",
-    artifactArchived: false,
-    artifactView: null,
   } satisfies Partial<OperatorState>;
 }
 
@@ -934,17 +883,6 @@ export function activityDetail(event: UiActivityEvent): string {
   // vocabularies ("auth_required" twice); once is enough.
   for (const reason of new Set(reasons)) parts.push(reason);
   return parts.join(" · ");
-}
-
-/**
- * An artifact's last refresh, when it is worth a badge. Only a failure is: a
- * success is what "Current data" already says, and a superseded run is
- * nobody's concern.
- */
-export function artifactRefreshBadge(
-  last: { status: string } | undefined,
-): { label: string; tone: Tone } | null {
-  return last?.status === "failed" ? { label: "Refresh failed", tone: "danger" } : null;
 }
 
 /**

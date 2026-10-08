@@ -163,6 +163,7 @@ export function renderUiHtml(
   /** @deprecated Scripts load from same-origin assets; ignored. */
   _nonce?: string,
   page: OperatorPage = "overview",
+): string {
   const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
   // The Clerk loader's origin. A value that fails the gate is dropped rather
   // than escaped into the page: the loader tag is simply not emitted, the gate

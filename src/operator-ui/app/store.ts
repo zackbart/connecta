@@ -2,14 +2,11 @@ import type { OperatorUiContract } from "../contract.js";
 import { queryClient } from "./query.js";
 import { isCancelledError } from "@tanstack/react-query";
 import type {
-  UiArtifactRow,
-  UiArtifactView,
   UiConnector,
   UiData,
 } from "../model.js";
 import {
   actionFailedNotice,
-  artifactViewRequest,
   collectionFailureCopy,
   credentialTestNotice,
   failure,
@@ -88,56 +85,8 @@ function requestHeaders(
   };
 }
 
-/* Nav hint ----------------------------------------------------------------- */
-
-/**
- * Artifact pages never read `/ui/data`, so on their own they cannot know
- * whether Activity is open to this identity. The pages that do read it leave
- * the answer here, in this tab only, and every identity change wipes it — so
- * the nav reads the same on every page instead of losing a link on two of
- * them. A dedicated artifact origin has its own storage and no hint, and
- * keeps the old behavior: it offers only what it can vouch for.
- */
-const NAV_HINT_KEY = "connecta:nav";
-
-function rememberNav(data: UiData): void {
-  try {
-    sessionStorage.setItem(
-      NAV_HINT_KEY,
-      JSON.stringify({ activity: data.activityEnabled, artifacts: Boolean(data.artifactsEnabled) }),
-    );
-  } catch {
-    // No storage, no hint: the artifact pages fall back to what they know.
-  }
-}
-
-function forgetNav(): void {
-  try {
-    sessionStorage.removeItem(NAV_HINT_KEY);
-  } catch {
-    // Nothing was stored.
-  }
-}
-
-/**
- * What the pages that read `/ui/data` last said about Activity and Artifacts.
- * Also what the nav falls back to while `/ui/data` is failing, so a 500 does
- * not take two links away with it.
- */
-export function navHint(): { activity: boolean; artifacts: boolean } {
-  try {
-    const hint = JSON.parse(sessionStorage.getItem(NAV_HINT_KEY) ?? "null") as
-      | { activity?: unknown; artifacts?: unknown }
-      | null;
-    return { activity: hint?.activity === true, artifacts: hint?.artifacts === true };
-  } catch {
-    return { activity: false, artifacts: false };
-  }
-}
-
 function gate(notice: Notice | null = null): void {
   queryClient.clear();
-  forgetNav();
   awaitingAuthorization.clear();
   state = resetIdentity(state, notice);
   for (const listener of listeners) listener();
@@ -285,7 +234,6 @@ async function loadData(): Promise<void> {
   if (!current()) return;
   if (!data || !Array.isArray(data.connectors)) return unreachable("server");
   set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
-  rememberNav(data);
   void loadConnectorDetails(data, current, token);
 }
 
@@ -707,180 +655,8 @@ export async function loadActivity(reset: boolean): Promise<void> {
   }
 }
 
-/* Artifacts --------------------------------------------------------------- */
-
-/**
- * An artifact API read with the session's token. Artifact pages never read
- * `/ui/data` — a dedicated artifact origin does not serve it — so this is
- * where they learn whether the session is accepted. Only a status decides
- * what the page says; no refusal's text reaches it.
- */
-async function artifactRead(
-  path: string,
-  current: () => boolean,
-  collection: "artifacts" | "artifact",
-): Promise<Response | undefined> {
-  let token;
-  try {
-    token = await sessionToken();
-  } catch {
-    if (current()) gate(failure("Your sign-in session couldn't be read. Sign in again."));
-    return undefined;
-  }
-  if (!current()) return undefined;
-  if (!token && auth.kind !== "cloudflare-access") {
-    gate(null);
-    return undefined;
-  }
-  let res: Response;
-  try {
-    res = await fetch(path, { headers: requestHeaders(token), credentials: "same-origin" });
-  } catch {
-    // Not the session's fault: stay signed in, say so, and offer a retry.
-    if (current()) {
-      set({
-        session: "ready",
-        gate: null,
-        artifactPhase: "error",
-        artifactNotice: failure(collectionFailureCopy(collection, { kind: "network" }, productName)),
-      });
-    }
-    return undefined;
-  }
-  if (!current()) return undefined;
-  if (res.status === 401) {
-    if (auth.kind !== "clerk" && auth.kind !== "cloudflare-access") {
-      localStorage.removeItem(TOKEN_KEY);
-      gate(failure("That token wasn't accepted. Paste a valid operator token."));
-    } else {
-      gate(failure("Your session wasn't accepted. Sign out, then sign in again."));
-    }
-    return undefined;
-  }
-  if (res.status === 403) {
-    gate(failure("This deployment doesn't open artifact pages to this identity."));
-    return undefined;
-  }
-  return res;
-}
-
-let artifactRevision = 0;
-export async function loadArtifacts(reset: boolean): Promise<void> {
-  const identityCurrent = fence();
-  const revision = ++artifactRevision;
-  const current = () => identityCurrent() && revision === artifactRevision;
-  set({
-    artifactPhase: "loading",
-    artifactNotice: null,
-    ...(reset ? { artifactRows: [], artifactCursor: null } : {}),
-  });
-  const params = new URLSearchParams();
-  if (state.artifactQuery.trim()) params.set("q", state.artifactQuery.trim());
-  if (state.artifactArchived) params.set("archived", "1");
-  if (!reset && state.artifactCursor) params.set("cursor", state.artifactCursor);
-  const query = params.toString();
-  const res = await artifactRead(`/artifacts/_api/list${query ? `?${query}` : ""}`, current, "artifacts");
-  if (!res || !current()) return;
-  if (!res.ok) {
-    return set({
-      session: "ready",
-      gate: null,
-      artifactPhase: "error",
-      artifactNotice: failure(
-        collectionFailureCopy("artifacts", { kind: "refused", status: res.status }, productName),
-      ),
-    });
-  }
-  let payload: { artifacts?: UiArtifactRow[]; nextCursor?: string } | null;
-  try {
-    payload = (await res.json()) as typeof payload;
-  } catch {
-    payload = null;
-  }
-  if (!current()) return;
-  if (!payload || !Array.isArray(payload.artifacts)) {
-    return set({
-      session: "ready",
-      gate: null,
-      artifactPhase: "error",
-      artifactNotice: failure(collectionFailureCopy("artifacts", { kind: "refused" }, productName)),
-    });
-  }
-  set({
-    session: "ready",
-    gate: null,
-    artifactPhase: "ready",
-    artifactRows: [...(reset ? [] : state.artifactRows), ...(payload.artifacts ?? [])],
-    artifactCursor: payload.nextCursor ?? null,
-  });
-}
-
-let artifactFrameConfined = false;
-
-/** The frame navigation policy cannot be relaxed within this document. */
-export function markArtifactFrameConfined(): void {
-  artifactFrameConfined = true;
-}
-
-async function loadArtifactView(): Promise<void> {
-  if (artifactFrameConfined) {
-    // A replacement identity needs a fresh bootstrap and a fresh CSP policy.
-    window.location.reload();
-    return;
-  }
-  const current = fence();
-  const request = artifactViewRequest(window.location.pathname, window.location.search);
-  set({ artifactPhase: "loading", artifactNotice: null });
-  if (!request) {
-    return set({
-      session: "ready",
-      artifactPhase: "error",
-      artifactNotice: failure("There is no artifact at this address."),
-    });
-  }
-  const res = await artifactRead(request, current, "artifact");
-  if (!res || !current()) return;
-  if (!res.ok) {
-    return set({
-      session: "ready",
-      gate: null,
-      artifactPhase: "error",
-      artifactNotice: failure(
-        collectionFailureCopy("artifact", { kind: "refused", status: res.status }, productName),
-      ),
-    });
-  }
-  let view: UiArtifactView | null = null;
-  try {
-    view = (await res.json()) as UiArtifactView;
-  } catch {
-    view = null;
-  }
-  if (!current()) return;
-  if (!view || typeof view.document !== "string") {
-    return set({
-      session: "ready",
-      gate: null,
-      artifactPhase: "error",
-      artifactNotice: failure("The artifact couldn't be read. Retry in a moment."),
-    });
-  }
-  set({ session: "ready", gate: null, artifactPhase: "ready", artifactView: view });
-}
-
-export function setArtifactQuery(artifactQuery: string): void {
-  set({ artifactQuery });
-}
-
-export function setArtifactArchived(artifactArchived: boolean): void {
-  set({ artifactArchived });
-  void loadArtifacts(true);
-}
-
 /** Load what the current page shows, deciding gated or ready on the way. */
 function loadCurrent(): Promise<void> {
-  if (state.page === "artifacts") return loadArtifacts(true);
-  if (state.page === "artifact") return loadArtifactView();
   return loadData();
 }
 
@@ -900,8 +676,7 @@ export function retryLoad(): Promise<void> {
 export function retryCollection(): Promise<void> {
   set({ pendingFocus: `${state.page}Heading` });
   if (state.page === "activity" || state.page === "connector") return loadActivity(true);
-  if (state.page === "artifact") return loadArtifactView();
-  return loadArtifacts(true);
+  return loadActivity(true);
 }
 
 /* Boot -------------------------------------------------------------------- */
