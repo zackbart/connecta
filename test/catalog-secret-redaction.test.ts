@@ -88,8 +88,8 @@ describe("discovery sent credentials", () => {
     } finally { for (const ctx of contexts) await connector.closeScope?.(ctx); }
   });
 
-  it.each(["auto", "legacy"] as const)("INV-5: %s discovery registers handshake credentials before sanitizing the first catalog", async (versionNegotiation) => {
-    const header = "handshake-only-credential";
+  it.each(["auto", "legacy"] as const)("INV-5: %s discovery registers auxiliary auth headers through handshake and catalog intake", async (versionNegotiation) => {
+    const header = "discovery-auxiliary-credential";
     const server = httpDownstream((mcp) => mcp.registerTool("read", {}, async () => ({ content: [] })));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
@@ -151,7 +151,12 @@ describe("discovery sent credentials", () => {
       } }],
     });
     const { staticTools: _staticTools, ...dynamic } = base;
-    const connector: Connector = { ...dynamic, listTools: (ctx) => base.callTool("read", {}, ctx) as ReturnType<Connector["listTools"]> };
+    const connector: Connector = { ...dynamic, async listTools(ctx) {
+      await base.callTool("read", {}, ctx);
+      // A decorator adds vendor facts after the API result boundary. Intake
+      // must still use the actual request's credentials before caching them.
+      return [echoedTool()];
+    } };
     const tools = await makeRegistry([connector], { storage }).getTools("api", BASE);
     expect(tools[0]?.description).toBe("Read with [redacted]");
     await expectCleanCache(storage, connector);

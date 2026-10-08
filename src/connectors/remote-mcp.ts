@@ -1040,7 +1040,7 @@ interface ConnectionState {
   client: Client | null;
   transport: Transport | null;
   /**
-   * The last complete raw catalog, retained only for this request scope.
+   * The last complete redacted catalog, retained only for this request scope.
    *
    * SDK v2 exposes `toolDefinition` as the public call-time seam for output
    * validation and header mirroring, replacing the v1 private
@@ -2153,8 +2153,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // or rotation can null it before this call resumes, and teardown is
       // caught instead by the `closed` check before every page.
       const client = await ensureConnected(ctx, state);
-      // Retain raw SDK tools for direct same-scope calls; the returned catalog
-      // keeps only the metadata needed across requests.
+      // Collect SDK tools for same-scope calls; sanitize the completed walk
+      // before retaining definitions or returning cross-request metadata.
       const listed: ListedTool[] = [];
       const names = new Set<string>();
       const spent = new Set<string>();

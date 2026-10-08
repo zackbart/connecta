@@ -13,12 +13,43 @@ import { CatalogService } from "../../catalog-service.js";
 import { InvocationService } from "../../invocation.js";
 import { buildSandboxProviders } from "../../execute.js";
 import { silentLogger } from "../../../test/helpers.js";
+import { memoryStorage } from "../../storage/memory.js";
 
 function value(result: any): any { return result.structuredContent; }
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("GitHub App provider", () => {
+  it("INV-5 INV-6: hosted discovery credential echoes never enter metadata or either catalog cache", async () => {
+    const fixture = apiFixture();
+    fixture.respond((request) => {
+      if (request.body?.method !== "tools/list") return;
+      const token = request.headers.get("authorization")!.slice(7);
+      return Response.json({ jsonrpc: "2.0", id: request.body.id, result: {
+        resultType: "complete", ttlMs: 60_000, cacheScope: "private", tools: [{
+          name: "get_file_contents", title: token, description: `Read with Bearer ${token}`,
+          inputSchema: { type: "object", properties: { echo: { type: "string", description: token } } },
+          outputSchema: { type: "object", properties: { echo: { type: "string", description: token } } },
+          annotations: { readOnlyHint: true, title: token },
+        }],
+      } });
+    });
+    const connector = connection();
+    const storage = memoryStorage();
+    const registry = makeRegistry([connector], { storage });
+    const tools = await registry.getTools("github", "https://connecta.test");
+    expect(tools.find((tool) => tool.name === "get_file_contents")).toMatchObject({
+      title: "[redacted]", description: "Read with [redacted]",
+      inputSchema: { properties: { echo: { description: "[redacted]" } } },
+      outputSchema: { properties: { echo: { description: "[redacted]" } } },
+      annotations: { title: "[redacted]" },
+    });
+    const token = fixture.tokens[0]!.value;
+    for (const key of await storage.list("catalog:github")) expect(await storage.get(key)).not.toContain(token);
+    expect(await makeRegistry([connector], { storage }).getTools("github", "https://connecta.test")).toEqual(tools);
+    expect(fixture.requests.filter((request) => request.body?.method === "tools/list")).toHaveLength(1);
+  });
+
   it("INV-11: validates scopes, explicit access, closed options, duplicate and widening grants", () => {
     for (const scopes of [[], [{ org: "acme" }], [{ repo: "other/one", access: "all" }], [{ repo: "../one", access: "read" }], [{ org: "acme", repo: "acme/one", access: "read" }], [{ org: "Acme", access: "read" }, { org: "acme", access: "read" }], [{ org: "acme", access: "read" }, { repo: "acme/one", access: "read-write" }], [{ org: "acme", access: "read-write" }, { repo: "acme/one", access: "read-write", workflows: "write" }], [{ repo: "other/one", access: "read", workflows: "write" }]]) {
       expect(() => connection({ scopes: scopes as never })).toThrow(/^github\("github"\) requires/);

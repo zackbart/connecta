@@ -338,6 +338,16 @@ Results, structured strings and nested error causes/data pass through the
 same boundary after unwrapping or joining text blocks and before paging,
 emits, program outputs or artifact writes. Programs retain their calls' sets
 only for the run so later outputs and storage cannot reconstruct an echo.
+Discovery registers sent credentials under the same rules, including
+`server/discover`, legacy initialization, and every `tools/list` page on a
+reused transport. Remote MCP sanitizes the complete listing before retaining
+request-local definitions. Registry intake also sanitizes custom, API and
+provider listings before drift observation, fingerprinting or either catalog
+cache. Every nested string and object key passes through the redactor,
+including titles, descriptions, schemas and annotations. If a tool name would
+change, the complete catalog is refused. Rewriting a name changes dispatch;
+dropping only that tool would publish a partial catalog, against INV-8. Later
+cached reads need no credential set because the stored facts are already clean.
 Echoed sensitive header lines are also withheld. The set is never persisted
 or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and

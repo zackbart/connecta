@@ -10,7 +10,7 @@ import { array, assertKnownOptions, instance, keys, optionsOf, strings } from ".
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
-import { redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
+import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -370,8 +370,8 @@ export function apiConnector(
         }
       : {}),
     staticTools: defs,
-    async listTools() {
-      return defs;
+    async listTools(ctx) {
+      return redactCatalog(ctx, defs);
     },
     async callTool(name, args, ctx) {
       trackCredentialReads(ctx);
