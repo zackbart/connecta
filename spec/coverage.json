@@ -411,6 +411,10 @@
         {
           "file": "test/sent-secrets.test.ts",
           "title": "INV-5 INV-8: preserves JSON escape context at a redaction window boundary"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-8: consumes fragmented JSON responses without retaining borrowed input buffers of size 1"
         }
       ]
     },

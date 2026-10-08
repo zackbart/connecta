@@ -419,6 +419,8 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
   signal?.addEventListener("abort", abort, { once: true });
   let bytes = 0;
   const chunks: Uint8Array[] = [];
+  let buffer: Uint8Array | undefined;
+  let buffered = 0;
   const sse = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
   // workerd applies BOM stripping to later decode() chunks too. Preserve
   // embedded resource BOMs and strip only the SSE stream's initial BOM here.
@@ -479,7 +481,19 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
       }
       bytes += chunk.value.byteLength;
       if (bytes > limit) throw exceeded();
-      if (!sse) { chunks.push(chunk.value); continue; }
+      if (!sse) {
+        // Network chunk count and backing-buffer size are untrusted. Retain
+        // only owned fixed-size blocks, never one object per incoming byte.
+        for (let offset = 0; offset < chunk.value.byteLength;) {
+          buffer ??= new Uint8Array(65_536);
+          const size = Math.min(buffer.length - buffered, chunk.value.byteLength - offset);
+          buffer.set(chunk.value.subarray(offset, offset + size), buffered);
+          offset += size;
+          buffered += size;
+          if (buffered === buffer.length) { chunks.push(buffer); buffer = undefined; buffered = 0; }
+        }
+        continue;
+      }
       let decoded = decoder.decode(chunk.value, { stream: true });
       if (firstDecoded && decoded.length) {
         firstDecoded = false;
@@ -489,6 +503,7 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
       if (terminal !== undefined) return await terminalResponse(terminal);
     }
     if (sse) throw new ConnectorCallError("connector_call_failed", "Downstream Skills stream ended without a terminal RPC response.");
+    if (buffer && buffered) chunks.push(buffer.subarray(0, buffered));
     let next = 0;
     return new Response(new ReadableStream<Uint8Array>({
       pull(controller) {

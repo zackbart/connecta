@@ -99,6 +99,24 @@ describe("remote MCP Skills transport", () => {
     expect(f.requests.filter(({ rpc }) => rpc.method === "skills/list")).toHaveLength(6);
   });
 
+  it.each([1, 7, 65_535])("INV-8: consumes fragmented JSON responses without retaining borrowed input buffers of size %i", async size => {
+    const f = fixture(rpc => {
+      const bytes = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: complete({ skills: [skill()], padding: "x".repeat(128 * 1024) }) }));
+      const buffer = new Uint8Array(size);
+      let offset = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (offset === bytes.length) { controller.close(); return; }
+          const end = Math.min(offset + size, bytes.length);
+          buffer.set(bytes.subarray(offset, end));
+          controller.enqueue(buffer.subarray(0, end - offset));
+          offset = end;
+        },
+      }, { highWaterMark: 0 }), { headers: { "content-type": "application/json" } });
+    });
+    expect(await f.downstream.list(f.context())).toEqual([skill()]);
+  }, 30_000);
+
   it.each([
     {}, { resources: {} }, { extensions: { [EXTENSION]: {} } },
     { resources: {}, extensions: { [EXTENSION]: { directoryRead: "yes" } } },
