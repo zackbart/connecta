@@ -54,6 +54,40 @@ const sql = (text: string, ...params: SqlValue[]): SqlStatement => ({
   params,
 });
 
+// Text holding U+0000. Both drivers bind a string with NUL intact, and SQLite
+// stores and compares TEXT by length, but `node:sqlite` on Node 22 ends a TEXT
+// result at its first NUL: `"before\0after"` reads back as `"before"`. So a
+// read of a text column also selects its bytes, only when they hold a zero
+// byte, and the bytes win. Reading every value as a BLOB would also work, but
+// D1 returns a BLOB as an array of numbers, several times the value's size on
+// the wire, and stash chunks and artifact bodies are large.
+
+type TextBytes = Uint8Array | readonly number[];
+
+/** Select `column`, and beside it `<column>_bytes` when it holds a NUL. */
+const textColumn = (column: string) =>
+  `${column}, CASE WHEN instr(CAST(${column} AS BLOB), x'00') > 0
+    THEN CAST(${column} AS BLOB) END AS ${column}_bytes`;
+
+// Everything written here was a JavaScript string, so the bytes are UTF-8;
+// a stored row that is not is refused rather than read wrong. A leading
+// U+FEFF is part of the value, not a byte order mark.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** A text column's value, from its bytes when the read selected them. */
+function textOf(
+  text: string | null,
+  bytes: TextBytes | null | undefined,
+  what: string,
+): string | null {
+  if (bytes == null) return text;
+  try {
+    return utf8.decode(bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes));
+  } catch {
+    throw new TypeError(`${what} is not valid UTF-8`);
+  }
+}
+
 /** Run `ddl` once per store object; a failure leaves it to the next call. */
 function schemaOnce(
   driver: SqlDriver,
@@ -106,10 +140,18 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
   );
   // Every statement that tests liveness binds the current time as ?2.
   const live = "(expires_at_ms IS NULL OR expires_at_ms > ?2)";
-  const current = async (key: string, now: number) =>
-    (await driver.all<{ value: string }>(
-      sql(`SELECT value FROM connecta_kv WHERE key = ?1 AND ${live}`, key, now),
-    ))[0]?.value ?? null;
+  const current = async (key: string, now: number) => {
+    const [row] = await driver.all<{ value: string; value_bytes: TextBytes | null }>(
+      sql(
+        `SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ?1 AND ${live}`,
+        key,
+        now,
+      ),
+    );
+    return row
+      ? textOf(row.value, row.value_bytes, `the stored value of ${JSON.stringify(key)}`)
+      : null;
+  };
   return {
     async get(key) {
       validateStorageKey(key);
@@ -272,6 +314,33 @@ interface ActivityRow {
   deployment_id: string | null;
 }
 
+/** Every activity column but the three integers, read through `textOf`. */
+const ACTIVITY_TEXT_COLUMNS = [
+  "id", "request_id", "actor_kind", "actor_id", "actor_namespace",
+  "connector_id", "tool_name", "source", "outcome", "error_code", "friction",
+  "approval", "server_name", "server_version", "deployment_id",
+] as const;
+
+const ACTIVITY_SELECT = `SELECT occurred_at_ms, duration_ms, attempts,
+  ${ACTIVITY_TEXT_COLUMNS.map(textColumn).join(",\n  ")}
+  FROM tool_call_activity`;
+
+function activityRow(read: Record<string, unknown>): ActivityRow {
+  const row: Record<string, unknown> = {
+    occurred_at_ms: read.occurred_at_ms,
+    duration_ms: read.duration_ms,
+    attempts: read.attempts,
+  };
+  for (const column of ACTIVITY_TEXT_COLUMNS) {
+    row[column] = textOf(
+      read[column] as string | null,
+      read[`${column}_bytes`] as TextBytes | null,
+      `activity column ${column}`,
+    );
+  }
+  return row as unknown as ActivityRow;
+}
+
 function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
   // Rows written before `friction` had a column derive it from the code.
   // Friction without a code — an oversized but successful result — exists
@@ -426,9 +495,9 @@ export function sqlActivityStore(
       const pageSize = boundedLimit + 1;
       const position = cursor ? decodeCursor(cursor) : undefined;
       await ensure();
-      const rows = await driver.all<ActivityRow>(position
+      const rows = (await driver.all<Record<string, unknown>>(position
         ? sql(
-            `SELECT * FROM tool_call_activity
+            `${ACTIVITY_SELECT}
              WHERE occurred_at_ms < ?1
                 OR (occurred_at_ms = ?1 AND id < ?2)
              ORDER BY occurred_at_ms DESC, id DESC
@@ -438,11 +507,11 @@ export function sqlActivityStore(
             pageSize,
           )
         : sql(
-            `SELECT * FROM tool_call_activity
+            `${ACTIVITY_SELECT}
              ORDER BY occurred_at_ms DESC, id DESC
              LIMIT ?1`,
             pageSize,
-          ));
+          ))).map(activityRow);
       const hasMore = rows.length > boundedLimit;
       const visible = hasMore ? rows.slice(0, boundedLimit) : rows;
       const last = visible.at(-1);

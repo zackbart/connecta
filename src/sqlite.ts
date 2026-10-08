@@ -57,25 +57,53 @@ export function openSqlite(path: string): DatabaseSync {
 
 const drivers = new WeakMap<DatabaseSync, SqlDriver>();
 
+interface Positional {
+  sync: StatementSync;
+  /** For each `?` in order, the index of the parameter it binds. */
+  order: number[];
+}
+
+/**
+ * Prepare `text` with each numbered parameter `?N` as a plain `?`. Before
+ * Node 22.20 and through at least 24.6, `node:sqlite` refuses any `?N` with
+ * "column index out of range", and ./sql.ts binds by number so one value can
+ * appear twice. Its statements hold no string literal containing `?`.
+ */
+function positional(db: DatabaseSync, text: string): Positional {
+  const order: number[] = [];
+  const sync = db.prepare(text.replace(/\?(\d+)/g, (_, number: string) => {
+    order.push(Number(number) - 1);
+    return "?";
+  }));
+  return { sync, order };
+}
+
 function sqliteDriver(database: SqliteDatabase): SqlDriver {
   const db = typeof database === "string" ? openSqlite(database) : database;
   const existing = drivers.get(db);
   if (existing) return existing;
   // The statement set is the fixed SQL in ./sql.ts, so the cache is bounded.
-  const statements = new Map<string, StatementSync>();
+  const statements = new Map<string, Positional>();
   const prepare = (statement: SqlStatement) => {
     let prepared = statements.get(statement.sql);
     if (!prepared) {
-      prepared = db.prepare(statement.sql);
+      prepared = positional(db, statement.sql);
       statements.set(statement.sql, prepared);
     }
-    return prepared;
+    return {
+      sync: prepared.sync,
+      params: prepared.order.map((index) =>
+        statement.params[index] as SqlStatement["params"][number]),
+    };
   };
-  const run = (statement: SqlStatement) =>
-    Number(prepare(statement).run(...statement.params).changes);
+  const run = (statement: SqlStatement) => {
+    const { sync, params } = prepare(statement);
+    return Number(sync.run(...params).changes);
+  };
   const driver: SqlDriver = {
     async all<Row>(statement: SqlStatement) {
-      return prepare(statement).all(...statement.params) as Row[];
+      const { sync, params } = prepare(statement);
+      return sync.all(...params) as Row[];
     },
     async run(statement) {
       return run(statement);
@@ -164,7 +192,7 @@ export function importStateFile(
   try {
     for (const statement of KV_SCHEMA) db.exec(statement);
     const insert = db.prepare(
-      `INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?1, ?2, ?3)
+      `INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, ?)
        ON CONFLICT (key) DO NOTHING`,
     );
     for (const [key, entry] of entries) {

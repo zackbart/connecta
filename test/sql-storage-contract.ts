@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/index.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import { agentFrictionForCode } from "../src/activity-friction.js";
-import { compareAndSetContract } from "./storage-contract.js";
+import { compareAndSetContract, NUL_VALUES } from "./storage-contract.js";
 
 /**
  * One SQL database as a suite sees it: fresh stores over it, and raw SQL for
@@ -30,8 +30,41 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   it("rejects a NUL key before creating the KV schema", async () => {
     const db = await open();
     await expect(db.storage().get("a\0b")).rejects.toThrow(/U\+0000 \(NUL\)/);
-    expect(await db.rows("SELECT name FROM sqlite_master WHERE name = ?1", "connecta_kv"))
+    expect(await db.rows("SELECT name FROM sqlite_master WHERE name = ?", "connecta_kv"))
       .toEqual([]);
+  });
+
+  it("stores every byte of a value holding NUL and reads values without one as text", async () => {
+    const db = await open();
+    const storage = db.storage();
+    for (const [index, value] of NUL_VALUES.entries()) {
+      await storage.set(`nul:${index}`, value);
+    }
+    await storage.set("plain", "no zero byte");
+    const stored = await db.rows<{ key: string; type: string; bytes: number }>(
+      `SELECT key, typeof(value) AS type, length(CAST(value AS BLOB)) AS bytes
+       FROM connecta_kv ORDER BY key`,
+    );
+    const encoder = new TextEncoder();
+    expect(stored).toEqual([
+      ...NUL_VALUES.map((value, index) => ({
+        key: `nul:${index}`,
+        type: "text",
+        bytes: encoder.encode(value).length,
+      })).sort((a, b) => (a.key < b.key ? -1 : 1)),
+      { key: "plain", type: "text", bytes: 12 },
+    ]);
+    expect(await storage.get("plain")).toBe("no zero byte");
+  });
+
+  it("refuses a stored value holding NUL that is not UTF-8 instead of reading it wrong", async () => {
+    const db = await open();
+    const storage = db.storage();
+    await storage.set("bad", "placeholder");
+    await db.exec("UPDATE connecta_kv SET value = CAST(x'ff00' AS TEXT) WHERE key = ?", "bad");
+    await expect(storage.get("bad")).rejects.toThrow(
+      new TypeError('the stored value of "bad" is not valid UTF-8'),
+    );
   });
 
   it("round-trips get, set, delete, and a sorted list", async () => {
@@ -97,7 +130,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     )`);
     await db.exec("CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms)");
     await db.exec(
-      "INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?1, ?2, NULL)",
+      "INSERT INTO connecta_kv (key, value, expires_at_ms) VALUES (?, ?, NULL)",
       "conn:notion:oauth:tokens",
       "sealed",
     );
@@ -137,6 +170,23 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 10 })).events).toEqual([bare, full]);
   });
 
+  it("round-trips activity text holding NUL (U+0000)", async () => {
+    // Tool names come from downstream servers and actor ids from identity
+    // providers; neither is promised free of NUL.
+    const activity = (await open()).activity();
+    const recorded = event(4, {
+      requestId: "request\0é",
+      actor: { kind: "clerk", id: "\0user", namespace: "https://clerk.example\0" },
+      connectorId: "notes\0",
+      toolName: "list\0😀hidden",
+      address: "notes\0.list\0😀hidden",
+      serverVersion: "0.29.0\0",
+      deploymentId: "\0",
+    });
+    await activity.record(recorded);
+    expect((await activity.list!({ limit: 1 })).events).toEqual([recorded]);
+  });
+
   it("round-trips a historical resumed program's approval row", async () => {
     // Written before 0.28.0 removed program pauses; the Activity tab still
     // renders these rows, so they must read back exactly.
@@ -171,7 +221,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
         `INSERT INTO tool_call_activity (id, occurred_at_ms, request_id, actor_kind,
           connector_id, tool_name, source, outcome, duration_ms, attempts, error_code,
           server_name, server_version)
-         VALUES (?1, ?2, 'request', 'bearer', 'notes', 'list', 'call_tool', 'error', 4, 1, ?3,
+         VALUES (?, ?, 'request', 'bearer', 'notes', 'list', 'call_tool', 'error', 4, 1, ?,
           'connecta', '0.10.5')`,
         id(index),
         Date.parse("2026-07-27T12:34:56.000Z") + index,

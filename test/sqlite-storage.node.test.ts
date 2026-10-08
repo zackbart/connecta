@@ -15,6 +15,7 @@ import {
 import { artifactStoreContract, headRecord } from "./artifact-store-contract.js";
 import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
+import { NUL_VALUES } from "./storage-contract.js";
 
 const directories: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -177,6 +178,23 @@ describe("importStateFile", () => {
     const db = track(openSqlite(join(directory, "connecta.sqlite")));
     expect(() => importStateFile(db, path)).toThrow(/not a connecta state file/);
     expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
+  });
+
+  it("imports values holding NUL (U+0000) whole", async () => {
+    const directory = tempDirectory();
+    const path = join(directory, "state.json");
+    // JSON.stringify writes each NUL as the escape \u0000, as 0.28 did.
+    writeFileSync(path, JSON.stringify(Object.fromEntries(
+      NUL_VALUES.map((value, index) => [`nul:${index}`, { value }]),
+    )));
+    const db = track(openSqlite(join(directory, "connecta.sqlite")));
+    expect(importStateFile(db, path))
+      .toEqual({ imported: NUL_VALUES.length, kept: 0, expired: 0 });
+    const storage = sqliteStorage(db);
+    for (const [index, value] of NUL_VALUES.entries()) {
+      expect(await storage.get(`nul:${index}`)).toBe(value);
+    }
+    expect(await storage.compareAndSet("nul:3", "before\0after", "next")).toBe(true);
   });
 
   it("rejects a NUL key before importing any state or creating tables", () => {

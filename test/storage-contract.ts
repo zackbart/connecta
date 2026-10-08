@@ -2,6 +2,25 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { KVStorage } from "../src/index.js";
 
 /**
+ * Values with NUL at the start, middle, and end, beside multi-byte UTF-8 and a
+ * leading U+FEFF (a decoder must not take it for a byte order mark), and one
+ * large enough to span many SQLite pages.
+ */
+export const NUL_VALUES: readonly string[] = [
+  "\0",
+  "\0\0\0",
+  "\0start",
+  "before\0after",
+  "end\0",
+  "é\0中\0😀",
+  "\0😀",
+  "😀\0",
+  "\uFEFF\0bom",
+  JSON.parse('{"sealed":"x\\u0000y"}').sealed as string,
+  `${"x".repeat(256 * 1024)}\0${"é".repeat(1024)}\0`,
+];
+
+/**
  * Shared compare-and-set cases for every `KVStorage`. Not a suite: each
  * adapter's own suite calls this inside its `describe`, so the same contract
  * runs against memory, namespaced, SQLite, and D1 storage.
@@ -45,6 +64,36 @@ export function compareAndSetContract(
     }
     expect(await storage.get("a")).toBe("original");
     expect(await storage.list("")).toEqual(["a"]);
+  });
+
+  it("keeps a value's NUL (U+0000) wherever it falls through get, set, list, and compareAndSet", async () => {
+    // Keys may not hold NUL; values may. Node 22's `node:sqlite` ended a text
+    // result at its first NUL, so every one of these once read back cut short.
+    const storage = await open();
+    for (const [index, value] of NUL_VALUES.entries()) {
+      await storage.set(`nul:${index}`, value);
+    }
+    for (const [index, value] of NUL_VALUES.entries()) {
+      expect(await storage.get(`nul:${index}`)).toBe(value);
+    }
+    expect(await storage.list("nul:"))
+      .toEqual(NUL_VALUES.map((_, index) => `nul:${index}`).sort());
+
+    await storage.set("cas", "a\0b");
+    expect(await storage.compareAndSet("cas", "a", "x")).toBe(false);
+    expect(await storage.compareAndSet("cas", "a\0", "x")).toBe(false);
+    expect(await storage.compareAndSet("cas", "a\0c", "x")).toBe(false);
+    expect(await storage.get("cas")).toBe("a\0b");
+    expect(await storage.compareAndSet("cas", "a\0b", null)).toBe(true);
+    expect(await storage.get("cas")).toBeNull();
+    expect(await storage.compareAndSet("cas", null, "\0é\0next")).toBe(true);
+    expect(await storage.get("cas")).toBe("\0é\0next");
+    expect(await storage.compareAndSet("cas", "\0é\0nex", "x")).toBe(false);
+    expect(await storage.compareAndSet("cas", "\0é\0next", "then\0", { ttlSeconds: 60 }))
+      .toBe(true);
+    expect(await storage.get("cas")).toBe("then\0");
+    expect(await storage.compareAndSet("cas", "then\0", null)).toBe(true);
+    expect(await storage.get("cas")).toBeNull();
   });
 
   it("lets exactly one of 50 concurrent claims on an absent key win", async () => {
