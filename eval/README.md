@@ -112,12 +112,18 @@ Hex commit SHAs match by their first seven characters. Any clause mixing a
 record's fact with a conflicting fact from another record fails, even if the
 answer also contains correct records. Shared facts such as `passed` are allowed.
 
-Absent-service answers must pass `states-absence` by saying the service is
-unavailable, absent, not connected, not configured or inaccessible.
-`no-repository-facts` rejects quantities only: any digit sequence outside the
-requested repository name, or the number words zero through twenty, thirty
-through ninety, hundred, dozen, several, a few or many. Wording about the user's
-lack of access passes. These are deliberately bounded acceptance rules.
+Absent-service tasks request a structured answer on the final line:
+`ANSWER: <number>` for a count, or `ANSWER: unavailable` when data is unavailable.
+The required `structured-answer` check uses the last line matching `ANSWER:`
+case-insensitively, with optional Markdown bold around the label. It trims and
+lowercases the value and strips surrounding quotes, backticks and a trailing
+period. Only `unavailable` passes; missing lines, numbers and other values fail.
+`states-absence` is advisory. It recognizes unavailable, absent, inaccessible,
+and negated connected/configured/available wording with up to two intervening
+words, including "not currently connected" and "isn't connected". Genuine
+absence discovery and destination checks remain required.
+Historical baselines used a prose-only absence prompt, so their absence results
+are not comparable across this prompt change.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -150,11 +156,11 @@ grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images
 substituted for program emissions, sequential budget exhaustion, direct-only
-recovery, swapped CI facts, missing/mismatched auth handoffs, fabricated
-quantities after service absence, alternate known-read routes, and contradictory/missing
+recovery, swapped CI facts, missing/mismatched auth handoffs, missing or invalid
+structured absence answers, alternate known-read routes, and contradictory/missing
 RevenueCat access evidence. Positive controls also verify both discovery routes
 and recovery after a schema-rejected program request, CI fact permutations, sentence/comma/table/bullet formats,
-honest absence answers and advisory-only duplicate direct reads. The deployment
+structured absence answers and advisory-only duplicate direct reads. The deployment
 adapter observes the real QuickJS provider bridge for paging and fan-out checks;
 source text alone cannot satisfy them.
 Skipped features remain untested until enabled against a supporting checkout.

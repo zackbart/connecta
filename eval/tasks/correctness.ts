@@ -59,15 +59,14 @@ function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
 /** Absence is a service fact; wording about the user's access is allowed. */
 export function statesAbsence(answer: string, service: string): boolean {
   const name = service.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b${name}\\b[^.!?;\\n]*\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:connected|configured|available)|inaccessible)\\b|` +
-    `\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:connected|configured|available)|inaccessible)\\b[^.!?;\\n]*\\b${name}\\b`, "i").test(answer);
+  return new RegExp(`\\b${name}\\b[^.!?;\\n]*\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:[\\w’']+\\s+){0,2}(?:connected|configured|available)|inaccessible)\\b|` +
+    `\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:[\\w’']+\\s+){0,2}(?:connected|configured|available)|inaccessible)\\b[^.!?;\\n]*\\b${name}\\b`, "i").test(answer);
 }
 
-/** An absent service supplies no quantities, whether written as digits or words.
- * "how many" states uncertainty, not a quantity. */
-export function noAbsentQuantities(answer: string, repository: string): boolean {
-  const text = answer.replace(new RegExp(repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "");
-  return !/\d/.test(text) && !/\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|tens|hundreds?|dozens?|several|a\s+few|many)\b/i.test(text.replace(/\bhow\s+many\b/gi, ""));
+/** The last ANSWER line supplies the absence result independently of prose. */
+export function structuredAbsence(answer: string): boolean {
+  const value = [...answer.matchAll(/^\s*\**ANSWER:\**\s*(.+?)\s*$/gim)].at(-1)?.[1];
+  return value !== undefined && value.trim().toLowerCase().replace(/^["'`]+|["'`.]+$/g, "").trim() === "unavailable";
 }
 
 export function called(world: World, address: string, args: Record<string, unknown> = {}): boolean {

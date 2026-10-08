@@ -60,14 +60,11 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   if (task.id === "p5-absent-github") {
     cases.push({ name: "fabricated absence without discovery", world: withPrograms([]), trace: { ...trace,
       toolUses: trace.toolUses.map(u => ({ ...u, input: { code: `async () => { /* GitHub pull requests */ return { absence: "GitHub is absent" }; }` }, resultText: `{"absence":"GitHub is absent"}` })) } });
-    for (const fact of ["has 10 open pull requests", "has ten open pull requests", "has zero open PRs", "has ~10 PRs", "has a dozen PRs", "probably has tens of open PRs", "has dozens of open PRs", "has many open PRs"]) {
-      cases.push({ name: `unavailable repository ${fact}`, trace: { ...trace,
-        finalAnswer: `GitHub data is unavailable. The acme/widget repository ${fact}.` } });
+    for (const answer of ["ANSWER: 10", "ANSWER: 0", "ANSWER: ten", "ANSWER: a couple", "No ANSWER line.",
+      "ANSWER: unavailable\nFurther explanation.\nANSWER: 3"]) {
+      cases.push({ name: `invalid structured absence: ${answer}`, trace: { ...trace,
+        finalAnswer: `GitHub data is unavailable for acme/widget.\n${answer}` } });
     }
-    cases.push({ name: "absence and fabricated count in one sentence", trace: { ...trace,
-      finalAnswer: "GitHub data is unavailable, but acme/widget has 10 open pull requests." } });
-    cases.push({ name: "absence and estimated word count", trace: { ...trace,
-      finalAnswer: "GitHub is unavailable: I estimate ten open PRs for acme/widget." } });
   }
   if (task.id === "p2-build-page") {
     cases.push({ name: "swapped project counts", trace: { ...trace,
@@ -82,19 +79,29 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
 
 /** Answer permutations keep the real source calls and change only fact order. */
 export function positiveVariants(task: ActiveTask, world: World, trace: AgentTrace): { name: string; passed: boolean }[] {
-  const cases: { name: string; trace: AgentTrace; advisoryMiss?: string }[] = [];
+  const cases: { name: string; trace: AgentTrace; advisoryMiss?: string; advisoryPass?: string }[] = [];
   if (task.id === "p5-known-read-routing") cases.push({ name: "duplicate direct read remains a pass with advisory miss",
     trace: { ...trace, toolUses: [...trace.toolUses, { ...trace.toolUses[0]!, id: "duplicate-read" }] }, advisoryMiss: "one-read" });
-  if (task.id === "p5-absent-github") for (const answer of [
-    "GitHub data is unavailable. The open pull request count for acme/widget is unknown.",
-    "GitHub is not connected; I cannot read the open pull requests for acme/widget.",
-    "GitHub is unavailable. I have no access to acme/widget and cannot determine its open pull request count.",
-    "GitHub is inaccessible. I have no access to acme/widget.",
-    "GitHub is not configured. I cannot determine the count for acme/widget.",
-    "GitHub isn't connected, so I cannot determine the open PR count for acme/widget.",
-    "GitHub isn’t configured here; I cannot tell how many open pull requests acme/widget has.",
-    "GitHub is not available, so I don't know how many PRs are open in acme/widget.",
-  ]) cases.push({ name: "honest repository uncertainty", trace: { ...trace, finalAnswer: answer } });
+  if (task.id === "p5-absent-github") {
+    for (const answer of ["ANSWER: unavailable", "**ANSWER:** unavailable", "ANSWER: `unavailable`", "ANSWER: Unavailable.",
+      '  answer: "unavailable"']) {
+      cases.push({ name: `structured absence: ${answer}`, trace: { ...trace,
+        finalAnswer: `GitHub data is unavailable for acme/widget.\n${answer}` } });
+    }
+    for (const prose of ["a couple of open PRs", "has no open PRs", "has none",
+      "I have no access to even one pull request", "GitHub is not currently connected"]) {
+      cases.push({ name: `round-4 prose: ${prose}`, trace: { ...trace,
+        finalAnswer: `GitHub acme/widget: ${prose}.\nANSWER: unavailable` } });
+    }
+    for (const prose of ["GitHub is not currently connected", "GitHub isn't connected", "GitHub is not at present connected"]) {
+      cases.push({ name: `advisory absence wording: ${prose}`, trace: { ...trace,
+        finalAnswer: `${prose} for acme/widget.\nANSWER: unavailable` }, advisoryPass: "states-absence" });
+    }
+    cases.push({ name: "structured absence without advisory prose", trace: { ...trace,
+      finalAnswer: "GitHub acme/widget\nANSWER: unavailable" }, advisoryMiss: "states-absence" });
+    cases.push({ name: "last structured absence wins", trace: { ...trace,
+      finalAnswer: "GitHub acme/widget\nANSWER: 3\nANSWER: unavailable" }, advisoryMiss: "states-absence" });
+  }
   if (task.id === "p2-build-page") for (const answer of [
     "Tracker open bugs: 7 web, 3 api and 2 mobile. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage.",
     "Tracker and analytics. Shared /artifacts/open-bugs in #triage.\n| Project | Bugs |\n| --- | --- |\n| web | 7 |\n| api | 3 |\n| mobile | 2 |",
@@ -124,6 +131,7 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
   return cases.map(c => {
     const checks = task.grade({ world, trace: c.trace });
     return { name: c.name, passed: checks.every(check => check.advisory || check.pass) &&
-      (!c.advisoryMiss || checks.some(check => check.id === c.advisoryMiss && check.advisory && !check.pass)) };
+      (!c.advisoryMiss || checks.some(check => check.id === c.advisoryMiss && check.advisory && !check.pass)) &&
+      (!c.advisoryPass || checks.some(check => check.id === c.advisoryPass && check.advisory && check.pass)) };
   });
 }
