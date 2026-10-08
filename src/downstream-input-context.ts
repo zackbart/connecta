@@ -70,6 +70,7 @@ export function assertNoPrivateStateEchoes(value: unknown, states: string[]): vo
       forms.add(encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
     }
     if (!forms.size) return;
+    const overlap = Math.max(...[...forms].map(form => form.length));
     const escapes: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
     const matches = (text: string): boolean => {
       for (let pass = 0; pass < 3; pass++) {
@@ -83,6 +84,23 @@ export function assertNoPrivateStateEchoes(value: unknown, states: string[]): vo
       }
       return false;
     };
+    const binaryMatches = (encoded: string): boolean => {
+      // MCP image/audio data and resource blobs are base64 bytes. Matching an
+      // encoded state alone misses surrounding bytes at different alignments.
+      // Decode fixed, four-character-aligned chunks and retain only overlap.
+      const decoder = new TextDecoder();
+      let utf8 = "", bytes = "";
+      for (let offset = 0; offset < encoded.length; offset += 64 * 1024) {
+        const chunk = atob(encoded.slice(offset, offset + 64 * 1024));
+        const text = decoder.decode(Uint8Array.from(chunk, char => char.charCodeAt(0)), { stream: true });
+        utf8 += text;
+        bytes += chunk;
+        if (matches(utf8) || matches(bytes)) return true;
+        utf8 = utf8.slice(-overlap);
+        bytes = bytes.slice(-overlap);
+      }
+      return matches(utf8 + decoder.decode());
+    };
     const seen = new WeakSet<object>();
     const visit = (item: unknown): boolean => {
       if (typeof item === "string") return matches(item);
@@ -90,12 +108,17 @@ export function assertNoPrivateStateEchoes(value: unknown, states: string[]): vo
       if (!item || typeof item !== "object" || seen.has(item)) return false;
       seen.add(item);
       if (item instanceof Error && matches(item.message)) return true;
-      const content = Object.getOwnPropertyDescriptor(item, "content")?.value;
+      const descriptors = Object.getOwnPropertyDescriptors(item);
+      const type = descriptors.type?.value;
+      const binary = type === "image" || type === "audio" ? descriptors.data?.value
+        : typeof descriptors.uri?.value === "string" ? descriptors.blob?.value : undefined;
+      if (typeof binary === "string" && binaryMatches(binary)) return true;
+      const content = descriptors.content?.value;
       if (Array.isArray(content)) {
         const texts = content.filter(block => block?.type === "text" && typeof block.text === "string").map(block => block.text);
         if (matches(texts.join("")) || matches(texts.join("\n"))) return true;
       }
-      return Object.entries(Object.getOwnPropertyDescriptors(item)).some(([key, descriptor]) =>
+      return Object.entries(descriptors).some(([key, descriptor]) =>
         matches(key) || "value" in descriptor && visit(descriptor.value));
     };
     if (visit(value)) throw refused();
