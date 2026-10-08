@@ -503,6 +503,10 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-4 INV-5 INV-6: guards raw continuation catalogs before public cache publication"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-10: composes request-bound elicitation modes with downstream Skills capabilities"
         }
       ]
     },

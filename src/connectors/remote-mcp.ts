@@ -2360,12 +2360,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             { name: "connecta", version: CONNECTA_VERSION },
             {
               ...clientOptions,
-              ...(skillsEnabled ? { capabilities: { extensions: { [SKILLS_EXTENSION]: {} } } } : {}),
               listMaxPages: MAX_TOOL_PAGES,
               versionNegotiation: {
                 mode: opts.versionNegotiation ?? "auto",
               },
-              capabilities: downstreamInputCapabilities(ctx.requestScope ?? ctx),
+              capabilities: {
+                ...downstreamInputCapabilities(ctx.requestScope ?? ctx),
+                ...(skillsEnabled ? { extensions: { [SKILLS_EXTENSION]: {} } } : {}),
+              },
               // The host owns each sealed continuation; never auto-retry a write.
               inputRequired: { autoFulfill: false },
             },

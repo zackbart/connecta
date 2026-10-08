@@ -24,7 +24,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; catalogEcho?: boolean } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; catalogEcho?: boolean; skills?: boolean } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
@@ -96,7 +96,7 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     await reply.body?.cancel();
     return Response.json({ jsonrpc: "2.0", id: request.id, result: { resultType: "input_required", ...options.raw } });
   });
-  const connector = remoteMcp("service", { url: downstream.url, auth: options.oauth ? { type: "oauth" } : options.authFirst ? { type: "credential" } : { type: "headers", headers: { Authorization: `Bearer ${SECRET}` } }, ...(options.failureStatus === 307 ? { redirects: "same-origin" } : {}), logger });
+  const connector = remoteMcp("service", { url: downstream.url, auth: options.oauth ? { type: "oauth" } : options.authFirst ? { type: "credential" } : { type: "headers", headers: { Authorization: `Bearer ${SECRET}` } }, ...(options.failureStatus === 307 ? { redirects: "same-origin" } : {}), ...(options.skills ? { skills: true } : {}), logger });
   const app = createTestConnecta({
     connectors: [connector], storage, logger,
     publicUrl: BASE, ...(options.vault === false ? {} : { vault }),
@@ -157,6 +157,19 @@ describe("downstream input relay", () => {
       expect(flow.call).toHaveBeenLastCalledWith(write ? "write" : "read", { id: 1 }, OPAQUE, { question: response });
       expect(flow.call).toHaveBeenCalledTimes(2);
     }
+  });
+
+  it("INV-4 INV-10: composes request-bound elicitation modes with downstream Skills capabilities", async () => {
+    const flow = setup({ skills: true });
+    const first = (await flow.rpc({ capabilities: { elicitation: { form: {} } } })).result;
+    expect(first.resultType).toBe("input_required");
+    expect((await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } }, capabilities: { elicitation: { form: {} } } })).result.isError).toBeFalsy();
+    for (const request of flow.requests.filter(request => request.method === "tools/call")) {
+      expect(request.params._meta["io.modelcontextprotocol/clientCapabilities"]).toEqual({
+        elicitation: { form: {} }, extensions: { "io.modelcontextprotocol/skills": {} },
+      });
+    }
+    expect(flow.call).toHaveBeenCalledTimes(2);
   });
 
   it("INV-4: namespaces downstream connecta keys and ignores unrelated input responses", async () => {
