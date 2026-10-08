@@ -1181,20 +1181,33 @@ describe("probe timeout", () => {
   });
 
   it("search_tools degrades a hung connector to unavailable within the timeout", async () => {
-    // A fake clock: the probe deadline ends the hung catalog when the test
-    // says so, and on a loaded host a real 50ms one could end the healthy
-    // catalog too.
+    // The fake clock controls deadlines, but not the WebCrypto fingerprint
+    // after listTools. Wait for the healthy catalog's complete registry read
+    // before advancing time, including on a loaded runner.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     onTestFinished(() => {
       vi.useRealTimers();
     });
-    const mt = createMetaTools(makeRegistry([hangingConnector, calcConnector]), BASE, {
+    const reg = makeRegistry([hangingConnector, calcConnector]);
+    let healthyReady!: () => void;
+    const healthyCatalogReady = new Promise<void>((resolve) => {
+      healthyReady = resolve;
+    });
+    const getTools = reg.getTools.bind(reg);
+    const catalogRead = vi.spyOn(reg, "getTools").mockImplementation(async (...args) => {
+      const tools = await getTools(...args);
+      if (args[0] === "calc") healthyReady();
+      return tools;
+    });
+    onTestFinished(() => catalogRead.mockRestore());
+    const mt = createMetaTools(reg, BASE, {
       probeTimeoutMs: 50,
     });
     let settled = false;
     const pending = mt.searchTools({ query: "add impossible" }).finally(() => {
       settled = true;
     });
+    await healthyCatalogReady;
     // Returns rather than hanging, at the probe deadline and not before: the
     // healthy connector still resolves, the hung one is simply absent (its
     // rejected catalog is dropped).

@@ -1,5 +1,6 @@
 import { Duration, Effect } from "effect";
 import {
+  activityClientFact,
   InvalidActivityCursorError,
   type ActivityActor,
   type ActivityPage,
@@ -67,8 +68,14 @@ function enrichActivityActorLabels(
               ? { namespace: event.actor.namespace }
               : {}),
           };
+          // Re-check stored client facts, including custom readers and old rows.
+          const { clientName: suppliedName, clientVersion: suppliedVersion, ...record } = event;
+          const clientName = activityClientFact(suppliedName, "name");
+          const clientVersion = activityClientFact(suppliedVersion, "version");
           return {
-            ...event,
+            ...record,
+            ...(clientName !== undefined ? { clientName } : {}),
+            ...(clientVersion !== undefined ? { clientVersion } : {}),
             actor: resolved ? { ...actor, label: resolved } : actor,
           };
         }),

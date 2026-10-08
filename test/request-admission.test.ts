@@ -44,7 +44,7 @@ async function waitFor(
 
 describe("request admission", () => {
   beforeEach(() => {
-    // The clock, not the scheduler: Effect still yields on real immediates.
+    // Only deadlines are faked; native WebCrypto still completes in real time.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   });
   afterEach(() => {
@@ -54,6 +54,10 @@ describe("request admission", () => {
   it("aborts an in-flight connector call at the total request deadline", async () => {
     let started = 0;
     let aborted = 0;
+    let markStarted!: () => void;
+    const callStarted = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const connector: Connector = {
       ...calcConnector,
       async callTool(_name, _args, ctx) {
@@ -65,6 +69,7 @@ describe("request admission", () => {
           } else {
             ctx.signal?.addEventListener("abort", () => { aborted++; resolve(); }, { once: true });
           }
+          markStarted();
         });
         return { stopped: true };
       },
@@ -80,7 +85,10 @@ describe("request admission", () => {
       name: "call_tool",
       arguments: { address: "calc.add", args: { a: 1, b: 2 } },
     }, { id: 1 }));
-    await waitFor(() => started === 1);
+    // Catalog fingerprinting awaits native WebCrypto. An arbitrary number of
+    // fake-clock turns cannot guarantee it finishes before the call begins.
+    await callStarted;
+    expect(started).toBe(1);
     // Time moves only here: a tick short of the 100ms lifetime the call is
     // still running, and at 100ms it is aborted.
     await vi.advanceTimersByTimeAsync(99);
@@ -108,7 +116,9 @@ describe("request admission", () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBe(true);
-    expect((await first).status).toBe(504);
+    const response = await first;
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({ jsonrpc: "2.0", error: { code: -33003, message: "MCP request lifetime exceeded." } });
     const health = await connecta.fetch(new Request(`${BASE}/health`));
     expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
     gate.release();
@@ -197,9 +207,8 @@ describe("request admission", () => {
     expect(overloaded.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(await overloaded.json()).toEqual({
       jsonrpc: "2.0",
-      id: null,
       error: {
-        code: -31001,
+        code: -33001,
         message: "Server capacity is exhausted. Retry later.",
         data: {
           code: "server_overloaded",
@@ -360,7 +369,7 @@ describe("request admission", () => {
       expect(response.status).toBe(503);
       expect(await response.json()).toMatchObject({
         error: {
-          code: -31002,
+          code: -33002,
           data: { code: "server_shutting_down", retryable: false },
         },
       });

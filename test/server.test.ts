@@ -324,7 +324,7 @@ describe("server /mcp end-to-end", () => {
         { token: TOKEN },
       ),
     );
-    expect(body.result.capabilities.extensions).toBeUndefined();
+    expect(body.result.capabilities.extensions).toEqual({});
     expect(body.result.capabilities.resources).toBeUndefined();
     const read = await readJsonRpc(await mcpRpc(c, "resources/read", {
       uri: "ui://connecta/program-ui/v3",

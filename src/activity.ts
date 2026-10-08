@@ -21,6 +21,27 @@ import type { CatalogDriftCounts, Logger } from "./types.js";
  */
 const MAX_ACTIVITY_NAME_BYTES = 128;
 
+/**
+ * Client facts use bounded ASCII grammars, never truncation or escaping.
+ * Names are 1 to 64 characters: alphanumeric or @ first (scoped package names
+ * such as `@modelcontextprotocol/inspector`), then alphanumerics, space, dot,
+ * underscore, @, /, + or -. Versions are 1 to 32 characters: alphanumeric
+ * first, then alphanumerics, dot, underscore, + or -. Prototype-key names are
+ * withheld too. The end assertion rejects even a final CR/LF, unlike `$`.
+ */
+const CLIENT_FACT_GRAMMARS = {
+  name: /^[A-Za-z0-9@][A-Za-z0-9 ._@/+-]{0,63}(?![\s\S])/,
+  version: /^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}(?![\s\S])/,
+};
+const RESERVED_CLIENT_FACTS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** One policy for the record builder, SQL write/read boundaries, and UI. */
+export function activityClientFact(value: unknown, field: "name" | "version"): string | undefined {
+  return typeof value === "string" && !RESERVED_CLIENT_FACTS.has(value) && CLIENT_FACT_GRAMMARS[field].test(value)
+    ? value
+    : undefined;
+}
+
 /** Two names and the dot between them. */
 const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 
@@ -115,6 +136,9 @@ export interface ToolCallActivityEvent {
   approval?: ActivityApproval;
   serverName: string;
   serverVersion: string;
+  /** Self-declared client identity checked by activityClientFact; invalid facts are absent. */
+  clientName?: string;
+  clientVersion?: string;
   deploymentId?: string;
 }
 
@@ -217,6 +241,7 @@ export interface ActivityRequestContext {
   actor: ActivityActor;
   requestId: string;
   serverInfo: { name: string; version: string };
+  clientInfo?: { name: string; version: string };
   deploymentId?: string;
   defer?: (promise: Promise<unknown>) => void;
   logger: Logger;
@@ -256,6 +281,9 @@ export function recordToolActivity(
   // `ConnectorCallError`'s code, and a downstream's own code is not recorded.
   const errorCode = classificationCode(input.errorCode);
   const friction = input.friction ?? agentFrictionForCode(errorCode);
+  // Re-check client grammars at the record boundary; never spread the envelope.
+  const clientName = activityClientFact(context.clientInfo?.name, "name");
+  const clientVersion = activityClientFact(context.clientInfo?.version, "version");
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
@@ -273,6 +301,8 @@ export function recordToolActivity(
     ...(friction ? { friction } : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
+    ...(clientName !== undefined ? { clientName } : {}),
+    ...(clientVersion !== undefined ? { clientVersion } : {}),
     ...(context.deploymentId
       ? { deploymentId: context.deploymentId }
       : {}),

@@ -17,6 +17,9 @@ function rpc(era: "modern" | "legacy", method: string, params: Record<string, un
   request.headers.set("MCP-Protocol-Version", era === "modern" ? "2026-07-28" : "2025-06-18");
   if (era === "modern") {
     request.headers.set("Mcp-Method", method);
+    if (params.arguments && typeof params.arguments === "object" && "address" in params.arguments) {
+      request.headers.set("Mcp-Param-Address", String(params.arguments.address));
+    }
     if (typeof params.name === "string") request.headers.set("Mcp-Name", params.name);
   }
   return request;
@@ -48,7 +51,7 @@ describe("MCP subscriptions", () => {
       const response = await c.fetch(request);
       expect(response.status).toBe(200);
       const body = await readJsonRpc(response);
-      expect(body.result.capabilities).toEqual({ tools: { listChanged: false } });
+      expect(body.result.capabilities).toEqual({ tools: { listChanged: false }, extensions: {} });
     } finally {
       await c.close();
     }
@@ -187,7 +190,7 @@ describe("MCP subscriptions", () => {
         notifications: { toolsListChanged: true },
       }, 1));
       expect(response.status).toBe(504);
-      await response.text();
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
       const health = await c.fetch(new Request(`${BASE}/health`));
       expect(await health.json()).toMatchObject({
         admission: { requests: { active: 0, totals: { admitted: 0 } } },
@@ -215,7 +218,7 @@ describe("MCP subscriptions", () => {
         duplex: "half",
       } as RequestInit));
       expect(response.status).toBe(504);
-      await response.text();
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -33003 } });
       expect(cancelled).toBe(true);
     } finally {
       await c.close();

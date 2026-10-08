@@ -1,3 +1,4 @@
+import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { PoolTrust } from "./tool-safety.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -1424,6 +1425,7 @@ export function registerExecuteTool(
     executor: Executor;
     logger: Logger;
     activity?: ActivityRequestContext | undefined;
+    client?: McpClientContext | undefined;
     requestSignal?: AbortSignal | undefined;
     requestScope?: object | undefined;
     discoveryConcurrency?: number | undefined;
@@ -1510,10 +1512,12 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    (args, extra) =>
-      underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
+    (args, extra) => {
+      if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
+      return underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
         execute(args as { code: string; diagnostics?: boolean }, {
           signal,
-        })),
+        }));
+    },
   );
 }

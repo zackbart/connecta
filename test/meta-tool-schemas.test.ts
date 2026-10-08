@@ -19,7 +19,7 @@ const stubExecutor: Executor = {
 };
 
 const directCallProperties = {
-  address: { type: "string" },
+  address: { type: "string", "x-mcp-header": "Address" },
   args: {
     type: "object",
     propertyNames: { type: "string" },
