@@ -27,6 +27,13 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
 
   compareAndSetContract(async () => (await open()).storage());
 
+  it("rejects a NUL key before creating the KV schema", async () => {
+    const db = await open();
+    await expect(db.storage().get("a\0b")).rejects.toThrow(/U\+0000 \(NUL\)/);
+    expect(await db.rows("SELECT name FROM sqlite_master WHERE name = ?1", "connecta_kv"))
+      .toEqual([]);
+  });
+
   it("round-trips get, set, delete, and a sorted list", async () => {
     const storage = (await open()).storage();
     await storage.set("conn:b:token", "2");
@@ -55,15 +62,6 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     await storage.set("axb", "3");
     expect(await storage.list("a%")).toEqual(["a%b"]);
     expect(await storage.list("a_")).toEqual(["a_b"]);
-  });
-
-  it("matches embedded NUL bytes in list prefixes literally", async () => {
-    const storage = (await open()).storage();
-    await storage.set("a\0b:one", "1");
-    await storage.set("a\0c:two", "2");
-    await storage.set("a:other", "3");
-    expect(await storage.list("a\0b:")).toEqual(["a\0b:one"]);
-    expect(await storage.list("a\0")).toEqual(["a\0b:one", "a\0c:two"]);
   });
 
   it("removes expired rows physically on a later write", async () => {

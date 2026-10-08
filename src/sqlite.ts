@@ -10,6 +10,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { ActivityStore } from "./activity.js";
 import type { KVStorage } from "./types.js";
+import { validateStorageKey } from "./storage/keys.js";
 import {
   KV_SCHEMA,
   sqlActivityStore,
@@ -147,6 +148,7 @@ export function importStateFile(
   }
   const entries = Object.entries(loaded as Record<string, unknown>);
   for (const [key, entry] of entries) {
+    validateStorageKey(key);
     const valid = entry !== null && typeof entry === "object" &&
       typeof (entry as { value?: unknown }).value === "string" &&
       (!("exp" in entry) || Number.isFinite((entry as { exp?: unknown }).exp));

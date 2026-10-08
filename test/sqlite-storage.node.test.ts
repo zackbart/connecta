@@ -178,4 +178,12 @@ describe("importStateFile", () => {
     expect(() => importStateFile(db, path)).toThrow(/not a connecta state file/);
     expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
   });
+
+  it("rejects a NUL key before importing any state or creating tables", () => {
+    const path = join(tempDirectory(), "state.json");
+    writeFileSync(path, JSON.stringify({ "a": { value: "original" }, "a\0b": { value: "bad" } }));
+    const db = track(openSqlite(":memory:"));
+    expect(() => importStateFile(db, path)).toThrow(/U\+0000 \(NUL\)/);
+    expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
+  });
 });

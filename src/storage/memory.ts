@@ -1,4 +1,5 @@
 import type { KVStorage } from "../types.js";
+import { validateStorageKey } from "./keys.js";
 
 interface Entry {
   value: string;
@@ -40,15 +41,19 @@ export function memoryStorage(): KVStorage {
   };
   return {
     async get(key) {
+      validateStorageKey(key);
       return fresh(key)?.value ?? null;
     },
     async set(key, value, opts) {
+      validateStorageKey(key);
       write(key, value, opts?.ttlSeconds);
     },
     async delete(key) {
+      validateStorageKey(key);
       map.delete(key);
     },
     async list(prefix) {
+      validateStorageKey(prefix);
       return [...map.keys()]
         .filter((key) => {
           fresh(key);
@@ -59,6 +64,7 @@ export function memoryStorage(): KVStorage {
     // Atomic because nothing between the read and the write yields: the body
     // runs to completion before any other call on this map can start.
     async compareAndSet(key, expected, next, opts) {
+      validateStorageKey(key);
       if ((fresh(key)?.value ?? null) !== expected) return false;
       if (next === null) map.delete(key);
       else write(key, next, opts?.ttlSeconds);

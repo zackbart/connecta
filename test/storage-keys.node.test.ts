@@ -100,6 +100,46 @@ describe("storage key families", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("rejects NUL in every unencoded key component, including identity scopes", () => {
+    const bad = "a\0b";
+    const artifact = artifactKeys.under("artifact:");
+    const builders = [
+      () => scopes.principal(bad),
+      () => scopes.subject(bad),
+      () => scopes.connector(bad),
+      () => resultKeys.chunk(bad, 0),
+      () => resultKeys.chunk(bad, 1),
+      () => catalogKeys.manifest(bad),
+      () => catalogKeys.chunk(bad, "rev", 1),
+      () => catalogKeys.chunk("svc", bad, 1),
+      () => oauthHandoffKeys.handoff(bad, "hash"),
+      () => oauthHandoffKeys.handoff("svc", bad),
+      () => accessTokenKeys.record(bad),
+      () => accessTokenKeys.lookup(bad),
+      () => credentialKeys.credential(bad),
+      () => credentialKeys.credential("svc", bad),
+      () => artifactKeys.under(bad),
+      () => artifact.head(bad),
+      () => artifact.versionPrefix(bad, "view"),
+      () => artifact.versionPrefix("id", bad),
+      () => artifact.runPrefix(bad),
+      () => artifact.run(bad, "0", "run"),
+      () => artifact.run("id", bad, "run"),
+      () => artifact.run("id", "0", bad),
+      () => artifact.blob(bad),
+      () => oauthKeys.value(oauthKeys.field.tokens, bad),
+      () => oauthConnectKeys.used(bad),
+    ];
+    for (const build of builders) {
+      expect(build).toThrow(/U\+0000 \(NUL\)/);
+    }
+    // These existing builders encode the component, so NUL remains safe and
+    // distinct from a literal percent escape without changing their layout.
+    expect(oauthKeys.cleanup(bad)).toBe("oauth:cleanup:a%00b");
+    expect(oauthKeys.cleanupAt(bad)).toBe("oauth:cleanup-at:a%00b");
+    expect(oauthKeys.cleanup("a%00b")).not.toBe(oauthKeys.cleanup(bad));
+  });
+
   it.each([
     ["a split prefix", `storage.set("result" + ":" + id, value);`],
     ["a prefix in pieces outside a call", `const key = "res" + "ult:" + id;`],

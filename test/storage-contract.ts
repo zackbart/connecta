@@ -23,6 +23,30 @@ export function compareAndSetContract(
     vi.useRealTimers();
   });
 
+  it("rejects NUL in every key operation and list prefix without touching other keys", async () => {
+    const storage = await open();
+    await storage.set("a", "original");
+    for (const key of ["\0a", "a\0b", "a\0"]) {
+      const operations = [
+        () => storage.get(key),
+        () => storage.set(key, "replacement"),
+        () => storage.delete(key),
+        () => storage.list(key),
+        () => storage.compareAndSet(key, null, "new"),
+        () => storage.compareAndSet(key, "original", "replacement"),
+        () => storage.compareAndSet(key, "original", null),
+        () => storage.compareAndSet(key, null, null),
+      ];
+      for (const operation of operations) {
+        await expect(operation()).rejects.toThrow(new TypeError(
+          "Storage keys and list prefixes must not contain U+0000 (NUL)",
+        ));
+      }
+    }
+    expect(await storage.get("a")).toBe("original");
+    expect(await storage.list("")).toEqual(["a"]);
+  });
+
   it("lets exactly one of 50 concurrent claims on an absent key win", async () => {
     const storage = await open();
     const results = await Promise.all(

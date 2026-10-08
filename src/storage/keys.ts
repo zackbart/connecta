@@ -68,18 +68,26 @@ export interface KeyFamily {
 /** A family's description beside the builders its callers use. */
 type Keyed = { readonly family: KeyFamily } & Record<string, unknown>;
 
+/** SQL TEXT keys must round-trip on every supported Node and D1 runtime. */
+export function validateStorageKey(key: string): string {
+  if (key.includes("\0")) {
+    throw new TypeError("Storage keys and list prefixes must not contain U+0000 (NUL)");
+  }
+  return key;
+}
+
 // --- scopes -------------------------------------------------------------
 
 /** Namespaces core hands to the subsystems below. */
 export const scopes = {
   /** A personal registry's partition of the root store. */
-  principal: (principalKey: string) => `principal:${principalKey}:`,
+  principal: (principalKey: string) => validateStorageKey(`principal:${principalKey}:`),
   /** One connector's namespace: its `ctx.storage`. */
-  connector: (connectorId: string) => `conn:${connectorId}:`,
+  connector: (connectorId: string) => validateStorageKey(`conn:${connectorId}:`),
   /** The root result partition. */
   results: "results:",
   /** A scoped subject's result partition. */
-  subject: (subjectKey: string) => `subject:${subjectKey}:`,
+  subject: (subjectKey: string) => validateStorageKey(`subject:${subjectKey}:`),
 } as const;
 
 // --- partition families ---------------------------------------------------
@@ -102,7 +110,7 @@ export const resultKeys = {
     durable: false,
   },
   chunk: (id: string, index: number) =>
-    index === 0 ? `result:${id}` : `result:${id}#${index}`,
+    validateStorageKey(index === 0 ? `result:${id}` : `result:${id}#${index}`),
 } as const satisfies Keyed;
 
 // --- root families --------------------------------------------------------
@@ -145,9 +153,9 @@ export const catalogKeys = {
     },
     durable: false,
   },
-  manifest: (connectorId: string) => `catalog:${connectorId}`,
+  manifest: (connectorId: string) => validateStorageKey(`catalog:${connectorId}`),
   chunk: (connectorId: string, revision: string, index: number) =>
-    `catalog:${connectorId}:chunk:${revision}:${index}`,
+    validateStorageKey(`catalog:${connectorId}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
 /** Seconds an OAuth callback's owner binding stays claimable. */
@@ -165,7 +173,7 @@ export const oauthHandoffKeys = {
     durable: false,
   },
   handoff: (connectorId: string, stateHash: string) =>
-    `oauth-handoff:v1:${connectorId}:${stateHash}`,
+    validateStorageKey(`oauth-handoff:v1:${connectorId}:${stateHash}`),
 } as const satisfies Keyed;
 
 /** Connecta-issued `cta_` access tokens: records, digest lookups, capacity. */
@@ -180,8 +188,8 @@ export const accessTokenKeys = {
     durable: true,
   },
   recordPrefix: "access-token:v1:record:",
-  record: (id: string) => `access-token:v1:record:${id}`,
-  lookup: (tokenHash: string) => `access-token:v1:lookup:${tokenHash}`,
+  record: (id: string) => validateStorageKey(`access-token:v1:record:${id}`),
+  lookup: (tokenHash: string) => validateStorageKey(`access-token:v1:lookup:${tokenHash}`),
   active: "access-token:v1:active",
 } as const satisfies Keyed;
 
@@ -225,15 +233,18 @@ export const artifactKeys = {
     ttl: { kind: "durable" },
     durable: true,
   },
-  under: (root: string) => ({
-    head: (id: string) => `${root}head:${id}`,
-    versionPrefix: (id: string, stream: string) => `${root}ver:${id}:${stream}:`,
-    runPrefix: (id: string) => `${root}run:${id}:`,
-    /** One run under `runPrefix(id)`; `order` sorts runs oldest first. */
-    run: (id: string, order: string, runId: string) => `${root}run:${id}:${order}:${runId}`,
-    blob: (key: string) => `${root}blob:${key}`,
-    scanCursor: `${root}refresh:scan-cursor`,
-  }),
+  under: (root: string) => {
+    validateStorageKey(root);
+    return {
+      head: (id: string) => validateStorageKey(`${root}head:${id}`),
+      versionPrefix: (id: string, stream: string) => validateStorageKey(`${root}ver:${id}:${stream}:`),
+      runPrefix: (id: string) => validateStorageKey(`${root}run:${id}:`),
+      /** One run under `runPrefix(id)`; `order` sorts runs oldest first. */
+      run: (id: string, order: string, runId: string) => validateStorageKey(`${root}run:${id}:${order}:${runId}`),
+      blob: (key: string) => validateStorageKey(`${root}blob:${key}`),
+      scanCursor: `${root}refresh:scan-cursor`,
+    };
+  },
 } as const satisfies Keyed;
 
 // --- connector families ---------------------------------------------------
@@ -276,7 +287,7 @@ export const oauthKeys = {
   field: oauthField,
   /** A value's physical key; `epoch` null is the historical unsuffixed name. */
   value: (key: OAuthValueKey, epoch: string | null) =>
-    epoch === null ? key : `${key}:epoch:${epoch}`,
+    validateStorageKey(epoch === null ? key : `${key}:epoch:${epoch}`),
   generation: "oauth:generation",
   cleanup: (generation: string) =>
     `oauth:cleanup:${encodeURIComponent(generation)}`,
@@ -296,7 +307,7 @@ export const oauthConnectKeys = {
     ttl: { kind: "fixed", seconds: 15 * 60 },
     durable: false,
   },
-  used: (nonce: string) => `oauth:connect-used:${nonce}`,
+  used: (nonce: string) => validateStorageKey(`oauth:connect-used:${nonce}`),
 } as const satisfies Keyed;
 
 /**

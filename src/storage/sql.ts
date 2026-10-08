@@ -30,6 +30,7 @@ import type {
 import { InvalidActivityCursorError } from "../activity.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
+import { validateStorageKey } from "./keys.js";
 
 type SqlValue = string | number | null;
 
@@ -111,10 +112,12 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
     ))[0]?.value ?? null;
   return {
     async get(key) {
+      validateStorageKey(key);
       await ensure();
       return current(key, Date.now());
     },
     async set(key, value, opts) {
+      validateStorageKey(key);
       await ensure();
       const now = Date.now();
       const expiry = expiresAt(now, opts?.ttlSeconds);
@@ -137,10 +140,12 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
       ]);
     },
     async delete(key) {
+      validateStorageKey(key);
       await ensure();
       await driver.run(sql("DELETE FROM connecta_kv WHERE key = ?1", key));
     },
     async list(prefix) {
+      validateStorageKey(prefix);
       await ensure();
       const rows = await driver.all<{ key: string }>(
         sql(
@@ -157,6 +162,7 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
       return rows.map((row) => row.key).sort();
     },
     async compareAndSet(key, expected, next, opts) {
+      validateStorageKey(key);
       await ensure();
       const now = Date.now();
       if (next === null && expected === null) {

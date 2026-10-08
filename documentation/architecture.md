@@ -252,6 +252,13 @@ folded), or a storage call passes a key holding literal text. Core hands
 subsystems namespaced views: `conn:<id>:` per connector, `principal:<key>:` per
 personal registry, `results:` and `subject:<key>:` for result paging.
 
+Keys and list prefixes must not contain U+0000 (NUL). D1, SQLite, and memory
+storage reject them with `TypeError` before accessing storage: Node 22's
+`node:sqlite` truncates TEXT results at NUL. Builders reject NUL in unencoded
+components; OAuth cleanup builders already percent-encode their components.
+State-file import validates all keys before writing. The `connecta_kv` table
+keeps its existing TEXT keys, including compatibility with the 0.28 schema.
+
 Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge

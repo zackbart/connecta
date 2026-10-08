@@ -3,7 +3,11 @@
 /** A JSON Schema object describing a tool's input. */
 export type JsonSchema = Record<string, unknown>;
 
-/** Minimal key/value store — the only state connecta needs. */
+/**
+ * Minimal key/value store — the only state connecta needs. Keys and list
+ * prefixes must not contain U+0000 (NUL); adapters reject them with TypeError
+ * before accessing storage. SQL TEXT results truncate at NUL on Node 22.
+ */
 export interface KVStorage {
   /** The live value at `key`; null when absent or expired. */
   get(key: string): Promise<string | null>;
