@@ -695,7 +695,7 @@ describe("status UI", () => {
         headers: { Authorization: `Bearer ${TOKEN}`, Origin: BASE },
       }),
     );
-    expect(bearer.status).toBe(401);
+    expect(bearer.status).toBe(403);
 
     const unknown = await credentialRequest(
       connecta,

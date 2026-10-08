@@ -707,7 +707,7 @@ describe("status UI credential management", () => {
         body,
       }),
     );
-    expect(bearerOnly.status).toBe(401);
+    expect(bearerOnly.status).toBe(403);
 
     const crossOrigin = await connecta.fetch(
       new Request(`${BASE}/ui/credentials/vaulted`, {

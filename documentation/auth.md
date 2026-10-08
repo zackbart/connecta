@@ -207,7 +207,7 @@ secrets. Use a separate stored token for each machine or human owner:
 2. Sign in through Clerk or Worker Access. Grant the intended token manager
    `identity.accessTokenManagement`, then create a token on Access tokens.
    It is bound to that human's principal. For a machine without a human owner,
-   provision `new AccessTokenManager(storage).create("machine-name")` from
+   provision `new AccessTokenManager(storage).create("machine-name", "deployment-provisioning")` from
    trusted deployment code. The Node template provides `npm run provision-token -- machine-name`.
 3. Update `identity.connectorAccess` and pool grants to the returned token
    metadata id with `actor.kind === "access_token"`. Names and `tokenPrefix`
