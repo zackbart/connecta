@@ -9,7 +9,7 @@ type Part = string | Expression;
 import type { ResourceTemplateRefusalCode } from "../types.js";
 export type ResourceTemplateRefusal = ResourceTemplateRefusalCode;
 interface MatchResult { matched: boolean; refusal?: ResourceTemplateRefusal }
-interface ParsedTemplate { parts: Part[]; scheme: string; authority: boolean }
+interface ParsedTemplate { parts: Part[]; scheme: string; authority: string | undefined }
 
 /** Bound parsing plus templates × URI length for the whole resource read. */
 export function resourceUriMatchesTemplates(uri: string, templates: readonly { uriTemplate: string }[], note: (code: ResourceTemplateRefusal) => void = () => {}): MatchResult {
@@ -42,12 +42,8 @@ function parse(template: string): ParsedTemplate | "resource_template_ambiguous"
   if (template.length > MAX_URI_LENGTH) return;
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.exec(template)?.[0];
   if (!scheme) return;
-  const authority = template.slice(scheme.length).startsWith("//");
-  if (authority) {
-    const rest = template.slice(scheme.length + 2);
-    const end = rest.search(/[/?#]|\{[/?#]/);
-    if (/[{}]/.test(end < 0 ? rest : rest.slice(0, end))) return;
-  }
+  const authority = literalAuthority(template.slice(scheme.length));
+  if (authority !== undefined && /[{}]/.test(authority)) return;
   const parts: Part[] = [];
   let offset = 0;
   let count = 0;
@@ -85,6 +81,13 @@ function parse(template: string): ParsedTemplate | "resource_template_ambiguous"
   return { parts, scheme, authority };
 }
 
+function literalAuthority(rest: string): string | undefined {
+  if (!rest.startsWith("//")) return;
+  const value = rest.slice(2);
+  const end = value.search(/[/?#]|\{[/?#]/);
+  return end < 0 ? value : value.slice(0, end);
+}
+
 function expressionCharacter({ operator, variables }: Expression, character: string): boolean {
   const base = operator === "+" || operator === "#" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~!$'()*+@-/,%" :
     operator === "." ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_~-%" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-%";
@@ -109,7 +112,7 @@ function findLiteral(uri: string, literal: string, offset: number): number {
 }
 
 function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boolean {
-  if (uri.length > MAX_URI_LENGTH || !uri.startsWith(scheme) || !authority && uri.slice(scheme.length).startsWith("//")) return false;
+  if (uri.length > MAX_URI_LENGTH || !uri.startsWith(scheme) || authority === undefined && uri.slice(scheme.length).startsWith("//")) return false;
   const values = new Map<string, Array<{ parts: string[]; prefix: number | undefined }>>();
   const capture = (variable: Variable, raw: string[], path: boolean): boolean => {
     const decoded = raw.map(value => safeValue(value, variable.prefix, path));
@@ -177,7 +180,36 @@ function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boo
   }
   const expanded = parts.map(part => typeof part === "string" ? part : expand(part, candidates)).join("");
   const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, value => value.toUpperCase());
-  return canonical(expanded) === canonical(uri);
+  // Empty expressions can join literals into an authority the template did
+  // not advertise. Compare the final RFC 3986 authority after re-expansion.
+  const rest = uri.slice(scheme.length);
+  return canonical(expanded) === canonical(uri) && literalAuthority(rest) === authority && sameHost(uri, scheme, authority) &&
+    safePath(authority === undefined ? rest : rest.slice(authority.length + 2));
+}
+
+function sameHost(uri: string, scheme: string, authority: string | undefined): boolean {
+  // WHATWG special schemes can turn an RFC 3986 path into a host. A literal
+  // authority supplies the expected host, including normal port/IDNA handling;
+  // without one, WHATWG must also find no host. Parser errors stay local.
+  if (authority !== undefined && /[\\\p{Cc}\p{Cf}]/u.test(authority)) return false;
+  try {
+    const host = authority === undefined ? "" : new URL(`${scheme}//${authority}/`).host;
+    return new URL(uri).host === host;
+  } catch { return false; }
+}
+
+function safePath(path: string): boolean {
+  // Inspect the RFC 3986 path before WHATWG removes dot segments. Empty
+  // captures can combine with literals to make traversal absent from any
+  // individual value. Queries and fragments do not contribute path segments.
+  const end = path.search(/[?#]/);
+  let value = end < 0 ? path : path.slice(0, end);
+  for (let depth = 0; depth < 8; depth++) {
+    if (/[\\\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(value)) return false;
+    if (!value.includes("%") || depth > 0 && !/%[0-9a-f]{2}/i.test(value)) return true;
+    try { value = depth === 0 ? decodeURIComponent(value) : decodeNestedPercentEscapes(value); } catch { return false; }
+  }
+  return false;
 }
 
 function expand({ operator, variables }: Expression, values: Map<string, string[]>): string {
@@ -206,10 +238,30 @@ function safeValue(raw: string, prefix: number | undefined, path: boolean): stri
   // Check each decoding layer. Reserved paths may contain slashes, but cannot
   // introduce URI syntax, a network path, traversal, controls or format marks.
   for (let depth = 0; depth < 8; depth++) {
-    if (/[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) || (!path && value.includes("/")) ||
+    if (/[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || (!path && value.includes("/")) ||
         value.startsWith("/") || value.split("/").some(segment => segment === "." || segment === "..")) return undefined;
-    if (!value.includes("%")) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
-    try { value = decodeURIComponent(value); } catch { return undefined; }
+    if (!/%[0-9a-f]{2}/i.test(value)) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
+    try { value = decodeNestedPercentEscapes(value); } catch { return undefined; }
   }
   return undefined;
+}
+
+function decodeNestedPercentEscapes(value: string): string {
+  // The first decode stays strict. Later layers can contain literal percent
+  // signs decoded from %25. Preserve those while decoding every remaining
+  // %HH escape, so literal data cannot hide unsafe escapes elsewhere. Invalid
+  // UTF-8 still throws and the callers keep the same eight-layer bound.
+  return decodeURIComponent(value.replace(/%(?![0-9a-f]{2})/gi, "%25"));
+}
+
+function unsafeUnicode(value: string): boolean {
+  // Refuse non-ASCII separators and compatibility lookalikes of URI syntax,
+  // rather than all non-ASCII. Ordinary percent-encoded UTF-8 path segments
+  // and ASCII spaces remain valid. Inspect every decoding layer without
+  // normalizing the value used for expansion.
+  for (const character of value) {
+    if (character <= "\x7f") continue;
+    if (/\p{Z}/u.test(character) || /[\\/:?#&;=.%@]/.test(character.normalize("NFKC"))) return true;
+  }
+  return false;
 }

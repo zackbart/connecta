@@ -423,7 +423,10 @@ the scheme and authority fixed and supports bounded RFC 6570 scalar and list
 expansions, including prefix modifiers and safe multi-segment `{+path}` and
 `{/p*}` paths. Variables cannot supply authority, backslashes, dot segments,
 a scheme change, query delimiters, controls or Unicode format characters,
-including through repeated percent encoding. The matcher scans forward to the
+including through repeated percent encoding. Initial percent encoding and
+UTF-8 decoding stay strict. Later decoding layers preserve literal percent
+signs produced by `%25` while checking every remaining `%HH` escape. The
+matcher scans forward to the
 leftmost following literal without backtracking. Adjacent expressions and
 literals that the preceding expression can contain are refused with
 `resource_template_ambiguous`. Matching all templates is capped at 262144

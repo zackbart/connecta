@@ -311,10 +311,43 @@ it("INV-3 INV-4 INV-8: reads exact resources and templates from the complete pag
   for (const key of await f.storage.list("response-cache:")) expect(await f.storage.get(key)).not.toContain("synthetic-resource-payload");
 });
 
+it.each([
+  ["https://h/100%25/{p}", "https://h/100%25/a"],
+  ["https://h/{p}", "https://h/50%25off"],
+])("INV-3 INV-4: guest reads dispatch encoded-percent template data exactly once (case %#)", async (template, uri) => {
+  const f = advertisedRemote([template]);
+  const result = await read(f.view(), qualified("docs", uri));
+  expect(result.isError).toBeUndefined();
+  expect(result.structuredContent).toMatchObject({ result: { contents: [{ uri, text: "synthetic-resource-payload" }] } });
+  expect(f.calls.filter(call => call.method === "resources/read")).toEqual([{ method: "resources/read", uri }]);
+});
+
 it.each(["docs://public/..", "docs://public/a/b", "docs://public/%2fprivate", "docs://public/%2e%2e", "docs://public/%252e%252e", "docs://public/http%3a%2f%2f127.0.0.1", "docs://public/%5cprivate"])("INV-3 INV-4: refuses template traversal URI %s before dispatch", async uri => {
   const f = advertisedRemote();
   expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({ error: { code: "not_found", retryable: false } });
   expect(f.calls.filter(call => call.method === "resources/read")).toEqual([]);
+});
+
+it.each([
+  ["https://h{/x}.evil.com:8443/", "https://h.evil.com:8443/"],
+  ["https://h{/x}@evil.com:1/", "https://h@evil.com:1/"],
+  ["http:{/a}/static!", "http:/evil.com/static!"],
+  ["docs://manual/{page}", "docs://manual/%E2%80%A8"],
+  ["docs://manual/{page}", "docs://manual/%25C2%25A0"],
+  ["docs://manual/{+path}", "docs://manual/a/%EF%BC%8F/b"],
+  ["https://h/.{x}/", "https://h/./"],
+  ["https://h/{x}./y", "https://h/./y"],
+  ["https://h/{x}%252e/y", "https://h/%252e/y"],
+])("INV-3 INV-4 INV-6: refuses final URI authority and path edges before dispatch without payload diagnostics (case %#)", async (template, uri) => {
+  const f = advertisedRemote([template]);
+  const result = await read(f.view(), qualified("docs", uri));
+  expect(result.structuredContent).toMatchObject({ error: { code: "not_found", retryable: false, message: "The resource URI is not advertised by this connector." } });
+  expect(f.calls.filter(call => call.method === "resources/read")).toEqual([]);
+  const status = await f.view().statusFor("docs", BASE);
+  for (const output of [result, status]) {
+    expect(JSON.stringify(output)).not.toContain(uri);
+    expect(JSON.stringify(output)).not.toContain(template);
+  }
 });
 
 it("INV-4 INV-5: public resource inventories stay private across callers, pools and token rotation", async () => {
