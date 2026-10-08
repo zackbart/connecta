@@ -157,28 +157,15 @@
 // with its argument, so an accepted miss stays visible instead of quietly
 // widening the bar for everyone ([#342](https://github.com/zackbart/connecta/issues/342)).
 import { describe, expect, it } from "vitest";
+import { providerFixtures } from "./providers.generated.js";
 import {
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
   compactDiscoverySchema,
 } from "../src/catalog.js";
-import { ccb } from "../src/providers/ccb.js";
-import { breeze } from "../src/providers/breeze.js";
-import { gmail } from "../src/providers/gmail.js";
-import { drive } from "../src/providers/drive.js";
-import { docs } from "../src/providers/docs.js";
-import { sheets } from "../src/providers/sheets.js";
-import { slides } from "../src/providers/slides.js";
-import { forms } from "../src/providers/forms.js";
-import { cloudflare } from "../src/providers/cloudflare.js";
-import { notion } from "../src/providers/notion.js";
-import { planningCenter } from "../src/providers/planning-center.js";
-import { overflow } from "../src/providers/overflow.js";
-import { vercel } from "../src/providers/vercel.js";
-import { tithely } from "../src/providers/tithely.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
-import type { Connector, ConnectorContext, ToolDef } from "../src/types.js";
+import type { ConnectorContext } from "../src/types.js";
 
 // H3's two budgets, from `src/catalog-service.ts`: search cuts a description at
 // 160 characters and describe at 240.
@@ -200,184 +187,6 @@ const CONTEXT: ConnectorContext = {
  * vocabulary beyond the shared set, so the extra verbs are listed rather than
  * inferred — a new one is a decision, not a typo that slips through.
  */
-const VERBS: Readonly<Record<string, readonly string[]>> = {
-  cloudflare: [
-    "list",
-    "get",
-    "search",
-    "create",
-    "update",
-    "delete",
-    "add",
-    "bulk",
-    "purge",
-    "rollback",
-    "write",
-    "verify",
-    "upload",
-    "rename",
-    "retry",
-    "set",
-    // The escape hatches sort together under the provider's own name.
-    "cloudflare",
-  ],
-  notion: [
-    "list",
-    "get",
-    "search",
-    "create",
-    "update",
-    "delete",
-    "add",
-    "append",
-    "query",
-    "trash",
-  ],
-  vercel: [
-    "list",
-    "get",
-    "add",
-    "verify",
-    "remove",
-    "upsert",
-    "update",
-    "delete",
-    "promote",
-    "cancel",
-    "vercel",
-  ],
-  ccb: ["list", "get", "ccb"],
-  "planning-center": [
-    "list",
-    "get",
-    "search",
-    "create",
-    "update",
-    "add",
-    // Refreshing a People list is Planning Center's own verb for it.
-    "run",
-    "apply",
-    "schedule",
-    // The escape hatches sort together under Planning Center's own
-    // abbreviation, the one its API headers use (`X-PCO-API-Version`).
-    "pco",
-  ],
-  // Reads only: every Overflow write moves money or edits a donor and crosses
-  // the destructive mutate hatch rather than a named verb.
-  overflow: ["list", "get", "overflow"],
-  // Reads only: every Tithe.ly write moves money or donor payment state and
-  // stays behind the approval-gated mutate hatch.
-  tithely: ["list", "get", "tithely"],
-  breeze: [
-    "list",
-    "get",
-    "add",
-    "update",
-    "assign",
-    "unassign",
-    "record",
-    "breeze",
-  ],
-  // Draft-only: no verb sends, deletes, or relabels, and there is no hatch.
-  gmail: ["search", "list", "get", "create", "update"],
-  // No permanent delete: trash is recoverable, and `delete` names only the
-  // removal of a share. `restore` is Drive's untrash.
-  drive: ["search", "list", "get", "create", "update", "move", "copy", "trash", "restore", "share", "delete"],
-  // No search or list: finding a document is Drive's job. "batch" is Google's
-  // own name for its raw edit method, documents.batchUpdate.
-  docs: ["get", "create", "append", "insert", "replace", "batch"],
-  // `batch` opens both multi-range value writes and the raw batchUpdate hatch;
-  // both are destructive, so the verb still names one safety class.
-  sheets: ["get", "create", "add", "append", "update", "clear", "batch"],
-  // The raw hatch keeps Google's own method name, batchUpdate, so an agent
-  // that knows the Slides reference finds it by that name. Comment posts
-  // are updated and deleted by name, each destructive.
-  slides: ["get", "list", "create", "replace", "update", "delete", "batch"],
-  // No delete or submit verb; `batch` is Google's own batchUpdate, the one
-  // always-destructive hatch, named as the Forms reference names it.
-  forms: ["get", "list", "create", "update", "batch"],
-};
-
-/**
- * The nested properties allowed to ship without a description, with the
- * argument for the whole set.
- *
- * H5 asks for a description on *every* property, and a check that only walked
- * the top level would have let a nested one through while the audit claimed
- * otherwise. Walking the whole schema leaves exactly these: the request parts
- * of Cloudflare's three escape hatches, where H5 collides with H7. `query` and
- * `headers` are one shared constant the compact renderer inlines into all
- * three hatches, and `cloudflare_api_upload` already renders at 1,007 of the
- * 1,024-byte budget this same audit brought it back under — describing
- * `name`/`value` pairs the parent property has already named as name/value
- * pairs would push it over and truncate the entire tool in discovery. H7 wins
- * on that trade, and the exception is recorded rather than hidden behind a
- * shallower check ([#342](https://github.com/zackbart/connecta/issues/342)).
- *
- * The list is asserted exactly, so a new undescribed nested property fails and
- * so does a stale entry here.
- */
-const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
-  Record<string, readonly string[]>
-> = {
-  cloudflare: [
-    "cloudflare_api_get.query[].name",
-    "cloudflare_api_get.query[].value",
-    "cloudflare_api_get.headers[].name",
-    "cloudflare_api_get.headers[].value",
-    "cloudflare_api_mutate.query[].name",
-    "cloudflare_api_mutate.query[].value",
-    "cloudflare_api_mutate.headers[].name",
-    "cloudflare_api_mutate.headers[].value",
-    "cloudflare_api_upload.query[].name",
-    "cloudflare_api_upload.query[].value",
-    "cloudflare_api_upload.headers[].name",
-    "cloudflare_api_upload.headers[].value",
-    "cloudflare_api_upload.fields[].name",
-    "cloudflare_api_upload.fields[].value",
-    "cloudflare_api_upload.fields[].contentType",
-    "cloudflare_api_upload.fields[].fileName",
-    "cloudflare_api_upload.files[].name",
-    "cloudflare_api_upload.files[].fileName",
-    "cloudflare_api_upload.files[].contentType",
-    "cloudflare_api_upload.files[].text",
-    "cloudflare_api_upload.files[].base64",
-  ],
-  notion: [],
-  vercel: [],
-  ccb: [],
-  "planning-center": [],
-  overflow: [],
-  tithely: [],
-  breeze: [],
-  gmail: [],
-  drive: [],
-  docs: [],
-  sheets: [],
-  slides: [],
-  forms: [],
-};
-
-/**
- * Providers whose auth is `api()`'s downstream OAuth grant rather than an
- * operator credential slot. H12's "one credential, one cheap test" has no slot
- * to test there: the grant is exercised by the consent flow itself, and a dead
- * one fails at use as `auth_required`. What H12 still asks is that the
- * connection declare exactly one way to authenticate.
- */
-const OAUTH_PROVIDERS: ReadonlySet<string> = new Set(["ccb"]);
-
-/**
- * Providers authenticated by a delegated Google service account (#678). H12
- * has nothing to hold them to: the key is deployment configuration, read at
- * construction where a structural mistake throws, and the account a call acts
- * as is the caller's own, so a Test button with no caller would prove nothing
- * about anyone's access. A dead grant fails at use with an `auth_required`
- * that names the scopes to authorize. What H12 still asks is one way to
- * authenticate — so neither a credential slot nor an OAuth grant.
- */
-const DELEGATED_PROVIDERS: ReadonlySet<string> = new Set(["gmail", "drive", "docs", "sheets", "slides", "forms"]);
-
 interface SchemaNode {
   properties?: Record<string, SchemaNode | undefined>;
   items?: SchemaNode;
@@ -428,147 +237,20 @@ function firstSentence(description: string): string {
   return (match ? match[0] : description).trim();
 }
 
-/** A freshly generated 2048-bit RSA key as the PKCS#8 PEM a JSON key carries. */
-async function rsaPrivateKeyPem(): Promise<string> {
-  const { privateKey } = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign"],
-  )) as CryptoKeyPair;
-  const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", privateKey)) as ArrayBuffer);
-  return `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
-}
-
-async function surface(
-  name: string,
-  connector: Connector,
-): Promise<{ name: string; connector: Connector; tools: ToolDef[] }> {
-  return { name, connector, tools: await connector.listTools(CONTEXT) };
-}
-
-const providers = await Promise.all([
-  surface(
-    "cloudflare",
-    cloudflare("cf", {
-      purpose: "Edge administration for the production estate",
-    }),
-  ),
-  surface(
-    "notion",
-    notion("nt", { purpose: "Engineering wiki and roadmap questions" }),
-  ),
-  surface(
-    "vercel",
-    vercel("vc", { purpose: "Production web applications" }),
-  ),
-  surface(
-    "ccb",
-    ccb("church", {
-      purpose: "Pastoral care and group shepherding",
-      environment: "production",
-      mode: "system",
-      access: "read-write",
-      clientId: "client",
-      clientSecret: "secret",
-    }),
-  ),
-  surface(
-    "planning-center",
-    planningCenter("pco", { purpose: "Church staff operations" }),
-  ),
-  surface(
-    "overflow",
-    overflow("ov", {
-      environment: "production",
-      purpose: "Church giving, deposits, and recurring gifts",
-    }),
-  ),
-  surface(
-    "tithely",
-    tithely("tl", { purpose: "Church giving reports", environment: "live" }),
-  ),
-  surface(
-    "breeze",
-    breeze("chms", { subdomain: "gracechurch", purpose: "Pastoral care and giving reports" }),
-  ),
-  surface(
-    "gmail",
-    gmail("mail", {
-      purpose: "Staff email triage and reply drafting",
-      serviceAccount: {
-        clientEmail: "delegate@project.iam.gserviceaccount.com",
-        // A real key, because construction checks it; the catalog signs nothing.
-        privateKey: await rsaPrivateKeyPem(),
-      },
-      subject: () => undefined,
-    }),
-  ),
-  surface(
-    "drive",
-    drive("files", {
-      purpose: "Staff documents and shared drives",
-      serviceAccount: {
-        clientEmail: "delegate@project.iam.gserviceaccount.com",
-        privateKey: await rsaPrivateKeyPem(),
-      },
-      subject: () => undefined,
-    }),
-  ),
-  surface(
-    "docs",
-    docs("docs", {
-      purpose: "Staff meeting notes and sermon drafts",
-      serviceAccount: {
-        clientEmail: "delegate@project.iam.gserviceaccount.com",
-        privateKey: await rsaPrivateKeyPem(),
-      },
-      subject: () => undefined,
-    }),
-  ),
-  surface(
-    "sheets",
-    sheets("sheets", {
-      purpose: "Finance and attendance spreadsheets",
-      serviceAccount: {
-        clientEmail: "delegate@project.iam.gserviceaccount.com",
-        privateKey: await rsaPrivateKeyPem(),
-      },
-      subject: () => undefined,
-    }),
-  ),
-  surface(
-    "slides",
-    slides("decks", {
-      purpose: "Sermon slides and staff meeting decks",
-      serviceAccount: {
-        clientEmail: "delegate@project.iam.gserviceaccount.com",
-        privateKey: await rsaPrivateKeyPem(),
-      },
-      subject: () => undefined,
-    }),
-  ),
-  surface(
-    "forms",
-    forms("forms", {
-      purpose: "Event registration forms and their responses",
-      serviceAccount: {
-        clientEmail: "delegate@project.iam.gserviceaccount.com",
-        privateKey: await rsaPrivateKeyPem(),
-      },
-      subject: () => undefined,
-    }),
-  ),
-]);
+const providers = await Promise.all(providerFixtures.filter((fixture) => fixture.conventions !== undefined).map(async (fixture) => {
+  const connector = fixture.create();
+  return { name: fixture.name, connector, tools: await connector.listTools(CONTEXT), conventions: fixture.conventions! };
+}));
 
 describe.each(providers)(
   "$name meets the hand-written provider conventions",
-  ({ name, connector, tools }) => {
+  ({ connector, tools, conventions }) => {
     it("names every tool verb_object in snake_case (H2)", () => {
       const shapes = tools.filter(
         (tool) => !/^[a-z][a-z0-9_]*$/.test(tool.name),
       );
       expect(shapes.map((tool) => tool.name)).toEqual([]);
-      const verbs = VERBS[name] ?? [];
+      const verbs = conventions.verbs;
       const strangers = tools.filter(
         (tool) => !verbs.includes(tool.name.split("_")[0] ?? ""),
       );
@@ -612,7 +294,7 @@ describe.each(providers)(
       for (const tool of tools) {
         schemaGaps(tool.inputSchema as SchemaNode, tool.name, gaps);
       }
-      const expected = [...(NESTED_DESCRIPTION_EXCEPTIONS[name] ?? [])].sort();
+      const expected = [...(conventions.nestedDescriptionExceptions)].sort();
       expect(gaps.undescribed.sort()).toEqual(expected);
       // Closedness has no exception at any depth: an open nested object is an
       // argument the validator waves through into the provider.
@@ -659,13 +341,13 @@ describe.each(providers)(
     });
 
     it("declares an operator credential and a test for it (H12)", () => {
-      if (DELEGATED_PROVIDERS.has(name)) {
+      if (conventions.auth === "delegated") {
         expect(connector.credential).toBeUndefined();
         expect(connector.startAuth).toBeUndefined();
         expect(connector.testCredential ?? connector.testCredentials).toBeUndefined();
         return;
       }
-      if (OAUTH_PROVIDERS.has(name)) {
+      if (conventions.auth === "oauth") {
         expect(connector.credential).toBeUndefined();
         expect(connector.startAuth).toBeInstanceOf(Function);
         return;

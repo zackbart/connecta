@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "provider": "overflow",
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://server.stage.overflow.co/api/docs/openapi.json"
+      },
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v3/contributions",
+          "specRevision": "3.0",
+          "contract": "sha256:dec09778fb3692d382c0a8a1448d7ffdaae6b5cdbe083b021f011aece6a6e6db"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v3/contributions",
+          "specRevision": "3.0",
+          "contract": "sha256:54bb2eb488257ceabcec18f02ffb75253876732faacd670706e109d7cfaff19a"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/contributions/{contributionId}",
+          "specRevision": "3.0",
+          "contract": "sha256:643ffd31c7c9eb1794fbe3e7cab40f79f19c65040fce09baa6cc099de4e977c2"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v3/contributions/{contributionId}/initiate-refund",
+          "specRevision": "3.0",
+          "contract": "sha256:c7fca60d29bf5ad080aad29e683bfcac4cf4ad40bec10d611f99542806cd1ecd"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/deposits",
+          "specRevision": "3.0",
+          "contract": "sha256:1060aea379690f7bf26da62d8b566075cc30001008770b95e4619912907f0f88"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/deposits/{depositId}",
+          "specRevision": "3.0",
+          "contract": "sha256:0ba845394a4b7dac94d2b19bfcb5dadbb0c3ec961eb2dbf9c233859b3cc42b1a"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/deposits/{depositId}/summary",
+          "specRevision": "3.0",
+          "contract": "sha256:8de9d9b531656249f060f5e8da55eb67299e0af75fe9073532e1ae2f8e5cbe65"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/refunds",
+          "specRevision": "3.0",
+          "contract": "sha256:45f04a41da0eb97559607fe9cbcf2822a688a575f7acf9efaf757c1504213efa"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/refunds/{refundId}",
+          "specRevision": "3.0",
+          "contract": "sha256:bd17b5e98fae27062f21d248259ea1a8dafb4b432f600008e79c208b3b09be9b"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/chargebacks",
+          "specRevision": "3.0",
+          "contract": "sha256:267a1ccd7a1bdd2fad5d2492ff9084158708ca98db4b5b876b1e26a9d72e9ce4"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/chargebacks/{chargebackId}",
+          "specRevision": "3.0",
+          "contract": "sha256:1b219ad68dea47d885fbc170ecd68f8e4b0d307f6192eaf05040d58395651677"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/webhooks",
+          "specRevision": "3.0",
+          "contract": "sha256:b8ec475b67c67fbd863ff263ef0a5615623d45892455c443e9f4413a03d58a9c"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/webhooks/{webhookId}",
+          "specRevision": "3.0",
+          "contract": "sha256:dfff18b286a60a6570b2e92baad3a4916446c18d14be2dc44af1ca47bca63bf5"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/webhooks/{webhookId}/event-logs",
+          "specRevision": "3.0",
+          "contract": "sha256:c1a5113e3df85f90ddf4e9da62473546a4fb31eb03dd955457e4500345c71969"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/donors",
+          "specRevision": "3.0",
+          "contract": "sha256:400c7edbe6f45a83777f132f9cd7d79ff65a99145dc8278708148697b9a1ca1d"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v3/donors",
+          "specRevision": "3.0",
+          "contract": "sha256:4b6fcb65cc6c67ae90a5c913d5b2cba4ebd4e510ed7181d0980d3d80a3955109"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/donors/{donorId}",
+          "specRevision": "3.0",
+          "contract": "sha256:1fca06fb6eaee685402d0ff748339663090098fc79aadebc3015baa7f3653b1a"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/v3/donors/{donorId}",
+          "specRevision": "3.0",
+          "contract": "sha256:9935333e4e1d8ba4885e6cf0fcac738e0c855f1319dc97798fb4199bf0642507"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v3/subscriptions/{donorId}",
+          "specRevision": "3.0",
+          "contract": "sha256:70265663b54476bde2b331ff784613f6033e9bedfa592022abb6d3c875d6fea4"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/subscriptions/{donorId}",
+          "specRevision": "3.0",
+          "contract": "sha256:a279e11c4cf3e3eb95a8d8b8b51c3ad7325dd4afd300d7ccda5afa47bf42f4ae"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/subscriptions",
+          "specRevision": "3.0",
+          "contract": "sha256:258e3dd3fe855f55085409f8e8b568b800d0792ba87cf224b6dbc347b440bb76"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/subscriptions/{donorId}/{subscriptionId}",
+          "specRevision": "3.0",
+          "contract": "sha256:da85786ec1bc25d1a10bfeb35aa5cffc8829d7790b71f6949d938cd1fedf25a2"
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/v3/subscriptions/{donorId}/{subscriptionId}",
+          "specRevision": "3.0",
+          "contract": "sha256:85464f6dae6b7968e85c9b18faefc5802cad19c9ba80c48e03fd6c8a7fb49813"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v3/subscriptions/{donorId}/{subscriptionId}",
+          "specRevision": "3.0",
+          "contract": "sha256:93f73eb6ccb38c83f97a84eb9cd89a2e76829251f9ef108570eadaab28875bf2"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/payment-methods/{donorId}",
+          "specRevision": "3.0",
+          "contract": "sha256:2f4f4982e6acd49fc8f7005a1136d6d7d2bf7ee8f433349c9504740432508d42"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/campaigns",
+          "specRevision": "3.0",
+          "contract": "sha256:7eb26a4458fe9265bc49d3a221fb6c2c1439b1bd9e14988f18eb2f31b75667cc"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/campaigns/{campaignId}",
+          "specRevision": "3.0",
+          "contract": "sha256:9ecca4f8990c0e6344687ff5acf2efebb280a714f917f338b7f8f0c7e47ec5e5"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/locations",
+          "specRevision": "3.0",
+          "contract": "sha256:c76b0f9c894bb90cccf5017e9841631a759fca211d1da16918ec550afde6b3c9"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/locations/{locationId}",
+          "specRevision": "3.0",
+          "contract": "sha256:1a8395f7f159c0e2c8f3fa470d5005e078c8880fb7d201394c2da586ed17bf0f"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v3/payments/authorize",
+          "specRevision": "3.0",
+          "contract": "sha256:f0d1fabd23b58db74e91eb363fa9a4370f5ac59c418cfbb7101ea8b806fd45a4"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/destinations",
+          "specRevision": "3.0",
+          "contract": "sha256:999c50be3f1f23781f7657b8a4de73db072efe2138b43c38c6a15ae70c26036c"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/destinations/{destinationId}",
+          "specRevision": "3.0",
+          "contract": "sha256:887e4bae85e8b31fcf14933847407ae56c9386afcfb2a1871514c62fbe31065c"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/devices",
+          "specRevision": "3.0",
+          "contract": "sha256:c62afd00e22c3c54bf525e8a6a6f314cb1d0f4e40923375e900dc8fc64cdd86d"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/devices/{deviceId}",
+          "specRevision": "3.0",
+          "contract": "sha256:1fe94659eac8051aaba8e79837ce784e500391cde9ba074a4787f1d95f94a3b8"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/events",
+          "specRevision": "3.0",
+          "contract": "sha256:012df91b90204136e6990110535ebb3d286686e68ec6370cd8745822a75e7c9f"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/groups",
+          "specRevision": "3.0",
+          "contract": "sha256:8f88f9bd439d2cf11f341c9ef14ebd104f37693ba82e3797486a1e67d2694cc7"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/tap/groups/{groupId}",
+          "specRevision": "3.0",
+          "contract": "sha256:ab08eea732c0ac87db5d9cfd2b02102e6e1fe304b22ee0d5b5c659a1548decf9"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v3/health",
+          "specRevision": "3.0",
+          "contract": "sha256:d93fc91e05dfc636bc060591012b10d08e645ad64289aff60c18464968893ffa"
+        }
+      ],
+      "rationale": "The vendor publishes its OpenAPI document only on staging; production's equivalent returns 404. This evidence relies on the vendor documenting one v3 API at both base URLs. All 38 operations are reviewed because the guide routes agents to them through named tools or REST hatches."
+    }
+  ]
+}

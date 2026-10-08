@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "provider": "stripe",
+  "checks": [
+    {
+      "type": "mcp-docs",
+      "setup": "https://docs.stripe.com/mcp.md",
+      "inventory": {
+        "url": "https://docs.stripe.com/mcp.md",
+        "format": "table",
+        "start": "## Tools",
+        "end": "### Supported API methods"
+      },
+      "endpoints": [
+        "https://mcp.stripe.com/"
+      ],
+      "reviewed": [
+        "stripe_api_search",
+        "stripe_api_details",
+        "stripe_api_read",
+        "get_stripe_account_info",
+        "get_balance_summary",
+        "list_metrics",
+        "explain_metric",
+        "metric_drilldown",
+        "show_metric_app",
+        "list_available_accounts_or_orgs",
+        "manage_stripe_accounts",
+        "search_stripe_documentation",
+        "stripe_api_write",
+        "create_refund",
+        "stripe_implementation_planner",
+        "stripe_analytics",
+        "stripe_report",
+        "send_stripe_mcp_feedback"
+      ]
+    }
+  ]
+}

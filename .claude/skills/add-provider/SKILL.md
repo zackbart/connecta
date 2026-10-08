@@ -1,84 +1,96 @@
 ---
 name: add-provider
-description: Add or change a maintained connecta provider under src/providers/ - a hosted MCP preset over remoteMcp() or an api() integration - with classification, tests, package registration, bundle budget, and drift records. Use for any new provider or provider-shape change.
+description: Add or change a maintained connecta provider in its own folder, with classification, skills, fixtures, reviewed bundle budgets, and vendor-contract drift evidence.
 ---
 
 # Add a maintained provider
 
-**Shape in flux.** Phase 1 item 5 ([#705](https://github.com/zackbart/connecta/issues/705))
-replaces this. 5a ([PR #721](https://github.com/zackbart/connecta/pull/721),
-in review) adds `defineProvider()` and public `classify` on `remoteMcp()`,
-replacing internal `withVettedCatalog()`. 5b moves each provider to
-`src/providers/<name>/{index.ts,SKILL.md,drift.json,provider.test.ts,fixtures.ts}`
-and generates the registration lists below. Once #721 merges, use
-`defineProvider()`; after 5b, follow its generator instead of these lists.
-The current shape follows. `<name>` is kebab-case, `<fn>` its camelCase factory.
+Read `PRINCIPLES.md` and the architecture guide. Phase 1 item 5
+([#705](https://github.com/zackbart/connecta/issues/705)) owns this shape.
+Hosted presets and capability reconciliation remain separate follow-up work.
 
-## The module: `src/providers/<name>.ts`
+## Provider folder
 
-- Export `<fn>(id: string, options: <Name>Options): Connector`, the options
-  interface, and endpoint constants (`<NAME>_MCP_ENDPOINT(S)` or
-  `<NAME>_API_BASE_URL(S)`). Imports stay relative; no new dependencies.
-- Options: required non-empty `purpose`; optional `title`, `instructions`
-  (appended to the guide, never replacing it), `authScope`, `callAdmission`
-  (no default unless the vendor publishes a limit), `maxResultBytes`, passed
-  through `defined({...})` from `../connectors/api-connector.js`.
-- Throw a plain `Error` at construction (INV-11) for a blank purpose, a
-  required mode with no safe default (Linear `access`, Tithe.ly `environment`;
-  say why the code won't guess), or a malformed structural option.
-- **Hosted MCP** (`linear.ts`, `basecamp.ts`): classify with a `READ_ONLY_TOOLS`
-  set and a `WRITE_TOOLS` map (`additive`/`destructive`), export
-  `<NAME>_VETTED_CATALOG = vettedCatalog({ reads, writes })` from
-  `../catalog-drift.js`, build `remoteMcp(id, { url, title, description, auth,
-  requireHttps: true, usageGuide })`, and return `withVettedCatalog(connector, catalog)`.
-  Unlisted tools are writes unless they say otherwise (INV-1).
-- **`api()`** (`tithely.ts`, `ccb.ts`): `apiConnector as api` with
-  `credential`, `testCredentials`, `usageGuide`, and `tools`. Requests go
-  through `guardedFetch`; failures throw `ConnectorCallError`. Each tool sets
-  an explicit `annotations.readOnlyHint` and an `outputSchema`.
-- Usage guide: the first line is the routing fact (live/test, read-only or
-  read-write); `summary` is explicit and at most 120 bytes; a
-  `## Workspace instructions` section only when `instructions` is set.
+Create `src/providers/<name>/` with these files. Shared implementation modules
+live in `src/providers/_shared/` and never become public providers.
 
-## Tests
+- `index.ts`: the factory, options type, endpoint constants, and its
+  `defineProvider()` definition. Preserve the public
+  `@zackbart/connecta/providers/<name>` import. Imports stay relative.
+- `SKILL.md`: maintained guide text. Its frontmatter declares `name` and
+  `instructionsHeading`. Mark each exact text fragment with
+  `<!-- fragment: key -->` and `<!-- endfragment -->`. The generator serializes
+  the UTF-8 text into `skill.generated.ts`; no runtime filesystem access.
+  Keep connection facts such as purpose, mode, region and account in the
+  renderer, and append deployment instructions under the generated heading.
+- `drift.json`: versioned vendor-contract evidence. Preserve reviewed endpoint
+  digests, revisions, product pins, inventories, and public source URLs.
+  Select the check type appropriate to the contract. A manual-only contract
+  must declare its source and rationale; it must not disappear from reporting.
+- `fixtures.ts`: export `fixture` with its name, credential-free construction
+  options, mode cases, `create()`, and any API convention data. Record allowed
+  verbs, justified nested-description exceptions, and the auth category here.
+  Fixtures run in both test runtimes and against installed tarball imports.
+- `provider.test.ts`: construction, auth, metadata, paging, projections,
+  errors, and classification tests. Use `provider.node.test.ts` only when Node
+  is actually necessary, with a first-line `// Node-only: <reason>` comment.
 
-- `test/<name>-provider.test.ts`, portable unless it truly needs Node:
-  construction refusals, per-mode title and guide, credentials, read/write
-  split, transport and auth, paging, error mapping. Hosted MCP tests mock
-  `../src/connectors/remote-mcp.js` and check classification against the catalog
-  through `servedTools()` (`test/fixtures/hosted-provider.ts`): `listTools`
-  returns the raw listing, and the registry classifies it from
-  `Connector.classification`.
-- `test/provider-conventions.test.ts` (`api()` providers): add the import, a
-  `VERBS` entry, `NESTED_DESCRIPTION_EXCEPTIONS`, and `surface(...)`; OAuth or
-  Google delegation providers join `OAUTH_PROVIDERS`/`DELEGATED_PROVIDERS`.
-  It enforces verb-first snake_case names, description lengths, closed and
-  fully described input schemas, output schemas, compact discovery size, and
-  the guide summary.
-- `test/provider-registry.test.ts`: add a `ProviderCase` proving two instances
-  boot offline with separate namespaces, storage, admission, and activity.
+Tests and fixture modules do not ship. Generated skill strings do ship.
+Additional provider-local tests and references may accompany these files.
 
-## Registration
+## Definition and behavior
 
-- `package.json` `exports`: `./providers/<name>` (types and import).
-  `test/package-surface.node.test.ts` fails without it and if the root entry
-  re-exports the provider. `test/purity.node.test.ts` needs no edit.
-- `knip.jsonc` `entry`: `src/providers/<name>.ts`.
-- `scripts/bundle-budget.json`: an `entries` budget plus a `notes` sentence;
-  `check:bundle` rejects an export without one.
-- `scripts/check-package.mjs`: packed `dist/providers/<name>.js` and `.d.ts`,
-  an import smoke, and the names in the root-leak list.
-- Drift: `api()` providers record `scripts/drift/<name>-endpoints.json` with
-  `npm run drift:check -- --record --provider <name>` and join `SPEC_PROVIDERS`;
-  hosted MCP providers join `DOCS_PROVIDERS`, `DOCUMENTED_MCP`, and
-  `loadDocumentedProviders()` in `scripts/drift-check.mjs`.
-- `README.md`: the alphabetical maintained-connections list.
-- `.changes/<slug>.md` with `type: added`.
+`defineProvider()` is transport-independent. Existing providers use
+`asProviderFactory()` to attach that same definition while retaining their
+existing constructor's option policy during the folder migration. Use
+`defineProvider()` for new providers. Declare the closed option shape
+with `optionsOf<Options>()`; no per-provider classification override option.
+Supply `name`, `title`, `kind`, `skill`, `options`, `create`, and reviewed
+`bundle` facts (`baselineGzip`, `maxGzip`, optional `note`). The optional `readme`
+field is the display name in the generated provider inventory. Caps are review
+facts, never recomputed from observed sizes. Keep them out of `drift.json`.
 
-## Verify
+- Require a non-empty purpose. Refuse structural mistakes at construction
+  (INV-11). The shared construction path names the provider and connector id
+  in every refusal and preserves its actionable detail.
+- Hosted MCP uses `remoteMcp()` with `requireHttps`, explicit auth, and reviewed
+  classification. The registry applies `Connector.classification`; the vendor
+  owns names, descriptions, schemas, and results. A reviewed write outranks a
+  contradictory vendor read hint. Unknown tools fail closed unless their
+  annotations establish a read (INV-1). Hiding unlisted tools belongs to item 6.
+- API tools explicitly annotate reads/writes, declare output schemas, confine
+  transport with `guardedFetch`, and throw `ConnectorCallError` at use. Do not
+  infer safety from names. Keep secret-bearing configuration out of `describe()`.
+- The guide leads with the routing fact, has an explicit summary no longer than
+  120 bytes, and carries conventions a schema cannot express. Provider guides
+  are currently adapted to `ConnectorUsageGuide`; future Skills work owns
+  reference exposure. Preserve existing guide bytes on mechanical moves.
 
-`npm run providers:check` reads public contracts, never credentials; findings
-become human-reviewed issues, and nothing files itself. Then
-`npm run check:fast` while iterating and `npm run check` before done. A new
-provider touches `package.json` and scripts, so CI runs browsers; later edits
-confined to its module, tests, and drift record skip them.
+## Derived lists
+
+Run `npm run providers:generate`. Folder discovery derives provider exports,
+Knip entries, bundle membership and budgets, packed smoke fixtures, portable
+convention imports, and the bounded README inventory. Drift discovery reads the
+local records. Do not hand-edit generated provider membership lists.
+
+`npm run check:providers-generated` compares expected outputs without writing.
+Adding a folder must require no central provider list edit. Public export names
+and non-provider entries must remain unchanged.
+
+## Verification
+
+Run provider-local tests in Node and Workers and the shared conventions,
+registry, purity, and package-boundary checks. Cite applicable `INV-n` IDs in
+meaningful test titles. For mechanical migrations, capture connector metadata,
+usage guides, registry-served names/classifications, and `describe()` before
+and after and compare serialized bytes for every provider and relevant mode.
+
+`npm run providers:check` reads public contracts only. Parser failures are
+provider-local findings; report them alongside other drift and manual review
+requirements. Never fetch credentials, call operational tools, file issues, or
+silently accept a new baseline. Recording evidence is an explicit action.
+
+Add a unique `.changes/<slug>.md` fragment. Run `npm run check:fast` while
+iterating, then `VITEST_MAX_WORKERS=2 npm run release:check` for provider
+registration, packaging, or export changes. Independent review is required
+before merge.

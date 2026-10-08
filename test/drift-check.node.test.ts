@@ -1,43 +1,42 @@
 // Node-only: spawns the Node maintainer drift checker against filesystem fixtures.
+import { existsSync } from "node:fs";
 import { execFile, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { BASECAMP_MCP_ENDPOINT } from "../src/providers/basecamp.js";
-import {
-  CLOUDFLARE_MCP_ENDPOINT,
-  CLOUDFLARE_MCP_VETTED_CATALOG,
-} from "../src/providers/cloudflare.js";
-import { LINEAR_MCP_ENDPOINTS } from "../src/providers/linear.js";
-import {
-  NOTION_MCP_ENDPOINT,
-  NOTION_MCP_VETTED_CATALOG,
-} from "../src/providers/notion.js";
-import {
-  STRIPE_MCP_ENDPOINT,
-  STRIPE_VETTED_CATALOG,
-} from "../src/providers/stripe.js";
-import {
-  VERCEL_MCP_ENDPOINT,
-  VERCEL_MCP_VETTED_CATALOG,
-} from "../src/providers/vercel.js";
+// Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
+const providerDirectory = fileURLToPath(new URL("../src/providers", import.meta.url));
+async function driftRecord(provider: string, directory = providerDirectory): Promise<any> {
+  return JSON.parse(await readFile(join(directory, provider, "drift.json"), "utf8"));
+}
+async function documentedEvidence(provider: string) {
+  return (await driftRecord(provider)).checks.find((check: any) => check.type === "mcp-docs" || check.type === "oauth-discovery");
+}
+const basecampEvidence = await documentedEvidence("basecamp");
+const cloudflareEvidence = await documentedEvidence("cloudflare");
+const linearEvidence = await documentedEvidence("linear");
+const notionEvidence = await documentedEvidence("notion");
+const stripeEvidence = await documentedEvidence("stripe");
+const vercelEvidence = await documentedEvidence("vercel");
+const BASECAMP_MCP_ENDPOINT = basecampEvidence.endpoints[0];
+const CLOUDFLARE_MCP_ENDPOINT = cloudflareEvidence.endpoints[0];
+const LINEAR_MCP_ENDPOINTS = { "read-write": linearEvidence.endpoints[0] };
+const NOTION_MCP_ENDPOINT = notionEvidence.endpoints[0];
+const STRIPE_MCP_ENDPOINT = stripeEvidence.endpoints[0];
+const VERCEL_MCP_ENDPOINT = vercelEvidence.endpoints[0];
 
 const checker = fileURLToPath(
   new URL("../scripts/drift-check.mjs", import.meta.url),
 );
-// tsx's loader in the checker's own process. The tsx CLI would boot a second
-// Node process per run, and every case here already pays for real ones.
-const tsx = ["--import", new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url).href];
-const manifestDirectory = fileURLToPath(new URL("../scripts/drift", import.meta.url));
+const manifestDirectory = providerDirectory;
 const temporary: string[] = [];
 
 // Every case spawns real checker processes — up to five, and the `--docs` ones
-// boot tsx to load provider sources, about a second apiece on an idle machine
-// and several on a loaded one. Process startup is wall-clock nothing here can
+// read vendor records directly. Process startup is wall-clock nothing here can
 // fake, so this is a hang guard sized for the heaviest case, not a speed
 // assertion: vitest's 5s default failed these for load, never for behavior.
 const CASE_TIMEOUT_MS = 60_000;
@@ -64,8 +63,20 @@ interface Finding {
 
 async function committed(provider: string): Promise<Manifest> {
   return JSON.parse(
-    await readFile(join(manifestDirectory, `${provider}-endpoints.json`), "utf8"),
+    await readManifestFile(join(manifestDirectory, provider, "drift.json")),
   );
+}
+
+/** Fixture helpers read/write the endpoint check, preserving its versioned record wrapper. */
+async function readManifestFile(path: string): Promise<string> {
+  const record = JSON.parse(await readFile(path, "utf8"));
+  const check = record.checks.find((item: any) => item.type === "endpoints" || item.type === "versioned-endpoints");
+  return JSON.stringify({ provider: record.provider, ...check });
+}
+async function writeManifestFile(path: string, text: string): Promise<void> {
+  const { provider, ...check } = JSON.parse(text);
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, JSON.stringify({ version: 1, provider, checks: [{ type: check.specifications ? "versioned-endpoints" : "endpoints", ...check }] }));
 }
 
 /** One synthetic operation, distinguishable by the marker in its parameters. */
@@ -117,8 +128,8 @@ async function workspace(providers: string[]): Promise<{
     const manifest = await committed(provider);
     manifests[provider] = manifest;
     specifications[provider] = specificationFor(manifest);
-    await writeFile(
-      join(directory, `${provider}-endpoints.json`),
+    await writeManifestFile(
+      join(directory, provider, "drift.json"),
       // Committed digests are of the real published document, so a fixture
       // starts from the rows alone and records its own.
       `${JSON.stringify(
@@ -181,7 +192,7 @@ async function documentedVercelWorkspace(): Promise<{
   temporary.push(directory);
   const toolReference = join(directory, "vercel-tools.md");
   const setupReference = join(directory, "vercel-setup.md");
-  const headings = [...VERCEL_MCP_VETTED_CATALOG.tools.keys()]
+  const headings = (vercelEvidence.reviewed as string[])
     .sort()
     .map((name) => `### ${name.replaceAll("_", "\\_")}`)
     .join("\n\n");
@@ -201,7 +212,6 @@ function runDocumented(
   const result = spawnSync(
     process.execPath,
     [
-      ...tsx,
       checker,
       "--docs",
       "--provider",
@@ -231,7 +241,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(recorded.status).toBe(0);
 
     const manifest: Manifest = JSON.parse(
-      await readFile(join(directory, "cloudflare-endpoints.json"), "utf8"),
+      await readManifestFile(join(directory, "cloudflare", "drift.json")),
     );
     expect(manifest.endpoints.length).toBeGreaterThan(0);
     for (const endpoint of manifest.endpoints) {
@@ -288,7 +298,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       );
 
       const result = run(directory, [provider], ["--json"]);
-      expect(result.status).toBe(1);
+      expect(result.status).toBe(0);
       const reported = findings(result.output, provider);
       // gonePath may carry more than one method; every one of them is a finding.
       const goneRows = endpoints.filter(
@@ -347,26 +357,25 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(findings(result.output, "notion")).toEqual([]);
   });
 
-  it("fails clearly when a published specification is unavailable", async () => {
+  it("reports an unavailable published specification as an advisory finding", async () => {
     const { directory } = await workspace(["notion"]);
+    expect(run(directory, ["notion"], ["--record"]).status).toBe(0);
     const result = run(directory, [], [
       "--provider",
       "notion",
       "--spec",
       `notion=${join(directory, "absent.json")}`,
     ]);
-    expect(result.status).toBe(2);
-    expect(result.output).toContain(
-      "could not read notion's published specification",
-    );
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("could not read notion's published specification");
   });
 
-  it("fails clearly when a touched-endpoint manifest is unavailable", async () => {
+  it("refuses a provider without a discovered drift record", async () => {
     const { directory } = await workspace(["notion"]);
     const result = run(directory, [], ["--provider", "cloudflare"]);
     expect(result.status).toBe(2);
     expect(result.output).toContain(
-      "could not read cloudflare's touched-endpoint manifest",
+      "unknown provider: cloudflare",
     );
   });
 
@@ -405,10 +414,10 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
         writeFile(join(pagesDirectory, `${slugs[index]}.md`), page(endpoint, "original")),
       ),
     );
-    const manifestPath = join(directory, "tithely-endpoints.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const manifestPath = join(directory, "tithely", "drift.json");
+    const manifest = JSON.parse(await readManifestFile(manifestPath));
     manifest.specification.pages = slugs;
-    await writeFile(manifestPath, JSON.stringify(manifest));
+    await writeManifestFile(manifestPath, JSON.stringify(manifest));
     const runPages = (extra: string[]) =>
       spawnSync(
         process.execPath,
@@ -424,14 +433,14 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const target = endpoints[0]!;
     await writeFile(join(pagesDirectory, "page-0.md"), page(target, "rewritten"));
     const drifted = runPages(["--json"]);
-    expect(drifted.status).toBe(1);
+    expect(drifted.status).toBe(0);
     expect(findings(drifted.stdout, "tithely")).toEqual([
       expect.objectContaining({ kind: "contract-changed", method: target.method, path: target.path }),
     ]);
 
     await writeFile(join(pagesDirectory, "page-1.md"), "# Moved\n\nNo snippet here.");
     const broken = runPages([]);
-    expect(broken.status).toBe(2);
+    expect(broken.status).toBe(0);
     expect(`${broken.stdout}${broken.stderr}`).toContain("no longer embeds an OpenAPI definition");
   });
 
@@ -442,8 +451,8 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const manifest = await committed("gmail") as Manifest & { scopes: string[] };
     const directory = await mkdtemp(join(tmpdir(), "connecta-drift-discovery-"));
     temporary.push(directory);
-    await writeFile(
-      join(directory, "gmail-endpoints.json"),
+    await writeManifestFile(
+      join(directory, "gmail", "drift.json"),
       JSON.stringify({
         ...manifest,
         endpoints: manifest.endpoints.map(({ method, path, specRevision }) => ({ method, path, specRevision })),
@@ -512,7 +521,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
 
     await writeFile(source, JSON.stringify(discovery("20260101")));
     expect(check(["--record"]).status).toBe(0);
-    const recorded = JSON.parse(await readFile(join(directory, "gmail-endpoints.json"), "utf8"));
+    const recorded = JSON.parse(await readManifestFile(join(directory, "gmail", "drift.json")));
     expect(recorded.scopes).toEqual(manifest.scopes);
     expect(recorded.endpoints.every((row: Endpoint) => row.specRevision === "20260101")).toBe(true);
 
@@ -525,7 +534,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     // A referenced schema changing moves every contract that reaches it.
     await writeFile(source, JSON.stringify(discovery("20260303", "integer")));
     const drifted = check(["--json"]);
-    expect(drifted.status).toBe(1);
+    expect(drifted.status).toBe(0);
     expect(new Set(findings(drifted.stdout, "gmail").map((finding) => finding.kind))).toEqual(
       new Set(["contract-changed"]),
     );
@@ -533,14 +542,14 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     // A touched method that stops accepting the provider's scopes is reported.
     await writeFile(source, JSON.stringify(discovery("20260101", "string", "drop")));
     const scoped = check(["--json"]);
-    expect(scoped.status).toBe(1);
+    expect(scoped.status).toBe(0);
     expect(findings(scoped.stdout, "gmail")).toEqual([
       expect.objectContaining({ kind: "scope-dropped", method: "POST", path: "/gmail/v1/users/{userId}/drafts" }),
     ]);
 
     await writeFile(source, JSON.stringify(specificationFor(manifest)));
     const wrong = check([]);
-    expect(wrong.status).toBe(2);
+    expect(wrong.status).toBe(0);
     expect(`${wrong.stdout}${wrong.stderr}`).toContain("not a Google Discovery document");
   });
 
@@ -597,7 +606,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(run(directory, ["notion"], ["--record"]).status).toBe(0);
 
     const recorded: Manifest = JSON.parse(
-      await readFile(join(directory, "notion-endpoints.json"), "utf8"),
+      await readManifestFile(join(directory, "notion", "drift.json")),
     );
     const digestFor = (endpoint: Endpoint) =>
       recorded.endpoints.find(
@@ -612,7 +621,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       JSON.stringify(specification),
     );
     const result = run(directory, ["notion"], ["--json"]);
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(0);
     expect(findings(result.output, "notion")).toEqual([
       expect.objectContaining({
         kind: "contract-changed",
@@ -636,7 +645,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     );
     // The first run reports it — nothing has reviewed it yet — and records it.
     const first = run(directory, ["notion"], ["--record", "--json"]);
-    expect(first.status).toBe(1);
+    expect(first.status).toBe(0);
     expect(findings(first.output, "notion")).toEqual([
       expect.objectContaining({
         kind: "deprecated",
@@ -646,7 +655,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     ]);
 
     const recorded: Manifest = JSON.parse(
-      await readFile(join(directory, "notion-endpoints.json"), "utf8"),
+      await readManifestFile(join(directory, "notion", "drift.json")),
     );
     expect(
       recorded.endpoints.find(
@@ -665,7 +674,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       JSON.stringify(specification),
     );
     const reversed = run(directory, ["notion"], ["--json"]);
-    expect(reversed.status).toBe(1);
+    expect(reversed.status).toBe(0);
     expect(findings(reversed.output, "notion")).toEqual([
       expect.objectContaining({
         kind: "undeprecated",
@@ -717,7 +726,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       `${await readFile(toolReference, "utf8")}\n### new\\_vercel\\_tool\n`,
     );
     const drifted = runDocumented("vercel", toolReference, setupReference);
-    expect(drifted.status).toBe(1);
+    expect(drifted.status).toBe(0);
     expect(JSON.parse(drifted.output).docs[0].added).toEqual([
       "new_vercel_tool",
     ]);
@@ -727,7 +736,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const directory = await mkdtemp(join(tmpdir(), "connecta-drift-table-"));
     temporary.push(directory);
     const reference = join(directory, "stripe.md");
-    const rows = [...STRIPE_VETTED_CATALOG.tools.keys()]
+    const rows = (stripeEvidence.reviewed as string[])
       .sort()
       .map((name) => `| Account | \`${name}\` | Fixture |`)
       .join("\n");
@@ -760,7 +769,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       ),
     );
     const drifted = runDocumented("stripe", reference, reference);
-    expect(drifted.status).toBe(1);
+    expect(drifted.status).toBe(0);
     expect(JSON.parse(drifted.output).docs[0].added).toContain(
       "new_stripe_tool",
     );
@@ -782,7 +791,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     );
     expect(cloudflareResult.status).toBe(0);
     expect(JSON.parse(cloudflareResult.output).docs[0]).toMatchObject({
-      documentedTools: CLOUDFLARE_MCP_VETTED_CATALOG.tools.size,
+      documentedTools: cloudflareEvidence.reviewed.length,
       added: [],
       findings: [],
     });
@@ -791,7 +800,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const notionSetup = join(directory, "notion-setup.md");
     await writeFile(
       notionTools,
-      [...NOTION_MCP_VETTED_CATALOG.tools.keys()]
+      (notionEvidence.reviewed as string[])
         .sort()
         .map((name) => `\`${name}\``)
         .join("\n\n"),
@@ -803,7 +812,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const notionResult = runDocumented("notion", notionTools, notionSetup);
     expect(notionResult.status).toBe(0);
     expect(JSON.parse(notionResult.output).docs[0]).toMatchObject({
-      documentedTools: NOTION_MCP_VETTED_CATALOG.tools.size,
+      documentedTools: notionEvidence.reviewed.length,
       added: [],
       findings: [],
     });
@@ -868,7 +877,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
         new Promise<{ status: number; output: string }>((resolve) => {
           execFile(
             process.execPath,
-            [...tsx, checker, "--docs", "--provider", "basecamp", "--setup-reference", `basecamp=${setup}`, "--json"],
+            [checker, "--docs", "--provider", "basecamp", "--setup-reference", `basecamp=${setup}`, "--json"],
             { encoding: "utf8" },
             (error, stdout, stderr) => {
               resolve({
@@ -899,7 +908,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       server = { ...server, client_id_metadata_document_supported: false };
       await resource("https://mcp.basecamp.com/v2/mcp");
       const drifted = await run();
-      expect(drifted.status).toBe(1);
+      expect(drifted.status).toBe(0);
       expect(
         JSON.parse(drifted.output).docs[0].findings.map(
           (finding: { kind: string }) => finding.kind,
@@ -911,8 +920,13 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
   });
 
   it("commits one well-formed row per touched endpoint", async () => {
-    for (const provider of ["cloudflare", "notion", "ccb", "gmail", "docs", "sheets", "slides", "forms"]) {
-      const manifest = await committed(provider);
+    for (const entry of await readdir(providerDirectory, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith("_") || !existsSync(join(providerDirectory, entry.name, "drift.json"))) continue;
+      const record = await driftRecord(entry.name);
+      const check = record.checks.find((item: any) => item.type === "endpoints");
+      if (!check) continue;
+      const provider = entry.name;
+      const manifest = { provider, ...check };
       expect(manifest.provider).toBe(provider);
       expect(manifest.specification.url).toMatch(/^https:\/\//);
       const seen = new Set<string>();
@@ -965,7 +979,7 @@ async function planningCenterWorkspace(): Promise<{
   const directory = await mkdtemp(join(tmpdir(), "connecta-drift-pco-"));
   temporary.push(directory);
   const committedManifest = JSON.parse(
-    await readFile(join(manifestDirectory, "planning-center-endpoints.json"), "utf8"),
+    await readManifestFile(join(manifestDirectory, "planning-center", "drift.json")),
   ) as VersionedManifest;
   const specification = (app: string) => join(directory, `${app}-openapi.json`);
   const documentation = (app: string) => join(directory, `${app}-documentation.json`);
@@ -1011,8 +1025,8 @@ async function planningCenterWorkspace(): Promise<{
       JSON.stringify({ openapi: "3.1.1", info: { title: app, version: entry.version }, paths }),
     );
   }
-  await writeFile(
-    join(directory, "planning-center-endpoints.json"),
+  await writeManifestFile(
+    join(directory, "planning-center", "drift.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   return { directory, manifest, specification, documentation };
@@ -1037,7 +1051,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
     const recorded = runPlanningCenter(directory, ["--record"]);
     expect(recorded.status, recorded.output).toBe(0);
     const after = JSON.parse(
-      await readFile(join(directory, "planning-center-endpoints.json"), "utf8"),
+      await readManifestFile(join(directory, "planning-center", "drift.json")),
     ) as VersionedManifest;
     for (const endpoint of after.endpoints) {
       expect(endpoint.contract).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -1063,14 +1077,14 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
     await writeFile(documentation("groups"), JSON.stringify(groups));
 
     const drifted = runPlanningCenter(directory);
-    expect(drifted.status).toBe(1);
+    expect(drifted.status).toBe(0);
     expect(findings(drifted.output, "planning-center")).toEqual([
       expect.objectContaining({ app: "groups", kind: "version-published" }),
       expect.objectContaining({ kind: "contract-changed", method: touched.method, path: touched.path }),
     ]);
 
     // Reviewed and recorded, neither is news again.
-    expect(runPlanningCenter(directory, ["--record"]).status).toBe(1);
+    expect(runPlanningCenter(directory, ["--record"]).status).toBe(0);
     expect(runPlanningCenter(directory).status).toBe(0);
   });
 
@@ -1087,7 +1101,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
     giving.info.version = "2018-08-01";
     await writeFile(specification("giving"), JSON.stringify(giving));
     const result = runPlanningCenter(directory);
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(0);
     const kinds = findings(result.output, "planning-center").map(
       (finding: any) => `${finding.app} ${finding.kind}`,
     );
@@ -1111,7 +1125,7 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
       "--spec",
       `planning-center/calendar=${override}`,
     ]);
-    expect(overridden.status).toBe(1);
+    expect(overridden.status).toBe(0);
     expect(findings(overridden.output, "planning-center")).toEqual([
       expect.objectContaining({ kind: "path-gone", path: "/calendar/v2/event_instances" }),
     ]);
@@ -1121,13 +1135,13 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
   });
 
   it("pins the manifest to the provider's versions and covers exactly what the named tools call", async () => {
-    const { PLANNING_CENTER_API_VERSIONS, planningCenter } = await import(
-      "../src/providers/planning-center.js"
-    );
+    const folderEntry = join(providerDirectory, "planning-center", "index.ts");
+    const source = existsSync(folderEntry) ? folderEntry : join(providerDirectory, "planning-center.ts");
+    const { PLANNING_CENTER_API_VERSIONS, planningCenter } = await import(pathToFileURL(source).href);
     const { memoryStorage } = await import("../src/storage/memory.js");
     const { silentLogger } = await import("./helpers.js");
     const manifest = JSON.parse(
-      await readFile(join(manifestDirectory, "planning-center-endpoints.json"), "utf8"),
+      await readManifestFile(join(manifestDirectory, "planning-center", "drift.json")),
     ) as VersionedManifest;
     expect(
       Object.fromEntries(
@@ -1218,5 +1232,279 @@ describe("Planning Center's per-product drift check", { timeout: CASE_TIMEOUT_MS
         .filter((endpoint) => ![...sent].some((request) => matches(request, endpoint)))
         .map((endpoint) => `${endpoint.method} ${endpoint.path}`),
     ).toEqual([]);
+  });
+});
+
+async function recordWorkspace(records: Record<string, unknown>): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "connecta-drift-records-"));
+  temporary.push(directory);
+  for (const [provider, record] of Object.entries(records)) {
+    await mkdir(join(directory, provider), { recursive: true });
+    await writeFile(join(directory, provider, "drift.json"), JSON.stringify(record));
+  }
+  return directory;
+}
+
+function reportFor(directory: string, extra: string[] = []) {
+  const result = spawnSync(process.execPath, [checker, "--provider-dir", directory, "--json", ...extra], { encoding: "utf8" });
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
+const manualCheck = { type: "manual", source: "https://vendor.example/reference", rationale: "Review the vendor's HTML endpoint table." };
+
+describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () => {
+  it("discovers new providers without a central list and ignores shared/helper folders", async () => {
+    const directory = await recordWorkspace({ "new-vendor": { version: 1, provider: "new-vendor", checks: [manualCheck] } });
+    await mkdir(join(directory, "helper"));
+    await mkdir(join(directory, "_shared"));
+    await writeFile(join(directory, "_shared", "drift.json"), "invalid shared data");
+    const result = reportFor(directory);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output)).toMatchObject({ manual: [{ provider: "new-vendor", findings: [{ kind: "manual-required" }] }], records: [], findings: 1 });
+    expect(reportFor(directory, ["--strict"]).status).toBe(1);
+  });
+
+  it("discovers exactly the published provider set, with versioned vendor evidence for every folder", async () => {
+    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    const published = Object.keys(pkg.exports).filter((key) => key.startsWith("./providers/")).map((key) => key.slice("./providers/".length)).sort();
+    const discovered = (await readdir(providerDirectory, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("_") && existsSync(join(providerDirectory, entry.name, "drift.json")))
+      .map((entry) => entry.name).sort();
+    expect(discovered).toEqual(published);
+    for (const provider of discovered) {
+      const record = await driftRecord(provider);
+      expect(record).toMatchObject({ version: 1, provider });
+      expect(record.checks.length).toBeGreaterThan(0);
+      for (const check of record.checks) {
+        expect(["endpoints", "versioned-endpoints", "mcp-docs", "oauth-discovery", "manual"]).toContain(check.type);
+        if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
+          expect(check.setup).toMatch(/^https:\/\//);
+          expect(check.endpoints.length).toBeGreaterThan(0);
+          expect(check.endpoints.every((endpoint: string) => endpoint.startsWith("https://"))).toBe(true);
+          expect(check.reviewed.length).toBeGreaterThan(0);
+          expect(new Set(check.reviewed).size).toBe(check.reviewed.length);
+          if (check.inventory) expect(check.inventory.url).toMatch(/^https:\/\//);
+        }
+        if (check.type === "endpoints" || check.type === "versioned-endpoints") {
+          expect(check.endpoints.length).toBeGreaterThan(0);
+          for (const endpoint of check.endpoints) {
+            expect(endpoint.contract).toMatch(/^sha256:[0-9a-f]{64}$/);
+            expect(endpoint.specRevision).toBeTruthy();
+          }
+        }
+      }
+    }
+    expect((await driftRecord("basecamp")).checks.map((check: any) => check.type)).toEqual(["oauth-discovery"]);
+  });
+
+  it("reports Breeze's manual source and rationale on every advisory run", async () => {
+    const result = reportFor(providerDirectory, ["--provider", "breeze"]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output).manual[0]).toMatchObject({ provider: "breeze", source: "https://app.breezechms.com/api", findings: [{ kind: "manual-required", detail: expect.stringContaining("hand-written HTML") }] });
+    expect(reportFor(providerDirectory, ["--provider", "breeze", "--strict"]).status).toBe(1);
+    expect(JSON.parse(reportFor(providerDirectory, ["--specs", "--docs", "--provider", "breeze"]).output).manual[0].findings[0].kind).toBe("manual-required");
+  });
+
+  it.each(["source", "rationale"])("rejects a manual check without %s while continuing other checks", async (field) => {
+    const incomplete = { ...manualCheck, [field]: " " };
+    const directory = await recordWorkspace({ vendor: { version: 1, provider: "vendor", checks: [incomplete, manualCheck] } });
+    const result = reportFor(directory);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output).manual.map((entry: any) => entry.findings[0].kind)).toEqual(["evidence-invalid", "manual-required"]);
+  });
+
+  it.each([
+    { version: 2, provider: "bad", checks: [manualCheck] },
+    { version: 1, provider: "wrong-folder", checks: [manualCheck] },
+    { version: 1, provider: "bad", checks: [] },
+  ])("reports malformed record headers without losing another provider", async (bad) => {
+    const directory = await recordWorkspace({ bad, good: { version: 1, provider: "good", checks: [manualCheck] } });
+    const result = reportFor(directory);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output)).toMatchObject({ records: [{ provider: "bad", findings: [{ kind: "evidence-invalid" }] }], manual: [{ provider: "good" }] });
+  });
+
+  it("reports a Vercel parser failure and a network failure while still checking a later provider", async () => {
+    const directory = await recordWorkspace({
+      vercel: { version: 1, provider: "vercel", checks: [vercelEvidence, manualCheck] },
+      "z-vendor": { version: 1, provider: "z-vendor", checks: [linearEvidence] },
+    });
+    const moved = join(directory, "moved.md");
+    const setup = join(directory, "setup.md");
+    await writeFile(moved, "# Tools moved to category pages\n");
+    await writeFile(setup, `OAuth ${VERCEL_MCP_ENDPOINT} ${LINEAR_MCP_ENDPOINTS["read-write"]}`);
+    const result = reportFor(directory, [
+      "--tool-reference", `vercel=${moved}`,
+      "--setup-reference", `vercel=${setup}`,
+      "--setup-reference", `z-vendor=${setup}`,
+    ]);
+    const report = JSON.parse(result.output);
+    expect(result.status).toBe(0);
+    expect(report.docs).toMatchObject([
+      { provider: "vercel", findings: [{ kind: "parser-error" }] },
+      { provider: "z-vendor", findings: [] },
+    ]);
+    expect(report.manual).toMatchObject([{ provider: "vercel", findings: [{ kind: "manual-required" }] }]);
+    const network = reportFor(directory, [
+      "--setup-reference", `vercel=${join(directory, "absent.md")}`,
+      "--tool-reference", `vercel=${moved}`,
+      "--setup-reference", `z-vendor=${setup}`,
+    ]);
+    expect(JSON.parse(network.output).docs).toMatchObject([
+      { provider: "vercel", findings: [{ kind: "unavailable" }] },
+      { provider: "z-vendor", findings: [] },
+    ]);
+  });
+
+  it("reports malformed specification JSON without recording it or stopping the next provider", async () => {
+    const { directory } = await workspace(["cloudflare", "notion"]);
+    const path = join(directory, "cloudflare", "drift.json");
+    const before = await readFile(path, "utf8");
+    await writeFile(join(directory, "cloudflare-spec.json"), "{bad json");
+    const result = run(directory, ["cloudflare", "notion"], ["--record", "--json"]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output).specs).toMatchObject([
+      { provider: "cloudflare", findings: [{ kind: "parser-error" }] },
+      { provider: "notion", findings: [] },
+    ]);
+    expect(await readFile(path, "utf8")).toBe(before);
+    expect((await driftRecord("notion", directory)).checks[0].endpoints[0].contract).toMatch(/^sha256:/);
+  });
+
+  it("refuses implicit recording and writes only explicitly selected endpoint evidence", async () => {
+    const { directory, specifications } = await workspace(["cloudflare", "notion"]);
+    expect(reportFor(directory, ["--record"]).status).toBe(2);
+    const path = join(directory, "cloudflare", "drift.json");
+    const record = await driftRecord("cloudflare", directory);
+    record.checks[0].endpoints[0].evidence = { source: "https://vendor.example/review" };
+    record.checks.push(cloudflareEvidence, manualCheck);
+    await writeFile(path, JSON.stringify(record));
+    const untouchedPath = join(directory, "notion", "drift.json");
+    const untouched = await readFile(untouchedPath, "utf8");
+    const before = await readFile(path, "utf8");
+    expect(run(directory, ["cloudflare"], ["--json"]).status).toBe(0);
+    expect(await readFile(path, "utf8")).toBe(before);
+    const result = run(directory, ["cloudflare"], ["--record", "--json"]);
+    expect(result.status).toBe(0);
+    const after = await driftRecord("cloudflare", directory);
+    expect(after.checks[0].specification).toEqual(record.checks[0].specification);
+    expect(after.checks[0].endpoints[0].evidence).toEqual(record.checks[0].endpoints[0].evidence);
+    expect(after.checks.slice(1)).toEqual(record.checks.slice(1));
+    expect(after.checks[0].endpoints[0].specRevision).toBe(specifications.cloudflare!.info.version);
+    expect(await readFile(untouchedPath, "utf8")).toBe(untouched);
+    expect(run(directory, ["cloudflare"], ["--spec", `notion=${join(directory, "notion-spec.json")}`, "--record"]).status).toBe(2);
+  });
+
+  it("reports per-product parser errors and continues version and endpoint checks without recording partial evidence", async () => {
+    const { directory, documentation, specification } = await planningCenterWorkspace();
+    expect(runPlanningCenter(directory, ["--record"]).status).toBe(0);
+    const path = join(directory, "planning-center", "drift.json");
+    const before = await readFile(path, "utf8");
+    await writeFile(documentation("people"), "{}");
+    await writeFile(specification("people"), "[]");
+    const groups = JSON.parse(await readFile(documentation("groups"), "utf8"));
+    groups.data.relationships.versions.data.push({ id: "2027-01-01" });
+    await writeFile(documentation("groups"), JSON.stringify(groups));
+    const result = runPlanningCenter(directory, ["--record"]);
+    expect(result.status).toBe(0);
+    expect(findings(result.output, "planning-center")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ app: "people", kind: "parser-error" }),
+      expect.objectContaining({ app: "groups", kind: "version-published" }),
+    ]));
+    expect(await readFile(path, "utf8")).toBe(before);
+  });
+});
+
+describe("hosted vendor evidence", () => {
+  it("retains each runtime endpoint and release-reviewed name list through folder discovery", async () => {
+    for (const entry of await readdir(providerDirectory, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith("_") || !existsSync(join(providerDirectory, entry.name, "drift.json"))) continue;
+      const checks = (await driftRecord(entry.name)).checks.filter((check: any) => check.type === "mcp-docs" || check.type === "oauth-discovery");
+      if (checks.length === 0) continue;
+      const folderEntry = join(providerDirectory, entry.name, "index.ts");
+      const source = existsSync(folderEntry) ? folderEntry : join(providerDirectory, `${entry.name}.ts`);
+      const module = await import(pathToFileURL(source).href);
+      const endpointValues = Object.entries(module)
+        .filter(([name]) => /_MCP_ENDPOINTS?$/.test(name))
+        .flatMap(([, value]) => typeof value === "string" ? [value] : Object.values(value as object));
+      const reviewedLists = Object.values(module).flatMap((value: any) => {
+        if (value?.tools instanceof Map) return [[...value.tools.keys()].sort()];
+        if (value?.definition?.classify?.tools) return [Object.keys(value.definition.classify.tools).sort()];
+        return [];
+      });
+      for (const check of checks) {
+        expect(check.endpoints.every((endpoint: string) => endpointValues.includes(endpoint)), entry.name).toBe(true);
+        expect(reviewedLists, entry.name).toContainEqual([...check.reviewed].sort());
+      }
+    }
+  });
+});
+
+const endpointEvidence = { type: "endpoints", specification: { url: "https://vendor.example/openapi.json" }, endpoints: [{ method: "GET", path: "/item", specRevision: "1", contract: `sha256:${"a".repeat(64)}` }] };
+
+describe("drift evidence validation", () => {
+  it.each(["spec", "setup-reference"])("keeps null checks provider-local with a %s override", async (override) => {
+    const check = override === "spec" ? endpointEvidence : linearEvidence;
+    const directory = await recordWorkspace({
+      vendor: { version: 1, provider: "vendor", checks: [null, check] },
+      other: { version: 1, provider: "other", checks: [manualCheck] },
+    });
+    const source = join(directory, "reference");
+    await writeFile(source, override === "spec"
+      ? JSON.stringify({ openapi: "3.1.0", info: { version: "1" }, paths: { "/item": { get: operation("item") } } })
+      : `${linearEvidence.endpoints.join(" ")} OAuth`);
+    const result = reportFor(directory, [`--${override}`, `vendor=${source}`]);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.output);
+    expect(report.records).toEqual([{ provider: "vendor", check: 0, findings: [expect.objectContaining({ kind: "evidence-invalid" })] }]);
+    expect(report.manual).toEqual([expect.objectContaining({ provider: "other" })]);
+    expect(override === "spec" ? report.specs : report.docs).toEqual([expect.objectContaining({ provider: "vendor" })]);
+  });
+
+  it.each([
+    { ...endpointEvidence, endpoints: [{ ...endpointEvidence.endpoints[0], contract: "not-a-digest" }] },
+    { ...endpointEvidence, endpoints: [{ method: "GET", path: "/item", specRevision: "1" }] },
+    { ...endpointEvidence, endpoints: [endpointEvidence.endpoints[0], endpointEvidence.endpoints[0]] },
+    { ...endpointEvidence, specification: { url: "https://vendor.example/openapi.json", format: "guess" } },
+    { ...vercelEvidence, inventory: { url: "https://vendor.example/tools", format: "guess" } },
+    { ...vercelEvidence, reviewed: [] },
+    { type: "unknown" },
+    null,
+  ])("reports invalid check evidence before network access and continues manual review", async (check) => {
+    const directory = await recordWorkspace({ vendor: { version: 1, provider: "vendor", checks: [check, manualCheck] } });
+    const result = reportFor(directory);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.output);
+    expect([...report.specs, ...report.docs, ...report.records].flatMap((entry: any) => entry.findings)).toEqual([expect.objectContaining({ kind: "evidence-invalid" })]);
+    expect(report.manual[0].findings[0].kind).toBe("manual-required");
+  });
+});
+
+describe("public reference availability", { timeout: CASE_TIMEOUT_MS }, () => {
+  it("reports HTTP failures per provider and completes the remaining checks", async () => {
+    const http = createServer((_request, response) => {
+      response.statusCode = 503;
+      response.end("temporarily unavailable");
+    });
+    await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+    try {
+      const url = `http://127.0.0.1:${(http.address() as AddressInfo).port}/setup`;
+      const directory = await recordWorkspace({
+        failed: { version: 1, provider: "failed", checks: [{ ...linearEvidence, setup: url }] },
+        good: { version: 1, provider: "good", checks: [manualCheck] },
+      });
+      const result = await new Promise<{ status: number; output: string }>((resolve) => {
+        execFile(process.execPath, [checker, "--provider-dir", directory, "--json"], { encoding: "utf8" }, (error, stdout, stderr) => {
+          resolve({ status: error ? Number(error.code) : 0, output: `${stdout}${stderr}` });
+        });
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.output)).toMatchObject({
+        docs: [{ provider: "failed", findings: [{ kind: "unavailable", detail: expect.stringContaining("HTTP 503") }] }],
+        manual: [{ provider: "good", findings: [{ kind: "manual-required" }] }],
+      });
+    } finally {
+      await new Promise((resolve) => http.close(resolve));
+    }
   });
 });

@@ -24,10 +24,10 @@ import {
   type Connector,
 } from "../src/index.js";
 import { describedEndpoint, describedHref, describedOrigin, describedUrl } from "../src/described.js";
-import { basecamp } from "../src/providers/basecamp.js";
-import { ccb } from "../src/providers/ccb.js";
-import { linear } from "../src/providers/linear.js";
-import { stripe } from "../src/providers/stripe.js";
+import { basecamp } from "../src/providers/basecamp/index.js";
+import { ccb } from "../src/providers/ccb/index.js";
+import { linear } from "../src/providers/linear/index.js";
+import { stripe } from "../src/providers/stripe/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
 import { CONNECTA_VERSION } from "../src/version.js";

@@ -1,5 +1,5 @@
 // Google Workspace domain-wide delegation, the layer every Workspace product
-// provider shares (src/providers/google/). Driven through gmail() because the
+// provider shares (src/providers/_shared/google/). Driven through gmail() because the
 // layer has no export of its own; the Gmail suite owns the tool surface.
 //
 // What this pins: the RS256 JWT-bearer assertion (header, claims, and a
@@ -17,9 +17,9 @@ import {
   googleReasonsOf,
   googleWorkspaceClient,
   workspaceConnection,
-} from "../src/providers/google/workspace.js";
+} from "../src/providers/_shared/google/workspace.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail.js";
+import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   AuthenticatedIdentity,

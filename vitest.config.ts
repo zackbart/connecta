@@ -41,6 +41,7 @@ export default defineConfig({
           alias: [
             { find: "@zackbart/connecta/quickjs", replacement: fileURLToPath(new URL("./src/executors/quickjs.ts", import.meta.url)) },
             { find: "@zackbart/connecta/auth/access-tokens", replacement: fileURLToPath(new URL("./src/access-tokens.ts", import.meta.url)) },
+            { find: /^@zackbart\/connecta\/providers\/(.+)$/, replacement: `${fileURLToPath(new URL("./src/providers/", import.meta.url))}$1/index.ts` },
             {
               find: /^@zackbart\/connecta\/(.+)$/,
               replacement: `${fileURLToPath(new URL("./src/", import.meta.url))}$1.ts`,

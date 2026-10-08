@@ -12,7 +12,7 @@ import {
 import { CatalogService } from "../src/catalog-service.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { notion } from "../src/providers/notion.js";
+import { notion } from "../src/providers/notion/index.js";
 import type {
   Connector,
   ConnectorContext,

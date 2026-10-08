@@ -12,13 +12,13 @@ import { activityHistory } from "../src/activity.js";
 import { d1ActivityStore } from "../src/d1.js";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { api, remoteMcp } from "../src/index.js";
-import { cloudflare } from "../src/providers/cloudflare.js";
-import { docs } from "../src/providers/docs.js";
-import { linear } from "../src/providers/linear.js";
-import { notion } from "../src/providers/notion.js";
-import { planningCenter } from "../src/providers/planning-center.js";
-import { stripe } from "../src/providers/stripe.js";
-import { vercel } from "../src/providers/vercel.js";
+import { cloudflare } from "../src/providers/cloudflare/index.js";
+import { docs } from "../src/providers/docs/index.js";
+import { linear } from "../src/providers/linear/index.js";
+import { notion } from "../src/providers/notion/index.js";
+import { planningCenter } from "../src/providers/planning-center/index.js";
+import { stripe } from "../src/providers/stripe/index.js";
+import { vercel } from "../src/providers/vercel/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { operatorUi } from "../src/ui.js";
@@ -183,17 +183,17 @@ describe("discriminated factory options", () => {
     ["remoteMcp() auth that is an array", () => remoteMcp("docs", loose({ url, auth: [{ type: "headers", headers }] })),
       'remoteMcp("docs").auth must be an object.'],
     ["a provider's remote MCP auth", () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", auth: { headers } })),
-      `cloudflare("cf").auth.type is required: one of ${MCP_AUTH}.`],
+      `cloudflare("cf") requires auth.type is required: one of ${MCP_AUTH}.`],
     ["a provider's narrowed auth", () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "OAuth" } })),
-      `stripe("billing").auth.type must be one of ${STRIPE_AUTH}.`],
+      `stripe("billing") requires auth.type to be one of ${STRIPE_AUTH}.`],
     ["a provider's narrowed auth without a type", () => stripe("billing", loose({ purpose: "Revenue", auth: {} })),
-      `stripe("billing").auth.type is required: one of ${STRIPE_AUTH}.`],
+      `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`],
     ["notion() surface", () => notion("wiki", loose({ purpose: "Docs", surface: "MCP" })),
-      `notion("wiki").surface must be one of ${SURFACE}.`],
+      `notion("wiki") requires surface to be one of ${SURFACE}.`],
     ["vercel() surface", () => vercel("deploys", loose({ purpose: "Deploys", surface: "hosted" })),
-      `vercel("deploys").surface must be one of ${SURFACE}.`],
+      `vercel("deploys") requires surface to be one of ${SURFACE}.`],
     ["cloudflare() surface", () => cloudflare("cf", loose({ purpose: "Ops", surface: null })),
-      `cloudflare("cf").surface must be one of ${SURFACE}.`],
+      `cloudflare("cf") requires surface to be one of ${SURFACE}.`],
   ] as const)("INV-11: refuses %s with its path and valid values", (_, build, message) => {
     let error: unknown;
     try {
@@ -404,7 +404,7 @@ describe("factory options refuse arrays and instances where plain data belongs",
     });
     Object.assign(options, { maxResultByte: 1 });
     expect(() => remoteMcp("docs", loose(options))).toThrow('remoteMcp("docs") must be an object.');
-    expect(() => linear("tracker", loose([{ purpose: "Roadmap" }]))).toThrow('linear("tracker") must be an object.');
+    expect(() => linear("tracker", loose([{ purpose: "Roadmap" }]))).toThrow('linear("tracker") requires an object.');
     expect(reads).toBe(0);
   });
 
@@ -420,7 +420,7 @@ describe("factory options refuse arrays and instances where plain data belongs",
       url: "https://mcp.example/mcp", auth: { type: "headers", headers: [["X-Key", "k"]] },
     })), 'remoteMcp("docs").auth.headers must be an object.'],
     ["a class instance as options", () => linear("tracker", loose(new (class { purpose = "Roadmap"; })())),
-      'linear("tracker") must be a plain object.'],
+      'linear("tracker") requires a plain object.'],
     ["a class instance as branding", () => operatorUi(loose({ branding: new (class { productName = "Ops"; })() })),
       "operatorUi().branding must be a plain object."],
   ] as const)("INV-11: refuses %s with its path", (_, build, message) => {
@@ -453,7 +453,7 @@ describe("factory string maps read as plain data", () => {
     })), 'remoteMcp("docs").auth.headers.prompt'],
     ["stripe() headers", (map: object) => stripe("billing", loose({
       purpose: "Revenue", mode: "sandbox", auth: { type: "headers", headers: map },
-    })), 'stripe("billing").auth.headers.prompt'],
+    })), 'stripe("billing") requires auth.headers.prompt'],
   ] as const)("INV-11: refuses an accessor or a non-string in %s by path, unrun and unechoed", (_, build, path) => {
     const counter = { reads: 0 };
     let error: unknown;
@@ -462,10 +462,11 @@ describe("factory string maps read as plain data", () => {
     } catch (caught) {
       error = caught;
     }
-    expect(String(error)).toContain(`${path} must be a plain value, not a getter or setter.`);
+    const relation = path.startsWith("stripe(") ? " to be " : " must be ";
+    expect(String(error)).toContain(`${path}${relation}a plain value, not a getter or setter.`);
     expect(String(error)).not.toContain(SECRET);
     expect(counter.reads).toBe(0);
-    expect(() => build({ prompt: { toString: () => SECRET } })).toThrow(`${path} must be a string.`);
+    expect(() => build({ prompt: { toString: () => SECRET } })).toThrow(`${path}${relation}a string.`);
     try {
       build({ prompt: { toString: () => SECRET } });
     } catch (caught) {

@@ -14,6 +14,10 @@ import { describe, expect, it } from "vitest";
 // with regex + fs, no bundler or TS API. node:fs / node:path here in the test
 // are fine — the rule applies to src/, not to this file.
 
+const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
+const { discoverProviders } = await import(discoveryModule) as {
+  discoverProviders(root: string): Promise<{ name: string; index: string }[]>;
+};
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(HERE, "..", "src");
 const ENTRY = join(SRC, "index.ts");
@@ -162,18 +166,11 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     }
   });
 
-  it("never reaches a prebuilt provider connection", () => {
-    // Derived from the directory: a provider added without its own subpath
-    // fails here rather than silently riding the root entry.
-    const providers = readdirSync(join(SRC, "providers")).filter((file) =>
-      file.endsWith(".ts"),
-    );
+  it("never reaches a prebuilt provider connection", async () => {
+    const providers = await discoverProviders(resolve(SRC, ".."));
     expect(providers.length).toBeGreaterThan(0);
-    for (const file of providers) {
-      const provider = join(SRC, "providers", file);
-      expect(graph.has(provider), `${file} is reachable from index.ts`).toBe(
-        false,
-      );
+    for (const provider of providers) {
+      expect(graph.has(provider.index), `${provider.name} is reachable from index.ts`).toBe(false);
     }
   });
 

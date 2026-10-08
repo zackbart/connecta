@@ -1,0 +1,415 @@
+{
+  "version": 1,
+  "provider": "planning-center",
+  "checks": [
+    {
+      "type": "versioned-endpoints",
+      "specifications": {
+        "people": {
+          "version": "2026-06-04",
+          "url": "https://api.planningcenteronline.com/people/v2/open_api/2026-06-04",
+          "documentation": "https://api.planningcenteronline.com/people/v2/documentation",
+          "latestPublished": "2026-06-04"
+        },
+        "services": {
+          "version": "2018-11-01",
+          "url": "https://api.planningcenteronline.com/services/v2/open_api/2018-11-01",
+          "documentation": "https://api.planningcenteronline.com/services/v2/documentation",
+          "latestPublished": "2018-11-01"
+        },
+        "groups": {
+          "version": "2023-07-10",
+          "url": "https://api.planningcenteronline.com/groups/v2/open_api/2023-07-10",
+          "documentation": "https://api.planningcenteronline.com/groups/v2/documentation",
+          "latestPublished": "2023-07-10"
+        },
+        "check-ins": {
+          "version": "2025-05-28",
+          "url": "https://api.planningcenteronline.com/check-ins/v2/open_api/2025-05-28",
+          "documentation": "https://api.planningcenteronline.com/check-ins/v2/documentation",
+          "latestPublished": "2025-05-28"
+        },
+        "calendar": {
+          "version": "2026-06-22",
+          "url": "https://api.planningcenteronline.com/calendar/v2/open_api/2026-06-22",
+          "documentation": "https://api.planningcenteronline.com/calendar/v2/documentation",
+          "latestPublished": "2026-06-22"
+        },
+        "registrations": {
+          "version": "2025-05-01",
+          "url": "https://api.planningcenteronline.com/registrations/v2/open_api/2025-05-01",
+          "documentation": "https://api.planningcenteronline.com/registrations/v2/documentation",
+          "latestPublished": "2025-05-01"
+        },
+        "giving": {
+          "version": "2019-10-18",
+          "url": "https://api.planningcenteronline.com/giving/v2/open_api/2019-10-18",
+          "documentation": "https://api.planningcenteronline.com/giving/v2/documentation",
+          "latestPublished": "2019-10-18"
+        },
+        "publishing": {
+          "version": "2024-03-25",
+          "url": "https://api.planningcenteronline.com/publishing/v2/open_api/2024-03-25",
+          "documentation": "https://api.planningcenteronline.com/publishing/v2/documentation",
+          "latestPublished": "2024-03-25"
+        },
+        "webhooks": {
+          "version": "2022-10-20",
+          "url": "https://api.planningcenteronline.com/webhooks/v2/open_api/2022-10-20",
+          "documentation": "https://api.planningcenteronline.com/webhooks/v2/documentation",
+          "latestPublished": "2022-10-20"
+        },
+        "api": {
+          "version": "2026-09-24",
+          "url": "https://api.planningcenteronline.com/api/v2/open_api/2026-09-24",
+          "documentation": "https://api.planningcenteronline.com/api/v2/documentation",
+          "latestPublished": "2026-09-24"
+        }
+      },
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/people/v2/me",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:3616308fdd66b8d0a197697e9699e195b7df4c4c6a9c07a5293dcab3b672a18d"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/people",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:72804288c5246d588322019f3f91aff0ad8976aeac33110ae79d531db9f23b52"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:abbfac272e1a7070308e43d495d86880d1084c5dc556c3f9447e37563619bd44"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/people/{person_id}",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:eb70d8bc7a2193601670b7ee68741f0a5dbd1277bfab29e4fe07d8f341ee1776"
+        },
+        {
+          "method": "PATCH",
+          "path": "/people/v2/people/{person_id}",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:acd7cb7d39f50e587338f13043e37705870835a69ac978a86215809ccf44307a"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/emails",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:4048ec510a3dc50b79aef902f26d7bfe9c5c3e92ef20f239c3d282d671a13235"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/phone_numbers",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:b93ae2da4e73c201729050ee19e3cc3847e919a46f285ccd7c0c2aa3fb814730"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/people/{person_id}/notes",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:8e6f5d5de5bf2ef98010841f35287b0d40443f017ef280b2e6cf05c1940e86eb"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/notes",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:e1f913c0199b0aee0e2e7a6e890b3f124f9b5b46870286307307beb4fd9dbe0e"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/people/{person_id}/field_data",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:390aa7dfd072bd7e5e5899a12a7b8f63bdd84f47d56b92c6f5699fe5b3e04f0c"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/go_back",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/notes",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:add7945db173c4d8e067b0f48a5468655d8d10852b6014dc6717ba05cb8eb16a"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/promote",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/remove",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/restore",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/skip_step",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/snooze",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/people/{person_id}/workflow_cards/{workflow_card_id}/unsnooze",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:48f829fc50cbd2c053952b856146bfdc3db1da2bccee45bea2a7b44a3d32e169"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/lists",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:555b3bbab39ae6177136e1fa93527bb83bb4b00f917967c187d0c4876c9e6786"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/lists/{list_id}/people",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:1c4b0df0f29a87628397f701bc4f7e4df6702da3ea1251a79fcf84028aa05979"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/lists/{list_id}/run",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:7b8cd8d5253d3fc6d30d26d18bccfcadbbab8c0637dfe6ef64672c3d1be588dc"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/workflows",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:98f161271deec88b69cb4940aa76884ec3452fb638b168eedcf6b98ee1156493"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/workflows/{workflow_id}/cards",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:2d6134cc408e91fc9f8c37a7e8a9dce66f52ba874f6d5280c854f7d879ec4032"
+        },
+        {
+          "method": "POST",
+          "path": "/people/v2/workflows/{workflow_id}/cards",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:53fbd86073b38778c65df3f90334e549e6e3f65ef5d8bf9a355d5d121155277e"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/forms",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:369d93436f0af5be762aa6ca92a1eaa0dd5953f1de109288e0d7e13afa98f33c"
+        },
+        {
+          "method": "GET",
+          "path": "/people/v2/forms/{form_id}/form_submissions",
+          "specRevision": "2026-06-04",
+          "contract": "sha256:77499a9c717e605b64ecf8247c61101a1cf43226d1cfdd759d5db950932b0585"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/service_types",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:f33aaff225bc7c7c65d2e9f67a0006265deace3c812f764d2e230e5616872bb1"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/service_types/{service_type_id}/plans",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:57deec6bc5c0e0bc2907d478a00c82fb32ed58bba10578129481c0a894eec910"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/service_types/{service_type_id}/plans/{plan_id}",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:0bc48c201bc0606ae722269cbcc18b407f8535b94bd62a1a16cc974e06442765"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/service_types/{service_type_id}/plans/{plan_id}/items",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:a9628c5f7334139c4476fb9758f8426f749d28cc21227adbd4e327fdb15fdc82"
+        },
+        {
+          "method": "POST",
+          "path": "/services/v2/service_types/{service_type_id}/plans/{plan_id}/items",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:030d3841d9491d3b98df1d1e8c1f60a7580e4c197fb1917ed4f32a7a0284f90c"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:7bba6d228c1c871287f13627e7d6c50abd7638fa2cd0ebc9a52f26a3140fb95f"
+        },
+        {
+          "method": "POST",
+          "path": "/services/v2/service_types/{service_type_id}/plans/{plan_id}/team_members",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:72e8053cd2376a861a361ab730884cb0e0c696d3840668fc0f22d84f9fd132e2"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/service_types/{service_type_id}/teams",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:a355e93f9e766252ac80658bce9b63ef7c39aea0f6583ac8f20d8800a216db55"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/people/{person_id}/schedules",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:5f364efbecc7c3ce281a292063a1d396803c4e827fa34171765dc9c829bce5e7"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/songs",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:5c89a31f4b8fce40e3c359e04e6d4a1df2eb42b65c46c3e5d95438fef24270b3"
+        },
+        {
+          "method": "GET",
+          "path": "/services/v2/songs/{song_id}/arrangements",
+          "specRevision": "2018-11-01",
+          "contract": "sha256:c3516e6817025a4272089c8daec1093ec4ae83215fb59190908531ca3e95efeb"
+        },
+        {
+          "method": "GET",
+          "path": "/groups/v2/groups",
+          "specRevision": "2023-07-10",
+          "contract": "sha256:2d4e6a719e34c9c9a853b53cda0122260c2810164b44be349a80ac73b66c39e3"
+        },
+        {
+          "method": "GET",
+          "path": "/groups/v2/groups/{group_id}/memberships",
+          "specRevision": "2023-07-10",
+          "contract": "sha256:6ade1ea63d3b32dff456444b9ff81870bbfc80e6c862a299dc92b8458b515559"
+        },
+        {
+          "method": "POST",
+          "path": "/groups/v2/groups/{group_id}/memberships",
+          "specRevision": "2023-07-10",
+          "contract": "sha256:98add4c0443f8797b65a0be4c361d49c5e095faa27620b478c3039e12c05eadb"
+        },
+        {
+          "method": "GET",
+          "path": "/groups/v2/groups/{group_id}/events",
+          "specRevision": "2023-07-10",
+          "contract": "sha256:f0e73d042ecaa90320e8f913fa42dd1067d06f80cb592a43f222f8cd40d8f7e1"
+        },
+        {
+          "method": "GET",
+          "path": "/groups/v2/events",
+          "specRevision": "2023-07-10",
+          "contract": "sha256:e9faa6074d140c9fcd9b63bcbcbec1539d051b4c376888437623d51e01b19574"
+        },
+        {
+          "method": "GET",
+          "path": "/check-ins/v2/events",
+          "specRevision": "2025-05-28",
+          "contract": "sha256:6ab0a3d8df36275073b3e52241a4818362b42630f0c913fd473460303ff4ab45"
+        },
+        {
+          "method": "GET",
+          "path": "/check-ins/v2/events/{event_id}/event_periods",
+          "specRevision": "2025-05-28",
+          "contract": "sha256:c2a0c5aa6ffd6b4f0de214bdef51264c264545c0206a88ec6252f78a446e45bc"
+        },
+        {
+          "method": "GET",
+          "path": "/check-ins/v2/events/{event_id}/check_ins",
+          "specRevision": "2025-05-28",
+          "contract": "sha256:3096742ef08d8cd936a1bd18db09648a3c3ecaac89e678fb859635d5913135b7"
+        },
+        {
+          "method": "GET",
+          "path": "/check-ins/v2/check_ins",
+          "specRevision": "2025-05-28",
+          "contract": "sha256:5f3433e608ef54f69e685c46e68d17ad47266222ec28805fad14919483e01e19"
+        },
+        {
+          "method": "GET",
+          "path": "/calendar/v2/event_instances",
+          "specRevision": "2026-06-22",
+          "contract": "sha256:31d1c4f8d8445296f6c9219451be2da3df687dcc52bf806c8eaf60709f438ff7"
+        },
+        {
+          "method": "GET",
+          "path": "/registrations/v2/signups",
+          "specRevision": "2025-05-01",
+          "contract": "sha256:a8d2763fddddd32b04d2f3e6e1570db71cfc3515ded7f35e2dee9315f07c18ff"
+        },
+        {
+          "method": "GET",
+          "path": "/registrations/v2/signups/{signup_id}/attendees",
+          "specRevision": "2025-05-01",
+          "contract": "sha256:d50291988c18b1f173747fd735807666ced17e7cdc5cf884f523b2052f00e7e5"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/donations",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:10024fa58fcd0db3e7493da4cd3b3802635c0f917ebbca358d68183d884511a9"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/people/{person_id}/donations",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:a4215d9aa003e088b5853bcc3d5dd6700c0d261f170b0cf938adfc2bf36d0ac0"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/funds",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:8cbb766feb765bd9943dedfe8f8ae2283c5d80e626ffaf61e0ccf48ae3e9f0e5"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/batches",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:0b30b655bc5a51922a11bfdcabe794d62e4c00df824f204cc993b949ee48275c"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/pledge_campaigns",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:84afafaad12f656a151c4f925ea8b8162b7189e36a23e5bd727fdf3869d73279"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/pledge_campaigns/{pledge_campaign_id}/pledges",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:504aa6d59ba5ccd3e40da1a05ff690bc3b7695dffd3c531695cb1f0805b478c8"
+        },
+        {
+          "method": "GET",
+          "path": "/giving/v2/recurring_donations",
+          "specRevision": "2019-10-18",
+          "contract": "sha256:0c0a122181c7373f6d87b1a0fdcb8c41631c2d59e4c0284663ead21f5a73fd0e"
+        },
+        {
+          "method": "GET",
+          "path": "/webhooks/v2/webhook_subscriptions",
+          "specRevision": "2022-10-20",
+          "contract": "sha256:719bd98023e082679d73484bdd69fa5263f1ea33df462b1b89638d7b78725053"
+        }
+      ]
+    }
+  ]
+}

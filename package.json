@@ -73,81 +73,81 @@
       "types": "./dist/auth/cloudflare-access.d.ts",
       "import": "./dist/auth/cloudflare-access.js"
     },
-    "./providers/breeze": {
-      "types": "./dist/providers/breeze.d.ts",
-      "import": "./dist/providers/breeze.js"
-    },
     "./providers/basecamp": {
-      "types": "./dist/providers/basecamp.d.ts",
-      "import": "./dist/providers/basecamp.js"
+      "types": "./dist/providers/basecamp/index.d.ts",
+      "import": "./dist/providers/basecamp/index.js"
     },
-    "./providers/cloudflare": {
-      "types": "./dist/providers/cloudflare.d.ts",
-      "import": "./dist/providers/cloudflare.js"
-    },
-    "./providers/linear": {
-      "types": "./dist/providers/linear.d.ts",
-      "import": "./dist/providers/linear.js"
-    },
-    "./providers/mixpanel": {
-      "types": "./dist/providers/mixpanel.d.ts",
-      "import": "./dist/providers/mixpanel.js"
-    },
-    "./providers/notion": {
-      "types": "./dist/providers/notion.d.ts",
-      "import": "./dist/providers/notion.js"
-    },
-    "./providers/revenuecat": {
-      "types": "./dist/providers/revenuecat.d.ts",
-      "import": "./dist/providers/revenuecat.js"
-    },
-    "./providers/stripe": {
-      "types": "./dist/providers/stripe.d.ts",
-      "import": "./dist/providers/stripe.js"
-    },
-    "./providers/vercel": {
-      "types": "./dist/providers/vercel.d.ts",
-      "import": "./dist/providers/vercel.js"
+    "./providers/breeze": {
+      "types": "./dist/providers/breeze/index.d.ts",
+      "import": "./dist/providers/breeze/index.js"
     },
     "./providers/ccb": {
-      "types": "./dist/providers/ccb.d.ts",
-      "import": "./dist/providers/ccb.js"
+      "types": "./dist/providers/ccb/index.d.ts",
+      "import": "./dist/providers/ccb/index.js"
     },
-    "./providers/planning-center": {
-      "types": "./dist/providers/planning-center.d.ts",
-      "import": "./dist/providers/planning-center.js"
-    },
-    "./providers/overflow": {
-      "types": "./dist/providers/overflow.d.ts",
-      "import": "./dist/providers/overflow.js"
-    },
-    "./providers/tithely": {
-      "types": "./dist/providers/tithely.d.ts",
-      "import": "./dist/providers/tithely.js"
-    },
-    "./providers/gmail": {
-      "types": "./dist/providers/gmail.d.ts",
-      "import": "./dist/providers/gmail.js"
-    },
-    "./providers/drive": {
-      "types": "./dist/providers/drive.d.ts",
-      "import": "./dist/providers/drive.js"
+    "./providers/cloudflare": {
+      "types": "./dist/providers/cloudflare/index.d.ts",
+      "import": "./dist/providers/cloudflare/index.js"
     },
     "./providers/docs": {
-      "types": "./dist/providers/docs.d.ts",
-      "import": "./dist/providers/docs.js"
+      "types": "./dist/providers/docs/index.d.ts",
+      "import": "./dist/providers/docs/index.js"
     },
-    "./providers/sheets": {
-      "types": "./dist/providers/sheets.d.ts",
-      "import": "./dist/providers/sheets.js"
-    },
-    "./providers/slides": {
-      "types": "./dist/providers/slides.d.ts",
-      "import": "./dist/providers/slides.js"
+    "./providers/drive": {
+      "types": "./dist/providers/drive/index.d.ts",
+      "import": "./dist/providers/drive/index.js"
     },
     "./providers/forms": {
-      "types": "./dist/providers/forms.d.ts",
-      "import": "./dist/providers/forms.js"
+      "types": "./dist/providers/forms/index.d.ts",
+      "import": "./dist/providers/forms/index.js"
+    },
+    "./providers/gmail": {
+      "types": "./dist/providers/gmail/index.d.ts",
+      "import": "./dist/providers/gmail/index.js"
+    },
+    "./providers/linear": {
+      "types": "./dist/providers/linear/index.d.ts",
+      "import": "./dist/providers/linear/index.js"
+    },
+    "./providers/mixpanel": {
+      "types": "./dist/providers/mixpanel/index.d.ts",
+      "import": "./dist/providers/mixpanel/index.js"
+    },
+    "./providers/notion": {
+      "types": "./dist/providers/notion/index.d.ts",
+      "import": "./dist/providers/notion/index.js"
+    },
+    "./providers/overflow": {
+      "types": "./dist/providers/overflow/index.d.ts",
+      "import": "./dist/providers/overflow/index.js"
+    },
+    "./providers/planning-center": {
+      "types": "./dist/providers/planning-center/index.d.ts",
+      "import": "./dist/providers/planning-center/index.js"
+    },
+    "./providers/revenuecat": {
+      "types": "./dist/providers/revenuecat/index.d.ts",
+      "import": "./dist/providers/revenuecat/index.js"
+    },
+    "./providers/sheets": {
+      "types": "./dist/providers/sheets/index.d.ts",
+      "import": "./dist/providers/sheets/index.js"
+    },
+    "./providers/slides": {
+      "types": "./dist/providers/slides/index.d.ts",
+      "import": "./dist/providers/slides/index.js"
+    },
+    "./providers/stripe": {
+      "types": "./dist/providers/stripe/index.d.ts",
+      "import": "./dist/providers/stripe/index.js"
+    },
+    "./providers/tithely": {
+      "types": "./dist/providers/tithely/index.d.ts",
+      "import": "./dist/providers/tithely/index.js"
+    },
+    "./providers/vercel": {
+      "types": "./dist/providers/vercel/index.d.ts",
+      "import": "./dist/providers/vercel/index.js"
     },
     "./ui": {
       "types": "./dist/ui.d.ts",
@@ -183,7 +183,7 @@
     "build:operator-ui": "node scripts/build-operator-ui.mjs",
     "check:operator-ui": "node scripts/build-operator-ui.mjs --check",
     "check:clerk-sdk": "node scripts/build-clerk-sdk.mjs --check",
-    "build": "npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json && node scripts/prune-declarations.mjs",
+    "build": "npm run providers:generate && npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json && node scripts/prune-declarations.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.operator-ui.json --noEmit",
     "test": "vitest run",
     "test:browser:install": "playwright install chromium",
@@ -205,13 +205,15 @@
     "eval:smoke": "tsx eval/run-smoke.ts",
     "eval:perf": "tsx eval/run-perf.ts",
     "eval:report": "tsx eval/report.ts",
-    "check:core": "npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:clerk-sdk && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
+    "check:core": "npm run check:providers-generated && npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:clerk-sdk && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
     "check:fast": "node scripts/check-fast.mjs",
     "check": "npm run check:core && npm run test:browser",
     "release:check": "npm run check && npm run check:security && npm run check:package",
     "prepack": "npm run check",
     "check:changes": "node scripts/changelog.mjs --check && node scripts/check-node-suites.mjs && node --test scripts/changelog.test.mjs",
-    "changelog:assemble": "node scripts/changelog.mjs"
+    "changelog:assemble": "node scripts/changelog.mjs",
+    "providers:generate": "tsx scripts/generate-providers.mjs",
+    "check:providers-generated": "tsx scripts/generate-providers.mjs --check"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

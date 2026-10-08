@@ -1,0 +1,484 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ToolDef } from "../../types.js";
+import {
+  guideOf,
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+} from "../../../test/fixtures/hosted-provider.js";
+
+const mocks = vi.hoisted(() => ({
+  listTools: vi.fn<() => Promise<ToolDef[]>>(),
+  remoteMcp: vi.fn(),
+}));
+
+vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the constructor is stubbed. `withCredentialDefaults` is pure option
+  // shaping — part of what these tests assert the provider resolved — so it
+  // stays real.
+  ...(await importOriginal<typeof import("../../connectors/remote-mcp.js")>()),
+  remoteMcp: mocks.remoteMcp,
+}));
+
+import { STRIPE_MCP_ENDPOINT, stripe } from "./index.js";
+import { connectorGuideSummary } from "../../skills.js";
+
+describe("stripe()", () => {
+  beforeEach(() => {
+    mockRemoteMcp(mocks);
+  });
+
+  it("owns the endpoint, OAuth default, purpose, and mixed-mode guidance", () => {
+    const connector = stripe("billing", {
+      purpose: "Revenue and dispute questions for the business",
+      instructions: "Never refund above $500 without a human in the loop.",
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "billing",
+      expect.objectContaining({
+        url: STRIPE_MCP_ENDPOINT,
+        title: "Stripe",
+        description:
+          "Stripe payments (live and sandbox accounts) — Revenue and dispute questions for the business",
+        auth: { type: "oauth" },
+        requireHttps: true,
+      }),
+    );
+    expect(guideOf(connector)).toContain("Scope: live and sandbox accounts");
+    expect(guideOf(connector)).toContain("list_available_accounts_or_orgs");
+    expect(guideOf(connector)).toContain("stripe_context");
+    expect(guideOf(connector)).toContain("livemode");
+    expect(guideOf(connector)).toContain("stripe_api_details");
+    expect(guideOf(connector)).toContain("stripe_analytics");
+    expect(guideOf(connector)).toContain("stripe_implementation_planner");
+    expect(guideOf(connector)).not.toContain("create_refund");
+    expect(guideOf(connector)).not.toContain("get_stripe_account_info");
+    expect(guideOf(connector)).toContain("Idempotency-Key");
+    expect(guideOf(connector)).toContain(
+      "100 requests per second in live mode and 25 in sandbox mode",
+    );
+    // Real markdown, not a diff hunk: agents read this string verbatim.
+    expect(guideOf(connector)).toContain("## Account instructions");
+    expect(guideOf(connector)).not.toContain("+## Account instructions");
+    expect(guideOf(connector)).toContain(
+      "Never refund above $500 without a human in the loop.",
+    );
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "billing",
+      expect.objectContaining({
+        callAdmission: {
+          rules: [
+            {
+              maxConcurrency: 4,
+              queueTimeoutMs: 5_000,
+              retryAfterMs: 1_000,
+              budget: {
+                kind: "rolling-window",
+                maxCalls: 25,
+                windowMs: 1_000,
+              },
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("keeps fixed sandbox mode unmissable for a static credential", () => {
+    const connector = stripe("billing_sandbox", {
+      mode: "sandbox",
+      purpose: "Rehearsing billing changes before they touch production",
+      auth: {
+        type: "headers",
+        headers: { Authorization: "Bearer rk_test_example" },
+      },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "billing_sandbox",
+      expect.objectContaining({
+        title: "Stripe (sandbox)",
+        description:
+          "Stripe payments (sandbox — test data, no real money) — Rehearsing billing changes before they touch production",
+      }),
+    );
+    expect(guideOf(connector)).toContain("Mode: sandbox");
+    expect(guideOf(connector)).toContain("SANDBOX Stripe connection");
+    expect(guideOf(connector)).toContain("never answer a question about live");
+    expect(guideOf(connector)).toContain("25 requests per second");
+  });
+
+  it("declares account-scoped OAuth and fixed-mode header summaries (P7)", () => {
+    // The derived summary would be "Mode: production. Account purpose: …",
+    // which spends the 120-character budget on the operator's prose and buries
+    // the one fact an agent must not get wrong.
+    const production = stripe("live", {
+      mode: "production",
+      purpose: "Billing operations for the production account",
+      auth: {
+        type: "headers",
+        headers: { Authorization: "Bearer rk_live_example" },
+      },
+    });
+    const oauth = stripe("organization", {
+      purpose: "Billing operations across organization accounts",
+    });
+    const live = connectorGuideSummary(production);
+    const organization = connectorGuideSummary(oauth);
+    expect(live).toContain("PRODUCTION");
+    expect(organization).toContain("Live and sandbox");
+    expect(live).not.toEqual(organization);
+    for (const summary of [live, organization]) {
+      expect(summary?.length).toBeLessThanOrEqual(120);
+      expect(summary).not.toContain("Account purpose");
+    }
+  });
+
+  it("tells the guide to resolve ids and to expect a varying catalog (P6, P8)", () => {
+    const connector = stripe("live", {
+      purpose: "Billing operations",
+    });
+    const guide = guideOf(connector);
+    expect(guide).toContain("never guess one");
+    expect(guide).toContain("cus_");
+    expect(guide).toContain("stripe_api_search");
+    expect(guide).toContain("not a fixed set");
+    expect(guide).toContain("authorize_connector");
+  });
+
+  it("tells the guide to project reads in the sandbox and to follow references search cannot filter (P7)", () => {
+    for (const connector of [
+      stripe("oauth", { purpose: "Billing operations" }),
+      stripe("fixed", {
+        mode: "sandbox",
+        purpose: "Test billing",
+        auth: { type: "headers", headers: { Authorization: "Bearer rk_test_example" } },
+      }),
+    ]) {
+      const guide = guideOf(connector);
+      expect(guide).toContain(
+        "belongs inside `execute_code`, projected to the fields the question needs before `return`",
+      );
+      expect(guide).toContain("Neither `limit` nor `expand` substitutes");
+      expect(guide).toContain("out of the transcript");
+      expect(guide).toContain("there is no `payment_intent` field");
+      expect(guide).toContain("`latest_charge`");
+      expect(guide).toContain("is one program, not four turns");
+      expect(guide).toContain("`outcome`, `failure_code`, `failure_message`");
+    }
+  });
+
+  it("warns that OAuth can span organization accounts without trusting connector metadata", () => {
+    const connector = stripe("organization_billing", {
+      title: "Primary Stripe account",
+      purpose: "Billing for the primary organization account",
+    });
+    const guide = guideOf(connector);
+
+    expect(guide).toContain(
+      "This OAuth session may expose both live and sandbox Stripe accounts.",
+    );
+    expect(guide).toContain(
+      "Never infer the account or mode from connector metadata.",
+    );
+    expect(connectorGuideSummary(connector)).toContain(
+      "Live and sandbox Stripe accounts",
+    );
+  });
+
+  it("requires live-schema account selection and stops instead of inventing it", () => {
+    const availableAccounts = [
+      { stripe_context: "acct_live", livemode: true },
+      { stripe_context: "acct_test", livemode: false },
+    ];
+    const connector = stripe("organization_billing", {
+      purpose: "Organization billing",
+    });
+    const guide = guideOf(connector);
+
+    expect(guide).toContain("list_available_accounts_or_orgs");
+    expect(guide).toContain("stripe_context");
+    expect(guide).toContain("livemode");
+    expect(guide).toContain(
+      "If the account, mode, or supported selector is ambiguous, stop and ask",
+    );
+    expect(guide).toContain("carry its `stripe_context` and `livemode` unchanged");
+    expect(availableAccounts.map(({ livemode }) => livemode)).toEqual([
+      true,
+      false,
+    ]);
+    expect(guide).toContain(
+      "Organization accounts are not Stripe Connect connected accounts.",
+    );
+    expect(guide).toContain("restricted key plus Stripe's documented");
+    expect(guide).toContain("OAuth does not support that path");
+  });
+
+  it("scales the admission budget to the mode's documented rate", () => {
+    stripe("prod", {
+      mode: "production",
+      purpose: "Live billing",
+      auth: {
+        type: "headers",
+        headers: { Authorization: "Bearer rk_live_example" },
+      },
+    });
+    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
+      "prod",
+      expect.objectContaining({
+        callAdmission: {
+          rules: [
+            {
+              maxConcurrency: 8,
+              queueTimeoutMs: 5_000,
+              retryAfterMs: 1_000,
+              budget: {
+                kind: "rolling-window",
+                maxCalls: 100,
+                windowMs: 1_000,
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    stripe("test", {
+      mode: "sandbox",
+      purpose: "Rehearsal",
+      auth: {
+        type: "headers",
+        headers: { Authorization: "Bearer rk_test_example" },
+      },
+    });
+    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
+      "test",
+      expect.objectContaining({
+        callAdmission: {
+          rules: [
+            {
+              maxConcurrency: 4,
+              queueTimeoutMs: 5_000,
+              retryAfterMs: 1_000,
+              budget: {
+                kind: "rolling-window",
+                maxCalls: 25,
+                windowMs: 1_000,
+              },
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("accepts restricted-key headers, a title override, and a result cap", () => {
+    stripe("platform", {
+      mode: "sandbox",
+      title: "Platform billing rehearsal",
+      purpose: "Connect platform rehearsal",
+      auth: {
+        type: "headers",
+        headers: { Authorization: "Bearer rk_test_example" },
+      },
+      maxResultBytes: 25_000,
+    });
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "platform",
+      expect.objectContaining({
+        title: "Platform billing rehearsal",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer rk_test_example" },
+        },
+        maxResultBytes: 25_000,
+      }),
+    );
+  });
+
+  it("refuses a declared mode its supplied key contradicts", () => {
+    expect(() =>
+      stripe("oops", {
+        mode: "sandbox",
+        purpose: "Rehearsal",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer sk_live_example" },
+        },
+      }),
+    ).toThrow(
+      'stripe("oops") requires a consistent declaration of mode "sandbox" but its auth headers carry a live-mode Stripe key.',
+    );
+    expect(() =>
+      stripe("oops", {
+        mode: "production",
+        purpose: "Live billing",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer rk_test_example" },
+        },
+      }),
+    ).toThrow(
+      'stripe("oops") requires a consistent declaration of mode "production" but its auth headers carry a test-mode Stripe key.',
+    );
+  });
+
+  it("leaves an unrecognizable credential alone rather than guessing at it", () => {
+    expect(() =>
+      stripe("opaque", {
+        mode: "production",
+        purpose: "Live billing",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer opaque-vault-reference" },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("routes a connected account through the Stripe-Account header", () => {
+    stripe("connected", {
+      mode: "production",
+      purpose: "Billing for one managed merchant",
+      connectedAccount: "acct_1234",
+      auth: {
+        type: "headers",
+        headers: { Authorization: "Bearer rk_live_example" },
+      },
+    });
+    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
+      "connected",
+      expect.objectContaining({
+        auth: {
+          type: "headers",
+          headers: {
+            Authorization: "Bearer rk_live_example",
+            "Stripe-Account": "acct_1234",
+          },
+        },
+      }),
+    );
+  });
+
+  it("refuses a connected account over OAuth or with a malformed id", () => {
+    expect(() =>
+      // Runtime guard for JavaScript callers that bypass the discriminated type.
+      // @ts-expect-error OAuth cannot configure a Stripe Connect account.
+      stripe("connected", {
+        purpose: "Billing for one managed merchant",
+        connectedAccount: "acct_1234",
+      }),
+    ).toThrow("cannot reach a connected account over OAuth");
+    expect(() =>
+      stripe("connected", {
+        mode: "production",
+        purpose: "Billing for one managed merchant",
+        connectedAccount: "1234",
+        auth: { type: "headers", headers: { Authorization: "Bearer rk_live_x" } },
+      }),
+    ).toThrow('connectedAccount to be a Stripe account id ("acct_...").');
+  });
+
+  itClassifiesLikeARelease(
+    () => stripe("billing", { purpose: "Rehearsal" }),
+    mocks,
+    {
+      read: [
+        "stripe_api_read",
+        "list_available_accounts_or_orgs",
+        "manage_stripe_accounts",
+      ],
+      write: "stripe_analytics",
+      destructive: "stripe_api_write",
+      unknown: ["create_customer", "get_new_treasury_thing", "wreck_new_thing"],
+    },
+  );
+
+  it("rejects an empty purpose and an unknown static mode at construction", () => {
+    expect(() => stripe("billing", { purpose: "  " })).toThrow(
+      "a non-empty account purpose",
+    );
+    expect(() =>
+      stripe("billing", {
+        mode: "test" as unknown as "sandbox",
+        purpose: "Rehearsal",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer opaque-key" },
+        },
+      }),
+    ).toThrow(
+      'stripe("billing") requires headers or credential auth to declare mode "production" or "sandbox".',
+    );
+  });
+
+  it("takes an operator-managed key and still requires a declared mode", () => {
+    const connector = stripe("billing", {
+      mode: "production",
+      purpose: "Organization billing",
+      auth: { type: "credential" },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "billing",
+      expect.objectContaining({
+        title: "Stripe (production)",
+        auth: {
+          type: "credential",
+          credential: expect.objectContaining({
+            label: "Secret or restricted API key",
+          }),
+        },
+      }),
+    );
+    // A static credential has one mode whether it came from the deployment or
+    // from its connection in the operator UI, so it gets the fixed-mode guide, not the OAuth one.
+    expect(guideOf(connector)).toContain("Mode: production");
+    expect(guideOf(connector)).toContain("This is a PRODUCTION Stripe connection.");
+
+    expect(() =>
+      stripe("billing", {
+        purpose: "Organization billing",
+        auth: { type: "credential" },
+      } as unknown as Parameters<typeof stripe>[1]),
+    ).toThrow(
+      'stripe("billing") requires headers or credential auth to declare mode "production" or "sandbox".',
+    );
+  });
+
+  it("cannot check a mode against a key it will never see", () => {
+    // The literal-header path asserts the key's prefix. An operator-managed
+    // credential has nothing to read at construction, so the declared mode
+    // stands alone rather than being guessed at or refused.
+    expect(() =>
+      stripe("sandboxed", {
+        mode: "sandbox",
+        purpose: "Rehearsal",
+        auth: { type: "credential" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a connected account it cannot add a second header for", () => {
+    expect(() =>
+      stripe("connected", {
+        mode: "production",
+        purpose: "Connect platform billing",
+        connectedAccount: "acct_123",
+        auth: { type: "credential" },
+      }),
+    ).toThrow("Stripe-Account is a second static header");
+  });
+
+  it("rejects a connector-wide mode for OAuth at runtime", () => {
+    expect(() =>
+      // Runtime guard for JavaScript callers and stale compiled deployments.
+      // @ts-expect-error OAuth account mode must come from Stripe's account list.
+      stripe("billing", {
+        mode: "production",
+        purpose: "Organization billing",
+        auth: { type: "oauth" },
+      }),
+    ).toThrow("cannot declare a connector-wide mode for OAuth");
+  });
+});

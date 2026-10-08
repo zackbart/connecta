@@ -67,6 +67,7 @@ function suiteSources() {
     }
   };
   walk("test");
+  walk("src/providers");
   return suites;
 }
 

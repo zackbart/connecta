@@ -66,6 +66,8 @@ export interface ProviderSkill {
   content: string;
   /** Heading for deployment instructions, such as `"Workspace instructions"`. */
   instructionsHeading: string;
+  /** Exact generated guide fragments used by existing renderers. */
+  fragments?: Readonly<Record<string, string>>;
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -112,6 +114,10 @@ export interface ProviderDefinition<O extends ProviderOptions> {
   title: string;
   kind: ProviderKind;
   skill: ProviderSkill;
+  /** Maintained display name in the generated README inventory. */
+  readme?: string;
+  /** Reviewed build facts; generation never raises an observed cap. */
+  bundle?: { baselineGzip: number; maxGzip: number; note?: string };
   /** Closed factory options, declared with `optionsOf<O>()` for key parity. */
   options: Field<unknown, unknown>;
   /**
@@ -192,14 +198,18 @@ export function defineProvider<O extends ProviderOptions>(
   }
   const frozen: Readonly<ProviderDefinition<O>> = Object.freeze({
     ...definition,
-    skill: Object.freeze({ ...definition.skill }),
+    skill: Object.freeze({
+      ...definition.skill,
+      ...(definition.skill.fragments ? { fragments: Object.freeze(definition.skill.fragments) } : {}),
+    }),
+    ...(definition.bundle ? { bundle: Object.freeze({ ...definition.bundle }) } : {}),
     ...(classify !== undefined ? { classify } : {}),
   });
-  const factoryName = `${frozen.name}()`;
+  const factoryName = `${frozen.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())}()`;
 
   const factory = (id: string, options: O): Connector =>
     asProvider(frozen.name, frozen.options, id, options, (id, options) => {
-      const at = `${frozen.name}("${id}")`;
+      const at = `${factoryName.slice(0, -2)}(${JSON.stringify(id)})`;
       if (typeof options !== "object" || options === null) {
         throw new Error(`${factoryName} requires an options object.`);
       }
@@ -259,13 +269,33 @@ export function defineProvider<O extends ProviderOptions>(
 }
 
 /**
+ * Attach the same validated definition to an existing provider constructor.
+ * Its option policy stays in its builder during the mechanical folder move;
+ * adopting defineProvider's common-value policy is a separate conversion.
+ */
+export function asProviderFactory<O extends ProviderOptions>(
+  definition: Omit<ProviderDefinition<O>, "create"> & {
+    create(id: string, options: Readonly<O>): Connector;
+  },
+): ProviderFactory<O> {
+  const frozen = defineProvider(definition).definition;
+  const create = definition.create;
+  const factory = (id: string, options: O): Connector =>
+    asProvider(frozen.name, frozen.options, id, options, create);
+  Object.defineProperty(factory, "name", {
+    value: frozen.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+  });
+  return Object.freeze(Object.assign(factory, { definition: frozen }));
+}
+
+/**
  * Build a maintained provider's connector: refuse unknown options and
  * accessors by path before the builder reads any of them, then stamp the
  * provider onto its description, so the operator surface can say "Linear"
  * rather than "remote MCP". This is the same construction path defineProvider
- * uses; the remaining providers keep this internal adapter until item 5b.
+ * uses; existing constructors retain their provider-specific option policy.
  */
-export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
+function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   provider: string,
   shape: Field<unknown, unknown>,
   id: string,
@@ -274,8 +304,13 @@ export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
 ): C {
   // The factory a deployment called: "planning-center" is planningCenter().
   const factory = provider.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-  options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
-  const connector = build(id, options);
+  let connector: C;
+  try {
+    options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
+    connector = build(id, options);
+  } catch (error) {
+    throw providerConstructionError(factory, id, error);
+  }
   const describe = connector.describe?.bind(connector);
   const ownDescribe = Object.getOwnPropertyDescriptor(connector, "describe");
   // Keep the receiver of prototype methods (including private fields). When
@@ -293,4 +328,20 @@ export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
     },
   });
   return stamped;
+}
+
+/** Keep vendor-specific refusals in one construction-error format. */
+function providerConstructionError(provider: string, id: string, error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const at = `${provider}(${JSON.stringify(id)})`;
+  // The same helper handles legacy provider validation and shared config
+  // validation. Retain the original error class and the actionable detail.
+  const prefix = error.message.startsWith(at) ? at
+    : error.message.startsWith(`${provider}()`) ? `${provider}()` : "";
+  const detail = error.message.slice(prefix.length).trimStart().replace(/^\./, "").replace(/^requires\s+/, "").replace(/^must be /, "")
+    .replace(/^(.+) must be /, "$1 to be ")
+    .replace(/^declares /, "a consistent declaration of ")
+    .replace(/^with headers or credential auth requires /, "headers or credential auth to declare ");
+  error.message = `${at} requires ${detail}`;
+  return error;
 }
