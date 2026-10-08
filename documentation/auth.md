@@ -731,6 +731,23 @@ Authentication logs contain fixed codes such as `oauth_binding_mismatch`,
 `oauth_client_not_allowed`, and `oauth_verification_failed`, never tokens,
 client IDs, claimed audiences, or upstream error text.
 
+Clerk 3.12 has no per-client fetch or diagnostic hook. Connecta uses a
+generated copy of that reviewed SDK with an instance-owned fetch: JWKS,
+backend API, opaque verification, and handshake responses read bytes through
+`byteReadResponse`, so workerd cannot print an upstream Content-Type during a
+native text read. SDK diagnostics use the fixed `Clerk authentication failed`
+event and checked `logFailure` records. Its authentication and resource
+serialization logic stays in the SDK; no global fetch, Response, or console is
+patched. Telemetry event and log methods are inert on this client, including
+when telemetry debug output is enabled. The optional `@clerk/backend` peer is
+pinned to `3.12.0` so the gate client's type matches its runtime methods.
+
+[`scripts/build-clerk-sdk.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/build-clerk-sdk.mjs) verifies the
+upstream version and source hash, applies the transport and diagnostic hooks,
+and regenerates the adapter with its license notices. `check:clerk-sdk` checks
+freshness in both verification loops. Updating the locked Clerk SDK requires a
+deliberate adapter update and the real-SDK Node and Workers auth tests.
+
 ## Clerk configuration is checked at construction
 
 `clerkAuth` reads its Frontend API origin out of `publishableKey`, so a key

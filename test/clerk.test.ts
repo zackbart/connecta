@@ -6,8 +6,8 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
-vi.mock("@clerk/backend", () => ({
-  createClerkClient: () => ({
+vi.mock("../src/auth/clerk-transport.js", () => ({
+  createByteReadingClerkClient: () => ({
     authenticateRequest: mocks.authenticateRequest,
     users: { getUser: mocks.getUser },
   }),

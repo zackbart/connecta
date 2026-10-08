@@ -111,6 +111,7 @@ async function main() {
     run("docs", "npm", ["run", "-s", "check:docs"]),
     run("changes", "npm", ["run", "-s", "check:changes"]),
     run("operator-ui", "npm", ["run", "-s", "check:operator-ui"]),
+    run("clerk-sdk", "npm", ["run", "-s", "check:clerk-sdk"]),
     run("lint", "npm", ["run", "-s", "check:lint"]),
     run("unused", "npm", ["run", "-s", "check:unused"]),
     run("typecheck", "npm", ["run", "-s", "typecheck"]),

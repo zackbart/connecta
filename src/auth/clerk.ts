@@ -2,7 +2,8 @@
 // Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
 // ~60s identity caching.
 
-import { createClerkClient } from "@clerk/backend";
+import type { createClerkClient } from "@clerk/backend";
+import { createByteReadingClerkClient } from "./clerk-transport.js";
 import { decodeJwt } from "@clerk/backend/jwt";
 import { byteReadResponse } from "../byte-read-response.js";
 import { failureRecord, logFailure } from "../operator-record.js";
@@ -379,7 +380,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   // Before the Clerk client, so a malformed key fails as a connecta
   // configuration error rather than however the SDK happens to treat it.
   const frontendApiUrl = fapiUrl(opts.publishableKey);
-  const clerk = createClerkClient({
+  const clerk = createByteReadingClerkClient({
     secretKey: opts.secretKey,
     publishableKey: opts.publishableKey,
   });

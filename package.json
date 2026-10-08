@@ -182,6 +182,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build:operator-ui": "node scripts/build-operator-ui.mjs",
     "check:operator-ui": "node scripts/build-operator-ui.mjs --check",
+    "check:clerk-sdk": "node scripts/build-clerk-sdk.mjs --check",
     "build": "npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json && node scripts/prune-declarations.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.operator-ui.json --noEmit",
     "test": "vitest run",
@@ -204,7 +205,7 @@
     "eval:smoke": "tsx eval/run-smoke.ts",
     "eval:perf": "tsx eval/run-perf.ts",
     "eval:report": "tsx eval/report.ts",
-    "check:core": "npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
+    "check:core": "npm run check:docs && npm run check:changes && npm run check:operator-ui && npm run check:clerk-sdk && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:declarations && npm run check:bundle && npm run check:examples",
     "check:fast": "node scripts/check-fast.mjs",
     "check": "npm run check:core && npm run test:browser",
     "release:check": "npm run check && npm run check:security && npm run check:package",
@@ -220,7 +221,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@clerk/backend": "^3.12.0",
+    "@clerk/backend": "3.12.0",
     "@cloudflare/codemode": "^0.4.4 || ^0.5.0",
     "quickjs-emscripten": "^0.32.0"
   },
@@ -236,7 +237,7 @@
     }
   },
   "devDependencies": {
-    "@clerk/backend": "^3.12.0",
+    "@clerk/backend": "3.12.0",
     "@cloudflare/codemode": "^0.5.0",
     "@cloudflare/vitest-pool-workers": "^0.18.8",
     "@cloudflare/workers-types": "^4.20250101.0 || ^5.0.0",

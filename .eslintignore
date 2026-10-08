@@ -1,0 +1,2 @@
+# Regenerated from reviewed upstream code; lint the patch generator and transport.
+src/auth/clerk-sdk/generated.ts

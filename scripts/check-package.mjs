@@ -1311,7 +1311,7 @@ try {
     [
       "install",
       "--ignore-scripts",
-      "@clerk/backend@^3.12.0",
+      "@clerk/backend@3.12.0",
       "quickjs-emscripten@^0.32.0",
     ],
     work,

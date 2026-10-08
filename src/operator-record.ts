@@ -424,7 +424,8 @@ export type FailureEvent =
   | "operator status"
   | "result paging unavailable"
   | "request failed"
-  | "Clerk email lookup failed; denying";
+  | "Clerk email lookup failed; denying"
+  | "Clerk authentication failed";
 
 /** What is logged in place of a record `failureRecord` did not build. */
 const REJECTED_RECORD = Object.freeze({ record: "<rejected>" });
