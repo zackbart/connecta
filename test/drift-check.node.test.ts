@@ -1443,6 +1443,24 @@ describe("hosted vendor evidence", () => {
 const endpointEvidence = { type: "endpoints", specification: { url: "https://vendor.example/openapi.json" }, endpoints: [{ method: "GET", path: "/item", specRevision: "1", contract: `sha256:${"a".repeat(64)}` }] };
 
 describe("drift evidence validation", () => {
+  it.each(["spec", "setup-reference"])("keeps null checks provider-local with a %s override", async (override) => {
+    const check = override === "spec" ? endpointEvidence : linearEvidence;
+    const directory = await recordWorkspace({
+      vendor: { version: 1, provider: "vendor", checks: [null, check] },
+      other: { version: 1, provider: "other", checks: [manualCheck] },
+    });
+    const source = join(directory, "reference");
+    await writeFile(source, override === "spec"
+      ? JSON.stringify({ openapi: "3.1.0", info: { version: "1" }, paths: { "/item": { get: operation("item") } } })
+      : `${linearEvidence.endpoints.join(" ")} OAuth`);
+    const result = reportFor(directory, [`--${override}`, `vendor=${source}`]);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.output);
+    expect(report.records).toEqual([{ provider: "vendor", check: 0, findings: [expect.objectContaining({ kind: "evidence-invalid" })] }]);
+    expect(report.manual).toEqual([expect.objectContaining({ provider: "other" })]);
+    expect(override === "spec" ? report.specs : report.docs).toEqual([expect.objectContaining({ provider: "vendor" })]);
+  });
+
   it.each([
     { ...endpointEvidence, endpoints: [{ ...endpointEvidence.endpoints[0], contract: "not-a-digest" }] },
     { ...endpointEvidence, endpoints: [{ method: "GET", path: "/item", specRevision: "1" }] },
@@ -1457,7 +1475,7 @@ describe("drift evidence validation", () => {
     const result = reportFor(directory);
     expect(result.status).toBe(0);
     const report = JSON.parse(result.output);
-    expect([...report.specs, ...report.docs].flatMap((entry: any) => entry.findings)).toEqual([expect.objectContaining({ kind: "evidence-invalid" })]);
+    expect([...report.specs, ...report.docs, ...report.records].flatMap((entry: any) => entry.findings)).toEqual([expect.objectContaining({ kind: "evidence-invalid" })]);
     expect(report.manual[0].findings[0].kind).toBe("manual-required");
   });
 });

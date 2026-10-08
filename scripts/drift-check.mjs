@@ -153,7 +153,8 @@ function errorFinding(error) {
 function checkMode(type) {
   if (type === "endpoints" || type === "versioned-endpoints") return "specs";
   if (type === "manual") return "manual";
-  return "docs";
+  if (type === "mcp-docs" || type === "oauth-discovery") return "docs";
+  return "records";
 }
 
 /** Discover only direct provider folders carrying drift.json; shared code is absent. */
@@ -195,6 +196,7 @@ function validateSelection(options, providers) {
     if (!entry) usage(`unknown provider: ${provider}`);
     if (entry.error) continue; // Invalid evidence must still get a structured report.
     const modes = new Set(entry.record.checks.map((check) => checkMode(check?.type)));
+    if (modes.has("records")) continue;
     if (![...modes].some((mode) => options[mode])) {
       usage(`${provider} is only checked by ${[...modes].map((mode) => `--${mode}`).join(" or ")}, which this run did not select. That combination would check nothing.`);
     }
@@ -203,7 +205,8 @@ function validateSelection(options, providers) {
     const [provider, app, extra] = key.split("/");
     const entry = known.get(provider);
     if (entry.error) continue;
-    const check = entry.record.checks.find((item) => item.type === "endpoints" || item.type === "versioned-endpoints");
+    const check = entry.record.checks.find((item) => item?.type === "endpoints" || item?.type === "versioned-endpoints");
+    if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
     if (!check) usage(`${provider} has no endpoint specification check`);
     if (check.type === "versioned-endpoints") {
       if (!app || extra) usage(`${provider} publishes one specification per product; name it --spec ${provider}/<app>=<file|url>`);
@@ -213,7 +216,8 @@ function validateSelection(options, providers) {
   for (const provider of new Set([...options.toolReferenceSources.keys(), ...options.setupReferenceSources.keys()])) {
     const entry = known.get(provider);
     if (entry.error) continue;
-    const check = entry.record.checks.find((item) => item.type === "mcp-docs" || item.type === "oauth-discovery");
+    const check = entry.record.checks.find((item) => item?.type === "mcp-docs" || item?.type === "oauth-discovery");
+    if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
     if (!check) usage(`${provider} has no MCP reference check`);
     if (options.toolReferenceSources.has(provider) && !check.inventory) usage(`${provider} has no public tool inventory`);
   }
@@ -1069,7 +1073,7 @@ async function main() {
     let changed = false;
     for (const [index, check] of record.checks.entries()) {
       const mode = checkMode(check?.type);
-      if (!options[mode]) continue;
+      if (mode !== "records" && !options[mode]) continue;
       try {
         validateCheck(check, options.record);
         if (mode === "specs") {

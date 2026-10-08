@@ -293,7 +293,7 @@ export function asProviderFactory<O extends ProviderOptions>(
  * accessors by path before the builder reads any of them, then stamp the
  * provider onto its description, so the operator surface can say "Linear"
  * rather than "remote MCP". This is the same construction path defineProvider
- * uses; the remaining providers keep this internal adapter until item 5b.
+ * uses; existing constructors retain their provider-specific option policy.
  */
 function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   provider: string,
