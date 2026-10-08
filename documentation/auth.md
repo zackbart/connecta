@@ -654,7 +654,14 @@ principal, whose partition they always use. Exceptions and unknown ids fail
 closed; permissions come from authenticated identity, never caller input.
 
 `identity.activityAccess` takes `Readonly<IdentityReference>` — `id` and
-`namespace` — and controls reading global activity. Undeclared, it admits every
+`namespace` — and controls reading activity. When configured, an authenticated
+principal may pass it without an interactive session. This includes a `cta_`
+token's stored principal and a non-interactive API principal; subject-only
+callers and anonymous requests cannot qualify. The optional activity `readGate`
+also applies. Reads remain GET-only and filter connector/tool grants, personal
+ownership and recorded pool access before any actor-label lookup. Non-interactive
+reads return typed actors without directory labels. Old rows without a pool
+remain subject to connector, tool and owner checks. Undeclared, it admits every
 interactive human, the one default here that is open, because a single-operator
 deployment would otherwise be locked out of its own event stream. Team
 deployments should set it. There is no general administrator role and no

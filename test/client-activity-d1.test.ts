@@ -47,7 +47,7 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
     const activity = d1ActivityStore(database);
     const old = (await activity.list!({ limit: 1 })).events[0]!;
     expect(old.serverVersion).toBe("999.0.0");
-    for (const field of ["packageVersion", "clientName", "clientVersion"]) expect(old).not.toHaveProperty(field);
+    for (const field of ["packageVersion", "clientName", "clientVersion", "classification", "resultBytes", "drift", "kind", "pool"]) expect(old).not.toHaveProperty(field);
     const columns = await database.prepare("PRAGMA table_info(tool_call_activity)").all<{ name: string; notnull: number }>();
     expect(columns.results.find(column => column.name === "package_version")?.notnull).toBe(0);
     const writes: Promise<unknown>[] = [];
@@ -56,10 +56,10 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
       serverInfo: { name: "display", version: "999.0.0" },
       clientInfo: { name: "Claude Code", version: "2.1.0" },
       logger: silentLogger, defer: pending => void writes.push(pending),
-    }, { connectorId: "calc", toolName: "add", address: "calc.add", source: "execute_code", outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 });
+    }, { connectorId: "calc", toolName: "add", address: "calc.add", source: "execute_code", classification: "write", resultBytes: 42, outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 });
     await Promise.all(writes);
     expect((await activity.list!({ limit: 10 })).events.find(event => event.requestId === "new"))
-      .toMatchObject({ packageVersion: CONNECTA_VERSION, clientName: "Claude Code", clientVersion: "2.1.0", errorCode: "auth_required" });
+      .toMatchObject({ packageVersion: CONNECTA_VERSION, clientName: "Claude Code", clientVersion: "2.1.0", errorCode: "auth_required", classification: "write", resultBytes: 42 });
   });
 
   it("INV-6: withholds non-string and invalid client facts at the D1 sink itself", async () => {

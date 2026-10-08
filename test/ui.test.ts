@@ -1384,7 +1384,7 @@ describe("status UI", () => {
         interactiveOperator: true,
         kind: "oidc",
         activityActorNamespace: "https://identity.example",
-        activityActorLabel: () => new Promise(() => {}),
+        activityActorLabel: vi.fn(() => new Promise(() => {})),
         authorize: () => ({ ok: true, userId: "operator" }),
       };
       const event: ToolCallActivityEvent = {
@@ -1426,6 +1426,11 @@ describe("status UI", () => {
           headers: { Authorization: "Bearer operator" },
         }),
       );
+      // Authorization now derives the identity partition before filtering.
+      // Start the resolver before advancing its request-owned deadline.
+      if ("activityActorLabel" in auth && vi.isMockFunction(auth.activityActorLabel)) {
+        for (let turn = 0; turn < 200 && auth.activityActorLabel.mock.calls.length === 0; turn++) await vi.advanceTimersByTimeAsync(1);
+      }
       await vi.advanceTimersByTimeAsync(1_500);
       const response = await pending;
       const page = (await response.json()) as ActivityReadPage;

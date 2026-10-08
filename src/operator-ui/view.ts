@@ -127,6 +127,8 @@ export interface UiActivityActor {
 }
 
 export interface UiActivityEvent {
+  kind?: "catalog_drift";
+  drift?: import("../activity.js").ActivityCatalogChange;
   id?: string;
   requestId?: string;
   classification?: "read" | "write";
@@ -618,6 +620,7 @@ export function credentialUnavailableCopy(
 export function connectorStatusLabel(status: string, problem?: UiProblem): string {
   if (status === "loading") return "Loading details";
   if (status === "ok") return "Connected";
+  if (status === "credential_required") return "Credential needed";
   if (status === "auth_required") {
     return problem === "credential_required" ? "Credential needed" : "Authorization needed";
   }
@@ -633,7 +636,7 @@ export type Tone = "ok" | "warn" | "danger" | "neutral";
 
 export function connectorStatusTone(status: string): Tone {
   if (status === "ok") return "ok";
-  if (status === "auth_required") return "warn";
+  if (status === "auth_required" || status === "credential_required") return "warn";
   if (status === "loading") return "neutral";
   return "danger";
 }
@@ -675,7 +678,7 @@ export function summarizeConnectors(
   };
   for (const connector of connectors) {
     if (connector.status === "ok") summary.connected += 1;
-    else if (connector.status === "auth_required") {
+    else if (connector.status === "auth_required" || connector.status === "credential_required") {
       if (connector.problem === "credential_required") summary.credentials += 1;
       else summary.attention += 1;
     }

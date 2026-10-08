@@ -269,7 +269,7 @@ export async function authorize(
       let access: ConnectorAccess;
       try {
         if (identityConfig?.activityAccess) {
-          operator = interactive && principal
+          operator = principal
             ? await identityConfig.activityAccess(principal)
             : false;
         }
@@ -312,7 +312,7 @@ export async function authorize(
         credentialAdministration,
         personalConnection,
         operator,
-        ...(operator ? { uiAdminEligible: true } : {}),
+        ...(interactive && operator ? { uiAdminEligible: true } : {}),
       };
     }
     lastResponse = result.response;

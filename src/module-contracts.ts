@@ -4,6 +4,7 @@ import type {
   ActivityReadGate,
   recordToolActivity,
   recordCatalogDriftActivity,
+  recordCatalogChangeActivity,
 } from "./activity.js";
 import type { RouteContext } from "./routes/shared.js";
 import type { ArtifactRefreshRuntime } from "./artifacts/refresh.js";
@@ -22,6 +23,7 @@ export interface ActivityModule {
   handle(context: RouteContext): Promise<Response | null>;
   readonly recordTool: typeof recordToolActivity;
   readonly recordDrift: typeof recordCatalogDriftActivity;
+  readonly recordChange: typeof recordCatalogChangeActivity;
 }
 /**
  * The artifacts module, created by `artifacts()` from /artifacts. Core appends

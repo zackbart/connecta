@@ -17,6 +17,12 @@ import { Badge, LoadFailure, NoticeLine, StateBlock, Unavailable } from "./parts
 import { loadActivity, retryCollection, setActivitySearch } from "./store.js";
 
 function ActivityRow({ event }: { event: UiActivityEvent }) {
+  if (event.kind === "catalog_drift" && event.drift) return <article className="activity-item">
+    <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
+    <div><div className="activity-address">{event.connectorId}: Catalog changed</div>
+      <div className="activity-detail">{event.drift.addedTools} added · {event.drift.removedTools} removed · {event.drift.changedTools} changed</div>
+    </div><Badge>Catalog change</Badge>
+  </article>;
   const outcome = activityOutcomeClass(event.outcome);
   const badge = activityOutcomeBadge(event.outcome);
   const stableId = actorStableId(event.actor);

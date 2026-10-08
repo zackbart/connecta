@@ -243,7 +243,7 @@ export interface ConnectorContext {
   timeoutMs?: number;
 }
 
-type ConnectorStatusState = "ok" | "auth_required" | "error";
+type ConnectorStatusState = "ok" | "auth_required" | "credential_required" | "error";
 
 /**
  * What a reviewed downstream tool does. `"read"` is observational. `"write"`

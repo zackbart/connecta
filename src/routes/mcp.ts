@@ -1,3 +1,4 @@
+import { bindActivityRequest } from "../activity-request.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
@@ -364,6 +365,7 @@ function serveMcp(
   principalKey: string | undefined,
   runtimeContext?: RuntimeExecutionContext,
   trust: import("../tool-safety.js").PoolTrust = "read-only",
+  pool?: string,
 ): Effect.Effect<Response, never, Scope.Scope> {
   const sentSecrets = sentSecretsForRequest(requestScope);
   // Every McpServer the request builds is fresh and closes with its scope.
@@ -390,6 +392,7 @@ function serveMcp(
           recordTool: opts.config.activity?.recordTool,
           actor,
           requestId: crypto.randomUUID(),
+          ...(pool !== undefined ? { pool } : {}),
           serverInfo: opts.config.serverInfo,
           ...(opts.config.activity?.deploymentId
             ? { deploymentId: opts.config.activity?.deploymentId }
@@ -400,6 +403,7 @@ function serveMcp(
           logger: opts.config.logger,
         }
       : undefined;
+    if (activity) bindActivityRequest(requestScope, activity);
     const client: McpClientContext = {};
     registerMetaTools(server, registry, {
       client,
@@ -776,6 +780,7 @@ export function createMcpRoute(
         authz.principalKey,
         runtimeContext,
         trust,
+        poolName,
       ));
       });
       if (remainingMs === undefined) return yield* handled;

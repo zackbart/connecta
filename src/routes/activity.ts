@@ -1,5 +1,7 @@
+import { intersectAccess, type ConnectorAccess } from "../connector-access.js";
 import { Duration, Effect } from "effect";
 import {
+  activityBehaviorFacts,
   activityPackageVersion,
   activityClientFact,
   InvalidActivityCursorError,
@@ -7,7 +9,7 @@ import {
   type ActivityPage,
   type ActivityReadPage,
 } from "../activity.js";
-import { failureRecord, logFailure } from "../operator-record.js";
+import { recordedToolName, failureRecord, logFailure } from "../operator-record.js";
 import type { InboundAuth } from "../types.js";
 import {
   ACTOR_LABEL_BUDGET_MS,
@@ -17,7 +19,7 @@ import {
   labelLookups,
   type LabelLookup,
 } from "./actor-labels.js";
-import { authorized, refuse, serveOperator, type Answer } from "./operator.js";
+import { authorized, refuse, serveOperator, type Answer, visibleRegistry } from "./operator.js";
 import { privateJson, type RouteContext } from "./shared.js";
 
 /**
@@ -70,12 +72,13 @@ function enrichActivityActorLabels(
               : {}),
           };
           // Re-check stored client facts, including custom readers and old rows.
-          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, ...record } = event;
+          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, classification: _classification, resultBytes: _resultBytes, kind: _kind, drift: _drift, pool: _pool, ...record } = event;
           const packageVersion = activityPackageVersion(suppliedPackageVersion);
           const clientName = activityClientFact(suppliedName, "name");
           const clientVersion = activityClientFact(suppliedVersion, "version");
           return {
             ...record,
+            ...activityBehaviorFacts(event),
             ...(packageVersion !== undefined ? { packageVersion } : {}),
             ...(clientName !== undefined ? { clientName } : {}),
             ...(clientVersion !== undefined ? { clientVersion } : {}),
@@ -87,11 +90,19 @@ function enrichActivityActorLabels(
   });
 }
 
+/** Historical disclosure uses the verdict at call time; old guarded rows fail closed. */
+export function activityToolVisible(authz: ConnectorAccess, event: ActivityPage["events"][number]): boolean {
+  const allowed = authz.toolAccess?.get(event.connectorId);
+  return recordedToolName({ name: event.toolName }) === event.toolName && (!allowed || allowed.has(event.toolName)) &&
+    (!authz.guardedToolAccess?.get(event.connectorId)?.has(event.toolName) || event.classification === "read");
+}
+
 function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
   const { url, opts } = context;
   return Effect.gen(function* () {
-    const authz = yield* authorized(context, false);
-    if (!authz.operator) return yield* refuse("operator access required", 403);
+    const authz = yield* authorized(context);
+    const registry = yield* visibleRegistry(context, authz);
+    if (!authz.operator) return yield* refuse("activity access required", 403);
     if (
       opts.config.activity?.readGate &&
       !(yield* Effect.promise(async () => opts.config.activity?.readGate!(authz.actor)))
@@ -100,6 +111,20 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     }
     const list = opts.config.activity?.store.list?.bind(opts.config.activity?.store);
     if (!list) return yield* refuse("activity history is not configured", 404);
+    const admittedPools = new Set<string>();
+    for (const [name, pool] of opts.pools) {
+      if (yield* Effect.promise(async () => { try { return await pool.grant(authz.identity) === true; } catch { return false; } })) admittedPools.add(name);
+    }
+    const visible = (event: ActivityPage["events"][number]) => {
+      const connector = registry.getConnector(event.connectorId);
+      if (!connector || event.pool !== undefined && !admittedPools.has(event.pool)) return false;
+      if (connector.authScope === "personal" && (event.actor.kind !== authz.actor.kind || event.actor.id !== authz.actor.id || event.actor.namespace !== authz.actor.namespace)) return false;
+      const access = event.pool ? intersectAccess(authz, opts.pools.get(event.pool)!.access) : authz;
+      if (access.connectorIds !== "all" && !access.connectorIds.includes(event.connectorId)) return false;
+      // Connector-wide counts reveal tools outside an address-only grant.
+      if (event.kind === "catalog_drift") return !access.toolAccess?.has(event.connectorId);
+      return activityToolVisible(access, event);
+    };
     const cursor = url.searchParams.get("cursor") ?? undefined;
     if (cursor && cursor.length > 500) return yield* refuse("invalid cursor", 400);
     const requestedLimit = Number(url.searchParams.get("limit") ?? "50");
@@ -110,7 +135,8 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
       try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
       catch: (error) => error,
     }).pipe(
-      Effect.flatMap((page) => enrichActivityActorLabels(page, opts.config.auth)),
+      Effect.map(page => ({ ...page, events: page.events.filter(visible) })),
+      Effect.flatMap((page) => enrichActivityActorLabels(page, authz.identity.interactive ? opts.config.auth : [])),
       Effect.map((page) => privateJson(page)),
       // A page too malformed to label or serialize is the store's failure,
       // like any other.

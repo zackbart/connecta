@@ -1065,7 +1065,16 @@ detail, Tools, Access and Config consume the typed contract. Activity and
 Artifacts retain their authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
 history. Calls group only by recorded request ids, with missing ids shown as
-separate calls. Classification and result size are shown only when recorded.
+separate calls. Classification and result size are shown only when recorded. The verdict is
+captured after registry resolution, and result size counts UTF-8 bytes of the
+downstream value before paging or truncation. Nullable SQL columns preserve old
+rows. Catalog changes use the same paging envelope with `kind: "catalog_drift"`,
+`source: "catalog_refresh"` and a checked `catalog_changed` fact containing only
+added, removed and changed tool counts. The first complete catalog is a baseline;
+one refresh-publication hook emits each later change. It includes the request's
+id and typed actor when available, otherwise a fresh id and system actor. No
+names, descriptions or schemas enter the event. Empty credential declarations
+report `credential_required` before running a connector status or catalog probe.
 The Access adapter reports inbound provider kinds, admitted pools, grants, trust
 and endpoint setup; token controls retain their existing permission gate.
 Configuration remains in deployment code. The UI mutates only credentials,

@@ -94,6 +94,7 @@ function lastCalls(context: RouteContext, authz: Authorized, connectors: Connect
       for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
         const page = yield* attempt(() => activity.store.list!({ limit: 100, ...(cursor ? { cursor } : {}) }));
         for (const event of page.events.slice(0, 100)) {
+          if (event.kind === "catalog_drift") continue;
           const row = byId.get(event.connectorId);
           if (!row || !isTimestamp(event.occurredAt) || !OUTCOMES.has(event.outcome)) continue;
           if (!toolVisible(authz, event.connectorId, event.toolName,
