@@ -14,6 +14,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const discoveryModule = new URL("../scripts/providers.mjs", import.meta.url).href;
+const { discoverProviders } = await import(discoveryModule) as {
+  discoverProviders(root: string): Promise<{ name: string; index: string }[]>;
+};
+const providers = await discoverProviders(ROOT);
 const packageJson = JSON.parse(
   readFileSync(join(ROOT, "package.json"), "utf8"),
 ) as {
@@ -106,9 +111,7 @@ describe("public package boundary", () => {
     // ERR_PACKAGE_PATH_NOT_EXPORTED instead (#374). It resolves to a data
     // file, so it widens nothing: no code path becomes importable, and the
     // root entry's purity boundary is untouched.
-    const providers = readdirSync(join(ROOT, "src", "providers"))
-      .filter((file) => file.endsWith(".ts"))
-      .map((file) => `./providers/${file.slice(0, -3)}`);
+    const providerExports = providers.map(({ name }) => `./providers/${name}`);
     expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(
       [
         ".",
@@ -122,7 +125,7 @@ describe("public package boundary", () => {
         "./worker",
         "./auth/clerk",
         "./auth/cloudflare-access",
-        ...providers,
+        ...providerExports,
       ].sort(),
     );
     expect(packageJson.exports?.["./package.json"]).toBe("./package.json");
@@ -269,21 +272,20 @@ describe("public package boundary", () => {
   // behavior. On a loaded host that outran the 5s default, so the budget here
   // is only a hang guard.
   it("publishes every provider independently from the root entry", async () => {
-    const providers = readdirSync(join(ROOT, "src", "providers"))
-      .filter((file) => file.endsWith(".ts"))
-      .sort();
     expect(providers.length).toBeGreaterThan(0);
     const core = await import("../src/index.js");
-    for (const file of providers) {
-      const name = file.slice(0, -3);
+    for (const { name, index } of providers) {
       expect(
         packageJson.exports,
-        `src/providers/${file} needs a ./providers/${name} export`,
-      ).toHaveProperty(`./providers/${name}`);
+        `src/providers/${name}/index.ts needs a ./providers/${name} export`,
+      ).toHaveProperty(`./providers/${name}`, {
+        types: `./dist/providers/${name}/index.d.ts`,
+        import: `./dist/providers/${name}/index.js`,
+      });
       // A runtime specifier: the provider is loaded, not statically linked, so
       // adding one never widens what the root entry pulls in.
       const provider = (await import(
-        pathToFileURL(join(ROOT, "src", "providers", file)).href
+        pathToFileURL(index).href
       )) as Record<string, unknown>;
       for (const symbol of Object.keys(provider)) {
         expect(
@@ -324,7 +326,7 @@ describe("public package boundary", () => {
 
   it("keeps the Cloudflare provider free of bare-specifier imports", () => {
     const source = readFileSync(
-      join(ROOT, "src", "providers", "cloudflare.ts"),
+      join(ROOT, "src", "providers", "cloudflare", "index.ts"),
       "utf8",
     );
     // Every import must be relative: a bare specifier here would be a runtime
@@ -336,7 +338,7 @@ describe("public package boundary", () => {
 
   it("keeps the Planning Center provider free of bare-specifier imports", () => {
     const source = readFileSync(
-      join(ROOT, "src", "providers", "planning-center.ts"),
+      join(ROOT, "src", "providers", "planning-center", "index.ts"),
       "utf8",
     );
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -349,7 +351,7 @@ describe("public package boundary", () => {
     expect(packageJson.peerDependencies).not.toHaveProperty("@vercel/sdk");
     expect(packageJson.devDependencies).not.toHaveProperty("@vercel/sdk");
     const source = readFileSync(
-      join(ROOT, "src", "providers", "vercel.ts"),
+      join(ROOT, "src", "providers", "vercel", "index.ts"),
       "utf8",
     );
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -360,7 +362,7 @@ describe("public package boundary", () => {
   it("keeps the CCB provider dependency-free and out of the root entry", () => {
     // Its OAuth grant is core's `api()` machinery, not an OAuth client library.
     const source = readFileSync(
-      join(ROOT, "src", "providers", "ccb.ts"),
+      join(ROOT, "src", "providers", "ccb", "index.ts"),
       "utf8",
     );
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -371,7 +373,7 @@ describe("public package boundary", () => {
   it("keeps the Overflow provider dependency-free and behind its own subpath", () => {
     expect(packageJson.exports).toHaveProperty("./providers/overflow");
     const source = readFileSync(
-      join(ROOT, "src", "providers", "overflow.ts"),
+      join(ROOT, "src", "providers", "overflow", "index.ts"),
       "utf8",
     );
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -381,7 +383,7 @@ describe("public package boundary", () => {
 
   it("keeps the Tithe.ly provider dependency-free", () => {
     const source = readFileSync(
-      join(ROOT, "src", "providers", "tithely.ts"),
+      join(ROOT, "src", "providers", "tithely", "index.ts"),
       "utf8",
     );
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -393,7 +395,7 @@ describe("public package boundary", () => {
   // against one church's host, so the provider stays Web-API fetch.
   it("keeps the Breeze provider dependency-free and out of the root entry", () => {
     const source = readFileSync(
-      join(ROOT, "src", "providers", "breeze.ts"),
+      join(ROOT, "src", "providers", "breeze", "index.ts"),
       "utf8",
     );
     for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
@@ -404,17 +406,17 @@ describe("public package boundary", () => {
 
   // Delegated Workspace access signs its own RS256 assertions with Web Crypto
   // (#678): no Google auth library, no OAuth client, no MCP SDK. The shared
-  // layer under providers/google/ is imported, never exported.
+  // layer under providers/_shared/google/ is imported, never exported.
   it("keeps the Workspace providers and their shared layer dependency-free", () => {
     for (const file of [
-      join(ROOT, "src", "providers", "gmail.ts"),
-      join(ROOT, "src", "providers", "drive.ts"),
-      join(ROOT, "src", "providers", "docs.ts"),
-      join(ROOT, "src", "providers", "sheets.ts"),
-      join(ROOT, "src", "providers", "slides.ts"),
-      join(ROOT, "src", "providers", "forms.ts"),
-      ...readdirSync(join(ROOT, "src", "providers", "google")).map((name) =>
-        join(ROOT, "src", "providers", "google", name),
+      join(ROOT, "src", "providers", "gmail", "index.ts"),
+      join(ROOT, "src", "providers", "drive", "index.ts"),
+      join(ROOT, "src", "providers", "docs", "index.ts"),
+      join(ROOT, "src", "providers", "sheets", "index.ts"),
+      join(ROOT, "src", "providers", "slides", "index.ts"),
+      join(ROOT, "src", "providers", "forms", "index.ts"),
+      ...readdirSync(join(ROOT, "src", "providers", "_shared", "google")).map((name) =>
+        join(ROOT, "src", "providers", "_shared", "google", name),
       ),
     ]) {
       const source = readFileSync(file, "utf8");

@@ -14,8 +14,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverProviders } from "./providers.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const providers = await discoverProviders(root);
 const work = await mkdtemp(join(tmpdir(), "connecta-package-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const rootManifest = JSON.parse(
@@ -255,44 +257,10 @@ try {
     "dist/executors/quickjs-runtime.js",
     "dist/auth/cloudflare-access.js",
     "dist/auth/cloudflare-access.d.ts",
-    "dist/providers/mixpanel.js",
-    "dist/providers/mixpanel.d.ts",
-    "dist/providers/revenuecat.js",
-    "dist/providers/revenuecat.d.ts",
-    "dist/providers/linear.js",
-    "dist/providers/linear.d.ts",
-    "dist/providers/notion.js",
-    "dist/providers/notion.d.ts",
-    "dist/providers/stripe.js",
-    "dist/providers/stripe.d.ts",
-    "dist/providers/cloudflare.js",
-    "dist/providers/cloudflare.d.ts",
-    "dist/providers/vercel.js",
-    "dist/providers/vercel.d.ts",
-    "dist/providers/ccb.js",
-    "dist/providers/ccb.d.ts",
-    "dist/providers/planning-center.js",
-    "dist/providers/planning-center.d.ts",
-    "dist/providers/overflow.js",
-    "dist/providers/overflow.d.ts",
-    "dist/providers/tithely.js",
-    "dist/providers/tithely.d.ts",
-    "dist/providers/breeze.js",
-    "dist/providers/breeze.d.ts",
-    "dist/providers/basecamp.js",
-    "dist/providers/basecamp.d.ts",
-    "dist/providers/gmail.js",
-    "dist/providers/gmail.d.ts",
-    "dist/providers/drive.js",
-    "dist/providers/drive.d.ts",
-    "dist/providers/docs.js",
-    "dist/providers/docs.d.ts",
-    "dist/providers/sheets.js",
-    "dist/providers/sheets.d.ts",
-    "dist/providers/slides.js",
-    "dist/providers/slides.d.ts",
-    "dist/providers/forms.js",
-    "dist/providers/forms.d.ts",
+    ...providers.flatMap(({ name }) => [
+      `dist/providers/${name}/index.js`,
+      `dist/providers/${name}/index.d.ts`,
+    ]),
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
     "dist/d1.js",
@@ -313,7 +281,11 @@ try {
     // root (#374) — so src/ served nothing but the source and declaration
     // maps that pointed back at it, and both went with it. A packed .map is
     // therefore either dangling or a sign the build config drifted back.
-    if (path.startsWith("src/") || path.endsWith(".map")) {
+    if (
+      path.startsWith("src/") || path.endsWith(".map") ||
+      /(?:^|\/)(?:fixtures|provider\.test|provider\.node\.test)\.(?:js|d\.ts)$/.test(path) ||
+      path.endsWith("provider-smoke.generated.mjs")
+    ) {
       throw new Error(`Source-only artifact leaked into the package: ${path}`);
     }
     // The hero image is 230 KB of README decoration. npmjs.com resolves the
@@ -383,6 +355,10 @@ try {
     join(work, "package.json"),
     JSON.stringify({ private: true, type: "module" }),
   );
+  await copyFile(
+    join(root, "scripts", "provider-smoke.generated.mjs"),
+    join(work, "provider-smoke.generated.mjs"),
+  );
   await writeFile(
     join(work, "smoke.mjs"),
     `
@@ -418,324 +394,41 @@ const jsonSchema = await import("@zackbart/connecta/json-schema");
 if (typeof jsonSchema.Validator !== "function") {
   throw new Error("missing Validator re-export");
 }
-const mixpanelProvider = await import("@zackbart/connecta/providers/mixpanel");
-if (typeof mixpanelProvider.mixpanel !== "function") {
-  throw new Error("missing Mixpanel provider constructor");
-}
-const mixpanelConnection = mixpanelProvider.mixpanel("analytics", {
-  purpose: "package smoke",
-});
-if (mixpanelConnection.id !== "analytics") {
-  throw new Error("Mixpanel provider did not return a connector");
-}
-const stripeProvider = await import("@zackbart/connecta/providers/stripe");
-if (typeof stripeProvider.stripe !== "function") {
-  throw new Error("missing Stripe provider constructor");
-}
-const stripeConnection = stripeProvider.stripe("payments", {
-  purpose: "package smoke",
-});
-if (stripeConnection.id !== "payments") {
-  throw new Error("Stripe provider did not return a connector");
-}
-const linearProvider = await import("@zackbart/connecta/providers/linear");
-if (typeof linearProvider.linear !== "function") {
-  throw new Error("missing Linear provider constructor");
-}
-// access is required and has no default -- omitting it throws at construction
-// (#342), so the smoke declares one the way a deployment must.
-const linearConnection = linearProvider.linear("tracker", {
-  access: "read-write",
-  purpose: "package smoke",
-});
-if (linearConnection.id !== "tracker") {
-  throw new Error("Linear provider did not return a connector");
-}
-if (
-  linearProvider.LINEAR_MCP_ENDPOINTS["read-only"] !==
-  "https://mcp.linear.app/mcp/readonly"
-) {
-  throw new Error("Linear read-only endpoint drifted");
-}
-const revenuecatProvider = await import(
-  "@zackbart/connecta/providers/revenuecat"
-);
-if (typeof revenuecatProvider.revenuecat !== "function") {
-  throw new Error("missing RevenueCat provider constructor");
-}
-const revenuecatConnection = revenuecatProvider.revenuecat("subscriptions", {
-  purpose: "package smoke",
-});
-if (revenuecatConnection.id !== "subscriptions") {
-  throw new Error("RevenueCat provider did not return a connector");
-}
-if (
-  revenuecatProvider.REVENUECAT_MCP_ENDPOINT !== "https://mcp.revenuecat.ai/mcp"
-) {
-  throw new Error("RevenueCat endpoint drifted");
-}
-const basecampProvider = await import(
-  "@zackbart/connecta/providers/basecamp"
-);
-if (typeof basecampProvider.basecamp !== "function") {
-  throw new Error("missing Basecamp provider constructor");
-}
-// clientMetadataUrl is required -- Basecamp restricts dynamic registration for
-// HTTPS callbacks -- so the smoke declares one the way a deployment must.
-const basecampConnection = basecampProvider.basecamp("projects", {
-  purpose: "package smoke",
-  clientMetadataUrl: "https://connecta.example/oauth/basecamp-client",
-});
-if (basecampConnection.id !== "projects") {
-  throw new Error("Basecamp provider did not return a connector");
-}
-if (basecampProvider.BASECAMP_MCP_ENDPOINT !== "https://mcp.basecamp.com/mcp") {
-  throw new Error("Basecamp endpoint drifted");
-}
-const notionProvider = await import("@zackbart/connecta/providers/notion");
-if (typeof notionProvider.notion !== "function") {
-  throw new Error("missing Notion provider constructor");
-}
-const notionConnection = notionProvider.notion("workspace", {
-  purpose: "package smoke",
-});
-if (notionConnection.id !== "workspace") {
-  throw new Error("Notion provider did not return a connector");
-}
-if (notionConnection.kind !== "api") {
-  throw new Error("Notion provider is not an api() connector");
-}
-if (!notionConnection.staticTools?.length) {
-  throw new Error("Notion provider published no tools");
-}
-const cloudflareProvider = await import(
-  "@zackbart/connecta/providers/cloudflare"
-);
-if (typeof cloudflareProvider.cloudflare !== "function") {
-  throw new Error("missing Cloudflare provider constructor");
-}
-const cloudflareConnection = cloudflareProvider.cloudflare("edge", {
-  purpose: "package smoke",
-});
-if (cloudflareConnection.id !== "edge") {
-  throw new Error("Cloudflare provider did not return a connector");
-}
-const vercelProvider = await import("@zackbart/connecta/providers/vercel");
-if (typeof vercelProvider.vercel !== "function") {
-  throw new Error("missing Vercel provider constructor");
-}
-const vercelConnection = vercelProvider.vercel("hosting", {
-  purpose: "package smoke",
-});
-if (vercelConnection.id !== "hosting" || vercelConnection.kind !== "api") {
-  throw new Error("Vercel provider did not return an api() connector");
-}
-if (!vercelConnection.staticTools?.length) {
-  throw new Error("Vercel provider published no tools");
-}
-const ccbProvider = await import("@zackbart/connecta/providers/ccb");
-if (typeof ccbProvider.ccb !== "function") {
-  throw new Error("missing CCB provider constructor");
-}
-const ccbConnection = ccbProvider.ccb("church", {
-  purpose: "package smoke",
-  environment: "sandbox",
-  mode: "system",
-  clientId: "smoke-client",
-  clientSecret: "smoke-secret",
-});
-if (ccbConnection.id !== "church" || ccbConnection.kind !== "api") {
-  throw new Error("CCB provider did not return an api() connector");
-}
-if (!ccbConnection.staticTools?.length || typeof ccbConnection.startAuth !== "function") {
-  throw new Error("CCB provider published no tools or no OAuth grant");
-}
-const planningCenterProvider = await import(
-  "@zackbart/connecta/providers/planning-center"
-);
-if (typeof planningCenterProvider.planningCenter !== "function") {
-  throw new Error("missing Planning Center provider constructor");
-}
-const planningCenterConnection = planningCenterProvider.planningCenter("church", {
-  purpose: "package smoke",
-});
-if (planningCenterConnection.id !== "church" || planningCenterConnection.kind !== "api") {
-  throw new Error("Planning Center provider did not return an api() connector");
-}
-if (!planningCenterConnection.staticTools?.length) {
-  throw new Error("Planning Center provider published no tools");
-}
-const overflowProvider = await import("@zackbart/connecta/providers/overflow");
-if (typeof overflowProvider.overflow !== "function") {
-  throw new Error("missing Overflow provider constructor");
-}
-const overflowConnection = overflowProvider.overflow("giving", {
-  environment: "staging",
-  purpose: "package smoke",
-});
-if (overflowConnection.id !== "giving" || overflowConnection.kind !== "api") {
-  throw new Error("Overflow provider did not return an api() connector");
-}
-if (!overflowConnection.staticTools?.length) {
-  throw new Error("Overflow provider published no tools");
-}
-const tithelyProvider = await import("@zackbart/connecta/providers/tithely");
-if (typeof tithelyProvider.tithely !== "function") {
-  throw new Error("missing Tithe.ly provider constructor");
-}
-const tithelyConnection = tithelyProvider.tithely("giving", {
-  purpose: "package smoke",
-  environment: "test",
-});
-if (tithelyConnection.id !== "giving" || tithelyConnection.kind !== "api") {
-  throw new Error("Tithe.ly provider did not return an api() connector");
-}
-if (!tithelyConnection.staticTools?.length) {
-  throw new Error("Tithe.ly provider published no tools");
-}
-const breezeProvider = await import("@zackbart/connecta/providers/breeze");
-if (typeof breezeProvider.breeze !== "function") {
-  throw new Error("missing Breeze provider constructor");
-}
-const breezeConnection = breezeProvider.breeze("church", {
-  subdomain: "smoke",
-  purpose: "package smoke",
-});
-if (breezeConnection.id !== "church" || breezeConnection.kind !== "api") {
-  throw new Error("Breeze provider did not return an api() connector");
-}
-if (!breezeConnection.staticTools?.length) {
-  throw new Error("Breeze provider published no tools");
-}
-const gmailProvider = await import("@zackbart/connecta/providers/gmail");
-if (typeof gmailProvider.gmail !== "function") {
-  throw new Error("missing Gmail provider constructor");
-}
-// Construction checks the key, so the smoke brings a real one.
-const smokeKey = await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign"],
-);
-const smokeDer = new Uint8Array(await crypto.subtle.exportKey("pkcs8", smokeKey.privateKey));
-const gmailConnection = gmailProvider.gmail("mail", {
-  purpose: "package smoke",
-  serviceAccount: {
-    clientEmail: "smoke@project.iam.gserviceaccount.com",
-    privateKey:
-      "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(...smokeDer)) +
-      "-----END PRIVATE KEY-----",
-  },
-  subject: () => undefined,
-});
-if (gmailConnection.id !== "mail" || gmailConnection.kind !== "api") {
-  throw new Error("Gmail provider did not return an api() connector");
-}
-if (gmailConnection.staticTools?.some((tool) => /send/.test(tool.name))) {
-  throw new Error("Gmail provider published a send tool");
-}
-const driveProvider = await import("@zackbart/connecta/providers/drive");
-if (typeof driveProvider.drive !== "function") {
-  throw new Error("missing Google Drive provider constructor");
-}
-const driveConnection = driveProvider.drive("files", {
-  purpose: "package smoke",
-  serviceAccount: {
-    clientEmail: "smoke@project.iam.gserviceaccount.com",
-    privateKey:
-      "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(...smokeDer)) +
-      "-----END PRIVATE KEY-----",
-  },
-  subject: () => undefined,
-});
-if (driveConnection.id !== "files" || driveConnection.kind !== "api") {
-  throw new Error("Google Drive provider did not return an api() connector");
-}
-if (driveConnection.staticTools?.some((tool) => /^(delete_file|empty_trash|transfer)/.test(tool.name))) {
-  throw new Error("Google Drive provider published a permanent delete or ownership transfer");
-}
-const docsProvider = await import("@zackbart/connecta/providers/docs");
-if (typeof docsProvider.docs !== "function") {
-  throw new Error("missing Google Docs provider constructor");
-}
-const docsConnection = docsProvider.docs("docs", {
-  purpose: "package smoke",
-  serviceAccount: {
-    clientEmail: "smoke@project.iam.gserviceaccount.com",
-    privateKey:
-      "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(...smokeDer)) +
-      "-----END PRIVATE KEY-----",
-  },
-  subject: () => undefined,
-});
-if (docsConnection.id !== "docs" || docsConnection.kind !== "api") {
-  throw new Error("Google Docs provider did not return an api() connector");
-}
-const sheetsProvider = await import("@zackbart/connecta/providers/sheets");
-if (typeof sheetsProvider.sheets !== "function") {
-  throw new Error("missing Google Sheets provider constructor");
-}
-const sheetsConnection = sheetsProvider.sheets("sheets", {
-  purpose: "package smoke",
-  serviceAccount: {
-    clientEmail: "smoke@project.iam.gserviceaccount.com",
-    privateKey:
-      "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(...smokeDer)) +
-      "-----END PRIVATE KEY-----",
-  },
-  subject: () => undefined,
-});
-if (sheetsConnection.id !== "sheets" || sheetsConnection.kind !== "api") {
-  throw new Error("Google Sheets provider did not return an api() connector");
-}
-if (!sheetsConnection.staticTools?.length) {
-  throw new Error("Google Sheets provider published no tools");
-}
-const slidesProvider = await import("@zackbart/connecta/providers/slides");
-if (typeof slidesProvider.slides !== "function") {
-  throw new Error("missing Google Slides provider constructor");
-}
-const slidesConnection = slidesProvider.slides("decks", {
-  purpose: "package smoke",
-  serviceAccount: {
-    clientEmail: "smoke@project.iam.gserviceaccount.com",
-    privateKey:
-      "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(...smokeDer)) +
-      "-----END PRIVATE KEY-----",
-  },
-  subject: () => undefined,
-});
-if (slidesConnection.id !== "decks" || slidesConnection.kind !== "api") {
-  throw new Error("Google Slides provider did not return an api() connector");
-}
-if (!slidesConnection.staticTools?.length) {
-  throw new Error("Google Slides provider published no tools");
-}
-const formsProvider = await import("@zackbart/connecta/providers/forms");
-if (typeof formsProvider.forms !== "function") {
-  throw new Error("missing Google Forms provider constructor");
-}
-const formsConnection = formsProvider.forms("forms", {
-  purpose: "package smoke",
-  serviceAccount: {
-    clientEmail: "smoke@project.iam.gserviceaccount.com",
-    privateKey:
-      "-----BEGIN PRIVATE KEY-----" +
-      btoa(String.fromCharCode(...smokeDer)) +
-      "-----END PRIVATE KEY-----",
-  },
-  subject: () => undefined,
-});
-if (formsConnection.id !== "forms" || formsConnection.kind !== "api") {
-  throw new Error("Google Forms provider did not return an api() connector");
-}
-if (!formsConnection.staticTools?.length) {
-  throw new Error("Google Forms provider published no tools");
+const originalFetch = globalThis.fetch;
+globalThis.fetch = () => { throw new Error("provider fixture construction attempted network access"); };
+try {
+  const { fixtures } = await import("./provider-smoke.generated.mjs");
+  const providerNames = Object.keys(manifest.exports)
+    .filter((key) => key.startsWith("./providers/"))
+    .map((key) => key.slice("./providers/".length)).sort();
+  if (JSON.stringify(fixtures.map((fixture) => fixture.name).sort()) !== JSON.stringify(providerNames)) {
+    throw new Error("packed provider exports and smoke fixtures disagree");
+  }
+  for (const fixture of fixtures) {
+    if (typeof fixture.create !== "function" || !Array.isArray(fixture.cases) || !fixture.cases.length) {
+      throw new Error(fixture.name + " needs construction smoke cases");
+    }
+    const providerModule = await import("@zackbart/connecta/providers/" + fixture.name);
+    for (const symbol of Object.keys(providerModule)) {
+      if (symbol in core) throw new Error(symbol + " from " + fixture.name + " leaked into the core entry");
+    }
+    for (const testCase of fixture.cases) {
+      const id = "smoke-" + fixture.name;
+      const connector = fixture.create(id, testCase.options);
+      if (connector.id !== id || !["api", "mcp"].includes(connector.kind)) {
+        throw new Error(fixture.name + " fixture did not construct a connector: " + testCase.label);
+      }
+      if (connector.kind === "api" && !connector.staticTools?.length) {
+        throw new Error(fixture.name + " published no API tools");
+      }
+      if (fixture.conventions?.auth === "oauth" && typeof connector.startAuth !== "function") {
+        throw new Error(fixture.name + " published no OAuth grant");
+      }
+      await fixture.assertSmoke?.(connector, providerModule);
+    }
+  }
+} finally {
+  globalThis.fetch = originalFetch;
 }
 const artifactsModule = await import("@zackbart/connecta/artifacts");
 if (typeof artifactsModule.kvArtifactStore !== "function") {
@@ -764,54 +457,6 @@ for (const name of [
   "sqliteActivityStore",
   "openSqlite",
   "quickJsExecutor",
-  "mixpanel",
-  "MIXPANEL_MCP_ENDPOINTS",
-  "stripe",
-  "STRIPE_MCP_ENDPOINT",
-  "linear",
-  "LINEAR_MCP_ENDPOINTS",
-  "revenuecat",
-  "REVENUECAT_MCP_ENDPOINT",
-  "notion",
-  "NOTION_API_VERSION",
-  "NOTION_API_BASE_URL",
-  "cloudflare",
-  "CLOUDFLARE_API_BASE",
-  "CLOUDFLARE_DNS_RECORD_TYPES",
-  "vercel",
-  "VERCEL_API_BASE_URL",
-  "ccb",
-  "CCB_ENVIRONMENTS",
-  "CCB_READ_SCOPES",
-  "planningCenter",
-  "PLANNING_CENTER_API_BASE_URL",
-  "PLANNING_CENTER_API_VERSIONS",
-  "overflow",
-  "OVERFLOW_API_BASE_URLS",
-  "tithely",
-  "TITHELY_API_BASE_URLS",
-  "breeze",
-  "BREEZE_HOST_SUFFIX",
-  "basecamp",
-  "BASECAMP_MCP_ENDPOINT",
-  "gmail",
-  "GMAIL_API_BASE_URL",
-  "GMAIL_SCOPES",
-  "drive",
-  "DRIVE_API_BASE_URL",
-  "DRIVE_SCOPES",
-  "docs",
-  "DOCS_API_BASE_URL",
-  "DOCS_SCOPES",
-  "sheets",
-  "SHEETS_API_BASE_URL",
-  "SHEETS_SCOPES",
-  "slides",
-  "SLIDES_API_BASE_URL",
-  "SLIDES_SCOPES",
-  "forms",
-  "FORMS_API_BASE_URL",
-  "FORMS_SCOPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
