@@ -336,8 +336,17 @@ const SECRETS_RESULT = result({
   imports: { type: "array", items: result({ environment: string, path: string, secrets: SECRET_LIST }) },
 });
 const SECRET_RESULT = result({ secret: SECRET });
-const WRITE_RESULT = result({ secret: result(SECRET_METADATA), pendingApproval: APPROVAL, ok: { type: "boolean" } });
-const FOLDER_RESULT = result({ folder: FOLDER, pendingApproval: APPROVAL, ok: { type: "boolean" } });
+const metadataOmitted: JsonSchema = {
+  type: "boolean",
+  description: "Unsafe or unavailable upstream metadata was withheld; the write or pending approval still succeeded.",
+};
+const WRITE_RESULT = result({
+  secret: result(SECRET_METADATA),
+  pendingApproval: APPROVAL,
+  ok: { type: "boolean" },
+  metadataOmitted,
+});
+const FOLDER_RESULT = result({ folder: FOLDER, pendingApproval: APPROVAL, ok: { type: "boolean" }, metadataOmitted });
 function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise<unknown>): ApiTool[] {
   return [
     {
@@ -548,6 +557,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         },
         ctx: ConnectorContext,
       ) => {
+        sentSecretsFor(ctx).secret(args.secretValue);
         const payload = asRecord(
           await call(
             {
@@ -565,7 +575,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             ctx,
           ),
         );
-        return writeResult(payload);
+        return writeResult(payload, ctx, args.secretValue);
       },
     },
     {
@@ -606,6 +616,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         if (args.secretValue === undefined && args.secretComment === undefined && args.newSecretName === undefined) {
           throw new ConnectorCallError("invalid_args", "Pass secretValue, secretComment, or newSecretName.");
         }
+        if (args.secretValue !== undefined) sentSecretsFor(ctx).secret(args.secretValue);
         const payload = asRecord(
           await call(
             {
@@ -624,7 +635,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             ctx,
           ),
         );
-        return writeResult(payload);
+        return writeResult(payload, ctx, args.secretValue);
       },
     },
     {
@@ -657,7 +668,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             ctx,
           ),
         );
-        return writeResult(payload);
+        return writeResult(payload, ctx);
       },
     },
     {
@@ -697,7 +708,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         );
         const body = asRecord(payload);
         return body["approval"]
-          ? writeResult(body)
+          ? writeResult(body, ctx)
           : body["folder"]
             ? { folder: projectFolder(body["folder"], args.path ?? "/") }
             : { ok: true };
@@ -707,14 +718,72 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
 }
 /**
  * Writes return the secret, or an approval request when the environment has a
- * change policy. The written value is omitted: the caller supplied it.
+ * change policy. Only documented scalar metadata leaves a write. Registering
+ * secretValue before dispatch also protects subsequent request/guest exits.
+ * The sent-secret matcher has an eight-character floor. Below that floor,
+ * withhold all upstream text (including IDs, approval status and tag names)
+ * rather than use unreliable substring matching. Numeric exact echoes are
+ * withheld too. Fixed result keys/flags are not upstream metadata.
  */
-function writeResult(payload: Json): Json {
+function writeResult(payload: Json, ctx: ConnectorContext, secretValue?: string): Json {
+  const secrets = sentSecretsFor(ctx);
+  const shortValue = secretValue !== undefined && secretValue.length < 8;
+  let omitted = false;
+  const record = (value: unknown): Json => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) omitted = true;
+    return asRecord(value);
+  };
+  const scalar = (value: unknown, type: "string" | "number"): string | number | undefined => {
+    if (value === undefined) return undefined;
+    if (
+      (type === "string" && typeof value !== "string") ||
+      (type === "number" && (typeof value !== "number" || !Number.isFinite(value)))
+    ) {
+      omitted = true;
+      return undefined;
+    }
+    const text = String(value);
+    if (
+      (shortValue && type === "string") ||
+      text === secretValue ||
+      secrets.contains(text) ||
+      secrets.text(text) !== text
+    ) {
+      omitted = true;
+      return undefined;
+    }
+    return value as string | number;
+  };
+  const string = (value: unknown) => scalar(value, "string") as string | undefined;
+  let projected: Json;
   if (payload["approval"]) {
-    const approval = asRecord(payload["approval"]);
-    return { pendingApproval: compact({ id: approval["id"], status: approval["status"] }) };
+    const approval = record(payload["approval"]);
+    projected = { pendingApproval: compact({ id: string(approval["id"]), status: string(approval["status"]) }) };
+  } else if (payload["secret"]) {
+    const secret = record(payload["secret"]);
+    const tags: string[] = [];
+    if (secret["tags"] !== undefined && !Array.isArray(secret["tags"])) omitted = true;
+    for (const tag of asArray(secret["tags"])) {
+      const slug = string(record(tag)["slug"]);
+      if (slug !== undefined) tags.push(slug);
+    }
+    projected = {
+      secret: compact({
+        id: string(secret["id"]),
+        key: string(secret["secretKey"]),
+        comment: string(secret["secretComment"]),
+        environment: string(secret["environment"]),
+        path: string(secret["secretPath"]),
+        type: string(secret["type"]),
+        version: scalar(secret["version"], "number"),
+        tags,
+        updatedAt: string(secret["updatedAt"]),
+      }),
+    };
+  } else {
+    // An unrecognized shape may still carry the value; report success only.
+    projected = { ok: true };
+    omitted = true;
   }
-  if (payload["secret"]) return { secret: withoutValues(projectSecret(payload["secret"])) };
-  // An unrecognized shape may still carry the value; report success only.
-  return { ok: true };
+  return omitted ? { ...projected, metadataOmitted: true } : projected;
 }

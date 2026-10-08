@@ -354,7 +354,7 @@ describe("Infisical connector", () => {
       secretPath: "/",
       secretValue: "new",
     });
-    expect(result).toEqual({ secret: { key: "API_KEY", version: 4, tags: [] } });
+    expect(result).toEqual({ secret: { version: 4, tags: [] }, metadataOmitted: true });
   });
 
   it("rejects an update with nothing to change", async () => {
@@ -380,7 +380,7 @@ describe("Infisical connector", () => {
       { projectId: "p1", environment: "prod", secretName: "API_KEY", secretValue: "leak" },
       context(),
     );
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, metadataOmitted: true });
   });
 
   it.each([
@@ -758,17 +758,24 @@ describe("maintained Infisical contract", () => {
       const input = tool === "delete_secret" ? args : { ...args, secretValue: "leak" };
       expect(JSON.stringify(await connector.callTool(tool, input, ctx))).not.toMatch(/leak|valueHidden/);
       mockFetch(json({ secret: { secretValue: "leak" }, approval: { id: "a1", status: "open", secretValue: "leak" } }));
-      await expect(connector.callTool(tool, input, ctx)).resolves.toEqual({
-        pendingApproval: { id: "a1", status: "open" },
-      });
+      await expect(connector.callTool(tool, input, ctx)).resolves.toEqual(
+        tool === "delete_secret"
+          ? { pendingApproval: { id: "a1", status: "open" } }
+          : { pendingApproval: {}, metadataOmitted: true },
+      );
       mockFetch(json({ secretValue: "leak" }));
-      await expect(connector.callTool(tool, input, ctx)).resolves.toEqual({ ok: true });
+      await expect(connector.callTool(tool, input, ctx)).resolves.toEqual({ ok: true, metadataOmitted: true });
     },
   );
 
   it("updates comments and names without submitting a value", async () => {
-    const fetch = mockFetch(login(), json({ secret: { secretKey: "NEW" } }));
-    await connector.callTool("update_secret", { ...args, secretComment: "", newSecretName: "NEW" }, context());
+    const fetch = mockFetch(
+      login(),
+      json({ secret: { secretKey: "NEW", secretComment: "Renamed with no value change" } }),
+    );
+    await expect(
+      connector.callTool("update_secret", { ...args, secretComment: "", newSecretName: "NEW" }, context()),
+    ).resolves.toEqual({ secret: { key: "NEW", comment: "Renamed with no value change", tags: [] } });
     expect(JSON.parse(String(requestOf(fetch, 1).init.body))).toEqual({
       projectId: "p1",
       environment: "prod",
@@ -957,7 +964,10 @@ it.each(["create_secret", "update_secret", "delete_secret", "create_folder"])(
             secretName: "KEY",
             ...(tool === "delete_secret" ? {} : { secretValue: "unrecognized-secret-value" }),
           };
-    await expect(connector.callTool(tool, args, context())).resolves.toEqual({ ok: true });
+    await expect(connector.callTool(tool, args, context())).resolves.toEqual({
+      ok: true,
+      ...(tool === "create_folder" ? {} : { metadataOmitted: true }),
+    });
   },
 );
 

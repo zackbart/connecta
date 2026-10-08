@@ -6,6 +6,7 @@ import { memoryStorage } from "../../storage/memory.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "../../../test/helpers.js";
 import { mcpRpc, readJsonRpc } from "../../../test/fixtures/http.js";
 import { infisical } from "./index.js";
+import { checkInfisicalWriteResult, infisicalWriteCases } from "../../../test/fixtures/infisical-write-results.js";
 
 const BASE = "https://connecta.test";
 let clientCounter = 0;
@@ -41,6 +42,16 @@ afterEach(() => {
 });
 
 describe("Infisical security boundaries", () => {
+  for (const tool of ["create_secret", "update_secret"]) {
+    for (const approval of [false, true]) {
+      it.each(infisicalWriteCases)(
+        `${tool} ${approval ? "pending approval" : "success"} withholds unsafe metadata for $name in provider and MCP exits (INV-5)`,
+        async (testCase) => {
+          await checkInfisicalWriteResult(testCase, tool, approval);
+        },
+      );
+    }
+  }
   const writes = [
     ["create_secret", "POST", { ...target, secretValue: "submitted-value-12345" }],
     ["update_secret", "PATCH", { ...target, secretValue: "submitted-value-12345" }],
