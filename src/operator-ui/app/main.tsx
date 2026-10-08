@@ -26,7 +26,7 @@ import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
-import { ConnectionsPage } from "./connections.js";
+import { ConnectorDetailPage } from "./connector-detail.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import {
   boot,
@@ -199,13 +199,14 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "connector") return <ConnectorDetailPage state={state} />;
   if (state.page === "connections") return <ConnectorsPage state={state} />;
   if (state.page === "overview") return <OverviewPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
   if (state.page === "artifacts") return <ArtifactsPage state={state} />;
   if (state.page === "artifact") return <ArtifactPage state={state} />;
-  return <ConnectionsPage state={state} />;
+  return <OverviewPage state={state} />;
 }
 
 function OperatorApp() {
@@ -227,7 +228,7 @@ function OperatorApp() {
       void loadAccessTokens();
     }
     if (
-      state.page === "activity" &&
+      (state.page === "activity" || state.page === "connector") &&
       state.data?.activityEnabled &&
       state.activityPhase === "idle"
     ) {

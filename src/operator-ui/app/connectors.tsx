@@ -30,7 +30,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
   const contract = state.contract;
   const rows: Row[] = contract?.config.connectors.flatMap(config => {
     const live = contract.live.connectors.find(c => c.id === config.id);
-    return live ? [{ ...live, title: config.title ?? config.id, authScope: config.authScope, source: config.source }] : [];
+    return live ? [{ ...live, title: config.title ?? config.id, authScope: config.authScope, source: config.source.provider ?? config.source.kind }] : [];
   }) ?? [];
   const q = query.trim().toLowerCase();
   const visible = rows.filter(row => [row.id, row.title, row.source, row.status].some(value => value.toLowerCase().includes(q)));

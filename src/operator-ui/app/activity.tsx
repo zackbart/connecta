@@ -45,23 +45,23 @@ function ActivityRow({ event }: { event: UiActivityEvent }) {
   );
 }
 
-export function ActivityPage({ state }: { state: OperatorState }) {
+export function ActivityPage({ state, connectorId }: { state: OperatorState; connectorId?: string }) {
   const data = state.data;
   const enabled = Boolean(data?.activityEnabled);
   const loading = state.activityPhase === "loading";
-  const visible = filterActivity(state.activityEvents, state.activitySearch);
+  const visible = filterActivity(state.activityEvents.filter(e => !connectorId || e.connectorId === connectorId), state.activitySearch);
   const summary = activitySummary(state.activityEvents);
   const failed = state.activityPhase === "error";
   return (
     <section id="activityView">
-      <div className="lead">
+      {connectorId ? null : <div className="lead">
         <h1 id="activityHeading" tabIndex={-1}>
           Activity
         </h1>
         <div className="lead-copy">
           <p>{pageDescription("activity", productDescription)}</p>
         </div>
-      </div>
+      </div>}
       {!data ? (
         // Whether Activity is open to this identity is in /ui/data, which
         // has not answered yet — or could not.

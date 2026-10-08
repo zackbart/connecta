@@ -511,3 +511,15 @@ kbd { font-family: var(--sans); font-size: .6875rem; color: var(--muted); }
 .table-name { display: grid; gap: .2rem; }
 .table-name > a { font-weight: 550; }
 #connectionsView > .section, #connectionsView > .state-block { margin-top: 1.5rem; }
+#connectorView > .tabs-list, #connectorView > [dir] { margin-top: 1.5rem; }
+.schema-trigger { padding: 0 !important; min-height: auto !important; text-align: left; justify-content: flex-start; }
+.catalog-description { max-width: 70ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.schema-code { font-family: var(--mono); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; padding: .75rem; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); max-height: 24rem; overflow: auto; }
+.select-label { display: flex; gap: .5rem; align-items: center; font-size: var(--text-sm); color: var(--muted); }
+select { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); padding: .35rem .5rem; border-radius: var(--radius); }
+.snapshot-tree { display: grid; gap: .35rem; font-size: var(--text-sm); }
+.snapshot-tree details { border-left: 1px solid var(--border); padding-left: 1rem; }
+.snapshot-tree summary { padding: .5rem 0; cursor: pointer; }
+.snapshot-tree summary .meta { margin-left: .75rem; }
+.snapshot-value { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr) auto; align-items: start; gap: 1rem; border-bottom: 1px solid var(--border); padding: .5rem 0; font-size: var(--text-sm); }
+.snapshot-value code, .snapshot-value > span { overflow-wrap: anywhere; }
