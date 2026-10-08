@@ -589,12 +589,17 @@ decline/cancel carry only their action. Sampling and roots remain unsupported
 under [#703](https://github.com/zackbart/connecta/issues/703).
 
 URL elicitation retains the downstream-provided URL unchanged. It must be HTTPS,
-have no URL userinfo, and contain no credential known to the sent-secret
-boundary. Connecta refuses unsafe URLs instead of rewriting them. Messages begin
+have no URL userinfo or control/space characters, contain no credential known to
+the sent-secret boundary, and remain byte-identical through agent redaction.
+Connecta refuses unsafe URLs instead of rewriting them. Messages begin
 with `Downstream <connector>:` so the host can display who supplied the prompt;
 the host owns consent and browser navigation. Connecta never adds credentials
-or follows the URL. Messages and schemas pass the ordinary agent-output
-redaction boundary. No prompt, state, response, arguments, or raw error reaches
+or follows the URL. Messages pass the ordinary agent-output redaction boundary.
+A form is refused if that boundary would change its schema, including property
+names, enum values, or annotations; the host never receives a rewritten answer
+contract. Prompts and completed continuation results that echo opaque state
+(including encoded echoes and short state) are refused. No prompt, state,
+response, arguments, or raw error reaches
 activity, logs, or status.
 
 A write returning `input_required` has not completed its operation: the

@@ -475,6 +475,14 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-6: refuses opaque-state echoes in prompts and completed continuation output"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5: refuses form schemas that redaction would change instead of changing the answer contract"
         }
       ]
     },

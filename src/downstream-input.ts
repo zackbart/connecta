@@ -7,7 +7,7 @@ import type { CredentialVault } from "./credential-contract.js";
 import type { ToolResult } from "./meta-tools.js";
 import type { RegistryView } from "./registry.js";
 import { ConnectorCallError } from "./errors.js";
-import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
+import { redactAgentOutput, sentSecretsForRequest, SentSecrets } from "./sent-secrets.js";
 import { inputRetryKeys } from "./storage/keys.js";
 import { REQUEST_STATE_TTL_MS, MAX_INPUT_ROUNDS, invalidRequestState, requestDigest, stateObject } from "./request-state.js";
 import { bindDownstreamCapabilities, downstreamInputCapabilities, bindDownstreamContinuation, clearDownstreamContinuation } from "./downstream-input-context.js";
@@ -67,6 +67,13 @@ function invalidInput(): never {
   throw new ConnectorCallError("input_required_invalid", "The downstream returned malformed or unsafe input requests.");
 }
 
+function echoesOpaqueState(value: unknown, state: string | undefined): boolean {
+  const secrets = new SentSecrets();
+  if (state !== undefined) secrets.opaque(state);
+  const serialized = JSON.stringify(value);
+  return typeof serialized === "string" && secrets.contains(serialized) || redactAgentOutput(secrets, value) !== value;
+}
+
 /** Capture opaque state before any result redaction or unwrapping can alter it. */
 export async function captureDownstreamInput(scope: object, connector: string, address: string, raw: unknown, secrets: SentSecrets): Promise<void> {
   if (!withinBudget(raw)) throw new ConnectorCallError("input_required_limit", "The downstream input payload exceeds 64 KiB.");
@@ -95,7 +102,9 @@ export async function captureDownstreamInput(scope: object, connector: string, a
         const url = new URL(params.url);
         // An opaque downstream nonce is retained. Credentials are never put
         // in browser URLs; refusal preserves semantics instead of rewriting it.
-        if (url.protocol !== "https:" || url.username || url.password || secrets.containsUrl(params.url)) return invalidInput();
+        if (url.protocol !== "https:" || url.username || url.password ||
+            [...params.url].some(char => char.charCodeAt(0) <= 0x20 || char.charCodeAt(0) === 0x7f) ||
+            secrets.containsUrl(params.url) || redactAgentOutput(secrets, params.url) !== params.url) return invalidInput();
       } catch { return invalidInput(); }
       inputRequests[namespace(connector, index)] = inputRequired.elicitUrl({
         message: `Downstream ${connector}: ${params.message}`, url: params.url,
@@ -103,6 +112,9 @@ export async function captureDownstreamInput(scope: object, connector: string, a
     } else {
       const parsed = await specTypeSchemas.ElicitRequestFormParams["~standard"].validate(params);
       if (parsed.issues) return invalidInput();
+      // A schema controls the accepted answer. Refuse redaction changes rather
+      // than asking the host to submit different field names or enum values.
+      if (redactAgentOutput(secrets, parsed.value.requestedSchema) !== parsed.value.requestedSchema) return invalidInput();
       inputRequests[namespace(connector, index)] = inputRequired.elicit({
         message: `Downstream ${connector}: ${parsed.value.message}`,
         requestedSchema: parsed.value.requestedSchema,
@@ -110,6 +122,9 @@ export async function captureDownstreamInput(scope: object, connector: string, a
     }
     inputs[namespace(connector, index)] = { key, mode };
   }
+  // Opaque state is private even when a downstream echoes it in a prompt,
+  // URL, or schema. Keep the continuation intact and refuse the public prompt.
+  if (echoesOpaqueState(inputRequests, raw.requestState as string | undefined)) return invalidInput();
   if (pendingInputs.has(scope)) return invalidInput();
   pendingInputs.set(scope, { connector, address,
     ...(raw.requestState !== undefined ? { requestState: raw.requestState as string } : {}), inputRequests, inputs });
@@ -192,7 +207,15 @@ export class DownstreamElicitation {
     bindDownstreamContinuation(this.options.requestScope, { connector: state.connector, address: state.target, input: {
       ...(state.requestState !== undefined ? { requestState: state.requestState } : {}), inputResponses: responses,
     } });
-    try { return await this.finish(tool, args, context, await operation(), state); }
+    try {
+      const result = await operation();
+      const pending = pendingInputs.get(this.options.requestScope);
+      if (echoesOpaqueState(result, state.requestState) || pending && echoesOpaqueState(pending.inputRequests, state.requestState)) {
+        pendingInputs.delete(this.options.requestScope);
+        return failure("input_required_invalid", "The downstream response exposes private continuation state.");
+      }
+      return await this.finish(tool, args, context, result, state);
+    }
     finally { clearDownstreamContinuation(this.options.requestScope); }
   }
 
@@ -214,8 +237,8 @@ export class DownstreamElicitation {
     const requestState = await this.options.mint({ version: 2, kind: "downstream", connector: pending.connector,
       sealed: await vault.seal(pending.connector, PURPOSE, JSON.stringify(state)) }, context);
     if (requestState.length > MAX_RELAY_STATE_CHARS) return failure("input_required_limit", "The sealed downstream state exceeds 128 KiB.");
-    // The raw opaque state stays encrypted. Prompts take the same #736 agent
-    // boundary as ordinary outputs, including schema strings and field keys.
+    // Opaque echoes and mutable schemas/URLs were refused during capture.
+    // Prompt messages take the same #736 agent boundary as ordinary outputs.
     return redactAgentOutput(sentSecretsForRequest(scope), inputRequired({
       ...(Object.keys(pending.inputRequests).length ? { inputRequests: pending.inputRequests } : {}), requestState,
     }));

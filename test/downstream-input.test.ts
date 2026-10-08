@@ -23,7 +23,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
@@ -44,7 +44,7 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
         const responses = context.mcpReq.inputResponses;
         call(name, args, state, responses);
         if (state && !options.repeat) return {
-          content: [{ type: "text", text: JSON.stringify({ done: true, responses }) }],
+          content: [{ type: "text", text: options.completeText ?? JSON.stringify({ done: true, responses }) }],
           structuredContent: options.output ? { done: true } : { done: true, responses },
         };
         return inputRequired({ requestState: options.opaque ?? OPAQUE,
@@ -218,11 +218,56 @@ describe("downstream input relay", () => {
     const params = first.inputRequests[Object.keys(first.inputRequests)[0]!].params;
     expect(params.url).toBe("https://downstream.test/approve?nonce=123");
     expect(params.message).toContain("Downstream service:");
-    for (const url of ["http://downstream.test/approve", "https://user:pass@downstream.test/approve", `https://downstream.test/approve?token=${SECRET}`]) {
+    for (const url of ["http://downstream.test/approve", "https://user:pass@downstream.test/approve", `https://downstream.test/approve?token=${SECRET}`,
+      "https://downstream.test/approve?nonce=ok\nauthorization: ordinary-approval-id"]) {
       const invalid = setup({ url });
       const result = (await invalid.rpc()).result;
       expect(result.structuredContent, JSON.stringify(result)).toBeDefined();
       expect(result.structuredContent.error.code).toBe("input_required_invalid");
+    }
+  });
+
+  it("INV-4 INV-5 INV-6: refuses opaque-state echoes in prompts and completed continuation output", async () => {
+    for (const [opaque, message] of [[OPAQUE, `Confirm ${OPAQUE}`], [OPAQUE, `Confirm ${btoa(OPAQUE)}`],
+      ["private state", "Confirm private%20state"], ["q7z", "Confirm q7z"], ["[redacted]", "Confirm [redacted]"]] as const) {
+      const flow = setup({ opaque, message });
+      const result = (await flow.rpc()).result;
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+      expect(JSON.stringify(result)).not.toContain(message);
+      expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(message);
+      expect(flow.call).toHaveBeenCalledOnce();
+    }
+    for (const params of [
+      { mode: "url", message: "Open", url: `https://downstream.test/approve?state=${OPAQUE}` },
+      { mode: "form", message: "Confirm", requestedSchema: { type: "object", properties: { [OPAQUE]: { type: "string" } } } },
+    ]) {
+      const flow = setup({ raw: { requestState: OPAQUE, inputRequests: { k: { method: "elicitation/create", params } } } });
+      const result = (await flow.rpc()).result;
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+      expect(JSON.stringify(result)).not.toContain(OPAQUE);
+    }
+    const flow = setup({ completeText: `Completed with state ${OPAQUE}` });
+    const first = (await flow.rpc()).result;
+    const final = (await flow.rpc({ state: first.requestState, responses: { [Object.keys(first.inputRequests)[0]!]: { action: "accept" } } })).result;
+    expect(final.structuredContent.error.code).toBe("input_required_invalid");
+    expect(JSON.stringify(final)).not.toContain(OPAQUE);
+    expect(flow.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-4 INV-5: refuses form schemas that redaction would change instead of changing the answer contract", async () => {
+    for (const requestedSchema of [
+      { type: "object", properties: { [SECRET]: { type: "string" } }, required: [SECRET] },
+      { type: "object", properties: { name: { type: "string", enum: [SECRET] } } },
+      { type: "object", properties: { name: { type: "string", description: SECRET } } },
+    ]) {
+      const flow = setup({ raw: { requestState: OPAQUE, inputRequests: { k: {
+        method: "elicitation/create", params: { mode: "form", message: "Confirm", requestedSchema },
+      } } } });
+      const result = (await flow.rpc()).result;
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+      expect(result.requestState).toBeUndefined();
+      expect(flow.call).toHaveBeenCalledOnce();
     }
   });
 
