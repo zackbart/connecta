@@ -9,7 +9,6 @@ import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { agentOutputOperations, sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
-import { Registry } from "../src/registry.js";
 import { scopes } from "../src/storage/keys.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { deferred } from "./fixtures/misc.js";
@@ -84,7 +83,7 @@ it("INV-5: failed search_tools listings register credentials in the search reque
   expect(await storage.list("catalog:catalog")).toEqual([]);
 });
 
-it.each([false, true])("INV-5: a failed registry refresh sanitizes shared failure intake, synchronous=%s", async (synchronous) => {
+it.each([false, true])("INV-5: independent failed listings sanitize their own failure intake, synchronous=%s", async (synchronous) => {
   const gate = deferred<void>();
   const entered = deferred<void>();
   let calls = 0;
@@ -111,12 +110,12 @@ it.each([false, true])("INV-5: a failed registry refresh sanitizes shared failur
     const first = registry.getTools("catalog", BASE, firstScope).catch(error => error);
     await entered.promise;
     const second = registry.getTools("catalog", BASE, secondScope).catch(error => error);
-    // Drain the joiner's storage reads before the owner publishes its failure.
+    // Both request-owned listings must enter before either fails.
     await new Promise(resolve => setTimeout(resolve, 0));
     gate.resolve();
     const failures = await Promise.all([first, second]);
-    expect(calls).toBe(1);
-    expect(sentSecretsForRequest(secondScope).text(TOKEN)).toBe(TOKEN);
+    expect(calls).toBe(2);
+    expect(sentSecretsForRequest(secondScope).text(TOKEN)).toBe("[redacted]");
     for (const failure of failures) {
       expect(failure).toBeInstanceOf(ConnectorCallError);
       expect(failure.message).toBe("[redacted]");
@@ -130,40 +129,24 @@ it.each([false, true])("INV-5: a failed registry refresh sanitizes shared failur
   expect(scopesSeen.at(-1)).not.toBe(scopesSeen[0]);
 });
 
-it("INV-5 INV-7: deferred refresh contexts contribute credentials and retain clean stale facts for later requests", async () => {
-  const clock = vi.spyOn(Date, "now");
-  let now = 1_800_000_000_000;
-  clock.mockImplementation(() => now);
+it("INV-5 INV-6: a later failed listing preserves classification without a stale fallback or inherited secrets", async () => {
   const storage = memoryStorage();
-  const contexts: ConnectorContext[] = [];
+  let calls = 0;
   const connector: Connector = {
     id: "catalog", kind: "api",
     async listTools(ctx) {
-      contexts.push(ctx);
       sentSecretsFor(ctx).add(TOKEN);
-      if (contexts.length > 1) throw new ConnectorCallError("invalid_args", `Refresh refused ${TOKEN}`);
+      if (++calls > 1) throw new ConnectorCallError("invalid_args", `Refresh refused ${TOKEN}`);
       return [{ name: "read", description: `Read ${TOKEN}`, annotations: { readOnlyHint: true } }];
     },
     async callTool() { return null; },
   };
-  const registry = new Registry([connector], { storage, logger: silentLogger, toolCacheTtlSeconds: 1, toolCatalogStaleSeconds: 30 });
-  await registry.getTools("catalog", BASE, {});
-  now += 2_000;
+  const registry = makeRegistry([connector], { storage });
+  expect((await registry.getTools("catalog", BASE, {}))[0]?.description).toBe("Read [redacted]");
   const requestScope = {};
-  const tails: Promise<unknown>[] = [];
-  const stale = await registry.getTools("catalog", BASE, requestScope, {}, { refreshTimeoutMs: 1_000, defer: promise => tails.push(promise) });
-  expect(stale[0]?.description).toBe("Read [redacted]");
-  await Promise.all(tails);
-  expect(contexts).toHaveLength(2);
-  expect(contexts[1]!.requestScope).not.toBe(requestScope);
-  expect(sentSecretsForRequest(requestScope).text(TOKEN)).toBe("[redacted]");
-  const later = await createMetaTools(registry, BASE).searchTools({ connector: "catalog", fullDescriptions: true });
-  expect(JSON.stringify(later)).toContain("Read [redacted]");
-  expect(JSON.stringify(later)).not.toContain(TOKEN);
-  for (const key of await storage.list("catalog:catalog")) expect(await storage.get(key)).not.toContain(TOKEN);
-  // A fresh registry, with no original request or credentials, reads the same facts.
-  const cached = await makeRegistry([connector], { storage }).getTools("catalog", BASE, {});
-  expect(cached[0]?.description).toBe("Read [redacted]");
+  await expect(registry.getTools("catalog", BASE, requestScope)).rejects.toMatchObject({ code: "invalid_args", message: "Refresh refused [redacted]" });
+  expect(sentSecretsForRequest({}).text(TOKEN)).toBe(TOKEN);
+  expect(await storage.list("catalog:")).toEqual([]);
 });
 
 it("INV-5: listing credentials redact a later unauthenticated result before stash storage and later paging", async () => {
@@ -201,7 +184,7 @@ it("INV-5: listing credentials redact a later unauthenticated result before stas
   }
   expect(JSON.parse(body).echo).toBe("[redacted]");
   const later = await tools.callTool({ address: "catalog.read", resultMode: "value" });
-  expect(later.structuredContent!.data).toMatchObject({ echo: TOKEN });
+  expect(later.structuredContent!.data).toMatchObject({ echo: "[redacted]" });
   expect(contexts.at(-1)!.requestScope).not.toBe(contexts[0]!.requestScope);
 });
 

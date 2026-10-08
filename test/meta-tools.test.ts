@@ -835,26 +835,19 @@ describe("catalog-lookup health accounting", () => {
     expect(recovered.lastSuccessAt).toBeTruthy();
   });
 
-  it("leaves health alone for static catalogs and warm-cache hits", async () => {
+  it("records fresh custom catalog failures without a registry stale fallback", async () => {
     const state = { failing: false, listCalls: 0 };
     const registry = makeRegistry([catalogFlaky(state), calcConnector]);
     const activity = activitySink();
     const mt = createMetaTools(registry, BASE, { activity: activity.activity });
     await mt.callTool({ address: "catalog.read", resultMode: "value" });
-    // The cache is warm now, so a catalog that starts failing is never asked
-    // again — and a cache hit is neither a failure nor evidence of health.
     state.failing = true;
-    const parsed = textOf(
-      await mt.callTool({ address: "catalog.read", resultMode: "value" }),
-    ) as { ok: boolean };
-    expect(parsed.ok).toBe(true);
-    expect(state.listCalls).toBe(1);
+    const result = await mt.callTool({ address: "catalog.read", resultMode: "value" });
+    expect(result.isError).toBe(true);
+    expect(state.listCalls).toBe(2);
 
     await mt.callTool({ address: "calc.add", args: { a: 1, b: 2 } });
-    expect(observe(activity.events, "catalog")).toMatchObject({
-      status: "ok",
-      consecutiveFailures: 0,
-    });
+    expect(observe(activity.events, "catalog")).toMatchObject({ status: "error", consecutiveFailures: 1 });
     expect(observe(activity.events, "calc")).toMatchObject({
       status: "ok",
       consecutiveFailures: 0,

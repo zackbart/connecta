@@ -162,8 +162,8 @@ describe("ConnectaConfig boundary", () => {
       discovery: {
         concurrency: 4,
         catalogTtlSeconds: 10,
-        persistCatalog: false,
-        staleCatalogSeconds: 30,
+        catalogMinTtlSeconds: 0,
+
         probeTimeoutMs: 1_000,
       },
       calls: {
@@ -264,56 +264,13 @@ describe("ConnectaConfig boundary", () => {
     ).toThrow("maxDurationMs must be at most 2,147,483,647 milliseconds");
   });
 
-  it("forwards catalog freshness and persistence settings at the boundary", async () => {
-    const storage = memoryStorage();
-    const connector: Connector = {
-      id: "catalog",
-      kind: "mcp",
-      async listTools() {
-        return [{ name: "read" }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const persisted = createConnecta({
-      connectors: [connector],
-      executor,
-      storage,
-      discovery: {
-        catalogTtlSeconds: 10,
-        persistCatalog: true,
-        staleCatalogSeconds: 30,
-      },
-    });
-
-    await persisted.registry.getTools("catalog", "https://connecta.test");
-    const raw = await storage.get("catalog:catalog");
-    expect(raw).toBeTruthy();
-    const catalog = JSON.parse(raw!) as {
-      version: number;
-      chunkCount: number;
-      fetchedAt: number;
-      expiresAt: number;
-      staleUntil: number;
-    };
-    expect(catalog.version).toBe(3);
-    expect(catalog.chunkCount).toBe(1);
-    expect(catalog.expiresAt - catalog.fetchedAt).toBe(10_000);
-    expect(catalog.staleUntil - catalog.expiresAt).toBe(30_000);
-
-    const noPersistenceStorage = memoryStorage();
-    const memoryOnly = createConnecta({
-      connectors: [{ ...connector, id: "memory-only" }],
-      executor,
-      storage: noPersistenceStorage,
-      discovery: { persistCatalog: false },
-    });
-    await memoryOnly.registry.getTools(
-      "memory-only",
-      "https://connecta.test",
-    );
-    expect(await noPersistenceStorage.get("catalog:memory-only")).toBeNull();
+  it("forwards catalog TTL bounds and rejects retired stale/persistence options", async () => {
+    const app = createConnecta({ connectors: [], executor, discovery: { catalogTtlSeconds: 10, catalogMinTtlSeconds: 1, catalogMaxTtlSeconds: 30 }, logger: "silent" });
+    expect(app.describeConfig()).toBeDefined();
+    await app.close();
+    for (const key of ["persistCatalog", "staleCatalogSeconds"]) {
+      expect(() => unsafeCreateConnecta({ connectors: [], executor, discovery: { [key]: true } })).toThrow("Unknown Connecta configuration option");
+    }
   });
 
   it("INV-11: rejects an unknown top-level option before reading the config", () => {
@@ -472,7 +429,7 @@ describe("ConnectaConfig schema", () => {
 
   it.each([
     ["discovery", { catalogTtlSeconds: -1 }, "discovery.catalogTtlSeconds must be a non-negative number of seconds"],
-    ["discovery", { persistCatalog: "yes" }, "discovery.persistCatalog must be true or false"],
+    ["discovery", { catalogMinTtlSeconds: -1 }, "discovery.catalogMinTtlSeconds must be a non-negative number of seconds"],
     ["discovery", null, "ConnectaConfig.discovery must be an object"],
     ["serverInfo", { name: 42 }, "serverInfo.name must be a string"],
     ["serverInfo", { icons: [{ mimeType: "image/png" }] }, "serverInfo.icons[0].src is required"],
@@ -585,7 +542,7 @@ if (false) {
     connectors: [],
     executor,
     // @ts-expect-error removed in v0.7
-    toolCatalogStaleSeconds: 1,
+    toolCatalogStaleSeconds: 30,
   });
   createConnecta({
     connectors: [],

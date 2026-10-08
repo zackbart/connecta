@@ -8,6 +8,7 @@ import {
   accessTokenKeys,
   artifactKeys,
   catalogKeys,
+  responseCacheKeys,
   credentialKeys,
   familyOfKey,
   KEY_FAMILIES,
@@ -79,6 +80,10 @@ describe("storage key families", () => {
     within(resultKeys.family, resultKeys.chunk("id", 0));
     within(resultKeys.family, resultKeys.chunk("id", 3));
     within(stashLedgerKeys.family, stashLedgerKeys.ledger);
+    const responseNamespace = responseCacheKeys.namespace("svc", "config", "generation");
+    const responseEntry = responseCacheKeys.entry(responseNamespace, "partition");
+    for (const key of [responseCacheKeys.prefix("svc"), responseCacheKeys.generation("svc"), responseNamespace,
+      responseEntry, responseCacheKeys.chunk(responseEntry, "revision", 0)]) within(responseCacheKeys.family, key);
     within(catalogKeys.family, catalogKeys.manifest("svc"));
     within(catalogKeys.family, catalogKeys.chunk("svc", "rev", 1));
     within(oauthHandoffKeys.family, oauthHandoffKeys.handoff("svc", "hash"));
@@ -119,6 +124,8 @@ describe("storage key families", () => {
       [personal(`${scopes.results}${resultKeys.chunk("id", 0)}`), "result"],
       [stashLedgerKeys.ledger, "result-stash-ledger"],
       [catalogKeys.manifest("svc"), "catalog"],
+      [responseCacheKeys.generation("svc"), "response-cache"],
+      [responseCacheKeys.entry(responseCacheKeys.namespace("svc", "config", "generation"), "partition"), "response-cache"],
       [personal(catalogKeys.chunk("svc", "rev", 1)), "catalog"],
       [oauthHandoffKeys.handoff("svc", "hash"), "oauth-handoff"],
       [accessTokenKeys.record("id"), "access-token"],

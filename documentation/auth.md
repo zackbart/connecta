@@ -202,15 +202,15 @@ arguments. A token's stored principal is vouched for by inbound auth. Pools narr
 The example assumes both exact tools were reviewed as read-only; names imply no safety.
 Review schemas, annotations, and downstream behavior
 before changing lists or upgrading providers. Remote catalogs can drift without
-upgrades; valid stale caches retain classification until refresh; downstreams
+upgrades; fresh cached facts are classified against the current review on every read; downstreams
 can change behavior while keeping read-only annotations. For `api()`, the author
 owns declarations and handlers. Connecta enforces loaded declarations, not
 absence of side effects. Restricted downstream credentials do not replace grants.
 
 `[]` hides all connectors from discovery and the connection UI. Address-only or
 disqualified guarded grants can leave a connector visible with its tool unreachable.
-Failed remote loads are errors, not empty catalogs; valid stale catalogs may be
-served within their stale window. Personal OAuth ownership and credential
+Failed remote loads are errors, not empty catalogs. Expired entries and failed
+pages never serve a stale fallback. Personal OAuth ownership and credential
 administration are separate from visibility; program writes follow the endpoint's trust tier and host approval. `test/identity-scope.test.ts` exercises these boundaries.
 
 ## Migrating static bearer clients
@@ -251,7 +251,8 @@ out of logs and reports.
 A pool is a named slice of the deployment served at its own endpoint,
 `/mcp/<pool>`, for when one identity needs different capability sets on different
 clients: a support agent that sees three Notion tools and Linear, a calendar bot
-that sees one tool, both over the same credentials and catalog cache.
+that sees one tool, both over the same credentials. Private remote catalog
+cache entries remain partitioned by the admitted pool.
 
 ```ts
 createConnecta({
@@ -288,7 +289,11 @@ identity; grants like these return false and every pool path 404s.
 ## Shared and personal auth
 
 Connector auth defaults to `authScope: "shared"` — its credential, OAuth state,
-tokens, catalog cache, and connector storage belong to the deployment. Set
+tokens and connector storage belong to the deployment. Private remote catalog
+cache entries still include the admitted principal and pool; shared credentials
+do not authorize cross-principal or cross-pool cache reuse. Public entries
+require a downstream `cacheScope: "public"` declaration and contain only
+intake-redacted successes, keyed by connector configuration. Set
 `authScope: "personal"` when every human needs a separate downstream account:
 
 ```ts
@@ -298,8 +303,10 @@ remoteMcp("linear", { url: "https://mcp.linear.app/mcp", authScope: "personal",
 
 A personal connector is absent — not refused — from any request without a
 stable namespaced principal. For one that can see it, connector storage, vault
-records, catalog caches, OAuth generations, and observed result shapes are
-partitioned under an opaque SHA-256 identity key; refreshes coalesce within
+records, OAuth generations, and observed result shapes are
+partitioned under an opaque SHA-256 identity key. Remote catalog cache keys
+include that owner and the admitted pool, plus the credential digest and OAuth
+epoch; refreshes coalesce within
 one owner, and another owner's epoch cannot retire them. Keep namespaces and
 principal ids stable across upgrades, since changing either selects different
 partitions. Literal `auth: { type: "headers" }` keeps its secret in deployment

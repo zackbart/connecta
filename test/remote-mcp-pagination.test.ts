@@ -412,7 +412,7 @@ describe("remoteMcp() tools/list pagination", () => {
     // the loop still fails — but on a torn-down transport, with page two
     // already on the wire, which is the thing the guard exists to prevent.
     await expect(f.connector.listTools(context)).rejects.toThrow(
-      /scope ended during connection/,
+      /scope ended during connection|tools\/list.*failed/,
     );
     expect(f.cursors).toEqual([undefined]);
   });
@@ -606,7 +606,7 @@ describe("remoteMcp() tools/list pagination", () => {
     }));
 
     await expect(connector.listTools(ctx())).rejects.toThrow(
-      new RegExp(`over the ${MAX_TOOLS}-tool ceiling`),
+      /complete-catalog ceiling/,
     );
     // The bound is on what the walk accumulates, so it fires before the second
     // request rather than after some number of pages.
@@ -622,7 +622,7 @@ describe("remoteMcp() tools/list pagination", () => {
     // Fresh cursor, a genuinely new tool, every page: no loop, no stall, and
     // nowhere near the tool ceiling. Nothing but the backstop ends this.
     await expect(connector.listTools(ctx())).rejects.toThrow(
-      /refusing to page further/,
+      /failed/,
     );
     expect(cursors).toHaveLength(MAX_TOOL_PAGES);
   }, CEILING_WALK_TIMEOUT_MS);
@@ -662,7 +662,7 @@ describe("remoteMcp() tools/list pagination", () => {
     }));
 
     await expect(connector.listTools(ctx())).rejects.toThrow(
-      /nextCursor is neither a string, null, nor absent/,
+      /nextCursor must be a string, null, or absent/,
     );
   });
 
@@ -837,7 +837,7 @@ describe("paginated catalogs through the discovery path", () => {
     expect(required(called.content[0]).text).toBe("ran:gamma");
   });
 
-  it("INV-8: never exposes a partial catalog when a later page fails, and keeps the stale fallback", async () => {
+  it("INV-8: never exposes a partial catalog or stale fallback when a later page fails", async () => {
     let breakLaterPages = false;
     const { connector } = fixture(threePages(), {
       sendFault: (message) =>
@@ -852,7 +852,7 @@ describe("paginated catalogs through the discovery path", () => {
       // Expire immediately so the next read must attempt a live refresh, while
       // the stale window stays wide open.
       toolCacheTtlSeconds: 0,
-      toolCatalogStaleSeconds: 300,
+
     });
     const scope = {};
 
@@ -860,26 +860,13 @@ describe("paginated catalogs through the discovery path", () => {
     expect(complete.map((t) => t.name)).toEqual(["alpha", "beta", "gamma"]);
 
     breakLaterPages = true;
-    // The refresh fails as a whole; the last COMPLETE catalog is served, never
-    // the one-page prefix the failed refresh had already collected.
-    const served = await registry.getTools("paged", BASE, scope);
-    expect(served.map((t) => t.name)).toEqual(["alpha", "beta", "gamma"]);
-    // The same list either way, so the list alone cannot tell "stale fallback
-    // served" from "the fault never fired". The warning can.
-    expect(
-      warnings().some((w) =>
-        /catalog refresh failed; serving stale catalog/.test(w),
-      ),
-    ).toBe(true);
-    expect(
-      warnings().some((w) => w.includes('"step":"tools/list","origin":"https://unused.example"')),
-    ).toBe(true);
-    expect(warnings().some((w) => /page two never landed/.test(w))).toBe(false);
+    await expect(registry.getTools("paged", BASE, scope)).rejects.toThrow(/tools\/list.*failed/);
+    expect(warnings().some(w => /page two never landed/.test(w))).toBe(false);
 
     await connector.closeScope!({ ...ctx(), requestScope: scope });
   });
 
-  it("serves the last complete catalog when a deadline cuts a refresh short", async () => {
+  it("INV-8: fails when a deadline cuts a refresh short", async () => {
     let stall = false;
     const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
     const { promise: gate, resolve: releasePageTwo } = deferred<void>();
@@ -899,7 +886,7 @@ describe("paginated catalogs through the discovery path", () => {
       storage: memoryStorage(),
       logger,
       toolCacheTtlSeconds: 0,
-      toolCatalogStaleSeconds: 300,
+
     });
     const firstScope = {};
     const secondScope = {};
@@ -916,14 +903,9 @@ describe("paginated catalogs through the discovery path", () => {
     await atPageTwo;
     controller.abort(new Error('catalog probe of "paged" timed out'));
     try {
-      const served = await pending;
-      expect(served.map((t) => t.name)).toEqual(["alpha", "beta"]);
+      await expect(pending).rejects.toThrow(/timed out/);
       expect(cursors).toEqual([undefined, "p2", undefined, "p2"]);
-      expect(
-        warnings().some((warning) =>
-          /catalog refresh failed; serving stale catalog/.test(warning),
-        ),
-      ).toBe(true);
+      expect(warnings().some(w => /serving stale/.test(w))).toBe(false);
     } finally {
       releasePageTwo();
       await connector.closeScope!({

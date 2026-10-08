@@ -141,41 +141,18 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
   "a stale reviewed read after a restart (%s)",
   (path) => {
     it.each(RESTARTS)(
-      "INV-1: stays a write when the downstream is unavailable and $name is all there is",
+      "INV-1: INV-8: refuses retired $name when the downstream is unavailable",
       async ({ version, fresh, listing }) => {
         const storage = memoryStorage();
         await seedThingsCatalog(storage, await listing(), { version, fresh });
         const app = deployment(PATHS[path](await currentDigest(), [], true), storage);
         try {
-          expect(await app.searched("readOnly")).toEqual(["things.list_things"]);
-          expect(await app.searched("approvalRequired")).toEqual([
-            "things.peek_things",
-            "things.scan_things",
-          ]);
-          for (const address of ["things.peek_things", "things.scan_things"]) {
+          expect(await app.searched("readOnly")).toEqual([]);
+          expect(await app.searched("approvalRequired")).toEqual([]);
+          for (const address of ["things.list_things", "things.peek_things", "things.scan_things"]) {
             const refused = await app.call("call_tool", { address, args: {} });
             expect(refused.isError).toBe(true);
-            expect(JSON.stringify(refused.structuredContent)).toContain(
-              "destructive_tool_requires_approval",
-            );
-          }
-          const result = await app.run(async (connecta) => {
-            const page = await connecta.search!({ connector: "things", query: "", safety: "readOnly" });
-            const refused: string[] = [];
-            for (const address of ["things.peek_things", "things.scan_things"]) {
-              try {
-                await connecta.call!(address, {});
-              } catch (error) {
-                refused.push(String((error as Error & { code: string }).code));
-              }
-            }
-            return { readOnly: page.tools.map((tool: { address: string }) => tool.address), refused };
-          });
-          const ran = result.structuredContent?.result as { readOnly: string[]; refused: string[] };
-          expect(ran.readOnly).toEqual(["things.list_things"]);
-          expect(ran.refused).toHaveLength(2);
-          for (const message of ran.refused) {
-            expect(message).toContain("destructive_tool_requires_approval");
+            expect(JSON.stringify(refused)).toContain("connector_call_failed");
           }
         } finally {
           await app.connecta.close();
@@ -183,7 +160,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
       },
     );
 
-    it("INV-1: refreshes a fresh 0.28 catalog and persists the downstream facts", async () => {
+    it("INV-1: ignores a fresh 0.28 catalog and classifies live downstream facts", async () => {
       const storage = memoryStorage();
       await seedThingsCatalog(storage, await mainEraListing(), { version: 2, fresh: true });
       const calls: string[] = [];
@@ -195,16 +172,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
           "destructive_tool_requires_approval",
         );
         expect(calls).toEqual([]);
-        // The refresh replaced the 0.28 catalog with what the downstream said,
-        // and nothing connecta derived from it.
-        await vi.waitFor(async () => {
-          expect(JSON.parse(String(await storage.get("catalog:things"))).version).toBe(3);
-        });
-        const manifest = JSON.parse(String(await storage.get("catalog:things")));
-        const persisted = JSON.parse(String(
-          await storage.get(`catalog:things:chunk:${manifest.revision}:0`),
-        )) as ToolDef[];
-        expect(persisted).toEqual(await downstreamListing());
+        expect(JSON.parse((await storage.get("catalog:things"))!).version).toBe(2);
       } finally {
         await app.connecta.close();
       }

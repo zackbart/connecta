@@ -14,7 +14,7 @@ import { InvocationService } from "../../invocation.js";
 import { buildSandboxProviders } from "../../execute.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { catalogKeys } from "../../storage/keys.js";
+import { responseCacheKeys } from "../../storage/keys.js";
 
 function value(result: any): any { return result.structuredContent; }
 
@@ -46,7 +46,7 @@ describe("GitHub App provider", () => {
       annotations: { title: "[redacted]" },
     });
     const token = fixture.tokens[0]!.value;
-    for (const key of await storage.list(catalogKeys.manifest("github"))) expect(await storage.get(key)).not.toContain(token);
+    for (const key of await storage.list(responseCacheKeys.prefix("github"))) expect(await storage.get(key)).not.toContain(token);
     expect(await makeRegistry([connector], { storage }).getTools("github", "https://connecta.test")).toEqual(tools);
     expect(fixture.requests.filter((request) => request.body?.method === "tools/list")).toHaveLength(1);
   });
@@ -115,7 +115,10 @@ describe("GitHub App provider", () => {
     now += 3_540_001;
     await connector.callTool("get_file_contents", args, context());
     expect(fixture.tokens).toHaveLength(3);
-    expect(set).not.toHaveBeenCalled(); expect(cas).not.toHaveBeenCalled();
+    // SDK catalog bookkeeping is allowed; installation tokens remain memory-only.
+    expect(JSON.stringify([set.mock.calls, cas.mock.calls])).not.toContain(fixture.tokens[0]!.value);
+    expect(set.mock.calls.every(([key]) => key.startsWith(responseCacheKeys.family.prefixes[0]))).toBe(true);
+    expect(cas.mock.calls.every(([key]) => key.startsWith(responseCacheKeys.family.prefixes[0]))).toBe(true);
   });
 
   it("INV-5: partitions tokens by vault key fingerprint and never describes app secrets", async () => {

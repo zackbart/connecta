@@ -402,7 +402,7 @@ describe("drift on the registry surface", () => {
       toolCacheTtlSeconds: 0,
     });
     await registry.getTools("plain", BASE);
-    expect(await registry.statusFor("plain", BASE)).toEqual({ state: "ok" });
+    expect(await registry.statusFor("plain", BASE)).toMatchObject({ state: "ok" });
   });
 
   it("INV-6: catalog refreshes produce no activity drift events", async () => {

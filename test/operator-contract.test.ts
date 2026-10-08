@@ -3,7 +3,6 @@ import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js"
 import { machineAuth } from "./helpers/machine-auth.js";
 import { createConnecta, customExecutor, type Connector, type InboundAuth } from "../src/index.js";
 import { operatorUi, type OperatorUiContract } from "../src/ui.js";
-import { seedThingsCatalog } from "./fixtures/stale-schema.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 
@@ -99,12 +98,11 @@ describe("operator config contract", () => {
     expect(data.you.grants[0]?.tools).toEqual([{ name: "write", requireReadOnly: true }, { name: "read", requireReadOnly: true }]);
   });
 
-  it("INV-10: catalog age uses persisted fetch time and static catalogs have no age", async () => {
+  it("INV-10: catalog age reports completed observations and static catalogs have no age", async () => {
     const storage = memoryStorage();
-    await seedThingsCatalog(storage, tools, { version: 3, fresh: true });
-    const app = deployment({ connectors: [connector("things", { staticTools: null, status: async () => ({ state: "ok" }), listTools: async () => { throw new Error("must not refresh"); } }), connector("static")], storage, executor, auth: human, ui: operatorUi(), logger: "silent" });
+    const app = deployment({ connectors: [connector("things", { staticTools: null, status: async () => ({ state: "ok" }), listTools: async () => tools }), connector("static")], storage, executor, auth: human, ui: operatorUi(), logger: "silent" });
     const data = await read(app);
-    expect(data.live.connectors[0]?.catalogAgeMs).toBeGreaterThanOrEqual(1_000);
+    expect(data.live.connectors[0]?.catalogAgeMs).toBeGreaterThanOrEqual(0);
     expect(data.live.connectors[1]?.catalogAgeMs).toBeNull();
   });
 

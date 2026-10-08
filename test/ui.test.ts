@@ -1,3 +1,4 @@
+import { responseCacheKeys } from "../src/storage/keys.js";
 import { OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH, OPERATOR_UI_STYLE_PATH as STYLE_PATH, OPERATOR_UI_ASSETS } from "../src/operator-ui/generated.js";
 import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
@@ -572,7 +573,7 @@ describe("status UI", () => {
     expect(clerk.oauthManagement).toBe(true);
     expect(clerk.connectors[0].oauth).toBe(true);
 
-    await storage.set("catalog:oauth", "stale catalog");
+    await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
     const disconnected = await credentialRequest(
       connecta,
       "/ui/oauth/oauth",
@@ -580,7 +581,7 @@ describe("status UI", () => {
     );
     expect(disconnected.status).toBe(204);
     expect(disconnectAuth).toHaveBeenCalledOnce();
-    expect(await storage.get("catalog:oauth")).toBeNull();
+    expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
 
     const restarted = await connectRequest(
       connecta,
@@ -619,7 +620,7 @@ describe("status UI", () => {
       storage, vault: oauthVault(storage),
       publicUrl: BASE,
     });
-    await storage.set("catalog:oauth", "stale catalog");
+    await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
 
     const disconnected = await credentialRequest(
       connecta,
@@ -631,7 +632,7 @@ describe("status UI", () => {
     await expect(disconnected.json()).resolves.toEqual({
       error: "OAuth disconnect failed",
     });
-    expect(await storage.get("catalog:oauth")).toBeNull();
+    expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
   });
 
   it("keeps OAuth mutation same-origin, Clerk-only, and connector-scoped", async () => {

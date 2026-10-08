@@ -905,7 +905,7 @@ describe("control-character tool names at catalog intake", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.body ? (JSON.parse(String(init.body)) as { method: string }).method : "";
       if (method === "tools/list") listings++;
-      if (source === "v2 cache" && method === "tools/list") throw new Error("offline");
+
       return serve(input, init);
     });
     const storage = memoryStorage();
@@ -929,7 +929,7 @@ describe("control-character tool names at catalog intake", () => {
     const search = await mt.searchTools({ query: "", connector: "svc" });
     expect(search.isError).toBeFalsy();
     expect(search.structuredContent?.total).toBe(2);
-    expect(listings).toBe(source === "v3 cache" ? 0 : 1);
+    expect(listings).toBe(1);
     expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
     expect(JSON.stringify(search)).not.toContain("x\u0085y");
     expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);

@@ -8,7 +8,7 @@ import { reviewedFixture } from "./fixtures/reviewed-connector.js";
 // A decorator that keeps the field keeps the review; one that drops it serves
 // an unreviewed connector, and persists no safety either way (INV-1).
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { vettedCatalog } from "../src/catalog-drift.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -20,7 +20,7 @@ import type {
   ToolClassification,
   ToolDef,
 } from "../src/types.js";
-import { httpDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { thingsDeployment } from "./fixtures/things-deployment.js";
 
@@ -32,7 +32,7 @@ type Name = (typeof NAMES)[number];
  * `list_things` claims to be read-only; the other two are silent. Each tool
  * records its name when it runs.
  */
-function downstream(calls: string[]) {
+function downstream(calls: string[], offline = false) {
   return httpDownstream((mcp) => {
     for (const name of NAMES) {
       mcp.registerTool(
@@ -48,14 +48,15 @@ function downstream(calls: string[]) {
         },
       );
     }
-  });
+    if (offline) mcp.server.setRequestHandler("tools/list", async () => { throw new Error("listing unavailable"); });
+  }, { catalogTtlMs: 300_000 });
 }
 
 type Calls = string[] | "unavailable";
 
 function transport(calls: Calls) {
   return calls === "unavailable"
-    ? () => throwingTransport(new Error("downstream unavailable"))
+    ? downstream([], true).transport
     : downstream(calls).transport;
 }
 
@@ -211,14 +212,12 @@ function retainingDecorator(): { decorate: Decorator; claimAllRead: () => void }
 }
 
 async function persistedTools(storage: KVStorage): Promise<ToolDef[]> {
-  let manifest: { version: number; revision: string } | undefined;
-  await vi.waitFor(async () => {
-    manifest = JSON.parse(String(await storage.get("catalog:things")));
-    expect(manifest?.version).toBe(3);
-  });
-  return JSON.parse(
-    String(await storage.get(`catalog:things:chunk:${manifest!.revision}:0`)),
-  ) as ToolDef[];
+  const roots = (await storage.list("response-cache:v1:things:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation"));
+  expect(roots).toHaveLength(1);
+  const root = roots[0]!;
+  const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };
+  const chunks = await Promise.all(Array.from({ length: manifest.chunkCount }, (_, i) => storage.get(`${root}:chunk:${manifest.revision}:${i}`)));
+  return JSON.parse(chunks.join("")).tools as ToolDef[];
 }
 
 /**
@@ -512,7 +511,7 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
         expect(dropped.isError).toBe(true);
         expect(calls).not.toContain("drop_thing");
         expect(await persistedTools(storage)).toEqual(
-          (await downstreamListing()).filter((tool) => tool.name !== "drop_thing"),
+          await downstreamListing(),
         );
       } finally {
         await before.connecta.close();
@@ -542,7 +541,7 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
       );
       // The claim is persisted as the decorator's fact, never as a verdict.
       expect(persisted.find((tool) => tool.name === "make_thing")?.annotations)
-        .toEqual({ readOnlyHint: true });
+        .toBeUndefined();
     });
 
     it("INV-1: keeps a reviewed write a write when a decorator marks its listing read-only in place", async () => {

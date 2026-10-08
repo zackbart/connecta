@@ -536,7 +536,7 @@ describe("search_tools", () => {
         limit,
       );
     }
-    expect(loads).toBe(1);
+    expect(loads).toBe(2);
 
     for (const limit of [MAX_SEARCH_LIMIT + 1, Number.MAX_SAFE_INTEGER]) {
       const result = await createMetaTools(
@@ -549,7 +549,7 @@ describe("search_tools", () => {
       });
     }
     // The rejected calls never reached listTools.
-    expect(loads).toBe(1);
+    expect(loads).toBe(2);
   });
 
   it("keeps default and maximum result pages coverage-free", async () => {

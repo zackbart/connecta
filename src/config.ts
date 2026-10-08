@@ -17,7 +17,6 @@ import type { CredentialVault } from "./credential-contract.js";
 import { CONFIG_DEFAULTS as D } from "./config-defaults.js";
 import {
   array,
-  bool,
   ConfigError,
   fn,
   object,
@@ -112,18 +111,12 @@ const discovery = {
    * operations. Default 4.
    */
   concurrency: whole({ min: 1, default: D.discovery.concurrency }),
-  /** Tool-list cache TTL (seconds). Default 300. */
+  /** Fallback tool-list TTL when the downstream omits ttlMs. Default 300 seconds. */
   catalogTtlSeconds: seconds({ default: D.discovery.catalogTtlSeconds }),
-  /**
-   * Persist serializable remote tool catalogs in storage so cold isolates can
-   * discover tools without a downstream handshake. Default true.
-   */
-  persistCatalog: bool({ default: D.discovery.persistCatalog }),
-  /**
-   * How long an expired persisted catalog remains available as a fallback
-   * when a live refresh fails. Default 3600 seconds.
-   */
-  staleCatalogSeconds: seconds({ default: D.discovery.staleCatalogSeconds }),
+  /** Floor for positive downstream hints. Zero hints always disable reuse. Default 0. */
+  catalogMinTtlSeconds: seconds({ default: D.discovery.catalogMinTtlSeconds }),
+  /** Ceiling for downstream hints and the fallback, capped by the SDK at 24h. Default 86400. */
+  catalogMaxTtlSeconds: seconds({ default: D.discovery.catalogMaxTtlSeconds }),
   /**
    * Deadline (ms) for each downstream probe/catalog call fanned out by
    * `search_tools` and by `connecta.search`/`connecta.describe` inside
@@ -489,7 +482,7 @@ const connectaConfig = {
       }
     },
   }),
-  /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
+  /** Tool-catalog TTL bounds and probe deadlines. */
   discovery: object(discovery),
   /** Deployment-wide call deadlines and result paging threshold. */
   calls: object(calls),
@@ -544,7 +537,7 @@ const CONFIG = object(connectaConfig);
 
 /** A deployment's whole configuration, passed to `createConnecta`. */
 export type ConnectaConfig = ConfigInput<typeof connectaConfig>;
-/** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
+/** Tool-catalog TTL bounds and probe deadlines. */
 export type ConnectaDiscoveryConfig = ConfigInput<typeof discovery>;
 /** Deployment-wide call deadlines and inline-result paging thresholds. */
 export type ConnectaCallsConfig = ConfigInput<typeof calls>;
@@ -604,6 +597,9 @@ function rejectUnknownOptions(paths: string[]): void {
 
 /** Checks that span fields; each value is already individually valid. */
 function assertCoherent(config: Parsed): void {
+  if (config.discovery.catalogMinTtlSeconds > config.discovery.catalogMaxTtlSeconds || config.discovery.catalogMaxTtlSeconds > 86_400) {
+    throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
+  }
   if (config.artifacts) {
     if (config.connectors.some((candidate) => candidate.id === "artifacts")) {
       throw new ConfigError(

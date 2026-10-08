@@ -16,7 +16,7 @@ stating before anything else.
 
 **Per isolate, built once.** `createConnecta(config)` returns
 `{ fetch, registry, describeConfig, close }` (`src/index.ts`). The `Registry` owns the connector
-set, address resolution, catalog caches, observed output schemas, connector
+set, address resolution, request-local catalog reads, observed output schemas, connector
 health, and the per-connector call limiters. It is built once and lives as long
 as the isolate — on Workers a lazy module-scope singleton, which is why both
 deployment shapes construct it outside the request handler.
@@ -53,8 +53,8 @@ request that created them. INV-7 requires this lifetime: a client retained
 across requests on Workers is a cross-request capability leak, and a promise awaited after the response is
 work the runtime may already have torn down. Deferred work has one sanctioned
 channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activity
-writes use it, as does a stale-window catalog refresh, which owns a fresh scope
-and deadline rather than carrying the inbound one past the request. And a fresh
+writes and dispatched OAuth grant commits use it. Catalog listing and SQL cache
+publication finish in the requesting scope. A fresh
 `McpServer` per request is what makes the deployment stateless: no sessions, no
 server push, no stream resumability, scope resolved rather than remembered.
 
@@ -191,8 +191,9 @@ or hands out, and a change usually belongs in exactly one of them:
 
 | Module | Owns |
 | --- | --- |
-| `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, catalog TTL/persistence/completeness, refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
-| `src/catalog-service.ts` | Request-local listing, search, and describe. Caches catalogs inside one request, fans discovery probes out under deadlines, and opts agent reads into the runtime's deferred catalog channel when one exists. |
+| `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, request-local complete-catalog reads, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
+| `src/catalog-cache.ts` | SQL-backed SDK tools/list response cache, intake redaction, TTL bounds, principal/pool partitions, and invalidation generations. |
+| `src/catalog-service.ts` | Request-local listing, search, and describe. Caches catalogs inside one request and fans discovery probes out under deadlines. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows. |
 | `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
@@ -351,6 +352,34 @@ Storage writes no log lines. A refused import names the file and an entry's
 position, never a key, a value, or the JSON parser's account, which quotes
 the file (INV-6).
 
+Remote MCP catalogs use the SDK `ResponseCacheStore` over this same SQL KV.
+The `response-cache:v1:` family binds connector id, a hash of its configured
+endpoint/auth/protocol settings and TTL policy, an invalidation generation,
+and a hash of the SDK cache partition. Later pages can only narrow the
+aggregate TTL and public scope grant. Private partitions include the admitted
+principal, subject, identity, pool, downstream credential digest, and OAuth
+epoch; `authScope: "shared"` does not collapse them. Public entries omit the
+principal partition only when the downstream explicitly declares `public`.
+Only complete, intake-redacted tools/list successes are stored. SDK default
+in-memory caching is replaced, so raw catalogs never enter it.
+
+`discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
+listings without `ttlMs`. Positive hints are bounded by
+`catalogMinTtlSeconds` (0) and `catalogMaxTtlSeconds` (86400, also the SDK
+ceiling); an explicit zero is never reused. Both bounds are nonnegative finite
+seconds (fractions round down to milliseconds), with min <= max <= 86400. `persistCatalog` and `staleCatalogSeconds`
+have been removed. SQL storage is always used for remote catalogs; dynamic
+custom connectors are listed anew in each request, and static catalogs remain
+in configuration. There is no stale-window or deferred catalog refresh.
+
+A manifest is published by CAS only after every UTF-8 chunk is written. It
+records the original fetch time, absolute expiry, revision, fingerprint, and
+monotonic stamp. Readers verify all chunks and fingerprint before accepting it.
+Entries expire at the bounded TTL, generations after 48 hours; invalidation
+rotates the generation, and old chunks expire without becoming reachable
+again. Catalog age remains the original fetch age across process restarts and
+cache hits. `test/catalog-cache.test.ts` runs against real SQLite and D1.
+
 Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge
@@ -431,11 +460,12 @@ chunks, so a later request needs no original credentials. Programs retain the
 request set only for the run so later outputs cannot reconstruct an echo.
 Discovery registers sent credentials under the same rules, including
 `server/discover`, legacy initialization, and every `tools/list` page on a
-reused transport. Remote MCP sanitizes the complete listing before retaining
-request-local definitions. Registry intake also sanitizes custom, API and
-provider listings before drift observation, fingerprinting or either catalog
-cache. Failed listings are redacted at the same intake before a shared refresh
-publishes its failure to another request. Successful catalog caches and result
+reused transport. Remote MCP sanitizes every list page before SDK aggregation, automatic cache
+writes, derived indexes, or request-local definitions. Invalid `x-mcp-header`
+declarations refuse the entire listing before the SDK can log downstream names
+or silently exclude a tool. Registry intake also sanitizes custom, API and
+provider listings before observation or request-local storage. Failed listings
+are redacted in their own request and are never cached. Successful catalog caches and result
 stashes retain only intake-redacted values; there is no tool-response cache.
 Every nested string and object key passes through the redactor,
 including titles, descriptions, schemas and annotations. If a tool name would
@@ -566,18 +596,16 @@ Connectors report facts; the registry is the only classifier. A reviewed
 connector carries its review as data, the deep-frozen
 `Connector.classification`, and its `listTools` returns the downstream's
 listing unclassified. The registry validates the field when it first reads a
-connector (INV-11), caches and persists exactly what `listTools` returned
-(manifest version 3), and classifies those facts on every read into fresh
-objects, so neither a cache layer nor a decorator holding a served or listed
-tool can carry a verdict. The request-scoped catalog also owns a deep copy
+connector (INV-11) and classifies the intake-redacted facts on every read into
+fresh objects. Remote MCP caches the underlying SDK response before connector
+decorators; decorators run again on every read. Neither a cache layer nor a
+decorator holding a served or listed tool can carry a verdict. The request-scoped catalog also owns a deep copy
 and returns fresh copies to discovery and invocation. Each connector call
 receives a separate deep copy of its definition, so mutations cannot change
 classification, schemas, or write accounting later in the same program.
-A restart onto a catalog persisted under an older
-review applies the current one; a 0.28 (version 2) catalog loses its
-read-only claims, which may be an older classifier's, and is refreshed on
-first read. During refreshes the deployment already asked for, the registry
-counts drift against the same record, and `scripts/drift-check.mjs` compares
+A restart applies the current review to cached SDK facts. Retired registry
+manifest versions 2 and 3 are ignored and expire on their original TTL.
+During successful listings the registry counts drift against the same record, and `scripts/drift-check.mjs` compares
 its names with published inventories. The internal `withVettedCatalog()`
 helper has been removed. Public provider `*_VETTED_CATALOG` exports remain
 deprecated aliases derived from each definition
@@ -728,7 +756,7 @@ before any request leaves. The provider never chooses the account and a
 deployment's own connector still cannot read the caller (PRINCIPLES.md, INV-3; `test/google-workspace-delegation.test.ts`). Its tokens live in a
 bounded module-level map, in memory only, keyed by the key's own digest as well
 as the account, subject, and scopes. A mint in flight is shared across requests
-the way the catalog and OAuth flights are: the owner settles a plain outcome
+the way OAuth flights are: the owner settles a plain outcome
 inside its own request — a token, Google's refusal, or `abandoned` — and each
 follower waits on a promise of its own under its own signal and timer to the
 flight's deadline, never touching the owner's signal or response.
@@ -827,7 +855,7 @@ storage is the root's namespaced to its principal.
 | One tool call (`invocation.ts`) | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`. |
 | `execute_code` (`execute.ts`) | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. The executor's `acquire()` and `execute()` stay Promises raced against the signal and `execute.watchdogMs`. Each guest host call is a fiber of its own. |
 | Discovery (`catalog-service.ts`) | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency. |
-| Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes, bounded by its owner's deadline (the default probe timeout when it has none); persisted-catalog writes take per-connector turns, each a Deferred its own request completes. Same-request loads share one read the way discovery's do. |
+| Registry (`registry.ts`) | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight. |
 | Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |
 | Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook. |
 | Operator and activity data (`routes/operator.ts`) | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation. |
@@ -884,19 +912,13 @@ when its only pending work is waiting on another request and it has no timer or
 I/O of its own. Connecta's deadline timers are what keep a waiting request
 alive and bounded, so no wait may lose its timer.
 
-**A shared flight has a lifetime of its own.** A catalog refresh flight runs in
-its owner's request, under its owner's scope and signal, and lives only as long
-as its owner's deadline. Past that the owner may have answered and gone, taking
-its I/O with it on workerd, and a connector that ignores its abort signal would
-otherwise hold every later reader on a flight nothing will ever settle. So each
-joiner waits on its own timer, set to the flight's bound: when it fires, the
-joiner abandons the flight and makes a fresh attempt, and a reader that arrives
-after the bound starts one without joining. Joiners also leave when the owner
-fails for a reason that was only its own, such as its cancellation, rather than
-inheriting it. A flight's result enters the caches only while the flight is
-current, checked at the same points as the catalog generation, so a stuck
-listing that lands late is never cached or persisted and never overwrites the
-fresh attempt's.
+**Catalog I/O belongs to its request.** Listings share work only within one
+request and authorization partition. Independent requests may read the same
+complete SQL cache entry, but never await another request's listing, retain
+its client, or inherit its sent-secret set. A rotated cache generation makes
+late publication from an invalidated request unreachable. Missing chunks,
+expired entries, storage errors, or a failed page trigger a fresh complete
+listing; failures never fall back to an expired catalog.
 
 ### Why not Schema or HttpApi
 
@@ -988,10 +1010,10 @@ compiling and configuring the real thing.
 
 ## Sharp edges
 
-- **The root registry is shared; identity views are partitioned.** Shared
-  connector caches are visible to later requests in the isolate; personal
-  connectors use a bounded principal registry and transient results the
-  authenticated subject. Putting a downstream client or credential on the wrong
+- **The root registry is shared; identity views are partitioned.** Public remote catalogs are shared only after intake redaction, keyed by the
+  connector configuration. Private entries include the admitted principal and
+  pool even for shared-auth connectors. Personal connectors use a bounded
+  principal registry and transient results the authenticated subject. Putting a downstream client or credential on the wrong
   side of those lines is the highest-severity mistake available here.
 - **Route order is behavior.** Moving a mutation route below the wildcard
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes

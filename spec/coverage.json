@@ -498,15 +498,15 @@
       "id": "caching",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching",
-      "notes": "Private upward tools/list and server/discover hints and TTL catalog storage exist; SDK ResponseCacheStore and downstream ttlMs/cacheScope adoption are planned.",
+      "notes": "Private upward tools/list and server/discover hints and SQL-backed SDK tools/list ResponseCacheStore honor downstream ttlMs/cacheScope, bounded legacy TTL, intake redaction, and principal/pool separation. Resource caching remains planned.",
       "tests": [
         {
           "file": "test/server.test.ts",
           "title": "serves a modern client without initialize and emits private tools/list cache hints"
         },
         {
-          "file": "test/registry.test.ts",
-          "title": "caches within the TTL and refetches after it expires"
+          "file": "test/catalog-cache.test.ts",
+          "title": "INV-4 INV-5: private catalogs never cross principals or pools, including shared-auth connectors"
         },
         {
           "file": "test/mcp-core.test.ts",
@@ -519,7 +519,7 @@
       "id": "pagination",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/pagination",
-      "notes": "Downstream tools/list pages are complete-or-failure. SDK-native listTools replaces the hand-written walk in Phase 3.",
+      "notes": "SDK Client.listTools aggregates downstream pages complete-or-failure. Intake refuses loops, nonprogress, invalid header declarations, and partial failures before SDK caching. Upward pagination of meta-tools remains planned.",
       "tests": [
         {
           "file": "test/remote-mcp-pagination.test.ts",
@@ -527,7 +527,7 @@
         },
         {
           "file": "test/remote-mcp-pagination.test.ts",
-          "title": "INV-8: never exposes a partial catalog when a later page fails, and keeps the stale fallback"
+          "title": "INV-8: never exposes a partial catalog or stale fallback when a later page fails"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

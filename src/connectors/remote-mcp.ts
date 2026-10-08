@@ -26,6 +26,7 @@ import {
 import type {
   FetchLike,
   ListToolsResult,
+  RequestOptions,
   StandardSchemaV1,
   Tool,
   Transport,
@@ -41,7 +42,8 @@ import {
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
-import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
+import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
+import { catalogClientOptions, catalogIntake, observeCatalogFetch } from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -277,21 +279,8 @@ const TERMINATE_SESSION_BUDGET_MS = 1_000;
  */
 const LOCAL_CLOSE_BUDGET_MS = 1_000;
 
-/**
- * Absolute backstop on `tools/list` pages in one refresh — a runaway guard, not
- * the primary defense.
- *
- * The walk terminates on its own well before this: a cursor handed back twice
- * is a definite loop, two consecutive pages that add no new tools are a server
- * going nowhere, and MAX_CATALOG_TOOLS caps what any of it can accumulate.
- * This exists only so the loop is finite even if a downstream somehow
- * satisfies all three forever on a path with no discovery deadline. Set high
- * enough that no honest server reaches it.
- */
+/** SDK aggregation cap; intake also refuses loops and non-progress (INV-8). */
 const MAX_TOOL_PAGES = 10_000;
-
-/** One entry of the SDK's `tools/list` result, before it becomes a ToolDef. */
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 
 /**
  * Compatibility concession for hand-rolled servers that serialize
@@ -1559,34 +1548,58 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       : undefined;
 
-  /**
-   * One `tools/list` request. The SDK schema is retained wholesale except for
-   * accepting `null` as the common, unambiguous end-of-chain spelling. Other
-   * cursor shapes still get a useful connector-level diagnosis.
-   */
-  const listPage = async (
-    client: Client,
-    cursor: string | undefined,
-    ctx: ConnectorContext,
-  ) => {
-    try {
-      return await client.request(
-        {
-          method: "tools/list",
-          ...(cursor === undefined ? {} : { params: { cursor } }),
-        },
-        CompatibleListToolsResultSchema,
-        requestOptions(ctx),
-      );
-    } catch (err) {
-      if (!isCursorShapeError(err)) {
-        throw atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
+  /** Wrap the public request seam, before listTools aggregates or auto-caches.
+   * SDK 2.3.1 treats an identical repeated page as completion. Refuse it here:
+   * an advertised successor is never proof of a complete catalog (INV-8). */
+  const installCatalogIntake = (client: Client, ctx: ConnectorContext): void => {
+    const request = client.request.bind(client);
+    const walks = new WeakMap<object, { names: Set<string>; cursors: Set<string>; barren: number; bytes: number; first?: ReturnType<typeof catalogIntake> }>();
+    client.request = (async (...args: unknown[]) => {
+      const message = args[0] as { method: string; params?: { cursor?: string } };
+      if (message.method !== "tools/list") return Reflect.apply(request, client, args);
+      const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
+      if (isClosed(entryFor(ctx))) throw scopeEndedError();
+      if (options?.signal?.aborted) throw options.signal.reason;
+      const key = options ?? message;
+      let walk = walks.get(key);
+      if (message.params?.cursor === undefined || !walk) {
+        walk = { names: new Set(), cursors: new Set(), barren: 0, bytes: 0 };
+        walks.set(key, walk);
       }
-      // No cause: the validator's error describes the downstream's page.
-      throw new Error(
-        `Connector "${id}" returned a tools/list page whose nextCursor is neither a string, null, nor absent — this catalog cannot be walked.`,
-      );
-    }
+      let page: ListToolsResult;
+      try {
+        page = await request(message as Parameters<Client["request"]>[0], CompatibleListToolsResultSchema, options);
+      } catch (error) {
+        if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream tools/list nextCursor must be a string, null, or absent.", { retryable: false });
+        throw error;
+      }
+      const clean = catalogIntake(ctx, page);
+      if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now());
+      const tools = clean.tools.filter(tool => {
+        if (walk.names.has(tool.name)) return false;
+        walk.names.add(tool.name);
+        return true;
+      });
+      walk.bytes += new TextEncoder().encode(JSON.stringify(tools)).byteLength;
+      if (walk.names.size > MAX_CATALOG_TOOLS || walk.bytes > MAX_SERIALIZED_CATALOG_BYTES) {
+        throw new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", { retryable: false });
+      }
+      if (clean.nextCursor !== undefined) {
+        if (walk.cursors.has(clean.nextCursor)) throw new ConnectorCallError("connector_call_failed", "Downstream tools/list pagination chain loops.", { retryable: false });
+        if (tools.length === 0 && ++walk.barren > 1) throw new ConnectorCallError("connector_call_failed", "Downstream tools/list pagination is not advancing.", { retryable: false });
+        if (tools.length > 0) walk.barren = 0;
+        walk.cursors.add(clean.nextCursor);
+      }
+      const result = { ...clean, tools };
+      if (!walk.first) walk.first = result;
+      else {
+        // SDK aggregation retains page-one metadata. A later page may only
+        // narrow its reuse grant, never broaden the complete catalog's scope.
+        walk.first.ttlMs = Math.min(walk.first.ttlMs, clean.ttlMs);
+        if (clean.cacheScope !== "public") walk.first.cacheScope = "private";
+      }
+      return result;
+    }) as Client["request"];
   };
 
   /** This request scope's entry, open or closed, created on first sight. */
@@ -1970,17 +1983,31 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const prior = opts.versionNegotiation === "legacy" ? undefined
           : yield* promised(() => readNegotiation(ctx, negotiationDigest));
         if (!owned()) return yield* Effect.fail(scopeEndedError());
-        const makeClient = () => new Client(
-          { name: "connecta", version: CONNECTA_VERSION },
-          {
-            versionNegotiation: {
-              mode: opts.versionNegotiation ?? "auto",
+        const cacheOptions = yield* promised(() => catalogClientOptions(ctx, id, JSON.stringify({
+          url: new URL(opts.url).href, auth: opts.auth?.type ?? null,
+          headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+          credentialHeader, credentialScheme, authScope: opts.authScope ?? "shared",
+          redirects: opts.redirects ?? "none", versionNegotiation: opts.versionNegotiation ?? "auto",
+          clientMetadataUrl, oauthScope,
+        }), JSON.stringify([genAtStart, state.credentialDigest])));
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
+        const makeClient = () => {
+          const client = new Client(
+            { name: "connecta", version: CONNECTA_VERSION },
+            {
+              ...cacheOptions,
+              listMaxPages: MAX_TOOL_PAGES,
+              versionNegotiation: {
+                mode: opts.versionNegotiation ?? "auto",
+              },
+              // Connecta has no interactive relay. Surface the result manually
+              // below as one structured, non-retryable connector failure.
+              inputRequired: { autoFulfill: false },
             },
-            // Connecta has no interactive relay. Surface the result manually
-            // below as one structured, non-retryable connector failure.
-            inputRequired: { autoFulfill: false },
-          },
-        );
+          );
+          installCatalogIntake(client, ctx);
+          return client;
+        };
         let c = makeClient();
         let t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
         if (!owned()) {
@@ -2223,119 +2250,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       : {}),
 
-    // `tools/list` is cursor-paginated: the server chooses the page size and
-    // signals "there is more" with a `nextCursor`, which the SDK's
-    // Client.listTools() returns without following. Collect the whole chain
-    // here, because a half-collected catalog is indistinguishable from a small
-    // one — later-page tools would simply appear not to exist, unsearchable and
-    // unaddressable, with nothing anywhere saying why.
-    //
-    // All pages ride the one request-scoped client already connected above, and
-    // the accumulator is returned rather than stored: a cursor is opaque and
-    // session-bound, so nothing here may outlive this call.
+    // The SDK walks the whole chain and writes one complete result. Intake
+    // runs on its public request seam before any page can enter that cache.
     async listTools(ctx) {
-      // The catalog contract: a downstream catalog is complete or it is a
-      // failure. Follow every page to the end of the cursor chain, preserve
-      // schemas and annotations, and never cache or serve a partial walk.
       const state = stateFor(ctx);
-      // The client this call connected or joined, bound once so the whole walk
-      // provably rides one session — a cursor is only meaningful to the
-      // connection that issued it. Never re-read from `state`: a force reset
-      // or rotation can null it before this call resumes, and teardown is
-      // caught instead by the `closed` check before every page.
       const client = await ensureConnected(ctx, state);
-      // Collect SDK tools for same-scope calls; sanitize the completed walk
-      // before retaining definitions or returning cross-request metadata.
-      const listed: ListedTool[] = [];
-      const names = new Set<string>();
-      const spent = new Set<string>();
-      let cursor: string | undefined;
-      /** Consecutive pages that advertised a successor but added nothing. */
-      let barren = 0;
-      let complete = false;
+      let clean: ListToolsResult["tools"];
       try {
-        for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-          // The scope can end between pages (probe timeout, teardown). Stop
-          // rather than keep paging into a transport that is being closed.
-          if (isClosed(state)) throw scopeEndedError();
-          // A discovery deadline uses the same signal for the whole chain.
-          // Check it before issuing each page as well as passing it to the
-          // in-flight SDK request, so expiry never starts one more round trip.
-          if (ctx.signal?.aborted) {
-            throw ctx.signal.reason instanceof Error
-              ? ctx.signal.reason
-              : new Error(`Connector "${id}" catalog deadline expired.`);
-          }
-          // Page one sends no params at all, so a non-paginated server sees
-          // exactly the request it saw before pagination existed.
-          const res = await listPage(client, cursor, ctx);
-          let added = 0;
-          for (const t of res.tools) {
-            // First page wins. An unstable cursor can serve the same tool on
-            // two pages — a duplicate would inflate `toolCount`, double the
-            // `search_tools` row, and churn catalog persistence.
-            if (names.has(t.name)) continue;
-            names.add(t.name);
-            listed.push(t);
-            added++;
-          }
-          // Pagination ends when `nextCursor` is absent or null — never merely
-          // falsy. Empty string is present and means "keep going".
-          const next = res.nextCursor;
-          if (next === undefined || next === null) {
-            complete = true;
-            break;
-          }
-          // A page that adds nothing and still claims a successor made no
-          // progress. Allow exactly one: the widespread idiom is to advertise
-          // a cursor whenever a page came back full and then serve one empty
-          // page to terminate. Two in a row is a downstream going nowhere.
-          if (added === 0 && ++barren > 1) {
-            throw new Error(
-              `Connector "${id}" returned two consecutive tools/list pages that added no tools and still advertised another — the catalog is not advancing.`,
-            );
-          }
-          if (added > 0) barren = 0;
-          // A cursor handed back a second time is a loop, not a slow server.
-          if (spent.has(next)) {
-            throw new Error(
-              `Connector "${id}" handed back a tools/list cursor it had already issued — the pagination chain loops.`,
-            );
-          }
-          // Checked here rather than on arrival: this bounds what a *walk* may
-          // accumulate; a one-page server was always free to send its page.
-          if (listed.length > MAX_CATALOG_TOOLS) {
-            throw new Error(
-              `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_CATALOG_TOOLS}-tool ceiling one catalog refresh will collect.`,
-            );
-          }
-          // Opaque by contract: handed straight back, never parsed, rewritten,
-          // or persisted.
-          spent.add(next);
-          cursor = next;
-        }
+        const result = await client.listTools(undefined, requestOptions(ctx) ?? {});
+        clean = redactCatalog(ctx, result.tools);
       } catch (err) {
-        // A grant can be revoked after connect and after any earlier page.
-        // Classify that exactly like connect-time and call-time authorization
-        // failures, and latch it for the rest of this request scope.
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
-        if (requiresAuthorization(err)) {
+        const bounded = atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
+        if (requiresAuthorization(bounded)) {
           if (state.client === client) state.authRequired = true;
-          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
+          if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
         }
-        throw err;
+        throw bounded;
       }
-      // Fail the refresh outright. Returning what we have would publish a
-      // partial catalog that looks complete; throwing lets the registry keep
-      // serving the last complete one via its stale fallback.
-      if (!complete) {
-        throw new Error(
-          `Connector "${id}" kept advertising more tools/list pages after ${MAX_TOOL_PAGES} — refusing to page further.`,
-        );
-      }
-      // Publish definitions only after the full walk succeeds. A later-page
-      // failure must not leave a partial validation/header view behind.
-      const clean = redactCatalog(ctx, listed);
       state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
       return clean.map((t) => ({
         name: t.name,

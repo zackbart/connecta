@@ -777,7 +777,7 @@ describe("server /mcp end-to-end", () => {
   });
 
   it.each(["search_tools", "execute_code"] as const)(
-    "threads waitUntil to stale catalog reads through %s",
+    "INV-7: waits for a fresh catalog through %s without spawning a deferred refresh",
     async (surface) => {
       vi.useFakeTimers();
       try {
@@ -820,7 +820,7 @@ describe("server /mcp end-to-end", () => {
           publicUrl: BASE,
           discovery: {
             catalogTtlSeconds: 1,
-            staleCatalogSeconds: 30,
+
           },
           executor,
         });
@@ -851,10 +851,10 @@ describe("server /mcp end-to-end", () => {
         });
 
         await vi.waitFor(() => expect(calls).toBe(2));
-        await vi.waitFor(() => expect(settled).toBe(true));
-        expect((await response).status).toBe(200);
-        expect(tails).toHaveLength(1);
+        expect(settled).toBe(false);
         release();
+        expect((await response).status).toBe(200);
+        expect(tails).toHaveLength(0);
         await Promise.all(tails);
       } finally {
         vi.useRealTimers();
