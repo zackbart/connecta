@@ -38,7 +38,7 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
-import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationMatches, resolveInvocationAuth } from "./invocation-auth.js";
+import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationDigest, resolveInvocationAuth } from "./invocation-auth.js";
 
 function defined<T extends object>(
   values: T,
@@ -587,9 +587,10 @@ export class InvocationService {
           activityTarget = target;
 
           const write = target.definition.classification !== "read";
-          const callDigest = yield* Effect.promise(() => classificationDigest(target.definition));
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
-          if (!replayClassificationMatches(this.catalog.requestScope, canonicalAddress, callDigest, target.classificationFresh === true)) {
+          const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
+          if (expectedDigest !== undefined && (target.classificationFresh !== true ||
+              (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)) {
             return { ...framingError("auth_replay_refused",
               "An entered read no longer has the same fresh classification. Reconcile its target before starting a new request."),
               reconciliationRequired: true as const };
@@ -667,8 +668,8 @@ export class InvocationService {
             // Cancellation can arrive during admission or context construction.
             if (admissionSignal?.aborted) throw admissionSignal.reason;
             dispatchedToConnector = true;
-            recordCallEntry(this.catalog.requestScope, { address: canonicalAddress, digest: callDigest,
-              classification: write ? "write" : "read", fresh: target.classificationFresh === true });
+            recordCallEntry(this.catalog.requestScope, { address: canonicalAddress,
+              classification: write ? "write" : "read", fresh: target.classificationFresh === true }, target.definition);
             return await target.connector.callTool(
               target.toolName,
               args ?? {},

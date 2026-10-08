@@ -205,10 +205,11 @@ export class AuthElicitation {
       (error.code === "auth_required" || error.code === "downstream_oauth_required");
     const explicit = tool === "authorize_connector" &&
       ["oauth", "operator_config"].includes(String(result.structuredContent?.recovery));
+    if (!authFailure && !explicit) return result;
     const id = authFailure ? error.connector : explicit ? args.connector : undefined;
     // Every accepted retry owns new request-local facts. Handler-authored
     // errors and program write summaries cannot establish replay eligibility.
-    const facts = authRecoveryFacts(this.options.requestScope, String(id));
+    const facts = await authRecoveryFacts(this.options.requestScope, String(id));
     const blocked = !explicit && (!facts.eligible || facts.writeEntered);
     if (authFailure && (facts.unsafeEntered || (tool !== "call_tool" && !facts.eligible))) {
       const structuredContent = { ...result.structuredContent, error: {

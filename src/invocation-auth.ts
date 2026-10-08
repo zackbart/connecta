@@ -27,9 +27,11 @@ export interface ReplayRead {
   address: string;
   digest: string;
 }
-interface EnteredCall extends ReplayRead {
+interface EnteredCall {
+  address: string;
   classification: "read" | "write";
   fresh: boolean;
+  definition: ToolDef;
 }
 const requests = new WeakMap<object, RequestInvocations>();
 
@@ -56,17 +58,18 @@ export async function classificationDigest(definition: ToolDef): Promise<string>
 }
 
 /** Called by the host immediately before callTool, using its private scope. */
-export function recordCallEntry(scope: object, call: EnteredCall): void {
-  requestFor(scope).entered.push({ ...call });
+export function recordCallEntry(scope: object, call: Omit<EnteredCall, "definition">, definition: ToolDef): void {
+  // Snapshot synchronously. Recovery hashes this private copy only when it
+  // needs a replay binding, without changing ordinary admission or completion.
+  requestFor(scope).entered.push({ ...call, definition: structuredClone(definition) });
 }
 
 export function bindReplayReads(scope: object, reads: ReplayRead[]): void {
   requestFor(scope).retryReads = new Map(reads.map(read => [read.address, read.digest]));
 }
 
-export function replayClassificationMatches(scope: object, address: string, digest: string, fresh: boolean): boolean {
-  const expected = requestFor(scope).retryReads.get(address);
-  return expected === undefined || (fresh && expected === digest);
+export function replayClassificationDigest(scope: object, address: string): string | undefined {
+  return requestFor(scope).retryReads.get(address);
 }
 
 /** Eligibility comes from invocation control flow, never error fields. */
@@ -75,16 +78,17 @@ export function recordAuthFailure(scope: object, connector: string, eligible: bo
   failures.set(connector, eligible && failures.get(connector) !== false);
 }
 
-export function authRecoveryFacts(scope: object, connector: string): {
+export async function authRecoveryFacts(scope: object, connector: string): Promise<{
   writeEntered: boolean; unsafeEntered: boolean; eligible: boolean; reads: ReplayRead[];
-} {
+}> {
   const facts = requestFor(scope);
   const writeEntered = facts.entered.some(call => call.classification === "write");
   const reads = new Map<string, string>();
   let unsafeEntered = writeEntered;
   for (const call of facts.entered) {
-    unsafeEntered ||= !call.fresh || !call.digest || (reads.has(call.address) && reads.get(call.address) !== call.digest);
-    reads.set(call.address, call.digest);
+    const digest = await classificationDigest(call.definition);
+    unsafeEntered ||= !call.fresh || !digest || (reads.has(call.address) && reads.get(call.address) !== digest);
+    reads.set(call.address, digest);
   }
   return { writeEntered, unsafeEntered, eligible: !unsafeEntered && facts.authFailures.get(connector) === true,
     reads: [...reads].map(([address, digest]) => ({ address, digest })) };
