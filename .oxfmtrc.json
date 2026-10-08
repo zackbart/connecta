@@ -29,7 +29,7 @@
     "**/fixtures.ts",
     "**/__snapshots__/**",
     "**/*-snapshots/**",
-    "eval/baselines/*.json",
+    "eval/baselines/**",
     "**/package-lock.json",
     "**/npm-shrinkwrap.json",
     "**/yarn.lock",
