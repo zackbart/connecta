@@ -63,7 +63,7 @@
       "id": "request-metadata",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#_meta",
-      "notes": "SDK envelope clientCapabilities and clientInfo are bound to request-local meta-tool context. Direct and program activity retain only runtime-checked client name/version facts, bounded to 128 UTF-8 bytes; capabilities and other metadata never enter activity.",
+      "notes": "SDK envelope clientCapabilities and clientInfo are bound to request-local meta-tool context. Direct and program activity retain only allowlisted ASCII client name/version facts, bounded to 64/32 characters. Invalid facts are absent at the record, SQL write/read, and operator UI boundaries; capabilities and other metadata never enter activity.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -76,6 +76,10 @@
         {
           "file": "test/mcp-core.test.ts",
           "title": "INV-6 INV-7: threads per-request client identity into direct and program activity without retaining capabilities"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "INV-6: withholds invalid modern client facts across direct/program activity and UI"
         }
       ]
     },

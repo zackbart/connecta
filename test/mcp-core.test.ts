@@ -5,28 +5,10 @@ import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
 import { calcApi, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, required, silentLogger } from "./helpers.js";
+import { checkClientActivity, INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES, modernRequest as modern } from "./fixtures/client-identity.js";
 
 const BASE = "https://connecta.test";
 const VERSION = "2026-07-28";
-function modern(method: string, params: Record<string, unknown> = {}, clientInfo?: unknown): Request {
-  return new Request(`${BASE}/mcp`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json", Accept: "application/json, text/event-stream",
-      "MCP-Protocol-Version": VERSION, "Mcp-Method": method,
-      ...(params.arguments && typeof params.arguments === "object" && "address" in params.arguments ? { "Mcp-Param-Address": String(params.arguments.address) } : {}),
-      ...(typeof params.name === "string" ? { "Mcp-Name": params.name } : {}),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 7, method, params: {
-      ...params,
-      _meta: {
-        "io.modelcontextprotocol/protocolVersion": VERSION,
-        "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
-        ...(clientInfo === undefined ? {} : { "io.modelcontextprotocol/clientInfo": clientInfo }),
-      },
-    } }),
-  });
-}
 
 describe("2026-07-28 core", () => {
   it("INV-4: binds SDK envelope capabilities and identity as request context only", () => {
@@ -45,17 +27,55 @@ describe("2026-07-28 core", () => {
     const context: ActivityRequestContext = {
       sink: { record: event => void events.push(event) }, actor: { kind: "test" }, requestId: "r",
       serverInfo: { name: "connecta", version: "0" }, logger: silentLogger,
-      clientInfo: { name: "💻".repeat(200), version: "v".repeat(1000), payload: "secret" } as { name: string; version: string },
     };
-    recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
-    const event = required(events[0]);
-    expect(new TextEncoder().encode(event.clientName).byteLength).toBeLessThanOrEqual(128);
-    expect(new TextEncoder().encode(event.clientVersion).byteLength).toBeLessThanOrEqual(128);
-    expect(JSON.stringify(event)).not.toContain("secret");
-    context.clientInfo = { name: 42, version: { code: "secret" } } as unknown as { name: string; version: string };
-    recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
-    expect(events[1]).not.toHaveProperty("clientName");
-    expect(events[1]).not.toHaveProperty("clientVersion");
+    for (const value of INVALID_CLIENT_FACTS) {
+      for (const source of ["call_tool", "call_destructive_tool", "execute_code"] as const) {
+        context.clientInfo = { name: value, version: value } as NonNullable<ActivityRequestContext["clientInfo"]>;
+        recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source, outcome: "success", durationMs: 1, attempts: 1 });
+        expect(events.at(-1)).not.toHaveProperty("clientName");
+        expect(events.at(-1)).not.toHaveProperty("clientVersion");
+      }
+    }
+    for (const clientInfo of VALID_CLIENT_IDENTITIES) {
+      context.clientInfo = clientInfo;
+      recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
+      expect(events.at(-1)).toMatchObject({ clientName: clientInfo.name, clientVersion: clientInfo.version });
+    }
+  });
+
+  it("INV-6: withholds invalid modern client facts across direct/program activity and UI", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    await checkClientActivity({ record: event => void events.push(event), list: async () => ({ events }) });
+  });
+
+  it("INV-6: rechecks client facts from custom activity readers before serving UI", async () => {
+    let template!: ToolCallActivityEvent;
+    recordToolActivity({
+      sink: { record: event => { template = event; } }, actor: { kind: "test" }, requestId: "r",
+      serverInfo: { name: "connecta", version: "0" }, logger: silentLogger,
+    }, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
+    const events = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map(value => ({
+      ...template, clientName: value as string, clientVersion: value as string,
+    }));
+    events.push(...VALID_CLIENT_IDENTITIES.map(clientInfo => ({ ...template, clientName: clientInfo.name, clientVersion: clientInfo.version })));
+    const c = createTestConnecta({ connectors: [], logger: silentLogger,
+      auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
+      activity: activityHistory({ store: { record() {}, list: async () => ({ events }) } }),
+    });
+    try {
+      const response = await c.fetch(new Request(`${BASE}/ui/activity`));
+      expect(response.status).toBe(200);
+      const page = await response.json() as { events: ToolCallActivityEvent[] };
+      for (const event of page.events.slice(0, INVALID_CLIENT_FACTS.length)) {
+        expect(event).not.toHaveProperty("clientName");
+        expect(event).not.toHaveProperty("clientVersion");
+      }
+      expect(page.events[INVALID_CLIENT_FACTS.length]).toMatchObject({ clientName: "v".repeat(33) });
+      expect(page.events[INVALID_CLIENT_FACTS.length]).not.toHaveProperty("clientVersion");
+      expect(page.events.slice(-VALID_CLIENT_IDENTITIES.length)).toEqual(events.slice(-VALID_CLIENT_IDENTITIES.length));
+      // Reading does not mutate the stored event.
+      expect(events[0]!.clientName).toBe(INVALID_CLIENT_FACTS[0]);
+    } finally { await c.close(); }
   });
 
   it("INV-6 INV-7: threads per-request client identity into direct and program activity without retaining capabilities", async () => {

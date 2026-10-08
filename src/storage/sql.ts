@@ -495,6 +495,8 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
   // only in the column, which is why the column exists.
   const friction = row.friction ??
     agentFrictionForCode(row.error_code ?? undefined);
+  const clientName = activityClientFact(row.client_name, "name");
+  const clientVersion = activityClientFact(row.client_version, "version");
   return {
     schemaVersion: 1,
     id: row.id,
@@ -517,8 +519,8 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
     ...(row.approval ? { approval: row.approval } : {}),
     serverName: row.server_name,
     serverVersion: row.server_version,
-    ...(row.client_name !== null ? { clientName: row.client_name } : {}),
-    ...(row.client_version !== null ? { clientVersion: row.client_version } : {}),
+    ...(clientName !== undefined ? { clientName } : {}),
+    ...(clientVersion !== undefined ? { clientVersion } : {}),
     ...(row.deployment_id ? { deploymentId: row.deployment_id } : {}),
   };
 }
@@ -632,8 +634,8 @@ export function sqlActivityStore(
           event.approval ?? null,
           event.serverName,
           event.serverVersion,
-          activityClientFact(event.clientName) ?? null,
-          activityClientFact(event.clientVersion) ?? null,
+          activityClientFact(event.clientName, "name") ?? null,
+          activityClientFact(event.clientVersion, "version") ?? null,
           event.deploymentId ?? null,
         ),
         sql(

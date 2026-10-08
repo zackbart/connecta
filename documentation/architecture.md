@@ -130,8 +130,12 @@ The SDK lifts each modern request's client declarations from `_meta` into
 `clientInfo` to their request-local context before dispatch. These declarations
 never select an identity, grant, connector view, or pool. Direct and program
 activity records retain only the self-declared `clientName` and `clientVersion`,
-each checked as a string and bounded to 128 UTF-8 bytes at the record boundary
-and SQL sink. Capabilities and other client metadata never enter activity.
+validated by one ASCII grammar at the record builder, SQL write/read boundaries,
+and authenticated activity read route. Names match
+`[A-Za-z0-9][A-Za-z0-9 ._@/+-]{0,63}`; versions match
+`[A-Za-z0-9][A-Za-z0-9._+-]{0,31}`, each as a whole string. Names allow up to
+64 characters, versions up to 32. `__proto__`, `constructor`, and `prototype`
+are reserved. Invalid values are absent, never truncated or escaped. Capabilities and other client metadata never enter activity.
 Legacy requests without an envelope leave client facts absent.
 
 `server/discover` advertises the served extension map, currently empty, with

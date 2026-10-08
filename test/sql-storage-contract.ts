@@ -1,3 +1,4 @@
+import { checkClientActivity, INVALID_CLIENT_FACTS, VALID_CLIENT_IDENTITIES } from "./fixtures/client-identity.js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/index.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
@@ -203,15 +204,41 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 10 })).events).toEqual([bare, full]);
   });
 
-  it("INV-6: persists only bounded typed client identity facts in activity", async () => {
-    const activity = (await open()).activity();
-    const full = event(1, { clientName: "doctor", clientVersion: "1.0.0" });
-    await activity.record(full);
-    expect((await activity.list!({ limit: 1 })).events).toEqual([full]);
-    await activity.record(event(2, { clientName: "💻".repeat(200), clientVersion: 42 as unknown as string }));
-    const stored = (await activity.list!({ limit: 1 })).events[0]!;
-    expect(new TextEncoder().encode(stored.clientName).byteLength).toBeLessThanOrEqual(128);
-    expect(stored).not.toHaveProperty("clientVersion");
+  it("INV-6: persists only allowlisted client identity facts in activity", async () => {
+    const db = await open();
+    const activity = db.activity();
+    for (const [index, value] of INVALID_CLIENT_FACTS.entries()) {
+      await activity.record(event(index, { clientName: value as string, clientVersion: value as string }));
+      expect(await db.rows("SELECT client_name, client_version FROM tool_call_activity WHERE id = ?", id(index)))
+        .toEqual([{ client_name: null, client_version: null }]);
+      const stored = (await activity.list!({ limit: 1 })).events[0]!;
+      expect(stored).not.toHaveProperty("clientName");
+      expect(stored).not.toHaveProperty("clientVersion");
+    }
+    await activity.record(event(50, { clientName: "valid", clientVersion: "v".repeat(33) }));
+    expect(await db.rows("SELECT client_name, client_version FROM tool_call_activity WHERE id = ?", id(50)))
+      .toEqual([{ client_name: "valid", client_version: null }]);
+    for (const [index, clientInfo] of VALID_CLIENT_IDENTITIES.entries()) {
+      const full = event(100 + index, { clientName: clientInfo.name, clientVersion: clientInfo.version });
+      await activity.record(full);
+      expect((await activity.list!({ limit: 1 })).events).toEqual([full]);
+    }
+  });
+
+  it("INV-6: withholds invalid client facts across direct/program SQL activity and UI", async () => {
+    await checkClientActivity((await open()).activity());
+  });
+
+  it("INV-6: withholds invalid client facts in historical SQL rows", async () => {
+    const db = await open();
+    const activity = db.activity();
+    await activity.record(event(1));
+    for (const value of INVALID_CLIENT_FACTS.filter(value => typeof value === "string")) {
+      await db.exec("UPDATE tool_call_activity SET client_name = ?, client_version = ? WHERE id = ?", value, value, id(1));
+      const stored = (await activity.list!({ limit: 1 })).events[0]!;
+      expect(stored).not.toHaveProperty("clientName");
+      expect(stored).not.toHaveProperty("clientVersion");
+    }
   });
 
   it("round-trips activity text holding NUL (U+0000)", async () => {

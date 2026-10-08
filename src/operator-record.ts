@@ -7,10 +7,14 @@
 // Threat model. INV-6 here covers records of calls and failures: logs,
 // activity rows, status and statusFor, health, doctor output, and any native
 // runtime output connecta triggers (workerd's console). Text a downstream
-// server or HTTP API authored, and anything derived from it, never reaches
-// one. Every typed field connecta records is checked against a closed set or
-// a grammar. Operator-authored code (custom connectors, plugin `status()`,
-// decorators) is trusted to follow the contract, and connecta still checks
+// server, HTTP API, or client authored, and anything derived from it, never
+// reaches one as arbitrary text. Self-declared client name/version facts in
+// activity use the bounded ASCII grammars in activityClientFact; invalid values are
+// absent at recording, SQL write/read, and operator UI boundaries. Client
+// capabilities and other metadata are never recorded. Every typed field
+// connecta records is checked against a closed set or a grammar. Operator-
+// authored code (custom connectors, plugin `status()`, decorators) is trusted
+// to follow the contract, and connecta still checks
 // the typed fields it records from it; deliberately adversarial operator code
 // is out of scope.
 //
