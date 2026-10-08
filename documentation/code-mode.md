@@ -321,7 +321,7 @@ says so inside its `Promise<…>`.
 
 ### connecta.call
 
-[Guest declarations](./guest.d.ts) describe the supplied global for editors.
+The published `GuestApi` type describes the supplied global for editors.
 The executable usage guide checks its API notation against those declarations;
 programs still use plain JavaScript.
 

@@ -1,4 +1,5 @@
-import type { ToolDef, CallErrorDetails } from "@zackbart/connecta";
+import type { ToolDef } from "./types.js";
+import type { CallErrorDetails } from "./errors.js";
 
 /** TypeScript notation for the JavaScript guest global; programs receive no arguments. */
 export interface GuestApi {
@@ -139,6 +140,3 @@ type CatalogSearchTool = {
   guideRequiredReasons?: GuideRequiredReason[];
 };
 
-declare global {
-  const connecta: GuestApi;
-}

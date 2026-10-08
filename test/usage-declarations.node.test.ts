@@ -6,7 +6,7 @@ import { guestInitializer } from "../src/guest-runtime.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { GUEST_API_DECLARATION } from "../src/usage-guide.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
-import type { GuestApi, CatalogSearchArgs as DeclaredSearchArgs, CatalogDescribeArgs as DeclaredDescribeArgs } from "../documentation/guest.js";
+import type { GuestApi, CatalogSearchArgs as DeclaredSearchArgs, CatalogDescribeArgs as DeclaredDescribeArgs } from "../src/guest-types.js";
 import type { CatalogSearchArgs, CatalogSearchResult, CatalogDescription, CatalogDescribeArgs } from "../src/catalog-service.js";
 
 it("guest declaration matches the host discovery types", () => {
@@ -17,7 +17,7 @@ it("guest declaration matches the host discovery types", () => {
 });
 
 it("shipped guest declaration has no unresolved or invalid types", () => {
-  const path = new URL("../documentation/guest.d.ts", import.meta.url).pathname;
+  const path = new URL("../src/guest-types.ts", import.meta.url).pathname;
   const configPath = ts.findConfigFile(process.cwd(), ts.sys.fileExists)!;
   const config = ts.readConfigFile(configPath, ts.sys.readFile);
   const options = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd()).options;
@@ -28,7 +28,7 @@ it("shipped guest declaration has no unresolved or invalid types", () => {
 });
 
 it("INV-3: advertised guest signatures match the shipped declaration and runtime method set", async () => {
-  const source = readFileSync(new URL("../documentation/guest.d.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/guest-types.ts", import.meta.url), "utf8");
   const file = ts.createSourceFile("guest.d.ts", source, ts.ScriptTarget.Latest, true);
   const api = file.statements.find((s): s is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(s) && s.name.text === "GuestApi")!;
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim();

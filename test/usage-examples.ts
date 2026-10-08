@@ -4,7 +4,7 @@ import { createExecuteTool, registerExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { USAGE_SKILL } from "../src/usage-guide.js";
 import type { Connector, Executor } from "../src/types.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://usage.test";
 const ids = Array.from({ length: 140 }, (_, i) => `item_${i}_é`);
@@ -68,7 +68,7 @@ export async function checkUsageExamples(executor: Executor): Promise<void> {
     expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
     expect(result.structuredContent?.result).toEqual(expected[index]);
     if (index === 1) expect(result.structuredContent?.hostCalls).toMatchObject({ attempted: 3, succeeded: 2, failed: 1 });
-    if (index === 2) expect((result.structuredContent?.hostCalls as { attempted: number }).attempted).toBeGreaterThan(1);
+    if (index === 2) expect((required(result.structuredContent).hostCalls as { attempted: number }).attempted).toBeGreaterThan(1);
   }
   for (const trust of ["trusted", "read-only"] as const) {
     for (const guided of [false, true]) {

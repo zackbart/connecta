@@ -178,7 +178,7 @@ async function uiCheck(checks: SmokeCheck[], origin: string, token?: string): Pr
         const input = page.locator("input").first();
         await input.fill(token);
         await input.press("Enter");
-        await page.getByText("Point an MCP client at this endpoint").waitFor({ timeout: 10_000 });
+        await page.getByRole("button", { name: "Client setup", exact: true }).waitFor({ timeout: 10_000 });
         await page.waitForLoadState("networkidle");
       }
       const text = (await page.innerText("body")).replace(/\s+/g, " ").trim();
