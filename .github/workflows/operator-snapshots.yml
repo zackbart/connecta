@@ -1,0 +1,37 @@
+name: Operator snapshots
+
+on:
+  workflow_dispatch:
+  # Bootstrap the first Linux baselines before this workflow reaches main.
+  # Subsequent updates are requested explicitly with workflow_dispatch.
+  pull_request:
+    types: [opened]
+    paths:
+      - test/browser/operator-visual.spec.ts
+      - test/fixtures/operator-visual.ts
+      - .github/workflows/operator-snapshots.yml
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:browser:install -- --with-deps
+      - run: npm run test:browser:snapshots
+      - uses: actions/upload-artifact@v6
+        with:
+          name: operator-linux-snapshots
+          path: test/browser/operator-visual.spec.ts-snapshots/*-linux.png
+          if-no-files-found: error
+          retention-days: 7

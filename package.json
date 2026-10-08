@@ -188,6 +188,8 @@
     "test": "vitest run",
     "test:browser:install": "playwright install chromium",
     "test:browser": "playwright test",
+    "test:browser:snapshots": "node scripts/update-operator-snapshots.mjs",
+    "pretest:browser:snapshots": "npm run build:operator-ui",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",
     "check:docs": "node scripts/check-doc-links.mjs",

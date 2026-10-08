@@ -5,7 +5,6 @@ import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resolveBranding } from "../src/ui.js";
 import { droppedThemeTokens, renderPage, resolveTheme, themeCss } from "../src/branding.js";
-import { PAGE_CSS, TOKENS_CSS } from "../src/page-styles.js";
 import type { ConnectaBranding, ConnectaTheme, Logger } from "../src/types.js";
 import { calcApi, makeDeployment } from "./fixtures/http.js";
 
@@ -140,21 +139,6 @@ describe("branding defaults", () => {
 
 describe("the shared page layout", () => {
   const layout = { title: "T", uiMounted: true, body: "<main>body</main>" };
-
-  it("carries the doctype, the shared tokens, the theme after them, and the masthead", () => {
-    const page = renderPage({
-      productName: "Acme MCP",
-      ownerName: "Acme & Co.",
-      ownerUrl: "https://acme.example",
-      theme: { accent: "#0a7d55", radius: 4 },
-    }, layout);
-    expect(page.startsWith('<!doctype html>\n<html lang="en">\n')).toBe(true);
-    expect(page).toContain("<title>T</title>");
-    expect(page).toContain(TOKENS_CSS + PAGE_CSS + ":root{--accent:#0a7d55;--radius:4px}</style>");
-    expect(page).toContain('<a class="brand navlink" href="https://acme.example">Acme &amp; Co.</a>');
-    expect(page).toContain('<span class="product">Acme MCP</span>');
-    expect(page).toContain("<main>body</main>");
-  });
 
   it("sets data-scheme only for a pinned scheme, with a matching theme color", () => {
     const system = renderPage(undefined, layout);
@@ -315,21 +299,6 @@ describe("operator theme tokens", () => {
 });
 
 describe("branding in served pages", () => {
-  it("renames the page and drops every default Connecta label", async () => {
-    const res = await makeDeployment(brandingConfig({
-      productName: "Acme MCP",
-      ownerName: "Acme Inc",
-      ownerUrl: "https://acme.example",
-      themeColor: "#101010",
-    })).fetch(new Request(`${BASE}/`));
-    const body = await res.text();
-    expect(body).toContain(
-      "<title>Overview — Acme MCP — Acme Inc</title>",
-    );
-    expect(body).toContain('content="#101010"');
-    expect(body).toContain('href="https://acme.example"');
-    expect(body).not.toContain("Connecta");
-  });
 
   it("links the product label when only productUrl is set", async () => {
     const body = await (

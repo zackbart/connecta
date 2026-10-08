@@ -234,6 +234,10 @@ test("INV-4: Clerk sign-in admits a session before loading real operator data", 
   await page.reload();
   await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Team sign in", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Vaulted service", exact: true })).toHaveCount(0);
+  expect((await page.request.get(deployment.origin + "/ui/api/config")).status()).toBe(401);
 });
 
 test("INV-4 INV-5 INV-10: OAuth connect traverses signed handoff, consent and callback then rereads connected state", async ({ page, deployment }) => {
@@ -332,4 +336,19 @@ test("INV-5: credential save encrypts the vault value and Test sends the saved s
   const facts = await page.request.get(deployment.origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
   expect(facts.status()).toBe(200);
   expect(await facts.text()).not.toContain(SECRET);
+  await card.getByRole("button", { name: "Replace", exact: true }).click();
+  const replacement = SECRET + "-replacement";
+  await card.getByLabel("API token", { exact: true }).fill(replacement);
+  await card.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
+  expect(await deployment.vault.get("vaulted")).toBe(replacement);
+  expect(await page.content()).not.toContain(replacement);
+  const dialogs: string[] = [];
+  page.on("dialog", dialog => { dialogs.push(dialog.message()); void dialog.dismiss(); });
+  await card.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(card.getByRole("group", { name: /Remove Vaulted service's credential/ }).getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await card.getByRole("group", { name: /Remove Vaulted service's credential/ }).getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(card.locator("#credentialNotice-vaulted")).toHaveText("Credential removed.");
+  expect(await deployment.vault.get("vaulted")).toBeNull();
+  expect(dialogs).toEqual([]);
 });

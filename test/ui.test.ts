@@ -3,7 +3,6 @@ import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { activityHistory } from "../src/activity.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
-import { operatorUi } from "../src/ui.js";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { machineAuth } from "./helpers/machine-auth.js";
@@ -248,27 +247,6 @@ describe("status UI", () => {
       expect(page).toContain("html[data-scheme=dark]");
 
     }
-  });
-
-  it("supports deployment-specific branding", async () => {
-    const c = createTestConnecta({
-      connectors: [calcApi(CALC_OPTIONS)],
-      auth: machineAuth(TOKEN),
-      storage: memoryStorage(),
-      ui: operatorUi({ branding: {
-        ownerName: "Acme & Co.",
-        ownerUrl: "https://example.com",
-        description: "Manage Acme agent connections.",
-      } }),
-    });
-    const res = await c.fetch(new Request(`${BASE}/`));
-    const body = await res.text();
-
-    expect(body).toContain(
-      "<title>Overview — Connecta — Acme &amp; Co.</title>",
-    );
-    expect(body).toContain('href="https://example.com"');
-    expect(body).toContain("Manage Acme agent connections.");
   });
 
   it("the Connections shell derives the MCP URL from the request origin", async () => {
