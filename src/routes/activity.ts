@@ -1,5 +1,7 @@
+import { activityEventVisible } from "./activity-disclosure.js";
 import { Duration, Effect } from "effect";
 import {
+  activityBehaviorFacts,
   activityPackageVersion,
   activityClientFact,
   InvalidActivityCursorError,
@@ -17,7 +19,7 @@ import {
   labelLookups,
   type LabelLookup,
 } from "./actor-labels.js";
-import { authorized, refuse, serveOperator, type Answer } from "./operator.js";
+import { authorized, refuse, serveOperator, type Answer, visibleRegistry } from "./operator.js";
 import { privateJson, type RouteContext } from "./shared.js";
 
 /**
@@ -70,12 +72,13 @@ function enrichActivityActorLabels(
               : {}),
           };
           // Re-check stored client facts, including custom readers and old rows.
-          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, ...record } = event;
+          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, classification: _classification, resultBytes: _resultBytes, kind: _kind, drift: _drift, pool: _pool, actorBasis: _actorBasis, ...record } = event;
           const packageVersion = activityPackageVersion(suppliedPackageVersion);
           const clientName = activityClientFact(suppliedName, "name");
           const clientVersion = activityClientFact(suppliedVersion, "version");
           return {
             ...record,
+            ...activityBehaviorFacts(event),
             ...(packageVersion !== undefined ? { packageVersion } : {}),
             ...(clientName !== undefined ? { clientName } : {}),
             ...(clientVersion !== undefined ? { clientVersion } : {}),
@@ -90,8 +93,9 @@ function enrichActivityActorLabels(
 function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
   const { url, opts } = context;
   return Effect.gen(function* () {
-    const authz = yield* authorized(context, false);
-    if (!authz.operator) return yield* refuse("operator access required", 403);
+    const authz = yield* authorized(context);
+    const registry = yield* visibleRegistry(context, authz);
+    if (!authz.operator) return yield* refuse("activity access required", 403);
     if (
       opts.config.activity?.readGate &&
       !(yield* Effect.promise(async () => opts.config.activity?.readGate!(authz.actor)))
@@ -100,17 +104,39 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     }
     const list = opts.config.activity?.store.list?.bind(opts.config.activity?.store);
     if (!list) return yield* refuse("activity history is not configured", 404);
+    const admittedPools = new Set<string>();
+    for (const [name, pool] of opts.pools) {
+      if (yield* Effect.promise(async () => { try { return await pool.grant(authz.identity) === true; } catch { return false; } })) admittedPools.add(name);
+    }
+    const visible = (event: ActivityPage["events"][number]) => activityEventVisible(context, authz, registry, admittedPools, event);
     const cursor = url.searchParams.get("cursor") ?? undefined;
     if (cursor && cursor.length > 500) return yield* refuse("invalid cursor", 400);
     const requestedLimit = Number(url.searchParams.get("limit") ?? "50");
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
       : 50;
-    return yield* Effect.tryPromise({
+    const readPage = (cursor: string | undefined, limit: number) => Effect.tryPromise({
       try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
-      catch: (error) => error,
+      catch: error => error,
+    });
+    return yield* Effect.gen(function* () {
+      let page = yield* readPage(cursor, limit);
+      const events = page.events.filter(visible);
+      // Store cursors may encode their boundary row's timestamp and id. A
+      // rejected boundary must never reach the caller. Advance one row at a
+      // time until the boundary is visible or history is exhausted.
+      const seen = new Set<string>();
+      let boundaryReads = 0;
+      while (page.nextCursor && (!page.events.length || !visible(page.events[page.events.length - 1]!))) {
+        if (boundaryReads++ >= 1000) throw new Error("activity disclosure scan exhausted");
+        if (seen.has(page.nextCursor)) throw new Error("activity cursor did not advance");
+        seen.add(page.nextCursor);
+        page = yield* readPage(page.nextCursor, 1);
+        events.push(...page.events.filter(visible));
+      }
+      return { events, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
     }).pipe(
-      Effect.flatMap((page) => enrichActivityActorLabels(page, opts.config.auth)),
+      Effect.flatMap((page) => enrichActivityActorLabels(page, authz.identity.interactive ? opts.config.auth : [])),
       Effect.map((page) => privateJson(page)),
       // A page too malformed to label or serialize is the store's failure,
       // like any other.

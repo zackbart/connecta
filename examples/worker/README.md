@@ -586,3 +586,11 @@ the agent and carries no error code. Rows written before the column derive
 their friction from `error_code`, and `error_code IS NOT NULL` remains an
 honest count of failures. `approval` is history, set only on `approved` rows
 written before 0.28.0 removed program pauses.
+
+Activity uses `d1ActivityStore` and the shared SQL row mapping. On first access,
+it adds nullable classification, result byte count, event kind, catalog-change
+counts, pool and actor-basis columns. Existing rows retain unknown facts. Personal
+rows require the checked `principal` actor basis before their ownership is trusted.
+Request IDs already
+exist in the table. Catalog-change events contain checked counts only; tool-call
+results and payloads are never stored.

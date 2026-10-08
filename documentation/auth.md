@@ -654,11 +654,27 @@ principal, whose partition they always use. Exceptions and unknown ids fail
 closed; permissions come from authenticated identity, never caller input.
 
 `identity.activityAccess` takes `Readonly<IdentityReference>` — `id` and
-`namespace` — and controls reading global activity. Undeclared, it admits every
+`namespace` — and controls reading activity. When configured, an authenticated
+principal may pass it without an interactive session. This includes a `cta_`
+token's stored principal and a non-interactive API principal; subject-only
+callers and anonymous requests cannot qualify. The optional activity `readGate`
+also applies. Reads remain GET-only and filter connector/tool grants, personal
+ownership and recorded pool access before any actor-label lookup. Personal rows
+use the admitted principal in the existing typed actor id and namespace fields;
+rows without a provable owner are withheld. Non-interactive
+reads return typed actors without directory labels. Old rows without a pool
+remain subject to connector, tool and owner checks. Undeclared, it admits every
 interactive human, the one default here that is open, because a single-operator
 deployment would otherwise be locked out of its own event stream. Team
 deployments should set it. There is no general administrator role and no
 implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal.
+
+Personal activity rows must carry the checked `principal` actor basis as well as
+a matching principal ID and namespace. Legacy subject actors cannot prove
+personal ownership and are withheld. Activity pagination advances past hidden
+boundary rows so their timestamp and event ID never appear in a returned cursor.
+Each read belongs to the request fiber. A scan exceeding 1,000 additional
+boundary reads returns 503 without a cursor; cancellation starts no further read.
 
 ```ts
 createConnecta({

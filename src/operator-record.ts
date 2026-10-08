@@ -93,7 +93,7 @@ const SOURCES: ReadonlySet<string> = new Set([
 
 const MODES: ReadonlySet<string> = new Set(["continue", "restart"]);
 
-const STATUS_STATES: ReadonlySet<string> = new Set(["ok", "auth_required", "error"]);
+const STATUS_STATES: ReadonlySet<string> = new Set(["ok", "auth_required", "credential_required", "error"]);
 /** A status state, or `failed` for a status that could not be read at all. */
 const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
 

@@ -28,7 +28,7 @@ import type {
   ActivityStore,
   ToolCallActivityEvent,
 } from "../activity.js";
-import { activityPackageVersion, activityClientFact, InvalidActivityCursorError } from "../activity.js";
+import { activityBehaviorFacts, activityPackageVersion, activityClientFact, InvalidActivityCursorError } from "../activity.js";
 import { assertKnownOptions, ConfigError, keys, optionsOf } from "../config-schema.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
@@ -431,16 +431,34 @@ const ACTIVITY_SCHEMA: readonly string[] = [
     server_version  TEXT NOT NULL,
     client_name     TEXT,
     client_version  TEXT,
-    deployment_id   TEXT
+    deployment_id   TEXT,
+    classification  TEXT,
+    result_bytes    INTEGER,
+    event_kind      TEXT,
+    drift_kind      TEXT,
+    added_tools     INTEGER,
+    removed_tools   INTEGER,
+    changed_tools   INTEGER,
+    pool_name       TEXT,
+    actor_basis     TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS tool_call_activity_recent
     ON tool_call_activity (occurred_at_ms DESC, id DESC)`,
 ];
 
 /** Columns added after the table first shipped, in the order they arrived. */
-const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version"];
+const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version", "classification", "result_bytes", "event_kind", "drift_kind", "added_tools", "removed_tools", "changed_tools", "pool_name", "actor_basis"];
 
 interface ActivityRow {
+  classification: string | null;
+  result_bytes: number | null;
+  event_kind: string | null;
+  drift_kind: string | null;
+  added_tools: number | null;
+  removed_tools: number | null;
+  changed_tools: number | null;
+  pool_name: string | null;
+  actor_basis: string | null;
   id: string;
   occurred_at_ms: number;
   request_id: string;
@@ -469,10 +487,10 @@ interface ActivityRow {
 const ACTIVITY_TEXT_COLUMNS = [
   "id", "request_id", "actor_kind", "actor_id", "actor_namespace",
   "connector_id", "tool_name", "source", "outcome", "error_code", "friction",
-  "approval", "package_version", "server_name", "server_version", "client_name", "client_version", "deployment_id",
+  "approval", "package_version", "server_name", "server_version", "client_name", "client_version", "deployment_id", "classification", "event_kind", "drift_kind", "pool_name", "actor_basis",
 ] as const;
 
-const ACTIVITY_SELECT = `SELECT occurred_at_ms, duration_ms, attempts,
+const ACTIVITY_SELECT = `SELECT occurred_at_ms, duration_ms, attempts, result_bytes, added_tools, removed_tools, changed_tools,
   ${ACTIVITY_TEXT_COLUMNS.map(textColumn).join(",\n  ")}
   FROM tool_call_activity`;
 
@@ -481,6 +499,7 @@ function activityRow(read: Record<string, unknown>): ActivityRow {
     occurred_at_ms: read.occurred_at_ms,
     duration_ms: read.duration_ms,
     attempts: read.attempts,
+    result_bytes: read.result_bytes, added_tools: read.added_tools, removed_tools: read.removed_tools, changed_tools: read.changed_tools,
   };
   for (const column of ACTIVITY_TEXT_COLUMNS) {
     row[column] = textOf(
@@ -506,6 +525,8 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
     id: row.id,
     occurredAt: new Date(row.occurred_at_ms).toISOString(),
     requestId: row.request_id,
+    ...activityBehaviorFacts({ classification: row.classification, resultBytes: row.result_bytes, kind: row.event_kind, pool: row.pool_name, actorBasis: row.actor_basis,
+      drift: { kind: row.drift_kind, addedTools: row.added_tools, removedTools: row.removed_tools, changedTools: row.changed_tools } }),
     actor: {
       kind: row.actor_kind as ToolCallActivityEvent["actor"]["kind"],
       ...(row.actor_id ? { id: row.actor_id } : {}),
@@ -599,7 +620,7 @@ export function sqlActivityStore(
     for (const name of LATER_ACTIVITY_COLUMNS) {
       if (present.has(name)) continue;
       try {
-        await d.run(sql(`ALTER TABLE tool_call_activity ADD COLUMN ${name} TEXT`));
+        await d.run(sql(`ALTER TABLE tool_call_activity ADD COLUMN ${name} ${["result_bytes", "added_tools", "removed_tools", "changed_tools"].includes(name) ? "INTEGER" : "TEXT"}`));
       } catch (error) {
         present = await columns();
         if (!present.has(name)) throw error;
@@ -611,14 +632,16 @@ export function sqlActivityStore(
     async record(event) {
       await ensure();
       const occurredAtMs = Date.parse(event.occurredAt);
+      const facts = activityBehaviorFacts(event);
       await driver.batch([
         sql(
           `INSERT INTO tool_call_activity (
             id, occurred_at_ms, request_id, actor_kind, actor_id,
             actor_namespace, connector_id, tool_name, source, outcome,
             duration_ms, attempts, error_code, friction, approval,
-            package_version, server_name, server_version, client_name, client_version, deployment_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            package_version, server_name, server_version, client_name, client_version, deployment_id,
+            classification, result_bytes, event_kind, drift_kind, added_tools, removed_tools, changed_tools, pool_name, actor_basis
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           event.id,
           occurredAtMs,
           event.requestId,
@@ -643,6 +666,8 @@ export function sqlActivityStore(
           activityClientFact(event.clientName, "name") ?? null,
           activityClientFact(event.clientVersion, "version") ?? null,
           event.deploymentId ?? null,
+          facts.classification ?? null, facts.resultBytes ?? null, facts.kind ?? null, facts.drift?.kind ?? null,
+          facts.drift?.addedTools ?? null, facts.drift?.removedTools ?? null, facts.drift?.changedTools ?? null, facts.pool ?? null, facts.actorBasis ?? null,
         ),
         sql(
           `DELETE FROM tool_call_activity WHERE id IN (

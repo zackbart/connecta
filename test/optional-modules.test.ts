@@ -71,6 +71,7 @@ describe("optional deployment modules", () => {
     // loaded host a real 20ms one could end the fast status first.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const slow = connector("slow"), fast = connector("fast");
+    delete slow.credential; delete fast.credential;
     slow.status = vi.fn(() => new Promise<never>(() => {}));
     const app = createConnecta({ connectors: [slow, fast], executor, auth, ui: operatorUi(), logger: "silent", discovery: { probeTimeoutMs: 20 } });
     const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));

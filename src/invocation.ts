@@ -321,6 +321,7 @@ export class InvocationService {
       let connectorMs = 0;
       let resultProcessingMs = 0;
       let attempts = 0;
+      let resultBytes: number | undefined;
       let dispatchedToConnector = false;
       let answered = false;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
@@ -364,9 +365,12 @@ export class InvocationService {
           address: `${identity.connectorId}.${toolName}`,
           source: context.source,
           outcome,
+          ...(activityTarget?.connector.authScope === "personal" ? { personal: true } : {}),
           durationMs: Date.now() - started,
           attempts,
           ...defined({
+            classification: resolved?.definition.classification,
+            resultBytes,
             errorCode: classification.errorCode,
             friction: classification.friction,
           }),
@@ -684,6 +688,11 @@ export class InvocationService {
               : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
           }
           observedResult = attempt.value.observed.data;
+          try {
+            const serialized = attempt.value.observed.format === "text" && typeof observedResult === "string"
+              ? observedResult : JSON.stringify(observedResult);
+            if (serialized !== undefined) resultBytes = new TextEncoder().encode(serialized).byteLength;
+          } catch { /* Unserializable values have no measurable byte count. */ }
           valueFormat = attempt.value.observed.format;
           result = context.unwrapResult ? observedResult : attempt.value.raw;
           return undefined;

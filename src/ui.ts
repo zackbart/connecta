@@ -97,6 +97,7 @@ export function uiProblemFor(
   observed: { credentialDrift: boolean; catalogFailed: boolean },
 ): UiProblem | undefined {
   if (observed.credentialDrift) return "credential_mismatch";
+  if (status === "credential_required") return "credential_required";
   if (status === "error") return "connector_unavailable";
   if (status === "auth_required") {
     if (connector.startAuth) return "oauth_required";

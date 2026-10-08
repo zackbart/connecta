@@ -1,4 +1,5 @@
 import { operatorAsset } from "../operator-ui/assets.js";
+import { operatorActivityContext } from "./activity-context.js";
 import { isSafeHttpsUrl } from "../branding.js";
 import { htmlSecurityHeaders } from "../html-security.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
@@ -191,6 +192,7 @@ function connectorDetail(
       baseUrl,
       {
         serverInfo: opts.config.serverInfo,
+        activityContext: operatorActivityContext(context, authz),
         credentialVault: opts.config.vault,
         activityEnabled,
         credentialManagement,

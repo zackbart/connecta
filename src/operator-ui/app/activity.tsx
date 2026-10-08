@@ -17,6 +17,12 @@ import { Badge, LoadFailure, NoticeLine, StateBlock, Unavailable } from "./parts
 import { loadActivity, retryCollection, setActivitySearch } from "./store.js";
 
 function ActivityRow({ event }: { event: UiActivityEvent }) {
+  if (event.kind === "catalog_drift" && event.drift) return <article className="activity-item">
+    <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
+    <div><div className="activity-address">{event.connectorId}: Catalog changed</div>
+      <div className="activity-detail">{event.drift.addedTools} added · {event.drift.removedTools} removed · {event.drift.changedTools} changed</div>
+    </div><Badge>Catalog change</Badge>
+  </article>;
   const outcome = activityOutcomeClass(event.outcome);
   const badge = activityOutcomeBadge(event.outcome);
   const stableId = actorStableId(event.actor);
@@ -118,7 +124,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
             />
             {connectorId ? null : <label className="select-label">Connector<select aria-label="Activity connector" value={connector} onChange={e => updateFilter("connector", e.target.value)}><option value="">All connectors</option>{(state.contract?.config.connectors ?? data.connectors).map(c => <option key={c.id} value={c.id}>{c.title ?? c.id}</option>)}</select></label>}
             <label className="select-label">Outcome<select aria-label="Activity outcome" value={outcome} onChange={e => updateFilter("outcome", e.target.value)}><option value="">All outcomes</option>{["success", "error", "timeout", "cancelled", "paused", "approved"].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-            <label className="select-label">Source<select aria-label="Activity source" value={source} onChange={e => updateFilter("source", e.target.value)}><option value="">All sources</option>{["call_tool", "call_destructive_tool", "execute_code", "batch_call"].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label className="select-label">Source<select aria-label="Activity source" value={source} onChange={e => updateFilter("source", e.target.value)}><option value="">All sources</option>{["call_tool", "call_destructive_tool", "execute_code", "batch_call", "catalog_refresh"].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             <button
               id="refreshActivity"
               className="btn"
@@ -161,7 +167,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
               aria-busy={loading ? "true" : "false"}
             >
               {[...grouped(visible)].map(([key, events]) => <section key={key} className="request-group" aria-label={events[0]?.requestId ? `Request ${events[0].requestId}` : "Ungrouped call"}>
-                <div className="request-head"><span>{events[0]?.requestId ? "Request" : "Call without request ID"}</span>{events[0]?.requestId ? <code>{events[0].requestId}</code> : null}<span className="meta">{events.length} {events.length === 1 ? "call" : "calls"}</span></div>
+                <div className="request-head"><span>{events[0]?.requestId ? "Request" : "Call without request ID"}</span>{events[0]?.requestId ? <code>{events[0].requestId}</code> : null}<span className="meta">{events.length} {events.some(event => event.kind === "catalog_drift") ? events.length === 1 ? "event" : "events" : events.length === 1 ? "call" : "calls"}</span></div>
                 {events.map((event, index) => <ActivityRow key={event.id ?? `${event.occurredAt}-${event.address}-${index}`} event={event} />)}
               </section>)}
             </div>

@@ -7,6 +7,7 @@
 // however it ends.
 
 import { Effect } from "effect";
+import { bindActivityRequest } from "../activity-request.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
@@ -36,6 +37,7 @@ import { uiProblemFor, uiToolSafety } from "../ui.js";
 import { CONNECTA_VERSION } from "../version.js";
 
 export interface UiDataOptions {
+  activityContext?: import("../activity.js").ActivityRequestContext | undefined;
   serverInfo: { name: string; version: string };
   credentialVault?: CredentialVault | undefined;
   activityEnabled: boolean;
@@ -70,6 +72,7 @@ export function uiData(
 ): Effect.Effect<UiData> {
   return Effect.suspend(() => {
     const requestScope = {};
+    if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
     const vault = options.credentialVault;
     const owner = options.personalCredentialOwner;
     /**
@@ -112,7 +115,7 @@ export function uiData(
       }
       return Effect.gen(function* () {
         const status = yield* attempt(() =>
-          registry.statusFor(c.id, baseUrl, requestScope, { signal }),
+          registry.statusFor(c.id, baseUrl, requestScope, { signal, ...(options.defer ? { defer: options.defer } : {}) }),
         );
         if (status.state !== "ok" || signal.aborted) {
           return { status, tools: [], catalogFailed: false };
@@ -122,7 +125,7 @@ export function uiData(
         // A name outside MCP's tool-name grammar is withheld here as in every
         // record (INV-6), and so is the address built from it.
         return yield* attempt(async () =>
-          (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(
+          (await registry.getTools(c.id, baseUrl, requestScope, { signal, ...(options.defer ? { defer: options.defer } : {}) })).map(
             (t): UiTool => ({
               name: recordedToolName(t),
               address: `${c.id}.${recordedToolName(t)}`,

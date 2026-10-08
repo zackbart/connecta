@@ -68,7 +68,7 @@ describe("2026-07-28 core", () => {
       ...template, packageVersion: value as string, clientName: value as string, clientVersion: value as string,
     }));
     events.push(...VALID_CLIENT_IDENTITIES.map(clientInfo => ({ ...template, clientName: clientInfo.name, clientVersion: clientInfo.version })));
-    const c = createTestConnecta({ connectors: [], logger: silentLogger,
+    const c = createTestConnecta({ connectors: [calcApi()], logger: silentLogger,
       auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
       activity: activityHistory({ store: { record() {}, list: async () => ({ events }) } }),
     });

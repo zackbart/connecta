@@ -257,6 +257,23 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     }
   });
 
+  it("INV-6: stores only checked nullable behavior facts, including discrete drift events", async () => {
+    const db = await open();
+    const activity = db.activity();
+    const modern = event(1, { classification: "write", resultBytes: 42, pool: "support", actorBasis: "principal" });
+    const drift = event(2, { kind: "catalog_drift", source: "catalog_refresh", toolName: "<catalog>", address: "notes.<catalog>", drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 } });
+    await activity.record(modern); await activity.record(drift);
+    const rows = (await activity.list!({ limit: 10 })).events;
+    expect(rows).toContainEqual(modern); expect(rows).toContainEqual(drift);
+    await activity.record(event(3, { actorBasis: "payload" as "principal", classification: "payload" as "read", resultBytes: NaN, kind: "catalog_drift", drift: { kind: "payload" as "catalog_changed", addedTools: 1, removedTools: -1, changedTools: Infinity } }));
+    const invalid = (await activity.list!({ limit: 10 })).events.find(e => e.id === id(3));
+    for (const field of ["classification", "resultBytes", "kind", "drift", "actorBasis"]) expect(invalid).not.toHaveProperty(field);
+    await db.exec("UPDATE tool_call_activity SET classification = ?, result_bytes = ?, drift_kind = ?, actor_basis = ?", "downstream-text", -1, "payload", "subject");
+    for (const row of (await activity.list!({ limit: 10 })).events) {
+      for (const field of ["classification", "resultBytes", "kind", "drift", "actorBasis"]) expect(row).not.toHaveProperty(field);
+    }
+  });
+
   it("round-trips activity text holding NUL (U+0000)", async () => {
     // Tool names come from downstream servers and actor ids from identity
     // providers; neither is promised free of NUL.

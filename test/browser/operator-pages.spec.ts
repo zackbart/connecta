@@ -29,6 +29,7 @@ const event = (id: string, requestId: string, toolName: string): ToolCallActivit
   schemaVersion: 1, id, requestId, occurredAt: "2026-10-08T12:00:00.000Z", actor: { kind: "clerk", id: "pages-user", namespace: CLERK },
   connectorId: "github", toolName, address: `github.${toolName}`, source: "call_tool", outcome: "success", durationMs: 8, attempts: 1,
   serverName: "Production", serverVersion: "1",
+  classification: toolName === "read" ? "read" : "write", resultBytes: 42,
   packageVersion: "0.28.1", clientName: "Claude Code", clientVersion: "2.1.0",
 });
 
@@ -56,10 +57,10 @@ test.beforeAll(async () => {
     startAuth: async () => { starts++; return { state: "auth_required", authorizationUrl: `${origin}/consent?state=pages-flow` }; },
     finishAuth: async () => {}, verifyState: async () => true, disconnectAuth: async () => {},
   };
-  app = createTestConnecta({ connectors: [github, slack, { ...github, id: "hidden", title: "Hidden connector" }], auth: fakeClerkAuth({ token: TOKEN, userId: "pages-user" }),
+  app = createTestConnecta({ connectors: [github, slack, { ...github, id: "slot", title: "Empty slot", credential: { label: "API key" } }, { ...github, id: "hidden", title: "Hidden connector" }], auth: fakeClerkAuth({ token: TOKEN, userId: "pages-user" }),
     publicUrl: origin, storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="),
     logger: "silent", serverInfo: { name: "Production", version: "1" }, calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
-    identity: { connectorAccess: () => ["github", "slack", "artifacts"], accessTokenManagement: () => true },
+    identity: { connectorAccess: () => ["github", "slack", "slot", "artifacts"], accessTokenManagement: () => true },
     pools: { support: { tools: ["github.read"], trust: "read-only", grant: () => true }, denied: { tools: ["hidden"], grant: () => false } },
     accessTokens: accessTokens(storage), artifacts: module,
     activity: activityHistory({ store: { record: () => {}, list: async () => ({ events: [event("a", "request-one", "read"), event("b", "request-one", "write"), event("c", "request-two", "read")] }) } }),
@@ -157,6 +158,8 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await page.getByLabel("Search loaded activity").fill("");
   await expect(page.locator('[aria-label="Request request-one"] .activity-item')).toHaveCount(2);
   const row = page.locator('[aria-label="Request request-one"] .activity-item').first();
+  await expect(row.getByText("read", { exact: true })).toBeVisible();
+  await expect(row.getByText("42 bytes", { exact: true })).toBeVisible();
   await expect(row.getByText("Connecta version: 0.28.1", { exact: true })).toBeVisible();
   await expect(row.getByText("Client name: Claude Code", { exact: true })).toBeVisible();
   await expect(row.getByText("Client version: 2.1.0", { exact: true })).toBeVisible();
@@ -168,6 +171,7 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await page.route("**/ui/api/activity*", route => {
     const old = event("old", "", "read");
     delete (old as Partial<ToolCallActivityEvent>).requestId;
+    delete old.classification; delete old.resultBytes;
     delete old.packageVersion; delete old.clientName; delete old.clientVersion;
     return route.fulfill({ json: { events: [old, { ...old, id: "older" }] } });
   });
@@ -176,6 +180,7 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await expect(page.locator('[aria-label="Ungrouped call"]')).toHaveCount(2);
   for (const group of await page.locator('[aria-label="Ungrouped call"]').all()) {
     await expect(group.locator(".activity-item")).toHaveCount(1);
+    await expect(group).not.toContainText("bytes");
     await expect(group).not.toContainText("Connecta version:");
     await expect(group).not.toContainText("Client name:");
     await expect(group).not.toContainText("Client version:");
@@ -224,5 +229,28 @@ test("connector tabs are keyboard friendly and preserve the selected tab on relo
   await expect(page).toHaveURL(origin + "/connectors/github#auth");
   await expect(page.getByRole("tab", { name: "Auth", exact: true })).toBeFocused();
   await page.reload(); await expect(page.getByRole("tab", { name: "Auth", exact: true })).toHaveAttribute("aria-selected", "true");
+  await clean(page);
+});
+
+
+test("empty credential slots show Credential needed on list and detail pages", async ({ page }) => {
+  await session(page); await page.goto(origin + "/connectors");
+  const row = page.getByRole("row").filter({ hasText: "Empty slot" });
+  await expect(row.getByText("Credential needed", { exact: true })).toBeVisible();
+  await expect(row).not.toContainText("Connected");
+  await page.goto(origin + "/connectors/slot");
+  await expect(page.getByText("Credential needed", { exact: true }).first()).toBeVisible();
+  const response = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
+  expect((await response.json() as OperatorUiContract).live.connectors.find(c => c.id === "slot")?.status).toBe("credential_required");
+  await clean(page);
+});
+
+test("Activity renders discrete catalog changes under their request", async ({ page }) => {
+  await session(page);
+  await page.route("**/ui/api/activity*", route => route.fulfill({ json: { events: [{ ...event("drift", "refresh-one", "<catalog>"), kind: "catalog_drift", source: "catalog_refresh", drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 } }] } }));
+  await page.goto(origin + "/activity");
+  const group = page.locator('[aria-label="Request refresh-one"]');
+  await expect(group.getByText("github: Catalog changed", { exact: true })).toBeVisible();
+  await expect(group.getByText("1 added · 2 removed · 3 changed", { exact: true })).toBeVisible();
   await clean(page);
 });

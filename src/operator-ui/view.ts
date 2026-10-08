@@ -127,6 +127,8 @@ export interface UiActivityActor {
 }
 
 export interface UiActivityEvent {
+  kind?: "catalog_drift";
+  drift?: import("../activity.js").ActivityCatalogChange;
   id?: string;
   requestId?: string;
   classification?: "read" | "write";
@@ -618,6 +620,7 @@ export function credentialUnavailableCopy(
 export function connectorStatusLabel(status: string, problem?: UiProblem): string {
   if (status === "loading") return "Loading details";
   if (status === "ok") return "Connected";
+  if (status === "credential_required") return "Credential needed";
   if (status === "auth_required") {
     return problem === "credential_required" ? "Credential needed" : "Authorization needed";
   }
@@ -633,7 +636,7 @@ export type Tone = "ok" | "warn" | "danger" | "neutral";
 
 export function connectorStatusTone(status: string): Tone {
   if (status === "ok") return "ok";
-  if (status === "auth_required") return "warn";
+  if (status === "auth_required" || status === "credential_required") return "warn";
   if (status === "loading") return "neutral";
   return "danger";
 }
@@ -675,7 +678,7 @@ export function summarizeConnectors(
   };
   for (const connector of connectors) {
     if (connector.status === "ok") summary.connected += 1;
-    else if (connector.status === "auth_required") {
+    else if (connector.status === "auth_required" || connector.status === "credential_required") {
       if (connector.problem === "credential_required") summary.credentials += 1;
       else summary.attention += 1;
     }
@@ -968,10 +971,12 @@ export function filterActivity(
 /** Counts only. What the deployment ran, never what it sent or received. */
 export function activitySummary(events: UiActivityEvent[]): string {
   if (events.length === 0) return "";
-  const tools = new Set(events.map((event) => event.address)).size;
-  return `${events.length} loaded call${events.length === 1 ? "" : "s"} · ${tools} tool${
+  const calls = events.filter(event => event.kind !== "catalog_drift");
+  const changes = events.length - calls.length;
+  const tools = new Set(calls.map((event) => event.address)).size;
+  return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${tools} tool${
     tools === 1 ? "" : "s"
-  }`;
+  }${changes ? ` · ${changes} catalog change${changes === 1 ? "" : "s"}` : ""}`;
 }
 
 // A pause and an approval are neither success nor failure: each gets its own
@@ -1039,6 +1044,7 @@ function reasonLabel(code: string): string {
 
 /** The one-line detail under an address: where it ran, retries, and why it stalled. */
 export function activityDetail(event: UiActivityEvent): string {
+  if (event.kind === "catalog_drift") return "Catalog changed";
   const parts = [SOURCE_LABELS[event.source] ?? event.source];
   if (event.approval === "tool") parts.push("approved for the rest of the run");
   if (event.approval === "call") parts.push("approved for this call");

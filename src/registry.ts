@@ -1,3 +1,4 @@
+import { activityRequest, bindActivityRequest } from "./activity-request.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
 import {
@@ -1510,6 +1511,29 @@ export class Registry implements RegistryView {
     }
   }
 
+  private readonly observedCatalogs = new Map<string, readonly ToolDef[]>();
+
+  /** Compare published catalogs and emit counts through one relocatable hook. */
+  private recordCatalogDrift(
+    previous: readonly ToolDef[] | undefined,
+    next: readonly ToolDef[],
+    attribution: { id: string; connector: Connector; ctx: ConnectorContext },
+  ): void {
+    const { id, connector, ctx } = attribution;
+    if (previous) {
+      const before = new Map(previous.map(tool => [tool.name, JSON.stringify(tool)]));
+      const after = new Map(next.map(tool => [tool.name, JSON.stringify(tool)]));
+      const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
+      const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
+      const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
+      if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
+        this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) } : undefined,
+        { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools }, ...(connector.authScope === "personal" ? { personal: true } : {}) },
+        activityRequest(ctx.requestScope),
+      );
+    }
+  }
+
   private async refreshToolsWithContext(
     id: string,
     connector: Connector,
@@ -1587,6 +1611,11 @@ export class Registry implements RegistryView {
       catalogChanged ||
       (previous !== undefined && previous.exp <= now) ||
       this.invalidated.has(id);
+    // One publication hook for discrete changes. The first complete catalog is
+    // a baseline; rejected, abandoned and identical refreshes emit nothing.
+    const baseline = this.observedCatalogs.get(id) ?? previous?.tools;
+    this.recordCatalogDrift(baseline, facts, { id, connector, ctx });
+    this.observedCatalogs.set(id, facts);
     this.cache.set(id, {
       tools: facts,
       fingerprint: snapshot.fingerprint,
@@ -1834,6 +1863,8 @@ export class Registry implements RegistryView {
             );
           }
           const refreshScope = {};
+          const activity = activityRequest(requestScope);
+          if (activity) bindActivityRequest(refreshScope, activity);
           if (requestScope) sentSecretsForRequest(requestScope).include(sentSecretsForRequest(refreshScope));
           const ctx = this.contextFor(id, baseUrl, refreshScope, {
             signal,
@@ -2209,6 +2240,18 @@ export class Registry implements RegistryView {
         ...(access ? { catalogAccess: { ...access } } : {}),
       });
     };
+    // Credential declarations own their readiness even when a static catalog
+    // or a plugin status would otherwise report success. Never probe an empty slot.
+    if (connector.credential) {
+      try {
+        const values = await this.opts.credentialVault?.getAll(id, this.opts.credentialOwner) ?? null;
+        const shape = storedCredentialShape(connector.credential, values);
+        if (shape.state === "missing") return withObservations(ownStatus({ state: "credential_required" }));
+        if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
+      } catch (err) {
+        return withObservations(failureStatus(id, err));
+      }
+    }
     if (connector.status) {
       try {
         return withObservations(await connector.status(ctx));

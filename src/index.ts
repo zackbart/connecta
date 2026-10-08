@@ -285,6 +285,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       ? {
           sink: resolved.activity.store,
           recordDrift: resolved.activity.recordDrift,
+          recordChange: resolved.activity.recordChange,
           serverInfo: resolved.serverInfo,
           ...(resolved.activity.deploymentId !== undefined
             ? { deploymentId: resolved.activity.deploymentId }
@@ -490,6 +491,7 @@ export type {
 } from "./types.js";
 export type {
   ActivityActor,
+  ActivityCatalogChange,
   ActivityCallSource,
   ActivityOutcome,
   ActivityPage,

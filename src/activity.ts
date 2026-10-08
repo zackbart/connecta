@@ -54,6 +54,7 @@ export function activityPackageVersion(value: unknown): string | undefined {
 const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 
 export type ActivityCallSource =
+  | "catalog_refresh"
   | "call_tool"
   | "call_destructive_tool"
   // Read-only history. Nothing emits `batch_call` since issue #273 removed the
@@ -115,11 +116,55 @@ export interface ActivityActor {
  * by construction. Deployments that need a safe human summary can add a
  * separate, explicit connector-level feature later.
  */
+export interface ActivityCatalogChange {
+  kind: "catalog_changed";
+  addedTools: number;
+  removedTools: number;
+  changedTools: number;
+}
+
+/** Integer metadata is checked at every write and read boundary. */
+export function activityCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export function activityBehaviorFacts(event: {
+  classification?: unknown; resultBytes?: unknown; kind?: unknown; drift?: unknown; pool?: unknown; actorBasis?: unknown;
+}): Pick<ToolCallActivityEvent, "classification" | "resultBytes" | "kind" | "drift" | "pool" | "actorBasis"> {
+  const classification = event.classification === "read" || event.classification === "write" ? event.classification : undefined;
+  const resultBytes = activityCount(event.resultBytes);
+  const change = event.drift as Partial<ActivityCatalogChange> | undefined;
+  const drift = event.kind === "catalog_drift" && change?.kind === "catalog_changed" &&
+    activityCount(change.addedTools) !== undefined && activityCount(change.removedTools) !== undefined && activityCount(change.changedTools) !== undefined
+    ? { kind: "catalog_changed" as const, addedTools: change.addedTools!, removedTools: change.removedTools!, changedTools: change.changedTools! } : undefined;
+  // Pool names come from matched deployment config, whose grammar has no size
+  // ceiling. Invalid stored scope stays withheld rather than becoming root scope.
+  const pool = event.pool === undefined || event.pool === null ? undefined
+    : typeof event.pool === "string" && /^[a-z0-9_-]+(?![\s\S])/.test(event.pool) ? event.pool : "<withheld>";
+  return {
+    ...(event.actorBasis === "principal" ? { actorBasis: "principal" as const } : {}),
+    ...(classification !== undefined ? { classification } : {}),
+    ...(resultBytes !== undefined ? { resultBytes } : {}),
+    ...(drift ? { kind: "catalog_drift", drift } : {}),
+    ...(pool !== undefined ? { pool } : {}),
+  };
+}
+
 export interface ToolCallActivityEvent {
   schemaVersion: 1;
   id: string;
   occurredAt: string;
   requestId: string;
+  /** Absent on legacy tool rows. Catalog changes use the same paging envelope. */
+  kind?: "catalog_drift";
+  drift?: ActivityCatalogChange;
+  /** The final registry verdict captured when resolution succeeded. */
+  classification?: "read" | "write";
+  /** UTF-8 bytes of the downstream value before result paging or truncation. */
+  resultBytes?: number;
+  pool?: string;
+  /** Personal ownership is provable only for rows recorded from the admitted principal. */
+  actorBasis?: "principal";
   actor: ActivityActor;
   connectorId: string;
   toolName: string;
@@ -243,6 +288,8 @@ export type ActivityReadGate = (
  */
 export interface CatalogDriftActivityContext {
   recordDrift?: typeof recordCatalogDriftActivity;
+  recordChange?: typeof recordCatalogChangeActivity;
+  defer?: (promise: Promise<unknown>) => void;
   sink: ActivitySink;
   serverInfo: { name: string; version: string };
   clientInfo?: { name: string; version: string };
@@ -255,7 +302,10 @@ export interface ActivityRequestContext {
   recordTool?: typeof recordToolActivity | undefined;
   sink: ActivitySink;
   actor: ActivityActor;
+  /** Personal rows identify their admitted owner in the existing actor fields. */
+  principalActor?: ActivityActor;
   requestId: string;
+  pool?: string;
   serverInfo: { name: string; version: string };
   clientInfo?: { name: string; version: string };
   deploymentId?: string;
@@ -273,12 +323,17 @@ export type ActivityEventInput = Pick<
   | "durationMs"
   | "attempts"
   | "friction"
+  | "classification"
+  | "resultBytes"
+  | "kind"
+  | "drift"
 > & {
   /**
    * A code connecta assigns. Rows written by older deployments may hold
    * others, so the stored event keeps `string`; a new row never does.
    */
   errorCode?: ClassificationCode;
+  personal?: boolean;
 };
 
 /**
@@ -305,7 +360,8 @@ export function recordToolActivity(
     id: crypto.randomUUID(),
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
-    actor: context.actor,
+    actor: input.personal ? context.principalActor ?? { kind: context.actor.kind } : context.actor,
+    ...activityBehaviorFacts({ ...input, pool: context.pool, actorBasis: input.personal && context.principalActor ? "principal" : undefined }),
     connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
     toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
     address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
@@ -380,6 +436,23 @@ export function recordCatalogDriftActivity(
   }
 }
 
+/** A discrete catalog change, with no catalog names, descriptions or schemas. */
+export function recordCatalogChangeActivity(
+  context: CatalogDriftActivityContext | undefined,
+  input: { connectorId: string; drift: ActivityCatalogChange; personal?: boolean },
+  request?: ActivityRequestContext,
+): void {
+  if (!context) return;
+  recordToolActivity(request ?? {
+    ...context, actor: { kind: "system" }, requestId: crypto.randomUUID(),
+  }, {
+    connectorId: input.connectorId, toolName: "<catalog>", address: `${input.connectorId}.<catalog>`,
+    source: "catalog_refresh", outcome: "success", durationMs: 0, attempts: 1,
+    kind: "catalog_drift", drift: input.drift,
+    ...(input.personal ? { personal: true } : {}),
+  });
+}
+
 export interface ActivityHistoryOptions {
   store: ActivityStore;
   deploymentId?: string;
@@ -399,5 +472,6 @@ export function activityHistory(options: ActivityHistoryOptions): ActivityModule
     handle: routeActivity,
     recordTool: recordToolActivity,
     recordDrift: recordCatalogDriftActivity,
+    recordChange: recordCatalogChangeActivity,
   };
 }

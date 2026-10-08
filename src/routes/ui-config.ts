@@ -1,6 +1,9 @@
+import { activityEventVisible } from "./activity-disclosure.js";
+import { operatorActivityContext } from "./activity-context.js";
+import { bindActivityRequest } from "../activity-request.js";
 import { configValuePaths } from "../config-value-sources.js";
 import { Effect } from "effect";
-import type { ActivityOutcome } from "../activity.js";
+import type { ActivityOutcome, ActivityRequestContext } from "../activity.js";
 import { intersectAccess, type ConnectorAccess } from "../connector-access.js";
 import { describedTools } from "../described.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
@@ -34,15 +37,16 @@ function toolVisible(authz: Authorized, id: string, name: string, classification
     (!authz.guardedToolAccess?.get(id)?.has(name) || classification === "read");
 }
 
-function observe(context: RouteContext, registry: RegistryView, connector: Connector): Effect.Effect<OperatorConnectorOverlay> {
+function observe(context: RouteContext, registry: RegistryView, connector: Connector, activity: ActivityRequestContext | undefined): Effect.Effect<OperatorConnectorOverlay> {
   const { opts, baseUrl, request, defer } = context;
   const scope = {};
+  if (activity) bindActivityRequest(scope, activity);
   const id = connector.id;
   return withDeadlineEffect(signal => Effect.gen(function* () {
     const drift = yield* attempt(() => registry.credentialDriftFor(id));
-    const status = drift ? { state: "auth_required" as const } : yield* attempt(() => registry.statusFor(id, baseUrl, scope, { signal }));
+    const status = drift ? { state: "auth_required" as const } : yield* attempt(() => registry.statusFor(id, baseUrl, scope, { signal, ...(defer ? { defer } : {}) }));
     let catalogFailed = false;
-    const tools = status.state === "ok" ? yield* attempt(() => registry.getTools(id, baseUrl, scope, { signal })).pipe(
+    const tools = status.state === "ok" ? yield* attempt(() => registry.getTools(id, baseUrl, scope, { signal, ...(defer ? { defer } : {}) })).pipe(
       Effect.catch(() => { catalogFailed = true; return Effect.succeed([]); }),
     ) : [];
     const problem = uiProblemFor(connector, status.state, { credentialDrift: Boolean(drift), catalogFailed });
@@ -74,7 +78,7 @@ function observe(context: RouteContext, registry: RegistryView, connector: Conne
 const OUTCOMES: ReadonlySet<ActivityOutcome> = new Set(["success", "error", "timeout", "cancelled", "paused", "approved"]);
 const isTimestamp = (value: string) => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
 
-function lastCalls(context: RouteContext, authz: Authorized, connectors: Connector[], rows: OperatorConnectorOverlay[]): Effect.Effect<OperatorUiContract["live"]["activity"]> {
+function lastCalls(context: RouteContext, authz: Authorized, registry: RegistryView, rows: OperatorConnectorOverlay[], admittedPools: ReadonlySet<string>): Effect.Effect<OperatorUiContract["live"]["activity"]> {
   const activity = context.opts.config.activity;
   if (!activity?.store.list) return Effect.succeed("unconfigured");
   if (!authz.operator) return Effect.succeed("forbidden");
@@ -85,7 +89,6 @@ function lastCalls(context: RouteContext, authz: Authorized, connectors: Connect
     if (!permitted) return "forbidden" as const;
     return yield* Effect.gen(function* () {
       const byId = new Map(rows.map(row => [row.id, row]));
-      const personal = new Set(connectors.filter(c => c.authScope === "personal").map(c => c.id));
       let cursor: string | undefined;
       const seen = new Set<string>();
       // Bound the read even when a custom reader repeats a cursor or ignores
@@ -94,11 +97,10 @@ function lastCalls(context: RouteContext, authz: Authorized, connectors: Connect
       for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
         const page = yield* attempt(() => activity.store.list!({ limit: 100, ...(cursor ? { cursor } : {}) }));
         for (const event of page.events.slice(0, 100)) {
+          if (event.kind === "catalog_drift") continue;
           const row = byId.get(event.connectorId);
           if (!row || !isTimestamp(event.occurredAt) || !OUTCOMES.has(event.outcome)) continue;
-          if (!toolVisible(authz, event.connectorId, event.toolName,
-            row.tools.find(tool => tool.name === event.toolName)?.classification)) continue;
-          if (personal.has(event.connectorId) && (event.actor.kind !== authz.actor.kind || event.actor.id !== authz.actor.id || event.actor.namespace !== authz.actor.namespace)) continue;
+          if (!activityEventVisible(context, authz, registry, admittedPools, event)) continue;
           if (!row.lastCall || event.occurredAt > row.lastCall.at) row.lastCall = { at: event.occurredAt, outcome: event.outcome };
         }
         cursor = page.nextCursor;
@@ -141,8 +143,9 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
       if (!admitted) return [];
       return [{ ...pool, tools: admitted.grants.flatMap(grant => grant.tools === "all" ? [grant.connectorId] : grant.tools.map(tool => `${grant.connectorId}.${tool.name}`)) }];
     });
-    const rows = yield* Effect.forEach(visible, c => observe(context, registry, c), { concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency) });
-    const activity = yield* lastCalls(context, authz, visible, rows);
+    const requestActivity = operatorActivityContext(context, authz);
+    const rows = yield* Effect.forEach(visible, c => observe(context, registry, c, requestActivity), { concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency) });
+    const activity = yield* lastCalls(context, authz, registry, rows, new Set(pools.map(pool => pool.name)));
     const contract: OperatorUiContract = {
       schemaVersion: 1,
       config,
