@@ -355,18 +355,23 @@ function localRecord(name: string, uri: string, description: string, content: st
 }
 
 /** JSON frontmatter is YAML too; no runtime provider imports or filesystem reads. */
-function localRecords(connectors: readonly Connector[]): SkillRecord[] {
+function validSkillName(name: string): boolean {
+  return name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
+}
+
+async function localRecords(connectors: readonly Connector[]): Promise<SkillRecord[]> {
   const builtIns = AVAILABLE_SKILLS.map(skill => localRecord(skill.name,
     `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [skill.name, `skill://connecta/${skill.name}`]));
-  const guides = connectors.filter(connector => connectorGuide(connector) !== undefined)
+  const guides = await Promise.all(connectors.filter(connector => connectorGuide(connector) !== undefined)
     .sort((a, b) => Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map(connector => {
-      const name = connector.id;
+    .map(async connector => {
+      const name = validSkillName(connector.id) ? connector.id : `connector-${[...new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(connector.id)))].map(byte => byte.toString(16).padStart(2, "0")).join("").slice(0, 48)}`;
       const description = connectorGuideSummary(connector)!;
       const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
       const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${connectorGuide(connector)!}`;
-      return localRecord(name, `${root}/SKILL.md`, description, content, [connectorSkillName(name), root]);
-    });
+      return localRecord(name, `${root}/SKILL.md`, description, content, [connectorSkillName(connector.id), `skill://connecta/connectors/${encodeURIComponent(connector.id)}`, root]);
+    }));
+  if (new Set(guides.map(guide => guide.entry.uri)).size !== guides.length) throw new ConnectorCallError("unavailable", "Connector skill slugs collide.");
   return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
 }
 
@@ -385,7 +390,7 @@ export function downstreamSkillUri(connectorId: string, uri: string): string {
 
 function validateEntry(entry: ConnectorSkill): void {
   if (!entry || typeof entry.uri !== "string" || typeof entry.frontmatter !== "object" || !entry.frontmatter || Array.isArray(entry.frontmatter) ||
-    typeof entry.frontmatter.name !== "string" || !entry.frontmatter.name || typeof entry.frontmatter.description !== "string" || !entry.frontmatter.description ||
+    typeof entry.frontmatter.name !== "string" || !validSkillName(entry.frontmatter.name) || typeof entry.frontmatter.description !== "string" || !entry.frontmatter.description || entry.frontmatter.description.length > 1024 ||
     (entry.resources !== "dynamic" && !Array.isArray(entry.resources))) {
     throw new ConnectorCallError("unavailable", "Downstream skill entry is invalid.");
   }
@@ -430,7 +435,7 @@ export interface SkillsRegistryOptions {
  */
 export class SkillsRegistry {
   private readonly scope: object;
-  private readonly local: SkillRecord[];
+  private readonly local: Promise<SkillRecord[]>;
   private snapshot: Promise<SkillRecord[]> | undefined;
 
   constructor(private readonly registry: RegistryView, private readonly baseUrl: string, private readonly options: SkillsRegistryOptions = {}) {
@@ -458,7 +463,7 @@ export class SkillsRegistry {
   }
 
   private async build(): Promise<SkillRecord[]> {
-    const records = await Promise.all(this.local.map(withManifest));
+    const records = await Promise.all((await this.local).map(withManifest));
     // Bounded sequential connector reads avoid unbounded fan-out and finish
     // cleanup before a later connector's failure can end the whole listing.
     for (const connector of this.registry.listConnectors()) {
@@ -494,7 +499,7 @@ export class SkillsRegistry {
   }
 
   private async lookup(uri: string): Promise<SkillRecord> {
-    const local = this.local.find(record => record.entry.uri === uri || record.aliases.includes(uri));
+    const local = (await this.local).find(record => record.entry.uri === uri || record.aliases.includes(uri));
     if (local) return withManifest(local);
     // A non-skill URI never starts a downstream resource request or listing.
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
@@ -504,7 +509,7 @@ export class SkillsRegistry {
   }
 
   private missing(name: string): ConnectorCallError {
-    const available = this.local.map(record => record.aliases[0]).join(", ");
+    const available = ["usage", ...this.registry.listConnectors().filter(connector => connectorGuide(connector) !== undefined).map(connector => connectorSkillName(connector.id)), "investigate"].join(", ");
     // Caller-authored URI/error text never enters operator records. Preserve
     // legacy guidance without allowing a missing name to probe a hidden view.
     const id = name.startsWith(CONNECTOR_SKILL_PREFIX) ? name.slice(CONNECTOR_SKILL_PREFIX.length) : name;
@@ -535,7 +540,7 @@ export class SkillsRegistry {
   }
 
   async read(uri: string) {
-    const local = this.local.find(record => record.entry.uri === uri || record.aliases.includes(uri));
+    const local = (await this.local).find(record => record.entry.uri === uri || record.aliases.includes(uri));
     if (local) return { ...PRIVATE, contents: [{ uri: local.entry.uri, mimeType: "text/markdown", text: (await withManifest(local)).content! }] };
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
     const record = (await this.records()).find(record => record.files?.has(uri));

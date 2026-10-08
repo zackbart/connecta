@@ -159,6 +159,22 @@ it("INV-8: manifests local bytes and retains authority-rooted downstream skill n
   expect(downstreamSkillUri("remote", "skill://review/SKILL.md").endsWith("/review/SKILL.md")).toBe(true);
 });
 
+it("INV-8: gives every permitted connector ID a valid and distinct Agent Skills slug", async () => {
+  const ids = ["with_underscore", "with-underscore", "-edge-", "a".repeat(90)];
+  const registry = new SkillsRegistry(makeRegistry(ids.map(id => guided(id))), BASE);
+  const names: string[] = [];
+  for (const id of ids) {
+    const entry = (await registry.get(`connector:${id}`)).skill;
+    const name = String(entry.frontmatter.name);
+    expect(name).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    expect(name.length).toBeLessThanOrEqual(64);
+    expect(entry.uri).toBe(`skill://connecta/connectors/${name}/SKILL.md`);
+    expect((await registry.read(`skill://connecta/connectors/${id}`)).contents[0]?.uri).toBe(entry.uri);
+    names.push(name);
+  }
+  expect(new Set(names).size).toBe(ids.length);
+});
+
 it("INV-4: filters connector and downstream skills before touching the caller's partition", async () => {
   const hiddenList = vi.fn(async () => []);
   const contexts: ConnectorContext[] = [];

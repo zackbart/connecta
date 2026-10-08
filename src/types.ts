@@ -404,7 +404,7 @@ export interface Connector {
    * cannot describe correct use (for example a generic API wrapper or a
    * cross-operation sequencing rule).
    *
-   * Served as `skill://connecta/connectors/<id>/SKILL.md`, with generated
+   * Served as `skill://connecta/connectors/<slug>/SKILL.md`, with generated
    * frontmatter followed by the unchanged guide body. `connector:<id>` is a
    * one-release lookup alias. The guide remains deployment-owned configuration;
    * no runtime registration or shared mutable copy exists.

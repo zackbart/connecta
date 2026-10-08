@@ -251,7 +251,9 @@ next, other connector guides, downstream skills, then the investigation guide.
 Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
 
 The local document URIs are `skill://connecta/usage/SKILL.md` and
-`skill://connecta/connectors/<connector-id>/SKILL.md`. The suffix makes each
+`skill://connecta/connectors/<slug>/SKILL.md`. A valid Agent Skills connector ID
+is its slug; other IDs use `connector-` followed by a stable SHA-256 prefix.
+The suffix makes each
 document a valid Agent Skills file; the roots `skill://connecta/usage` and
 `skill://connecta/connectors/<connector-id>` also resolve. Provider guides are
 built from the generated `src/providers/*/SKILL.md` content with the existing
