@@ -876,26 +876,73 @@ pending consent links after upgrading; callbacks without a saved initiating user
 so each completes once.
 [Meta-tools](./meta-tools.md#authorization-recovery) describes recovery.
 
-## URL-based downstream OAuth clients
+## Downstream OAuth client registration
 
-`remoteMcp` accepts `auth: { type: "oauth", clientMetadataUrl, scope }`, naming
-a public HTTPS client metadata document on a non-root path, without credentials
-or a fragment. The document must list its own URL as `client_id`, the
-deployment's exact `/oauth/callback/<connector-id>` in `redirect_uris`,
-authorization-code and refresh-token grants, and
-`token_endpoint_auth_method: "none"`. The deployment hosts it; connecta exposes
-no public route through inbound authentication.
+`remoteMcp(id, { auth: { type: "oauth", scope } })` defaults to a self-hosted
+Client ID Metadata Document when the configured `publicUrl` is a public HTTPS
+origin. Connecta serves `GET /oauth/client-metadata/<id>` without inbound auth,
+with `application/json` and a five-minute public cache lifetime. Only configured
+self-hosted OAuth connectors have a document; unknown, non-OAuth, external-CIMD,
+and static-client connectors return 404. Other methods return 405.
 
-The SDK uses the URL as the client ID only when the authorization server
-advertises `client_id_metadata_document_supported`, and otherwise registers
-dynamically; state, PKCE, issuer binding, encrypted tokens, refresh, and
-disconnect run the same paths. The URL and scopes bind the saved client, so a
-restart after either changes cannot reuse an old registration, and a restart
-never carries the URL-based client, so a server that stops advertising support
-gets a registered one. `scope` sets space-separated default scopes in client
-metadata; a downstream challenge or protected-resource declaration takes
-precedence, and the SDK adds `offline_access` when advertised. Omitting both
-keeps the existing discovery and registration flow.
+The document contains its own URL as `client_id`, `serverInfo.name` as
+`client_name`, the exact `publicUrl` callback in `redirect_uris`, the
+`authorization_code` and `refresh_token` grants, `response_types: ["code"]`,
+`application_type: "web"`, `token_endpoint_auth_method: "none"`, and configured
+`scope` when present. It contains no secrets. Alternate request hosts never add
+callbacks or change the client ID. The document, DCR submission, and saved-client
+configuration binding use one metadata builder.
+
+| Configuration and authorization server | Registration path |
+| --- | --- |
+| Pre-registered `auth.client` | `static`, restricted to its configured issuer |
+| Explicit `clientMetadataUrl`, server advertises CIMD support | `cimd`, using the external URL |
+| Public HTTPS `publicUrl`, server advertises CIMD support | `cimd`, using Connecta's document |
+| Server does not advertise CIMD support | `dcr` fallback |
+| Unset, HTTP, loopback, or private `publicUrl` | `dcr`, without a self-hosted document |
+
+`startAuth()` and operator connector status expose `registrationPath` after a
+client has been selected. Reads neither register a client nor begin consent.
+DCR fallback follows the server's advertised capabilities; a rejected CIMD
+consent is not silently retried under another client identity.
+
+`clientMetadataUrl` remains an optional external HTTPS document on a non-root
+path, without credentials or a fragment. Its `client_id` must equal its URL,
+and its metadata must include the deployment's exact callback and public-client
+authentication. Changing from an external document to the self-hosted URL needs
+one Disconnect and reconnect because tokens belong to the old client ID.
+`basecamp()` now defaults to the self-hosted document and accepts an external
+URL override. Basecamp restricts DCR for HTTPS callbacks, so it needs a public
+HTTPS deployment or an external document.
+
+For a pre-registered client, use:
+
+```ts
+remoteMcp("service", {
+  url: "https://mcp.example/mcp",
+  auth: {
+    type: "oauth",
+    client: {
+      issuer: "https://auth.example",
+      clientId: env.SERVICE_CLIENT_ID,
+      clientSecret: env.SERVICE_CLIENT_SECRET,
+      tokenEndpointAuthMethod: "client_secret_basic",
+    },
+  },
+});
+```
+
+`client` and `clientMetadataUrl` are mutually exclusive. The client must name
+its exact HTTPS issuer. A different discovered issuer is refused before
+registration or credential dispatch. Authentication defaults to
+`client_secret_basic` with a secret and `none` without one; `client_secret_post`
+is also supported. Empty credentials and mismatched methods fail construction.
+Client secrets stay in deployment configuration. Storage holds only the client
+ID and its public binding, alongside the encrypted grant. Restart discards
+stored static-client state and reselects the configured identity.
+
+Configured `scope` is a fallback; a downstream challenge or protected-resource
+declaration takes precedence, and the SDK adds `offline_access` when advertised.
 
 ## Downstream OAuth on `api()`
 

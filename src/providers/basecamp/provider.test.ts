@@ -73,24 +73,11 @@ describe("basecamp()", () => {
     expect(guideOf(connection())).not.toContain("## Account instructions");
   });
 
-  it("requires a client metadata document URL at construction", () => {
-    // Basecamp restricts dynamic registration for HTTPS redirect URIs, so a
-    // deployment without one would boot and then fail at its first consent,
-    // where nobody in the conversation can repair it.
-    for (const clientMetadataUrl of [undefined, "", "   "]) {
-      expect(() =>
-        basecamp("basecamp", {
-          purpose: "Projects",
-          clientMetadataUrl,
-        } as never),
-      ).toThrow(
-        'basecamp("basecamp") requires clientMetadataUrl: Basecamp restricts dynamic client registration for HTTPS redirect URIs',
-      );
-    }
-    expect(() =>
-      basecamp("studio", { purpose: "Projects" } as never),
-    ).toThrow("redirect_uris include <publicUrl>/oauth/callback/studio.");
-    expect(mocks.remoteMcp).not.toHaveBeenCalled();
+  it("INV-11: defaults to the deployment's self-hosted client metadata document", () => {
+    basecamp("basecamp", { purpose: "Projects" });
+    expect(mocks.remoteMcp).toHaveBeenCalledWith("basecamp", expect.objectContaining({
+      auth: { type: "oauth", scope: "full mcp offline_access" },
+    }));
   });
 
   it("rejects an empty purpose at construction (P2)", () => {

@@ -1,3 +1,4 @@
+import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, selfHostedClientUrl, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import {
   AuthorizationServerMismatchError,
   Client,
@@ -132,6 +133,8 @@ export type RemoteMcpAuth =
       type: "oauth";
       /** Public HTTPS client metadata document, for servers supporting URL-based client IDs. */
       clientMetadataUrl?: string;
+      /** Pre-registered client, bound to its configured issuer; excludes clientMetadataUrl. */
+      client?: RemoteOAuthClient;
       /** Space-separated default scopes when the resource server does not advertise them. */
       scope?: string;
     };
@@ -1092,6 +1095,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
   assertOAuthScope(id, oauthScope);
+  const staticClient = opts.auth?.type === "oauth" && opts.auth.client ? { ...opts.auth.client } : undefined;
+  assertRemoteOAuthClient(id, staticClient);
+  if (staticClient && clientMetadataUrl !== undefined) throw new Error(`[connecta] connector "${id}" OAuth client and clientMetadataUrl are mutually exclusive.`);
   if (clientMetadataUrl !== undefined) {
     let valid = false;
     try {
@@ -1590,6 +1596,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     signal: AbortSignal | undefined = ctx.signal,
   ): KvOAuthProvider => {
     if (state?.provider) return state.provider;
+    const metadataUrl = staticClient ? undefined : clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id);
     const provider = new KvOAuthProvider(
       id,
       ctx.storage,
@@ -1601,22 +1608,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       JSON.stringify({
         url: new URL(opts.url).href,
         redirectUri: `${ctx.baseUrl}/oauth/callback/${id}`,
-        clientMetadata: {
-          redirect_uris: [`${ctx.baseUrl}/oauth/callback/${id}`],
-          client_name: "connecta",
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-          token_endpoint_auth_method: "none",
-          ...(oauthScope !== undefined ? { scope: oauthScope } : {}),
-        },
+        clientMetadata: downstreamClientMetadata(`${ctx.baseUrl}/oauth/callback/${id}`, oauthScope, ctx.oauthClientName,
+          staticClient?.tokenEndpointAuthMethod ?? (staticClient?.clientSecret === undefined ? "none" : "client_secret_basic")),
         authScope: opts.authScope ?? "shared",
         versionNegotiation: opts.versionNegotiation ?? "auto",
         redirects: opts.redirects ?? "none",
-        clientMetadataUrl,
+        clientMetadataUrl: metadataUrl,
+        ...(staticClient ? { client: { issuer: staticClient.issuer, clientId: staticClient.clientId, tokenEndpointAuthMethod: staticClient.tokenEndpointAuthMethod } } : {}),
       }),
       (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
-      clientMetadataUrl,
+      metadataUrl,
       oauthScope,
+      undefined,
+      { name: ctx.oauthClientName, client: staticClient },
     );
     if (state) state.provider = provider;
     return provider;
@@ -2359,24 +2363,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     async status(ctx): Promise<ConnectorStatus> {
       const state = stateFor(ctx);
+      const report = async (status: ConnectorStatus) => {
+        const path = isOauth ? await newProvider(ctx, state).registrationPath() : undefined;
+        return ownStatus({ ...status, ...(path ? { registrationPath: path } : {}) });
+      };
       try {
         await ensureConnected(ctx, state);
-        return ownStatus({ state: "ok" });
+        return report({ state: "ok" });
       } catch (err) {
         // An empty slot, or one with no vault behind it, is reported the way a
         // missing grant is: present, unauthenticated, and repairable — never a
         // boot failure and never a silently absent connector.
         if (err instanceof CredentialRequiredError) {
-          return ownStatus({ state: "auth_required", message: err.message });
+          return report({ state: "auth_required", message: err.message });
         }
         if (err instanceof OperatorDisconnectedError) {
-          return ownStatus({ state: "auth_required", message: err.message });
+          return report({ state: "auth_required", message: err.message });
         }
         if (state.authRequired) {
           // Only an OAuth connector has a pending consent URL to offer. A
           // credential connector's downstream 401 is repaired in the operator
           // UI connection, so do not reach into OAuth storage to look for one.
-          return ownStatus({
+          return report({
             state: "auth_required",
             message: credentialAuth
               ? "Authorization required — the downstream rejected this connector's stored credential."
@@ -2514,7 +2522,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const listTools = connector.listTools;
   connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
 
+  if (isOauth && !staticClient && clientMetadataUrl === undefined) declareSelfHostedClient(connector, oauthScope);
   if (isOauth) {
+    const start = connector.startAuth!;
+    connector.startAuth = async (...args) => {
+      const status = await start(...args);
+      const path = await newProvider(args[0], stateFor(args[0])).registrationPath();
+      return { ...status, ...(path ? { registrationPath: path } : {}) };
+    };
     // Pin before the first asynchronous storage/discovery read, not only once
     // a refresh flight exists. These operations do not take call admission.
     const retain = retainingOAuthPartition;

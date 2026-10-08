@@ -214,6 +214,10 @@ export interface ConnectorContext {
   logger: Logger;
   /** Public base URL of this deployment (origin), used for OAuth callbacks. */
   baseUrl: string;
+  /** Fixed deployment configuration, independent of the request Host. */
+  publicUrl?: string;
+  /** Deployment name used in downstream client metadata. */
+  oauthClientName?: string;
   /**
    * Read-only access to this connector's human-managed credential. Present
    * only when the connector declares `credential` and the deployment configures
@@ -322,6 +326,8 @@ export interface ConnectorStatus {
    * authorization URL instead of starting a new flow. Absent otherwise.
    */
   authorizationReused?: boolean;
+  /** The client registration mechanism actually selected for this grant. */
+  registrationPath?: "cimd" | "dcr" | "static";
   /**
    * From `startAuth()`, the message reaches the agent. From `status()`, it is
    * never logged, and `Registry.statusFor` keeps it only when connecta wrote

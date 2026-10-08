@@ -1,5 +1,5 @@
 import { basecamp } from "./index.js";
-const options: Parameters<typeof basecamp>[1] = { "purpose":"Audit fixture","clientMetadataUrl":"https://connecta.example/oauth/basecamp-client" };
+const options: Parameters<typeof basecamp>[1] = { "purpose":"Audit fixture" };
 export const fixture = {
   name: "basecamp",
   options,

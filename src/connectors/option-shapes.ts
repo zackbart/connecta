@@ -12,6 +12,7 @@ import type {
   ConnectorUsageGuide,
 } from "../types.js";
 export { CALL_ADMISSION, PROVIDER_COMMON } from "../provider.js";
+import type { RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import type { RemoteMcpAuth } from "./remote-mcp.js";
 
 type AuthCase<T extends RemoteMcpAuth["type"]> = Extract<RemoteMcpAuth, { type: T }>;
@@ -36,5 +37,8 @@ export const REMOTE_MCP_AUTH = variants("type", {
     ...keys("type", "header", "scheme"),
     credential: CREDENTIAL,
   }).shape,
-  oauth: optionsOf<AuthCase<"oauth">>()(keys("type", "clientMetadataUrl", "scope")).shape,
+  oauth: optionsOf<AuthCase<"oauth">>()({
+    ...keys("type", "clientMetadataUrl", "scope"),
+    client: optionsOf<RemoteOAuthClient>()(keys("issuer", "clientId", "clientSecret", "tokenEndpointAuthMethod")),
+  }).shape,
 });

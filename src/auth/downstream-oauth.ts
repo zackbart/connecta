@@ -9,6 +9,7 @@ import type {
   OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
+import { authenticateRemoteClient, downstreamClientMetadata, type RemoteOAuthClient } from "./downstream-client-metadata.js";
 import { ConnectorCallError } from "../errors.js";
 import {
   attachOAuthPartition,
@@ -697,6 +698,7 @@ function isDisconnectedEpoch(epoch: string): boolean {
  */
 export class KvOAuthProvider implements OAuthClientProvider {
   readonly clientMetadataUrl?: string;
+  readonly addClientAuthentication?: NonNullable<OAuthClientProvider["addClientAuthentication"]>;
   /** The epoch this provider's flow reads and writes in, once known. */
   private epoch: string | undefined;
   /** Set when a flow binds: from then on a replaced epoch fails the flow. */
@@ -747,8 +749,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly scope?: string,
     /** Isolate-local clock, used only for claims that have never been sent. */
     private readonly refreshNow: () => number = Date.now,
+    private readonly clientOptions?: { name?: string | undefined; client?: RemoteOAuthClient | undefined },
   ) {
     if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
+    const client = clientOptions?.client;
+    if (client) this.addClientAuthentication = (headers, params) => authenticateRemoteClient(client, headers, params);
   }
 
   get redirectUrl(): string {
@@ -756,14 +761,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
-    return {
-      redirect_uris: [this.redirectUri],
-      client_name: "connecta",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-      ...(this.scope !== undefined ? { scope: this.scope } : {}),
-    };
+    const client = this.clientOptions?.client;
+    return downstreamClientMetadata(this.redirectUri, this.scope, this.clientOptions?.name,
+      client?.tokenEndpointAuthMethod ?? (client?.clientSecret === undefined ? "none" : "client_secret_basic"));
   }
 
   // --- the grant record ---------------------------------------------------
@@ -1165,6 +1165,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ctx?: OAuthClientInformationContext,
   ): Promise<OAuthClientInformationMixed | undefined> {
     const { body } = await this.boundGrant();
+    const client = this.clientOptions?.client;
+    if (client) {
+      if ((ctx && ctx.issuer !== client.issuer) || body.issuer !== client.issuer) throw this.flowSuperseded();
+      if (!body.client) await this.saveClientInformation({ client_id: client.clientId }, { issuer: client.issuer });
+      else if (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding) throw this.flowSuperseded();
+      return { client_id: client.clientId, issuer: client.issuer,
+        token_endpoint_auth_method: this.clientMetadata.token_endpoint_auth_method,
+        ...(client.clientSecret !== undefined ? { client_secret: client.clientSecret } : {}) };
+    }
     if (!body.client || (ctx && body.issuer !== ctx.issuer)) return undefined;
     this.seen.client = fingerprint(body.client.value);
     return ctx ? { ...body.client.value, issuer: ctx.issuer } : body.client.value;
@@ -1176,9 +1185,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     await this.writeCredential(
       "client",
-      { value: info, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
+      { value: this.clientOptions?.client ? { client_id: this.clientOptions.client.clientId } : info, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
       ctx?.issuer,
     );
+  }
+
+  async registrationPath(): Promise<"cimd" | "dcr" | "static" | undefined> {
+    const { body } = await this.boundGrant();
+    if (!body.client) return undefined;
+    if (this.clientOptions?.client) return body.issuer === this.clientOptions.client.issuer && body.client.value.client_id === this.clientOptions.client.clientId ? "static" : undefined;
+    return body.client.value.client_id === this.clientMetadataUrl ? "cimd" : "dcr";
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
@@ -1195,6 +1211,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     const issuer = discoveryIssuer(state);
+    if (this.clientOptions?.client && issuer !== this.clientOptions.client.issuer) throw this.flowSuperseded();
     this.consentDiscovery = state;
     await this.updateGrant((grant) => {
       const body: GrantBody = grant.body.issuer !== issuer
@@ -1853,6 +1870,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       client.binding !== this.clientBinding ||
       typeof clientId !== "string" ||
       clientId === this.clientMetadataUrl ||
+      this.clientOptions?.client !== undefined ||
       (typeof expiresAt === "number" && expiresAt > 0 && expiresAt * 1000 <= Date.now()) ||
       (client.carried && !tokens)
     ) {

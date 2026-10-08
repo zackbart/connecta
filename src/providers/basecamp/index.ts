@@ -44,18 +44,8 @@ export interface BasecampOptions {
   authScope?: "shared" | "personal";
   /** Which Basecamp account this is and what decisions it answers. */
   purpose: string;
-  /**
-   * Required. The HTTPS URL of a Client ID Metadata Document this deployment
-   * controls: a public JSON document whose `client_id` is its own URL, whose
-   * `redirect_uris` include `<publicUrl>/oauth/callback/<connector id>`, with
-   * `token_endpoint_auth_method: "none"` and the `authorization_code` and
-   * `refresh_token` grants. Basecamp advertises dynamic client registration
-   * but restricts it for HTTPS redirect URIs, which every deployed connecta
-   * has; its authorization server accepts a metadata-document client id
-   * instead (`client_id_metadata_document_supported: true`). Connecta does not
-   * serve one of its own yet, so the deployment hosts it.
-   */
-  clientMetadataUrl: string;
+  /** Optional external CIMD URL. Defaults to this deployment's public HTTPS document. */
+  clientMetadataUrl?: string;
   /** Account-specific conventions appended to the maintained provider guide. */
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
@@ -369,14 +359,6 @@ export const basecamp = defineProvider<BasecampOptions>({
 function basecampConnector(id: string, options: BasecampOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
   const clientMetadataUrl = options.clientMetadataUrl;
-  if (typeof clientMetadataUrl !== "string" || !clientMetadataUrl.trim()) {
-    // A structural mistake, so it throws here rather than at the first
-    // authorization, where the failure would be Basecamp refusing a
-    // registration nobody in the conversation can repair.
-    throw new Error(
-      `basecamp("${id}") requires clientMetadataUrl: Basecamp restricts dynamic client registration for HTTPS redirect URIs, so connecta must present a Client ID Metadata Document instead. Host a public HTTPS JSON document whose client_id is its own URL and whose redirect_uris include <publicUrl>/oauth/callback/${id}.`,
-    );
-  }
   const authScope = options.authScope ?? "shared";
   const connector = remoteMcp(id, {
     url: BASECAMP_MCP_ENDPOINT,
@@ -395,7 +377,7 @@ function basecampConnector(id: string, options: BasecampOptions, provider: Provi
     // be a label, not a guarantee. The classification fails closed either way.
     auth: {
       type: "oauth",
-      clientMetadataUrl,
+      ...(clientMetadataUrl !== undefined ? { clientMetadataUrl } : {}),
       scope: FALLBACK_SCOPE,
     },
     requireHttps: true,

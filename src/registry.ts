@@ -302,6 +302,8 @@ function warnOnFailure<R>(
 }
 
 export interface RegistryOptions {
+  publicUrl?: string | undefined;
+  oauthClientName?: string | undefined;
   classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>> | undefined;
   storage: KVStorage;
   logger: Logger;
@@ -915,6 +917,8 @@ export class Registry implements RegistryView {
       storage: namespaced(this.opts.storage, scopes.connector(id)),
       logger: this.opts.logger,
       baseUrl,
+      ...(this.opts.publicUrl !== undefined ? { publicUrl: this.opts.publicUrl } : {}),
+      ...(this.opts.oauthClientName !== undefined ? { oauthClientName: this.opts.oauthClientName } : {}),
       ...(credentialAccess ? { credential: credentialAccess } : {}),
       requestScope,
       ...callOptions,
