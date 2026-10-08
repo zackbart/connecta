@@ -758,7 +758,9 @@ export class Registry implements RegistryView {
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
       maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,
-      onCompletedCatalogRefresh: (refresh, ctx) => this.recordCatalogDrift(refresh.previous, refresh.next, { id, connector: this.connectors.get(id)!, ctx, privateCatalog: refresh.private }),
+      ...(this.opts.catalogDriftActivity?.recordChange ? {
+        onCompletedCatalogRefresh: (refresh, ctx) => this.recordCatalogDrift(refresh.previous, refresh.next, { id, connector: this.connectors.get(id)!, ctx, privateCatalog: refresh.private }),
+      } : {}),
     });
     sentSecretsFor(context);
     trackCredentialReads(context);
