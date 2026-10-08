@@ -1,5 +1,5 @@
 /** Complete fake-only grading inputs, separate from the clipped display trace. */
-import { World, type ArtifactSnapshot } from "../fakes/world.js";
+import { World } from "../fakes/world.js";
 import type { TrackerState } from "../fakes/tracker.js";
 import type { ChatState, AuditState } from "../fakes/services.js";
 import type { CallRecord } from "../fakes/service.js";
@@ -15,7 +15,6 @@ export interface SavedGradeInputs {
     chat: ChatState;
     audit: AuditState;
     oauth: { connected: boolean; starts: number; visits: number };
-    artifacts?: ArtifactSnapshot;
     programs: ProgramObservation[];
     calls: CallRecord[];
   };
@@ -25,7 +24,6 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
   return { version: 1, trace, world: {
     ci: world.ci, tracker: world.tracker, chat: world.chat, audit: world.audit,
     oauth: { connected: world.oauth.connected, starts: world.oauth.starts, visits: world.oauth.visits },
-    ...(world.artifacts ? { artifacts: world.artifacts } : {}),
     programs: world.programs, calls: world.ledger.calls,
   } };
 }
@@ -39,7 +37,6 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
   Object.assign(world.chat, saved.world.chat);
   Object.assign(world.audit, saved.world.audit);
   Object.assign(world.oauth, saved.world.oauth);
-  if (saved.world.artifacts) world.artifacts = saved.world.artifacts;
   world.programs = saved.world.programs;
   world.ledger.calls.push(...saved.world.calls);
   return { world, trace: saved.trace };

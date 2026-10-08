@@ -14,6 +14,13 @@ if (source === out) throw new Error("Regrade output must differ from the source 
 const file = JSON.parse(await readFile(source, "utf8")) as AgentResultFile;
 if (file.kind !== "connecta-eval/agent" || file.version !== 1) throw new Error("Expected agent result file version 1");
 const runner = file.config.runner ?? (file.claudeVersion ? "claude" : "codex");
+// Historical result files can include tasks whose feature and grader were removed.
+const currentIds = new Set(ACTIVE_TASKS.map(task => task.id));
+const ignored = [...new Set(file.trials.filter(trial => !currentIds.has(trial.task)).map(trial => trial.task))];
+if (ignored.length) console.log(`Ignoring historical tasks without current graders: ${ignored.join(", ")}`);
+file.trials = file.trials.filter(trial => currentIds.has(trial.task));
+file.tasks = file.tasks.filter(task => currentIds.has(task.id));
+file.config.tasks = file.config.tasks.filter(id => currentIds.has(id));
 file.trials = file.trials.map(trial => {
   const task = ACTIVE_TASKS.find(t => t.id === trial.task);
   if (!task) throw new Error(`No current grader for ${trial.task}`);

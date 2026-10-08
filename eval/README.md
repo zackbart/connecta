@@ -273,10 +273,11 @@ fake PNG had an invalid IDAT checksum. `p5-program-image` and
 capable-auth task is graded for both runners. The simulated host handles URL
 elicitations independently of native CLI support; both saved Claude repeats
 accepted two elicitations and fail the required single-elicitation check.
-Codex remains eligible for all retained tasks. The removed built-in artifact tasks
-`p2-build-page`, `p2-fix-chart-title`, and
-`p2-refresh-weekly` are excluded from the active set and from regraded files.
-Regrading records them in `excluded` with a feature-removal reason.
+Codex remains eligible for all active tasks. The three built-in artifact tasks were removed with the feature in #766.
+
+Offline regrading ignores historical tasks without a current grader and prints
+their ids. The output task list, selected tasks and trials contain only tasks
+with current graders.
 
 Skips record their reason, appear as N/A in reports,
 and count as neither passes nor failures. Revalidate and remove these skips

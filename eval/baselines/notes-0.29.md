@@ -53,8 +53,7 @@ names those tasks.
 | `p5-known-read-routing` | 2/2 | 0/2 |
 | `p5-connecta-read` | 2/2 | 2/2 |
 
-`p2-build-page`, `p2-fix-chart-title`, and `p2-refresh-weekly` were removed
-with the built-in artifacts feature and excluded from every score.
+The three built-in artifact tasks were removed with the feature in #766.
 
 ## Classification of every originally failing check
 
@@ -155,6 +154,23 @@ regraded for this check and will be re-run live by the orchestrator.
 Record consistency covers only the fields each task requests. For CI these
 are run id, status and commit. Unrequested fields such as branch are out of
 scope by design, so no branch-grading change is part of round 2.
+
+## Rebase after feature removal
+
+Rebased onto main `eac94d8e` after #766 removed built-in artifacts and #767
+fixed the optional-module timer test. Artifact-specific exclusion logic,
+controls and saved snapshots are gone. Offline regrading ignores historical
+tasks without current graders and reports their ids.
+
+Both source files regraded to the same scores: Claude 29/34 with four N/A
+trials, and Codex 29/36 with two errors. Each output contains 19 tasks and
+38 trials. The regrade files remain under `/tmp/connecta-plan/regraded/`.
+
+`npm run build` and `npm run eval:selftest` passed. The self-test covered
+19 tasks, one caught-refusal replay, 138 negative controls and 106 positive
+controls. `VITEST_MAX_WORKERS=2 npm run release:check` passed with 11,614 tests
+passed, 263 skipped, 213 Chromium checks, zero production audit vulnerabilities
+and package smoke. No live trials or review ran during this rebase.
 
 ## Limits of this baseline
 
