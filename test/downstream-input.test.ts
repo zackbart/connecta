@@ -11,7 +11,7 @@ import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { guestErrorText, guestFailureFacts, spyLogger } from "./fixtures/misc.js";
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
-import { inputRetryKeys, scopes } from "../src/storage/keys.js";
+import { inputRetryKeys, resultKeys, scopes } from "../src/storage/keys.js";
 
 const BASE = "https://connecta.test";
 const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";
@@ -23,7 +23,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
@@ -43,14 +43,16 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
         const state = context.mcpReq.requestState();
         const responses = context.mcpReq.inputResponses;
         call(name, args, state, responses);
-        if (state && !options.repeat) return {
+        const round = state === undefined ? 0 : (options.roundStates?.indexOf(typeof state === "string" ? state : "") ?? 0) + 1;
+        if (state && !options.repeat && (!options.roundStates || round >= options.roundStates.length)) return {
           content: [{ type: "text", text: options.completeText ?? JSON.stringify({ done: true, responses }) }],
-          structuredContent: options.output ? { done: true } : { done: true, responses },
+          structuredContent: options.completeStructured ?? (options.output ? { done: true } : { done: true, responses }),
+          ...(options.completeError ? { isError: true } : {}),
         };
-        return inputRequired({ requestState: options.opaque ?? OPAQUE,
+        return inputRequired({ requestState: options.roundStates?.[round] ?? options.opaque ?? OPAQUE,
           inputRequests: { [key]: options.url
             ? inputRequired.elicitUrl({ message: options.message ?? "Open this page", url: options.url })
-            : inputRequired.elicit({ message: options.message ?? "Pick a name", requestedSchema: { type: "object", properties: { name: { type: "string" } } } }) },
+            : inputRequired.elicit({ message: (state ? options.continuationMessage : undefined) ?? options.message ?? "Pick a name", requestedSchema: { type: "object", properties: { name: { type: "string" } } } }) },
         });
       });
     }
@@ -269,6 +271,54 @@ describe("downstream input relay", () => {
       expect(result.requestState).toBeUndefined();
       expect(flow.call).toHaveBeenCalledOnce();
     }
+  });
+
+  it("INV-4 INV-5 INV-6: rejects private state before paging, schema observation, or downstream error shaping", async () => {
+    for (const opts of [
+      { completeText: `${"x".repeat(25_000)}${OPAQUE}` },
+      { completeStructured: { [OPAQUE]: true } },
+      { completeText: `Downstream error ${OPAQUE}`, completeError: true },
+    ]) {
+      const flow = setup(opts);
+      const first = (await flow.rpc()).result;
+      const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+      expect(JSON.stringify(result)).not.toContain(OPAQUE);
+      const keys = await flow.storage.list("");
+      expect(keys.filter(key => key.includes(resultKeys.family.prefixes[0]))).toHaveLength(0);
+      for (const key of keys) expect(await flow.storage.get(key)).not.toContain(OPAQUE);
+      const search = await flow.rpc({ name: "search_tools", args: { query: "service.read" }, user: "bob" });
+      expect(search.result.isError).toBeFalsy();
+      expect(JSON.stringify(search)).not.toContain(OPAQUE);
+      expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(OPAQUE);
+    }
+  });
+
+  it("INV-4 INV-5 INV-9: retains bounded encrypted private state history across different downstream rounds", async () => {
+    const states = ["PRIVATE_FIRST_ROUND_STATE", "PRIVATE_SECOND_ROUND_STATE"];
+    for (const opts of [{ completeText: `Completed with ${states[0]}` }, { continuationMessage: `Confirm ${states[0]}` }]) {
+      const flow = setup({ roundStates: states, ...opts });
+      const first = (await flow.rpc()).result;
+      let result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+      if (!opts.continuationMessage) {
+        expect(result.resultType).toBe("input_required");
+        const wrapper = JSON.parse(atob(result.requestState.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"))).p;
+        expect(JSON.stringify(wrapper)).not.toContain(states[0]);
+        const privateState = JSON.parse(await flow.vault.open!("service", "connecta:downstream-input:v1", wrapper.sealed));
+        expect(privateState.previousStates).toEqual([states[0]]);
+        result = (await flow.rpc({ state: result.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+      }
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+      expect(JSON.stringify(result)).not.toContain(states[0]);
+      expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(states[0]);
+    }
+    const flow = setup({ roundStates: ["a".repeat(30_000), "b".repeat(40_000)] });
+    const first = (await flow.rpc()).result;
+    expect(first.resultType, JSON.stringify(first)).toBe("input_required");
+    const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+    expect(result.structuredContent.error.code).toBe("input_required_limit");
+    expect(result.requestState).toBeUndefined();
+    expect(flow.call).toHaveBeenCalledTimes(2);
   });
 
   it("INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads", async () => {

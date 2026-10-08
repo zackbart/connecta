@@ -572,7 +572,8 @@ The signed `createRequestStateCodec` envelope contains a version-2
 `downstream` discriminator, connector id, and vault ciphertext. The encrypted
 payload binds the principal, endpoint including its pool path, meta-tool,
 submitted address and resolved target, arguments digest, round, original expiry,
-and one-use nonce. It carries the opaque downstream state byte-exact and a map
+and one-use nonce. It carries the opaque downstream state byte-exact, bounded
+private state history from earlier rounds, and a map
 from connecta's numbered `downstream/<connector>/<index>` keys to the original
 downstream keys and elicitation modes. Neither the opaque state nor the original
 keys appear in agent output. Each round consumes a TTL-bound storage CAS before
@@ -597,10 +598,10 @@ the host owns consent and browser navigation. Connecta never adds credentials
 or follows the URL. Messages pass the ordinary agent-output redaction boundary.
 A form is refused if that boundary would change its schema, including property
 names, enum values, or annotations; the host never receives a rewritten answer
-contract. Prompts and completed continuation results that echo opaque state
-(including encoded echoes and short state) are refused. No prompt, state,
-response, arguments, or raw error reaches
-activity, logs, or status.
+contract. Prompts and raw continuation results that echo any round's opaque state
+(including encoded echoes and short state) are refused before redaction,
+paging, stashing, error shaping, or schema observation. No prompt, state,
+response, arguments, or raw error reaches activity, logs, or status.
 
 A write returning `input_required` has not completed its operation: the
 [MRTR spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)
@@ -615,7 +616,8 @@ active in a round. An auth retry can reach downstream input within the same
 three-prompt, ten-minute window. A downstream continuation that fails auth ends
 with the ordinary failure; it does not replace its pending state with an auth
 replay. Downstream payloads and input responses are capped at 64 KiB, with at
-most 16 inputs and 256 characters per downstream key. Sealed wire state is
+most 16 inputs and 256 characters per downstream key. The combined private
+state history is also capped at 64 KiB. Sealed wire state is
 capped at 128 KiB. `input_required_invalid`, `input_required_limit`,
 `input_required_unsupported`, and `input_required_round_limit` are non-retryable
 typed failures.

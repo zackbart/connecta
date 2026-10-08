@@ -39,7 +39,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationDigest, resolveInvocationAuth } from "./invocation-auth.js";
-import { downstreamContinuation, isDownstreamInputResult, type DownstreamInputResult } from "./downstream-input-context.js";
+import { downstreamContinuation, isDownstreamInputResult, assertDownstreamOutputSafe, type DownstreamInputResult } from "./downstream-input-context.js";
 
 function defined<T extends object>(
   values: T,
@@ -725,6 +725,7 @@ export class InvocationService {
                 });
                 return { inputRequired: true as const, value };
               }
+              assertDownstreamOutputSafe(this.catalog.requestScope, reply);
               const raw = sentSecrets.redact(reply);
               // isError is checked here for BOTH result shapes so every adapter
               // reports the same downstream-failure wording, and the throw lands

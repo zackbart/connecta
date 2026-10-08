@@ -483,6 +483,14 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-4 INV-5: refuses form schemas that redaction would change instead of changing the answer contract"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-6: rejects private state before paging, schema observation, or downstream error shaping"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-9: retains bounded encrypted private state history across different downstream rounds"
         }
       ]
     },

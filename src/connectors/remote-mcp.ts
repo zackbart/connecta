@@ -73,7 +73,7 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
-import { downstreamInputCapabilities } from "../downstream-input-context.js";
+import { downstreamInputCapabilities, assertDownstreamOutputSafe } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -2783,11 +2783,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             },
           )
           .catch((err: unknown) => {
+            assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
             throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
           return result;
         }
+        assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
         if (output && !result.isError) {
           if (result.structuredContent === undefined) throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
           const validation = await output["~standard"].validate(result.structuredContent);

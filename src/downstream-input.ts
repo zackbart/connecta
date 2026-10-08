@@ -7,10 +7,10 @@ import type { CredentialVault } from "./credential-contract.js";
 import type { ToolResult } from "./meta-tools.js";
 import type { RegistryView } from "./registry.js";
 import { ConnectorCallError } from "./errors.js";
-import { redactAgentOutput, sentSecretsForRequest, SentSecrets } from "./sent-secrets.js";
+import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { inputRetryKeys } from "./storage/keys.js";
 import { REQUEST_STATE_TTL_MS, MAX_INPUT_ROUNDS, invalidRequestState, requestDigest, stateObject } from "./request-state.js";
-import { bindDownstreamCapabilities, downstreamInputCapabilities, bindDownstreamContinuation, clearDownstreamContinuation } from "./downstream-input-context.js";
+import { bindDownstreamCapabilities, downstreamInputCapabilities, bindDownstreamContinuation, clearDownstreamContinuation, assertNoPrivateStateEchoes, assertDownstreamOutputSafe } from "./downstream-input-context.js";
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 export const MAX_RELAY_STATE_CHARS = 128 * 1024;
@@ -40,6 +40,7 @@ export interface DownstreamRequestState {
   expiresAt: number;
   nonce: string;
   requestState?: string;
+  previousStates: string[];
   inputs: InputBindings;
 }
 
@@ -65,13 +66,6 @@ function namespace(connector: string, index: number): string {
 
 function invalidInput(): never {
   throw new ConnectorCallError("input_required_invalid", "The downstream returned malformed or unsafe input requests.");
-}
-
-function echoesOpaqueState(value: unknown, state: string | undefined): boolean {
-  const secrets = new SentSecrets();
-  if (state !== undefined) secrets.opaque(state);
-  const serialized = JSON.stringify(value);
-  return typeof serialized === "string" && secrets.contains(serialized) || redactAgentOutput(secrets, value) !== value;
 }
 
 /** Capture opaque state before any result redaction or unwrapping can alter it. */
@@ -124,7 +118,8 @@ export async function captureDownstreamInput(scope: object, connector: string, a
   }
   // Opaque state is private even when a downstream echoes it in a prompt,
   // URL, or schema. Keep the continuation intact and refuse the public prompt.
-  if (echoesOpaqueState(inputRequests, raw.requestState as string | undefined)) return invalidInput();
+  assertDownstreamOutputSafe(scope, inputRequests);
+  assertNoPrivateStateEchoes(inputRequests, raw.requestState !== undefined ? [raw.requestState as string] : []);
   if (pendingInputs.has(scope)) return invalidInput();
   pendingInputs.set(scope, { connector, address,
     ...(raw.requestState !== undefined ? { requestState: raw.requestState as string } : {}), inputRequests, inputs });
@@ -178,6 +173,9 @@ export class DownstreamElicitation {
         !Number.isInteger(state.round) || (state.round as number) < 1 || (state.round as number) > MAX_INPUT_ROUNDS ||
         typeof state.nonce !== "string" || !/^[a-f0-9-]{36}$/.test(state.nonce) ||
         (state.requestState !== undefined && typeof state.requestState !== "string") ||
+        !Array.isArray(state.previousStates) || state.previousStates.length >= (state.round as number) ||
+        !state.previousStates.every(value => typeof value === "string") ||
+        !withinBudget([...state.previousStates, ...(state.requestState !== undefined ? [state.requestState] : [])]) ||
         !stateObject(state.inputs) || Object.keys(state.inputs).length > MAX_REQUESTS ||
         !Object.entries(state.inputs).every(([wireKey, binding], index) => wireKey === namespace(wrapper.connector as string, index) && stateObject(binding) &&
           typeof binding.key === "string" && binding.key.length > 0 && binding.key.length <= 256 && (binding.mode === "url" || binding.mode === "form")) ||
@@ -204,22 +202,15 @@ export class DownstreamElicitation {
     // Claim before any downstream dispatch, including decline/cancel. A failed
     // or ambiguous continuation must not leave a reusable write permission.
     if (!await storage.compareAndSet(inputRetryKeys.used(state.nonce), null, "used", { ttlSeconds: REQUEST_STATE_TTL_MS / 1000 })) return invalidRequestState();
-    bindDownstreamContinuation(this.options.requestScope, { connector: state.connector, address: state.target, input: {
+    bindDownstreamContinuation(this.options.requestScope, { connector: state.connector, address: state.target,
+      privateStates: [...state.previousStates, ...(state.requestState !== undefined ? [state.requestState] : [])], input: {
       ...(state.requestState !== undefined ? { requestState: state.requestState } : {}), inputResponses: responses,
     } });
-    try {
-      const result = await operation();
-      const pending = pendingInputs.get(this.options.requestScope);
-      if (echoesOpaqueState(result, state.requestState) || pending && echoesOpaqueState(pending.inputRequests, state.requestState)) {
-        pendingInputs.delete(this.options.requestScope);
-        return failure("input_required_invalid", "The downstream response exposes private continuation state.");
-      }
-      return await this.finish(tool, args, context, result, state);
-    }
+    try { return await this.finish(tool, args, context, await operation(), state); }
     finally { clearDownstreamContinuation(this.options.requestScope); }
   }
 
-  async finish(tool: string, args: Record<string, unknown>, context: ServerContext, result: ToolResult, previous?: { round: number; expiresAt: number }): Promise<ToolResult | InputRequiredResult> {
+  async finish(tool: string, args: Record<string, unknown>, context: ServerContext, result: ToolResult, previous?: { round: number; expiresAt: number; requestState?: string; previousStates?: string[] }): Promise<ToolResult | InputRequiredResult> {
     const scope = this.options.requestScope;
     const pending = pendingInputs.get(scope);
     pendingInputs.delete(scope);
@@ -228,11 +219,16 @@ export class DownstreamElicitation {
     if (!modernRequests.has(scope) || !vault?.requestStateKey || !vault.seal || !vault.open || !principal ||
         !["call_tool", "call_destructive_tool"].includes(tool)) return failure("input_required_unsupported", "Downstream input requires an authenticated direct call and a sealing vault.");
     if ((previous?.round ?? 0) >= MAX_INPUT_ROUNDS) return failure("input_required_round_limit", "The downstream still requires input after three rounds. Start a new direct request.");
+    const previousStates = [...new Set([...(previous?.previousStates ?? []), ...(previous?.requestState !== undefined ? [previous.requestState] : [])])]
+      .filter(value => value !== pending.requestState);
+    if (!withinBudget([...previousStates, ...(pending.requestState !== undefined ? [pending.requestState] : [])])) {
+      return failure("input_required_limit", "The downstream private state history exceeds 64 KiB.");
+    }
     const state: DownstreamRequestState = { version: 2, kind: "downstream", principal, endpoint,
       connector: pending.connector, address: String(args.address), target: pending.address, tool: tool as DownstreamRequestState["tool"],
       digest: await requestDigest(tool, args), round: (previous?.round ?? 0) + 1,
       expiresAt: previous?.expiresAt ?? Date.now() + REQUEST_STATE_TTL_MS, nonce: crypto.randomUUID(),
-      ...(pending.requestState !== undefined ? { requestState: pending.requestState } : {}), inputs: pending.inputs,
+      ...(pending.requestState !== undefined ? { requestState: pending.requestState } : {}), previousStates, inputs: pending.inputs,
     };
     const requestState = await this.options.mint({ version: 2, kind: "downstream", connector: pending.connector,
       sealed: await vault.seal(pending.connector, PURPOSE, JSON.stringify(state)) }, context);

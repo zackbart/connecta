@@ -73,16 +73,6 @@ export class SentSecrets {
 
   add(value: string): void {
     if (value.length < MIN_SECRET_LENGTH) return;
-    this.register(value);
-  }
-
-  /** Opaque continuation state has no credential length floor. Use a separate
-   * collector to refuse echoes, without rewriting protocol or schema fields. */
-  opaque(value: string): void {
-    if (value) this.register(value);
-  }
-
-  private register(value: string): void {
     for (const form of [value, `Bearer ${value}`, `token ${value}`]) {
       this.form(form);
       this.form(encodeURIComponent(form));
