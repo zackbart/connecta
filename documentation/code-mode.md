@@ -588,6 +588,10 @@ request; it is not activity, a session, or a stream.
 
 ## Emitted output
 
+Images accept only `image/png`, `image/jpeg`, `image/gif`, or `image/webp`
+and nonempty canonical base64. Whitespace, URL-safe alphabets, bad padding,
+and nonzero pad bits are rejected before collection. Size budgets still apply.
+
 MCP-native output a return value cannot carry: base64 is not projectable, so a
 block that survives intake uncapped (`S5`) must not die at the `R2` exit guard.
 The earlier alternatives are in [decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)

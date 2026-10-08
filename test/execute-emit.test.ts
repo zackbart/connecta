@@ -62,6 +62,25 @@ describe("EmitCollector validation (M1)", () => {
     }
   });
 
+  it.each(["", "%%%invalid%%", "aGk", "aGk=\n", "a Gk=", "aGk===", "-_==", "AB==", "AAF=", "data:image/png;base64,aGk="])("INV-3: rejects malformed image base64 %j before collection", (data) => {
+    const sink = collector();
+    expect(() => sink.accept({ type: "image", data, mimeType: "image/png" })).toThrow(/strict base64/);
+    expect(sink.blocks).toEqual([]);
+    expect(sink.bytes).toBe(0);
+  });
+
+  it.each(["text/html", "image/svg+xml", "image/jpg", "IMAGE/PNG"])("INV-3: refuses unsupported image MIME %s", (mimeType) => {
+    const sink = collector();
+    expect(() => sink.accept({ type: "image", data: "aGk=", mimeType })).toThrow(/image mimeType/);
+    expect(sink.blocks).toEqual([]);
+  });
+
+  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])("INV-3: accepts supported image MIME %s with canonical base64", (mimeType) => {
+    const sink = collector();
+    sink.accept({ type: "image", data: "aGk=", mimeType });
+    expect(sink.blocks).toEqual([{ type: "image", data: "aGk=", mimeType }]);
+  });
+
   it("accepts exactly the three block shapes", () => {
     const sink = collector();
     sink.accept({ type: "text", text: "t" });

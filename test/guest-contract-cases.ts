@@ -1111,6 +1111,38 @@ return fs;
       expect(outcome.result).toBe("import('./executor.js')import\\('import text");
     },
   },
+  {
+    clauses: "M1, M2",
+    name: "INV-3: malformed images are refused before collection on every executor",
+    code: `async () => {
+      const codes = [];
+      for (const block of [
+        { type: "image", data: "%%%invalid%%", mimeType: "text/html" },
+        { type: "image", data: "%%%invalid%%", mimeType: "image/png" },
+        { type: "image", data: "aGk=", mimeType: "text/html" },
+        { type: "image", data: "AB==", mimeType: "image/png" },
+      ]) {
+        try { await connecta.emit(block); codes.push("accepted"); }
+        catch (error) { codes.push(error.code); }
+      }
+      return codes;
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual(["invalid_args", "invalid_args", "invalid_args", "invalid_args"]);
+      expect(outcome.content).toHaveLength(1);
+    },
+  },
+  {
+    clauses: "M1, M2",
+    name: "INV-3: an unawaited malformed image fails the run",
+    code: `async () => { connecta.emit({ type: "image", data: "%%%invalid%%", mimeType: "text/html" }); return "must fail"; }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "invalid_args" });
+      expect(outcome.content).toHaveLength(1);
+    },
+  },
   ...["success", "failure", "counts"].map((kind): ContractCase => ({
     clauses: "E6, X11",
     name: `INV-3 INV-6: prints and returned ${kind} look-alikes remain guest values`,

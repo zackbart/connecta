@@ -250,6 +250,18 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
       `connecta.emit block carries unsupported field(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}; a "${String(block.type)}" block is exactly { ${fields.join(", ")} }`,
     );
   }
+  if (block.type === "image") {
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(block.mimeType as string)) {
+      throw guestFailure("invalid_args", "connecta.emit image mimeType must be image/png, image/jpeg, image/gif, or image/webp.");
+    }
+    const data = block.data as string;
+    // RFC 4648 alphabet, complete quads and canonical padding, including zero
+    // pad bits. Decode only the last quad; validation does not copy the image.
+    if (!data.length || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data) ||
+      btoa(atob(data.slice(-4))) !== data.slice(-4)) {
+      throw guestFailure("invalid_args", "connecta.emit image data must be nonempty, strict base64 with canonical padding.");
+    }
+  }
   return raw as EmittedBlock;
 }
 
