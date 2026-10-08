@@ -38,6 +38,9 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
       transcript: trace.transcript.filter(entry => entry.kind !== "assistant" || !entry.text.includes("/connect/oauth")) } });
     cases.push({ name: "agent handed off another connect URL", trace: { ...trace,
       transcript: trace.transcript.map(entry => entry.kind === "assistant" ? { ...entry, text: entry.text.replace(/\/connect\/oauth\?h=[A-Za-z0-9_.%-]+/g, "/connect/oauth?h=wrong") } : entry) } });
+    cases.push({ name: "agent appended to the connect token", trace: { ...trace,
+      transcript: trace.transcript.map(entry => entry.kind === "assistant" ? { ...entry,
+        text: entry.text.replace(/(\/connect\/oauth\?h=[A-Za-z0-9_.%-]+)/g, "$1wrong") } : entry) } });
   }
   if (task.id === "p5-fanout-over-budget") {
     cases.push({ name: "swapped run statuses and commits", trace: { ...trace, finalAnswer: "CI: 4812 passed, commit c0ffee1; 4811 failed, commit 9f2c1ab; 4810 passed, commit 71d0e3c." } });

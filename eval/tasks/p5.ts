@@ -139,12 +139,13 @@ const rich = (program: boolean): ActiveTask => withCorrectness({ ...base,
 
 function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefined {
   for (const use of trace.toolUses) {
-    const match = /http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]+/.exec(use.resultText ?? "");
+    const match = /http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]*[A-Za-z0-9_%-]/.exec(use.resultText ?? "");
     if (!match) continue;
     if (!requireHandoff) return match[0];
     const resultIndex = trace.transcript.findIndex(entry => entry.kind === "tool_result" && entry.id === use.id);
     if (resultIndex >= 0 && trace.transcript.slice(resultIndex + 1).some(entry =>
-      entry.kind === "assistant" && entry.turn === use.turn && entry.text.includes(match[0]))) return match[0];
+      entry.kind === "assistant" && entry.turn === use.turn &&
+      [...entry.text.matchAll(/http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]*[A-Za-z0-9_%-]/g)].some(url => url[0] === match[0]))) return match[0];
   }
   return undefined;
 }
