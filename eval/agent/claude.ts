@@ -40,7 +40,8 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       ...(options.testHost?.args ?? []),
       "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json",
       "--model", options.model, "--tools", "", "--setting-sources", "",
-      "--safe-mode", "--disable-slash-commands", "--no-chrome",
+      "--disable-slash-commands", "--no-chrome",
+      "--settings", JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false, enabledPlugins: {} }),
       "--strict-mcp-config", "--mcp-config", configPath, "--no-session-persistence",
       "--permission-mode", "dontAsk", "--permission-prompts", "none",
       "--allowedTools", options.allowedTools.map(tool => `mcp__connecta__${tool}`).join(","),
@@ -55,7 +56,9 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       // Do not let inherited API keys, alternate providers, bare mode, or an
       // enclosing Claude session override subscription auth or CLI isolation.
       env: { PATH: process.env.PATH, HOME: process.env.HOME, TZ: "UTC",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+        CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1", ENABLE_CLAUDEAI_MCP_SERVERS: "false" },
     });
     const events: StreamEvent[] = [];
     const turnStarts: number[] = [];
@@ -77,6 +80,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     lines.on("line", line => {
       let event: StreamEvent;
       try { event = JSON.parse(line) as StreamEvent; } catch { return; }
+      push(event);
       if (event.type === "system" && event.subtype === "init") {
         model = typeof event.model === "string" ? event.model : undefined;
         loadedTools = Array.isArray(event.tools) ? event.tools.map(String) : [];
@@ -84,6 +88,9 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
           // Denied tools can be omitted by Claude's inventory, but no built-in
           // tool, unrelated server, or retired meta-tool is allowed.
           assertSurface([...new Set([...loadedTools, ...options.deniedTools.map(t => `mcp__connecta__${t}`)])]);
+          if ([event.plugins, event.skills].some(value => Array.isArray(value) && value.length)) {
+            throw new Error("Claude loaded plugins or skills outside the fake MCP config");
+          }
           if (model !== options.model) throw new Error(`Claude served ${String(model)} instead of ${options.model}`);
         } catch (error) {
           push({ type: "result", subtype: "error", result: String(error) });
@@ -91,7 +98,6 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
           return;
         }
       }
-      push(event);
       if (event.type === "result") finishTurn?.();
     });
     child.stderr.on("data", chunk => { stderrTail = (stderrTail + String(chunk)).slice(-4_000); });

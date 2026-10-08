@@ -21,12 +21,15 @@ first sign the CLI in with the intended subscription or API account.
 
 Claude uses the owner's signed-in `claude` CLI subscription login. The runner
 defaults to `claude-sonnet-5-5` and preserves the real home for login/keychain access without reading credentials.
-Each trial runs in an empty temporary workspace with `--safe-mode`,
+Each trial runs in an empty temporary workspace with
 `--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
-and `--strict-mcp-config --mcp-config <fake-only config>`. These flags disable
-CLAUDE.md, user/project/local settings, skills, plugins, hooks, built-in tools,
-and external MCP servers. Safe mode preserves authentication; bare mode does
-not and is unsuitable here. The fake MCP allowlist runs with `dontAsk`; denied
+and `--strict-mcp-config --mcp-config <fake-only config>`. Empty setting sources omit user/project/local settings and plugin enables.
+Explicit `--settings` disables hooks and automatic memory. The installed CLI's
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
+controls suppress instructions and bundled skills; Claude.ai MCP servers are
+disabled too. Init inventories with any plugins or skills are rejected.
+`--safe-mode` suppresses even explicit MCP servers in CLI 2.1.292, so it cannot
+serve this eval; `--bare` cannot reuse subscription auth. The fake MCP allowlist runs with `dontAsk`; denied
 tools are disallowed and prompts are refused. Child environments contain no
 `ANTHROPIC_API_KEY`, auth-token override, alternate provider config or enclosing
 Claude session flags, so an inherited API key cannot select API billing.

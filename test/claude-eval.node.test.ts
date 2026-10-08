@@ -20,13 +20,18 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
     value('--setting-sources') !== '' || !argv.includes('--strict-mcp-config') ||
     !argv.includes('--no-session-persistence') || value('--permission-mode') !== 'dontAsk' ||
     value('--permission-prompts') !== 'none' || fs.realpathSync(process.cwd()).startsWith(fs.realpathSync(process.env.HOME)) ||
-    !argv.includes('--safe-mode') || !argv.includes('--disable-slash-commands') || !argv.includes('--no-chrome') ||
+    argv.includes('--safe-mode') || !argv.includes('--disable-slash-commands') || !argv.includes('--no-chrome') ||
+    JSON.parse(value('--settings')).disableAllHooks !== true ||
+    JSON.parse(value('--settings')).autoMemoryEnabled !== false ||
+    Object.keys(JSON.parse(value('--settings')).enabledPlugins).length ||
+    process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS !== '1' || process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== '1' ||
+    process.env.CLAUDE_CODE_DISABLE_BUNDLED_SKILLS !== '1' || process.env.ENABLE_CLAUDEAI_MCP_SERVERS !== 'false' ||
     process.env.HOME !== value('--expected-home') || process.env.CLAUDE_CONFIG_DIR || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ||
     process.env.OPENAI_API_KEY || process.env.CLAUDECODE || process.env.CLAUDE_CODE_SIMPLE) {
   send({type:'result',subtype:'error',result:'isolation failed'}); process.exit(1);
 }
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
-  claude_code_version:'fake-claude',tools:mode === 'extra-tool' ? [...tools,'Bash'] : tools});
+  claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['unexpected'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : tools});
 let turn = 0;
 readline.createInterface({input:process.stdin}).on('line', line => {
   const input = JSON.parse(line); turn++;
@@ -74,8 +79,9 @@ describe("Claude eval CLI", () => {
     expect(infraError(run.events, run.exitCode, trace.loadedTools)).toBeUndefined();
   });
 
-  it.each(["wrong-model", "extra-tool"])("refuses %s before accepting a trial", async mode => {
+  it.each(["wrong-model", "extra-tool", "extra-plugin", "extra-skill"])("refuses %s before accepting a trial", async mode => {
     const run = await fixture(mode);
+    expect(parseTrace(run.events, run.turnStarts, []).claudeCodeVersion).toBe("fake-claude");
     expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeDefined();
     expect(run.events.some(event => event.type === "result" && event.subtype === "error")).toBe(true);
   });
