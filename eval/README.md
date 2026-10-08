@@ -101,7 +101,10 @@ Auth tasks use a local fake OAuth connector and sign-in directory. A determinist
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
 host opens the signed `/connect/oauth` URL as the initiating user and replies
 with the bound requestState. An incapable host returns the handoff to the agent
-and waits for the scripted operator turn. These tasks prove agent recovery and
+and waits for the agent to present that exact URL in its own message after the
+tool response. The scripted operator opens it only after that handoff; missing
+or mismatched assistant URLs fail the required `agent-handoff` check.
+These tasks prove agent recovery and
 Connecta's MRTR behavior, not native URL-elicitation support in either CLI.
 The fake `/connect` visit completes consent locally; no real OAuth service runs.
 

@@ -24,6 +24,12 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   }
   if (task.id === "p5-program-image") cases.push({ name: "image delivered by direct call", trace: { ...trace,
     toolUses: trace.toolUses.map(u => ({ ...u, tool: "call_tool", input: { address: "assets.get_badge_image", args: {} } })) } });
+  if (task.id === "p5-auth-connect-incapable") {
+    cases.push({ name: "operator connected without agent handoff", trace: { ...trace,
+      transcript: trace.transcript.filter(entry => entry.kind !== "assistant" || !entry.text.includes("/connect/oauth")) } });
+    cases.push({ name: "agent handed off another connect URL", trace: { ...trace,
+      transcript: trace.transcript.map(entry => entry.kind === "assistant" ? { ...entry, text: entry.text.replace(/\/connect\/oauth\?h=[A-Za-z0-9_.%-]+/g, "/connect/oauth?h=wrong") } : entry) } });
+  }
   if (task.id === "p5-fanout-over-budget") {
     cases.push({ name: "swapped run statuses and commits", trace: { ...trace, finalAnswer: "CI: 4812 passed, commit c0ffee1; 4811 failed, commit 9f2c1ab; 4810 passed, commit 71d0e3c." } });
     cases.push({ name: "commit-first swapped commits", trace: { ...trace, finalAnswer: "CI: commit 71d0e3c, run 4812 failed; commit 9f2c1ab, run 4811 passed; commit c0ffee1, run 4810 passed." } });

@@ -124,10 +124,14 @@ const rich = (program: boolean): ActiveTask => withCorrectness({ ...base,
   } : { address: "assets.get_badge_image", args: {} }); },
 }, { destination: w => called(w, program ? "assets.get_badge" : "assets.get_badge_image"), evidence: [/brand assets/i, /badge/i, /approved/i, /revision\s*7/i], referenceAnswer: "Brand assets launch badge is approved, revision 7." });
 
-function connectUrl(trace: AgentTrace): string | undefined {
+function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefined {
   for (const use of trace.toolUses) {
     const match = /http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]+/.exec(use.resultText ?? "");
-    if (match) return match[0];
+    if (!match) continue;
+    if (!requireHandoff) return match[0];
+    const resultIndex = trace.transcript.findIndex(entry => entry.kind === "tool_result" && entry.id === use.id);
+    if (resultIndex >= 0 && trace.transcript.slice(resultIndex + 1).some(entry =>
+      entry.kind === "assistant" && entry.turn === use.turn && entry.text.includes(match[0]))) return match[0];
   }
   return undefined;
 }
@@ -139,17 +143,24 @@ const auth = (capable: boolean): ActiveTask => withCorrectness({ ...base,
   prompt: "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
   ...(capable ? {} : { followUps: [{
     before: async ({ deployment, trace, note }: Parameters<NonNullable<NonNullable<ActiveTask["followUps"]>[number]["before"]>>[0]) => {
-      const url = connectUrl(trace);
-      if (!url) { note("No /connect/oauth URL was returned; operator has nothing to open."); return false; }
+      const url = connectUrl(trace, true);
+      if (!url) { note("The agent did not hand off the matching /connect/oauth URL; operator has nothing to open."); return false; }
       await deployment.openConnect(url); note("Operator visited the fake service's /connect URL as the initiating user.");
     }, prompt: "Done, I connected the service using your /connect URL. Please retry the balance read." }] }),
   grade: ({ world, trace }) => [
     check("connect-visited", "one verified /connect visit started the fake authorization", world.oauth.visits === 1 && world.oauth.starts === 1),
     check("host-mode", "the expected host mode was exercised", capable ? trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.connector === "oauth" : !trace.urlElicitations?.length && Boolean(connectUrl(trace))),
+    ...(capable ? [] : [check("agent-handoff", "the agent presented the matching /connect URL before the operator visit", Boolean(connectUrl(trace, true)))]),
     check("zero-writes", "no downstream business writes", world.ledger.calls.every(c => c.kind === "read")),
-  ], reference: async ({ call, nextTurn }) => {
-    await call("call_tool", { address: "oauth.get_balance", args: { customer: "Northwind" } });
-    if (!capable) { await nextTurn(); await call("call_tool", { address: "oauth.get_balance", args: { customer: "Northwind" } }); }
+  ], reference: async ({ call, nextTurn, answer }) => {
+    const result = await call("call_tool", { address: "oauth.get_balance", args: { customer: "Northwind" } });
+    if (!capable) {
+      const url = /http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]+/.exec(result.text)?.[0];
+      if (!url) throw new Error("Auth reference received no connect URL");
+      answer(`Please connect the invoice service at ${url}. I'll wait for you to complete it.`);
+      if (!await nextTurn()) throw new Error("Auth reference handoff did not reach the operator");
+      await call("call_tool", { address: "oauth.get_balance", args: { customer: "Northwind" } });
+    }
   },
 }, { destination: w => called(w, "oauth.get_balance", { customer: "Northwind" }), evidence: [/oauth|invoice service/i, /Northwind/i, /5[,]?650\.50/, /in_1002/, /in_1003/, /in_1005/],
   referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005." });

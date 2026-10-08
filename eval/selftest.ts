@@ -9,7 +9,7 @@
 import { World } from "./fakes/world.js";
 import { startNodeDeployment } from "./deploy/node.js";
 import { connectMcp } from "./support/mcp.js";
-import type { AgentTrace, ToolUse } from "./agent/trace.js";
+import type { AgentTrace, ToolUse, TranscriptEntry } from "./agent/trace.js";
 import { counterexamples, positiveVariants } from "./tasks/counterexamples.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { startAuthHost } from "./agent/auth-host.js";
@@ -17,9 +17,9 @@ import { parseTrace, type StreamEvent } from "./agent/trace.js";
 import { flags } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
 
-function emptyTrace(toolUses: ToolUse[], finalAnswer = ""): AgentTrace {
+function emptyTrace(toolUses: ToolUse[], finalAnswer = "", transcript: TranscriptEntry[] = []): AgentTrace {
   return {
-    finalAnswer, transcript: [],
+    finalAnswer, transcript,
     toolUses,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     costUsd: undefined,
@@ -43,6 +43,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
   const host = task.host ? await startAuthHost(deployment, task.host.urlElicitation === "capable", e => hostEvents.push(e)) : undefined;
   const session = await connectMcp(host?.mcpUrl ?? deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
   const toolUses: ToolUse[] = [];
+  const transcript: TranscriptEntry[] = [];
   let turn = 1;
   let finalAnswer = "";
   try {
@@ -63,7 +64,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
       }
       await task.reference({
         world,
-        answer: text => { finalAnswer = text; },
+        answer: text => { finalAnswer = text; transcript.push({ kind: "assistant", turn, text }); },
         call: async (tool, args) => {
           const result = await session.call(tool, args);
           toolUses.push({
@@ -75,6 +76,8 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
             resultText: result.text,
             resultBlocks: result.content,
           });
+          transcript.push({ kind: "tool_result", turn, id: toolUses.at(-1)!.id,
+            isError: result.isError, text: result.text, chars: result.text.length });
           return result;
         },
         nextTurn: async () => {
@@ -83,7 +86,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
           const proceed = await followUp?.before?.({
             world,
             deployment,
-            trace: emptyTrace(toolUses),
+            trace: emptyTrace(toolUses, finalAnswer, transcript),
             note: () => {},
           });
           return proceed !== false;
@@ -92,7 +95,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
     }
     if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
     world.programs = deployment.programs;
-    const trace = emptyTrace(toolUses, finalAnswer);
+    const trace = emptyTrace(toolUses, finalAnswer, transcript);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     const correct = task.grade({ world, trace });
     const regressions = mode === "reference" ? counterexamples(task, world, trace) : [];
