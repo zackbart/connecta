@@ -422,40 +422,91 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
   let buffer: Uint8Array | undefined;
   let buffered = 0;
   const sse = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
-  // workerd applies BOM stripping to later decode() chunks too. Preserve
-  // embedded resource BOMs and strip only the SSE stream's initial BOM here.
+  // Decode an entire SSE message once. Its byte buffer has no per-chunk or
+  // per-line objects, and preserves embedded resource BOMs on workerd too.
   const decoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false });
-  let firstDecoded = true;
-  let lineBuffer = "";
-  let scanned = 0;
-  let data: string[] = [];
-  const lineEnd = /[\r\n]/g;
-  const consume = (decoded: string, eof = false): string | undefined => {
-    lineBuffer += decoded;
-    while (true) {
-      lineEnd.lastIndex = scanned;
-      const ending = lineEnd.exec(lineBuffer);
-      if (!ending) { scanned = lineBuffer.length; return; }
-      // A CR split from its possible LF must wait for the next chunk.
-      if (lineBuffer[ending.index] === "\r" && ending.index + 1 === lineBuffer.length && !eof) {
-        scanned = ending.index;
-        return;
+  let data = new Uint8Array(0);
+  let dataBytes = 0;
+  let hasData = false;
+  const newline = new Uint8Array([10]);
+  const field = [100, 97, 116, 97, 58]; // data:
+  const bom = [239, 187, 191];
+  let bomOffset = 0;
+  let fieldOffset = 0;
+  // 0: field prefix, 1: optional value space, 2: data value, 3: ignored line.
+  let state = 0;
+  let lineBytes = false;
+  let skipLf = false;
+  const append = (value: Uint8Array) => {
+    const needed = dataBytes + value.byteLength;
+    if (needed > limit) throw exceeded();
+    if (needed > data.length) {
+      const next = new Uint8Array(Math.min(limit, Math.max(65_536, needed, data.length * 2)));
+      next.set(data.subarray(0, dataBytes));
+      data = next;
+    }
+    data.set(value, dataBytes);
+    dataBytes = needed;
+  };
+  const beginData = () => {
+    if (hasData) append(newline);
+    hasData = true;
+  };
+  const consume = (chunk: Uint8Array): string | undefined => {
+    for (let offset = 0; offset < chunk.length;) {
+      const byte = chunk[offset]!;
+      if (skipLf) {
+        skipLf = false;
+        if (byte === 10) { offset++; continue; }
       }
-      const width = lineBuffer[ending.index] === "\r" && lineBuffer[ending.index + 1] === "\n" ? 2 : 1;
-      const line = lineBuffer.slice(0, ending.index);
-      lineBuffer = lineBuffer.slice(ending.index + width);
-      scanned = 0;
-      if (line === "") {
-        const json = data.join("\n");
-        data = [];
-        if (!json) continue;
-        const message: unknown = JSON.parse(json);
-        if (skillObject(message) && message.id === rpcId && ("result" in message || "error" in message)) return json;
-      } else {
-        const colon = line.indexOf(":");
-        const field = colon === -1 ? line : line.slice(0, colon);
-        if (field === "data") data.push(colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, ""));
+      // Strip exactly one initial UTF-8 BOM, even across single-byte chunks.
+      if (bomOffset >= 0) {
+        if (byte === bom[bomOffset]) {
+          if (++bomOffset === bom.length) bomOffset = -1;
+          offset++;
+          continue;
+        }
+        if (bomOffset) { lineBytes = true; state = 3; }
+        bomOffset = -1;
       }
+      if (byte === 10 || byte === 13) {
+        if (lineBytes) {
+          if (state === 0 && fieldOffset === 4) beginData();
+        } else {
+          const json = hasData && dataBytes ? decoder.decode(data.subarray(0, dataBytes)) : "";
+          dataBytes = 0;
+          hasData = false;
+          if (json) {
+            const message: unknown = JSON.parse(json);
+            if (skillObject(message) && message.id === rpcId && ("result" in message || "error" in message)) {
+              data = new Uint8Array(0);
+              return json;
+            }
+          }
+        }
+        state = 0;
+        fieldOffset = 0;
+        lineBytes = false;
+        skipLf = byte === 13;
+        offset++;
+        continue;
+      }
+      lineBytes = true;
+      if (state === 0) {
+        if (byte === field[fieldOffset]) {
+          if (++fieldOffset === field.length) { beginData(); state = 1; }
+        } else state = 3;
+        offset++;
+        continue;
+      }
+      if (state === 1) {
+        state = 2;
+        if (byte === 32) { offset++; continue; }
+      }
+      let end = offset;
+      while (end < chunk.length && chunk[end] !== 13 && chunk[end] !== 10) end++;
+      if (state === 2) append(chunk.subarray(offset, end));
+      offset = end;
     }
   };
   const terminalResponse = async (json: string) => {
@@ -473,10 +524,6 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
       const chunk = await reader.read();
       if (signal?.aborted) throw signal.reason;
       if (chunk.done) {
-        if (sse) {
-          const terminal = consume(decoder.decode(), true);
-          if (terminal !== undefined) return await terminalResponse(terminal);
-        }
         break;
       }
       bytes += chunk.value.byteLength;
@@ -494,20 +541,14 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
         }
         continue;
       }
-      let decoded = decoder.decode(chunk.value, { stream: true });
-      if (firstDecoded && decoded.length) {
-        firstDecoded = false;
-        if (decoded.startsWith("\uFEFF")) decoded = decoded.slice(1);
-      }
-      const terminal = consume(decoded);
+      const terminal = consume(chunk.value);
       if (terminal !== undefined) return await terminalResponse(terminal);
     }
     if (sse) throw new ConnectorCallError("connector_call_failed", "Downstream Skills stream ended without a terminal RPC response.");
     if (buffer && buffered) chunks.push(buffer.subarray(0, buffered));
-    let next = 0;
     return new Response(new ReadableStream<Uint8Array>({
       pull(controller) {
-        const chunk = chunks[next++];
+        const chunk = chunks.shift();
         if (chunk) controller.enqueue(chunk);
         else controller.close();
       },

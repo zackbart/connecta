@@ -223,6 +223,32 @@ describe("remote MCP Skills transport", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it("INV-8: consumes single-byte SSE chunks with bounded buffering and an initial split BOM", async () => {
+    const f = fixture(rpc => {
+      const bytes = new TextEncoder().encode(`\uFEFFdata: ${" ".repeat(256 * 1024)}${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: complete({ skills: [skill()] }) })}\r\n\r\n`);
+      let offset = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { if (offset < bytes.length) controller.enqueue(bytes.subarray(offset, ++offset)); else controller.close(); },
+      }, { highWaterMark: 0 }), { headers: { "content-type": "text/event-stream" } });
+    });
+    expect(await f.downstream.list(f.context())).toEqual([skill()]);
+  }, 30_000);
+
+  it("INV-8: consumes many short SSE data lines without retaining per-line strings", async () => {
+    const f = fixture(rpc => {
+      const block = new TextEncoder().encode("data:   \n".repeat(8192));
+      let blocks = 227;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (blocks-- > 0) controller.enqueue(block);
+          else if (blocks === -1) controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: complete({ skills: [skill()] }) })}\n\n`));
+          else controller.close();
+        },
+      }, { highWaterMark: 0 }), { headers: { "content-type": "text/event-stream" } });
+    });
+    expect(await f.downstream.list(f.context())).toEqual([skill()]);
+  }, 30_000);
+
   it("INV-8: rejects an SSE response ending without a matching terminal result", async () => {
     const f = fixture(() => new Response(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: 999, result: complete({ skills: [skill()] }) })}\n\n`, { headers: { "content-type": "text/event-stream" } }));
     await expect(f.downstream.list(f.context())).rejects.toThrow();
