@@ -73,7 +73,7 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
-import { downstreamInputCapabilities } from "../downstream-input.js";
+import { downstreamInputCapabilities } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -2761,9 +2761,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           );
         }
         let output: StandardSchemaV1 | undefined;
+        const outputError = (code: number, message: string): unknown => atMcpBoundary(ctx,
+          new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
         if (toolDefinition?.outputSchema) {
           try { output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType); }
-          catch { throw new ConnectorCallError("invalid_args", "The downstream tool has an invalid output schema. Nothing was dispatched."); }
+          catch { throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`); }
         }
         const result = await client
           .callTool(
@@ -2787,9 +2789,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           return result;
         }
         if (output && !result.isError) {
-          if (result.structuredContent === undefined) throw new ConnectorCallError("connector_call_failed", "The downstream omitted its declared structured output.");
+          if (result.structuredContent === undefined) throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
           const validation = await output["~standard"].validate(result.structuredContent);
-          if (validation.issues) throw new ConnectorCallError("connector_call_failed", "The downstream result does not match its declared output schema.");
+          if (validation.issues) throw outputError(-32602, "Structured content does not match the tool's output schema: validation failed");
         }
         return result;
       } catch (err) {

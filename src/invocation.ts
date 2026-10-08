@@ -39,8 +39,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationDigest, resolveInvocationAuth } from "./invocation-auth.js";
-import { downstreamContinuation } from "./downstream-input.js";
-import { isInputRequiredResult, type InputRequiredResult } from "@modelcontextprotocol/server";
+import { downstreamContinuation, isDownstreamInputResult, type DownstreamInputResult } from "./downstream-input-context.js";
 
 function defined<T extends object>(
   values: T,
@@ -234,7 +233,7 @@ export interface InvocationContext<T> {
   dispatchSignal?: AbortSignal;
   unwrapResult?: boolean;
   /** MCP direct calls capture a suspension before redaction and value shaping. */
-  processInputRequired?: (value: InputRequiredResult, resolved: ResolvedCatalogTool, secrets: SentSecrets) => T | Promise<T>;
+  processInputRequired?: (value: DownstreamInputResult, resolved: ResolvedCatalogTool, secrets: SentSecrets) => T | Promise<T>;
   /**
    * Caller-owned result policy. MCP applies result paging here; code mode
    * normally accepts the already-unwrapped value unchanged.
@@ -718,7 +717,7 @@ export class InvocationService {
                   catch: (error) => error,
                 }),
               );
-              if (target.connector.kind === "mcp" && isInputRequiredResult(reply)) {
+              if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
                 if (!context.processInputRequired) throw new ConnectorCallError("input_required_unsupported",
                   "The downstream returned input_required. Use the equivalent direct MCP call to provide input.");
                 const value = yield* Effect.tryPromise({

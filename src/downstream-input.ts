@@ -10,6 +10,7 @@ import { ConnectorCallError } from "./errors.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { inputRetryKeys } from "./storage/keys.js";
 import { REQUEST_STATE_TTL_MS, MAX_INPUT_ROUNDS, invalidRequestState, requestDigest, stateObject } from "./request-state.js";
+import { bindDownstreamCapabilities, downstreamInputCapabilities, bindDownstreamContinuation, clearDownstreamContinuation } from "./downstream-input-context.js";
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 export const MAX_RELAY_STATE_CHARS = 128 * 1024;
@@ -50,29 +51,8 @@ interface PendingInput {
   inputs: InputBindings;
 }
 
-interface InputContinuation {
-  requestState?: string;
-  inputResponses: Record<string, unknown>;
-}
 const pendingInputs = new WeakMap<object, PendingInput>();
-const continuations = new WeakMap<object, { connector: string; address: string; input: InputContinuation }>();
-const capabilities = new WeakMap<object, { elicitation?: { form?: Record<string, never>; url?: Record<string, never> } }>();
 const modernRequests = new WeakSet<object>();
-
-/** Only the relayable declarations travel to the downstream SDK, never grants. */
-export function downstreamInputCapabilities(scope: object) {
-  return capabilities.get(scope) ?? {};
-}
-
-/** The host binds this to one verified target before invocation constructs its context. */
-export function downstreamContinuation(scope: object, connector: string, address: string): InputContinuation | undefined {
-  const continuation = continuations.get(scope);
-  if (!continuation) return undefined;
-  if (continuation.connector !== connector || continuation.address !== address) {
-    throw new ConnectorCallError("input_required_invalid", "The resolved target no longer matches this continuation.");
-  }
-  return continuation.input;
-}
 
 function withinBudget(value: unknown): boolean {
   try { return new TextEncoder().encode(JSON.stringify(value)).byteLength <= MAX_PAYLOAD_BYTES; }
@@ -158,7 +138,7 @@ export class DownstreamElicitation {
     const modern = envelope?.[PROTOCOL_VERSION_META_KEY] === "2026-07-28";
     if (modern) modernRequests.add(this.options.requestScope);
     else modernRequests.delete(this.options.requestScope);
-    capabilities.set(this.options.requestScope, modern && stateObject(elicitation) ? {
+    bindDownstreamCapabilities(this.options.requestScope, modern && stateObject(elicitation) ? {
       elicitation: {
         ...(stateObject(elicitation.form) || Object.keys(elicitation).length === 0 ? { form: {} } : {}),
         ...(stateObject(elicitation.url) ? { url: {} } : {}),
@@ -209,11 +189,11 @@ export class DownstreamElicitation {
     // Claim before any downstream dispatch, including decline/cancel. A failed
     // or ambiguous continuation must not leave a reusable write permission.
     if (!await storage.compareAndSet(inputRetryKeys.used(state.nonce), null, "used", { ttlSeconds: REQUEST_STATE_TTL_MS / 1000 })) return invalidRequestState();
-    continuations.set(this.options.requestScope, { connector: state.connector, address: state.target, input: {
+    bindDownstreamContinuation(this.options.requestScope, { connector: state.connector, address: state.target, input: {
       ...(state.requestState !== undefined ? { requestState: state.requestState } : {}), inputResponses: responses,
     } });
     try { return await this.finish(tool, args, context, await operation(), state); }
-    finally { continuations.delete(this.options.requestScope); }
+    finally { clearDownstreamContinuation(this.options.requestScope); }
   }
 
   async finish(tool: string, args: Record<string, unknown>, context: ServerContext, result: ToolResult, previous?: { round: number; expiresAt: number }): Promise<ToolResult | InputRequiredResult> {

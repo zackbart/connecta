@@ -318,7 +318,7 @@ describe("downstream input relay", () => {
       expect(first.resultType).toBe("input_required");
       const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
       expect(result.isError === true).toBe(invalidOutput);
-      if (invalidOutput) expect(result.structuredContent.error.code).toBe("connector_call_failed");
+      if (invalidOutput) expect(result.structuredContent.error.code).toBe("invalid_args");
     }
   });
 });
