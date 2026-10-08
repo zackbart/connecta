@@ -2326,6 +2326,9 @@ it.each([undefined, 30])("INV-7: direct and guest calls share default and reques
   };
   const app = makeDeployment({ connectors: [connector], executor, calls: { defaultTimeoutMs: 40 }, execute: { hostCallTimeoutMs: 10 } });
   try {
+    const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: "test-token-123" }));
+    const advertised = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+    expect(advertised.description).toContain("0.04s/host call");
     const invoke = async (name: string, args: object) => (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: "test-token-123" }))).result;
     const direct = await invoke("call_tool", { address: "deadline.read", resultMode: "value", ...(requestedMs ? { timeoutMs: requestedMs } : {}) });
     const guest = await invoke("execute_code", { code: "async () => await connecta.call({ address: 'deadline.read' })" });

@@ -481,8 +481,9 @@ program error. There is no prose matching and no 64-entry ring. The frame id is
 kept by guest Error identity; copied public `code`/`details` cannot authenticate
 an error. Frames from another run and invented ids cannot identify a host failure.
 The guest JSON codec, Object prototype, and Promise prototype are immutable.
-Promise race and species are protected too, so a program cannot intercept a
-private frame during bridge decoding, async return adoption, or serialization.
+Promise race and species are protected too. Host completion uses captured array
+iteration and immutable frames, so a program cannot intercept or change a private
+frame during bridge decoding, async return adoption, or serialization.
 Program diagnostic fields are bounded before transport, including escaped text;
 a large custom error name cannot turn a failure into a truncated success.
 

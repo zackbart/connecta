@@ -29,6 +29,21 @@ export function guestPrelude(secret: string): string {
   const NativePromise = Promise;
   const nativeResolve = Function.prototype.call.bind(NativePromise.resolve);
   const nativeRace = Function.prototype.call.bind(NativePromise.race);
+  const isArray = Array.isArray;
+  const iteratorKey = Symbol.iterator;
+  const arrayValues = Function.prototype.call.bind(Array.prototype.values);
+  const arrayNext = Function.prototype.call.bind(Object.getPrototypeOf([][Symbol.iterator]()).next);
+  function safeRace(values) {
+    // Upstream constructs its completion array after the program starts.
+    // Use captured array iteration, with private own methods, so neither a
+    // replaced iterator factory nor iterator.next can observe its promises.
+    if (isArray(values)) {
+      const iterator = arrayValues(values);
+      values = { __proto__: null, [iteratorKey]: () => ({ __proto__: null,
+        next: () => arrayNext(iterator) }) };
+    }
+    return nativeRace(HostPromise, values);
+  }
   // The upstream Worker starts its Promise.race after invoking the program.
   // Its deadline must not use a resolve function replaced during that invocation.
   class HostPromise extends NativePromise {}
@@ -39,7 +54,7 @@ export function guestPrelude(secret: string): string {
   Object.freeze(HostPromise.prototype);
   Object.freeze(HostPromise);
   Object.defineProperties(NativePromise, {
-    race: { value: values => nativeRace(HostPromise, values), writable: false, configurable: false },
+    race: { value: safeRace, writable: false, configurable: false },
     [Symbol.species]: { value: NativePromise, configurable: false }
   });
   // Async return values are adopted through their prototype's then method.
@@ -138,7 +153,7 @@ export function guestPrelude(secret: string): string {
         return result;
       } catch (error) {
         const hostId = weakGet(frames, error);
-        if (hostId) return { __connectaFailure: { token, hostId } };
+        if (hostId) return freeze({ __connectaFailure: freeze({ token, hostId }) });
         let name = "Error", message = "Program threw a value.", stack = "";
         try {
           if (typeof error === "string") message = error;
@@ -151,8 +166,8 @@ export function guestPrelude(secret: string): string {
         // Three 1,000-character fields fit the transport cap even when every
         // character needs a six-character JSON escape. Failures never truncate
         // into an ordinary successful program result.
-        return { __connectaFailure: { token, program: { name, message: slice(message, 0, 1000), stack,
-          baseline: typeof baseline === "string" ? slice(baseline, 0, 1000) : "" } } };
+        return freeze({ __connectaFailure: freeze({ token, program: freeze({ name, message: slice(message, 0, 1000), stack,
+          baseline: typeof baseline === "string" ? slice(baseline, 0, 1000) : "" }) }) });
       }
     };
   }});

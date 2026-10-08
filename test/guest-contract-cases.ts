@@ -854,6 +854,21 @@ return fs;
     },
   })),
   {
+    clauses: "E6, X11",
+    name: "INV-6: completion uses captured array iteration despite guest iterator hooks",
+    code: `async () => {
+      const iterator = [][Symbol.iterator]();
+      const prototype = Object.getPrototypeOf(iterator);
+      Reflect.set(Array.prototype, Symbol.iterator, function () { throw new Error("guest iterator used"); });
+      Reflect.set(prototype, "next", function () { throw new Error("guest next used"); });
+      await connecta.call("missing.read");
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "unknown_address" });
+    },
+  },
+  {
     clauses: "P1",
     name: "TypeScript syntax is not JavaScript and does not run",
     code: `async () => {

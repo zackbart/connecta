@@ -1523,7 +1523,7 @@ export function registerExecuteTool(
     {
       description: executeDescription(
         emitBudgets,
-        hostLimits,
+        { ...hostLimits, hostCallTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs },
         hasConnectorGuides(connectors),
         connectors,
         maxWrites,
