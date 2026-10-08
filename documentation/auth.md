@@ -209,8 +209,10 @@ absence of side effects. Restricted downstream credentials do not replace grants
 
 `[]` hides all connectors from discovery and the connection UI. Address-only or
 disqualified guarded grants can leave a connector visible with its tool unreachable.
-Failed remote loads are errors, not empty catalogs. Expired entries and failed
-pages never serve a stale fallback. Personal OAuth ownership and credential
+Failed remote loads are errors, not empty catalogs. A transient first-page tool
+listing failure may serve complete facts in the same auth partition for five
+minutes after expiry. Failed pagination, permission and auth failures do not
+use this fallback. The expired deadline cannot authorize auth recovery. Personal OAuth ownership and credential
 administration are separate from visibility; program writes follow the endpoint's trust tier and host approval. `test/identity-scope.test.ts` exercises these boundaries.
 
 ## Migrating static bearer clients

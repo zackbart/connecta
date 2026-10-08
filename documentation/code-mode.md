@@ -418,10 +418,17 @@ partitioned catalog cache. The decoded URI must exactly match an advertised
 resource or match an advertised URI template. An unmatched URI fails with a
 fixed `not_found` message before any downstream read. Template matching keeps
 the scheme and authority fixed and supports bounded RFC 6570 scalar and list
-expansions, including prefix modifiers. Variables cannot supply slashes,
-backslashes, dot traversal, a scheme change, query delimiters or control
-characters, including through repeated percent encoding. Ambiguous adjacent
-expressions, mixed exploded composites and path-list explosions fail closed.
+expansions, including prefix modifiers and safe multi-segment `{+path}` and
+`{/p*}` paths. Variables cannot supply authority, backslashes, dot segments,
+a scheme change, query delimiters, controls or Unicode format characters,
+including through repeated percent encoding. The matcher scans forward to the
+leftmost following literal without backtracking. Adjacent expressions and
+literals that the preceding expression can contain are refused with
+`resource_template_ambiguous`. Matching all templates is capped at 262144
+combined template and URI characters per read, with
+`resource_match_budget_exceeded` beyond that bound. Operator status retains
+each typed refusal once, without URI or template text. Mixed exploded
+composites remain unsupported.
 Connecta passes an admitted decoded URI as an opaque MCP `resources/read`
 argument to the configured endpoint. It never fetches that
 URI or creates a connector from it.

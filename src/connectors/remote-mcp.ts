@@ -44,7 +44,7 @@ import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
-import { catalogClientOptions, catalogItems, observeCompletedCatalogRefresh, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch } from "../catalog-cache.js";
+import { catalogClientOptions, catalogItems, observeCompletedCatalogRefresh, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch, observeCatalogExpiry } from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -1572,7 +1572,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const listTools = client.listTools.bind(client);
     client.listTools = (params, options) => cache.withListing(listingContext(options), async () => {
       const before = toolPages;
-      const result = await listTools(params, options);
+      let result: ListToolsResult;
+      try { result = await listTools(params, options); }
+      catch (error) {
+        const bounded = atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [cache.currentContext().signal]);
+        const transient = error instanceof SdkHttpError && [502, 503, 504].includes(error.status) || bounded instanceof ConnectorCallError && bounded.code === "unavailable";
+        const fallback = transient && toolPages === before ? await cache.fallbackTools() : undefined;
+        if (!fallback) throw error;
+        return fallback;
+      }
       if (toolPages !== before && params?.cursor === undefined) {
         const refresh = await cache.completeCatalogRefresh(result);
         if (refresh) {
@@ -1611,7 +1619,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       const clean = cache.intake(ctx, method, page);
       if (method === "tools/list") toolPages++;
-      if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now());
+      if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
       const tools = catalogItems(method, clean).filter(item => {
         const name = method === "tools/list" ? item.name : method === "resources/list" ? (item as { uri: string }).uri : (item as { uriTemplate: string }).uriTemplate;
         if (walk.names.has(name)) return false;
@@ -1637,6 +1645,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         walk.first.ttlMs = Math.min(walk.first.ttlMs, clean.ttlMs);
         if (clean.cacheScope !== "public") walk.first.cacheScope = "private";
       }
+      observeCatalogExpiry(ctx, method, walk.first.ttlMs);
       return result;
     }) as Client["request"];
   };

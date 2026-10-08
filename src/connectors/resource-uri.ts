@@ -94,7 +94,7 @@ function expressionCharacter({ operator, variables }: Expression, character: str
 
 // KMP gives a single forward scan even when a literal has repeated prefixes.
 function findLiteral(uri: string, literal: string, offset: number): number {
-  const failure = new Array<number>(literal.length).fill(0);
+  const failure = Array.from({ length: literal.length }, () => 0);
   for (let index = 1, prefix = 0; index < literal.length; index++) {
     while (prefix && literal[index] !== literal[prefix]) prefix = failure[prefix - 1]!;
     if (literal[index] === literal[prefix]) prefix++;

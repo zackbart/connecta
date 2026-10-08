@@ -378,13 +378,21 @@ listings without `ttlMs`. Positive hints are bounded by
 ceiling); an explicit zero is never reused. Both bounds are nonnegative finite
 seconds (fractions round down to milliseconds), with min <= max <= 86400. `persistCatalog` and `staleCatalogSeconds`
 have been removed. SQL storage is always used for remote catalogs; dynamic
-custom connectors are listed anew in each request, and static catalogs remain
-in configuration. There is no stale-window or deferred catalog refresh.
+custom connectors are listed anew in each request; authenticated callers may
+retain a complete private fallback, and static catalogs remain
+in configuration. After a transient first-page tool listing failure, ordinary calls
+may use a complete catalog for up to five minutes after its expiry in the same
+auth partition. Partial walks, permission and auth failures do not use this
+fallback. Resources require unexpired inventories. There is no deferred refresh.
+Host-only provenance carries each catalog's original fetch time, TTL and expiry,
+and whether it was a fallback, through classification and request-local copies.
+Zero TTL and stale fallbacks cannot authorize post-entry auth recovery.
 
 A manifest is published by CAS only after every UTF-8 chunk is written. It
 records the original fetch time, absolute expiry, revision, fingerprint, and
 monotonic stamp. Readers verify all chunks and fingerprint before accepting it.
-Entries expire at the bounded TTL, generations after 48 hours; invalidation
+Freshness expires at the bounded TTL; tool facts remain for the five-minute
+fallback window, and generations expire after 48 hours; invalidation
 rotates the generation, and old chunks expire without becoming reachable
 again. Remote clients pin that generation before listing, including SDK cache
 refreshes. Each new listing pins the current generation, so a live client can

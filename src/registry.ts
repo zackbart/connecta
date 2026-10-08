@@ -1,7 +1,7 @@
 import { markCatalogFreshness, carryCatalogFreshness } from "./catalog-freshness.js";
 import { activityRequest } from "./activity-request.js";
 import type { CatalogDriftActivityContext } from "./activity.js";
-import { attachCatalogCache, catalogFetchedAt, invalidateCatalogCache, observeUncachedCatalogRefresh, type CatalogToolFingerprint } from "./catalog-cache.js";
+import { attachCatalogCache, catalogExpiry, customCatalogFallback, storeCustomCatalogFallback, catalogFetchedAt, invalidateCatalogCache, observeUncachedCatalogRefresh, type CatalogToolFingerprint } from "./catalog-cache.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
 import {
@@ -990,7 +990,9 @@ export class Registry implements RegistryView {
     try {
       listed = await connector.listTools(ctx);
     } catch (error) {
-      throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
+      const fallback = error instanceof ConnectorCallError && error.code === "unavailable" ? await customCatalogFallback(ctx, id).catch(() => undefined) : undefined;
+      if (!fallback) throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
+      listed = fallback;
     }
     const tools = redactCatalog(ctx, listed).map(({ classification: _ignored, ...fact }) => fact);
     if (tools.length > MAX_CATALOG_TOOLS || encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
@@ -1002,12 +1004,16 @@ export class Registry implements RegistryView {
     const review = catalogReviewOf(connector);
     if (review) await observeReviewedDrift(connector, review, accepted, this.opts.logger);
     if (catalogFetchedAt(ctx) === undefined) {
+      try { await storeCustomCatalogFallback(ctx, id, facts); }
+      catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
       try { await observeUncachedCatalogRefresh(ctx, id, facts); }
       catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
     }
     this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
-    this.catalogAccess.set(id, { state: "fresh", observedAt: new Date().toISOString() });
-    return markCatalogFreshness(facts, 0);
+    const provenance = catalogExpiry(ctx);
+    const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
+    this.catalogAccess.set(id, { state: freshUntil > Date.now() ? "fresh" : "stale", observedAt: new Date().toISOString() });
+    return markCatalogFreshness(facts, freshUntil);
   }
 
   /** The served catalog excludes control-character names; raw caches stay complete. */

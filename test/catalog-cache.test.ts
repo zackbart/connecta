@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { catalogClientOptions, attachCatalogCache, catalogIntake, invalidateCatalogCache, observeCompletedCatalogRefresh, type CompletedCatalogRefresh } from "../src/catalog-cache.js";
+import { catalogClientOptions, catalogExpiry, attachCatalogCache, catalogIntake, invalidateCatalogCache, observeCompletedCatalogRefresh, type CompletedCatalogRefresh } from "../src/catalog-cache.js";
+import { catalogIsFresh } from "../src/catalog-freshness.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -51,7 +52,7 @@ async function fixture(options: { ttl?: number; scope?: "public" | "private"; le
   const store = await storage();
   const id = `catalog_${crypto.randomUUID().replaceAll("-", "")}`;
   let tokenA = TOKEN_A;
-  let listings = 0; let mode: "ok" | "name" | "error" | "partial" | "header" | "paged" = "ok";
+  let listings = 0; let mode: "ok" | "name" | "error" | "transient" | "partial" | "header" | "paged" = "ok";
   const requests: string[] = [];
   const server = httpDownstream(mcp => mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })));
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -61,6 +62,7 @@ async function fixture(options: { ttl?: number; scope?: "public" | "private"; le
     if (body?.method === "tools/list") {
       listings++;
       const token = request.headers.get("authorization")!.slice(7);
+      if (mode === "transient") return new Response(null, { status: 503 });
       if (mode === "error" || (mode === "partial" && body.params?.cursor)) return new Response(`Refused ${token}`, { status: 403 });
       return Response.json({ jsonrpc: "2.0", id: body.id, result: {
         ...(options.legacy ? {} : { resultType: "complete" }),
@@ -393,16 +395,19 @@ describe("SQL-backed SDK catalog cache", () => {
     const f = await fixture(options);
     let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
     const initial = f.registry();
-    await f.read(initial);
+    const initialTools = await f.read(initial);
+    expect(catalogIsFresh(initialTools)).toBe(true);
     const fetched = now;
     now += 1;
     const restarted = f.registry();
-    await f.read(restarted);
+    const cachedTools = await f.read(restarted);
+    expect(catalogIsFresh(cachedTools)).toBe(true);
     expect(restarted.catalogAgeMs(f.id)).toBe(now - fetched);
     expect(f.listings()).toBe(1);
     now += options.expected - 2;
     await f.read(f.registry()); expect(f.listings()).toBe(1);
     now += 2;
+    expect(catalogIsFresh(cachedTools)).toBe(false);
     await f.read(f.registry()); expect(f.listings()).toBe(2);
   });
 
@@ -727,4 +732,57 @@ describe("SQL-backed SDK catalog cache", () => {
       release.resolve(); vi.useRealTimers(); await settled.promise; await closing;
     }
   });
+});
+
+
+it.each([0, 1_000])("INV-9: host expiry records original fetch age and zero TTL %s through cache hits", async ttlMs => {
+  const store = await storage(); const ctx = connectorContext(store);
+  const connector = remoteMcp(`expiry_${crypto.randomUUID().replaceAll("-", "")}`, { url: "https://downstream.test/mcp", _transportFactory: () => {
+    const [client, peer] = InMemoryTransport.createLinkedPair();
+    const server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: {} } });
+    server.setRequestHandler("tools/list", async () => ({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs, cacheScope: "private" }));
+    const connected = server.connect(peer);
+    closers.push(async () => { await connected; await server.close(); });
+    return client;
+  } });
+  closers.push(() => connector.closeScope!(ctx));
+  let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
+  await connector.listTools(ctx);
+  const fetched = now;
+  expect(catalogExpiry(ctx)).toEqual({ fetchedAt: fetched, ttlMs, expiresAt: fetched + ttlMs, staleFallback: false });
+  now += 500;
+  await connector.listTools(ctx);
+  expect(catalogExpiry(ctx)).toEqual({ fetchedAt: ttlMs ? fetched : now, ttlMs, expiresAt: (ttlMs ? fetched : now) + ttlMs, staleFallback: false });
+});
+
+it("INV-9 INV-8: stale tool fallback preserves expiry, remains partitioned and ends after five minutes", async () => {
+  const f = await fixture({ ttl: 1_000 });
+  let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
+  const root = f.registry();
+  await f.read(root);
+  now += 1_100;
+  f.mode("error");
+  // Permission failures never reuse stale facts.
+  await expect(f.read(root)).rejects.toMatchObject({ code: "provider_permission_denied" });
+  f.mode("transient");
+  const fallback = await f.read(root);
+  expect(fallback).toHaveLength(1);
+  expect(catalogIsFresh(fallback)).toBe(false);
+  expect(root.catalogAgeMs(f.id)).toBe(1_100);
+  expect((await root.statusFor(f.id, BASE)).catalogAccess?.state).toBe("stale");
+  await expect(f.read(root, "b")).rejects.toMatchObject({ code: "connector_call_failed" });
+  now += 300_000;
+  await expect(f.read(root)).rejects.toMatchObject({ code: "connector_call_failed" });
+});
+
+
+it("INV-9 INV-8: an explicit zero-TTL refresh removes a previous reusable listing", async () => {
+  const store = await storage(); const ctx = connectorContext(store);
+  const cache = await catalogClientOptions(ctx, `zero_${crypto.randomUUID().replaceAll("-", "")}`, "configuration", "grant");
+  const key = { method: "tools/list", partition: JSON.stringify(["server", cache.cachePartition]) };
+  const tools = [{ name: "read", inputSchema: { type: "object" as const } }];
+  await cache.responseCacheStore!.set(key, { value: JSON.stringify({ tools, ttlMs: 60_000 }), expiresAt: Date.now() + 60_000 });
+  expect(await cache.responseCacheStore!.get(key)).toBeDefined();
+  await cache.responseCacheStore!.set(key, { value: JSON.stringify({ tools, ttlMs: 0 }), expiresAt: Date.now() });
+  expect(await cache.responseCacheStore!.get(key)).toBeUndefined();
 });

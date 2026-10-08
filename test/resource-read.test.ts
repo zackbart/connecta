@@ -347,7 +347,7 @@ it.each([
   [Array.from({ length: 500 }, (_, i) => `x:{value}/literal${i}!`), "resource_match_budget_exceeded"],
 ] as const)("INV-3 INV-6 INV-7: typed template refusal prevents dispatch and appears once in operator status (case %#)", async (templates, code) => {
   const f = advertisedRemote([...templates]);
-  const uri = "x:" + ",".repeat(8189) + "?";
+  const uri = "x:" + "a".repeat(4093) + "?";
   for (let attempt = 0; attempt < 2; attempt++) {
     expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({ error: { code, retryable: false } });
   }

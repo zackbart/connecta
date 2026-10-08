@@ -10,7 +10,7 @@ import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTE
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { responseCacheKeys } from "./storage/keys.js";
-import type { ConnectorContext, KVStorage } from "./types.js";
+import type { ConnectorContext, KVStorage, ToolDef } from "./types.js";
 
 interface CatalogCacheSettings {
   storage: KVStorage;
@@ -117,9 +117,30 @@ function catalogSchema(method: CatalogMethod) {
   return method === "tools/list" ? specTypeSchemas.ListToolsResult : method === "resources/list" ? specTypeSchemas.ListResourcesResult : specTypeSchemas.ListResourceTemplatesResult;
 }
 
-const fetchedAt = new WeakMap<ConnectorContext, number>();
-export function observeCatalogFetch(ctx: ConnectorContext, at: number): void { fetchedAt.set(ctx, at); }
-export function catalogFetchedAt(ctx: ConnectorContext): number | undefined { return fetchedAt.get(ctx); }
+export interface CatalogExpiry {
+  fetchedAt: number;
+  ttlMs: number;
+  expiresAt: number;
+  staleFallback: boolean;
+}
+const expiry = new WeakMap<ConnectorContext, Map<CatalogMethod, CatalogExpiry>>();
+const fetches = new WeakMap<ConnectorContext, Map<CatalogMethod, number>>();
+export function observeCatalogFetch(ctx: ConnectorContext, at: number, method: CatalogMethod = "tools/list"): void {
+  const methods = fetches.get(ctx) ?? new Map();
+  methods.set(method, at); fetches.set(ctx, methods);
+}
+export function catalogFetchedAt(ctx: ConnectorContext, method: CatalogMethod = "tools/list"): number | undefined { return fetches.get(ctx)?.get(method); }
+export function catalogExpiry(ctx: ConnectorContext, method: CatalogMethod = "tools/list"): CatalogExpiry | undefined { return expiry.get(ctx)?.get(method); }
+export function observeCatalogExpiry(ctx: ConnectorContext, method: CatalogMethod, ttlMs: number, expiresAt?: number, staleFallback = false): void {
+  const fetchedAt = catalogFetchedAt(ctx, method) ?? Date.now();
+  const methods = expiry.get(ctx) ?? new Map();
+  methods.set(method, { fetchedAt, ttlMs, expiresAt: Math.min(expiresAt ?? Infinity, fetchedAt + ttlMs), staleFallback });
+  expiry.set(ctx, methods);
+}
+// Tool facts remain available for ordinary calls after a transient listing
+// failure for five minutes. Resources never use stale inventories. A fallback
+// carries its original expired deadline and cannot authorize auth recovery.
+const STALE_FALLBACK_MS = 300_000;
 const settings = new WeakMap<ConnectorContext, CatalogCacheSettings>();
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void { settings.set(ctx, value); }
 interface CacheScope { closed: boolean; abort: AbortController; invalidating?: Promise<void> }
@@ -247,6 +268,7 @@ export async function catalogClientOptions(
   completeCatalogRefresh: (result: ListToolsResult) => Promise<CompletedCatalogRefresh | undefined>;
   withListing: <T>(ctx: ConnectorContext, read: () => Promise<T>) => Promise<T>;
   currentContext: () => ConnectorContext;
+  fallbackTools: () => Promise<ListToolsResult | undefined>;
 }> {
   const policy = settings.get(ctx);
   const partition = JSON.stringify([policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null), ctx.baseUrl, ctx.publicUrl, authPartition]);
@@ -282,6 +304,7 @@ export async function catalogClientOptions(
     };
   };
   let lastStamp = 0;
+  let staleTools: { result: ListToolsResult; manifest: Manifest } | undefined;
   const currentGeneration = async ({ stopped, io, generation }: CacheOperation): Promise<string | undefined> => {
     const key = responseCacheKeys.generation(connectorId);
     for (let attempt = 0; attempt < 16; attempt++) {
@@ -363,7 +386,8 @@ export async function catalogClientOptions(
       const root = await address(key, operation);
       if (!root || stopped()) return undefined;
       const m = manifest(await io(() => storage.get(root)));
-      if (stopped() || !m || m.expiresAt <= Date.now()) return undefined;
+      if (stopped() || !m || m.expiresAt <= Date.now() &&
+          (key.method !== "tools/list" || m.expiresAt + STALE_FALLBACK_MS <= Date.now())) return undefined;
       const chunks: string[] = [];
       for (let i = 0; i < m.chunkCount; i++) {
         if (stopped()) return undefined;
@@ -381,9 +405,14 @@ export async function catalogClientOptions(
         (result.resultType !== undefined && result.resultType !== "complete")) return undefined;
       const validated = await catalogSchema(method)["~standard"].validate(result);
       if (stopped() || validated.issues) return undefined;
-      const clean = JSON.stringify(intake(ctx, method, validated.value));
-      observeCatalogFetch(ctx, m.fetchedAt);
-      return { value: clean, stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
+      const clean = intake(ctx, method, validated.value);
+      if (m.expiresAt <= Date.now()) {
+        if (method === "tools/list" && (!staleTools || staleTools.manifest.fetchedAt < m.fetchedAt)) staleTools = { result: clean as ListToolsResult, manifest: m };
+        return undefined;
+      }
+      observeCatalogFetch(ctx, m.fetchedAt, method);
+      observeCatalogExpiry(ctx, method, clean.ttlMs, m.expiresAt);
+      return { value: JSON.stringify(clean), stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
     },
     async set(key, entry) {
       const operation = capture();
@@ -392,19 +421,23 @@ export async function catalogClientOptions(
       if (!root || stopped()) return 0;
       const result = JSON.parse(entry.value) as CatalogResult;
       const method = key.method as CatalogMethod;
+      if (catalogTtlMs(ctx, result.ttlMs) === 0) {
+        if (!stopped() && await namespace(operation) && !stopped()) await io(() => storage.delete(root));
+        return 0;
+      }
       if (!Array.isArray(catalogItems(method, result)) || "nextCursor" in result ||
         (result.resultType !== undefined && result.resultType !== "complete")) return 0;
       // Defence in depth: the SDK catches store failures, so intake also runs on
       // the request path, where a secret-bearing name refuses the entire list.
       const value = JSON.stringify(intake(ctx, method, result));
       const fingerprint = await fingerprintSerializedCatalog(value);
-      const expiresAt = Math.min(entry.expiresAt ?? Date.now(), (catalogFetchedAt(ctx) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs));
+      const expiresAt = Math.min(entry.expiresAt ?? Date.now(), (catalogFetchedAt(ctx, method) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs));
       if (stopped() || expiresAt <= Date.now() || !await namespace(operation) || stopped()) return 0;
       const revision = crypto.randomUUID();
       const bytes = new TextEncoder().encode(value);
       const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
       let offset = 0; let chunkCount = 0;
-      const ttlSeconds = () => Math.max(0.001, (expiresAt - Date.now()) / 1000);
+      const ttlSeconds = () => Math.max(0.001, (expiresAt + (method === "tools/list" ? STALE_FALLBACK_MS : 0) - Date.now()) / 1000);
       while (offset < bytes.length) {
         if (stopped() || expiresAt <= Date.now()) return 0;
         let end = Math.min(offset + MAX_CATALOG_CHUNK_BYTES, bytes.length);
@@ -419,7 +452,7 @@ export async function catalogClientOptions(
         const previous = await io(() => storage.get(root));
         if (stopped() || expiresAt <= Date.now()) return 0;
         const stamp = Math.max(Date.now(), (manifest(previous)?.stamp ?? 0) + 1, lastStamp + 1);
-        const m: Manifest = { stamp, expiresAt, fetchedAt: catalogFetchedAt(ctx) ?? Date.now(), scope: sharing === "shared" && result.cacheScope === "public" ? "public" : "private", revision, chunkCount, fingerprint: fingerprint.fingerprint };
+        const m: Manifest = { stamp, expiresAt, fetchedAt: catalogFetchedAt(ctx, method) ?? Date.now(), scope: sharing === "shared" && result.cacheScope === "public" ? "public" : "private", revision, chunkCount, fingerprint: fingerprint.fingerprint };
         const published = await io(() => storage.compareAndSet(root, previous, JSON.stringify(m), { ttlSeconds: ttlSeconds() }));
         if (stopped()) return 0;
         if (published) { lastStamp = stamp; return stamp; }
@@ -457,6 +490,7 @@ export async function catalogClientOptions(
       if (policy && !settings.has(listingCtx)) settings.set(listingCtx, policy);
       const listing: Listing = { ctx: listingCtx, generation: {}, ended: false };
       active = listing;
+      staleTools = undefined;
       const operation = capture();
       try {
         if (resolveCredentialIdentity) listing.credentialIdentity = await operation.io(resolveCredentialIdentity);
@@ -481,9 +515,47 @@ export async function catalogClientOptions(
     tail = pending.then(() => {}, () => {});
     return pending;
   };
-  return { intake, completeCatalogRefresh, responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
+  const fallbackTools = async (): Promise<ListToolsResult | undefined> => {
+    const operation = capture();
+    if (!staleTools || operation.stopped() || !await namespace(operation) || operation.stopped() ||
+        staleTools.manifest.expiresAt + STALE_FALLBACK_MS <= Date.now()) return;
+    const { result, manifest } = staleTools;
+    observeCatalogFetch(operation.ctx, manifest.fetchedAt);
+    observeCatalogExpiry(operation.ctx, "tools/list", typeof result.ttlMs === "number" ? result.ttlMs : 0, manifest.expiresAt, true);
+    return result;
+  };
+  return { intake, completeCatalogRefresh, fallbackTools, responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
 }
 
 function isCatalogMethod(method: string): method is CatalogMethod {
   return method === "tools/list" || method === "resources/list" || method === "resources/templates/list";
+}
+
+async function customCatalogCache(ctx: ConnectorContext, connectorId: string) {
+  const credential = await ctx.credential?.getAll();
+  const auth = (await fingerprintSerializedCatalog(JSON.stringify(credential ?? null))).fingerprint;
+  const cache = await catalogClientOptions(ctx, connectorId, "custom-connector", auth);
+  const key: CacheKey = { method: "tools/list", partition: JSON.stringify(["custom-connector", cache.cachePartition]) };
+  return { cache, key };
+}
+/** Custom listings always fetch. Only an authenticated owner may retain a
+ * complete private fallback; unscoped/operator reads start no cache I/O. */
+export async function storeCustomCatalogFallback(ctx: ConnectorContext, connectorId: string, tools: readonly ToolDef[]): Promise<void> {
+  const ttlMs = catalogTtlMs(ctx, undefined);
+  observeCatalogFetch(ctx, Date.now());
+  observeCatalogExpiry(ctx, "tools/list", ttlMs);
+  if (!ttlMs || !callerOf(ctx)?.authenticated) return;
+  const { cache, key } = await customCatalogCache(ctx, connectorId);
+  await cache.withListing(ctx, async () => {
+    const result = catalogIntake(ctx, { tools: tools.map(tool => ({ ...tool, inputSchema: tool.inputSchema ?? { type: "object" } })) as ListToolsResult["tools"], ttlMs, cacheScope: "private" });
+    await cache.responseCacheStore!.set(key, { value: JSON.stringify(result), expiresAt: catalogExpiry(ctx)!.expiresAt, scope: "private" });
+  });
+}
+export async function customCatalogFallback(ctx: ConnectorContext, connectorId: string): Promise<ToolDef[] | undefined> {
+  if (!callerOf(ctx)?.authenticated) return;
+  const { cache, key } = await customCatalogCache(ctx, connectorId);
+  return cache.withListing(ctx, async () => {
+    await cache.responseCacheStore!.get(key);
+    return (await cache.fallbackTools())?.tools as ToolDef[] | undefined;
+  });
 }
