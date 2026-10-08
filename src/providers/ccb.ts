@@ -46,7 +46,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf } from "../config-schema.js";
 import { CALL_ADMISSION } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";

@@ -11,7 +11,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf } from "../config-schema.js";
 import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 export type MixpanelRegion = "us" | "eu" | "in";
 

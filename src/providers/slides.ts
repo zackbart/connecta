@@ -54,7 +54,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 export type {
   GoogleServiceAccount,

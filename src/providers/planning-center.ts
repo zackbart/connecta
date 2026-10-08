@@ -45,7 +45,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf } from "../config-schema.js";
 import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** Planning Center's REST origin. Override only for a proxy or test double. */
 export const PLANNING_CENTER_API_BASE_URL = "https://api.planningcenteronline.com";

@@ -11,7 +11,7 @@ import type {
 } from "../types.js";
 import { optionsOf } from "../config-schema.js";
 import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** RevenueCat publishes one hosted MCP endpoint, streamable HTTP. */
 export const REVENUECAT_MCP_ENDPOINT = "https://mcp.revenuecat.ai/mcp";

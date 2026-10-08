@@ -32,7 +32,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf, variants } from "../config-schema.js";
 import { CREDENTIAL, PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";

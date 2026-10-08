@@ -28,7 +28,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf, variants } from "../config-schema.js";
 import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
 export const VERCEL_API_BASE_URL = "https://api.vercel.com";

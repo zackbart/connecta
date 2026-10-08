@@ -15,7 +15,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf, variants } from "../config-schema.js";
 import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** Notion's REST origin. Every tool below speaks to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";

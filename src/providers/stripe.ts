@@ -11,7 +11,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf, strings, variants } from "../config-schema.js";
 import { CREDENTIAL } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** Which Stripe environment a static credential reaches. */
 export type StripeMode = "production" | "sandbox";

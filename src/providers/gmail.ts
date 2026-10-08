@@ -34,7 +34,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 export type {
   GoogleServiceAccount,

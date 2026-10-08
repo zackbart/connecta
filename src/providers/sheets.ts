@@ -42,7 +42,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 export type {
   GoogleServiceAccount,

@@ -3,8 +3,10 @@ import {
   withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
 import { reviewedCatalog } from "../catalog-drift.js";
-import { defineProvider, type ProviderOptions } from "../provider.js";
+import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../provider.js";
 import type {
   ConnectorCallAdmissionPolicy,
   ToolClassification,
@@ -193,12 +195,20 @@ const LINEAR_SKILL = `- Resolve identity before acting. \`list_teams\`, \`list_u
 - Linear meters the underlying API per user per hour, shared with everything else that credential does. Reuse discovery results within a run and avoid speculative fan-out.
 - An \`auth_required\` failure means this connector's Linear authorization is missing or expired: run \`authorize_connector\` for this connector id, then retry the same call unchanged.`;
 
+/** The closed options linear() accepts, checked against LinearOptions. */
+const LINEAR_OPTIONS = optionsOf<LinearOptions>()({
+  ...PROVIDER_COMMON,
+  ...keys("access"),
+  auth: REMOTE_MCP_AUTH,
+});
+
 /** A maintained Linear hosted-MCP connection. */
 export const linear = defineProvider<LinearOptions>({
   name: "linear",
   title: "Linear",
   kind: "mcp",
   skill: { content: LINEAR_SKILL, instructionsHeading: "Workspace instructions" },
+  options: LINEAR_OPTIONS,
   classify: LINEAR_CLASSIFICATION,
   create(id, options, provider) {
     const access = options.access;

@@ -7,7 +7,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf } from "../config-schema.js";
 import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /**
  * Basecamp's one hosted MCP endpoint, streamable HTTP.

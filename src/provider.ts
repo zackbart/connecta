@@ -1,12 +1,16 @@
 // The one shape every maintained provider takes. Deliberately transport-free:
 // it imports neither `remoteMcp()` nor `api()`, so an `api()` provider does not
 // acquire the MCP client, OAuth, or Effect graph by using it, and a hosted
-// provider does not acquire `api()`. Its only runtime import validates a
-// reviewed classification, which is Web-API code with no I/O.
+// provider does not acquire `api()`. Its runtime imports validate plain
+// options and reviewed classification, with no I/O.
+import { array, assertKnownOptions, keys, optionsOf, type Field } from "./config-schema.js";
 import { reviewedClassification } from "./catalog-drift.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
+  ConnectorCallAdmissionRule,
+  ConnectorDescription,
+  ConnectorRollingWindowBudget,
   ConnectorUsageGuide,
   ToolClassification,
 } from "./types.js";
@@ -33,6 +37,24 @@ export interface ProviderOptions {
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
+
+const budget = optionsOf<ConnectorRollingWindowBudget>()(keys("kind", "maxCalls", "windowMs"));
+
+const admissionRule = optionsOf<ConnectorCallAdmissionRule>()({
+  ...keys("maxConcurrency", "maxQueueSize", "queueTimeoutMs", "retryAfterMs", "partitionKey"),
+  budget,
+});
+
+export const CALL_ADMISSION = optionsOf<ConnectorCallAdmissionPolicy>()({
+  ...keys("maxPartitions"),
+  rules: array(admissionRule),
+});
+
+/** Options every maintained provider shares. */
+export const PROVIDER_COMMON = {
+  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
+  callAdmission: CALL_ADMISSION,
+};
 
 /** The provider's maintained, connection-independent usage guide. */
 export interface ProviderSkill {
@@ -61,7 +83,7 @@ export interface ProviderGuideInput {
   required?: boolean;
 }
 
-/** What `defineProvider()` hands `create` after validating common options. */
+/** What `defineProvider()` hands `create` after validating its options. */
 export interface ProviderContext {
   /** The definition's reviewed classification, for `remoteMcp({ classify })`. */
   readonly classify?: ToolClassification;
@@ -90,6 +112,8 @@ export interface ProviderDefinition<O extends ProviderOptions> {
   title: string;
   kind: ProviderKind;
   skill: ProviderSkill;
+  /** Closed factory options, declared with `optionsOf<O>()` for key parity. */
+  options: Field<unknown, unknown>;
   /**
    * Reviewed classification of the vendor's hosted MCP catalog. Hosted and
    * composed providers pass it to `remoteMcp({ classify })` through
@@ -99,8 +123,9 @@ export interface ProviderDefinition<O extends ProviderOptions> {
    */
   classify?: ToolClassification;
   /**
-   * Build the connector. Runs synchronously at construction after common
-   * options are validated; throw here for provider-specific mistakes.
+   * Build the connector. Runs synchronously at construction after its closed
+   * options and common values are validated. Throw here for provider-specific
+   * mistakes.
    */
   create(id: string, options: Readonly<O>, provider: ProviderContext): Connector;
 }
@@ -121,8 +146,8 @@ function nonEmpty(value: unknown): value is string {
 /**
  * Define a maintained provider: one validated description and one factory.
  *
- * Definition mistakes throw when the provider module loads. Common option
- * mistakes throw when a deployment calls the factory, before `create` runs,
+ * Definition mistakes throw when the provider module loads. Closed-option
+ * and common-value mistakes throw before `create` runs,
  * so a deployment never boots in the wrong shape (INV-11).
  */
 export function defineProvider<O extends ProviderOptions>(
@@ -151,6 +176,9 @@ export function defineProvider<O extends ProviderOptions>(
       `${label} is an api() provider; annotate each authored tool instead of classifying a hosted catalog.`,
     );
   }
+  if (!definition.options?.shape && !definition.options?.variants) {
+    throw new Error(`${label} requires a closed options shape from optionsOf().`);
+  }
   // A validated, deep-frozen copy. The definition is what build and check
   // tools read and what every later connector classifies with, so nothing
   // reachable from it may change a verdict after review: neither the
@@ -169,62 +197,91 @@ export function defineProvider<O extends ProviderOptions>(
   });
   const factoryName = `${frozen.name}()`;
 
-  const factory = (id: string, options: O): Connector => {
-    const at = `${frozen.name}("${id}")`;
-    if (typeof options !== "object" || options === null) {
-      throw new Error(`${factoryName} requires an options object.`);
-    }
-    if (!nonEmpty(options.purpose)) {
-      throw new Error(
-        `${at} requires a non-empty purpose: what this connection is for and which decisions it answers.`,
-      );
-    }
-    if (options.title !== undefined && !nonEmpty(options.title)) {
-      throw new Error(`${at} title must be a non-empty string when set.`);
-    }
-    if (options.instructions !== undefined && typeof options.instructions !== "string") {
-      throw new Error(`${at} instructions must be a string when set.`);
-    }
-    if (
-      options.authScope !== undefined &&
-      options.authScope !== "shared" &&
-      options.authScope !== "personal"
-    ) {
-      throw new Error(`${at} authScope must be "shared" or "personal".`);
-    }
-    const resolved: Readonly<O> = { ...options, purpose: options.purpose.trim() };
-    const instructions = options.instructions?.trim();
-    const connector = frozen.create(id, resolved, {
-      ...(frozen.classify !== undefined ? { classify: frozen.classify } : {}),
-      connectorOptions: {
-        ...(options.authScope !== undefined ? { authScope: options.authScope } : {}),
-        ...(options.maxResultBytes !== undefined
-          ? { maxResultBytes: options.maxResultBytes }
-          : {}),
-        ...(options.callAdmission !== undefined
-          ? { callAdmission: options.callAdmission }
-          : {}),
-      },
-      usageGuide(input) {
-        const heading = input.heading ?? `${frozen.title} usage`;
-        const body = [...input.context, frozen.skill.content.trim()].join("\n\n");
-        return {
-          content:
-            `# ${heading}\n\n${body}\n` +
-            (instructions
-              ? `\n## ${frozen.skill.instructionsHeading}\n\n${instructions}\n`
-              : ""),
-          ...(input.summary !== undefined ? { summary: input.summary } : {}),
-          ...(input.required === true ? { required: true } : {}),
-        };
-      },
+  const factory = (id: string, options: O): Connector =>
+    asProvider(frozen.name, frozen.options, id, options, (id, options) => {
+      const at = `${frozen.name}("${id}")`;
+      if (typeof options !== "object" || options === null) {
+        throw new Error(`${factoryName} requires an options object.`);
+      }
+      if (!nonEmpty(options.purpose)) {
+        throw new Error(
+          `${at} requires a non-empty purpose: what this connection is for and which decisions it answers.`,
+        );
+      }
+      if (options.title !== undefined && !nonEmpty(options.title)) {
+        throw new Error(`${at} title must be a non-empty string when set.`);
+      }
+      if (options.instructions !== undefined && typeof options.instructions !== "string") {
+        throw new Error(`${at} instructions must be a string when set.`);
+      }
+      if (
+        options.authScope !== undefined &&
+        options.authScope !== "shared" &&
+        options.authScope !== "personal"
+      ) {
+        throw new Error(`${at} authScope must be "shared" or "personal".`);
+      }
+      const resolved: Readonly<O> = { ...options, purpose: options.purpose.trim() };
+      const instructions = options.instructions?.trim();
+      const connector = frozen.create(id, resolved, {
+        ...(frozen.classify !== undefined ? { classify: frozen.classify } : {}),
+        connectorOptions: {
+          ...(options.authScope !== undefined ? { authScope: options.authScope } : {}),
+          ...(options.maxResultBytes !== undefined
+            ? { maxResultBytes: options.maxResultBytes }
+            : {}),
+          ...(options.callAdmission !== undefined
+            ? { callAdmission: options.callAdmission }
+            : {}),
+        },
+        usageGuide(input) {
+          const heading = input.heading ?? `${frozen.title} usage`;
+          const body = [...input.context, frozen.skill.content.trim()].join("\n\n");
+          return {
+            content:
+              `# ${heading}\n\n${body}\n` +
+              (instructions
+                ? `\n## ${frozen.skill.instructionsHeading}\n\n${instructions}\n`
+                : ""),
+            ...(input.summary !== undefined ? { summary: input.summary } : {}),
+            ...(input.required === true ? { required: true } : {}),
+          };
+        },
+      });
+      if (connector?.id !== id) {
+        throw new Error(`${at} create() must return a connector with id "${id}".`);
+      }
+      return connector;
     });
-    if (connector?.id !== id) {
-      throw new Error(`${at} create() must return a connector with id "${id}".`);
-    }
-    return connector;
-  };
   // Frozen whole: build and check tools read `definition` to learn what the
   // factory classifies, so neither replacing nor deleting it may take effect.
   return Object.freeze(Object.assign(factory, { definition: frozen }));
+}
+
+/**
+ * Build a maintained provider's connector: refuse unknown options and
+ * accessors by path before the builder reads any of them, then stamp the
+ * provider onto its description, so the operator surface can say "Linear"
+ * rather than "remote MCP". This is the same construction path defineProvider
+ * uses; the remaining providers keep this internal adapter until item 5b.
+ */
+export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
+  provider: string,
+  shape: Field<unknown, unknown>,
+  id: string,
+  options: O,
+  build: (id: string, options: O) => C,
+): C {
+  // The factory a deployment called: "planning-center" is planningCenter().
+  const factory = provider.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+  options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
+  const connector = build(id, options);
+  const describe = connector.describe?.bind(connector);
+  return {
+    ...connector,
+    describe: (): ConnectorDescription => {
+      const base = describe?.() ?? { source: { kind: "custom" as const } };
+      return { ...base, source: { ...base.source, provider } };
+    },
+  };
 }

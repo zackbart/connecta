@@ -460,7 +460,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
 }
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
-export { defineProvider } from "./provider.js";
+export { keys, optionsOf, array, opaque, instance, strings, variants } from "./config-schema.js";
+export { defineProvider, PROVIDER_COMMON } from "./provider.js";
 export type {
   ProviderContext,
   ProviderDefinition,

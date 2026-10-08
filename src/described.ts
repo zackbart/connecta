@@ -3,10 +3,8 @@
 // nothing else, so a value that carries a secret — a URL's userinfo or query,
 // a header's value, a function's source — has no path into a description.
 
-import { assertKnownOptions, type Field } from "./config-schema.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
-  ConnectorDescription,
   ConnectorToolDescription,
   DescribedEndpoint,
   JsonSchema,
@@ -111,31 +109,4 @@ export function describedTools(tools: readonly ToolDef[]): ConnectorToolDescript
       classification: isExplicitlyReadOnly(tool) ? "read" : "write",
     };
   });
-}
-
-/**
- * Build a maintained provider's connector: refuse unknown options and
- * accessors by path before the builder reads any of them, then stamp the
- * provider onto its description, so the operator surface can say "Linear"
- * rather than "remote MCP".
- */
-export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
-  provider: string,
-  shape: Field<unknown, unknown>,
-  id: string,
-  options: O,
-  build: (id: string, options: O) => C,
-): C {
-  // The factory a deployment called: "planning-center" is planningCenter().
-  const factory = provider.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-  options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
-  const connector = build(id, options);
-  const describe = connector.describe?.bind(connector);
-  return {
-    ...connector,
-    describe: (): ConnectorDescription => {
-      const base = describe?.() ?? { source: { kind: "custom" as const } };
-      return { ...base, source: { ...base.source, provider } };
-    },
-  };
 }

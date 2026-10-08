@@ -21,3 +21,11 @@ must hold string values. An `api()` tool is checked in place and passed
 through as given, so a class-instance tool keeps its prototype handler and
 private fields; a tool without a handler function refuses to construct. Pool names and `execute.approval` keys such as `__proto__` and
 `constructor` are ordinary entries (#705).
+
+Provider definitions declare a closed `options` shape with `optionsOf<T>()`.
+`defineProvider()` and the remaining providers use one descriptor-validation
+path and stamp the maintained name onto `describe().source.provider`. The root
+exports the option-shape combinators and `PROVIDER_COMMON` for provider authors.
+`remoteMcp()` accepts `classify`; its review is still validated by the shared
+classification validator and applied only by the registry. Custom connectors
+remain opaque, preserving `Connector.classification` (#705).

@@ -352,7 +352,13 @@ a sandbox for hostile objects. Records keyed by deployment
 names (pools, `execute.approval`) have no prototype, so `__proto__` is a name.
 Built-in factories (`api()`, `remoteMcp()`, every provider, and each module
 factory) walk their own options the same way, against shapes the compiler
-checks against their option types (`src/connectors/option-shapes.ts`). Checks
+checks against their option types (`optionsOf<T>()`). Provider definitions
+declare their closed `options` shape; `defineProvider()` validates it by the
+same descriptor walk before `create` reads a value and stamps the definition
+name onto `describe().source.provider`. `classify` is accepted by the remote
+shape and validated by the shared reviewed-classification validator. Custom
+connectors remain opaque, including their `classification` field, which the
+registry validates. Checks
 that need the connector set — pool members, `execute.approval` addresses, a
 connector's own `maxResultBytes` — throw from `src/index.ts` and the registry
 under the same policy. `storage` stays opaque, but its check requires `list`
@@ -381,15 +387,20 @@ switched by the environment, and keep their entries under 30 lines.
 
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
 name, title, kind (`"mcp"`, `"api"`, or `"composed"`), a maintained skill, an
-optional reviewed classification, and a synchronous `create`. The factory
-validates options common to every provider (purpose, title, instructions,
-`authScope`) before `create` runs, and renders the guide: heading, the
+optional reviewed classification, a closed `options` shape declared with
+`optionsOf<O>()`, and a synchronous `create`. The root exports the option-shape
+combinators and `PROVIDER_COMMON` so provider authors use the same validation
+path. The factory refuses undeclared keys and accessors before reading any
+option, copies plain data, preserves behaviour objects, then validates common
+values (purpose, title, instructions, `authScope`) before `create` runs, and renders the guide: heading, the
 connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
 (`test/purity.node.test.ts`). The factory carries its `definition`, which build and
 check tools read instead of keeping provider lists; Linear is converted, and
-the other providers move in later #705 items.
+the other 18 providers use a thin internal adapter to the same validation and
+description-stamping path until their definitions and folders move in later
+#705 items.
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,

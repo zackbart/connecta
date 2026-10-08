@@ -68,7 +68,7 @@ import type {
 } from "../types.js";
 import { keys, optionsOf } from "../config-schema.js";
 import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
-import { asProvider } from "../described.js";
+import { asProvider } from "../provider.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";

@@ -7,28 +7,14 @@
 
 import { array, keys, optionsOf, strings, variants } from "../config-schema.js";
 import type {
-  ConnectorCallAdmissionPolicy,
-  ConnectorCallAdmissionRule,
   ConnectorCredentialConfig,
   ConnectorCredentialFieldConfig,
-  ConnectorRollingWindowBudget,
   ConnectorUsageGuide,
 } from "../types.js";
+export { CALL_ADMISSION, PROVIDER_COMMON } from "../provider.js";
 import type { RemoteMcpAuth } from "./remote-mcp.js";
 
 type AuthCase<T extends RemoteMcpAuth["type"]> = Extract<RemoteMcpAuth, { type: T }>;
-
-const budget = optionsOf<ConnectorRollingWindowBudget>()(keys("kind", "maxCalls", "windowMs"));
-
-const admissionRule = optionsOf<ConnectorCallAdmissionRule>()({
-  ...keys("maxConcurrency", "maxQueueSize", "queueTimeoutMs", "retryAfterMs", "partitionKey"),
-  budget,
-});
-
-export const CALL_ADMISSION = optionsOf<ConnectorCallAdmissionPolicy>()({
-  ...keys("maxPartitions"),
-  rules: array(admissionRule),
-});
 
 export const CREDENTIAL = optionsOf<ConnectorCredentialConfig>()({
   ...keys("label", "description", "placeholder"),
@@ -51,9 +37,3 @@ export const REMOTE_MCP_AUTH = variants("type", {
   }).shape,
   oauth: optionsOf<AuthCase<"oauth">>()(keys("type", "clientMetadataUrl", "scope")).shape,
 });
-
-/** Options every maintained provider shares. */
-export const PROVIDER_COMMON = {
-  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
-  callAdmission: CALL_ADMISSION,
-};
