@@ -1,9 +1,11 @@
 # Agent evaluations
 
-The 0.29 runner/tasks update is the first half of #709 item 1. Paid baselines
-are a separate follow-up. Files in `baselines/` retain their historical tools,
-models and grades; they do not establish current behavior or compare directly
-with the stricter correctness checks below.
+The final 0.29 baselines for #709 item 1 are
+[Sonnet 5.5](baselines/sonnet-5-5-0.29.json), 28/34 with four N/A trials, and
+[GPT-6-Luna](baselines/gpt-6-luna-0.29.json), 29/38.
+[Baseline notes](baselines/notes-0.29.md) record the live setup, per-task scores,
+failure triage and caveats. Older files retain their historical tools, models
+and grades and are not directly comparable.
 
 ## Runners
 
@@ -135,7 +137,8 @@ Prose contradiction heuristics no longer determine the outcome. Plain, bold
 and backtick answers and honest "I haven't closed it" wording have positive
 controls; closed, missing and overridden answers have negative controls.
 Historical saved refusal trials predate this instruction and cannot be
-regraded for `structured-outcome`. Both runners require live re-runs.
+regraded for `structured-outcome`. The final 0.29 baselines use fresh live
+trials with this instruction.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -238,11 +241,12 @@ unawaited host calls. Decision for #598: preserve normal-result semantics and
 the existing cancellation of outstanding work; reconsider a warning when a
 representative failed task shows that it would help. No warning was added.
 
-## First 0.29 baseline triage and offline regrading
+## Final 0.29 baselines and offline regrading
 
-[The baseline notes](baselines/notes-0.29.md) classify the frozen `909b4937`
-trials. They are a two-repeat diagnostic, with provisional grades wherever
-inputs were not saved. The original JSON files stay unchanged.
+[The baseline notes](baselines/notes-0.29.md) classify the final live trials
+from `14f878be`, regraded at `3bf19a21`, and summarize the earlier `909b4937`
+triage. Both final files have complete grading inputs with no required live
+rerun. The original JSON files stay unchanged.
 
 ```sh
 npm run eval:regrade -- --in eval/results/sonnet-5-5.json --out eval/results/sonnet-5-5-regraded.json
@@ -262,7 +266,7 @@ A clipped argument or result cannot establish a missing fact. Unsupported
 checks retain their original grade with `retained: true`; each trial lists
 `regrade.unavailable`, and the report marks the score as partial. These are
 provisional mixed scores, not fully regraded baselines. Errors need new trials.
-The notes list the tasks needing complete live reruns. No state or concurrency
+The final 0.29 live batch supplies these observations. No state or concurrency
 observation is inferred from program source text.
 
 Claude Code 2.1.292 cannot establish rich MCP delivery in the current stream
