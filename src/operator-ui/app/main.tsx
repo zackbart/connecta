@@ -21,6 +21,7 @@ import {
   type OperatorState,
 } from "../view.js";
 import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
+import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ArtifactPage, ArtifactsPage } from "./artifacts.js";
@@ -197,6 +198,7 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "overview") return <OverviewPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
   if (state.page === "artifacts") return <ArtifactsPage state={state} />;
@@ -271,7 +273,7 @@ function mount(id: string, view: ReactNode): void {
 
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
-const routes = ["/", "/tokens", "/activity", "/artifacts", "/artifacts/$"].map(path =>
+const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity", "/artifacts", "/artifacts/$"].map(path =>
   createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
 );
 const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultPendingMinMs: 0 });

@@ -497,3 +497,17 @@ kbd { font-family: var(--sans); font-size: .6875rem; color: var(--muted); }
   .operator-shell main.page { margin: 0; padding: var(--space-6) var(--space-4); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+
+/* Pages share the shell's spacing, type and color tokens. */
+.page-heading, .facts-row, .attention-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.page-heading h1 { margin-bottom: 0 !important; }
+.page-heading { margin-bottom: 1rem; }
+.facts-row { justify-content: flex-start; padding: .5rem 0; font-size: var(--text-sm); }
+.attention-row { padding: .75rem 1rem; font-size: var(--text-sm); color: var(--text); text-decoration: none; }
+.attention-row:hover { background: var(--surface-2); }
+.drawer-content { top: 0; bottom: 0; left: auto; right: 0; transform: none; width: min(38rem, 100vw); max-height: 100vh; border-radius: 0; }
+.drawer-content .setup-list { margin-bottom: 1.5rem; }
+#overviewView > .state-block { margin-top: 2rem; }
+.table-name { display: grid; gap: .2rem; }
+.table-name > a { font-weight: 550; }
+#connectionsView > .section, #connectionsView > .state-block { margin-top: 1.5rem; }

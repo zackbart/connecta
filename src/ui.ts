@@ -43,27 +43,25 @@ import {
   resolveBranding,
 } from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
-export type OperatorPage =
-  | "tokens"
-  | "connections"
-  | "activity"
-  | "artifacts"
-  | "artifact";
+export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
-  connections: "Connections",
-  tokens: "Access tokens",
-  activity: "Activity",
-  artifacts: "Artifacts",
-  artifact: "Artifact",
+  overview: "Overview", connections: "Connectors", connector: "Connector",
+  tools: "Tools", access: "Access", config: "Config", tokens: "Access tokens",
+  activity: "Activity", artifacts: "Artifacts", artifact: "Artifact",
 };
 
 /** `/artifacts/<id>` and its snapshots, `/artifacts/<id>/v/<version>`. */
 const ARTIFACT_PAGE = /^\/artifacts\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\/v\/\d{1,9})?$/;
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
+  if (path === "/") return "overview";
+  if (path === "/connectors") return "connections";
+  if (/^\/connectors\/[a-z0-9_-]+$/.test(path)) return "connector";
+  if (path === "/tools") return "tools";
+  if (path === "/access") return "access";
+  if (path === "/config") return "config";
   if (path === "/tokens") return "tokens";
-  if (path === "/") return "connections";
   if (path === "/activity") return "activity";
   if (path === "/artifacts") return "artifacts";
   if (ARTIFACT_PAGE.test(path)) return "artifact";
@@ -174,7 +172,7 @@ export function renderUiHtml(
   branding?: ConnectaBranding,
   /** @deprecated Scripts load from same-origin assets; ignored. */
   _nonce?: string,
-  page: OperatorPage = "connections",
+  page: OperatorPage = "overview",
   options: {
     /** Where the Connections page lives, when this shell is on another origin. */
     homeUrl?: string;
