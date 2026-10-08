@@ -325,6 +325,58 @@ schemas), but withholds a tool name outside the grammar as it does in records.
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
 the next one.
 
+### Providers and reviewed classification
+
+A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
+name, title, kind (`"mcp"`, `"api"`, or `"composed"`), a maintained skill, an
+optional reviewed classification, and a synchronous `create`. The factory
+validates options common to every provider (purpose, title, instructions,
+`authScope`) before `create` runs, and renders the guide: heading, the
+connection context `create` supplies, the maintained text, then deployment
+instructions, which append and never replace. `src/provider.ts` imports neither
+transport, so an `api()` provider gains no MCP client or Effect graph from it
+(`test/purity.node.test.ts`). The factory carries its `definition`, which build and
+check tools read instead of keeping provider lists; Linear is converted, and
+the other providers move in later #705 items.
+
+`remoteMcp({ classify })` is the public way to declare what a downstream's
+tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
+reason?, schemaDigest? } } }`, validated at construction. It fails closed
+(INV-1): a reviewed read fills silence but yields to an explicit write
+annotation, a reviewed write stays a write whatever the downstream claims, an
+unlisted tool is a read only when it says so, and a reviewed tool whose
+`schemaDigest` no longer matches, or cannot be checked, is a write on discovery
+and every invocation path until a release reviews it again. A digest covers
+the whole schema; one too large to hash whole is unchecked.
+
+Connectors report facts; the registry is the only classifier. A reviewed
+connector carries its review as data, the deep-frozen
+`Connector.classification`, and its `listTools` returns the downstream's
+listing unclassified. The registry validates the field when it first reads a
+connector (INV-11), caches and persists exactly what `listTools` returned
+(manifest version 3), and classifies those facts on every read into fresh
+objects, so neither a cache layer nor a decorator holding a served or listed
+tool can carry a verdict. The request-scoped catalog also owns a deep copy
+and returns fresh copies to discovery and invocation. Each connector call
+receives a separate deep copy of its definition, so mutations cannot change
+classification, schemas, or write accounting later in the same program.
+A restart onto a catalog persisted under an older
+review applies the current one; a 0.28 (version 2) catalog loses its
+read-only claims, which may be an older classifier's, and is refreshed on
+first read. During refreshes the deployment already asked for, the registry
+counts drift against the same record, and `scripts/drift-check.mjs` compares
+its names with published inventories. The legacy `withVettedCatalog()` only
+sets the field, so unconverted hosted providers follow the same rules
+(`test/classified-decorators.test.ts`, `test/linear-snapshot.test.ts`).
+
+Wrappers must forward `classification` to keep the review. `{ ...connector }`,
+`Object.assign`, and `Object.create` keep it. A forwarding class that omits it
+serves an unreviewed connector: the downstream's annotations are its own
+claims and fail closed when absent, and nothing it persists carries safety.
+Phase 2's deployment-level classifier overrides, keyed by connector id and
+tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
+regardless of wrapping.
+
 ## Optional deployment modules
 
 `createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`
@@ -709,7 +761,8 @@ src/
   server.ts           route ordering, HTTPS upgrade, security wrapper
   routes/             one file per surface; shared.ts holds the auth gate
   skills.ts           MCP instructions, the usage skill, connector guides
-  catalog-drift.ts    vetted manifests and the counts a refresh produces
+  catalog-drift.ts    reviewed classifications and the drift counts a refresh produces
+  provider.ts         defineProvider(): the one maintained-provider shape
   activity.ts         optional history factory and best-effort recorder
   auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
   executors/          the QuickJS pool and child (Node only)

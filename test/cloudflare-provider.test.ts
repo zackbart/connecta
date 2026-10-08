@@ -3,7 +3,10 @@
 // the whole file; nothing here reaches the network.
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import type { ToolDef } from "../src/types.js";
-import { mockRemoteMcp } from "./fixtures/hosted-provider.js";
+import {
+  mockRemoteMcp,
+  servedTools,
+} from "./fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -197,7 +200,8 @@ describe("cloudflare() construction", () => {
       { name: "execute", annotations: { readOnlyHint: true } },
       { name: "new-cloudflare-tool" },
     ]);
-    const tools = await connection({ surface: "mcp" }).listTools(
+    const tools = await servedTools(
+      connection({ surface: "mcp" }),
       contextWithToken(),
     );
     expect(tools[0]?.annotations).toEqual({
@@ -284,7 +288,7 @@ describe("cloudflare() construction", () => {
 
 describe("cloudflare() tool surface", () => {
   it("partitions reads from writes with correct annotations", async () => {
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual([
       "add_pages_domain",
@@ -423,7 +427,7 @@ describe("cloudflare() tool surface", () => {
     // honest if the capability survives and the guide says where it went, so
     // this pins the absence, the surviving read, the guide line, and the
     // approval-gated route an operator now takes instead.
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     const names = tools.map((tool) => tool.name);
     for (const removed of ["get_r2_metrics", "set_r2_cors", "delete_r2_cors"]) {
       expect(names, `${removed} is measured out of the named surface`).not.toContain(
@@ -459,7 +463,7 @@ describe("cloudflare() tool surface", () => {
     // per-setting route that survives, the guide line that says where the
     // capability went, and — the part a rename would quietly break — that no
     // surviving schema still points an agent at a tool that is gone.
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     const names = tools.map((tool) => tool.name);
     expect(names).not.toContain("list_zone_settings");
     expect(names).toContain("get_zone_setting");
@@ -483,7 +487,7 @@ describe("cloudflare() tool surface", () => {
   });
 
   it("hand-writes a complete schema for every tool", async () => {
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     for (const tool of tools) {
       const input = tool.inputSchema as Record<string, unknown>;
       expect(tool.description, `${tool.name} needs a description`).toBeTruthy();
@@ -520,7 +524,7 @@ describe("cloudflare() tool surface", () => {
   });
 
   it("enumerates every legal DNS record type in the schema", async () => {
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     const properties = (name: string) =>
       (toolNamed(tools, name).inputSchema as Record<string, unknown>)[
         "properties"
@@ -554,7 +558,7 @@ describe("cloudflare() tool surface", () => {
   });
 
   it("publishes the current R2 and KV jurisdiction values", async () => {
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     const properties = (name: string) =>
       (toolNamed(tools, name).inputSchema as any).properties as Record<
         string,
@@ -587,7 +591,7 @@ describe("cloudflare() tool surface", () => {
   });
 
   it("requires a scope argument only when the deployment declares no default", async () => {
-    const unscoped = await connection().listTools(contextWithToken());
+    const unscoped = await servedTools(connection(), contextWithToken());
     expect(
       (toolNamed(unscoped, "list_dns_records").inputSchema as Record<string, unknown>)[
         "required"
@@ -599,7 +603,8 @@ describe("cloudflare() tool surface", () => {
       ],
     ).toEqual(["zoneId", "recordId"]);
 
-    const scoped = await connection({ zoneId: "zone-1" }).listTools(
+    const scoped = await servedTools(
+      connection({ zoneId: "zone-1" }),
       contextWithToken(),
     );
     expect(
@@ -1933,7 +1938,7 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
     // And the schema itself tells the agent where the id comes from, so the
     // repair does not need a documentation read.
-    const tools = await connection().listTools(contextWithToken());
+    const tools = await servedTools(connection(), contextWithToken());
     const zoneProperty = (
       (toolNamed(tools, "get_zone").inputSchema as Record<string, unknown>)[
         "properties"

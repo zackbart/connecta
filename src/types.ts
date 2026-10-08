@@ -230,6 +230,45 @@ export interface ConnectorContext {
 type ConnectorStatusState = "ok" | "auth_required" | "error";
 
 /**
+ * What a reviewed downstream tool does. `"read"` is observational. `"write"`
+ * changes state without destroying any that already exists, such as a create.
+ * `"destructive"` modifies or removes existing state, including an upsert that
+ * can overwrite. Both writes leave the read-only path; `"destructive"` also
+ * asserts `destructiveHint`, which shapes the approval copy a human reads.
+ */
+export type ToolVerdict = "read" | "write" | "destructive";
+
+/** One reviewed tool, with the evidence that justifies its verdict. */
+export interface ReviewedTool {
+  readonly verdict: ToolVerdict;
+  /** Why the verdict holds when the name or downstream annotations do not say. */
+  readonly reason?: string;
+  /**
+   * `sha256:<hex>` digest of the input and output schemas the review read.
+   * Omit until a review has actually read them; an invented digest reports
+   * drift that never happened. When the live schema no longer matches it, or
+   * it cannot be checked, the verdict lapses and the tool is served as a write.
+   */
+  readonly schemaDigest?: string;
+}
+
+/**
+ * A reviewed classification of a downstream MCP catalog, keyed by exact tool
+ * name. Plain data, validated at construction, so the same record classifies
+ * live tools and feeds the drift check. A connector carries it as
+ * `Connector.classification`, and the registry applies it on every read.
+ *
+ * It fails closed. A name it does not list keeps only an explicit downstream
+ * read annotation; silence and contradiction classify as writes. A listed read
+ * fills downstream silence but never overrules an explicit write annotation.
+ * A listed write or destructive tool stays a write whatever the downstream
+ * claims. A listed tool whose `schemaDigest` no longer matches is a write.
+ */
+export interface ToolClassification {
+  readonly tools: Readonly<Record<string, ToolVerdict | ReviewedTool>>;
+}
+
+/**
  * How far a downstream catalog has moved away from the manifest a release
  * reviewed. Four numbers and nothing else: names, schemas, and prose stay out
  * of every surface this rides on, so a drift report can never become a payload
@@ -362,12 +401,32 @@ export interface Connector {
    */
   staticTools?: ToolDef[];
   /**
+   * Optional reviewed classification of the tools `listTools` returns: data
+   * the registry applies, never something the connector applies itself.
+   * `remoteMcp({ classify })` and maintained providers set it to a
+   * deep-frozen record; a custom connector may set one too. It is validated
+   * when a registry first reads it (INV-11), and read once per connector
+   * object. A connector that sets it lists raw downstream tools; the
+   * registry caches and persists only that listing, and classifies it on
+   * every read with this record, so no cache layer carries a verdict.
+   * Connectors with `staticTools` cannot set it: annotate those directly.
+   *
+   * A wrapper that rebuilds a connector must forward this field to keep the
+   * review. `{ ...connector }`, `Object.assign`, and `Object.create` keep it;
+   * a forwarding class that omits it serves an unreviewed connector, whose
+   * downstream annotations are its own claims and fail closed when absent.
+   * Phase 2's deployment-level classifier overrides, keyed by connector id
+   * and tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
+   * regardless of wrapping.
+   */
+  readonly classification?: ToolClassification | undefined;
+  /**
    * Optional: the drift this connector saw the last time it listed tools,
-   * or undefined when it has not listed any yet. Implemented by maintained
-   * hosted-MCP proxies, which compare the live catalog with the manifest a
-   * release reviewed *while* serving a refresh the deployment already asked
-   * for. It is a getter over an observation, never a probe: calling it makes
-   * no request, touches no credential, and returns counts only.
+   * or undefined when it has not listed any yet. A getter over an
+   * observation, never a probe: calling it makes no request, touches no
+   * credential, and returns counts only. Ignored for a connector with a
+   * `classification`, whose drift the registry observes itself, against
+   * that record, while serving a refresh the deployment already asked for.
    */
   catalogDrift?(): CatalogDriftReport | undefined;
   listTools(ctx: ConnectorContext): Promise<ToolDef[]>;
@@ -375,7 +434,7 @@ export interface Connector {
     name: string,
     args: unknown,
     ctx: ConnectorContext,
-    /** The catalog definition, including when discovery used memory/storage. */
+    /** A fresh deep copy of the catalog definition for this dispatch. */
     options?: { definition?: ToolDef },
   ): Promise<unknown>;
   /**

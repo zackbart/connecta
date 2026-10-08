@@ -597,7 +597,10 @@ export class InvocationService {
               target.toolName,
               args ?? {},
               connectorContext,
-              { definition: target.definition },
+              // The connector may retain or mutate its definition. Keep the
+              // invocation's classification and schema private, even during
+              // this call, and give every dispatch its own deep copy.
+              { definition: structuredClone(target.definition) },
             );
           };
           // The permit belongs to this scope, so success, failure, and the

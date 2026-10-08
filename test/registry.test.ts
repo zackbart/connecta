@@ -27,7 +27,7 @@ import { required,
 const BASE = "https://connecta.test";
 
 interface CatalogManifest {
-  version: 2;
+  version: 3;
   revision: string;
   toolCount: number;
   byteCount: number;
@@ -528,7 +528,7 @@ describe("tool cache TTL", () => {
 
     const manifest = await readManifest(storage, "chunked");
     expect(manifest).toMatchObject({
-      version: 2,
+      version: 3,
       toolCount: 2,
       chunkCount: 2,
     });

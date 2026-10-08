@@ -1112,6 +1112,16 @@ export function createConnecta(config: ConnectaConfig): Connecta {
 
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
+export { defineProvider } from "./provider.js";
+export type {
+  ProviderContext,
+  ProviderDefinition,
+  ProviderFactory,
+  ProviderGuideInput,
+  ProviderKind,
+  ProviderOptions,
+  ProviderSkill,
+} from "./provider.js";
 export { ConnectorCallError } from "./errors.js";
 export type { ConnectorCallErrorCode, CallErrorDetails } from "./errors.js";
 // The same argument validation api() performs, usable by connectors that
@@ -1172,8 +1182,11 @@ export type {
   JsonSchema,
   KVStorage,
   Logger,
+  ReviewedTool,
+  ToolClassification,
   ToolDef,
   ToolAnnotations,
+  ToolVerdict,
 } from "./types.js";
 export type {
   ActivityActor,

@@ -45,7 +45,10 @@ The current shape follows. `<name>` is kebab-case, `<fn>` its camelCase factory.
 - `test/<name>-provider.test.ts`, portable unless it truly needs Node:
   construction refusals, per-mode title and guide, credentials, read/write
   split, transport and auth, paging, error mapping. Hosted MCP tests mock
-  `../src/connectors/remote-mcp.js` and check classification against the catalog.
+  `../src/connectors/remote-mcp.js` and check classification against the catalog
+  through `servedTools()` (`test/fixtures/hosted-provider.ts`): `listTools`
+  returns the raw listing, and the registry classifies it from
+  `Connector.classification`.
 - `test/provider-conventions.test.ts` (`api()` providers): add the import, a
   `VERBS` entry, `NESTED_DESCRIPTION_EXCEPTIONS`, and `surface(...)`; OAuth or
   Google delegation providers join `OAUTH_PROVIDERS`/`DELEGATED_PROVIDERS`.

@@ -6,8 +6,12 @@ import type {
   CatalogDriftCounts,
   CatalogDriftReport,
   Connector,
-  ConnectorContext,
+  Logger,
+  ReviewedTool,
+  ToolAnnotations,
+  ToolClassification,
   ToolDef,
+  ToolVerdict,
 } from "./types.js";
 
 /** A count, or 0 when the seam returned something that is not one. */
@@ -110,21 +114,83 @@ export interface VettedCatalogInput {
 
 const encoder = new TextEncoder();
 
-/** Deterministic JSON: object keys sorted, so key order is not a schema change. */
-function canonicalize(value: unknown, depth = 0): unknown {
-  // Drift is advisory. Beyond this bound compare an explicit marker instead
-  // of letting a downstream schema exhaust the host stack.
-  if (depth > 64) return "[schema depth truncated]";
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalize(item, depth + 1));
-  }
-  if (value === null || typeof value !== "object") return value;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return Object.fromEntries(
-    entries.map(([key, item]) => [key, canonicalize(item, depth + 1)]),
+/**
+ * Most JSON values one tool's schemas may hold before its digest refuses to
+ * compute. A digest vouches for a whole schema or for nothing, so a schema
+ * past the bound is not hashed in part: the computation throws, and the
+ * caller serves every digested review unverified (INV-1).
+ */
+const MAX_SCHEMA_DIGEST_NODES = 100_000;
+
+/** Object keys in the order `JSON.stringify` emits a key-sorted object. */
+function canonicalKeys(value: object): [string, unknown][] {
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    ([, item]) =>
+      item !== undefined &&
+      typeof item !== "function" &&
+      typeof item !== "symbol",
   );
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  // A plain object enumerates integer-like keys first, in numeric order.
+  // Recorded digests were taken from a key-sorted object, so reproduce its
+  // enumeration rather than the sort alone.
+  const sorted = Object.fromEntries(entries);
+  return Object.keys(sorted).map((key) => [key, sorted[key]]);
+}
+
+/**
+ * Deterministic JSON with object keys sorted, so key order is not a schema
+ * change. Iterative and complete: every leaf at every depth reaches the
+ * digest, and a schema deeper than the host stack cannot exhaust it. Throws
+ * past {@link MAX_SCHEMA_DIGEST_NODES}, and on any value JSON cannot carry.
+ */
+function canonicalJson(root: unknown): string {
+  type Task = { readonly text: string } | { readonly value: unknown };
+  const out: string[] = [];
+  const stack: Task[] = [{ value: root }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const task = stack.pop()!;
+    if ("text" in task) {
+      out.push(task.text);
+      continue;
+    }
+    if (++nodes > MAX_SCHEMA_DIGEST_NODES) {
+      throw new Error(
+        `schema has more than ${MAX_SCHEMA_DIGEST_NODES} values; refusing to digest it in part.`,
+      );
+    }
+    const value = task.value;
+    if (value === null || value === undefined) {
+      out.push("null");
+    } else if (typeof value === "string" || typeof value === "boolean") {
+      out.push(JSON.stringify(value));
+    } else if (typeof value === "number") {
+      out.push(Number.isFinite(value) ? JSON.stringify(value) : "null");
+    } else if (typeof value === "function" || typeof value === "symbol") {
+      // Only array items reach here; object keys holding these are dropped.
+      out.push("null");
+    } else if (typeof value !== "object") {
+      throw new Error(`schema holds a ${typeof value}, which JSON cannot carry.`);
+    } else if (Array.isArray(value)) {
+      out.push("[");
+      stack.push({ text: "]" });
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: value[index] });
+        if (index > 0) stack.push({ text: "," });
+      }
+    } else {
+      out.push("{");
+      stack.push({ text: "}" });
+      const entries = canonicalKeys(value);
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const [key, item] = entries[index]!;
+        stack.push({ value: item });
+        stack.push({ text: `${index > 0 ? "," : ""}${JSON.stringify(key)}:` });
+      }
+    }
+  }
+  return out.join("");
 }
 
 /**
@@ -136,15 +202,16 @@ function canonicalize(value: unknown, depth = 0): unknown {
  * maintainer's attention on a downstream that reordered its JSON keys.
  * Description and annotations are excluded — a reworded description is P1's
  * business, and an annotation change is already its own drift category.
+ *
+ * Rejects rather than digesting part of a schema: a digest that ignored some
+ * leaf would let a reviewed read keep its verdict after that leaf changed.
  */
 export async function vettedSchemaDigest(tool: ToolDef): Promise<string> {
   const bytes = encoder.encode(
-    JSON.stringify(
-      canonicalize({
-        inputSchema: tool.inputSchema ?? null,
-        outputSchema: tool.outputSchema ?? null,
-      }),
-    ),
+    canonicalJson({
+      inputSchema: tool.inputSchema ?? null,
+      outputSchema: tool.outputSchema ?? null,
+    }),
   );
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   return `sha256:${[...digest]
@@ -193,66 +260,179 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
   return { version: 1, tools };
 }
 
+const VERDICTS: Readonly<Record<string, VettedVerdict>> = {
+  read: "read-only",
+  write: "additive",
+  destructive: "destructive",
+};
+const PUBLIC_VERDICTS: Readonly<Record<VettedVerdict, ToolVerdict>> = {
+  "read-only": "read",
+  additive: "write",
+  destructive: "destructive",
+};
+const SCHEMA_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const REVIEWED_TOOL_KEYS = new Set(["verdict", "reason", "schemaDigest"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
- * Fill in downstream silence; keep reviewed destructive tools fail-closed.
+ * Validate a public {@link ToolClassification} once, reading every value a
+ * single time, into the manifest the registry classifies with and a
+ * deep-frozen copy of the record.
  *
- * Silence is what a vetted classification is for, and an explicit downstream
- * annotation otherwise wins in both directions. `destructiveHint: true` or
- * `readOnlyHint: false` on a classified read is the downstream telling us this
- * release's allowlist is stale; `readOnlyHint: true` on a name no release has
- * classified says the same thing from the other side. The single place a
- * vetted verdict still overrides the downstream is a name this release
- * reviewed and filed destructive: there connecta knows what the tool does, and
- * a claim to the contrary is a downstream bug rather than news
- * ([#310](https://github.com/zackbart/connecta/issues/310),
- * [#315](https://github.com/zackbart/connecta/issues/315)).
+ * Every structural mistake throws, naming `owner`, because a classification
+ * that half-applies is worse than one that refuses to boot (INV-11). Unknown
+ * keys throw too: a misspelled `verdict` must not quietly leave a write
+ * unclassified.
  */
-function applyVettedSafety(
+function parseClassification(
+  classification: ToolClassification,
+  owner: string,
+): { catalog: VettedCatalog; frozen: ToolClassification } {
+  function fail(detail: string): never {
+    throw new Error(`[connecta] ${owner} classify ${detail}`);
+  }
+  if (!isRecord(classification)) fail("must be an object with a tools record.");
+  for (const key of Object.keys(classification)) {
+    if (key !== "tools") fail(`has unknown key "${key}"; only "tools" is accepted.`);
+  }
+  const input: unknown = classification.tools;
+  if (!isRecord(input)) fail("tools must be a record of tool name to verdict.");
+  const tools = new Map<string, VettedToolRecord>();
+  const frozen: Record<string, ToolVerdict | ReviewedTool> = {};
+  for (const [name, entry] of Object.entries(input)) {
+    if (!name || name.trim() !== name) {
+      fail(`tool name "${name}" is empty or has surrounding whitespace.`);
+    }
+    const record: Record<string, unknown> =
+      typeof entry === "string" ? { verdict: entry } : isRecord(entry) ? { ...entry } : {};
+    for (const key of Object.keys(record)) {
+      if (!REVIEWED_TOOL_KEYS.has(key)) fail(`tool "${name}" has unknown key "${key}".`);
+    }
+    const { verdict: publicVerdict, reason, schemaDigest: digest } = record;
+    const verdict =
+      typeof publicVerdict === "string" && Object.hasOwn(VERDICTS, publicVerdict)
+        ? VERDICTS[publicVerdict]
+        : undefined;
+    if (verdict === undefined) {
+      fail(`tool "${name}" needs verdict "read", "write", or "destructive".`);
+    }
+    if (reason !== undefined && (typeof reason !== "string" || !reason.trim())) {
+      fail(`tool "${name}" reason must be a non-empty string.`);
+    }
+    if (digest !== undefined && (typeof digest !== "string" || !SCHEMA_DIGEST.test(digest))) {
+      fail(`tool "${name}" schemaDigest must be "sha256:" and 64 lowercase hex digits.`);
+    }
+    tools.set(name, {
+      verdict,
+      ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
+    });
+    frozen[name] =
+      typeof entry === "string"
+        ? PUBLIC_VERDICTS[verdict]
+        : Object.freeze({
+            verdict: PUBLIC_VERDICTS[verdict],
+            ...(typeof reason === "string" ? { reason } : {}),
+            ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
+          });
+  }
+  return {
+    catalog: { version: 1, tools },
+    frozen: Object.freeze({ tools: Object.freeze(frozen) }),
+  };
+}
+
+/** Validate a {@link ToolClassification} and build the manifest it describes. */
+export function reviewedCatalog(
+  classification: ToolClassification,
+  owner: string,
+): VettedCatalog {
+  return parseClassification(classification, owner).catalog;
+}
+
+/**
+ * Validate a {@link ToolClassification} and return a deep-frozen copy of it:
+ * what a connector carries as `classification`, so neither the caller's
+ * original object nor a write through the connector can change a verdict
+ * after review.
+ */
+export function reviewedClassification(
+  classification: ToolClassification,
+  owner: string,
+): ToolClassification {
+  return parseClassification(classification, owner).frozen;
+}
+
+/** A legacy manifest in the public, deep-frozen form a connector carries. */
+function classificationOf(catalog: VettedCatalog): ToolClassification {
+  const tools: Record<string, ReviewedTool> = {};
+  for (const [name, record] of catalog.tools) {
+    tools[name] = Object.freeze({
+      verdict: PUBLIC_VERDICTS[record.verdict],
+      ...(record.schemaDigest !== undefined ? { schemaDigest: record.schemaDigest } : {}),
+    });
+  }
+  return Object.freeze({ tools: Object.freeze(tools) });
+}
+
+/**
+ * One reviewed tool as served: a fresh object, never one a connector, a
+ * cache, or an earlier read holds.
+ *
+ * A listed read fills downstream silence, and an explicit write annotation on
+ * it wins: `destructiveHint: true` or `readOnlyHint: false` on a classified
+ * read is the downstream telling us the review is stale. A listed write or
+ * destructive tool stays a write whatever the downstream claims; there
+ * connecta knows what the tool does, and a claim to the contrary is a
+ * downstream bug rather than news
+ * ([#310](https://github.com/zackbart/connecta/issues/310),
+ * [#315](https://github.com/zackbart/connecta/issues/315)). A tool no review
+ * lists keeps only an explicit read annotation, the downstream's own word
+ * being the only evidence there is. A reviewed tool whose recorded schema
+ * digest the live tool no longer matches, or could not be checked against,
+ * keeps no reviewed verdict and is a write.
+ */
+function servedTool(
   catalog: VettedCatalog,
-  definition: ToolDef,
+  fact: ToolDef,
+  lapsed: ReadonlySet<string>,
 ): ToolDef {
+  const definition = structuredClone(fact);
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
+  const annotate = (annotations: ToolAnnotations): ToolDef => ({
+    ...definition,
+    annotations,
+  });
+  if (record?.verdict === "destructive") {
+    return annotate({ ...downstream, readOnlyHint: false, destructiveHint: true });
+  }
+  if (record && lapsed.has(definition.name)) {
+    // A review vouches for the schema it read. When the live schema no longer
+    // matches that digest, or the digest could not be checked, the verdict is
+    // about some other tool: the read becomes a write until a release reviews
+    // it again (INV-1).
+    return annotate({ ...downstream, readOnlyHint: false });
+  }
   if (record?.verdict === "read-only") {
-    if (
-      downstream.destructiveHint === true ||
-      downstream.readOnlyHint === false
-    ) {
+    if (downstream.destructiveHint === true || downstream.readOnlyHint === false) {
       return definition;
     }
-    return {
-      ...definition,
-      annotations: {
-        ...downstream,
-        readOnlyHint: true,
-        destructiveHint: downstream.destructiveHint ?? false,
-      },
-    };
-  }
-  if (record?.verdict === "destructive") {
-    return {
-      ...definition,
-      annotations: {
-        ...downstream,
-        readOnlyHint: false,
-        destructiveHint: true,
-      },
-    };
-  }
-  // Maintained additive creates and tools this release has never seen land
-  // here alike. Fill-in only: a silent tool is not read-only, so drift still
-  // fails closed onto `call_destructive_tool`, and neither population gets a
-  // `destructiveHint` it has not earned. A tool that arrives explicitly
-  // read-only keeps that annotation — on a name no release has reviewed, the
-  // downstream's own word is the only evidence there is, and rewriting it
-  // would be an overrule rather than a fill-in.
-  return {
-    ...definition,
-    annotations: {
+    return annotate({
       ...downstream,
-      readOnlyHint: downstream.readOnlyHint ?? false,
-    },
-  };
+      readOnlyHint: true,
+      destructiveHint: downstream.destructiveHint ?? false,
+    });
+  }
+  if (record?.verdict === "additive") {
+    return annotate({ ...downstream, readOnlyHint: false });
+  }
+  // Fill-in only: a silent tool is not read-only, so drift fails closed onto
+  // `call_destructive_tool`, and it gets no `destructiveHint` it has not
+  // earned. An explicit read claim on a name no review lists is believed.
+  return annotate({ ...downstream, readOnlyHint: downstream.readOnlyHint ?? false });
 }
 
 /**
@@ -273,6 +453,70 @@ function contradicts(record: VettedToolRecord, definition: ToolDef): boolean {
 }
 
 /**
+ * Names of served tools whose schemas no longer match the digest a release
+ * recorded for them. A manifest that recorded no digest for a tool cannot have
+ * an opinion about its schema, so it does not pay for a hash either. Throws
+ * when a digest cannot be computed; the caller decides what that means.
+ */
+async function changedSchemas(
+  catalog: VettedCatalog,
+  tools: readonly ToolDef[],
+): Promise<Set<string>> {
+  const changed = new Set<string>();
+  for (const definition of tools) {
+    const recorded = catalog.tools.get(definition.name)?.schemaDigest;
+    if (
+      recorded !== undefined &&
+      recorded !== (await vettedSchemaDigest(definition))
+    ) {
+      changed.add(definition.name);
+    }
+  }
+  return changed;
+}
+
+/** Every served tool whose review recorded a digest: what cannot be verified. */
+function digestedTools(
+  catalog: VettedCatalog,
+  tools: readonly ToolDef[],
+): Set<string> {
+  return new Set(
+    tools
+      .filter((definition) => catalog.tools.get(definition.name)?.schemaDigest !== undefined)
+      .map((definition) => definition.name),
+  );
+}
+
+function countDrift(
+  catalog: VettedCatalog,
+  tools: readonly ToolDef[],
+  changed: ReadonlySet<string>,
+): CatalogDriftCounts {
+  let unclassifiedTools = 0;
+  let annotationConflicts = 0;
+  const served = new Set<string>();
+  for (const definition of tools) {
+    served.add(definition.name);
+    const record = catalog.tools.get(definition.name);
+    if (!record) {
+      unclassifiedTools += 1;
+      continue;
+    }
+    if (contradicts(record, definition)) annotationConflicts += 1;
+  }
+  let unservedTools = 0;
+  for (const name of catalog.tools.keys()) {
+    if (!served.has(name)) unservedTools += 1;
+  }
+  return {
+    unclassifiedTools,
+    unservedTools,
+    annotationConflicts,
+    schemaChanges: changed.size,
+  };
+}
+
+/**
  * Compare a live catalog with the manifest and count what moved.
  *
  * Counts only, and by construction: there is nowhere here to put a tool name,
@@ -284,76 +528,125 @@ export async function detectCatalogDrift(
   catalog: VettedCatalog,
   tools: readonly ToolDef[],
 ): Promise<CatalogDriftCounts> {
-  let unclassifiedTools = 0;
-  let annotationConflicts = 0;
-  let schemaChanges = 0;
-  const served = new Set<string>();
-  for (const definition of tools) {
-    served.add(definition.name);
-    const record = catalog.tools.get(definition.name);
-    if (!record) {
-      unclassifiedTools += 1;
-      continue;
-    }
-    if (contradicts(record, definition)) annotationConflicts += 1;
-    // A manifest that recorded no digest for this tool cannot have an opinion
-    // about its schema, so it does not pay for a hash either.
-    if (
-      record.schemaDigest !== undefined &&
-      record.schemaDigest !== (await vettedSchemaDigest(definition))
-    ) {
-      schemaChanges += 1;
-    }
-  }
-  let unservedTools = 0;
-  for (const name of catalog.tools.keys()) {
-    if (!served.has(name)) unservedTools += 1;
-  }
-  return {
-    unclassifiedTools,
-    unservedTools,
-    annotationConflicts,
-    schemaChanges,
-  };
+  return countDrift(catalog, tools, await changedSchemas(catalog, tools));
 }
 
 /**
- * Wrap a hosted-MCP connector in its vetted manifest: the classification the
- * catalog is normalized with, and the drift check that rides the same listing.
+ * Give a hosted-MCP connector its vetted manifest as a `classification`: the
+ * review the registry classifies every read with and counts drift against.
+ * The connector itself is unchanged, and its `listTools` still returns what
+ * the downstream said.
  *
- * The check happens where the tools are already in hand and still unmodified —
- * after the downstream answered, before the classification is applied. It adds
- * no request of its own, which is the whole boundary: connecta watches a
- * contract while it is serving a refresh the deployment asked for, and never
- * initiates one to go looking ([#179](https://github.com/zackbart/connecta/issues/179),
- * [#343](https://github.com/zackbart/connecta/issues/343)).
+ * Retained for the hosted providers that have not converted to
+ * `remoteMcp({ classify })` yet (#705); it is deleted with the last of them.
  */
 export function withVettedCatalog(
   connector: Connector,
   catalog: VettedCatalog,
 ): Connector {
-  let observed: CatalogDriftReport | undefined;
-  return {
-    ...connector,
-    async listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
-      const downstream = await connector.listTools(ctx);
-      try {
-        observed = {
-          observedAt: new Date().toISOString(),
-          ...(await detectCatalogDrift(catalog, downstream)),
-        };
-      } catch (error) {
-        // A drift check is a report about a catalog, never a condition for
-        // serving one. Keep the last good observation rather than replacing it
-        // with a lie, and let the refresh through.
-        logFailure(ctx.logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
-      }
-      return downstream.map((definition) =>
-        applyVettedSafety(catalog, definition),
+  return { ...connector, classification: classificationOf(catalog) };
+}
+
+/**
+ * Each connector object's review, validated the first time a registry reads
+ * it. Read once per object, so a getter or a record mutated later cannot
+ * hand a later registry (a principal's, say) a different review.
+ */
+const reviews = new WeakMap<Connector, VettedCatalog | null>();
+
+/**
+ * The review `connector.classification` declares, or undefined when it
+ * declares none. Throws on a malformed one (INV-11).
+ */
+export function catalogReviewOf(connector: Connector): VettedCatalog | undefined {
+  let review = reviews.get(connector);
+  if (review === undefined) {
+    const classification = connector.classification;
+    review =
+      classification === undefined
+        ? null
+        : reviewedCatalog(classification, `connector "${connector.id}"`);
+    reviews.set(connector, review);
+  }
+  return review ?? undefined;
+}
+
+/**
+ * Classify downstream facts with a review: what the registry serves on every
+ * read, from whichever cache layer the facts came from.
+ *
+ * Every tool returned is a fresh object, so nothing a caller does to one can
+ * reach the facts, `memo`, or a later read. `memo` holds digest verification
+ * per facts array; the registry passes one only for deep-frozen arrays it
+ * owns. A failed verification is not kept, so the next read tries again, and
+ * meanwhile no digested review vouches for a read (INV-1).
+ */
+export async function classifyCatalog(
+  catalog: VettedCatalog,
+  connectorId: string,
+  facts: readonly ToolDef[],
+  logger: Logger,
+  memo?: WeakMap<readonly ToolDef[], ReadonlySet<string>>,
+): Promise<ToolDef[]> {
+  let lapsed = memo?.get(facts);
+  if (!lapsed) {
+    try {
+      lapsed = await changedSchemas(catalog, facts);
+      memo?.set(facts, lapsed);
+    } catch (error) {
+      lapsed = digestedTools(catalog, facts);
+      logFailure(
+        logger,
+        "schema digest check failed; serving digested reviews as writes",
+        failureRecord({ connector: connectorId }, error),
       );
-    },
-    catalogDrift(): CatalogDriftReport | undefined {
-      return observed;
-    },
-  };
+    }
+  }
+  const unverified = lapsed;
+  return facts.map((fact) => servedTool(catalog, fact, unverified));
+}
+
+/**
+ * The drift each reviewed connector object showed on its last listing in this
+ * runtime. Keyed by the connector rather than by registry, so a principal's
+ * registry and the root report one observation, as they serve one connector.
+ */
+const observations = new WeakMap<Connector, CatalogDriftReport>();
+
+/**
+ * Compare a listing a refresh just received with the connector's review, and
+ * keep the counts as its latest observation.
+ *
+ * The check happens where the tools are already in hand, while serving a
+ * refresh the deployment asked for. It adds no request of its own, which is
+ * the whole boundary: connecta watches a contract while it is serving a
+ * refresh, and never initiates one to go looking
+ * ([#179](https://github.com/zackbart/connecta/issues/179),
+ * [#343](https://github.com/zackbart/connecta/issues/343)).
+ */
+export async function observeReviewedDrift(
+  connector: Connector,
+  catalog: VettedCatalog,
+  listed: readonly ToolDef[],
+  logger: Logger,
+): Promise<void> {
+  try {
+    const changed = await changedSchemas(catalog, listed);
+    observations.set(connector, {
+      observedAt: new Date().toISOString(),
+      ...countDrift(catalog, listed, changed),
+    });
+  } catch (error) {
+    // A drift check is a report about a catalog, never a condition for
+    // serving one. Keep the last good observation rather than replacing it
+    // with a lie, and let the refresh through; classification fails closed.
+    logFailure(logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
+  }
+}
+
+/** The latest drift {@link observeReviewedDrift} kept for `connector`. */
+export function observedCatalogDrift(
+  connector: Connector,
+): CatalogDriftReport | undefined {
+  return observations.get(connector);
 }

@@ -884,35 +884,37 @@ async function loadDocumentedProviders() {
     return {
       cloudflare: {
         endpoints: [cloudflare.CLOUDFLARE_MCP_ENDPOINT],
-        catalog: cloudflare.CLOUDFLARE_MCP_VETTED_CATALOG,
+        reviewed: [...cloudflare.CLOUDFLARE_MCP_VETTED_CATALOG.tools.keys()],
       },
       linear: {
         endpoints: [linear.LINEAR_MCP_ENDPOINTS["read-write"]],
-        catalog: linear.LINEAR_VETTED_CATALOG,
+        // Converted providers carry their reviewed classification on the
+        // definition; the drift check reads the same record runtime applies.
+        reviewed: Object.keys(linear.linear.definition.classify?.tools ?? {}),
       },
       stripe: {
         endpoints: [stripe.STRIPE_MCP_ENDPOINT],
-        catalog: stripe.STRIPE_VETTED_CATALOG,
+        reviewed: [...stripe.STRIPE_VETTED_CATALOG.tools.keys()],
       },
       mixpanel: {
         endpoints: Object.values(mixpanel.MIXPANEL_MCP_ENDPOINTS),
-        catalog: mixpanel.MIXPANEL_VETTED_CATALOG,
+        reviewed: [...mixpanel.MIXPANEL_VETTED_CATALOG.tools.keys()],
       },
       notion: {
         endpoints: [notion.NOTION_MCP_ENDPOINT],
-        catalog: notion.NOTION_MCP_VETTED_CATALOG,
+        reviewed: [...notion.NOTION_MCP_VETTED_CATALOG.tools.keys()],
       },
       revenuecat: {
         endpoints: [revenuecat.REVENUECAT_MCP_ENDPOINT],
-        catalog: revenuecat.REVENUECAT_VETTED_CATALOG,
+        reviewed: [...revenuecat.REVENUECAT_VETTED_CATALOG.tools.keys()],
       },
       vercel: {
         endpoints: [vercel.VERCEL_MCP_ENDPOINT],
-        catalog: vercel.VERCEL_MCP_VETTED_CATALOG,
+        reviewed: [...vercel.VERCEL_MCP_VETTED_CATALOG.tools.keys()],
       },
       basecamp: {
         endpoints: [basecamp.BASECAMP_MCP_ENDPOINT],
-        catalog: basecamp.BASECAMP_VETTED_CATALOG,
+        reviewed: [...basecamp.BASECAMP_VETTED_CATALOG.tools.keys()],
       },
     };
   } catch (error) {
@@ -1060,7 +1062,7 @@ async function checkDocumentedProvider(provider, runtime, options) {
       `${provider}'s MCP tool reference contained no recognizable tool names`,
     );
   }
-  const reviewed = [...runtime.catalog.tools.keys()].sort();
+  const reviewed = [...runtime.reviewed].sort();
   const reviewedSet = new Set(reviewed);
   const documentedSet = new Set(documented ?? []);
   const acknowledged = defaults.inventory?.acknowledgedUnclassified ?? new Set();

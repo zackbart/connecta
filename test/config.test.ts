@@ -296,7 +296,7 @@ describe("ConnectaConfig boundary", () => {
       expiresAt: number;
       staleUntil: number;
     };
-    expect(catalog.version).toBe(2);
+    expect(catalog.version).toBe(3);
     expect(catalog.chunkCount).toBe(1);
     expect(catalog.expiresAt - catalog.fetchedAt).toBe(10_000);
     expect(catalog.staleUntil - catalog.expiresAt).toBe(30_000);
