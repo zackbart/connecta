@@ -53,6 +53,8 @@ export interface AgentTrace {
   claudeCodeVersion: string | undefined;
   agentVersion?: string;
   loadedTools: string[];
+  skillInventory?: { name: string; enabled: boolean }[];
+  pluginInventory?: { name: string; id: string; enabled: boolean }[];
   rateLimit: Record<string, unknown> | undefined;
 }
 
@@ -86,6 +88,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   let version: string | undefined;
   let agentVersion: string | undefined;
   let loadedTools: string[] = [];
+  let skillInventory: AgentTrace["skillInventory"];
+  let pluginInventory: AgentTrace["pluginInventory"];
   let rateLimit: Record<string, unknown> | undefined;
   let finalAnswer = "";
   const urlElicitations: { connector: string; url: string; action: string }[] = [];
@@ -101,6 +105,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       version = event.claude_code_version === undefined ? undefined : String(event.claude_code_version);
       agentVersion = event.agent_version === undefined ? undefined : String(event.agent_version);
       loadedTools = Array.isArray(event.tools) ? event.tools.map(String) : [];
+      skillInventory = event.skillInventory as AgentTrace["skillInventory"];
+      pluginInventory = event.pluginInventory as AgentTrace["pluginInventory"];
       return;
     }
     if (event.type === "rate_limit_event") {
@@ -224,6 +230,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     claudeCodeVersion: version,
     ...(agentVersion ? { agentVersion } : {}),
     loadedTools,
+    ...(skillInventory ? { skillInventory } : {}),
+    ...(pluginInventory ? { pluginInventory } : {}),
     rateLimit,
   };
 }

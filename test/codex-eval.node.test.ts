@@ -8,9 +8,15 @@ import { infraError, stopsBatch } from "../eval/agent/infra.js";
 import { parseTrace } from "../eval/agent/trace.js";
 
 const SERVER = String.raw`
+const fs = require('node:fs');
 const readline = require('node:readline');
 const mode = process.argv[2];
 const send = x => process.stdout.write(JSON.stringify(x) + '\n');
+const config = fs.readFileSync(process.env.CODEX_HOME + '/config.toml', 'utf8');
+const skills = ['imagegen','openai-docs','review-agent','skill-creator','skill-installer'];
+if (skills.some(name => !config.includes('name = "' + name + '"\nenabled = false')) ||
+    !config.includes('[plugins]') || !config.includes('remote_plugin = false')) process.exit(1);
+let threadStarted = false;
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const m = JSON.parse(line);
   if (m.method === 'initialize') {
@@ -22,7 +28,16 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   } else if (m.id === 1 && m.result?.action === 'decline') {
     send({ id: 1, result: {} });
   } else if (m.method === 'thread/start') {
+    threadStarted = true;
     send({ id: m.id, result: { model: m.params.model, thread: { id: 'thread-1' } } });
+  } else if (m.method === 'skills/list') {
+    const enabled = mode === 'extra-skill' || mode === 'late-skill' && threadStarted;
+    send({ id: m.id, result: mode === 'bad-inventory' ? {} : { data: [{ cwd: m.params.cwds[0],
+      errors: [], skills: [...skills.map(name => ({ name, enabled: false })),
+        ...(enabled ? [{name:'future-skill',enabled:true,settings:{token:'fake-secret'}}] : [])] }] } });
+  } else if (m.method === 'plugin/installed') {
+    send({ id: m.id, result: { marketplaceLoadErrors: [], marketplaces: mode === 'extra-plugin' ?
+      [{ plugins: [{ name:'future-plugin', id:'future-plugin@builtin', enabled:true, settings:{token:'fake-secret'} }] }] : [] } });
   } else if (m.method === 'mcpServerStatus/list') {
     send({ id: m.id, result: { data: [{ name: 'connecta', tools: Object.fromEntries(["execute_code", "call_tool", "call_destructive_tool", "search_tools", "authorize_connector", "skills"].map(t => [t, {}])) }] } });
   } else if (m.method === 'turn/start') {
@@ -38,7 +53,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
 });
 `;
 
-async function fixture(mode: "complete" | "hang", signal?: AbortSignal,
+async function fixture(mode: "complete" | "hang" | "extra-skill" | "late-skill" | "extra-plugin" | "bad-inventory", signal?: AbortSignal,
   nextTurn: () => Promise<string | undefined> = async () => undefined, timeoutMs = 10_000) {
   const root = await mkdtemp(join(tmpdir(), "connecta-codex-test-"));
   try {
@@ -71,6 +86,18 @@ describe("Codex eval app-server", () => {
     expect(trace.apiMs).toBeUndefined();
     expect(run.model).toBe("gpt-6-sol");
     expect(run.loadedTools).toHaveLength(6);
+    expect(trace.skillInventory).toEqual(['imagegen','openai-docs','review-agent','skill-creator','skill-installer'].map(name => ({ name, enabled: false })));
+    expect(trace.pluginInventory).toEqual([]);
+  });
+
+  it.each([['extra-skill', 'future-skill'], ['late-skill', 'future-skill'], ['extra-plugin', 'future-plugin@builtin'],
+    ['bad-inventory', 'could not be verified']] as const)("fails closed on %s before any model turn", async (mode, diagnostic) => {
+    const run = await fixture(mode);
+    expect(run.turnStarts).toEqual([]);
+    const errors = run.events.filter(e => e.type === 'result').map(e => String(e.result)).join('\n');
+    expect(errors).toContain(diagnostic);
+    expect(errors).not.toContain('fake-secret');
+    expect(errors).not.toContain('settings');
   });
 
   it("terminates an active turn when interrupted", async () => {

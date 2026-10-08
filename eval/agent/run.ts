@@ -77,6 +77,8 @@ export interface TrialResult {
     stderrTail: string;
     argv: string[];
     loadedTools: string[];
+    skillInventory?: AgentTrace["skillInventory"];
+    pluginInventory?: AgentTrace["pluginInventory"];
   };
   /** Claude Code runner metadata; historical results remain readable. */
   claude?: Record<string, unknown>;
@@ -278,6 +280,8 @@ async function runTrial(
         stderrTail: run.stderrTail,
         argv: run.argv,
         loadedTools: trace.loadedTools,
+        ...(trace.skillInventory ? { skillInventory: trace.skillInventory } : {}),
+        ...(trace.pluginInventory ? { pluginInventory: trace.pluginInventory } : {}),
       },
       startedAt,
     };

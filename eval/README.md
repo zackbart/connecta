@@ -16,7 +16,14 @@ npm run eval:agent -- --runner claude --models claude-sonnet-5-5 --tasks p5-know
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
 `gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential
 file and the fake Connecta endpoint. Apps, web search, shell tools and subagents
-are disabled. An OpenAI API key in the environment alone is not sufficient;
+are disabled. Codex CLI 0.160.1 still discovers five bundled system skills in a
+fresh home. The temporary config disables `imagegen`, `openai-docs`,
+`review-agent`, `skill-creator` and `skill-installer` by name and disables remote
+plugins. Before thread creation and again before the first turn, `skills/list`
+and `plugin/installed` must report no enabled skills or plugins and no inventory
+errors. Unexpected enabled items fail closed with their names or ids in the
+diagnostic. Disabled skill/plugin inventories are saved in the trace.
+An OpenAI API key in the environment alone is not sufficient;
 first sign the CLI in with the intended subscription or API account.
 
 Claude uses the owner's signed-in `claude` CLI subscription login. The runner
