@@ -83,6 +83,7 @@ afterEach(() => {
 function context(token: string | null = "secret_token"): ConnectorContext {
   return {
     storage: {
+      capabilities: { absoluteExpiry: true },
       get: async () => null,
       set: async () => {},
       delete: async () => {},

@@ -10,6 +10,12 @@ export type JsonSchema = Record<string, unknown>;
  * before accessing storage. SQL TEXT results truncate at NUL on Node 22.
  */
 export interface KVStorage {
+  /**
+   * Explicit adapter opt-in: both `set` and `compareAndSet` honor
+   * `expiresAtMs`, including delayed commits. `createConnecta` rejects adapters
+   * without this capability. Declare it only after implementing that contract.
+   */
+  readonly capabilities: { readonly absoluteExpiry: true };
   /** The live value at `key`; null when absent or expired. */
   get(key: string): Promise<string | null>;
   /**

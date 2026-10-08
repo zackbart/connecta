@@ -293,6 +293,7 @@ describe("operator data routes", () => {
     let stall = true;
     const grantKey = `${scopes.connector("oauth")}${oauthGrantKeys.grant}`;
     const storage: KVStorage = {
+      capabilities: inner.capabilities,
       list: (prefix) => inner.list(prefix),
       get: (key) => inner.get(key),
       delete: (key) => inner.delete(key),

@@ -115,6 +115,19 @@ describe("ConnectaConfig boundary", () => {
     );
   });
 
+  it.each([undefined, null, {}, { absoluteExpiry: false }, { absoluteExpiry: "true" }])(
+    "INV-11: refuses storage without an explicit absolute-expiry capability (%j)",
+    (capabilities) => {
+      expect(() =>
+        unsafeCreateConnecta({
+          connectors: [],
+          executor,
+          storage: { ...memoryStorage(), capabilities },
+        }),
+      ).toThrow("storage must declare capabilities.absoluteExpiry: true");
+    },
+  );
+
   it("validates result stash limits and accepts zero to disable stashing", async () => {
     for (const field of ["maxStashBytes", "maxStashEntries"]) {
       for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "64", null]) {

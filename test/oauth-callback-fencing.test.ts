@@ -124,6 +124,7 @@ function backingStore(remote: boolean): KVStorage {
       return result;
     };
   return {
+    capabilities: storage.capabilities,
     get: hop(storage.get),
     set: hop(storage.set),
     delete: hop(storage.delete),

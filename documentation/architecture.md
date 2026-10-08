@@ -344,6 +344,12 @@ marker refuses stale copies afterward.
 
 `KVStorage` is `get`/`set`/`delete`/`list(prefix)`/`compareAndSet`, all
 required, and `createConnecta` refuses storage missing one (INV-11).
+Adapters must also declare `capabilities: { absoluteExpiry: true }`.
+Construction rejects missing or false capability declarations with an error
+naming `capabilities.absoluteExpiry`. The memory, SQLite, and D1 adapters carry
+this marker. Custom adapters may declare it only after implementing absolute
+expiry on both writes; a legacy `ttlSeconds`-only adapter is rejected by the
+published types and at runtime.
 `compareAndSet(key, expected, next, options?)` is an atomic claim: `null` means
 absent (expired counts) on the way in and delete on the way out, and a
 successful write takes the same expiry options as `set`. Relative `ttlSeconds`
@@ -470,15 +476,23 @@ a clock check before and after each write. Trailing chunks precede the header;
 failure or timeout returns no result id and stops the write loop. Chunks use an
 absolute expiry at booking time plus their TTL, so slow writes shorten the
 remaining paging window. Storage promises cannot guarantee cancellation of an
-already-dispatched database operation. Even a commit after timeout or process
+already-dispatched database operation, and a rejected client response does not
+prove that operation cannot commit later. Even a commit after timeout or process
 interruption keeps that absolute expiry, rather than starting another TTL.
 
 Settlement and release only shorten or remove a reservation. Successful writes
 attempt to shorten the charge to the fixed chunk expiry. Cleanup releases it
-only after all deletions succeed and no write remains in flight. Failed cleanup
-or exhausted release attempts finite settlement; a timed-out write keeps the
-original reservation because it may still commit after deletion. These ledger
-updates retry within the same 32-attempt budget. If they fail, crash, or exhaust,
+only after all deletions succeed and every dispatched write returned confirmed
+success. Failed cleanup or exhausted release attempts finite settlement when
+no write is unconfirmed. A rejected or timed-out write keeps its original
+reservation because it may still commit after deletion. Each completion path
+has one 15-second budget covering deletion, release, fallback settlement, and
+their storage waits and retries. Successful-write settlement has the same
+15-second budget. A stalled operation stops being awaited when the budget
+expires; its late response starts no further I/O, and no background cleanup
+fiber is started. The caller returns its write outcome even if these
+optimizations cannot finish. Ledger updates retry within the same 32-attempt
+budget. If they fail, time out, crash, or exhaust,
 capacity may be over-held until the booked deadline, at most 15 minutes and
 30 seconds for the normal TTL. The ledger row itself has an absolute expiry at
 its latest live reservation deadline. There are no completion receipts or

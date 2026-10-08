@@ -51,6 +51,7 @@ export async function servedTools(
 
 export const context: ConnectorContext = {
   storage: {
+    capabilities: { absoluteExpiry: true },
     get: vi.fn(),
     set: vi.fn(),
     delete: vi.fn(),

@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { Registry } from "../src/registry.js";
+import { createConnecta, customExecutor } from "../src/index.js";
 import { resultKeys, scopes, stashLedgerKeys } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
@@ -10,6 +11,7 @@ const make = (storage: KVStorage, capacity = 1, maxBytes = capacity) =>
   new Registry([], { storage, logger: silentLogger, results: { maxStashEntries: capacity, maxStashBytes: maxBytes } });
 const chunk = (id: string, index = 0) => scopes.results + resultKeys.chunk(id, index);
 const WRITE_MS = 30_000;
+const COMPLETION_MS = 15_000;
 const TTL_MS = 900_000;
 
 /** SQL fixtures age rows and translate new absolute expiries with the mocked clock. */
@@ -42,6 +44,244 @@ export function stashChargeContract(
       },
     };
   };
+
+  it("INV-11: rejects a legacy ttlSeconds-only adapter at construction", async () => {
+    const { storage: inner } = await open();
+    const legacy = {
+      get: inner.get,
+      set: (key: string, value: string, opts?: { ttlSeconds?: number }) =>
+        inner.set(key, value, opts?.ttlSeconds === undefined ? undefined : { ttlSeconds: opts.ttlSeconds }),
+      delete: inner.delete,
+      list: inner.list,
+      compareAndSet: (key: string, expected: string | null, next: string | null, opts?: { ttlSeconds?: number }) =>
+        inner.compareAndSet(
+          key,
+          expected,
+          next,
+          opts?.ttlSeconds === undefined ? undefined : { ttlSeconds: opts.ttlSeconds },
+        ),
+    };
+    const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
+    // @ts-expect-error old method signatures lack the required capability opt-in
+    const config: Parameters<typeof createConnecta>[0] = { connectors: [], executor, storage: legacy };
+    expect(() => createConnecta(config)).toThrow("storage must declare capabilities.absoluteExpiry: true");
+    expect(await inner.list("")).toEqual([]);
+    const app = createConnecta({ connectors: [], executor, storage: inner, logger: "silent" });
+    expect(await app.registry.stashResult("supported", ["x"], 900)).toBe(true);
+    await app.close();
+  });
+
+  it.each([0, 1])("INV-7: retains a rejected write's charge through its late chunk %s commit", async (index) => {
+    const f = await clocked();
+    const inner = f.storage;
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let late: Promise<void> | undefined;
+    let deletions = 0;
+    const storage: KVStorage = {
+      ...inner,
+      async set(key, value, options) {
+        if (key === chunk("rejected", index)) {
+          // The client response fails while the already-dispatched backend is pending.
+          late = gate.then(() => inner.set(key, value, options));
+          throw new Error("response rejected before backend commit");
+        }
+        await inner.set(key, value, options);
+      },
+      async delete(key) {
+        deletions++;
+        await inner.delete(key);
+      },
+    };
+    try {
+      await expect(make(storage, 1, 2).stashResult("rejected", ["h", "x"], 900)).rejects.toThrow("response rejected");
+      expect(deletions).toBe(2);
+      expect(await inner.list(scopes.results)).toEqual([]);
+      expect(entries(await inner.get(stashLedgerKeys.ledger))).toEqual([
+        [expect.any(String), 2, f.start + WRITE_MS + TTL_MS],
+      ]);
+      expect(await make(inner, 1, 2).stashResult("replacement", ["x"], 900)).toBe(false);
+      finish();
+      await late;
+      expect(await inner.get(chunk("rejected", index))).toBe(index === 0 ? "h" : "x");
+      expect(await inner.list(scopes.results)).toHaveLength(1);
+      await f.tick(TTL_MS - 1_000);
+      expect(await inner.get(chunk("rejected", index))).not.toBeNull();
+      expect(await make(inner, 1, 2).stashResult("still-full", ["x"], 900)).toBe(false);
+      await f.tick(WRITE_MS + 1_001);
+      expect(await inner.list("")).toEqual([]);
+      expect(await make(inner, 1, 2).stashResult("recovered", ["x"], 900)).toBe(true);
+    } finally {
+      finish();
+      await late;
+      f.restore();
+    }
+  });
+
+  it.each(["timeout", "rejection"])(
+    "INV-7: returns within the cleanup budget with stalled deletion after %s",
+    async (failure) => {
+      const f = await clocked();
+      const inner = f.storage;
+      let entered!: () => void, finishWrite!: () => void, deleting!: () => void, finishDelete!: () => void;
+      const writing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const writeGate = new Promise<void>((resolve) => {
+        finishWrite = resolve;
+      });
+      const cleanup = new Promise<void>((resolve) => {
+        deleting = resolve;
+      });
+      const deleteGate = new Promise<void>((resolve) => {
+        finishDelete = resolve;
+      });
+      let lateWrite: Promise<void> | undefined, lateDelete: Promise<void> | undefined;
+      let deletions = 0,
+        ledgerWrites = 0;
+      const storage: KVStorage = {
+        ...inner,
+        async set(key, value, options) {
+          entered();
+          if (failure === "rejection") throw new Error("unconfirmed write failure");
+          lateWrite = writeGate.then(() => inner.set(key, value, options));
+          await lateWrite;
+        },
+        async delete(key) {
+          deletions++;
+          deleting();
+          lateDelete = deleteGate.then(() => inner.delete(key));
+          await lateDelete;
+        },
+        async compareAndSet(...args) {
+          ledgerWrites++;
+          return inner.compareAndSet(...args);
+        },
+      };
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let outcome: boolean | "rejected" | undefined;
+      const first = make(storage, 1, 2)
+        .stashResult("stalled", ["h", "x"], 900)
+        .then(
+          (value) => {
+            outcome = value;
+          },
+          () => {
+            outcome = "rejected";
+          },
+        );
+      try {
+        await writing;
+        if (failure === "timeout") {
+          await f.tick(WRITE_MS);
+          await vi.advanceTimersByTimeAsync(WRITE_MS);
+        }
+        await cleanup;
+        await vi.advanceTimersByTimeAsync(COMPLETION_MS - 1);
+        expect(outcome).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(outcome).toBe(failure === "timeout" ? false : "rejected");
+        await first;
+        expect(entries(await inner.get(stashLedgerKeys.ledger))[0]![2]).toBe(f.start + WRITE_MS + TTL_MS);
+        expect(await make(inner, 1, 2).stashResult("still-full", ["x"], 900)).toBe(false);
+        finishDelete();
+        await lateDelete;
+        finishWrite();
+        await lateWrite;
+        // Completing abandoned adapter promises cannot start more cleanup or ledger I/O.
+        expect(deletions).toBe(1);
+        expect(ledgerWrites).toBe(1);
+        expect(await inner.get(chunk("stalled"))).toBeNull();
+        await f.tick(WRITE_MS + TTL_MS + 1);
+        expect(await inner.list("")).toEqual([]);
+        expect(await make(inner, 1, 2).stashResult("recovered", ["x"], 900)).toBe(true);
+      } finally {
+        finishDelete();
+        finishWrite();
+        vi.useRealTimers();
+        await Promise.all([first, lateWrite, lateDelete]);
+        f.restore();
+      }
+    },
+    30_000,
+  );
+
+  it.each(["get", "compareAndSet"] as const)(
+    "INV-7: returns within the settlement budget with stalled %s",
+    async (operation) => {
+      const f = await clocked();
+      const inner = f.storage;
+      let entered!: () => void, finish!: () => void;
+      const settling = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      let written = false,
+        ledgerReads = 0,
+        ledgerWrites = 0;
+      let late: Promise<unknown> | undefined;
+      const storage: KVStorage = {
+        ...inner,
+        async set(...args) {
+          await inner.set(...args);
+          written = true;
+        },
+        async get(key) {
+          ledgerReads++;
+          if (written && operation === "get") {
+            entered();
+            late = gate.then(() => inner.get(key));
+            return (await late) as string | null;
+          }
+          return inner.get(key);
+        },
+        async compareAndSet(...args) {
+          ledgerWrites++;
+          if (written && operation === "compareAndSet") {
+            entered();
+            late = gate.then(() => inner.compareAndSet(...args));
+            return (await late) as boolean;
+          }
+          return inner.compareAndSet(...args);
+        },
+      };
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let outcome: boolean | undefined;
+      const first = make(storage)
+        .stashResult("settling", ["x"], 900)
+        .then((value) => {
+          outcome = value;
+        });
+      try {
+        await settling;
+        await vi.advanceTimersByTimeAsync(COMPLETION_MS - 1);
+        expect(outcome).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(outcome).toBe(true);
+        await first;
+        expect(await inner.get(chunk("settling"))).toBe("x");
+        expect(entries(await inner.get(stashLedgerKeys.ledger))[0]![2]).toBe(f.start + WRITE_MS + TTL_MS);
+        expect(await make(inner).stashResult("still-full", ["x"], 900)).toBe(false);
+        const counts = [ledgerReads, ledgerWrites];
+        finish();
+        await late;
+        expect([ledgerReads, ledgerWrites]).toEqual(counts);
+        await f.tick(WRITE_MS + TTL_MS + 1);
+        expect(await inner.list("")).toEqual([]);
+        expect(await make(inner).stashResult("recovered", ["x"], 900)).toBe(true);
+      } finally {
+        finish();
+        vi.useRealTimers();
+        await Promise.all([first, late]);
+        f.restore();
+      }
+    },
+    30_000,
+  );
 
   it.each([
     { name: "contention-exhausted settlement", slow: false, releaseLosses: 0, settlementLosses: 32, transient: false },

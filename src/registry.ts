@@ -157,6 +157,7 @@ export interface RegistryOptions {
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
   return {
+    capabilities: storage.capabilities,
     get: (k) => storage.get(prefix + k),
     set: (k, v, o) => storage.set(prefix + k, v, o),
     delete: (k) => storage.delete(prefix + k),
@@ -270,6 +271,18 @@ const STASH_LEDGER_BACKOFF_MS = 4;
 const STASH_LEDGER_BACKOFF_CAP_MS = 250;
 /** Whole chunk-write phase, measured from booking, including the header. */
 const STASH_WRITE_TIMEOUT_MS = 30_000;
+/** Total cleanup/release or settlement budget, including ledger retries. */
+const STASH_COMPLETION_TIMEOUT_MS = 15_000;
+
+/** Stop waiting without starting background storage work after the deadline. */
+function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect.Effect<void, unknown, Storage> {
+  return effect.pipe(
+    Effect.asVoid,
+    Effect.timeoutOrElse({ duration: Duration.millis(STASH_COMPLETION_TIMEOUT_MS), orElse: () => Effect.void }),
+    // onError finalizers are otherwise uninterruptible, including their I/O.
+    Effect.interruptible,
+  );
+}
 
 /** One live stash charge: reservation id, bytes, and expiry (epoch ms). */
 type StashCharge = readonly [reservation: string, bytes: number, expiresAt: number];
@@ -795,7 +808,9 @@ export class Registry implements RegistryView {
    * chunk is written, so every isolate and process sharing the store sees the
    * same entries and bytes. A pending write keeps its finite charge reserved.
    * Writes stop after 30 seconds; absolute chunk expiries cannot pass the
-   * booked deadline even on late commit. Storage TTL reclaims the rows.
+   * booked deadline even on late commit. Rejected responses leave writes
+   * unconfirmed and retain their charge. Cleanup/release and settlement each
+   * stop waiting after 15 seconds. Storage TTL reclaims the rows.
    */
   stashResult(
     id: string,
@@ -840,24 +855,26 @@ export class Registry implements RegistryView {
             : { result: undefined },
         );
         let pendingWrite = false;
-        // A timed-out driver call may still commit after deletion. Its absolute
-        // expiry stays capped, and its original reservation stays until deadline.
-        const release = Effect.gen(function* () {
-          const deleted = yield* Effect.gen(function* () {
-            for (const key of keys) yield* storageDelete(key);
-            return true;
-          }).pipe(Effect.catch(() => Effect.succeed(false)));
-          if (pendingWrite) return;
-          if (deleted) {
-            const released = yield* swapStashLedger((live) =>
-              live.some(owns)
-                ? { entries: live.filter((entry) => !owns(entry)), result: undefined }
-                : { result: undefined },
-            );
-            if (released.status === "applied") return;
-          }
-          yield* settle;
-        });
+        // A rejected or timed-out driver call may still commit after deletion.
+        // Only a confirmed write response clears pendingWrite.
+        const release = completeStash(
+          Effect.gen(function* () {
+            const deleted = yield* Effect.gen(function* () {
+              for (const key of keys) yield* storageDelete(key);
+              return true;
+            }).pipe(Effect.catch(() => Effect.succeed(false)));
+            if (pendingWrite) return;
+            if (deleted) {
+              const released = yield* swapStashLedger((live) =>
+                live.some(owns)
+                  ? { entries: live.filter((entry) => !owns(entry)), result: undefined }
+                  : { result: undefined },
+              );
+              if (released.status === "applied") return;
+            }
+            yield* settle;
+          }),
+        );
         // Trailing chunks first, then the header. The caller receives no result
         // ID after failure or timeout, including a late header commit.
         const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
@@ -872,11 +889,6 @@ export class Registry implements RegistryView {
                   pendingWrite = false;
                 }),
               ),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  pendingWrite = false;
-                }),
-              ),
             );
             if ((yield* Clock.currentTimeMillis) >= writeDeadline) return false;
           }
@@ -886,7 +898,7 @@ export class Registry implements RegistryView {
           Effect.onError(() => release.pipe(Effect.ignore)),
         );
         if (!written) yield* release;
-        else yield* settle;
+        else yield* completeStash(settle);
         return written;
       }),
       this.opts,

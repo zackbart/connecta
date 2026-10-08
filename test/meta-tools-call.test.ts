@@ -2145,7 +2145,9 @@ describe("bounded result stash", () => {
     expect(await storage.list("results:result:")).toHaveLength(64);
   });
 
-  it("releases a failed write's charge only after deleting what it may have written", async () => {
+  it("INV-7: retains a rejected write's finite charge even after successful deletion", async () => {
+    let clock = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
     const storage = memoryStorage();
     let failWrite = true;
     let failDelete = true;
@@ -2173,14 +2175,17 @@ describe("bounded result stash", () => {
     expect(notice(await call())).not.toHaveProperty("resultId");
     expect(await storage.list("results:result:")).toHaveLength(1);
     expect(notice(await call())).not.toHaveProperty("resultId");
-    // With deletion working, a failed write cleans up and frees its charge.
+    // With deletion working, an unconfirmed write still holds its reservation.
     failDelete = false;
     failWrite = true;
     await storage.delete("result-stash:v1:ledger");
     for (const key of await storage.list("results:")) await storage.delete(key);
     expect(notice(await call())).not.toHaveProperty("resultId");
     expect(await storage.list("results:result:")).toEqual([]);
+    expect(notice(await call())).not.toHaveProperty("resultId");
+    clock += 930_001;
     expect(notice(await call())).toHaveProperty("resultId");
+    now.mockRestore();
   });
 
   it("pages a large stored result without encoding the full text again", async () => {

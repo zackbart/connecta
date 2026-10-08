@@ -1760,6 +1760,7 @@ describe("/oauth/callback/<id> route", () => {
     const reads: string[] = [];
     const inner = memoryStorage();
     const storage: KVStorage = {
+      capabilities: inner.capabilities,
       compareAndSet: (key, expected, next, options) => inner.compareAndSet(key, expected, next, options),
       get: async (k) => {
         reads.push(k);

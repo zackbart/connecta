@@ -159,6 +159,7 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
     return row ? textOf(row.value, row.value_bytes, `the stored value of ${JSON.stringify(key)}`) : null;
   };
   return {
+    capabilities: { absoluteExpiry: true },
     describe: () => ({ kind }),
     async get(key) {
       validateStorageKey(key);

@@ -202,6 +202,7 @@ describe("request-local catalogs", () => {
     let storageReads = 0;
     let storageWrites = 0;
     const storage: KVStorage = {
+      capabilities: backing.capabilities,
       list: (prefix) => backing.list(prefix),
       compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       async get(key) {

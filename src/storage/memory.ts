@@ -47,6 +47,7 @@ export function memoryStorage(): KVStorage {
     });
   };
   return {
+    capabilities: { absoluteExpiry: true },
     describe: () => ({ kind: "memory" }),
     async get(key) {
       validateStorageKey(key);
