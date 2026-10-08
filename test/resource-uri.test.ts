@@ -102,3 +102,22 @@ it("INV-3 INV-7: matches sixteen expressions with one forward capture per litera
   expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(true);
   expect(performance.now() - start).toBeLessThan(50);
 });
+
+it("INV-3 INV-7: scans almost the full match budget before an end-of-URI mismatch", () => {
+  const uriTemplate = "x:{v*}";
+  const templates = Array.from({ length: 31 }, () => ({ uriTemplate }));
+  const uri = "x:" + "a".repeat(8189) + "?";
+  // Each template parses and captures the entire URI before the last character
+  // refuses the value. 31 full scans charge 254,138 of the 262,144 work budget.
+  expect(resourceUriMatchesTemplate(uri.slice(0, -1) + "a", uriTemplate)).toBe(true);
+  expect(uri.length).toBe(8192);
+  expect(templates.length * (uri.length + uriTemplate.length)).toBe(254_138);
+  const refusals: string[] = [];
+  const start = performance.now();
+  const result = resourceUriMatchesTemplates(uri, templates, code => refusals.push(code));
+  const elapsed = performance.now() - start;
+  expect(result).toEqual({ matched: false });
+  expect(refusals).toEqual([]);
+  expect(elapsed).toBeLessThan(50);
+  expect(resourceUriMatchesTemplates(uri, [...templates, { uriTemplate }])).toEqual({ matched: false, refusal: "resource_match_budget_exceeded" });
+});
