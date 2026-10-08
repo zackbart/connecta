@@ -30,6 +30,9 @@ it.each([
   ["https://h:443{/x}", "https://h:443/safe"],
   ["https://user@h:8443{/x}", "https://user@h:8443/safe"],
   ["https://[::1]:8443{/x}", "https://[::1]:8443/safe"],
+  ["https://H:443{/x}", "https://H:443/safe"],
+  ["docs:{/a}/static!", "docs:/safe/static!"],
+  ["x:{value}", "x:safe"],
 ])("INV-3: matches advertised RFC 6570 expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
 });
@@ -72,6 +75,21 @@ it.each([
 ])("INV-3 INV-4: re-checks the literal authority after empty expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
+});
+
+it.each(["http", "https", "ftp", "ws", "wss"])("INV-3 INV-4: refuses a WHATWG host absent from the RFC 3986 %s template", scheme => {
+  // The final ! makes the capture boundary deterministic, so host checking
+  // must refuse this after expansion rather than at template parsing.
+  const uri = `${scheme}:/evil.com/static!`;
+  const uriTemplate = `${scheme}:{/a}/static!`;
+  expect(new URL(uri).host).toBe("evil.com");
+  expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(false);
+  expect(resourceUriMatchesTemplates(uri, [{ uriTemplate }])).toEqual({ matched: false });
+  expect(resourceUriMatchesTemplate(`${scheme}:/evil.com/static`, `${scheme}:{/a}/static`)).toBe(false);
+});
+
+it("INV-3 INV-4: refuses backslash normalization in a literal authority", () => {
+  expect(resourceUriMatchesTemplate("https://h\\evil.com/safe", "https://h\\evil.com{/x}")).toBe(false);
 });
 
 

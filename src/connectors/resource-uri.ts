@@ -182,7 +182,18 @@ function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boo
   const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, value => value.toUpperCase());
   // Empty expressions can join literals into an authority the template did
   // not advertise. Compare the final RFC 3986 authority after re-expansion.
-  return canonical(expanded) === canonical(uri) && literalAuthority(uri.slice(scheme.length)) === authority;
+  return canonical(expanded) === canonical(uri) && literalAuthority(uri.slice(scheme.length)) === authority && sameHost(uri, scheme, authority);
+}
+
+function sameHost(uri: string, scheme: string, authority: string | undefined): boolean {
+  // WHATWG special schemes can turn an RFC 3986 path into a host. A literal
+  // authority supplies the expected host, including normal port/IDNA handling;
+  // without one, WHATWG must also find no host. Parser errors stay local.
+  if (authority !== undefined && /[\\\p{Cc}\p{Cf}]/u.test(authority)) return false;
+  try {
+    const host = authority === undefined ? "" : new URL(`${scheme}//${authority}/`).host;
+    return new URL(uri).host === host;
+  } catch { return false; }
 }
 
 function expand({ operator, variables }: Expression, values: Map<string, string[]>): string {
