@@ -506,6 +506,10 @@
         },
         {
           "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-6: guards refreshed discovery before negotiation-cache persistence and reuse"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
           "title": "INV-4 INV-10: composes request-bound elicitation modes with downstream Skills capabilities"
         }
       ]

@@ -8,11 +8,13 @@ import { createTestConnecta, required } from "./helpers.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
-import { guestErrorText, guestFailureFacts, spyLogger } from "./fixtures/misc.js";
+import { connectorContext, guestErrorText, guestFailureFacts, spyLogger } from "./fixtures/misc.js";
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
-import { inputRetryKeys, resultKeys, scopes } from "../src/storage/keys.js";
+import { inputRetryKeys, negotiationKeys, resultKeys, scopes } from "../src/storage/keys.js";
 import { seedGrant } from "./fixtures/oauth.js";
+import { readNegotiation } from "../src/connectors/negotiation-cache.js";
+import { bindDownstreamContinuation, clearDownstreamContinuation } from "../src/downstream-input-context.js";
 
 const BASE = "https://connecta.test";
 const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";
@@ -404,6 +406,40 @@ describe("downstream input relay", () => {
     expect(search.result.isError).toBeFalsy();
     expect(JSON.stringify(search)).not.toContain(OPAQUE);
     expect(flow.call).toHaveBeenCalledOnce();
+  });
+
+  it("INV-4 INV-5 INV-6: guards refreshed discovery before negotiation-cache persistence and reuse", async () => {
+    const flow = setup({ authFirst: true });
+    await flow.vault.set("service", SECRET, "alice");
+    const first = (await flow.rpc()).result;
+    expect(first.resultType).toBe("input_required");
+    const fetch = globalThis.fetch;
+    let discovery: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await fetch(input, init);
+      if (typeof init?.body !== "string" || JSON.parse(init.body).method !== "server/discover") return response;
+      const body = await response.json() as { result: Record<string, unknown> };
+      body.result.instructions = OPAQUE;
+      discovery = body.result;
+      return Response.json(body);
+    });
+    // Rotating the credential changes the negotiation partition and forces a
+    // discovery after the host has verified and unwrapped the continuation.
+    await flow.vault.set("service", `${SECRET}-rotated`, "alice");
+    const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+    expect(result.structuredContent.error.code).toBe("input_required_invalid");
+    expect(discovery.instructions).toBe(OPAQUE);
+    expect(flow.call).toHaveBeenCalledOnce();
+    for (const key of await flow.storage.list("")) expect(await flow.storage.get(key)).not.toContain(OPAQUE);
+    expect(JSON.stringify([flow.logs, flow.activity.record.mock.calls])).not.toContain(OPAQUE);
+
+    // An existing verdict must also be checked before it reaches a new client.
+    const ctx = connectorContext();
+    const scope = ctx.requestScope ?? ctx;
+    bindDownstreamContinuation(scope, { connector: "service", address: "service.read", input: { requestState: OPAQUE, inputResponses: {} }, privateStates: [OPAQUE], write: false });
+    await ctx.storage.set(negotiationKeys.verdict("reuse"), JSON.stringify({ prior: { kind: "modern", discover: discovery }, expiresAt: Date.now() + 60_000 }));
+    try { await expect(readNegotiation(ctx, "reuse")).rejects.toMatchObject({ code: "input_required_invalid" }); }
+    finally { clearDownstreamContinuation(scope); }
   });
 
   it("INV-2 INV-4 INV-9: sends an OAuth write continuation once without auth refresh, step-up, or redirect replay", async () => {

@@ -598,10 +598,11 @@ the host owns consent and browser navigation. Connecta never adds credentials
 or follows the URL. Messages pass the ordinary agent-output redaction boundary.
 A form is refused if that boundary would change its schema, including property
 names, enum values, or annotations; the host never receives a rewritten answer
-contract. Prompts, raw continuation results, and continuation-time catalogs that
-echo any round's opaque state are refused before redaction, paging, stashing,
-error shaping, schema observation, or cache publication. This includes bounded
-percent-decoded and JSON-escaped views, encoded echoes, short state, and serialized
+contract. Prompts, raw continuation results, discovery, and continuation-time
+catalogs that echo any round's opaque state are refused before redaction, paging,
+stashing, error shaping, schema observation, or cache publication and reuse.
+This includes bounded percent-decoded and JSON-escaped views, encoded echoes,
+short state, and serialized
 numbers, booleans, and null. No prompt, state,
 response, arguments, or raw error reaches activity, logs, or status.
 
