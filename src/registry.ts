@@ -1,5 +1,5 @@
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import { hasControlCharacters } from "./tool-name.js";
+import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
 import {
   Cause,
   Clock,
@@ -593,6 +593,7 @@ export class Registry implements RegistryView {
       DEFAULT_MAX_RESULT_BYTES,
     );
     for (const c of connectors) {
+      assertStaticToolNames(c.staticTools ?? [], `Connector(${JSON.stringify(c.id)}).staticTools`);
       if ("handleRequest" in c) {
         throw new Error(
           `Connector "${c.id}" declares removed handleRequest. ` +

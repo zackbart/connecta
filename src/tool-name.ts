@@ -6,3 +6,12 @@ export function hasControlCharacters(name: string): boolean {
   }
   return false;
 }
+
+/** Refuse static configuration before errors or warnings can render its names. */
+export function assertStaticToolNames(tools: readonly { name: string }[], path: string): void {
+  for (const [index, tool] of tools.entries()) {
+    if (hasControlCharacters(tool.name)) {
+      throw new Error(`${path}[${index}].name contains a control character.`);
+    }
+  }
+}
