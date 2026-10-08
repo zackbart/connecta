@@ -178,7 +178,7 @@ belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
 
-Six functions: `search`, `describe`, `call`, `read`, `result`, `skill`, and `emit`.
+Seven functions: `search`, `describe`, `call`, `read`, `result`, `skill`, and `emit`.
 All return awaitable values; emission also works without `await`. The namespace
 has no inherited members. Unknown properties are undefined, and calling them
 fails as a guest `TypeError`. The host also dispatches only own members of `fns`.

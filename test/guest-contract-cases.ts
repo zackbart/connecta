@@ -1367,6 +1367,7 @@ return fs;
         ],
       });
       expect(state.calls["reader.resources/read"]).toBe(2);
+      expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 1, failed: 3 });
     },
   },
   {
@@ -1376,6 +1377,7 @@ return fs;
     check(outcome) {
       expect(outcome.isError).toBe(true);
       expect(outcome.value).toMatchObject({ error: { code: "not_found", retryable: false } });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
     },
   },
   {
@@ -2365,7 +2367,7 @@ return fs;
     clauses: "E6, X8",
     name: "only provider functions are callable, inherited members included",
     code: `async () => {
-      const out = { inheritedType: typeof connecta.toString };
+      const out = { inheritedType: typeof connecta.toString, methods: Object.keys(connecta).sort(), frozen: Object.isFrozen(connecta) };
       for (const removed of ["ui", "batch", "__callNamespace"]) {
         try { await connecta[removed]("unused"); } catch (err) { out[removed] = err.message; }
       }
@@ -2377,6 +2379,8 @@ return fs;
       const result = record(outcome);
       // Both executors expose the same finite namespace without inherited members.
       expect(result.inheritedType).toBe("undefined");
+      expect(result.methods).toEqual(["call", "describe", "emit", "read", "result", "search", "skill"]);
+      expect(result.frozen).toBe(true);
       for (const removed of ["ui", "batch", "__callNamespace"]) {
         expect(String(result[removed]).length).toBeGreaterThan(0);
       }
