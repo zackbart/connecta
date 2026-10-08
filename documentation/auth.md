@@ -664,7 +664,7 @@ request at the edge, but connecta requires a `cta_` token for machine identity.
 It never reads `Cf-Access-Jwt-Assertion`, fetches signing keys, or accepts a
 caller's JWT. Missing context or a throwing lookup fails closed on both
 runtimes. It does not support Node, a `cloudflared` origin, or a Service Binding
-hop. [Decision 0003](../decisions/0003-inbound-auth.md) records that boundary
+hop. [Decision 0003](https://github.com/zackbart/connecta/blob/main/decisions/0003-inbound-auth.md) records that boundary
 and replaces #506's provisional verdict with supported Worker Access.
 Connecta configuration still decides connector and management permissions.
 
